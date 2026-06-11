@@ -1,6 +1,6 @@
 # aap-demo
 
-Local cluster infrastructure for AAP 2.7 deployment, powered by OpenShift Local. Deploy AAP in minutes on macOS, Linux, or Windows.
+Local cluster infrastructure for AAP 2.7 deployment, powered by OpenShift Local. Deploy AAP in minutes on macOS, Linux, or **Windows (PowerShell)**.
 
 ## Overview
 
@@ -128,7 +128,20 @@ mkdir -p ~/.aap-demo
 
 ## Architecture
 
-### macOS  / Linux (CRC backend) / Windows (in development)
+### macOS / Linux (bash CLI)
+
+Use `./install.sh` — see [QUICK-START.md](./QUICK-START.md).
+
+### Windows (PowerShell)
+
+Native PowerShell CLI (no WSL required):
+
+```powershell
+.\powershell\Install.ps1
+aap-demo help
+```
+
+See [docs/windows/QUICK-START.md](./docs/windows/QUICK-START.md) and [docs/windows/ARCHITECTURE.md](./docs/windows/ARCHITECTURE.md) for prerequisites, phased plan, and module layout.
 
 ```
 Host
