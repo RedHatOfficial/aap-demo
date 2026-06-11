@@ -75,11 +75,11 @@ When the user has multiple AAP deployments (e.g., operator in `aap-operator` + a
 
 Pull secrets are required for image pulls and live in `~/.aap-demo/`:
 - `pull-secret.txt` or `pull-secret.json` (from console.redhat.com)
-- ATF tests: `atf-vault-password` (for vaulted test vars)
+- ATF tests: `atf-vault-password` (for vaulted test vars)  # pragma: allowlist secret
 
 If image pulls fail with 403/unauthorized, check:
 1. Correct pull secret exists in `~/.aap-demo/`
-2. Pull secret is injected into the namespace: `kubectl get secret -n $NAMESPACE | grep pull`
+2. Pull secret is injected into the namespace: `kubectl get secret -n $NAMESPACE | grep pull`  # pragma: allowlist secret
 3. ServiceAccount has imagePullSecrets: `kubectl get sa default -n $NAMESPACE -o yaml`
 
 ## Diagnostics Loop

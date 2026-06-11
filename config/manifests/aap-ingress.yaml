@@ -34,18 +34,18 @@ metadata:
     # traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
 spec:
   rules:
-  - host: __AAP_HOSTNAME__
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: aap
-            port:
-              number: 80
-  # Uncomment to enable TLS (requires cert-manager or pre-created secret)
-  # tls:
-  # - hosts:
+    - host: __AAP_HOSTNAME__
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aap
+                port:
+                  number: 80
+    # Uncomment to enable TLS (requires cert-manager or pre-created secret)
+    # tls:
+    # - hosts:
   #   - __AAP_HOSTNAME__
   #   secretName: aap-gateway-tls

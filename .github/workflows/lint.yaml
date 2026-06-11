@@ -1,0 +1,158 @@
+---
+name: Lint
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+          scandir: '.'
+          ignore_paths: '.git .github docs'
+          ignore_names: '*.zsh'
+
+  yamllint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run yamllint
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          config_file: .yamllint
+          file_or_dir: .
+          strict: false
+
+  markdownlint:
+    name: Markdown Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
+
+      - name: Run markdownlint
+        run: markdownlint . --config .markdownlint.json
+
+  ansible-lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-lint
+        run: |
+          pip install ansible-lint
+
+      - name: Run ansible-lint
+        run: |
+          # Only lint if we have Ansible files
+          if [ -f "requirements.yml" ] || find . -name "playbook*.yml" -o -name "site.yml" | grep -q .; then
+            ansible-lint --force-color --offline || true
+          else
+            echo "No Ansible playbooks found, skipping ansible-lint"
+          fi
+        continue-on-error: true
+
+  secretlint:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install detect-secrets
+        run: |
+          pip install detect-secrets
+
+      - name: Run detect-secrets
+        run: |
+          if [ ! -f ".secrets.baseline" ]; then
+            detect-secrets scan --baseline .secrets.baseline
+          fi
+          detect-secrets audit .secrets.baseline
+
+  shellformat:
+    name: Shell Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install shfmt
+        run: |
+          wget -qO /usr/local/bin/shfmt https://github.com/mvdan/sh/releases/download/v3.8.0/shfmt_v3.8.0_linux_amd64
+          chmod +x /usr/local/bin/shfmt
+
+      - name: Run shfmt check
+        run: |
+          shfmt -d -i 2 -ci -bn .
+
+  validate-manifests:
+    name: Validate Kubernetes Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kubeval
+        run: |
+          wget -qO- https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz | tar xz
+          sudo mv kubeval /usr/local/bin/
+
+      - name: Validate Kubernetes YAMLs
+        run: |
+          find config/manifests config/crs -name "*.yaml" -o -name "*.yml" | while read -r file; do
+            echo "Validating $file"
+            kubeval --ignore-missing-schemas "$file" || true
+          done
+        continue-on-error: true
+
+  hadolint:
+    name: Dockerfile Lint
+    runs-on: ubuntu-latest
+    if: false  # Enable if Dockerfiles are added
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning

@@ -1,3 +1,4 @@
+---
 # MicroShift configuration for AAP Demo VM
 # Routes will use *.apps.<VM_IP>.nip.io
 dns:

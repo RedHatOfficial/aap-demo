@@ -1,12 +1,14 @@
 # aap-demo
 
-Local cluster infrastructure for AAP 2.7 deployment, powered by OpenShift Local. Deploy AAP in minutes on macOS, Linux, or Windows.
+Local cluster infrastructure for AAP 2.7 deployment, powered by OpenShift Local.
+Deploy AAP in minutes on macOS, Linux, or Windows.
 
 ## Overview
 
 aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift) for development, testing, and demonstration.
 
 **Key characteristics:**
+
 - One command setup: `aap-demo create && aap-demo deploy`
 - Full OpenShift API compatibility (OLM, Routes, CRDs)
 - Shared Podman/CRI-O storage — locally built images are immediately available to pods
@@ -20,6 +22,7 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 ### Prerequisites
 
 **OpenShift Local:**
+
 - OpenShift Local — [Download](https://console.redhat.com/openshift/create/local)
 - On Linux: also install `libvirt-daemon`, `libvirt-daemon-driver-storage`, `libvirt-daemon-driver-network`, `qemu-kvm`
 
@@ -58,7 +61,7 @@ On first run, you'll be prompted to select an infrastructure backend (CRC recomm
 
 Once deployed, `aap-demo status` shows routes, credentials, and cluster health:
 
-```
+```text
 Infra:       crc
 Cluster:     running
 
@@ -126,7 +129,7 @@ mkdir -p ~/.aap-demo
 
 ### macOS  / Linux (CRC backend) / Windows (in development)
 
-```
+```text
 Host
 └── CRC (OpenShift Local) VM
     ├── MicroShift or full OpenShift (user choice)
@@ -149,7 +152,6 @@ aap-demo enable mcp-server     # MCP server for AI assistants (requires AAP)
 ```
 
 Addons are saved to `~/.aap-demo/config` and auto-deployed on `aap-demo create`.
-
 
 ## Environment Variables
 
@@ -174,15 +176,24 @@ aap-demo repair                # Repair after crash/sleep
 aap-demo destroy && aap-demo create && aap-demo deploy   # Full rebuild
 ```
 
-`aap-demo diagnose` checks cluster connectivity, storage classes, SCCs, namespace labels, AAP CR status, pod health, PVC binding, and DNS. It provides actionable fix suggestions for any issues found.
+`aap-demo diagnose` checks cluster connectivity, storage classes, SCCs, namespace
+labels, AAP CR status, pod health, PVC binding, and DNS. It provides actionable fix
+suggestions for any issues found.
 
-`aap-demo diagnose --ai` runs the same checks, then sends the results plus pod logs and events to [Claude](https://claude.ai) for AI-powered root cause analysis and fix suggestions. Requires the `claude` CLI ([Claude Code](https://docs.anthropic.com/en/docs/claude-code)).
+`aap-demo diagnose --ai` runs the same checks, then sends the results plus pod logs
+and events to [Claude](https://claude.ai) for AI-powered root cause analysis and fix
+suggestions. Requires the `claude` CLI
+([Claude Code](https://docs.anthropic.com/en/docs/claude-code)).
 
-`aap-demo must-gather` collects aap-demo config, CRC status, storage/PVC/pod/event data, and runs the official [AAP must-gather](https://github.com/ansible/aap-must-gather) image for operator-level diagnostics.
+`aap-demo must-gather` collects aap-demo config, CRC status, storage/PVC/pod/event
+data, and runs the official [AAP must-gather](https://github.com/ansible/aap-must-gather)
+image for operator-level diagnostics.
 
 ### AI-Assisted Development
 
-This repository includes a `.claude/CLAUDE.md` file that provides Claude Code with full aap-demo context. When running Claude Code in the aap-demo directory, it automatically understands the architecture, common issues, and troubleshooting patterns.
+This repository includes a `.claude/CLAUDE.md` file that provides Claude Code with
+full aap-demo context. When running Claude Code in the aap-demo directory, it
+automatically understands the architecture, common issues, and troubleshooting patterns.
 
 ## References
 
@@ -193,4 +204,3 @@ This repository includes a `.claude/CLAUDE.md` file that provides Claude Code wi
 ## Contributing
 
 For questions or contributions, open an issue or pull request on GitHub.
-

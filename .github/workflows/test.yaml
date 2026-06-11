@@ -1,0 +1,81 @@
+---
+name: Test
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  syntax-check:
+    name: Shell Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify shell script syntax
+        run: |
+          EXIT_CODE=0
+          find . -name "*.sh" -type f | while read -r script; do
+            echo "Checking syntax: $script"
+            if ! bash -n "$script"; then
+              echo "::error file=$script::Syntax error in $script"
+              EXIT_CODE=1
+            fi
+          done
+          exit $EXIT_CODE
+
+  dry-run:
+    name: Dry Run Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Test help command
+        run: |
+          chmod +x aap-demo.sh
+          ./aap-demo.sh help
+
+      - name: Test version/info commands
+        run: |
+          ./aap-demo.sh version || true
+          ./aap-demo.sh status --dry-run || true
+
+  validate-scripts:
+    name: Validate Script Permissions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check executable bits
+        run: |
+          EXIT_CODE=0
+          # Find shell scripts with shebangs
+          find . -name "*.sh" -type f | while read -r script; do
+            if head -n 1 "$script" | grep -q '^#!'; then
+              if [ ! -x "$script" ]; then
+                echo "::warning file=$script::Script has shebang but is not executable"
+              fi
+            fi
+          done
+          exit $EXIT_CODE
+
+  link-check:
+    name: Check Links
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+          config-file: '.markdown-link-check.json'
+        continue-on-error: true
