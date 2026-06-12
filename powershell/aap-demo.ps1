@@ -2,7 +2,7 @@
 # aap-demo — Windows PowerShell entry point
 # See docs/windows/ARCHITECTURE.md
 
-#Requires -Version 7.0
+#Requires -Version 5.1
 
 $ErrorActionPreference = 'Stop'
 
@@ -18,7 +18,7 @@ Import-Module $ModulePath -Force
 
 # Parse arguments (mirrors aap-demo.sh subset)
 $Command = $null
-$ExtraArgs = [System.Collections.Generic.List[string]]::new()
+$ExtraArgs = @()
 $CliOverrides = @{}
 $PendingFlag = $null
 $DestroyReset = $false
@@ -54,7 +54,7 @@ foreach ($arg in $Args) {
     }
 
     if ($Command) {
-        $ExtraArgs.Add($arg)
+        $ExtraArgs += $arg
     } else {
         Write-Host "Unknown argument: $arg"
         Write-Host "Run 'aap-demo help' for usage"

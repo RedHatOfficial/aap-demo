@@ -9,7 +9,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full design and phased implemen
 1. Enable Hyper-V and install OpenShift Local (`crc setup` may require reboot)
 2. Install `oc` and `kubectl` — add to PATH
 3. Save pull secret to `%USERPROFILE%\.aap-demo\pull-secret.txt`
-4. PowerShell 7+ (`pwsh`)
+4. PowerShell 5.1+ (Windows PowerShell or PowerShell Core)
 
 ## Install
 

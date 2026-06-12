@@ -141,7 +141,12 @@ function Confirm-AapDemoDestructive {
     if ($script:AapDemoQuiet -eq 'true') { return }
     Write-Host $Prompt
     Write-Host 'Auto-continuing in 10 seconds...'
-    $null = Read-Host -TimeoutSec 10
+
+    # PS5-compatible timeout: Start job for Read-Host
+    $job = Start-Job -ScriptBlock { Read-Host }
+    $null = Wait-Job $job -Timeout 10
+    Stop-Job $job -ErrorAction SilentlyContinue
+    Remove-Job $job -Force -ErrorAction SilentlyContinue
 }
 
 function Import-AapDemoIngressCa {

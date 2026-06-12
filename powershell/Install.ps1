@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # Install aap-demo PowerShell CLI on Windows
-#Requires -Version 7.0
+#Requires -Version 5.1
 
 $ErrorActionPreference = 'Stop'
 

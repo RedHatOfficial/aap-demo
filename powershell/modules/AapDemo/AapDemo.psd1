@@ -4,7 +4,7 @@
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     Author            = 'aap-demo contributors'
     Description       = 'Native PowerShell module for aap-demo on Windows (OpenShift Local / CRC)'
-    PowerShellVersion = '7.0'
+    PowerShellVersion = '5.1'
     FunctionsToExport = @(
         'Initialize-AapDemoConfig'
         'Invoke-AapDemoCreate'

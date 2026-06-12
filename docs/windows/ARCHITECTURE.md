@@ -4,7 +4,7 @@ Native PowerShell implementation of the aap-demo CLI for Windows 10/11 with Open
 
 ## Goals
 
-- Run `aap-demo` from **PowerShell 7+** without WSL or Git Bash
+- Run `aap-demo` from **PowerShell 5.1+** without WSL or Git Bash
 - Reuse existing **YAML manifests**, **Ansible playbooks**, and **addon assets** unchanged
 - Mirror the bash CLI command surface; implement incrementally by phase
 - Keep platform-specific logic in small adapter modules (CRC/SSH, cert trust, paths)
@@ -196,7 +196,7 @@ Port `addons/*/deploy.sh` to `Invoke-AapDemoAddon` or individual `deploy.ps1` sc
 - [OpenShift Local](https://console.redhat.com/openshift/create/local) installed
 - `oc` and `kubectl` on PATH
 - OpenSSH Client (Windows optional feature, usually preinstalled)
-- PowerShell 7+
+- PowerShell 5.1+ (Windows PowerShell or PowerShell Core)
 - Red Hat pull secret at `%USERPROFILE%\.aap-demo\pull-secret.txt`
 - Recommended: 16 GB RAM, 100 GB free disk
 
