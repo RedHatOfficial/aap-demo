@@ -38,8 +38,12 @@ if ! command -v crc &>/dev/null; then
   exit 1
 fi
 
-# Ensure CRC daemon is running (required on Linux, auto-started on macOS)
-if [ "$(uname)" != "Darwin" ] && ! [ -S ~/.crc/crc-http.sock ]; then
+# Ensure CRC daemon is running (Linux only — macOS/Windows manage the daemon)
+_is_mingw() {
+  case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
+
+if ! _is_mingw && [ "$(uname)" != "Darwin" ] && ! [ -S ~/.crc/crc-http.sock ]; then
   echo "Starting CRC daemon..."
   crc daemon &>/dev/null &
   disown

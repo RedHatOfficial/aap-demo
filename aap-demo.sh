@@ -332,10 +332,13 @@ ensure_operator_sdk() {
   echo "operator-sdk not found. Installing..."
   echo ""
 
-  # Detect platform and architecture
+  local SDK_OS SDK_ARCH SDK_VERSION SDK_URL SDK_DEST SDK_BIN_DIR
   case "$(uname -s)" in
     Darwin) SDK_OS="darwin" ;;
     Linux) SDK_OS="linux" ;;
+    MINGW* | MSYS* | CYGWIN*)
+      SDK_OS="windows"
+      ;;
     *)
       echo "ERROR: Unsupported OS: $(uname -s)"
       exit 1
@@ -350,20 +353,31 @@ ensure_operator_sdk() {
       ;;
   esac
 
-  # Download from GitHub releases
   SDK_VERSION="v1.38.0"
   SDK_URL="https://github.com/operator-framework/operator-sdk/releases/download/${SDK_VERSION}/operator-sdk_${SDK_OS}_${SDK_ARCH}"
   echo "Downloading operator-sdk ${SDK_VERSION} for ${SDK_OS}/${SDK_ARCH}..."
 
-  if ! curl -fsSL -o /tmp/operator-sdk "$SDK_URL"; then
+  SDK_BIN_DIR="${HOME}/.local/bin"
+  mkdir -p "$SDK_BIN_DIR"
+  SDK_DEST="${SDK_BIN_DIR}/operator-sdk"
+  [ "$SDK_OS" = "windows" ] && SDK_DEST="${SDK_DEST}.exe"
+
+  if ! curl -fsSL -o "$SDK_DEST" "$SDK_URL"; then
     echo "ERROR: Failed to download operator-sdk"
     exit 1
   fi
 
-  chmod +x /tmp/operator-sdk
-  sudo mv /tmp/operator-sdk /usr/local/bin/
+  chmod +x "$SDK_DEST"
 
-  echo "✓ operator-sdk installed to /usr/local/bin/"
+  if [ "$SDK_OS" = "windows" ]; then
+    echo "✓ operator-sdk installed to ${SDK_DEST}"
+  elif [ -w /usr/local/bin ]; then
+    mv "$SDK_DEST" /usr/local/bin/operator-sdk
+    echo "✓ operator-sdk installed to /usr/local/bin/"
+  else
+    echo "✓ operator-sdk installed to ${SDK_DEST}"
+    echo "  Ensure ${SDK_BIN_DIR} is in your PATH"
+  fi
   echo ""
 }
 
