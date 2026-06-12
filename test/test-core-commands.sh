@@ -53,8 +53,8 @@ fi
 # Test 2: status command format
 echo "Test 2: status output includes required sections"
 if output=$("$AAP_DEMO_SH" status 2>&1); then
-  if echo "$output" | grep -q "Infra:" && \
-     echo "$output" | grep -q "Cluster:"; then
+  if echo "$output" | grep -q "Infra:" \
+    && echo "$output" | grep -q "Cluster:"; then
     _pass "status_format"
   else
     _fail "status_format - missing required sections"
@@ -68,7 +68,7 @@ echo "Test 3: stop command logic"
 # Mock crc command to avoid actual stop
 export PATH="$SCRIPT_DIR/mocks:$PATH"
 mkdir -p "$SCRIPT_DIR/mocks"
-cat > "$SCRIPT_DIR/mocks/crc" << 'EOF'
+cat >"$SCRIPT_DIR/mocks/crc" <<'EOF'
 #!/bin/bash
 echo "MOCK: crc $*" >&2
 exit 0

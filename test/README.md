@@ -24,18 +24,21 @@ Comprehensive test script validating all aap-demo commands.
 
 ### Coverage
 
-**Help/Usage**
+#### Help/Usage
+
 - ✓ `help`, `-h`, `--help` output
 - ✓ No args shows welcome banner
 
-**Argument Parsing**
+#### Argument Parsing
+
 - ✓ `NAMESPACE`, `QUIET`, `FORCE` env vars
 - ✓ Unknown commands error
 - ✓ Unknown flags error
 - ✓ `--context=NAME` / `--context NAME` parsing
 - ✓ `--kubeconfig=PATH` error handling
 
-**Commands**
+#### Commands
+
 - ✓ `config` (no args)
 - ✓ `redhat-status`, `rh-status` (network skipped in quick mode)
 - ✓ `idle [true|false]` arg parsing
@@ -53,6 +56,7 @@ Comprehensive test script validating all aap-demo commands.
 ### Test Design
 
 Tests validate:
+
 1. **Argument parsing** — flags, env vars, positional args processed correctly
 2. **Help text** — all help commands show usage
 3. **Error handling** — unknown commands/args produce useful errors
@@ -60,6 +64,7 @@ Tests validate:
 5. **Graceful degradation** — commands fail cleanly when cluster/AAP missing
 
 Tests **do not** validate:
+
 - Actual cluster creation/destruction (would be destructive)
 - Full deploy flow (too slow for unit tests)
 - Live AAP operations (requires running instance)
@@ -76,7 +81,7 @@ Tests **do not** validate:
 test_my_new_feature() {
   local output rc
   output=$(_run_aap_demo my-command arg 2>&1) && rc=0 || rc=$?
-  
+
   if [ $rc -eq 0 ] && echo "$output" | grep -q "expected"; then
     _pass "my_new_feature"
   else
