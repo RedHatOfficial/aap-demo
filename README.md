@@ -237,6 +237,23 @@ automatically understands the architecture, common issues, and troubleshooting p
 - [OpenShift Local](https://console.redhat.com/openshift/create/local)
 - [AAP Documentation](https://access.redhat.com/documentation/en-us/red_hat_ansible_automation_platform/)
 
+## Testing
+
+Test suite validates core aap-demo commands without requiring cluster operations:
+
+```bash
+./test/test-core-commands.sh
+```
+
+Tests verify:
+
+- `status` - execution and output format
+- `start`/`stop` - CRC command delegation
+- `destroy` - warning messages and cleanup logic
+- `create` - script delegation and OLM setup
+
+All tests use grep verification or command mocking to avoid destructive operations.
+
 ## Contributing
 
 For questions or contributions, open an issue or pull request on GitHub.
