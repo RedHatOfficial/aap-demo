@@ -26,13 +26,21 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 - [Homebrew](https://brew.sh/) — Install with: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 - [Operator SDK](https://sdk.operatorframework.io/docs/installation/) — Install with: `brew install operator-sdk`
 
+#### Windows
+
+- [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`; Hyper-V must be enabled
+- `kubectl` — included with OpenShift Local, or install separately
+- [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`; required for `diagnose`, `test`, `watch`, and other advanced commands
+- PowerShell 5.1 or later (included with Windows 10/11)
+
 #### OpenShift Local
 
 - OpenShift Local — [Download](https://console.redhat.com/openshift/create/local)
 - On Linux: also install `libvirt-daemon`, `libvirt-daemon-driver-storage`, `libvirt-daemon-driver-network`, `qemu-kvm`
+- On Windows: Hyper-V enabled (OpenShift Local requirement)
 - Obtain a **Pull Secret** from the [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret)
 
-### OpenShift client
+### macOS / Linux
 
 #### Download the OpenShift client for your platform
 
@@ -73,6 +81,61 @@ aap-demo status        # Check deployment status
 
 On first run, you'll be prompted to select an infrastructure backend (Microshift is recommended). The choice is saved to
  `~/.aap-demo/config`
+
+### Windows
+
+Windows uses a PowerShell CLI. Core commands (`create`, `deploy`, `status`) run in
+PowerShell. All other commands delegate to `aap-demo.sh` via Git Bash.
+
+#### Save your pull secret
+
+Download from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret) and save as:
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.aap-demo"
+Copy-Item "$env:USERPROFILE\Downloads\pull-secret.txt" "$env:USERPROFILE\.aap-demo\pull-secret.txt"
+```
+
+#### Install
+
+```powershell
+git clone https://github.com/RedHatOfficial/aap-demo.git
+cd aap-demo
+.\powershell\install.ps1
+```
+
+This registers the repo path, installs the `aap-demo` launcher to
+`%USERPROFILE%\.local\bin`, adds that directory to your user PATH, and downloads
+`operator-sdk` if needed.
+
+Open a **new** PowerShell window after install so PATH changes take effect.
+
+#### Deploy
+
+```powershell
+aap-demo create        # Create the cluster
+aap-demo deploy        # Deploy AAP 2.7
+aap-demo status        # Check deployment status
+```
+
+#### Uninstall
+
+```powershell
+.\powershell\install.ps1 -Uninstall
+```
+
+This removes the wrapper and PATH entry. It does not delete `%USERPROFILE%\.crc\` or
+other cluster data.
+
+#### Windows notes
+
+- Kubeconfig default: `%USERPROFILE%\.crc\machines\crc\kubeconfig`
+- Config file: `%USERPROFILE%\.aap-demo\config`
+- If `aap-demo` is not recognized, confirm `%USERPROFILE%\.local\bin` is on PATH and
+  restart PowerShell
+- `create`, `deploy`, and `status` are PowerShell-native; install Git for Windows for
+  other commands (`diagnose`, `test`, `watch`, …)
+- See [powershell/native/README.md](powershell/native/README.md) for PowerShell module details
 
 Once deployed, `aap-demo status` shows routes, credentials, and cluster health:
 
@@ -142,7 +205,7 @@ mkdir -p ~/.aap-demo
 
 ## Architecture
 
-### macOS  / Linux  / Windows (in development)
+### macOS / Linux / Windows
 
 ```mermaid
 flowchart LR
@@ -177,7 +240,7 @@ flowchart LR
 - **VM lifecycle:** Managed by CRC (`crc start`, `crc stop`, `crc delete`)
 - **Networking:** SSH (2222), API (6443), HTTP/HTTPS (443) — all on localhost
 - **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
-- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust
+- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust (manual trust may be needed on Windows)
 
 ## Addons
 
