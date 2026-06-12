@@ -20,6 +20,16 @@ Bash.
 Optional: `operator-sdk` (installer downloads it if missing), `python`, `jq`,
 `ansible-playbook` (for ATF tests via bash).
 
+### Install Git Bash (winget)
+
+Required for advanced commands (`diagnose`, `test`, `watch`, `destroy`, …):
+
+```powershell
+winget install --id Git.Git -e --source winget
+```
+
+Open a new PowerShell window after install so `bash` is on PATH.
+
 ## Install
 
 ### 1. Clone and checkout
@@ -166,8 +176,14 @@ Do not move or delete the cloned repo after install — the launcher points at i
 
 ### Git Bash required for command X
 
-Install [Git for Windows](https://git-scm.com/download/win), then retry. Commands
-like `create`, `deploy`, and `status` do not need Git Bash.
+Install Git for Windows, then retry:
+
+```powershell
+winget install --id Git.Git -e --source winget
+```
+
+Or download from [git-scm.com](https://git-scm.com/download/win). Commands like
+`create`, `deploy`, and `status` do not need Git Bash.
 
 ### `crc start` or Hyper-V errors
 
