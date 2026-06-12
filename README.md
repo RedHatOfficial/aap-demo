@@ -84,8 +84,8 @@ On first run, you'll be prompted to select an infrastructure backend (Microshift
 
 ### Windows
 
-Windows uses a PowerShell CLI. Core commands (`create`, `deploy`, `status`) run in
-PowerShell. All other commands delegate to `aap-demo.sh` via Git Bash.
+See **[powershell/README.md](../powershell/README.md)** for full install and usage
+instructions. Summary:
 
 #### Save your pull secret
 
@@ -135,6 +135,7 @@ other cluster data.
   restart PowerShell
 - `create`, `deploy`, and `status` are PowerShell-native; install Git for Windows for
   other commands (`diagnose`, `test`, `watch`, …)
+- See [powershell/README.md](powershell/README.md) for full Windows install and usage
 - See [powershell/native/README.md](powershell/native/README.md) for PowerShell module details
 
 Once deployed, `aap-demo status` shows routes, credentials, and cluster health:
