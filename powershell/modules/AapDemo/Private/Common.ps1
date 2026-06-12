@@ -158,7 +158,7 @@ function Import-AapDemoIngressCa {
         return $true
     } catch {
         Write-AapDemoWarn "Could not add ingress CA to trust store (run as Administrator): $($_.Exception.Message)"
-        Write-Host "  Manual: Import-Certificate -FilePath '$CertPath' -CertStoreLocation Cert:\LocalMachine\Root"
+        Write-Host "  Manual: Import-Certificate -FilePath `"$CertPath`" -CertStoreLocation Cert:\LocalMachine\Root"
         return $false
     }
 }

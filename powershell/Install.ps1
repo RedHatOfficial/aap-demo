@@ -13,6 +13,25 @@ $Ps1Path = Join-Path $InstallRoot 'aap-demo.ps1'
 
 Write-Host 'Installing aap-demo (Windows PowerShell)...'
 
+# Check and install OpenShift CLI tools
+if (-not (Get-Command oc -ErrorAction SilentlyContinue)) {
+    Write-Host ''
+    Write-Host 'OpenShift CLI (oc) not found. Installing via winget...' -ForegroundColor Yellow
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        try {
+            & winget install RedHat.OpenShift-Client --silent --accept-package-agreements --accept-source-agreements
+            Write-Host '  oc installed. Restart terminal to use.' -ForegroundColor Green
+        } catch {
+            Write-Host "  WARNING: winget install failed. Manual install: https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host '  WARNING: winget not found. Install oc manually from https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/' -ForegroundColor Yellow
+    }
+} else {
+    Write-Host '  oc found: ' -NoNewline
+    & oc version --client 2>$null | Select-Object -First 1
+}
+
 if (-not (Test-Path $BinDir)) {
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 }
