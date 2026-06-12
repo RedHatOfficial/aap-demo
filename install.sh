@@ -55,26 +55,53 @@ if [[ "$(uname)" == "Darwin" ]]; then
   fi
 fi
 
-# Report missing dependencies
+# Auto-install missing dependencies
 if [ -n "$MISSING_DEPS" ]; then
-  echo "ERROR: Missing required dependencies:$MISSING_DEPS"
+  echo "Missing dependencies:$MISSING_DEPS"
   echo ""
-  echo "Install with:"
-  echo ""
+
   if [[ "$(uname)" == "Darwin" ]]; then
-    echo "  macOS:"
-    echo "    brew install kubectl ansible jq python3 operator-sdk"
+    echo "Installing via Homebrew..."
+    for dep in $MISSING_DEPS; do
+      case "$dep" in
+        kubectl)
+          brew install kubectl
+          ;;
+        operator-sdk)
+          brew install operator-sdk
+          ;;
+        ansible)
+          brew install ansible
+          ;;
+        jq)
+          brew install jq
+          ;;
+        python3)
+          brew install python3
+          ;;
+      esac
+    done
   else
+    echo "ERROR: Missing required dependencies:$MISSING_DEPS"
+    echo ""
+    echo "Install with:"
+    echo ""
     echo "  Fedora/RHEL:"
     echo "    sudo dnf install ansible-core jq python3-pip"
     echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
+    echo "    # operator-sdk: https://sdk.operatorframework.io/docs/installation/"
     echo ""
     echo "  Ubuntu/Debian:"
     echo "    sudo apt install ansible jq python3-pip"
     echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
+    echo "    # operator-sdk: https://sdk.operatorframework.io/docs/installation/"
+    echo ""
+    exit 1
   fi
+
   echo ""
-  exit 1
+  echo "  ✓ Dependencies installed"
+  echo ""
 fi
 
 echo "  ✓ All required dependencies found"
