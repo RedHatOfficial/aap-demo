@@ -1,0 +1,38 @@
+---
+# Ansible-lint configuration for aap-demo
+# https://ansible.readthedocs.io/projects/lint/
+
+profile: production
+
+exclude_paths:
+  - .git/
+  - .github/
+  - .serena/
+  - test/
+  - config/
+  - includes/
+
+# Skip specific rules
+skip_list:
+  - yaml[line-length]  # Line too long (handled by yamllint)
+  - name[casing]       # Task names don't follow capitalization
+  - role-name          # Role name doesn't match requirements
+
+# Warn only
+warn_list:
+  - experimental
+  - no-changed-when
+  - command-instead-of-module
+
+# Enable offline mode (no external requirements)
+offline: true
+
+# Use default rules with modifications
+use_default_rules: true
+
+# Mock modules and roles (if needed)
+mock_modules: []
+mock_roles: []
+
+# Verbosity
+verbosity: 1

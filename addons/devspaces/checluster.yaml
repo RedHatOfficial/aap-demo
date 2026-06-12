@@ -1,3 +1,4 @@
+---
 # DevSpaces CheCluster for aap-demo
 # Simplified from RDU cluster config for single-node MicroShift
 apiVersion: org.eclipse.che/v2

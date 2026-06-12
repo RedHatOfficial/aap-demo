@@ -1,12 +1,14 @@
 # aap-demo
 
-Local cluster infrastructure for AAP 2.7 deployment, powered by OpenShift Local. Deploy AAP in minutes on macOS, Linux, or Windows.
+Local cluster infrastructure for AAP 2.7 deployment, powered by OpenShift Local.
+Deploy AAP in minutes on macOS, Linux, or Windows.
 
 ## Overview
 
 aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift) for development, testing, and demonstration.
 
 **Key characteristics:**
+
 - One command setup: `aap-demo create && aap-demo deploy`
 - Full OpenShift API compatibility (OLM, Routes, CRDs)
 - Shared Podman/CRI-O storage — locally built images are immediately available to pods
@@ -19,7 +21,8 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 ### Prerequisites
 
-**OpenShift Local:**
+### OpenShift Local:**
+
 - OpenShift Local — [Download](https://console.redhat.com/openshift/create/local)
 - On Linux: also install `libvirt-daemon`, `libvirt-daemon-driver-storage`, `libvirt-daemon-driver-network`, `qemu-kvm`
 - Obtain a **Pull Secret** from the [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret)
@@ -27,30 +30,38 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 #### MacOS
 - Ensure that [Operator SDK](https://sdk.operatorframework.io/docs/installation/) is installed
 
-**OpenShift client:**
+### OpenShift client
+
+#### Download the OpenShift client for your platform
+
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | `curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-mac-arm64.tar.gz` |
+| macOS (Intel) | `curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-mac.tar.gz` |
+| Linux | `curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz` |
+
+#### Extract and copy to /usr/local/bin
 
 ```bash
-# Download OpenShift client (pick your platform)
-# macOS ARM:   curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-mac-arm64.tar.gz
-# macOS Intel: curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-mac.tar.gz
-# Linux:       curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz
-
 tar -xzf openshift-client-*.tar.gz
 sudo cp oc kubectl /usr/local/bin/
+```
 
-# Download pull secret from https://console.redhat.com/openshift/install/pull-secret
+#### Download your pull secret from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret) and save it
+
+```bash
 mkdir -p ~/.aap-demo
 cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
 ```
 
-### Install
+#### Install
 
 ```bash
-git clone https://github.com/ansible-automation-platform/aap-demo.git
+git clone https://github.com/RedHatOfficial/aap-demo.git
 cd aap-demo && ./install.sh
 ```
 
-### Deploy
+#### Deploy
 
 ```bash
 aap-demo create        # Create the cluster
@@ -58,11 +69,12 @@ aap-demo deploy        # Deploy AAP 2.7
 aap-demo status        # Check deployment status
 ```
 
-On first run, you'll be prompted to select an infrastructure backend (CRC recommended). The choice is saved to `~/.aap-demo/config`.
+On first run, you'll be prompted to select an infrastructure backend (Microshift is recommended). The choice is saved to
+ `~/.aap-demo/config`
 
 Once deployed, `aap-demo status` shows routes, credentials, and cluster health:
 
-```
+```text
 Infra:       crc
 Cluster:     running
 
@@ -128,15 +140,36 @@ mkdir -p ~/.aap-demo
 
 ## Architecture
 
-### macOS  / Linux (CRC backend) / Windows (in development)
+### macOS  / Linux  / Windows (in development)
 
-```
-Host
-└── CRC (OpenShift Local) VM
-    ├── MicroShift or full OpenShift (user choice)
-    ├── CRI-O (container runtime)
-    ├── Podman (shared storage with CRI-O)
-    └── AAP pods
+```mermaid
+flowchart LR
+    subgraph Host["Host"]
+        CLI["aap-demo"]
+        OC["oc / kubectl"]
+    end
+
+    subgraph VM["OpenShift Local VM"]
+        subgraph AAP["aap-operator"]
+            OP["AAP Operator"]
+            GW["Gateway"]
+            AC["Controller"]
+            AH["Hub"]
+            ED["EDA"]
+        end
+        OLM["olm / OperatorHub"]
+        ING["Ingress"]
+        STO["LVMS · NFS"]
+    end
+
+    CLI --> VM
+    OC --> VM
+    OLM --> OP
+    OP --> GW & AC & AH & ED
+    GW --> ING
+    AC & ED --> STO
+    AH --> STO
+    ING --> Host
 ```
 
 - **VM lifecycle:** Managed by CRC (`crc start`, `crc stop`, `crc delete`)
@@ -153,7 +186,6 @@ aap-demo enable mcp-server     # MCP server for AI assistants (requires AAP)
 ```
 
 Addons are saved to `~/.aap-demo/config` and auto-deployed on `aap-demo create`.
-
 
 ## Environment Variables
 
@@ -178,15 +210,24 @@ aap-demo repair                # Repair after crash/sleep
 aap-demo destroy && aap-demo create && aap-demo deploy   # Full rebuild
 ```
 
-`aap-demo diagnose` checks cluster connectivity, storage classes, SCCs, namespace labels, AAP CR status, pod health, PVC binding, and DNS. It provides actionable fix suggestions for any issues found.
+`aap-demo diagnose` checks cluster connectivity, storage classes, SCCs, namespace
+labels, AAP CR status, pod health, PVC binding, and DNS. It provides actionable fix
+suggestions for any issues found.
 
-`aap-demo diagnose --ai` runs the same checks, then sends the results plus pod logs and events to [Claude](https://claude.ai) for AI-powered root cause analysis and fix suggestions. Requires the `claude` CLI ([Claude Code](https://docs.anthropic.com/en/docs/claude-code)).
+`aap-demo diagnose --ai` runs the same checks, then sends the results plus pod logs
+and events to [Claude](https://claude.ai) for AI-powered root cause analysis and fix
+suggestions. Requires the `claude` CLI
+([Claude Code](https://docs.anthropic.com/en/docs/claude-code)).
 
-`aap-demo must-gather` collects aap-demo config, CRC status, storage/PVC/pod/event data, and runs the official [AAP must-gather](https://github.com/ansible/aap-must-gather) image for operator-level diagnostics.
+`aap-demo must-gather` collects aap-demo config, CRC status, storage/PVC/pod/event
+data, and runs the official [AAP must-gather](https://github.com/ansible/aap-must-gather)
+image for operator-level diagnostics.
 
 ### AI-Assisted Development
 
-This repository includes a `.claude/CLAUDE.md` file that provides Claude Code with full aap-demo context. When running Claude Code in the aap-demo directory, it automatically understands the architecture, common issues, and troubleshooting patterns.
+This repository includes a `.claude/CLAUDE.md` file that provides Claude Code with
+full aap-demo context. When running Claude Code in the aap-demo directory, it
+automatically understands the architecture, common issues, and troubleshooting patterns.
 
 ## References
 
@@ -197,4 +238,3 @@ This repository includes a `.claude/CLAUDE.md` file that provides Claude Code wi
 ## Contributing
 
 For questions or contributions, open an issue or pull request on GitHub.
-

@@ -29,9 +29,9 @@ roleRef:
   kind: ClusterRole
   name: system:openshift:scc:anyuid
 subjects:
-- kind: ServiceAccount
-  name: registry
-  namespace: aap-demo-registry
+  - kind: ServiceAccount
+    name: registry
+    namespace: aap-demo-registry
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -64,42 +64,42 @@ spec:
     spec:
       serviceAccountName: registry
       containers:
-      - name: registry
-        image: registry:2
-        ports:
-        - containerPort: 5000
-          name: http
-        env:
-        - name: REGISTRY_HTTP_ADDR
-          value: ":5000"
-        - name: REGISTRY_STORAGE_DELETE_ENABLED
-          value: "true"
-        volumeMounts:
-        - name: data
-          mountPath: /var/lib/registry
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "256Mi"
-            cpu: "500m"
-        readinessProbe:
-          httpGet:
-            path: /v2/
-            port: 5000
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        livenessProbe:
-          httpGet:
-            path: /v2/
-            port: 5000
-          initialDelaySeconds: 10
-          periodSeconds: 30
+        - name: registry
+          image: registry:2
+          ports:
+            - containerPort: 5000
+              name: http
+          env:
+            - name: REGISTRY_HTTP_ADDR
+              value: ":5000"
+            - name: REGISTRY_STORAGE_DELETE_ENABLED
+              value: "true"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /v2/
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 30
       volumes:
-      - name: data
-        persistentVolumeClaim:
-          claimName: registry-data
+        - name: data
+          persistentVolumeClaim:
+            claimName: registry-data
 ---
 apiVersion: v1
 kind: Service
@@ -112,9 +112,9 @@ spec:
   selector:
     app: registry
   ports:
-  - port: 5000
-    targetPort: 5000
-    name: http
+    - port: 5000
+      targetPort: 5000
+      name: http
 ---
 apiVersion: route.openshift.io/v1
 kind: Route

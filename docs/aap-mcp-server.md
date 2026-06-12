@@ -2,7 +2,9 @@
 
 ## Overview
 
-The Ansible Automation Platform MCP (Model Context Protocol) Server provides programmatic access to AAP functionality through a standardized MCP interface. This enables AI assistants and other tools to interact with AAP using structured tools and resources.
+The Ansible Automation Platform MCP (Model Context Protocol) Server provides programmatic access to AAP functionality
+through a standardized MCP interface. This enables AI assistants and other tools to interact with AAP using structured
+tools and resources.
 
 The MCP server is a CR managed by the AAP operator. The `AnsibleMCPServer` CRD is included in AAP operator 2.6+.
 
