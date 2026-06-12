@@ -21,6 +21,7 @@ Red Hat-maintained VM running MicroShift (single-node OpenShift API subset).
 | CPUs | 4 | 8 |
 
 **Key characteristics:**
+
 - VM lifecycle managed by CRC (`crc start`, `crc stop`, `crc delete`)
 - OpenShift API compatibility (Routes, SCCs, OLM)
 - LVMS storage (topolvm-provisioner) with configurable PV reservation
@@ -47,12 +48,14 @@ Full OpenShift Container Platform running in a CRC VM. Selected during `aap-demo
 | CPUs | 4 | 8 |
 
 **When to use CRC OpenShift instead of MicroShift:**
+
 - Testing features that require specific OpenShift operators (e.g., DevSpaces)
 - Validating against the full operator ecosystem and OperatorHub
 - Testing Machine Config Operator (MCO) or cluster-level features
 - Final validation before deploying to production OpenShift
 
 **Trade-offs vs MicroShift:**
+
 - ~96 system pods vs ~10
 - 5-8 min startup vs 3 min
 - Higher memory usage
@@ -65,6 +68,7 @@ MicroShift running directly in a Podman container. Linux only — no VM overhead
 ### Prerequisites
 
 **Podman 4.0+ is required** for the MINC backend. Install from:
+
 - [Podman Desktop](https://podman-desktop.io/) (recommended)
 - [podman.io](https://podman.io/docs/installation) (CLI-only install)
 
@@ -75,6 +79,7 @@ MicroShift running directly in a Podman container. Linux only — no VM overhead
 | CPUs | 2 | 4 |
 
 **Key characteristics:**
+
 - No VM — runs as a Podman container
 - Same OpenShift API compatibility as CRC MicroShift
 - Fastest startup (~2 min)
@@ -135,4 +140,5 @@ aap-demo create
 aap-demo deploy
 ```
 
-The CRC preset (MicroShift vs OpenShift) is selected during `aap-demo create` and saved to `~/.aap-demo/config` as `CRC_PRESET=microshift` or `CRC_PRESET=openshift`.
+The CRC preset (MicroShift vs OpenShift) is selected during `aap-demo create` and saved to `~/.aap-demo/config` as
+`CRC_PRESET=microshift` or `CRC_PRESET=openshift`.

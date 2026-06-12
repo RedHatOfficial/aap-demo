@@ -4,11 +4,11 @@
 
 # Check if QUIET mode - skip everything
 if [ "${QUIET}" = "true" ]; then
-    exit 0
+  exit 0
 fi
 
 echo ""
-echo ""                                       
+echo ""
 echo "                                          ▄▄       ▄▄ "
 echo "                                          ██       ██ "
 echo "                   ▀▀█▄  ▀▀█▄ ████▄       ██  ▀▀█▄ ████▄ "

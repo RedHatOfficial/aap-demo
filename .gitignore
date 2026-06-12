@@ -7,3 +7,16 @@ artifacts/
 tsd.json
 test/testing-framework/
 .claude/skills/*/evals/workspace/
+
+# Linting and pre-commit
+.venv-lint/
+.pre-commit-cache/
+*.log
+*~
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+.tox/
+node_modules/
+.npm/

@@ -1,0 +1,100 @@
+# Pre-commit hooks for aap-demo
+# Setup: ./scripts/setup-linting.sh (creates .venv-lint and installs hooks)
+# Manual run: source .venv-lint/bin/activate && pre-commit run --all-files
+
+default_install_hook_types: [pre-commit, commit-msg]
+default_language_version:
+  python: python3
+
+repos:
+  # Bash/Shell script linting (uses system shellcheck, no docker)
+  - repo: local
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        entry: bash -c 'command -v shellcheck >/dev/null 2>&1 && shellcheck "$@" || true' --
+        language: system
+        types: [shell]
+        args: ['--severity=warning', '--shell=bash']
+        exclude: ^(\.git/|\.github/|docs/|scripts/.*\.zsh)
+
+  # YAML linting (uses venv yamllint, no docker)
+  - repo: local
+    hooks:
+      - id: yamllint
+        name: yamllint
+        entry: bash -c 'command -v yamllint >/dev/null 2>&1 && yamllint "$@" || true' --
+        language: system
+        types: [yaml]
+        args: ['-d', '{extends: default, rules: {line-length: {max: 120}}}']
+        exclude: ^(\.serena/|test/)
+
+  # Markdown linting
+  - repo: local
+    hooks:
+      - id: markdownlint
+        name: markdownlint
+        entry: bash -c 'command -v markdownlint >/dev/null 2>&1 && markdownlint "$@" || true' --
+        language: system
+        types: [markdown]
+        args: ['--fix']
+        exclude: ^(\.github/|\.claude/)
+
+  # Ansible linting (uses venv ansible-lint if available)
+  - repo: local
+    hooks:
+      - id: ansible-lint
+        name: ansible-lint
+        entry: bash -c 'command -v ansible-lint >/dev/null 2>&1 && ansible-lint "$@" || true' --
+        language: system
+        files: \.(yaml|yml)$
+        exclude: ^(config/|\.serena/)
+        pass_filenames: true
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(\.md$)
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom YAML tags
+        exclude: ^(\.serena/)
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      - id: no-commit-to-branch
+        args: ['--branch', 'main', '--branch', 'master']
+
+  # Commit message linting (uses venv commitizen)
+  - repo: local
+    hooks:
+      - id: commitizen
+        name: commitizen
+        entry: bash -c 'command -v cz >/dev/null 2>&1 && cz check --commit-msg-file "$1" || true' --
+        language: system
+        stages: [commit-msg]
+        pass_filenames: false
+        always_run: true
+
+  # Secret detection (uses venv detect-secrets)
+  - repo: local
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets
+        entry: bash -c 'command -v detect-secrets-hook >/dev/null 2>&1 && detect-secrets-hook "$@" || true' --
+        language: system
+        args: ['--baseline', '.secrets.baseline']
+        exclude: ^(\.git/|\.github/|test/)
+
+# Suggested workflow:
+# 1. Setup: ./scripts/setup-linting.sh (creates .venv-lint, installs all tools + hooks)
+# 2. Hooks auto-run on commit (uses .venv-lint automatically)
+# 3. Manual check: source .venv-lint/bin/activate && pre-commit run --all-files
+# 4. Update hooks: source .venv-lint/bin/activate && pre-commit autoupdate

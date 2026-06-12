@@ -1,3 +1,4 @@
+#!/usr/bin/env zsh
 #compdef aap-demo aap-demo.sh
 # Zsh completion for aap-demo
 

@@ -1,0 +1,23 @@
+---
+name: Status Badges
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  update-badges:
+    name: Update Status Badges
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate badge data
+        run: |
+          echo "Generating badge data for workflow status"
+          # This is a placeholder - actual badge generation happens via shields.io
+          # Badges are embedded in README.md pointing to GitHub Actions workflows

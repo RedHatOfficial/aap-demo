@@ -1,0 +1,51 @@
+---
+# yamllint configuration for aap-demo
+# https://yamllint.readthedocs.io/
+
+extends: default
+
+rules:
+  # Line length - allow longer lines for Kubernetes manifests
+  line-length:
+    max: 120
+    level: warning
+
+  # Comments spacing
+  comments:
+    min-spaces-from-content: 1
+    require-starting-space: true
+    ignore-shebangs: true
+
+  # Indentation - 2 spaces standard
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  # Document start (---) not required for all files
+  document-start:
+    present: false
+
+  # Allow duplicate keys (sometimes needed in Kustomize overlays)
+  key-duplicates:
+    forbid-duplicated-merge-keys: true
+
+  # Truthy values - allow yes/no/on/off (common in Ansible)
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
+    check-keys: false
+
+  # Brackets - allow flow style for short sequences
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Empty values - allow null
+  empty-values:
+    forbid-in-block-mappings: false
+    forbid-in-flow-mappings: false
+
+# Ignore patterns
+ignore: |
+  .serena/
+  test/
+  .github/

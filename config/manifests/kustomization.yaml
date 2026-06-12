@@ -1,3 +1,4 @@
+---
 # Kustomization for AAP MINC auto-loaded manifests
 # These are applied automatically by MicroShift on startup
 #

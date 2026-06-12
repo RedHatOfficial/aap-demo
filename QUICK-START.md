@@ -35,7 +35,7 @@ aap-demo status        # Show routes and credentials
 
 ## What You Get
 
-```
+```text
 AAP Demo Status
 ===============
 
