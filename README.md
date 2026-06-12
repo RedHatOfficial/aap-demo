@@ -21,16 +21,16 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 ### Prerequisites
 
-### OpenShift Local:**
+#### MacOS
+
+- [Homebrew](https://brew.sh/) — Install with: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
+- [Operator SDK](https://sdk.operatorframework.io/docs/installation/) — Install with: `brew install operator-sdk`
+
+#### OpenShift Local
 
 - OpenShift Local — [Download](https://console.redhat.com/openshift/create/local)
 - On Linux: also install `libvirt-daemon`, `libvirt-daemon-driver-storage`, `libvirt-daemon-driver-network`, `qemu-kvm`
 - Obtain a **Pull Secret** from the [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret)
-
-
-#### MacOS
-
-- Ensure that [Operator SDK](https://sdk.operatorframework.io/docs/installation/) is installed
 
 ### OpenShift client
 

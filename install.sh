@@ -18,6 +18,67 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "uninstall" ]; then
 fi
 
 echo "Installing aap-demo..."
+echo ""
+
+# Check dependencies
+MISSING_DEPS=""
+
+if ! command -v kubectl &>/dev/null; then
+  MISSING_DEPS="$MISSING_DEPS kubectl"
+fi
+
+if ! command -v ansible-playbook &>/dev/null; then
+  MISSING_DEPS="$MISSING_DEPS ansible"
+fi
+
+if ! command -v jq &>/dev/null; then
+  MISSING_DEPS="$MISSING_DEPS jq"
+fi
+
+if ! command -v python3 &>/dev/null; then
+  MISSING_DEPS="$MISSING_DEPS python3"
+fi
+
+# macOS-specific checks
+if [[ "$(uname)" == "Darwin" ]]; then
+  if ! command -v brew &>/dev/null; then
+    echo "ERROR: Homebrew is required on macOS"
+    echo ""
+    echo "Install Homebrew with:"
+    echo "  /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    echo ""
+    exit 1
+  fi
+
+  if ! command -v operator-sdk &>/dev/null; then
+    MISSING_DEPS="$MISSING_DEPS operator-sdk"
+  fi
+fi
+
+# Report missing dependencies
+if [ -n "$MISSING_DEPS" ]; then
+  echo "ERROR: Missing required dependencies:$MISSING_DEPS"
+  echo ""
+  echo "Install with:"
+  echo ""
+  if [[ "$(uname)" == "Darwin" ]]; then
+    echo "  macOS:"
+    echo "    brew install kubectl ansible jq python3 operator-sdk"
+  else
+    echo "  Fedora/RHEL:"
+    echo "    sudo dnf install ansible-core jq python3-pip"
+    echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
+    echo ""
+    echo "  Ubuntu/Debian:"
+    echo "    sudo apt install ansible jq python3-pip"
+    echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
+  fi
+  echo ""
+  exit 1
+fi
+
+echo "  ✓ All required dependencies found"
+echo ""
 
 # Create ~/.local/bin if needed
 mkdir -p ~/.local/bin

@@ -38,6 +38,11 @@ if ! command -v pip3 &>/dev/null; then
   MISSING_DEPS="$MISSING_DEPS pip3(python3-pip)"
 fi
 
+# Check for operator-sdk (macOS only requirement for OLM)
+if [[ "$(uname)" == "Darwin" ]] && ! command -v operator-sdk &>/dev/null; then
+  MISSING_DEPS="$MISSING_DEPS operator-sdk"
+fi
+
 # Exit if any required tools are missing
 if [ -n "$MISSING_DEPS" ]; then
   echo "ERROR: Missing required dependencies:$MISSING_DEPS"
@@ -57,7 +62,11 @@ if [ -n "$MISSING_DEPS" ]; then
   echo "    chmod +x kubectl && sudo mv kubectl /usr/local/bin/"
   echo ""
   echo "  macOS:"
-  echo "    brew install kubectl ansible jq python3"
+  echo "    # Install Homebrew if not present:"
+  echo "    /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+  echo ""
+  echo "    # Install dependencies:"
+  echo "    brew install kubectl ansible jq python3 operator-sdk"
   exit 1
 fi
 
