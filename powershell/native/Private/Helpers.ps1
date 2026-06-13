@@ -399,6 +399,177 @@ function Wait-AapCsv {
   return $csv
 }
 
+function Test-AapIsAdministrator {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-AapIngressCaCertPath {
+  Join-Path $Script:AapDemoConfigDir 'crc-ingress-ca.crt'
+}
+
+function Get-AapX509Thumbprint {
+  param([Parameter(Mandatory)][string]$Path)
+  $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
+  return $cert.Thumbprint.ToUpperInvariant()
+}
+
+function Test-AapCertInRootStore {
+  param(
+    [Parameter(Mandatory)][string]$Thumbprint,
+    [ValidateSet('CurrentUser', 'LocalMachine')]
+    [string]$Location = 'CurrentUser'
+  )
+  $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', $Location)
+  try {
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    return [bool]($store.Certificates | Where-Object { $_.Thumbprint.ToUpperInvariant() -eq $Thumbprint })
+  } catch {
+    return $false
+  } finally {
+    $store.Close()
+  }
+}
+
+function Remove-AapIngressCaCertificates {
+  param(
+    [ValidateSet('CurrentUser', 'LocalMachine')]
+    [string]$Location = 'CurrentUser'
+  )
+  $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', $Location)
+  try {
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    $stale = @($store.Certificates | Where-Object { $_.Subject -match 'CN=ingress-ca' })
+    foreach ($cert in $stale) {
+      [void]$store.Remove($cert)
+    }
+  } catch {
+    # Access denied or read-only store — skip cleanup
+  } finally {
+    $store.Close()
+  }
+}
+
+function Add-AapCertToRootStoreViaCertutil {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [ValidateSet('CurrentUser', 'LocalMachine')]
+    [string]$Location = 'CurrentUser',
+    [switch]$Elevated
+  )
+  $certutilArgs = if ($Location -eq 'CurrentUser') {
+    @('-user', '-addstore', 'Root', $Path)
+  } else {
+    @('-addstore', 'Root', $Path)
+  }
+
+  if ($Elevated -and $Location -eq 'LocalMachine') {
+    try {
+      $proc = Start-Process -FilePath 'certutil.exe' -ArgumentList $certutilArgs -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+      return $proc.ExitCode -eq 0
+    } catch {
+      return $false
+    }
+  }
+
+  $result = Invoke-AapExternal certutil.exe $certutilArgs
+  return $result.ExitCode -eq 0
+}
+
+function Import-AapIngressCaCertificate {
+  param([Parameter(Mandatory)][string]$Path)
+
+  $thumbprint = Get-AapX509Thumbprint -Path $Path
+  if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') {
+    Write-AapStep 'Ingress CA already trusted (Windows system certificate store)'
+    return
+  }
+
+  Remove-AapIngressCaCertificates -Location 'CurrentUser'
+  Remove-AapIngressCaCertificates -Location 'LocalMachine'
+
+  $userTrusted = Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser'
+  if (-not $userTrusted) {
+    $userOk = $false
+    try {
+      $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser')
+      $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+      $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
+      $store.Add($cert)
+      $store.Close()
+      $userOk = $true
+    } catch {
+      $userOk = Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'CurrentUser'
+    }
+    if ($userOk) {
+      Write-AapStep 'Ingress CA trusted (Windows user certificate store)'
+    } else {
+      Write-AapWarn 'Could not import ingress CA to user certificate store'
+    }
+  }
+
+  if (Test-AapIsAdministrator) {
+    if (Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'LocalMachine') {
+      Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+    } else {
+      Write-AapWarn 'Could not import ingress CA to system certificate store'
+    }
+    return
+  }
+
+  if (Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'LocalMachine' -Elevated) {
+    Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+    return
+  }
+
+  Write-AapWarn 'System trust skipped (UAC declined or unavailable). Fully quit Chrome/Edge and retry, or run aap-demo status from an elevated PowerShell.'
+}
+
+function Install-AapIngressCaTrust {
+  if ($env:AAP_DEMO_TRUST_CA -eq 'false') { return }
+
+  $caPath = Get-AapIngressCaCertPath
+  if (Test-Path -LiteralPath $caPath) {
+    try {
+      $thumbprint = Get-AapX509Thumbprint -Path $caPath
+      if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') {
+        $env:CURL_CA_BUNDLE = $caPath
+        $env:SSL_CERT_FILE = $caPath
+        return
+      }
+      if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser') {
+        Import-AapIngressCaCertificate -Path $caPath
+        $env:CURL_CA_BUNDLE = $caPath
+        $env:SSL_CERT_FILE = $caPath
+        return
+      }
+    } catch {
+      Write-AapWarn "Could not verify saved ingress CA: $($_.Exception.Message)"
+    }
+  }
+
+  Write-AapStep 'Trusting ingress CA...'
+  try {
+    $caPem = Invoke-AapCrcSsh 'sudo cat /var/lib/microshift/certs/ingress-ca/ca.crt' -AllowFailure
+    if (-not $caPem -or $caPem -notmatch 'BEGIN CERTIFICATE') {
+      Write-AapWarn 'Could not fetch ingress CA from cluster'
+      if (Test-Path -LiteralPath $caPath) {
+        Import-AapIngressCaCertificate -Path $caPath
+      }
+      return
+    }
+
+    New-Item -ItemType Directory -Force -Path $Script:AapDemoConfigDir | Out-Null
+    Set-AapUtf8Content -Path $caPath -Value $caPem.Trim()
+    Import-AapIngressCaCertificate -Path $caPath
+    $env:CURL_CA_BUNDLE = $caPath
+    $env:SSL_CERT_FILE = $caPath
+  } catch {
+    Write-AapWarn "Could not trust ingress CA: $($_.Exception.Message)"
+  }
+}
+
 function Find-AapGitBash {
   $candidates = @(
     (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),

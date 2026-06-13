@@ -74,11 +74,15 @@ aap-demo help
 ```powershell
 aap-demo create        # Create OpenShift Local cluster (~10–20 min first time)
 aap-demo deploy        # Deploy AAP 2.7 (~5–15 min)
-aap-demo status        # Routes, credentials, pod counts
+aap-demo status        # Routes, credentials, pod counts; trusts ingress CA if needed
 ```
 
 On first `create`, you are prompted to choose a CRC preset (MicroShift is
 recommended). The choice is saved to `%USERPROFILE%\.aap-demo\config`.
+
+After deploy, open the AAP route from `aap-demo status`. If your browser still
+shows a certificate warning, run `aap-demo status` again and accept the UAC
+prompt — see [Ingress CA and browser TLS](#ingress-ca-and-browser-tls) below.
 
 ## Commands
 
@@ -126,6 +130,7 @@ Set in PowerShell before running commands, or add to
 | `NAMESPACE` | `aap-operator` | Kubernetes namespace |
 | `QUIET` | `false` | Suppress interactive prompts |
 | `KUBECONFIG` | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig |
+| `AAP_DEMO_TRUST_CA` | `true` (implicit) | Set to `false` to skip automatic ingress CA import |
 
 Example:
 
@@ -142,6 +147,7 @@ aap-demo create
 | `%USERPROFILE%\.aap-demo\config` | Saved preset, addons, preferences |
 | `%USERPROFILE%\.aap-demo\repo-path` | Path to cloned aap-demo repo |
 | `%USERPROFILE%\.aap-demo\pull-secret.txt` | Red Hat pull secret |
+| `%USERPROFILE%\.aap-demo\crc-ingress-ca.crt` | MicroShift ingress CA (saved for TLS trust) |
 | `%USERPROFILE%\.crc\` | OpenShift Local VM data |
 | `%USERPROFILE%\.local\bin\aap-demo.ps1` | Installed launcher |
 
@@ -190,10 +196,86 @@ Or download from [git-scm.com](https://git-scm.com/download/win). Commands like
 - Enable Hyper-V (Windows Pro/Enterprise) or use WSL2 backend per OpenShift Local docs
 - Run OpenShift Local setup from the Red Hat console installer first
 
-### Browser TLS warnings
+### Ingress CA and browser TLS
 
-Ingress CA auto-trust is not configured on Windows yet. Accept the certificate
-warning or import the CA from the cluster manually.
+MicroShift routes (for example `https://aap-aap-operator.apps.127.0.0.1.nip.io`)
+use a cluster-local CA. Browsers and CLI tools will warn or fail until that CA
+is trusted on Windows.
+
+#### Automatic trust
+
+`create`, `deploy`, and `status` call **Install-AapIngressCaTrust** automatically:
+
+1. Fetch the ingress CA from the CRC VM:
+   `/var/lib/microshift/certs/ingress-ca/ca.crt`
+2. Save a copy to `%USERPROFILE%\.aap-demo\crc-ingress-ca.crt`
+3. Import into **Current User → Trusted Root Certification Authorities**
+4. Import into **Local Machine → Trusted Root Certification Authorities**
+   (requires Administrator / UAC — needed for Chrome and Edge)
+
+When the CA is already trusted, these commands stay silent. Failures are
+warnings only; `status` never aborts because of certificate import.
+
+Skip automatic import:
+
+```powershell
+$env:AAP_DEMO_TRUST_CA = 'false'
+aap-demo status
+```
+
+#### Chrome or Edge still shows a red certificate banner
+
+1. Run `aap-demo status` and **accept the UAC prompt** when it appears.
+   You should see: `Ingress CA trusted (Windows system certificate store)`.
+2. **Fully quit** the browser (taskbar icon → Exit, or close every window).
+   Reloading a tab is not enough — the trust store is read at startup.
+3. Open the AAP URL from `aap-demo status` again.
+
+If you opened the route **before** the CA was trusted, clear cached security
+state for the nip.io domain:
+
+1. Open `chrome://net-internals/#hsts` (or the Edge equivalent).
+2. Under **Delete domain security policies**, enter `127.0.0.1.nip.io`.
+3. Click **Delete**, then reload the AAP URL.
+
+#### curl and PowerShell on Windows
+
+PowerShell (`Invoke-WebRequest`) and .NET use the Windows certificate stores and
+should work once the CA is imported.
+
+Windows `curl.exe` uses Schannel and may fail with a revocation-check error even
+when the CA is trusted:
+
+```text
+CRYPT_E_NO_REVOCATION_CHECK — The revocation function was unable to check revocation
+```
+
+Use `--ssl-no-revoke` for local CRC routes:
+
+```powershell
+curl.exe --ssl-no-revoke -I https://aap-aap-operator.apps.127.0.0.1.nip.io
+```
+
+During `create` / `deploy` / `status`, the saved CA path is also exported as
+`CURL_CA_BUNDLE` and `SSL_CERT_FILE` for tools that read those variables.
+
+#### Manual import
+
+If UAC is blocked (corporate policy) or auto-trust fails:
+
+```powershell
+certutil -user -addstore Root "$env:USERPROFILE\.aap-demo\crc-ingress-ca.crt"
+# Chrome/Edge also need the system store (elevated PowerShell):
+certutil -addstore Root "$env:USERPROFILE\.aap-demo\crc-ingress-ca.crt"
+```
+
+Or import via **certmgr.msc** → Trusted Root Certification Authorities.
+
+#### After cluster recreate
+
+Destroying and recreating the cluster issues a new ingress CA. Run
+`aap-demo status` (or `create` / `deploy`) again to replace the saved cert and
+refresh both certificate stores.
 
 ### PowerShell vs PowerShell 7
 

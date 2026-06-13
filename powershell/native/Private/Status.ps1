@@ -38,6 +38,8 @@ function Invoke-AapDemoStatus {
     return
   }
 
+  Install-AapIngressCaTrust
+
   Write-Host 'Namespaces:'
   Write-Host '-----------'
   $nsResult = Invoke-AapOcCapture @('get', 'ns', '--no-headers', '-o', 'custom-columns=:metadata.name')
@@ -51,7 +53,9 @@ function Invoke-AapDemoStatus {
     if ($total -eq 0) { continue }
     $running = @($pods | Select-String 'Running').Count
     $aapResult = Invoke-AapOcCapture @('get', 'aap', '-n', $ns, '--no-headers')
-    $aapCr = if ($aapResult.ExitCode -eq 0) { $aapResult.Lines | Select-Object -First 1 } else { $null }
+    $aapCr = if ($aapResult.ExitCode -eq 0 -and $aapResult.Output -notmatch '^No resources found') {
+      $aapResult.Lines | Select-Object -First 1
+    } else { $null }
     if ($aapCr) {
       $crName = ($aapCr -split '\s+')[0]
       $routeResult = Invoke-AapOcCapture @('get', 'route', $crName, '-n', $ns, '-o', 'jsonpath=https://{.spec.host}')
@@ -78,7 +82,7 @@ function Invoke-AapDemoStatus {
   Write-Host 'Credentials:'
   Write-Host '------------'
   $aapNsResult = Invoke-AapOcCapture @('get', 'aap', '-A', '--no-headers')
-  $aapNs = if ($aapNsResult.ExitCode -eq 0) {
+  $aapNs = if ($aapNsResult.ExitCode -eq 0 -and $aapNsResult.Output -notmatch '^No resources found') {
     $aapNsResult.Lines | ForEach-Object { ($_ -split '\s+')[0] } | Sort-Object -Unique
   } else { @() }
   $foundCred = $false
@@ -128,5 +132,6 @@ OTHER COMMANDS (Git Bash):
 NOTES:
     OpenShift Local on Windows requires Hyper-V.
     Pull secret: %USERPROFILE%\.aap-demo\pull-secret.txt
+    Ingress CA trust: accept UAC on first status/deploy for Chrome/Edge.
 '@
 }

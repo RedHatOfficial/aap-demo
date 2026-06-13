@@ -24,6 +24,8 @@ function Invoke-AapDemoDeploy {
     throw 'oc cannot connect to cluster'
   }
 
+  Install-AapIngressCaTrust
+
   Install-AapOlm
 
   if (-not $Force) {
