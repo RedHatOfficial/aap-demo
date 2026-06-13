@@ -202,16 +202,36 @@ function Invoke-AapOcPatchQuiet {
 
 function Get-AapCrcStatus {
   Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
-  $raw = & crc status --output json 2>$null
-  if (-not $raw) { return @{ crcStatus = 'Unknown' } }
+  $parsed = Get-AapCrcStatusJson
+  if (-not $parsed) { return @{ crcStatus = 'Unknown' } }
+  $prop = $parsed.PSObject.Properties['crcStatus']
+  $status = if ($prop) { [string]$prop.Value } else { 'Unknown' }
+  return @{ crcStatus = $status }
+}
+
+function Get-AapCrcStatusJson {
+  Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
+  $raw = & crc status -o json 2>$null
+  if (-not $raw) { return $null }
   try {
-    $parsed = $raw | ConvertFrom-Json
-    $prop = $parsed.PSObject.Properties['crcStatus']
-    $status = if ($prop) { [string]$prop.Value } else { 'Unknown' }
-    return @{ crcStatus = $status }
+    return $raw | ConvertFrom-Json
   } catch {
-    return @{ crcStatus = 'Unknown' }
+    return $null
   }
+}
+
+function Get-AapCrcDiskUsagePercent {
+  $parsed = Get-AapCrcStatusJson
+  if (-not $parsed) { return 0 }
+  $usage = 0
+  if ($parsed.PSObject.Properties['diskUsage']) {
+    $usage = [long]$parsed.diskUsage
+  } elseif ($parsed.PSObject.Properties['diskUse']) {
+    $usage = [long]$parsed.diskUse
+  }
+  $size = if ($parsed.PSObject.Properties['diskSize']) { [long]$parsed.diskSize } else { 0 }
+  if ($size -gt 0) { return [int]($usage * 100 / $size) }
+  return 0
 }
 
 function Get-AapCrcSshKey {

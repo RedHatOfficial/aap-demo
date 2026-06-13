@@ -11,24 +11,18 @@ Bash.
 | Requirement | Notes |
 |-------------|--------|
 | **PowerShell 5.1+** | Built into Windows 10/11. PowerShell 7 (`pwsh`) also works. |
-| **OpenShift Local** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
-| **`kubectl`** | Bundled with OpenShift Local, or install separately. |
+| **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
+| **OpenShift CLI (`oc`)** | Installed by `install.ps1` via winget when missing. |
 | **Red Hat pull secret** | [Download](https://console.redhat.com/openshift/install/pull-secret) |
-| **Git for Windows** | Optional for `create` / `deploy` / `status`. Required for `diagnose`, `test`, `watch`, and other advanced commands. |
+| **Git for Windows** | Installed by `install.ps1` via winget when missing. Required for `test`, `watch`, and other advanced commands (`diagnose --ai` only). |
 | **OpenSSH client** | Used during `create` to configure the cluster VM (`ssh` on PATH). |
 
-Optional: `operator-sdk` (installer downloads it if missing), `python`, `jq`,
-`ansible-playbook` (for ATF tests via bash).
+`kubectl` is **not** required on Windows for the PowerShell-native commands — they use
+`oc` exclusively. Commands that fall back to Git Bash (`test`, `watch`, …)
+need `kubectl` or `oc` on PATH (`aap-demo.sh` uses `oc` as a kubectl substitute when
+`kubectl` is not installed).
 
-### Install Git Bash (winget)
-
-Required for advanced commands (`diagnose`, `test`, `watch`, `destroy`, …):
-
-```powershell
-winget install --id Git.Git -e --source winget
-```
-
-Open a new PowerShell window after install so `bash` is on PATH.
+Optional: `python`, `jq`, `ansible-playbook` (for ATF tests via bash).
 
 ## Install
 
@@ -40,12 +34,17 @@ cd aap-demo
 git checkout feature/powershell-native
 ```
 
-### 2. Save pull secret
+### 2. Copy pull secret
+
+Download from the [Red Hat console](https://console.redhat.com/openshift/install/pull-secret),
+then copy it into place:
 
 ```powershell
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.aap-demo"
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.aap-demo" | Out-Null
 Copy-Item "$env:USERPROFILE\Downloads\pull-secret.txt" "$env:USERPROFILE\.aap-demo\pull-secret.txt"
 ```
+
+Adjust the source path if your browser saved the file elsewhere or under a different name.
 
 ### 3. Run installer
 
@@ -53,17 +52,7 @@ Copy-Item "$env:USERPROFILE\Downloads\pull-secret.txt" "$env:USERPROFILE\.aap-de
 .\powershell\install.ps1
 ```
 
-The installer will:
-
-- Verify `crc` and `kubectl` are on PATH
-- Record the repo path in `%USERPROFILE%\.aap-demo\repo-path`
-- Install an `aap-demo` launcher to `%USERPROFILE%\.local\bin`
-- Add `%USERPROFILE%\.local\bin` to your user PATH
-- Download `operator-sdk.exe` when not already installed
-
-### 4. Open a new PowerShell window
-
-PATH changes apply only in new sessions.
+Open a **new** PowerShell window when install finishes, then:
 
 ```powershell
 aap-demo help
@@ -94,7 +83,10 @@ prompt — see [Ingress CA and browser TLS](#ingress-ca-and-browser-tls) below.
 | `aap-demo deploy` | Deploy AAP 2.7 operator and instance via OLM |
 | `aap-demo deploy -Force` | Deploy even if an AAP CR already exists |
 | `aap-demo status` | Cluster health, namespaces, routes, admin password |
+| `aap-demo diagnose` | Environment health checks (cluster, storage, AAP, DNS) |
 | `aap-demo help` | Show PowerShell command help |
+
+`aap-demo diagnose --ai` delegates to Git Bash for Claude-assisted analysis.
 
 ### Git Bash fallback (requires [Git for Windows](https://git-scm.com/download/win))
 
@@ -103,11 +95,10 @@ Any command not listed above is forwarded to `aap-demo.sh`, including:
 | Command | Description |
 |---------|-------------|
 | `aap-demo watch` | Monitor deployment progress |
-| `aap-demo diagnose` | Health checks |
 | `aap-demo diagnose --ai` | Health checks + Claude analysis |
 | `aap-demo clean` | Remove AAP deployment |
 | `aap-demo destroy` | Delete cluster |
-| `aap-demo start` / `stop` | Start or stop CRC |
+| `crc start` / `aap-demo stop` | Start or stop CRC (`start` is the `crc` command, not `aap-demo`) |
 | `aap-demo idle true` / `false` | Scale AAP down/up |
 | `aap-demo enable mcp-server` | Enable addons |
 | `aap-demo test` | Run ATF tests |
@@ -145,11 +136,9 @@ aap-demo create
 | Path | Purpose |
 |------|---------|
 | `%USERPROFILE%\.aap-demo\config` | Saved preset, addons, preferences |
-| `%USERPROFILE%\.aap-demo\repo-path` | Path to cloned aap-demo repo |
 | `%USERPROFILE%\.aap-demo\pull-secret.txt` | Red Hat pull secret |
 | `%USERPROFILE%\.aap-demo\crc-ingress-ca.crt` | MicroShift ingress CA (saved for TLS trust) |
 | `%USERPROFILE%\.crc\` | OpenShift Local VM data |
-| `%USERPROFILE%\.local\bin\aap-demo.ps1` | Installed launcher |
 
 ## Uninstall
 
@@ -166,9 +155,11 @@ To remove the cluster: `aap-demo destroy` (requires Git Bash).
 
 ### `aap-demo` is not recognized
 
-1. Confirm install completed: `Test-Path "$env:USERPROFILE\.local\bin\aap-demo.ps1"`
-2. Confirm PATH: `[Environment]::GetEnvironmentVariable('Path','User')` contains `.local\bin`
-3. Open a **new** PowerShell window
+Re-run the installer and open a **new** PowerShell window:
+
+```powershell
+.\powershell\install.ps1
+```
 
 ### `aap-demo is not installed` / repo path error
 
@@ -182,14 +173,23 @@ Do not move or delete the cloned repo after install — the launcher points at i
 
 ### Git Bash required for command X
 
-Install Git for Windows, then retry:
+Re-run the installer (it installs Git for Windows via winget when missing), then
+open a new PowerShell window:
 
 ```powershell
-winget install --id Git.Git -e --source winget
+.\powershell\install.ps1
 ```
 
-Or download from [git-scm.com](https://git-scm.com/download/win). Commands like
-`create`, `deploy`, and `status` do not need Git Bash.
+Commands like `create`, `deploy`, and `status` do not need Git Bash.
+
+### `oc` or `crc` not found
+
+Re-run the installer from the repo directory (it installs `oc` via winget when
+possible and reports any missing prerequisites):
+
+```powershell
+.\powershell\install.ps1
+```
 
 ### `crc start` or Hyper-V errors
 
@@ -305,7 +305,6 @@ bash implementation.
 ```powershell
 cd path\to\aap-demo
 git pull
-# No reinstall needed unless install.ps1 changed
 ```
 
-If you move the repo to a new path, re-run `.\powershell\install.ps1`.
+Re-run `.\powershell\install.ps1` if `install.ps1` changed or you moved the repo.

@@ -113,20 +113,25 @@ POWERSHELL COMMANDS:
     create          Create OpenShift Local (CRC) cluster
     deploy          Deploy AAP 2.7 via OLM
     status          Show cluster and AAP status
+    diagnose        Check environment health
     help            Show this help
 
 DEPLOY OPTIONS:
     -Force          Redeploy even if AAP CR exists
     -Namespace=ns   Target namespace (default: aap-operator)
 
+DIAGNOSE OPTIONS:
+    --ai            AI-assisted analysis (requires Git Bash + claude CLI)
+
 EXAMPLES:
     aap-demo create
     aap-demo deploy
     aap-demo deploy -Force
     aap-demo status
+    aap-demo diagnose
 
 OTHER COMMANDS (Git Bash):
-    diagnose, test, watch, clean, destroy, enable, idle, must-gather, ...
+    test, watch, clean, destroy, enable, idle, must-gather, ...
     These delegate to aap-demo.sh and require Git for Windows.
 
 NOTES:

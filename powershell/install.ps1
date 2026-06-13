@@ -5,7 +5,8 @@
 
 .DESCRIPTION
   Checks prerequisites, records repo location, installs aap-demo to
-  %USERPROFILE%\.local\bin, and adds that directory to the user PATH.
+  %USERPROFILE%\.local\bin, adds that directory to the user PATH, and
+  installs optional dependencies (oc, Git for Windows) via winget when missing.
 
 .EXAMPLE
   .\powershell\install.ps1
@@ -85,6 +86,46 @@ function Install-Oc {
     Write-Ok 'oc installed via winget'
   } else {
     Write-Warn 'OpenShift Client installed but oc is not on PATH yet — open a new PowerShell window'
+  }
+}
+
+function Install-GitBash {
+  if (Find-GitBash) {
+    Write-Ok 'Git Bash already installed'
+    return
+  }
+
+  if (-not (Test-CommandExists 'winget')) {
+    Write-Warn 'Git Bash not found and winget is unavailable'
+    return
+  }
+
+  Write-Info 'Installing Git for Windows via winget (Git.Git)...'
+  $wingetArgs = @(
+    'install', '--id', 'Git.Git', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements'
+  )
+  if ($Quiet) { $wingetArgs += '--disable-interactivity' }
+
+  try {
+    & winget @wingetArgs
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warn "winget install Git.Git failed (exit $LASTEXITCODE)"
+      return
+    }
+  } catch {
+    Write-Warn "Could not install Git for Windows via winget: $($_.Exception.Message)"
+    return
+  }
+
+  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $env:Path = @($machinePath, $userPath) -join ';'
+
+  if (Find-GitBash) {
+    Write-Ok 'Git Bash installed via winget'
+  } else {
+    Write-Warn 'Git for Windows installed but bash.exe not found yet — open a new PowerShell window'
   }
 }
 
@@ -184,6 +225,7 @@ function Install-AapDemo {
   }
 
   Install-Oc
+  Install-GitBash
 
   $checks = Test-Prerequisites
   if ($checks.Missing.Count -gt 0) {
@@ -197,7 +239,9 @@ function Install-AapDemo {
 
   Write-Ok 'Required tools: crc, oc'
 
-  if (-not (Find-GitBash)) {
+  if (Find-GitBash) {
+    Write-Ok 'Git Bash available for advanced commands'
+  } else {
     Write-Warn 'Git Bash not found — create/deploy/status work; other commands need Git for Windows'
   }
 
@@ -244,8 +288,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\bin\aa
   Write-Info '  aap-demo deploy'
   Write-Host ''
   Write-Info 'Notes:'
-  Write-Info '- create, deploy, status run in PowerShell.'
-  Write-Info '- Other commands (diagnose, test, watch, ...) use Git Bash via aap-demo.sh.'
+  Write-Info '- create, deploy, status, diagnose run in PowerShell.'
+  Write-Info '- Other commands (diagnose --ai, test, watch, ...) use Git Bash via aap-demo.sh.'
   Write-Info '- OpenShift Local on Windows needs Hyper-V enabled.'
   Write-Info '- Kubeconfig default: %USERPROFILE%\.crc\machines\crc\kubeconfig'
   Write-Host ''

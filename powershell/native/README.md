@@ -7,8 +7,8 @@ PowerShell implementation of core aap-demo commands on Windows. Installed via
 
 | Command | Runtime |
 |---------|---------|
-| `create`, `deploy`, `status`, `help` | PowerShell |
-| `diagnose`, `test`, `watch`, `clean`, `destroy`, `enable`, … | Git Bash → `aap-demo.sh` |
+| `create`, `deploy`, `status`, `diagnose`, `help` | PowerShell |
+| `diagnose --ai`, `test`, `watch`, `clean`, `destroy`, `enable`, … | Git Bash → `aap-demo.sh` |
 
 ## Layout
 
@@ -23,6 +23,7 @@ powershell/
       Create.ps1
       Deploy.ps1
       Status.ps1
+      Diagnose.ps1
 ```
 
 ## Install
@@ -33,7 +34,7 @@ powershell/
 
 ## Gaps vs bash (in progress)
 
-- No `watch`, `diagnose`, `must-gather`, `test`, addons in PowerShell yet
+- No `watch`, `must-gather`, `test`, addons in PowerShell yet
 - No ingress CA auto-trust on Windows
 - No podman remote connection setup
 - Simpler deploy (no gateway capability patch loop)

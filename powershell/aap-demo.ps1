@@ -4,7 +4,7 @@
   aap-demo CLI for Windows (PowerShell).
 
 .DESCRIPTION
-  Core commands (create, deploy, status) run in PowerShell.
+  Core commands (create, deploy, status, diagnose) run in PowerShell.
   All other commands delegate to aap-demo.sh via Git Bash.
 #>
 [CmdletBinding()]
@@ -47,6 +47,11 @@ switch ($command.ToLowerInvariant()) {
   }
   'status' {
     Invoke-AapDemoStatus
+  }
+  'diagnose' {
+    $params = @{}
+    if ($rest -contains '--ai') { $params.Ai = $true }
+    Invoke-AapDemoDiagnose @params
   }
   { $_ -in @('help', '--help', '-h') } {
     Get-AapDemoHelp
