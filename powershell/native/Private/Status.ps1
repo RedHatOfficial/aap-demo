@@ -58,9 +58,15 @@ function Invoke-AapDemoStatus {
     } else { $null }
     if ($aapCr) {
       $crName = ($aapCr -split '\s+')[0]
+      $idleResult = Invoke-AapOcCapture @(
+        'get', 'aap', $crName, '-n', $ns, '-o', 'jsonpath={.spec.idle_aap}'
+      )
+      $idleLabel = if ($idleResult.ExitCode -eq 0 -and $idleResult.Output.Trim() -eq 'true') {
+        ' (idle)'
+      } else { '' }
       $routeResult = Invoke-AapOcCapture @('get', 'route', $crName, '-n', $ns, '-o', 'jsonpath=https://{.spec.host}')
       $route = if ($routeResult.ExitCode -eq 0) { $routeResult.Output.Trim() } else { '' }
-      Write-Host ("  {0,-30} {1}/{2} pods  {3}  {4}" -f $ns, $running, $total, $crName, $route)
+      Write-Host ("  {0,-30} {1}/{2} pods{3}  {4}  {5}" -f $ns, $running, $total, $idleLabel, $crName, $route)
     } else {
       Write-Host ("  {0,-30} {1}/{2} pods" -f $ns, $running, $total)
     }
@@ -109,34 +115,62 @@ aap-demo — Windows PowerShell CLI
 USAGE:
     aap-demo <command> [options]
 
-POWERSHELL COMMANDS:
+CLUSTER:
     create          Create OpenShift Local (CRC) cluster
-    deploy          Deploy AAP 2.7 via OLM
+    stop            Stop CRC cluster
+    destroy         Delete CRC cluster (--reset clears saved preset)
+    repair          Show CRC repair instructions
+    setup           CRC setup info (handled by create)
+    kubeconfig      Sync and merge kubeconfig (context: aap-demo)
+    ssh             SSH into CRC VM
+
+DEPLOY:
+    deploy          Deploy AAP 2.7 via OLM (alias: deploy-all)
+    deploy-operator Deploy operator only (no AAP CR)
+    deploy-aap      Apply AAP CR only (operator must exist)
+    redeploy        Clean namespace and redeploy AAP
+    redeploy-all    Destroy cluster and full redeploy
+    clean           Remove AAP namespace and resources
+    watch           Monitor AAP deployment progress
+
+STATUS:
     status          Show cluster and AAP status
     diagnose        Check environment health
+    idle            Scale AAP down/up (true|false)
+    redhat-status   Check Red Hat registry status (alias: rh-status)
+    must-gather     Collect diagnostic bundle
+
+ADDONS:
+    enable <name>   Enable addon (PowerShell + oc)
+    disable <name>  Disable addon
+
+OTHER:
+    config [k] [v]  Show or set ~/.aap-demo/config values
+    update          git pull and reinstall launcher
     help            Show this help
 
-DEPLOY OPTIONS:
+OPTIONS:
     -Force          Redeploy even if AAP CR exists
     -Namespace=ns   Target namespace (default: aap-operator)
-
-DIAGNOSE OPTIONS:
-    --ai            AI-assisted analysis (requires Git Bash + claude CLI)
+    -Channel=ch     OLM channel (default: stable-2.7)
+    CR=name         AAP CR template (default: minimal)
+    PUBLIC_URL=url  Required for noingress CRs
+    --ai            AI-assisted diagnose (requires Git Bash + claude CLI)
 
 EXAMPLES:
     aap-demo create
     aap-demo deploy
     aap-demo deploy -Force
+    aap-demo deploy-operator
+    aap-demo deploy-aap CR=minimal
     aap-demo status
     aap-demo diagnose
-
-OTHER COMMANDS (Git Bash):
-    test, watch, clean, destroy, enable, idle, must-gather, ...
-    These delegate to aap-demo.sh and require Git for Windows.
+    aap-demo watch
+    aap-demo idle true
 
 NOTES:
-    OpenShift Local on Windows requires Hyper-V.
+    Requires oc and crc on PATH. OpenShift Local needs Hyper-V.
     Pull secret: %USERPROFILE%\.aap-demo\pull-secret.txt
-    Ingress CA trust: accept UAC on first status/deploy for Chrome/Edge.
+    Git Bash: only needed for diagnose --ai.
 '@
 }

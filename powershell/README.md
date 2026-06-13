@@ -1,8 +1,7 @@
 # aap-demo on Windows (PowerShell)
 
-Install and run [aap-demo](../README.md) on Windows using PowerShell. Core commands
-run natively in PowerShell; everything else falls back to the bash scripts via Git
-Bash.
+Install and run [aap-demo](../README.md) on Windows using PowerShell. All commands
+run natively in PowerShell; only `diagnose --ai` uses Git Bash.
 
 **Branch:** `feature/powershell-native` (while this work is in progress)
 
@@ -14,15 +13,12 @@ Bash.
 | **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
 | **OpenShift CLI (`oc`)** | Installed by `install.ps1` via winget when missing. |
 | **Red Hat pull secret** | [Download](https://console.redhat.com/openshift/install/pull-secret) |
-| **Git for Windows** | Installed by `install.ps1` via winget when missing. Required for `test`, `watch`, and other advanced commands (`diagnose --ai` only). |
+| **Git for Windows** | Optional. Only needed for `diagnose --ai`. |
 | **OpenSSH client** | Used during `create` to configure the cluster VM (`ssh` on PATH). |
 
-`kubectl` is **not** required on Windows for the PowerShell-native commands — they use
-`oc` exclusively. Commands that fall back to Git Bash (`test`, `watch`, …)
-need `kubectl` or `oc` on PATH (`aap-demo.sh` uses `oc` as a kubectl substitute when
-`kubectl` is not installed).
+`kubectl` is **not** required on Windows — all commands use `oc` exclusively.
 
-Optional: `python`, `jq`, `ansible-playbook` (for ATF tests via bash).
+Optional: `python`, `jq`.
 
 ## Install
 
@@ -75,37 +71,34 @@ prompt — see [Ingress CA and browser TLS](#ingress-ca-and-browser-tls) below.
 
 ## Commands
 
-### PowerShell (no Git Bash required)
+All commands run in PowerShell. Run `aap-demo help` for the full list.
 
 | Command | Description |
 |---------|-------------|
 | `aap-demo create` | Create OpenShift Local cluster (NFS, CoreDNS, OLM, metrics-server) |
 | `aap-demo deploy` | Deploy AAP 2.7 operator and instance via OLM |
+| `aap-demo deploy-operator` | Deploy operator only (no AAP CR) |
+| `aap-demo deploy-aap` | Apply AAP CR only (operator must exist) |
 | `aap-demo deploy -Force` | Deploy even if an AAP CR already exists |
+| `aap-demo redeploy` | Clean namespace and redeploy AAP |
+| `aap-demo redeploy-all` | Destroy cluster and full redeploy |
+| `aap-demo clean` | Remove AAP deployment |
+| `aap-demo destroy` | Delete CRC cluster (`--reset` clears saved preset) |
+| `aap-demo stop` | Stop CRC cluster |
 | `aap-demo status` | Cluster health, namespaces, routes, admin password |
-| `aap-demo diagnose` | Environment health checks (cluster, storage, AAP, DNS) |
-| `aap-demo help` | Show PowerShell command help |
+| `aap-demo diagnose` | Environment health checks |
+| `aap-demo watch` | Monitor AAP deployment until Successful |
+| `aap-demo idle true` / `false` | Scale AAP down/up |
+| `aap-demo kubeconfig` | Sync kubeconfig (context: `aap-demo`) |
+| `aap-demo ssh` | SSH into CRC VM |
+| `aap-demo enable` / `disable` | Enable or disable addons |
+| `aap-demo must-gather` | Collect diagnostic bundle |
+| `aap-demo redhat-status` | Check Red Hat registry status |
+| `aap-demo config` | Show or set `~/.aap-demo/config` values |
+| `aap-demo update` | `git pull` and reinstall launcher |
+| `aap-demo help` | Show command help |
 
 `aap-demo diagnose --ai` delegates to Git Bash for Claude-assisted analysis.
-
-### Git Bash fallback (requires [Git for Windows](https://git-scm.com/download/win))
-
-Any command not listed above is forwarded to `aap-demo.sh`, including:
-
-| Command | Description |
-|---------|-------------|
-| `aap-demo watch` | Monitor deployment progress |
-| `aap-demo diagnose --ai` | Health checks + Claude analysis |
-| `aap-demo clean` | Remove AAP deployment |
-| `aap-demo destroy` | Delete cluster |
-| `crc start` / `aap-demo stop` | Start or stop CRC (`start` is the `crc` command, not `aap-demo`) |
-| `aap-demo idle true` / `false` | Scale AAP down/up |
-| `aap-demo enable mcp-server` | Enable addons |
-| `aap-demo test` | Run ATF tests |
-| `aap-demo must-gather` | Collect diagnostics |
-
-Run `aap-demo help` in Git Bash context for the full list: use any bash-only
-command name — the router delegates automatically.
 
 ## Environment variables
 
@@ -149,7 +142,7 @@ cd path\to\aap-demo
 .\powershell\install.ps1 -Uninstall
 ```
 
-To remove the cluster: `aap-demo destroy` (requires Git Bash).
+To remove the cluster: `aap-demo destroy`
 
 ## Troubleshooting
 
@@ -171,7 +164,7 @@ Re-run from the repo directory:
 
 Do not move or delete the cloned repo after install — the launcher points at it.
 
-### Git Bash required for command X
+### Git Bash required for diagnose --ai
 
 Re-run the installer (it installs Git for Windows via winget when missing), then
 open a new PowerShell window:
@@ -180,7 +173,7 @@ open a new PowerShell window:
 .\powershell\install.ps1
 ```
 
-Commands like `create`, `deploy`, and `status` do not need Git Bash.
+Most commands (`create`, `deploy`, `destroy`, …) do not need Git Bash.
 
 ### `oc` or `crc` not found
 
@@ -293,14 +286,20 @@ Then run commands with `pwsh` instead of `powershell`.
 ```
 aap-demo (launcher in ~/.local/bin)
   └── powershell/aap-demo.ps1
-        ├── create, deploy, status  →  powershell/native/AapDemo.psm1
-        └── everything else         →  aap-demo.sh via Git Bash
+        └── powershell/native/AapDemo.psm1  (all commands)
+              └── diagnose --ai  →  Git Bash (when needed)
 ```
 
 See [native/README.md](native/README.md) for module layout and known gaps vs the
 bash implementation.
 
 ## Updating
+
+```powershell
+aap-demo update
+```
+
+Or manually:
 
 ```powershell
 cd path\to\aap-demo

@@ -1,3 +1,66 @@
+function Invoke-AapApplyAapCr {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$Namespace,
+    [string]$CrName = 'minimal',
+    [string]$PublicUrl = $null,
+    [switch]$Force
+  )
+
+  $crPath = Get-AapManifestPath "config/crs/aap-$CrName.yaml"
+  if (-not (Test-Path -LiteralPath $crPath)) {
+    throw "CR template not found: aap-$CrName.yaml"
+  }
+
+  $existingName = Get-AapExistingCrName -Namespace $Namespace
+  if ($existingName -and $Force) {
+    Write-AapStep "Deleting existing AAP CR: $existingName"
+    Invoke-AapOcQuiet @('delete', 'aap', $existingName, '-n', $Namespace, '--timeout=60s') | Out-Null
+    for ($i = 1; $i -le 30; $i++) {
+      if (-not (Get-AapExistingCrName -Namespace $Namespace)) { break }
+      Start-Sleep -Seconds 2
+    }
+  }
+
+  if ($CrName -match 'noingress') {
+    if (-not $PublicUrl) {
+      throw @"
+PUBLIC_URL required for noingress CR.
+
+  aap-demo deploy-aap CR=minimal-noingress PUBLIC_URL=https://aap.apps.example.com
+"@
+    }
+    Write-AapStep "Applying CR $CrName with PUBLIC_URL=$PublicUrl"
+    $cr = Get-Content -LiteralPath $crPath -Raw
+    $cr = $cr -replace '__PUBLIC_BASE_URL__', $PublicUrl
+    $temp = [System.IO.Path]::GetTempFileName()
+    try {
+      Set-AapUtf8Content -Path $temp -Value $cr
+      Invoke-AapOcApplyFile -Path $temp -Namespace $Namespace
+    } finally {
+      Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    }
+    return
+  }
+
+  Write-AapStep "Applying CR: $CrName"
+  if ((Invoke-AapOcQuiet @('get', 'sc', 'nfs-local-rwx')) -eq 0) {
+    Invoke-AapOcApplyFile -Path $crPath -Namespace $Namespace
+  } else {
+    Write-AapWarn 'nfs-local-rwx missing - applying CR with ReadWriteOnce fallback'
+    $cr = Get-Content -LiteralPath $crPath -Raw
+    $cr = $cr -replace 'file_storage_storage_class: nfs-local-rwx', '# file_storage_storage_class: (default)'
+    $cr = $cr -replace 'file_storage_access_mode: ReadWriteMany', 'file_storage_access_mode: ReadWriteOnce'
+    $temp = [System.IO.Path]::GetTempFileName()
+    try {
+      Set-AapUtf8Content -Path $temp -Value $cr
+      Invoke-AapOcApplyFile -Path $temp -Namespace $Namespace
+    } finally {
+      Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 function Invoke-AapDemoDeploy {
   [CmdletBinding()]
   param(
@@ -5,14 +68,15 @@ function Invoke-AapDemoDeploy {
     [string]$Channel = $Script:AapDemoDefaultChannel,
     [string]$OcpVersion = $Script:AapDemoDefaultOcpVersion,
     [string]$CrName = 'minimal',
-    [switch]$Force
+    [switch]$Force,
+    [switch]$OperatorOnly
   )
 
   Write-AapHeader 'aap-demo deploy'
 
   $crc = Get-AapCrcStatus
   if ([string]$crc.crcStatus -eq 'Stopped') {
-    Write-AapStep 'Cluster stopped — starting CRC...'
+    Write-AapStep 'Cluster stopped - starting CRC...'
     & crc start
     if ($LASTEXITCODE -ne 0) { throw 'crc start failed' }
   } elseif ([string]$crc.crcStatus -eq 'Unknown') {
@@ -28,13 +92,12 @@ function Invoke-AapDemoDeploy {
 
   Install-AapOlm
 
-  if (-not $Force) {
-    $existingResult = Invoke-AapOcCapture @('get', 'aap', '-n', $Namespace, '--no-headers')
-    if ($existingResult.ExitCode -eq 0 -and $existingResult.Output) {
-      $existing = $existingResult.Lines | Select-Object -First 1
-      $name = ($existing -split '\s+')[0]
-      Write-AapStep "AAP instance '$name' already exists in $Namespace"
-      Write-Host '  Use -Force to redeploy or aap-demo status to check health'
+  if (-not $Force -and -not $OperatorOnly) {
+    $existingName = Get-AapExistingCrName -Namespace $Namespace
+    if ($existingName) {
+      Write-AapStep ('AAP instance ''{0}'' already exists in {1} - watching progress' -f $existingName, $Namespace)
+      Write-Host ''
+      Invoke-AapDemoWatch -Namespace $Namespace
       return
     }
   }
@@ -73,28 +136,20 @@ function Invoke-AapDemoDeploy {
   $csv = Wait-AapCsv -Namespace $Namespace
   Write-AapStep "Operator CSV: $csv"
 
-  $crPath = Get-AapManifestPath "config/crs/aap-$CrName.yaml"
-  if (-not (Test-Path -LiteralPath $crPath)) {
-    throw "CR template not found: aap-$CrName.yaml"
+  if ($OperatorOnly) {
+    Write-AapStep 'Operator deployed (no AAP CR)'
+    Write-Host ''
+    Write-Host '  Deploy AAP instance: aap-demo deploy-aap'
+    Write-Host ''
+    return
   }
 
-  if ((Invoke-AapOcQuiet @('get', 'sc', 'nfs-local-rwx')) -eq 0) {
-    Invoke-AapOc @('apply', '-f', $crPath, '-n', $Namespace) | Out-Null
-  } else {
-    Write-AapWarn 'nfs-local-rwx missing — applying CR with ReadWriteOnce fallback'
-    $cr = Get-Content -LiteralPath $crPath -Raw
-    $cr = $cr -replace 'file_storage_storage_class: nfs-local-rwx', '# file_storage_storage_class: (default)'
-    $cr = $cr -replace 'file_storage_access_mode: ReadWriteMany', 'file_storage_access_mode: ReadWriteOnce'
-    $temp = [System.IO.Path]::GetTempFileName()
-    Set-AapUtf8Content -Path $temp -Value $cr
-    Invoke-AapOc @('apply', '-f', $temp, '-n', $Namespace) | Out-Null
-    Remove-Item -LiteralPath $temp -Force
-  }
+  Invoke-AapApplyAapCr -Namespace $Namespace -CrName $CrName -Force:$Force
 
-  Write-AapStep 'AAP CR applied — reconciliation in progress'
+  Write-AapStep 'AAP CR applied - reconciliation in progress'
   Write-Host ''
-  Write-Host '  Monitor: aap-demo status'
-  Write-Host '  Or:      aap-demo watch  (via Git Bash)'
+  Write-Host '  Monitor: aap-demo watch'
+  Write-Host '  Or:      aap-demo status'
   Write-Host ''
 }
 
@@ -114,7 +169,7 @@ function Initialize-AapNamespace {
 
   $pullSecret = Get-AapPullSecretPath
   if (-not $pullSecret) {
-    Write-AapWarn 'No pull secret — image pulls may fail'
+    Write-AapWarn 'No pull secret - image pulls may fail'
     return
   }
 
@@ -126,6 +181,6 @@ function Initialize-AapNamespace {
     '-n', $Namespace
   ) | Out-Null
 
-  $patch = '{"imagePullSecrets":[{"name":"redhat-operators-pull-secret"}]}'
+  $patch = (@{ imagePullSecrets = @(@{ name = 'redhat-operators-pull-secret' }) } | ConvertTo-Json -Compress)
   Invoke-AapOcPatch @('patch', 'serviceaccount', 'default', '-n', $Namespace) -Patch $patch | Out-Null
 }

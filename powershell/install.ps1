@@ -171,7 +171,7 @@ function Test-Prerequisites {
   $warnings = [System.Collections.Generic.List[string]]::new()
 
   if (-not (Find-GitBash)) {
-    $warnings.Add('Git for Windows — needed for diagnose, test, watch, and other advanced commands')
+    $warnings.Add('Git for Windows — needed for diagnose --ai only')
   }
 
   foreach ($tool in @('crc', 'oc')) {
@@ -180,7 +180,7 @@ function Test-Prerequisites {
     }
   }
 
-  foreach ($tool in @('jq', 'python', 'python3', 'ansible-playbook')) {
+  foreach ($tool in @('jq', 'python', 'python3')) {
     if (-not (Test-CommandExists $tool)) {
       $warnings.Add($tool)
     }
@@ -240,9 +240,9 @@ function Install-AapDemo {
   Write-Ok 'Required tools: crc, oc'
 
   if (Find-GitBash) {
-    Write-Ok 'Git Bash available for advanced commands'
+    Write-Ok 'Git Bash available (diagnose --ai only)'
   } else {
-    Write-Warn 'Git Bash not found — create/deploy/status work; other commands need Git for Windows'
+    Write-Warn 'Git Bash not found — all commands work except diagnose --ai'
   }
 
   if ($checks.Warnings.Count -gt 0 -and -not $Quiet) {
@@ -288,8 +288,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\bin\aa
   Write-Info '  aap-demo deploy'
   Write-Host ''
   Write-Info 'Notes:'
-  Write-Info '- create, deploy, status, diagnose run in PowerShell.'
-  Write-Info '- Other commands (diagnose --ai, test, watch, ...) use Git Bash via aap-demo.sh.'
+  Write-Info '- All commands run in PowerShell; only diagnose --ai uses Git Bash.'
   Write-Info '- OpenShift Local on Windows needs Hyper-V enabled.'
   Write-Info '- Kubeconfig default: %USERPROFILE%\.crc\machines\crc\kubeconfig'
   Write-Host ''

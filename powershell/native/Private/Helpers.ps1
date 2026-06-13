@@ -590,6 +590,218 @@ function Install-AapIngressCaTrust {
   }
 }
 
+function Get-AapExistingCrName {
+  param([Parameter(Mandatory)][string]$Namespace)
+
+  foreach ($resource in @('aap', 'ansibleautomationplatforms.aap.ansible.com')) {
+    $result = Invoke-AapOcCapture @(
+      'get', $resource, '-n', $Namespace,
+      '-o', 'jsonpath={.items[0].metadata.name}'
+    )
+    if ($result.ExitCode -eq 0 -and $result.Output.Trim()) {
+      return $result.Output.Trim()
+    }
+  }
+  return $null
+}
+
+function Invoke-AapOcApplyFile {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [Parameter(Mandatory)][string]$Namespace
+  )
+
+  $result = Invoke-AapOcCapture @('apply', '-f', $Path, '-n', $Namespace)
+  if ($result.ExitCode -eq 0) { return }
+
+  if ($result.Output -match 'AlreadyExists') {
+    Write-AapStep 'AAP CR already exists - applying server-side update'
+    $ssa = Invoke-AapOcCapture @(
+      'apply', '--server-side', '--force-conflicts', '-f', $Path, '-n', $Namespace
+    )
+    if ($ssa.ExitCode -eq 0) { return }
+
+    Write-AapStep 'AAP CR already exists - continuing with current resource'
+    return
+  }
+
+  throw "oc apply failed ($($result.ExitCode)): $($result.Output)"
+}
+
+function ConvertFrom-AapKubeBase64 {
+  param([string]$Value)
+  if (-not $Value) { return $null }
+  $clean = ($Value -replace '\s', '')
+  if (-not $clean) { return $null }
+  return [Convert]::FromBase64String($clean)
+}
+
+function Get-AapOcConfigJson {
+  param([Parameter(Mandatory)][string]$KubeConfig)
+  $result = Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @(
+    'config', 'view', '--raw', '-o', 'json'
+  )
+  if ($result.ExitCode -ne 0) {
+    throw 'Kubeconfig is invalid'
+  }
+  return ($result.Lines -join [Environment]::NewLine) | ConvertFrom-Json
+}
+
+function Test-AapOcHasListOutput {
+  param($Result)
+  if ($Result.ExitCode -ne 0 -or -not $Result.Output) { return $false }
+  $lines = @($Result.Lines | Where-Object {
+      $_.Trim() -and $_ -notmatch '^(No resources found|NAME\b)'
+    })
+  return $lines.Count -gt 0
+}
+
+function Get-AapOcFirstListName {
+  param($Result)
+  $line = @($Result.Lines | Where-Object {
+      $_.Trim() -and $_ -notmatch '^(No resources found|NAME\b)'
+    }) | Select-Object -First 1
+  if (-not $line) { return $null }
+  return ($line -split '\s+', 2)[0]
+}
+
+function Get-AapAdminPassword {
+  param([Parameter(Mandatory)][string]$Namespace)
+
+  $secretResult = Invoke-AapOcCapture @(
+    'get', 'aap', '-n', $Namespace,
+    '-o', 'jsonpath={.items[0].status.adminPasswordSecret}'
+  )
+  $secretNames = @()
+  if ($secretResult.ExitCode -eq 0 -and $secretResult.Output.Trim()) {
+    $secretNames += $secretResult.Output.Trim()
+  }
+  $secretNames += @(
+    'aap-admin-password',
+    'myaap-admin-password',
+    'aap-controller-admin-password',
+    'custom-admin-password'
+  )
+
+  foreach ($secretName in ($secretNames | Select-Object -Unique)) {
+    $pwResult = Invoke-AapOcCapture @(
+      'get', 'secret', $secretName, '-n', $Namespace,
+      '-o', 'jsonpath={.data.password}'
+    )
+    if ($pwResult.ExitCode -eq 0 -and $pwResult.Output.Trim()) {
+      return [Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String($pwResult.Output.Trim())
+      )
+    }
+  }
+  return $null
+}
+
+function Get-AapAapSuccessful {
+  param([Parameter(Mandatory)][string]$Namespace)
+
+  $aapJsonResult = Invoke-AapOcCapture @('get', 'aap', '-n', $Namespace, '-o', 'json')
+  if ($aapJsonResult.ExitCode -ne 0 -or -not $aapJsonResult.Output) {
+    return $false
+  }
+  try {
+    $aapObj = $aapJsonResult.Output | ConvertFrom-Json
+    foreach ($item in @($aapObj.items)) {
+      foreach ($cond in @($item.status.conditions)) {
+        if ($cond.type -eq 'Successful' -and [string]$cond.status -eq 'True') {
+          return $true
+        }
+      }
+    }
+  } catch {
+    return $false
+  }
+  return $false
+}
+
+function Wait-AapUserContinue {
+  param([int]$TimeoutSeconds = 10)
+  Write-Host 'Press Ctrl+C to cancel, or press Enter to continue immediately...'
+  Write-Host "Auto-continuing in $TimeoutSeconds seconds..."
+  $end = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $end) {
+    if ([Console]::KeyAvailable) {
+      $null = [Console]::ReadKey($true)
+      break
+    }
+    Start-Sleep -Milliseconds 200
+  }
+  Write-Host ''
+}
+
+function Get-AapAddonsList {
+  $raw = Get-AapConfigValue 'ADDONS'
+  if (-not $raw) { return @() }
+  return @($raw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Set-AapAddonsList {
+  param([string[]]$Addons)
+  $value = ($Addons | Where-Object { $_ }) -join ','
+  if ($value) {
+    Set-AapConfigValue 'ADDONS' $value
+  } else {
+    $path = Get-AapConfigPath
+    if (Test-Path -LiteralPath $path) {
+      $lines = Get-Content -LiteralPath $path | Where-Object { $_ -notmatch '^ADDONS=' }
+      if ($lines) {
+        Set-Content -LiteralPath $path -Value $lines -Encoding ascii
+      } else {
+        Remove-Item -LiteralPath $path -Force
+      }
+    }
+  }
+}
+
+function Add-AapAddon {
+  param([Parameter(Mandatory)][string]$Addon)
+  $current = @(Get-AapAddonsList)
+  if ($current -contains $Addon) { return }
+  $current += $Addon
+  Set-AapAddonsList $current
+}
+
+function Remove-AapAddon {
+  param([Parameter(Mandatory)][string]$Addon)
+  $current = @(Get-AapAddonsList) | Where-Object { $_ -ne $Addon }
+  Set-AapAddonsList $current
+}
+
+function Invoke-AapOcConfig {
+  param(
+    [Parameter(Mandatory)][string]$KubeConfig,
+    [Parameter(Mandatory)][string[]]$Arguments
+  )
+  $prev = $env:KUBECONFIG
+  try {
+    $env:KUBECONFIG = $KubeConfig
+    $result = Invoke-AapExternal oc $Arguments
+    return $result
+  } finally {
+    $env:KUBECONFIG = $prev
+  }
+}
+
+function Invoke-AapPruneCrcImages {
+  try {
+    Write-Host ''
+    Write-Host 'Pruning unused container images...'
+    $output = Invoke-AapCrcSsh 'sudo crictl rmi --prune 2>&1' -AllowFailure
+    if ($output -match '(?i)deleted') {
+      Write-AapStep 'Pruned unused images'
+    } else {
+      Write-AapStep 'No unused images to prune'
+    }
+  } catch {
+    Write-AapWarn "Image prune skipped: $($_.Exception.Message)"
+  }
+}
+
 function Find-AapGitBash {
   $candidates = @(
     (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
@@ -602,7 +814,7 @@ function Find-AapGitBash {
 Git Bash not found.
 
 Install Git for Windows: https://git-scm.com/download/win
-Required for this command (not yet implemented in PowerShell).
+Required for diagnose --ai only.
 "@
   }
   return @($candidates)[0]
