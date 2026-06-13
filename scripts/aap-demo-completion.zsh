@@ -31,7 +31,6 @@ _aap_demo() {
         'create:Create MINC cluster only (MINC)'
         'destroy:Delete entire MINC cluster (MINC)'
         'stop:Stop MINC cluster gracefully (MINC)'
-        'start:Start stopped MINC cluster (MINC)'
         'repair:Repair MINC after podman crash (MINC)'
         'setup:Run setup only - storage, coredns, mkcert (MINC)'
         'kubeconfig:Sync MINC kubeconfig (MINC)'

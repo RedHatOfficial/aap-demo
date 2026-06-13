@@ -7,6 +7,11 @@ $Script:AapDemoConfigDir = Join-Path $env:USERPROFILE '.aap-demo'
 $Script:AapDemoDefaultNamespace = 'aap-operator'
 $Script:AapDemoDefaultChannel = 'stable-2.7'
 $Script:AapDemoDefaultOcpVersion = '4.20'
+$Script:AapDemoUserBin = Join-Path $env:USERPROFILE '.local\bin'
+
+if ((Test-Path -LiteralPath $Script:AapDemoUserBin) -and ($env:Path -notlike "*$Script:AapDemoUserBin*")) {
+  $env:Path = "$Script:AapDemoUserBin;$env:Path"
+}
 
 function Write-AapHeader {
   param([string]$Title)
@@ -117,8 +122,20 @@ function Invoke-AapExternal {
     [Parameter(Mandatory)][string]$FilePath,
     [string[]]$ArgumentList = @()
   )
-  $output = & $FilePath @ArgumentList 2>&1
-  $code = $LASTEXITCODE
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = & $FilePath @ArgumentList 2>&1 | ForEach-Object {
+      if ($_ -is [System.Management.Automation.ErrorRecord]) {
+        $_.ToString()
+      } else {
+        $_
+      }
+    }
+    $code = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
   return [PSCustomObject]@{
     ExitCode = $code
     Output   = ($output | Out-String).TrimEnd()
@@ -126,30 +143,9 @@ function Invoke-AapExternal {
   }
 }
 
-function Invoke-AapKubectl {
-  param([Parameter(Mandatory)][string[]]$Args)
-  Assert-AapCommand kubectl 'Install kubectl or OpenShift Local (crc)'
-  Initialize-AapKubeEnvironment
-  $result = Invoke-AapExternal kubectl $Args
-  if ($result.ExitCode -ne 0) {
-    throw "kubectl failed ($($result.ExitCode)): $($result.Output)"
-  }
-  return $result
-}
-
-function Invoke-AapKubectlQuiet {
-  param([Parameter(Mandatory)][string[]]$Args)
-  Initialize-AapKubeEnvironment
-  & kubectl @Args 2>&1 | Out-Null
-  return $LASTEXITCODE
-}
-
 function Invoke-AapOc {
   param([Parameter(Mandatory)][string[]]$Args)
-  if (-not (Test-AapCommand oc)) {
-    # Fall back to kubectl create clusterrolebinding equivalents where possible
-    return $null
-  }
+  Assert-AapCommand oc 'Install oc: winget install --id RedHat.OpenShift-Client -e --source winget'
   Initialize-AapKubeEnvironment
   $result = Invoke-AapExternal oc $Args
   if ($result.ExitCode -ne 0) {
@@ -158,12 +154,61 @@ function Invoke-AapOc {
   return $result
 }
 
+function Invoke-AapOcQuiet {
+  param([Parameter(Mandatory)][string[]]$Args)
+  Initialize-AapKubeEnvironment
+  $result = Invoke-AapExternal oc $Args
+  return $result.ExitCode
+}
+
+function Invoke-AapOcCapture {
+  param([Parameter(Mandatory)][string[]]$Args)
+  Initialize-AapKubeEnvironment
+  return Invoke-AapExternal oc $Args
+}
+
+function Invoke-AapOcPatch {
+  param(
+    [Parameter(Mandatory)][string[]]$Args,
+    [Parameter(Mandatory)][string]$Patch,
+    [string]$PatchType = 'merge'
+  )
+  $temp = [System.IO.Path]::GetTempFileName()
+  try {
+    Set-Content -LiteralPath $temp -Value $Patch -Encoding ascii -NoNewline
+    $patchArgs = @($Args + @("--type=$PatchType", '--patch-file', $temp))
+    return Invoke-AapOc $patchArgs
+  } finally {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Invoke-AapOcPatchQuiet {
+  param(
+    [Parameter(Mandatory)][string[]]$Args,
+    [Parameter(Mandatory)][string]$Patch,
+    [string]$PatchType = 'merge'
+  )
+  $temp = [System.IO.Path]::GetTempFileName()
+  try {
+    Set-Content -LiteralPath $temp -Value $Patch -Encoding ascii -NoNewline
+    $patchArgs = @($Args + @("--type=$PatchType", '--patch-file', $temp))
+    $result = Invoke-AapExternal oc $patchArgs
+    return $result.ExitCode
+  } finally {
+    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Get-AapCrcStatus {
   Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
   $raw = & crc status --output json 2>$null
   if (-not $raw) { return @{ crcStatus = 'Unknown' } }
   try {
-    return ($raw | ConvertFrom-Json)
+    $parsed = $raw | ConvertFrom-Json
+    $prop = $parsed.PSObject.Properties['crcStatus']
+    $status = if ($prop) { [string]$prop.Value } else { 'Unknown' }
+    return @{ crcStatus = $status }
   } catch {
     return @{ crcStatus = 'Unknown' }
   }
@@ -174,7 +219,12 @@ function Get-AapCrcSshKey {
 }
 
 function Invoke-AapCrcSsh {
-  param([Parameter(Mandatory)][string]$RemoteCommand)
+  param(
+    [Parameter(Mandatory)][string]$RemoteCommand,
+    [switch]$AllowFailure
+  )
+  # Windows here-strings use CRLF; bash heredocs require LF-only terminators.
+  $RemoteCommand = $RemoteCommand -replace "`r`n", "`n" -replace "`r", "`n"
   $key = Get-AapCrcSshKey
   if (-not (Test-Path -LiteralPath $key)) {
     throw "CRC SSH key not found: $key"
@@ -189,15 +239,50 @@ function Invoke-AapCrcSsh {
     $RemoteCommand
   )
   $result = Invoke-AapExternal ssh $args
-  if ($result.ExitCode -ne 0) {
+  if (-not $AllowFailure -and $result.ExitCode -ne 0) {
     throw "ssh failed ($($result.ExitCode)): $($result.Output)"
   }
   return $result.Output
 }
 
+function Test-AapCrcSsh {
+  param([Parameter(Mandatory)][string]$RemoteCommand)
+  $RemoteCommand = $RemoteCommand -replace "`r`n", "`n" -replace "`r", "`n"
+  $key = Get-AapCrcSshKey
+  if (-not (Test-Path -LiteralPath $key)) {
+    return $false
+  }
+  $args = @(
+    '-p', '2222',
+    '-i', $key,
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'UserKnownHostsFile=NUL',
+    '-o', 'LogLevel=ERROR',
+    'core@127.0.0.1',
+    $RemoteCommand
+  )
+  $result = Invoke-AapExternal ssh $args
+  return $result.ExitCode -eq 0
+}
+
+function Set-AapUtf8Content {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [Parameter(Mandatory)][string]$Value
+  )
+  $encoding = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $Value, $encoding)
+}
+
 function Get-AapManifestPath {
   param([Parameter(Mandatory)][string]$RelativePath)
   Join-Path $Script:AapDemoRepoRoot $RelativePath
+}
+
+function Read-AapManifest {
+  param([Parameter(Mandatory)][string]$RelativePath)
+  $raw = Get-Content -LiteralPath (Get-AapManifestPath $RelativePath) -Raw
+  return ($raw -replace "`r`n", "`n" -replace "`r", "`n")
 }
 
 function Apply-AapManifestTemplate {
@@ -215,8 +300,8 @@ function Apply-AapManifestTemplate {
   }
   $temp = [System.IO.Path]::GetTempFileName()
   try {
-    Set-Content -LiteralPath $temp -Value $content -Encoding utf8NoBOM
-    Invoke-AapKubectl @('apply', '-f', $temp) | Out-Null
+    Set-AapUtf8Content -Path $temp -Value $content
+    Invoke-AapOc @('apply', '-f', $temp) | Out-Null
   } finally {
     Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
   }
@@ -224,35 +309,36 @@ function Apply-AapManifestTemplate {
 
 function Grant-AapNamespaceSccs {
   param([Parameter(Mandatory)][string]$Namespace)
-  if (Test-AapCommand oc) {
-    Invoke-AapOc @('adm', 'policy', 'add-scc-to-group', 'anyuid', "system:serviceaccounts:$Namespace") | Out-Null
-    Invoke-AapOc @('adm', 'policy', 'add-scc-to-group', 'privileged', "system:serviceaccounts:$Namespace") | Out-Null
-    return
-  }
-  foreach ($scc in @('anyuid', 'privileged')) {
-    $name = "system:openshift:scc:${scc}:${Namespace}"
-    if ((Invoke-AapKubectlQuiet @('get', 'clusterrolebinding', $name)) -ne 0) {
-      Invoke-AapKubectl @(
-        'create', 'clusterrolebinding', $name,
-        "--clusterrole=system:openshift:scc:$scc",
-        "--group=system:serviceaccounts:$Namespace"
-      ) | Out-Null
-    }
-  }
+  Invoke-AapOc @('adm', 'policy', 'add-scc-to-group', 'anyuid', "system:serviceaccounts:$Namespace") | Out-Null
+  Invoke-AapOc @('adm', 'policy', 'add-scc-to-group', 'privileged', "system:serviceaccounts:$Namespace") | Out-Null
+}
+
+function Install-AapOlmViaCrcVm {
+  $sdkVersion = 'v1.38.0'
+  $kubeConfig = '/var/lib/microshift/resources/kubeadmin/kubeconfig'
+  $url = "https://github.com/operator-framework/operator-sdk/releases/download/$sdkVersion/operator-sdk_linux_amd64"
+  $cmd = "curl -fsSL -o /tmp/operator-sdk $url && chmod +x /tmp/operator-sdk && sudo KUBECONFIG=$kubeConfig /tmp/operator-sdk olm install"
+  Invoke-AapCrcSsh $cmd -AllowFailure | Out-Null
 }
 
 function Install-AapOlm {
-  Assert-AapCommand operator-sdk 'Install operator-sdk or run .\powershell\install.ps1'
-  if ((Invoke-AapKubectlQuiet @('get', 'crd', 'subscriptions.operators.coreos.com')) -eq 0) {
+  if ((Invoke-AapOcQuiet @('get', 'crd', 'subscriptions.operators.coreos.com')) -eq 0) {
     Write-AapStep 'OLM already installed'
     return
   }
   Write-AapStep 'Installing OLM...'
-  $result = Invoke-AapExternal operator-sdk @('olm', 'install')
-  if ($result.ExitCode -ne 0 -and (Invoke-AapKubectlQuiet @('get', 'crd', 'subscriptions.operators.coreos.com')) -ne 0) {
-    throw "OLM install failed: $($result.Output)"
+  if (Test-AapCommand 'operator-sdk') {
+    $result = Invoke-AapExternal operator-sdk @('olm', 'install')
+    if ($result.ExitCode -ne 0 -and (Invoke-AapOcQuiet @('get', 'crd', 'subscriptions.operators.coreos.com')) -ne 0) {
+      throw "OLM install failed: $($result.Output)"
+    }
+  } else {
+    Install-AapOlmViaCrcVm
+    if ((Invoke-AapOcQuiet @('get', 'crd', 'subscriptions.operators.coreos.com')) -ne 0) {
+      throw 'OLM install failed (operator-sdk ran on CRC VM but subscriptions CRD is missing)'
+    }
   }
-  Invoke-AapKubectlQuiet @('delete', 'catsrc', 'operatorhubio-catalog', '-n', 'olm') | Out-Null
+  Invoke-AapOcQuiet @('delete', 'catsrc', 'operatorhubio-catalog', '-n', 'olm') | Out-Null
   Write-AapStep 'OLM installed'
 }
 
@@ -263,8 +349,11 @@ function Wait-AapCatalogSourceReady {
   )
   Write-Host '  Waiting for CatalogSource...'
   for ($i = 1; $i -le $Attempts; $i++) {
-    $state = (& kubectl get catalogsource redhat-operators -n $Namespace `
-      -o jsonpath='{.status.connectionState.lastObservedState}' 2>$null)
+    $result = Invoke-AapOcCapture @(
+      'get', 'catalogsource', 'redhat-operators', '-n', $Namespace,
+      '-o', 'jsonpath={.status.connectionState.lastObservedState}'
+    )
+    $state = if ($result.ExitCode -eq 0) { $result.Output.Trim() } else { '' }
     if ($state -eq 'READY') {
       Write-AapStep 'CatalogSource ready'
       return
@@ -281,15 +370,94 @@ function Wait-AapCsv {
     [int]$Attempts = 60
   )
   Write-Host '  Waiting for operator CSV...'
+  $csv = $null
   for ($i = 1; $i -le $Attempts; $i++) {
-    $csv = (& kubectl get csv -n $Namespace --no-headers 2>$null | Select-String 'aap-operator' | ForEach-Object { ($_ -split '\s+')[0] } | Select-Object -First 1)
-    if ($csv) {
-      Write-AapStep "Found CSV: $csv"
-      & kubectl wait --for=jsonpath='{.status.phase}'=Succeeded "csv/$csv" -n $Namespace --timeout=600s 2>$null | Out-Null
-      return $csv
+    $result = Invoke-AapOcCapture @('get', 'csv', '-n', $Namespace, '--no-headers')
+    if ($result.ExitCode -eq 0 -and $result.Output -notmatch '^No resources found') {
+      $csv = $result.Lines |
+        Where-Object { $_ -match '^aap-operator\.' } |
+        ForEach-Object { ($_ -split '\s+')[0] } |
+        Select-Object -First 1
+      if ($csv) {
+        Write-AapStep "Found CSV: $csv"
+        break
+      }
     }
     Write-Host "    attempt $i/$Attempts"
     Start-Sleep -Seconds 10
   }
-  throw 'CSV not found after timeout'
+  if (-not $csv) {
+    throw 'CSV not found after timeout'
+  }
+
+  Write-Host '  Waiting for CSV to reach Succeeded phase...'
+  if ((Invoke-AapOcQuiet @('wait', "--for=jsonpath={.status.phase}=Succeeded", "csv/$csv", '-n', $Namespace, '--timeout=600s')) -ne 0) {
+    $phaseResult = Invoke-AapOcCapture @('get', 'csv', $csv, '-n', $Namespace, '-o', 'jsonpath={.status.phase}')
+    $phase = if ($phaseResult.ExitCode -eq 0) { $phaseResult.Output.Trim() } else { 'unknown' }
+    throw "CSV $csv did not reach Succeeded phase (current: $phase)"
+  }
+  return $csv
+}
+
+function Find-AapGitBash {
+  $candidates = @(
+    (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Git\bin\bash.exe')
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+  if (@($candidates).Count -eq 0) {
+    throw @"
+Git Bash not found.
+
+Install Git for Windows: https://git-scm.com/download/win
+Required for this command (not yet implemented in PowerShell).
+"@
+  }
+  return @($candidates)[0]
+}
+
+function Get-AapInstalledRepoRoot {
+  $repoRoot = $Script:AapDemoRepoRoot
+  $marker = Join-Path $Script:AapDemoConfigDir 'repo-path'
+  if (Test-Path -LiteralPath $marker) {
+    $repoRoot = (Get-Content -LiteralPath $marker -Raw).Trim()
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'aap-demo.sh'))) {
+    throw @"
+aap-demo repo not found.
+
+Run from the repo directory or install with:
+  .\powershell\install.ps1
+"@
+  }
+  return $repoRoot
+}
+
+function Invoke-AapBashCli {
+  param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Arguments
+  )
+
+  $Arguments = @($Arguments)
+  $repoRoot = Get-AapInstalledRepoRoot
+  $bashExe = Find-AapGitBash
+
+  $env:HOME = $env:USERPROFILE
+
+  if ((Test-Path -LiteralPath $Script:AapDemoUserBin) -and ($env:Path -notlike "*$Script:AapDemoUserBin*")) {
+    $env:Path = "$Script:AapDemoUserBin;$env:Path"
+  }
+
+  if (-not $env:KUBECONFIG) {
+    $defaultKube = Join-Path $env:USERPROFILE '.crc\machines\crc\kubeconfig'
+    if (Test-Path -LiteralPath $defaultKube) {
+      $env:KUBECONFIG = $defaultKube
+    }
+  }
+
+  $scriptWin = Join-Path $repoRoot 'aap-demo.sh'
+  & $bashExe $scriptWin @Arguments
+  exit $LASTEXITCODE
 }

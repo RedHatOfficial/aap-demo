@@ -20,15 +20,16 @@ function Invoke-AapDemoDeploy {
   }
 
   Initialize-AapKubeEnvironment
-  if ((Invoke-AapKubectlQuiet @('cluster-info')) -ne 0) {
-    throw 'kubectl cannot connect to cluster'
+  if ((Invoke-AapOcQuiet @('cluster-info')) -ne 0) {
+    throw 'oc cannot connect to cluster'
   }
 
   Install-AapOlm
 
   if (-not $Force) {
-    $existing = (& kubectl get aap -n $Namespace --no-headers 2>$null | Select-Object -First 1)
-    if ($existing) {
+    $existingResult = Invoke-AapOcCapture @('get', 'aap', '-n', $Namespace, '--no-headers')
+    if ($existingResult.ExitCode -eq 0 -and $existingResult.Output) {
+      $existing = $existingResult.Lines | Select-Object -First 1
       $name = ($existing -split '\s+')[0]
       Write-AapStep "AAP instance '$name' already exists in $Namespace"
       Write-Host '  Use -Force to redeploy or aap-demo status to check health'
@@ -39,31 +40,32 @@ function Invoke-AapDemoDeploy {
   Write-AapStep "Deploying AAP 2.7 to namespace $Namespace"
   Initialize-AapNamespace -Namespace $Namespace
 
-  $catalog = Get-Content -LiteralPath (Get-AapManifestPath 'config/olm/catalogsource.yaml') -Raw
+  $catalog = Read-AapManifest 'config/olm/catalogsource.yaml'
   $catalog = $catalog -replace 'namespace: aap-operator', "namespace: $Namespace"
   $catalog = $catalog -replace 'redhat-operator-index:v[0-9.]+', "redhat-operator-index:v$OcpVersion"
   $temp = [System.IO.Path]::GetTempFileName()
-  Set-Content -LiteralPath $temp -Value $catalog -Encoding utf8NoBOM
-  Invoke-AapKubectl @('apply', '-f', $temp) | Out-Null
+  Set-AapUtf8Content -Path $temp -Value $catalog
+  Invoke-AapOc @('apply', '-f', $temp) | Out-Null
   Remove-Item -LiteralPath $temp -Force
 
   Wait-AapCatalogSourceReady -Namespace $Namespace
 
-  $og = Get-Content -LiteralPath (Get-AapManifestPath 'config/olm/operatorgroup.yaml') -Raw
-  $og = $og -replace 'namespace: aap', "namespace: $Namespace"
+  $og = Read-AapManifest 'config/olm/operatorgroup.yaml'
+  $og = $og -replace '(?m)^  namespace: aap$', "  namespace: $Namespace"
   $og = $og -replace 'name: aap-og', "name: ${Namespace}-og"
-  $og = $og -replace '- aap', "- $Namespace"
+  $og = $og -replace '(?m)^    - aap$', "    - $Namespace"
   $temp = [System.IO.Path]::GetTempFileName()
-  Set-Content -LiteralPath $temp -Value $og -Encoding utf8NoBOM
-  Invoke-AapKubectl @('apply', '-f', $temp) | Out-Null
+  Set-AapUtf8Content -Path $temp -Value $og
+  Invoke-AapOc @('apply', '-f', $temp) | Out-Null
   Remove-Item -LiteralPath $temp -Force
 
-  $sub = Get-Content -LiteralPath (Get-AapManifestPath 'config/olm/subscription.yaml') -Raw
-  $sub = $sub -replace 'namespace: aap', "namespace: $Namespace"
+  $sub = Read-AapManifest 'config/olm/subscription.yaml'
+  $sub = $sub -replace '(?m)^  namespace: aap$', "  namespace: $Namespace"
+  $sub = $sub -replace 'sourceNamespace: aap-operator', "sourceNamespace: $Namespace"
   $sub = $sub -replace 'channel: stable-2.7', "channel: $Channel"
   $temp = [System.IO.Path]::GetTempFileName()
-  Set-Content -LiteralPath $temp -Value $sub -Encoding utf8NoBOM
-  Invoke-AapKubectl @('apply', '-f', $temp) | Out-Null
+  Set-AapUtf8Content -Path $temp -Value $sub
+  Invoke-AapOc @('apply', '-f', $temp) | Out-Null
   Remove-Item -LiteralPath $temp -Force
 
   $csv = Wait-AapCsv -Namespace $Namespace
@@ -74,16 +76,16 @@ function Invoke-AapDemoDeploy {
     throw "CR template not found: aap-$CrName.yaml"
   }
 
-  if ((Invoke-AapKubectlQuiet @('get', 'sc', 'nfs-local-rwx')) -eq 0) {
-    Invoke-AapKubectl @('apply', '-f', $crPath, '-n', $Namespace) | Out-Null
+  if ((Invoke-AapOcQuiet @('get', 'sc', 'nfs-local-rwx')) -eq 0) {
+    Invoke-AapOc @('apply', '-f', $crPath, '-n', $Namespace) | Out-Null
   } else {
     Write-AapWarn 'nfs-local-rwx missing — applying CR with ReadWriteOnce fallback'
     $cr = Get-Content -LiteralPath $crPath -Raw
     $cr = $cr -replace 'file_storage_storage_class: nfs-local-rwx', '# file_storage_storage_class: (default)'
     $cr = $cr -replace 'file_storage_access_mode: ReadWriteMany', 'file_storage_access_mode: ReadWriteOnce'
     $temp = [System.IO.Path]::GetTempFileName()
-    Set-Content -LiteralPath $temp -Value $cr -Encoding utf8NoBOM
-    Invoke-AapKubectl @('apply', '-f', $temp, '-n', $Namespace) | Out-Null
+    Set-AapUtf8Content -Path $temp -Value $cr
+    Invoke-AapOc @('apply', '-f', $temp, '-n', $Namespace) | Out-Null
     Remove-Item -LiteralPath $temp -Force
   }
 
@@ -98,9 +100,9 @@ function Initialize-AapNamespace {
   param([Parameter(Mandatory)][string]$Namespace)
 
   Write-AapStep "Setting up namespace $Namespace"
-  Invoke-AapKubectlQuiet @('create', 'namespace', $Namespace) | Out-Null
+  Invoke-AapOcQuiet @('create', 'namespace', $Namespace) | Out-Null
   Grant-AapNamespaceSccs -Namespace $Namespace
-  Invoke-AapKubectl @(
+  Invoke-AapOc @(
     'label', 'namespace', $Namespace,
     'pod-security.kubernetes.io/enforce=privileged',
     'pod-security.kubernetes.io/audit=privileged',
@@ -114,8 +116,8 @@ function Initialize-AapNamespace {
     return
   }
 
-  Invoke-AapKubectlQuiet @('delete', 'secret', 'redhat-operators-pull-secret', '-n', $Namespace) | Out-Null
-  Invoke-AapKubectl @(
+  Invoke-AapOcQuiet @('delete', 'secret', 'redhat-operators-pull-secret', '-n', $Namespace) | Out-Null
+  Invoke-AapOc @(
     'create', 'secret', 'generic', 'redhat-operators-pull-secret',
     "--from-file=.dockerconfigjson=$pullSecret",
     '--type=kubernetes.io/dockerconfigjson',
@@ -123,5 +125,5 @@ function Initialize-AapNamespace {
   ) | Out-Null
 
   $patch = '{"imagePullSecrets":[{"name":"redhat-operators-pull-secret"}]}'
-  Invoke-AapKubectl @('patch', 'serviceaccount', 'default', '-n', $Namespace, '--type=merge', '-p', $patch) | Out-Null
+  Invoke-AapOcPatch @('patch', 'serviceaccount', 'default', '-n', $Namespace) -Patch $patch | Out-Null
 }

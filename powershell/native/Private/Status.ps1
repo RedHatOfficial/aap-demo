@@ -17,7 +17,7 @@ function Invoke-AapDemoStatus {
     'Stopped' {
       Write-Host 'Cluster:     stopped' -ForegroundColor Yellow
       Write-Host ''
-      Write-Host 'Start with: aap-demo start  or  aap-demo create'
+      Write-Host 'Start with: crc start  or  aap-demo create'
       return
     }
     default {
@@ -33,25 +33,29 @@ function Invoke-AapDemoStatus {
   Write-Host "Kubeconfig:  $kube"
   Write-Host ''
 
-  if ((Invoke-AapKubectlQuiet @('cluster-info')) -ne 0) {
-    Write-AapWarn 'kubectl cannot connect'
+  if ((Invoke-AapOcQuiet @('cluster-info')) -ne 0) {
+    Write-AapWarn 'oc cannot connect'
     return
   }
 
   Write-Host 'Namespaces:'
   Write-Host '-----------'
-  $namespaces = & kubectl get ns --no-headers -o custom-columns=':metadata.name' 2>$null
+  $nsResult = Invoke-AapOcCapture @('get', 'ns', '--no-headers', '-o', 'custom-columns=:metadata.name')
+  $namespaces = if ($nsResult.ExitCode -eq 0) { $nsResult.Lines } else { @() }
   foreach ($ns in $namespaces) {
     if ([string]::IsNullOrWhiteSpace($ns)) { continue }
-    $pods = & kubectl get pods -n $ns --no-headers 2>$null
+    $podsResult = Invoke-AapOcCapture @('get', 'pods', '-n', $ns, '--no-headers')
+    $pods = if ($podsResult.ExitCode -eq 0) { $podsResult.Lines } else { @() }
     if (-not $pods) { continue }
     $total = @($pods | Where-Object { $_ -notmatch 'Completed' }).Count
     if ($total -eq 0) { continue }
     $running = @($pods | Select-String 'Running').Count
-    $aapCr = (& kubectl get aap -n $ns --no-headers 2>$null | Select-Object -First 1)
+    $aapResult = Invoke-AapOcCapture @('get', 'aap', '-n', $ns, '--no-headers')
+    $aapCr = if ($aapResult.ExitCode -eq 0) { $aapResult.Lines | Select-Object -First 1 } else { $null }
     if ($aapCr) {
       $crName = ($aapCr -split '\s+')[0]
-      $route = (& kubectl get route $crName -n $ns -o jsonpath='https://{.spec.host}' 2>$null)
+      $routeResult = Invoke-AapOcCapture @('get', 'route', $crName, '-n', $ns, '-o', 'jsonpath=https://{.spec.host}')
+      $route = if ($routeResult.ExitCode -eq 0) { $routeResult.Output.Trim() } else { '' }
       Write-Host ("  {0,-30} {1}/{2} pods  {3}  {4}" -f $ns, $running, $total, $crName, $route)
     } else {
       Write-Host ("  {0,-30} {1}/{2} pods" -f $ns, $running, $total)
@@ -61,20 +65,27 @@ function Invoke-AapDemoStatus {
   Write-Host ''
   Write-Host 'AAP Deployments:'
   Write-Host '----------------'
-  $routes = & kubectl get route -A --no-headers 2>$null |
-    Where-Object { $_ -notmatch '^(openshift-|kube-|aap-demo-)' } |
-    ForEach-Object { $cols = $_ -split '\s+'; "  https://$($cols[2])" }
+  $routesResult = Invoke-AapOcCapture @('get', 'route', '-A', '--no-headers')
+  $routes = if ($routesResult.ExitCode -eq 0) {
+    $routesResult.Lines |
+      Where-Object { $_ -notmatch '^(openshift-|kube-|aap-demo-)' } |
+      ForEach-Object { $cols = $_ -split '\s+'; "  https://$($cols[2])" }
+  } else { @() }
   if ($routes) { $routes | ForEach-Object { Write-Host $_ } }
   else { Write-Host '  (no AAP routes found)' }
 
   Write-Host ''
   Write-Host 'Credentials:'
   Write-Host '------------'
-  $aapNs = & kubectl get aap -A --no-headers 2>$null | ForEach-Object { ($_ -split '\s+')[0] } | Sort-Object -Unique
+  $aapNsResult = Invoke-AapOcCapture @('get', 'aap', '-A', '--no-headers')
+  $aapNs = if ($aapNsResult.ExitCode -eq 0) {
+    $aapNsResult.Lines | ForEach-Object { ($_ -split '\s+')[0] } | Sort-Object -Unique
+  } else { @() }
   $foundCred = $false
   foreach ($ns in $aapNs) {
     foreach ($secretName in @('aap-admin-password', 'myaap-admin-password', 'aap-controller-admin-password')) {
-      $pw = (& kubectl get secret $secretName -n $ns -o jsonpath='{.data.password}' 2>$null)
+      $pwResult = Invoke-AapOcCapture @('get', 'secret', $secretName, '-n', $ns, '-o', 'jsonpath={.data.password}')
+      $pw = if ($pwResult.ExitCode -eq 0) { $pwResult.Output.Trim() } else { '' }
       if ($pw) {
         $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pw))
         Write-Host ("  {0,-20} admin / {1}" -f "${ns}:", $decoded)

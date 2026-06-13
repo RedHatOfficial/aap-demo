@@ -11,4 +11,5 @@ Export-ModuleMember -Function @(
   'Invoke-AapDemoDeploy'
   'Invoke-AapDemoStatus'
   'Get-AapDemoHelp'
+  'Invoke-AapBashCli'
 )

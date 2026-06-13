@@ -212,7 +212,7 @@ Then run commands with `pwsh` instead of `powershell`.
 aap-demo (launcher in ~/.local/bin)
   └── powershell/aap-demo.ps1
         ├── create, deploy, status  →  powershell/native/AapDemo.psm1
-        └── everything else         →  powershell/aap-demo-bash.ps1 → aap-demo.sh
+        └── everything else         →  aap-demo.sh via Git Bash
 ```
 
 See [native/README.md](native/README.md) for module layout and known gaps vs the

@@ -38,7 +38,7 @@ fi
 # Check cluster connectivity
 if ! kubectl cluster-info >/dev/null 2>&1; then
   echo "ERROR: kubectl not connected to cluster"
-  echo "Make sure your cluster is running: aap-demo start"
+  echo "Make sure your cluster is running: crc start"
   exit 1
 fi
 

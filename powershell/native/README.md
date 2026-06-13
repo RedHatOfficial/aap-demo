@@ -15,7 +15,6 @@ PowerShell implementation of core aap-demo commands on Windows. Installed via
 ```
 powershell/
   aap-demo.ps1           # CLI router (PowerShell + bash fallback)
-  aap-demo-bash.ps1      # Git Bash delegate
   install.ps1
   native/
     AapDemo.psm1

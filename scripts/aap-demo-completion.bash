@@ -7,7 +7,7 @@ _aap_demo() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="deploy deploy-all deploy-operator deploy-aap status clean destroy stop start repair setup create watch update config redeploy redeploy-all redhat-status rh-status kubeconfig help"
+    commands="deploy deploy-all deploy-operator deploy-aap status clean destroy stop repair setup create watch update config redeploy redeploy-all redhat-status rh-status kubeconfig help"
     options="--infra --kubeconfig --context --ansible"
     infra_types="minc vm lab"
 

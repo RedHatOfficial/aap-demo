@@ -10,7 +10,6 @@
 #   ./aap-demo.sh clean               # Remove AAP deployment
 #   ./aap-demo.sh destroy             # Delete entire cluster
 #   ./aap-demo.sh stop                # Stop OpenShift Local cluster
-#   ./aap-demo.sh start               # Start OpenShift Local cluster
 #   ./aap-demo.sh repair              # Repair after crash
 #   ./aap-demo.sh setup               # Setup only (no deploy)
 #   ./aap-demo.sh create              # Create cluster only
@@ -113,7 +112,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
+    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
     --ai | --reset)
@@ -168,12 +167,36 @@ source "${SCRIPT_DIR}/includes/infra-api.sh"
 # -----------------------------------------------------------------------------
 
 check_kubectl() {
-  if ! command -v kubectl &>/dev/null; then
-    _err "kubectl not found"
-    echo ""
-    echo "Install kubectl:"
-    echo ""
-    if [ "$(uname)" = "Darwin" ]; then
+  if command -v kubectl &>/dev/null; then
+    return 0
+  fi
+
+  # OpenShift Local / MicroShift hosts often have oc but not kubectl (common on Windows).
+  if command -v oc &>/dev/null; then
+    kubectl() {
+      oc "$@"
+    }
+    return 0
+  fi
+
+  if command -v crc &>/dev/null; then
+    local _crc_oc_path
+    _crc_oc_path=$(crc oc-env 2>/dev/null | grep 'PATH=' | sed 's/.*PATH="\([^:]*\):.*/\1/' | head -1)
+    if [ -n "$_crc_oc_path" ] && [ -d "$_crc_oc_path" ] && [ -x "$_crc_oc_path/oc" ]; then
+      export PATH="$_crc_oc_path:$PATH"
+      kubectl() {
+        oc "$@"
+      }
+      return 0
+    fi
+  fi
+
+  _err "kubectl not found"
+  echo ""
+  echo "Install kubectl or the OpenShift CLI (oc):"
+  echo ""
+  case "$(uname -s)" in
+    Darwin)
       echo "  # macOS (Homebrew)"
       echo "  brew install kubectl"
       echo ""
@@ -184,18 +207,22 @@ check_kubectl() {
         echo "  curl -LO https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/amd64/kubectl"
       fi
       echo "  chmod +x kubectl && sudo mv kubectl /usr/local/bin/"
-    else
+      ;;
+    MINGW* | MSYS* | CYGWIN*)
+      echo "  winget install --id RedHat.OpenShift-Client -e --source winget"
+      echo "  # oc works as kubectl for aap-demo commands"
+      ;;
+    *)
       echo "  # Linux"
       echo "  sudo dnf install kubectl"
       echo "  OR"
       echo "  curl -LO https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
       echo "  chmod +x kubectl && sudo mv kubectl /usr/local/bin/"
-    fi
-    echo ""
-    echo "Or download from: https://kubernetes.io/docs/tasks/tools/"
-    return 1
-  fi
-  return 0
+      ;;
+  esac
+  echo ""
+  echo "Or download from: https://kubernetes.io/docs/tasks/tools/"
+  return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -256,7 +283,7 @@ verify_cluster_type() {
     echo ""
   elif [ "$state" = "stopped" ]; then
     echo "WARNING: Cluster exists but is stopped"
-    echo "  Run 'aap-demo start' to start it"
+    echo "  Run 'crc start' to start it"
     echo ""
   fi
   return 0
@@ -403,7 +430,6 @@ Cluster management:
   create          Create OpenShift Local cluster
   destroy         Delete cluster (--reset to clear config)
   stop            Stop cluster
-  start           Start cluster
   ssh             SSH into cluster node
 
 Examples:
@@ -461,7 +487,6 @@ COMMANDS:
     create          Create OpenShift Local cluster
     destroy [--reset] Delete local cluster (--reset also clears config)
     stop            Stop local cluster gracefully
-    start           Start stopped local cluster
     ssh             SSH into cluster node
     repair          Repair cluster after crash
     setup           Run setup only (storage, coredns, mkcert)
@@ -476,7 +501,6 @@ EXAMPLES:
     aap-demo deploy                  # Deploy AAP 2.7
     aap-demo status                  # Show cluster and AAP status
     aap-demo stop                    # Stop cluster
-    aap-demo start                   # Start cluster
     aap-demo ssh                     # SSH into cluster node
     aap-demo enable console          # Enable web console addon
 
@@ -595,7 +619,7 @@ _verify_cluster() {
 
   if [ "$cluster_state" = "stopped" ]; then
     echo "Cluster is stopped. Starting..."
-    cmd_start
+    _start_crc_cluster
     setup_kubeconfig
     if kubectl cluster-info &>/dev/null 2>&1; then
       return 0
@@ -622,7 +646,7 @@ _verify_cluster() {
   echo ""
   echo "ERROR: Cluster is not accessible"
   echo "  Run: aap-demo create   # Create a new cluster"
-  echo "  Run: aap-demo start    # Start a stopped cluster"
+  echo "  Run: crc start    # Start a stopped cluster"
   echo "  Run: aap-demo status   # Check cluster status"
   return 1
 }
@@ -909,7 +933,7 @@ cmd_diagnose() {
     ms_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('openshiftVersion',''))" 2>/dev/null || echo "")
     _check_pass "OpenShift Local running"
   elif [ "$crc_state" = "Stopped" ]; then
-    _check_fail "OpenShift Local is stopped — run: aap-demo start"
+    _check_fail "OpenShift Local is stopped — run: crc start"
   else
     _check_fail "OpenShift Local cluster not found — run: aap-demo create"
   fi
@@ -1615,7 +1639,7 @@ cmd_status() {
   elif [ "$cluster_state" = "stopped" ]; then
     printf "Cluster:     \033[1;33mstopped\033[0m\n"
     echo ""
-    echo "Start with: aap-demo start"
+    echo "Start with: crc start"
     return 0
   else
     printf "Cluster:     \033[1;31mnot running\033[0m\n"
@@ -1834,16 +1858,12 @@ cmd_stop() {
   printf "\033[1maap-demo stop\033[0m - Stopping CRC cluster...\n"
   crc stop || true
   echo "✓ CRC cluster stopped"
-  echo "To restart: aap-demo start"
+  echo "To restart: crc start"
 }
 
-cmd_start() {
-  echo ""
-  printf "\033[1maap-demo start\033[0m - Starting CRC cluster...\n"
+_start_crc_cluster() {
   crc start || true
-  # Fix DNS resolver if needed
   [ -f /etc/resolver/testing ] && sudo rm -f /etc/resolver/testing
-  echo "✓ CRC cluster started"
 }
 
 cmd_create() {
@@ -1886,8 +1906,7 @@ cmd_deploy() {
     cmd_create
   elif [ "$crc_state" = "stopped" ]; then
     echo "Cluster is stopped. Starting..."
-    crc start || true
-    [ -f /etc/resolver/testing ] && sudo rm -f /etc/resolver/testing
+    _start_crc_cluster
   fi
 
   # Install OLM if not present (OpenShift Local doesn't include it)
@@ -2034,7 +2053,7 @@ deploy_latest() {
   echo "Waiting for CSV to be created..."
   CSV_NAME=""
   for i in $(seq 1 60); do
-    CSV_NAME=$(kubectl get csv -n "$NAMESPACE" 2>/dev/null | grep aap-operator | awk '{print $1}' | head -1)
+    CSV_NAME=$(kubectl get csv -n "$NAMESPACE" 2>/dev/null | grep '^aap-operator\.' | awk '{print $1}' | head -1)
     if [ -n "$CSV_NAME" ]; then
       echo "Found CSV: $CSV_NAME"
       break
@@ -2556,7 +2575,7 @@ case "$COMMAND" in
   help | --help | -h | config | update | "" | destroy)
     # These commands don't need cluster access
     ;;
-  redeploy-all | deploy | deploy-all | redeploy | create | start)
+  redeploy-all | deploy | deploy-all | redeploy | create)
     # These handle their own cluster state (auto-start if stopped)
     setup_kubeconfig
     ;;
@@ -2584,9 +2603,6 @@ case "$COMMAND" in
     ;;
   stop)
     cmd_stop
-    ;;
-  start)
-    cmd_start
     ;;
   create)
     cmd_create

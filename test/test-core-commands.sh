@@ -85,18 +85,6 @@ else
   _fail "stop_calls_crc - command failed"
 fi
 
-# Test 4: start command - verify it calls crc start
-echo "Test 4: start command logic"
-if output=$(QUIET=true "$AAP_DEMO_SH" start 2>&1); then
-  if echo "$output" | grep -q "MOCK: crc start"; then
-    _pass "start_calls_crc"
-  else
-    _fail "start_calls_crc - did not call crc start"
-  fi
-else
-  _fail "start_calls_crc - command failed"
-fi
-
 # Test 5: destroy command - verify confirmation prompt in interactive mode
 echo "Test 5: destroy shows warning without QUIET"
 # Don't actually run destroy - just verify the warning message exists in the function

@@ -52,8 +52,6 @@ switch ($command.ToLowerInvariant()) {
     Get-AapDemoHelp
   }
   default {
-    $bashWrapper = Join-Path $PSScriptRoot 'aap-demo-bash.ps1'
-    & $bashWrapper @Arguments
-    exit $LASTEXITCODE
+    Invoke-AapBashCli @Arguments
   }
 }

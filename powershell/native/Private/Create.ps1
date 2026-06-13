@@ -61,24 +61,22 @@ function Invoke-AapDemoCreate {
 
   if ($preset -eq 'microshift') {
     Write-AapStep 'Configuring nip.io baseDomain...'
-    Invoke-AapCrcSsh @'
-sudo tee /etc/microshift/config.d/99-aap-demo-dns.yaml > /dev/null <<'EOF'
-dns:
-  baseDomain: 127.0.0.1.nip.io
-EOF
-'@ | Out-Null
+    Invoke-AapCrcSsh 'sudo mkdir -p /etc/microshift/config.d && printf ''%s\n'' ''dns:'' ''  baseDomain: 127.0.0.1.nip.io'' | sudo tee /etc/microshift/config.d/99-aap-demo-dns.yaml > /dev/null' | Out-Null
+    $dnsConfig = Invoke-AapCrcSsh 'sudo cat /etc/microshift/config.d/99-aap-demo-dns.yaml'
+    if ($dnsConfig -notmatch 'baseDomain:\s+127\.0\.0\.1\.nip\.io') {
+      throw "MicroShift DNS config invalid:`n$dnsConfig"
+    }
 
     Write-AapStep 'Restarting MicroShift with nip.io domain...'
-    Invoke-AapCrcSsh 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl start microshift' | Out-Null
+    Invoke-AapCrcSsh 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl reset-failed microshift 2>/dev/null; sudo systemctl start microshift 2>/dev/null || true' -AllowFailure | Out-Null
 
+    Write-AapStep 'Waiting for MicroShift API...'
     for ($i = 1; $i -le 60; $i++) {
-      try {
-        Invoke-AapCrcSsh 'sudo kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig cluster-info' | Out-Null
+      if (Test-AapCrcSsh 'sudo kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig cluster-info') {
         break
-      } catch {
-        if ($i -eq 60) { throw 'MicroShift API did not become ready' }
-        Start-Sleep -Seconds 5
       }
+      if ($i -eq 60) { throw 'MicroShift API did not become ready' }
+      Start-Sleep -Seconds 5
     }
 
     $kubeDir = Join-Path $env:USERPROFILE '.crc\machines\crc'
@@ -88,26 +86,32 @@ EOF
     $env:KUBECONFIG = Join-Path $kubeDir 'kubeconfig'
 
     Write-AapStep 'Installing metrics-server...'
-    if ((Invoke-AapKubectlQuiet @('get', 'deployment', 'metrics-server', '-n', 'kube-system')) -ne 0) {
-      Invoke-AapKubectl @('apply', '-f', 'https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml') | Out-Null
-      Invoke-AapKubectl @(
-        'patch', 'deployment', 'metrics-server', '-n', 'kube-system', '--type=json',
-        '-p', '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
-      ) | Out-Null
+    if ((Invoke-AapOcQuiet @('get', 'deployment', 'metrics-server', '-n', 'kube-system')) -ne 0) {
+      Invoke-AapOc @('apply', '-f', 'https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml') | Out-Null
+    }
+    $metricsPatch = '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+    $metricsArgs = Invoke-AapOcCapture @(
+      'get', 'deployment', 'metrics-server', '-n', 'kube-system',
+      '-o', 'jsonpath={.spec.template.spec.containers[0].args}'
+    )
+    if ($metricsArgs.ExitCode -eq 0 -and $metricsArgs.Output -notmatch 'kubelet-insecure-tls') {
+      if ((Invoke-AapOcPatchQuiet @('patch', 'deployment', 'metrics-server', '-n', 'kube-system') -Patch $metricsPatch -PatchType 'json') -ne 0) {
+        Write-AapWarn 'Could not patch metrics-server for --kubelet-insecure-tls'
+      }
     }
 
-    if ((Invoke-AapKubectlQuiet @('get', 'sc', 'nfs-local-rwx')) -ne 0) {
+    if ((Invoke-AapOcQuiet @('get', 'sc', 'nfs-local-rwx')) -ne 0) {
       Write-AapStep 'Setting up nfs-local-rwx storage...'
-      if (Test-AapCommand oc) {
-        Invoke-AapOc @('adm', 'policy', 'add-scc-to-group', 'privileged', 'system:serviceaccounts:nfs-storage') | Out-Null
-      }
-      $defaultSc = (& kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>$null)
+      Invoke-AapOc @('adm', 'policy', 'add-scc-to-group', 'privileged', 'system:serviceaccounts:nfs-storage') | Out-Null
+      $defaultSc = (Invoke-AapOcCapture @(
+        'get', 'sc', '-o', 'jsonpath={.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
+      )).Output
       if (-not $defaultSc) { $defaultSc = 'topolvm-provisioner' }
       Apply-AapManifestTemplate 'config/manifests/nfs-server.yaml' @{ '__DEFAULT_SC__' = $defaultSc }
-      Invoke-AapKubectl @('wait', '--for=condition=Available', 'deployment/nfs-server', '-n', 'nfs-storage', '--timeout=120s') | Out-Null
-      $nfsIp = (& kubectl get svc nfs-server -n nfs-storage -o jsonpath='{.spec.clusterIP}')
+      Invoke-AapOc @('wait', '--for=condition=Available', 'deployment/nfs-server', '-n', 'nfs-storage', '--timeout=120s') | Out-Null
+      $nfsIp = (Invoke-AapOcCapture @('get', 'svc', 'nfs-server', '-n', 'nfs-storage', '-o', 'jsonpath={.spec.clusterIP}')).Output
       Apply-AapManifestTemplate 'config/manifests/nfs-provisioner.yaml' @{ '__NFS_SERVER_IP__' = $nfsIp }
-      Invoke-AapKubectl @('wait', '--for=condition=Available', 'deployment/nfs-provisioner', '-n', 'nfs-storage', '--timeout=120s') | Out-Null
+      Invoke-AapOc @('wait', '--for=condition=Available', 'deployment/nfs-provisioner', '-n', 'nfs-storage', '--timeout=120s') | Out-Null
     }
 
     Write-AapStep 'Configuring CoreDNS for in-cluster routes...'
@@ -162,6 +166,6 @@ function Set-AapCoreDns {
 "@
 
   $patch = @{ data = @{ Corefile = $corefile } } | ConvertTo-Json -Compress
-  & kubectl patch configmap dns-default -n openshift-dns --type merge -p $patch 2>$null | Out-Null
-  Invoke-AapKubectlQuiet @('rollout', 'restart', 'daemonset/dns-default', '-n', 'openshift-dns') | Out-Null
+  Invoke-AapOcPatchQuiet @('patch', 'configmap', 'dns-default', '-n', 'openshift-dns') -Patch $patch | Out-Null
+  Invoke-AapOcQuiet @('rollout', 'restart', 'daemonset/dns-default', '-n', 'openshift-dns') | Out-Null
 }

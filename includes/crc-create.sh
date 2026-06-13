@@ -475,7 +475,7 @@ COREFILE_EOF
       echo "  ✓ CoreDNS configured (re-patched): ${ROUTE_DOMAIN} → router service"
     else
       printf "  ${_YELLOW}WARNING: CoreDNS config not persisting — DNS operator keeps overwriting${_NC}\n"
-      echo "  If pods can't resolve nip.io routes, run: aap-demo start"
+      echo "  If pods can't resolve nip.io routes, run: crc start"
     fi
   fi
 fi

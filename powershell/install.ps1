@@ -48,27 +48,54 @@ function Find-GitBash {
   return $paths | Select-Object -First 1
 }
 
+function Install-Oc {
+  if (Test-CommandExists 'oc') {
+    Write-Ok 'oc already on PATH'
+    return
+  }
+
+  if (-not (Test-CommandExists 'winget')) {
+    Write-Warn 'oc not found and winget is unavailable'
+    return
+  }
+
+  Write-Info 'Installing oc via winget (RedHat.OpenShift-Client)...'
+  $wingetArgs = @(
+    'install', '--id', 'RedHat.OpenShift-Client', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements'
+  )
+  if ($Quiet) { $wingetArgs += '--disable-interactivity' }
+
+  try {
+    & winget @wingetArgs
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warn "winget install RedHat.OpenShift-Client failed (exit $LASTEXITCODE)"
+      return
+    }
+  } catch {
+    Write-Warn "Could not install oc via winget: $($_.Exception.Message)"
+    return
+  }
+
+  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $env:Path = @($machinePath, $userPath) -join ';'
+
+  if (Test-CommandExists 'oc') {
+    Write-Ok 'oc installed via winget'
+  } else {
+    Write-Warn 'OpenShift Client installed but oc is not on PATH yet — open a new PowerShell window'
+  }
+}
+
 function Install-OperatorSdk {
   if (Test-CommandExists 'operator-sdk') {
     Write-Ok 'operator-sdk already on PATH'
     return
   }
 
-  $sdkVersion = 'v1.38.0'
-  $arch = if ([Environment]::Is64BitOperatingSystem) { 'amd64' } else { '386' }
-  $url = "https://github.com/operator-framework/operator-sdk/releases/download/$sdkVersion/operator-sdk_windows_$arch"
-  $dest = Join-Path $BinDir 'operator-sdk.exe'
-
-  Write-Info "Downloading operator-sdk $sdkVersion..."
-  try {
-    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
-  } catch {
-    Write-Warn "Could not download operator-sdk: $($_.Exception.Message)"
-    Write-Info 'Install manually or let aap-demo deploy retry from Git Bash'
-    return
-  }
-
-  Write-Ok "operator-sdk installed: $dest"
+  Write-Ok 'operator-sdk not installed on Windows host (no official Windows binary)'
+  Write-Info 'OLM is installed on the CRC Linux VM automatically during aap-demo create'
 }
 
 function Get-UserPathEntries {
@@ -106,7 +133,7 @@ function Test-Prerequisites {
     $warnings.Add('Git for Windows — needed for diagnose, test, watch, and other advanced commands')
   }
 
-  foreach ($tool in @('crc', 'kubectl')) {
+  foreach ($tool in @('crc', 'oc')) {
     if (-not (Test-CommandExists $tool)) {
       $missing.Add($tool)
     }
@@ -119,7 +146,7 @@ function Test-Prerequisites {
   }
 
   if (-not (Test-CommandExists 'operator-sdk')) {
-    $warnings.Add('operator-sdk (installed automatically on first deploy when possible)')
+    $warnings.Add('operator-sdk (not required on Windows; OLM installs via CRC VM during create)')
   }
 
   return [PSCustomObject]@{
@@ -156,17 +183,19 @@ function Install-AapDemo {
     throw "Run install.ps1 from the aap-demo repo (expected aap-demo.sh in $RepoRoot)"
   }
 
+  Install-Oc
+
   $checks = Test-Prerequisites
   if ($checks.Missing.Count -gt 0) {
     Write-Err 'Missing required tools:'
     foreach ($item in $checks.Missing) { Write-Info "- $item" }
     Write-Host ''
     Write-Info 'OpenShift Local (crc): https://console.redhat.com/openshift/create/local'
-    Write-Info 'kubectl: bundled with crc/oc, or https://kubernetes.io/docs/tasks/tools/'
+    Write-Info 'oc: winget install --id RedHat.OpenShift-Client -e --source winget'
     throw 'Install missing prerequisites and re-run install.ps1'
   }
 
-  Write-Ok 'Required tools: crc, kubectl'
+  Write-Ok 'Required tools: crc, oc'
 
   if (-not (Find-GitBash)) {
     Write-Warn 'Git Bash not found — create/deploy/status work; other commands need Git for Windows'
