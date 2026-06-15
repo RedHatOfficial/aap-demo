@@ -17,6 +17,7 @@ skip_list:
   - yaml[line-length]  # Line too long (handled by yamllint)
   - name[casing]       # Task names don't follow capitalization
   - role-name          # Role name doesn't match requirements
+  - yaml[document-start] # Allow '---' at the start of YAML files
 
 # Warn only
 warn_list:

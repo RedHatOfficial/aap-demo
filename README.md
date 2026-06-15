@@ -21,6 +21,11 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 ### Prerequisites
 
+#### System Requirements
+
+A typical Microshift and AAP 2.7 environment requires 16GB of RAM, 2 cores, and 100 GB of storage.
+We recommend having a total of 32GB RAM available on your system.
+
 #### MacOS
 
 - [Homebrew](https://brew.sh/) — Install with: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
