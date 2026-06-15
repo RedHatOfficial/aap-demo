@@ -23,14 +23,16 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 #### MacOS
 
-- [Homebrew](https://brew.sh/) — Install with: `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
-- [Operator SDK](https://sdk.operatorframework.io/docs/installation/) — Install with: `brew install operator-sdk`
+- [Homebrew](https://brew.sh/) — Install with:
+  `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`
 
 #### Windows
 
-- [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`; Hyper-V must be enabled
+- [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`;
+  Hyper-V must be enabled
 - `kubectl` — included with OpenShift Local, or install separately
-- [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`; required for `diagnose`, `test`, `watch`, and other advanced commands
+- [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`;
+  required for `diagnose`, `test`, `watch`, and other advanced commands
 
   ```powershell
   winget install --id Git.Git -e --source winget
