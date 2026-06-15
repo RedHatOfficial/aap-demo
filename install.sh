@@ -76,19 +76,43 @@ if [ -n "$MISSING_DEPS" ]; then
       esac
     done
   else
-    echo "ERROR: Missing required dependencies:$MISSING_DEPS"
-    echo ""
-    echo "Install with:"
-    echo ""
-    echo "  Fedora/RHEL:"
-    echo "    sudo dnf install ansible-core jq python3-pip"
-    echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
-    echo ""
-    echo "  Ubuntu/Debian:"
-    echo "    sudo apt install ansible jq python3-pip"
-    echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
-    echo ""
-    exit 1
+    # Auto-install on Linux
+    echo "Installing missing dependencies..."
+    for dep in $MISSING_DEPS; do
+      case "$dep" in
+        kubectl)
+          echo "Installing kubectl..."
+          KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+          KUBECTL_ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+          curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl"
+          chmod +x kubectl
+          mkdir -p ~/.local/bin
+          mv kubectl ~/.local/bin/
+          echo "✓ kubectl installed to ~/.local/bin/kubectl"
+          ;;
+        ansible|jq|python3)
+          # Try package manager
+          if command -v dnf &>/dev/null; then
+            PKG_CMD="sudo dnf install -y"
+            case "$dep" in
+              ansible) PKG="ansible-core" ;;
+              *) PKG="$dep" ;;
+            esac
+          elif command -v apt &>/dev/null; then
+            PKG_CMD="sudo apt install -y"
+            PKG="$dep"
+          else
+            echo "ERROR: No supported package manager (dnf/apt) found for $dep"
+            exit 1
+          fi
+          echo "Installing $dep via package manager..."
+          $PKG_CMD $PKG || {
+            echo "ERROR: Failed to install $dep"
+            exit 1
+          }
+          ;;
+      esac
+    done
   fi
 
   echo ""
