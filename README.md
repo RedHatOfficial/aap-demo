@@ -9,12 +9,12 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 **Key characteristics:**
 
-- One command setup: `aap-demo create && aap-demo deploy`
+- One command setup: `aap-demo deploy`
 - Full OpenShift API compatibility (OLM, Routes, CRDs)
 - Shared Podman/CRI-O storage — locally built images are immediately available to pods
 - In-cluster registry at `registry.apps.127.0.0.1.nip.io`
 - Valid TLS certificates (auto-trusted on macOS/Linux)
-- Addon system: `aap-demo enable console`, `aap-demo enable registry`, `aap-demo enable mcp-server`
+- Addon system: `aap-demo enable mcp-server`
 - Reproducible — destroy and recreate in minutes
 
 ## Quick Start
@@ -34,7 +34,6 @@ A typical Microshift and AAP 2.7 environment requires 16GB of RAM, 2 cores, and
 #### Windows
 
 - [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`; Hyper-V must be enabled
-- `kubectl` — included with OpenShift Local, or install separately
 - [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`;
   required for `diagnose`, `test`, `watch`, and other advanced commands
 
@@ -46,27 +45,12 @@ A typical Microshift and AAP 2.7 environment requires 16GB of RAM, 2 cores, and
 
 #### OpenShift Local
 
-- OpenShift Local — [Download](https://console.redhat.com/openshift/create/local)
+- OpenShift Local — [Install](https://console.redhat.com/openshift/create/local)
 - On Linux: also install `libvirt-daemon`, `libvirt-daemon-driver-storage`, `libvirt-daemon-driver-network`, `qemu-kvm`
 - On Windows: Hyper-V enabled (OpenShift Local requirement)
 - Obtain a **Pull Secret** from the [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret)
 
 ### macOS / Linux
-
-#### Download the OpenShift client for your platform
-
-| Platform | Download |
-|----------|----------|
-| macOS (Apple Silicon) | `curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-mac-arm64.tar.gz` |
-| macOS (Intel) | `curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-mac.tar.gz` |
-| Linux | `curl -LO https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/stable/openshift-client-linux.tar.gz` |
-
-#### Extract and copy to /usr/local/bin
-
-```bash
-tar -xzf openshift-client-*.tar.gz
-sudo cp oc kubectl /usr/local/bin/
-```
 
 #### Download your pull secret from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret) and save it
 
@@ -85,13 +69,9 @@ cd aap-demo && ./install.sh
 #### Deploy
 
 ```bash
-aap-demo create        # Create the cluster
 aap-demo deploy        # Deploy AAP 2.7
 aap-demo status        # Check deployment status
 ```
-
-On first run, you'll be prompted to select an infrastructure backend (Microshift is recommended). The choice is saved to
- `~/.aap-demo/config`
 
 ### Windows
 
@@ -204,60 +184,19 @@ aap-demo update              # Pull latest code and reinstall
 aap-demo help                # Full command reference
 ```
 
-## Credentials
-
-A Red Hat pull secret is required:
-
-```bash
-mkdir -p ~/.aap-demo
-# Download from: https://console.redhat.com/openshift/install/pull-secret
-# Save as: ~/.aap-demo/pull-secret.txt
-```
-
 ## Architecture
 
 ### macOS / Linux / Windows
 
-```mermaid
-flowchart LR
-    subgraph Host["Host"]
-        CLI["aap-demo"]
-        OC["oc / kubectl"]
-    end
-
-    subgraph VM["OpenShift Local VM"]
-        subgraph AAP["aap-operator"]
-            OP["AAP Operator"]
-            GW["Gateway"]
-            AC["Controller"]
-            AH["Hub"]
-            ED["EDA"]
-        end
-        OLM["olm / OperatorHub"]
-        ING["Ingress"]
-        STO["LVMS · NFS"]
-    end
-
-    CLI --> VM
-    OC --> VM
-    OLM --> OP
-    OP --> GW & AC & AH & ED
-    GW --> ING
-    AC & ED --> STO
-    AH --> STO
-    ING --> Host
-```
-
-- **VM lifecycle:** Managed by CRC (`crc start`, `crc stop`, `crc delete`)
 - **Networking:** SSH (2222), API (6443), HTTP/HTTPS (443) — all on localhost
 - **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
-- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust (manual trust may be needed on Windows)
+- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust/
+  Windows via certutil
 
 ## Addons
 
 ```bash
 aap-demo enable                # List all addons with status
-aap-demo enable registry       # In-cluster container registry
 aap-demo enable mcp-server     # MCP server for AI assistants (requires AAP)
 ```
 
