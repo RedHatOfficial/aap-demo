@@ -90,7 +90,7 @@ if [ -n "$MISSING_DEPS" ]; then
           mv kubectl ~/.local/bin/
           echo "✓ kubectl installed to ~/.local/bin/kubectl"
           ;;
-        ansible|jq|python3)
+        ansible | jq | python3)
           # Try package manager
           if command -v dnf &>/dev/null; then
             PKG_CMD="sudo dnf install -y"
