@@ -287,9 +287,6 @@ aap-demo (launcher in ~/.local/bin)
               └── diagnose --ai  →  Git Bash (when needed)
 ```
 
-See [native/README.md](native/README.md) for module layout and known gaps vs the
-bash implementation.
-
 ## Updating
 
 ```powershell

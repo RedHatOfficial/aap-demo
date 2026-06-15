@@ -147,7 +147,6 @@ other cluster data.
 - `create`, `deploy`, and `status` are PowerShell-native; install Git for Windows for
   other commands (`diagnose`, `test`, `watch`, …)
 - See [powershell/README.md](powershell/README.md) for full Windows install and usage
-- See [powershell/native/README.md](powershell/native/README.md) for PowerShell module details
 
 Once deployed, `aap-demo status` shows routes, credentials, and cluster health:
 
