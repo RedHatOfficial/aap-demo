@@ -10,6 +10,7 @@
 #   ./aap-demo.sh clean               # Remove AAP deployment
 #   ./aap-demo.sh destroy             # Delete entire cluster
 #   ./aap-demo.sh stop                # Stop OpenShift Local cluster
+#   ./aap-demo.sh start               # Start stopped cluster
 #   ./aap-demo.sh repair              # Repair after crash
 #   ./aap-demo.sh setup               # Setup only (no deploy)
 #   ./aap-demo.sh create              # Create cluster only
@@ -487,6 +488,7 @@ COMMANDS:
     create          Create OpenShift Local cluster
     destroy [--reset] Delete local cluster (--reset also clears config)
     stop            Stop local cluster gracefully
+    start           Start stopped cluster (re-applies CoreDNS config)
     ssh             SSH into cluster node
     repair          Repair cluster after crash
     setup           Run setup only (storage, coredns, mkcert)
@@ -501,6 +503,7 @@ EXAMPLES:
     aap-demo deploy                  # Deploy AAP 2.7
     aap-demo status                  # Show cluster and AAP status
     aap-demo stop                    # Stop cluster
+    aap-demo start                   # Start stopped cluster
     aap-demo ssh                     # SSH into cluster node
     aap-demo enable console          # Enable web console addon
 
@@ -1858,7 +1861,27 @@ cmd_stop() {
   printf "\033[1maap-demo stop\033[0m - Stopping CRC cluster...\n"
   crc stop || true
   echo "✓ CRC cluster stopped"
-  echo "To restart: crc start"
+  echo "To restart: aap-demo start"
+}
+
+cmd_start() {
+  echo ""
+  printf "\033[1maap-demo start\033[0m - Starting CRC cluster...\n"
+  _start_crc_cluster
+  setup_kubeconfig
+
+  # Re-apply CoreDNS config (fixes DNS after restarts)
+  if [ -f "${SCRIPT_DIR}/includes/crc-create.sh" ]; then
+    # Extract and re-run just the CoreDNS config function
+    bash -c "
+      source '${SCRIPT_DIR}/includes/crc-create.sh'
+      configure_coredns 2>/dev/null || true
+    "
+  fi
+
+  echo "✓ CRC cluster started"
+  echo ""
+  echo "Run 'aap-demo status' to check cluster health"
 }
 
 _start_crc_cluster() {
@@ -2603,6 +2626,9 @@ case "$COMMAND" in
     ;;
   stop)
     cmd_stop
+    ;;
+  start)
+    cmd_start
     ;;
   create)
     cmd_create

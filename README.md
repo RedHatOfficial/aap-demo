@@ -261,7 +261,8 @@ Test suite validates core aap-demo commands without requiring cluster operations
 Tests verify:
 
 - `status` - execution and output format
-- `start`/`stop` - CRC command delegation
+- `start` - CRC startup + CoreDNS reconfiguration (fixes DNS after restarts)
+- `stop` - CRC shutdown
 - `destroy` - warning messages and cleanup logic
 - `create` - script delegation and OLM setup
 
