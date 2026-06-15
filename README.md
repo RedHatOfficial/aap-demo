@@ -30,7 +30,8 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 - [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`; Hyper-V must be enabled
 - `kubectl` — included with OpenShift Local, or install separately
-- [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`; required for `diagnose`, `test`, `watch`, and other advanced commands
+- [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`;
+  required for `diagnose`, `test`, `watch`, and other advanced commands
 
   ```powershell
   winget install --id Git.Git -e --source winget
@@ -89,7 +90,7 @@ On first run, you'll be prompted to select an infrastructure backend (Microshift
 
 ### Windows
 
-See **[powershell/README.md](../powershell/README.md)** for full install and usage
+See the **[Windows installer guide](powershell/README.md)** for full install and usage
 instructions. Summary:
 
 #### Save your pull secret

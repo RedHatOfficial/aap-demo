@@ -3,18 +3,16 @@
 Install and run [aap-demo](../README.md) on Windows using PowerShell. All commands
 run natively in PowerShell; only `diagnose --ai` uses Git Bash.
 
-**Branch:** `feature/powershell-native` (while this work is in progress)
-
 ## Requirements
 
-| Requirement | Notes |
-|-------------|--------|
-| **PowerShell 5.1+** | Built into Windows 10/11. PowerShell 7 (`pwsh`) also works. |
+| Requirement                 | Notes                                                                           |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| **PowerShell 5.1+**         | Built into Windows 10/11. PowerShell 7 (`pwsh`) also works.                     |
 | **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
-| **OpenShift CLI (`oc`)** | Installed by `install.ps1` via winget when missing. |
-| **Red Hat pull secret** | [Download](https://console.redhat.com/openshift/install/pull-secret) |
-| **Git for Windows** | Optional. Only needed for `diagnose --ai`. |
-| **OpenSSH client** | Used during `create` to configure the cluster VM (`ssh` on PATH). |
+| **OpenShift CLI (`oc`)**    | Installed by `install.ps1` via winget when missing.                             |
+| **Red Hat pull secret**     | [Download](https://console.redhat.com/openshift/install/pull-secret)            |
+| **Git for Windows**         | Optional. Only needed for `diagnose --ai`.                                      |
+| **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
 `kubectl` is **not** required on Windows — all commands use `oc` exclusively.
 
@@ -22,12 +20,11 @@ Optional: `python`, `jq`.
 
 ## Install
 
-### 1. Clone and checkout
+### 1. Clone the repository
 
 ```powershell
 git clone https://github.com/RedHatOfficial/aap-demo.git
 cd aap-demo
-git checkout feature/powershell-native
 ```
 
 ### 2. Copy pull secret
@@ -73,30 +70,30 @@ prompt — see [Ingress CA and browser TLS](#ingress-ca-and-browser-tls) below.
 
 All commands run in PowerShell. Run `aap-demo help` for the full list.
 
-| Command | Description |
-|---------|-------------|
-| `aap-demo create` | Create OpenShift Local cluster (NFS, CoreDNS, OLM, metrics-server) |
-| `aap-demo deploy` | Deploy AAP 2.7 operator and instance via OLM |
-| `aap-demo deploy-operator` | Deploy operator only (no AAP CR) |
-| `aap-demo deploy-aap` | Apply AAP CR only (operator must exist) |
-| `aap-demo deploy -Force` | Deploy even if an AAP CR already exists |
-| `aap-demo redeploy` | Clean namespace and redeploy AAP |
-| `aap-demo redeploy-all` | Destroy cluster and full redeploy |
-| `aap-demo clean` | Remove AAP deployment |
-| `aap-demo destroy` | Delete CRC cluster (`--reset` clears saved preset) |
-| `aap-demo stop` | Stop CRC cluster |
-| `aap-demo status` | Cluster health, namespaces, routes, admin password |
-| `aap-demo diagnose` | Environment health checks |
-| `aap-demo watch` | Monitor AAP deployment until Successful |
-| `aap-demo idle true` / `false` | Scale AAP down/up |
-| `aap-demo kubeconfig` | Sync kubeconfig (context: `aap-demo`) |
-| `aap-demo ssh` | SSH into CRC VM |
-| `aap-demo enable` / `disable` | Enable or disable addons |
-| `aap-demo must-gather` | Collect diagnostic bundle |
-| `aap-demo redhat-status` | Check Red Hat registry status |
-| `aap-demo config` | Show or set `~/.aap-demo/config` values |
-| `aap-demo update` | `git pull` and reinstall launcher |
-| `aap-demo help` | Show command help |
+| Command                        | Description                                                        |
+| ------------------------------ | ------------------------------------------------------------------ |
+| `aap-demo create`              | Create OpenShift Local cluster (NFS, CoreDNS, OLM, metrics-server) |
+| `aap-demo deploy`              | Deploy AAP 2.7 operator and instance via OLM                       |
+| `aap-demo deploy-operator`     | Deploy operator only (no AAP CR)                                   |
+| `aap-demo deploy-aap`          | Apply AAP CR only (operator must exist)                            |
+| `aap-demo deploy -Force`       | Deploy even if an AAP CR already exists                            |
+| `aap-demo redeploy`            | Clean namespace and redeploy AAP                                   |
+| `aap-demo redeploy-all`        | Destroy cluster and full redeploy                                  |
+| `aap-demo clean`               | Remove AAP deployment                                              |
+| `aap-demo destroy`             | Delete CRC cluster (`--reset` clears saved preset)                 |
+| `aap-demo stop`                | Stop CRC cluster                                                   |
+| `aap-demo status`              | Cluster health, namespaces, routes, admin password                 |
+| `aap-demo diagnose`            | Environment health checks                                          |
+| `aap-demo watch`               | Monitor AAP deployment until Successful                            |
+| `aap-demo idle true` / `false` | Scale AAP down/up                                                  |
+| `aap-demo kubeconfig`          | Sync kubeconfig (context: `aap-demo`)                              |
+| `aap-demo ssh`                 | SSH into CRC VM                                                    |
+| `aap-demo enable` / `disable`  | Enable or disable addons                                           |
+| `aap-demo must-gather`         | Collect diagnostic bundle                                          |
+| `aap-demo redhat-status`       | Check Red Hat registry status                                      |
+| `aap-demo config`              | Show or set `~/.aap-demo/config` values                            |
+| `aap-demo update`              | `git pull` and reinstall launcher                                  |
+| `aap-demo help`                | Show command help                                                  |
 
 `aap-demo diagnose --ai` delegates to Git Bash for Claude-assisted analysis.
 
@@ -105,16 +102,16 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 Set in PowerShell before running commands, or add to
 `%USERPROFILE%\.aap-demo\config` as `KEY=value` lines.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CRC_CPUS` | `8` | VM CPU count |
-| `CRC_MEMORY` | `16384` | VM memory (MiB) |
-| `CRC_DISK` | `100` | VM disk (GiB) |
-| `CRC_PV_SIZE` | `50` | Storage for PVCs (GiB) |
-| `NAMESPACE` | `aap-operator` | Kubernetes namespace |
-| `QUIET` | `false` | Suppress interactive prompts |
-| `KUBECONFIG` | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig |
-| `AAP_DEMO_TRUST_CA` | `true` (implicit) | Set to `false` to skip automatic ingress CA import |
+| Variable            | Default                                      | Description                                        |
+| ------------------- | -------------------------------------------- | -------------------------------------------------- |
+| `CRC_CPUS`          | `8`                                          | VM CPU count                                       |
+| `CRC_MEMORY`        | `16384`                                      | VM memory (MiB)                                    |
+| `CRC_DISK`          | `100`                                        | VM disk (GiB)                                      |
+| `CRC_PV_SIZE`       | `50`                                         | Storage for PVCs (GiB)                             |
+| `NAMESPACE`         | `aap-operator`                               | Kubernetes namespace                               |
+| `QUIET`             | `false`                                      | Suppress interactive prompts                       |
+| `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |
+| `AAP_DEMO_TRUST_CA` | `true` (implicit)                            | Set to `false` to skip automatic ingress CA import |
 
 Example:
 
@@ -126,12 +123,12 @@ aap-demo create
 
 ## File locations
 
-| Path | Purpose |
-|------|---------|
-| `%USERPROFILE%\.aap-demo\config` | Saved preset, addons, preferences |
-| `%USERPROFILE%\.aap-demo\pull-secret.txt` | Red Hat pull secret |
+| Path                                         | Purpose                                     |
+| -------------------------------------------- | ------------------------------------------- |
+| `%USERPROFILE%\.aap-demo\config`             | Saved preset, addons, preferences           |
+| `%USERPROFILE%\.aap-demo\pull-secret.txt`    | Red Hat pull secret                         |
 | `%USERPROFILE%\.aap-demo\crc-ingress-ca.crt` | MicroShift ingress CA (saved for TLS trust) |
-| `%USERPROFILE%\.crc\` | OpenShift Local VM data |
+| `%USERPROFILE%\.crc\`                        | OpenShift Local VM data                     |
 
 ## Uninstall
 
@@ -200,11 +197,11 @@ is trusted on Windows.
 `create`, `deploy`, and `status` call **Install-AapIngressCaTrust** automatically:
 
 1. Fetch the ingress CA from the CRC VM:
-   `/var/lib/microshift/certs/ingress-ca/ca.crt`
+  `/var/lib/microshift/certs/ingress-ca/ca.crt`
 2. Save a copy to `%USERPROFILE%\.aap-demo\crc-ingress-ca.crt`
 3. Import into **Current User → Trusted Root Certification Authorities**
 4. Import into **Local Machine → Trusted Root Certification Authorities**
-   (requires Administrator / UAC — needed for Chrome and Edge)
+  (requires Administrator / UAC — needed for Chrome and Edge)
 
 When the CA is already trusted, these commands stay silent. Failures are
 warnings only; `status` never aborts because of certificate import.
@@ -219,9 +216,9 @@ aap-demo status
 #### Chrome or Edge still shows a red certificate banner
 
 1. Run `aap-demo status` and **accept the UAC prompt** when it appears.
-   You should see: `Ingress CA trusted (Windows system certificate store)`.
+  You should see: `Ingress CA trusted (Windows system certificate store)`.
 2. **Fully quit** the browser (taskbar icon → Exit, or close every window).
-   Reloading a tab is not enough — the trust store is read at startup.
+  Reloading a tab is not enough — the trust store is read at startup.
 3. Open the AAP URL from `aap-demo status` again.
 
 If you opened the route **before** the CA was trusted, clear cached security
