@@ -50,9 +50,6 @@ if [[ "$(uname)" == "Darwin" ]]; then
     exit 1
   fi
 
-  if ! command -v operator-sdk &>/dev/null; then
-    MISSING_DEPS="$MISSING_DEPS operator-sdk"
-  fi
 fi
 
 # Auto-install missing dependencies
@@ -66,9 +63,6 @@ if [ -n "$MISSING_DEPS" ]; then
       case "$dep" in
         kubectl)
           brew install kubectl
-          ;;
-        operator-sdk)
-          brew install operator-sdk
           ;;
         ansible)
           brew install ansible
@@ -89,12 +83,10 @@ if [ -n "$MISSING_DEPS" ]; then
     echo "  Fedora/RHEL:"
     echo "    sudo dnf install ansible-core jq python3-pip"
     echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
-    echo "    # operator-sdk: https://sdk.operatorframework.io/docs/installation/"
     echo ""
     echo "  Ubuntu/Debian:"
     echo "    sudo apt install ansible jq python3-pip"
     echo "    # kubectl: https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/"
-    echo "    # operator-sdk: https://sdk.operatorframework.io/docs/installation/"
     echo ""
     exit 1
   fi
