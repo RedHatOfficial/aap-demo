@@ -1,0 +1,6 @@
+# Auto-generated vars files
+.auto-*.yml
+vars.yml
+
+# Rendered templates
+.rendered/

@@ -2478,7 +2478,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server"
+AVAILABLE_ADDONS="mcp-server ansible-project"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
@@ -2529,8 +2529,10 @@ _addons_remove() {
 
 cmd_enable() {
   local addon="${1:-}"
+  shift || true
+
   if [ -z "$addon" ]; then
-    echo "Usage: aap-demo enable <addon>"
+    echo "Usage: aap-demo enable <addon> [options]"
     echo ""
     local saved
     saved=$(_addons_list)
@@ -2544,6 +2546,9 @@ cmd_enable() {
       fi
       printf "  %-15s %s\n" "$a" "($status)"
     done
+    echo ""
+    echo "Special usage:"
+    echo "  aap-demo enable ansible-project <git-url> [project-name]"
     return 0
   fi
 
@@ -2561,7 +2566,10 @@ cmd_enable() {
 
   echo "Enabling addon: $addon"
   _verify_cluster || return 1
-  bash "$addon_dir/deploy.sh"
+
+  # Pass extra arguments to deploy.sh
+  bash "$addon_dir/deploy.sh" "$@"
+
   _addons_add "$addon"
   echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
 }
