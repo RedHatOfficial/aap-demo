@@ -38,8 +38,12 @@ if ! command -v crc &>/dev/null; then
   exit 1
 fi
 
-# Ensure CRC daemon is running (required on Linux, auto-started on macOS)
-if [ "$(uname)" != "Darwin" ] && ! [ -S ~/.crc/crc-http.sock ]; then
+# Ensure CRC daemon is running (Linux only — macOS/Windows manage the daemon)
+_is_mingw() {
+  case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
+
+if ! _is_mingw && [ "$(uname)" != "Darwin" ] && ! [ -S ~/.crc/crc-http.sock ]; then
   echo "Starting CRC daemon..."
   crc daemon &>/dev/null &
   disown
@@ -70,39 +74,8 @@ if [ "$CRC_STATUS" = "Unknown" ] || [ -z "$CURRENT_PRESET" ] || [ "$CURRENT_PRES
   fi
 
   if [ -z "$SAVED_PRESET" ]; then
-    if [ -t 0 ]; then
-      echo ""
-      printf "${_BOLD}Select CRC preset:${_NC}\n"
-      echo ""
-      printf "  ${_BOLD}1) MicroShift — Recommended${_NC}\n"
-      echo "     Lightweight single-node Kubernetes (OpenShift API subset)"
-      echo "     + Fast boot (~2 min), ~10 system pods"
-      echo "     + Minimal resource usage (4 CPUs, 4GB RAM minimum)"
-      echo "     + OLM, Routes, SCCs supported"
-      echo "     - No built-in console (aap-demo provides one as addon)"
-      echo "     - DevSpaces not supported (devworkspace-operator incompatible)"
-      echo ""
-      printf "  ${_BOLD}2) OpenShift — Full Platform${_NC}\n"
-      echo "     Full OpenShift Container Platform (single-node)"
-      echo "     + Complete OpenShift API compatibility"
-      echo "     + Built-in console, OAuth, monitoring available"
-      echo "     + DevSpaces fully supported"
-      echo "     - Heavier (~96 system pods)"
-      echo "     - Requires more resources (4 CPUs, 9GB RAM minimum)"
-      echo "     - Slower boot (~5 min)"
-      echo ""
-      printf "Choice [1]: "
-      read -r preset_choice </dev/tty
-      echo ""
-    else
-      preset_choice=""
-    fi
-
-    case "${preset_choice:-1}" in
-      1 | microshift) SAVED_PRESET="microshift" ;;
-      2 | openshift) SAVED_PRESET="openshift" ;;
-      *) SAVED_PRESET="microshift" ;;
-    esac
+    # Default to microshift
+    SAVED_PRESET="microshift"
 
     # Save to config
     mkdir -p "$(dirname "${HOME}/.aap-demo/config")"
@@ -471,7 +444,7 @@ COREFILE_EOF
       echo "  ✓ CoreDNS configured (re-patched): ${ROUTE_DOMAIN} → router service"
     else
       printf "  ${_YELLOW}WARNING: CoreDNS config not persisting — DNS operator keeps overwriting${_NC}\n"
-      echo "  If pods can't resolve nip.io routes, run: aap-demo start"
+      echo "  If pods can't resolve nip.io routes, run: crc start"
     fi
   fi
 fi
