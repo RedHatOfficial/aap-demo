@@ -61,8 +61,8 @@ ensure_operator_sdk() {
   chmod +x "$SDK_DEST"
 
   # Try system install if user has sudo, otherwise use ~/.local/bin
-  if sudo -n true 2>/dev/null && [ -w /usr/local/bin ]; then
-    mv "$SDK_DEST" /usr/local/bin/operator-sdk
+  if sudo -n true 2>/dev/null; then
+    sudo mv "$SDK_DEST" /usr/local/bin/operator-sdk
     echo "✓ operator-sdk installed to /usr/local/bin/"
   else
     echo "✓ operator-sdk installed to ${SDK_DEST}"
