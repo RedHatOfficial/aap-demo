@@ -321,51 +321,6 @@ check_mkcert_ca() {
   fi
 }
 
-# -----------------------------------------------------------------------------
-# Preflight: operator-sdk (for DEV bundle deployments)
-# -----------------------------------------------------------------------------
-ensure_operator_sdk() {
-  if command -v operator-sdk >/dev/null 2>&1; then
-    return 0
-  fi
-
-  echo "operator-sdk not found. Installing..."
-  echo ""
-
-  # Detect platform and architecture
-  case "$(uname -s)" in
-    Darwin) SDK_OS="darwin" ;;
-    Linux) SDK_OS="linux" ;;
-    *)
-      echo "ERROR: Unsupported OS: $(uname -s)"
-      exit 1
-      ;;
-  esac
-  case "$(uname -m)" in
-    x86_64) SDK_ARCH="amd64" ;;
-    aarch64 | arm64) SDK_ARCH="arm64" ;;
-    *)
-      echo "ERROR: Unsupported architecture: $(uname -m)"
-      exit 1
-      ;;
-  esac
-
-  # Download from GitHub releases
-  SDK_VERSION="v1.38.0"
-  SDK_URL="https://github.com/operator-framework/operator-sdk/releases/download/${SDK_VERSION}/operator-sdk_${SDK_OS}_${SDK_ARCH}"
-  echo "Downloading operator-sdk ${SDK_VERSION} for ${SDK_OS}/${SDK_ARCH}..."
-
-  if ! curl -fsSL -o /tmp/operator-sdk "$SDK_URL"; then
-    echo "ERROR: Failed to download operator-sdk"
-    exit 1
-  fi
-
-  chmod +x /tmp/operator-sdk
-  sudo mv /tmp/operator-sdk /usr/local/bin/
-
-  echo "✓ operator-sdk installed to /usr/local/bin/"
-  echo ""
-}
 
 # -----------------------------------------------------------------------------
 # Help
@@ -1846,7 +1801,6 @@ cmd_create() {
 
   # Install OLM by default (OpenShift Local doesn't include it, needed for operator dev and latest deploys)
   setup_kubeconfig
-  ensure_operator_sdk
   bash "${SCRIPT_DIR}/addons/olm/deploy.sh" || {
     echo ""
     printf "  \033[1;33mWARNING: OLM install failed — you can retry with: aap-demo enable olm\033[0m\n"
@@ -1936,7 +1890,6 @@ deploy_latest() {
   _check_disk_space || exit 1
 
   # Ensure OLM is installed (OpenShift Local doesn't include it)
-  ensure_operator_sdk
   KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"
 
   echo ""
