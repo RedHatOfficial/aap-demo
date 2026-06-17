@@ -325,31 +325,9 @@ fi
 # ---------------------------------------------------------------------------
 # Trust ingress CA
 # ---------------------------------------------------------------------------
-printf "${_GREEN}▸${_NC} Trusting ingress CA...\n"
-
-CA_CERT="/tmp/crc-ingress-ca.crt"
-ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo cat /var/lib/microshift/certs/ingress-ca/ca.crt' >"$CA_CERT" 2>/dev/null
-
-if [ -s "$CA_CERT" ]; then
-  if [[ "$(uname)" == "Darwin" ]]; then
-    # Remove any previous ingress-ca certs to avoid accumulation
-    while sudo security delete-certificate -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null; do :; done
-    if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CA_CERT" 2>/dev/null; then
-      echo "  ✓ Ingress CA trusted (macOS keychain)"
-    else
-      printf "${_YELLOW}▸${_NC} Could not add CA (may need admin password)\n"
-    fi
-  else
-    # Linux: copy to system trust store and update (replaces previous)
-    if sudo cp "$CA_CERT" /etc/pki/ca-trust/source/anchors/crc-ingress-ca.crt 2>/dev/null \
-      && sudo update-ca-trust 2>/dev/null; then
-      echo "  ✓ Ingress CA trusted (system ca-trust)"
-    else
-      printf "${_YELLOW}▸${_NC} Could not add CA to system trust store\n"
-    fi
-  fi
-  rm -f "$CA_CERT"
-fi
+# shellcheck source=includes/ingress-ca-trust.sh
+source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
+install_ingress_ca_trust
 
 # ---------------------------------------------------------------------------
 # Set up kubeconfig
