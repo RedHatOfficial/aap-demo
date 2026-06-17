@@ -12,6 +12,5 @@
 
 spec:
   controller:
-    task_pod_spec:
-      securityContext:
-        fsGroup: 996  # awx UID - makes emptyDir volumes owned by awx group
+    security_context_settings:
+      fsGroup: 996  # awx UID - makes emptyDir volumes owned by awx group
