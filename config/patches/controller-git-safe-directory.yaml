@@ -1,17 +1,25 @@
 ---
 # Patch to fix git "dubious ownership" errors in AWX projects
-# Apply after AAP deployment creates the AutomationController CR
+# Apply after AAP deployment creates the AnsibleAutomationPlatform CR
 #
 # Usage:
-#   kubectl patch automationcontroller aap-controller -n aap-operator --patch-file config/patches/controller-git-safe-directory.yaml --type=merge
+#   kubectl patch ansibleautomationplatform aap -n aap-operator --patch-file config/patches/controller-git-safe-directory.yaml --type=merge
 #
 # Or integrate into aap-demo.sh deploy flow
 
 spec:
-  task_extra_env: |
-    - name: GIT_CONFIG_COUNT
-      value: "1"
-    - name: GIT_CONFIG_KEY_0
-      value: "safe.directory"
-    - name: GIT_CONFIG_VALUE_0
-      value: "/var/lib/awx/projects"
+  controller:
+    task_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: "safe.directory"
+      - name: GIT_CONFIG_VALUE_0
+        value: "/var/lib/awx/projects"  # Scoped to specific path (more secure than wildcard "*")
+    ee_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: "safe.directory"
+      - name: GIT_CONFIG_VALUE_0
+        value: "/var/lib/awx/projects"  # Scoped to specific path (more secure than wildcard "*")
