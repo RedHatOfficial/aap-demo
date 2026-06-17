@@ -21,3 +21,9 @@ __pycache__/
 .tox/
 node_modules/
 .npm/
+
+# Auto Generated Ansible-Project files
+.auto-*.yml
+
+## Rendered templates
+.rendered/
