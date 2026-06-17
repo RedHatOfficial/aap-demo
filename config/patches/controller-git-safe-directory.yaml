@@ -2,10 +2,8 @@
 # Patch to fix git "dubious ownership" errors in AWX projects
 # Apply after AAP deployment creates the AnsibleAutomationPlatform CR
 #
-# SECURITY NOTE: Uses wildcard (*) for safe.directory which reduces git CVE-2022-24765 protections.
-# AWX creates unpredictable subdirs like _7__pp under /var/lib/awx/projects. Scoped paths don't match.
-# Alternative mitigation: fix ownership (AWX should own /var/lib/awx/projects/* not root).
-# Wildcard acceptable in demo/dev contexts; production should fix ownership or use init containers.
+# Uses fsGroup to make awx (UID 996) own /var/lib/awx/projects emptyDir volume.
+# This is more secure than safe.directory wildcard (*) which disables CVE-2022-24765 protections.
 #
 # Usage:
 #   kubectl patch ansibleautomationplatform aap -n aap-operator --patch-file config/patches/controller-git-safe-directory.yaml --type=merge
@@ -14,17 +12,6 @@
 
 spec:
   controller:
-    task_extra_env: |
-      - name: GIT_CONFIG_COUNT
-        value: "1"
-      - name: GIT_CONFIG_KEY_0
-        value: "safe.directory"
-      - name: GIT_CONFIG_VALUE_0
-        value: "*"
-    ee_extra_env: |
-      - name: GIT_CONFIG_COUNT
-        value: "1"
-      - name: GIT_CONFIG_KEY_0
-        value: "safe.directory"
-      - name: GIT_CONFIG_VALUE_0
-        value: "*"
+    task_pod_spec:
+      securityContext:
+        fsGroup: 996  # awx UID - makes emptyDir volumes owned by awx group
