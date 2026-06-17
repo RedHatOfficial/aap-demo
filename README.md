@@ -33,6 +33,7 @@ A typical Microshift and AAP 2.7 environment requires 16GB of RAM, 2 cores, and
 
 #### Windows
 
+- Windows 11 Pro, Enterprise, or Server (Hyper-V is not available on Windows 11 Home)
 - [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`; Hyper-V must be enabled
 - [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`;
   required for `diagnose`, `test`, `watch`, and other advanced commands
