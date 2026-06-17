@@ -15,11 +15,11 @@ spec:
       - name: GIT_CONFIG_KEY_0
         value: "safe.directory"
       - name: GIT_CONFIG_VALUE_0
-        value: "/var/lib/awx/projects"  # Scoped to specific path (more secure than wildcard "*")
+        value: "*"
     ee_extra_env: |
       - name: GIT_CONFIG_COUNT
         value: "1"
       - name: GIT_CONFIG_KEY_0
         value: "safe.directory"
       - name: GIT_CONFIG_VALUE_0
-        value: "/var/lib/awx/projects"  # Scoped to specific path (more secure than wildcard "*")
+        value: "*"
