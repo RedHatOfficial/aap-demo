@@ -338,7 +338,7 @@ check_mkcert_ca() {
     echo ""
     echo "      mkcert -install"
     echo ""
-    echo "  You will be prompted for your administrator password."
+    echo "  You will be prompted for your system administrator password (sudo)."
     echo "  This is a one-time setup per machine."
     echo ""
     echo "  Firefox: Install certutil first (brew install nss / apt install libnss3-tools)"
