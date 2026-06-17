@@ -120,7 +120,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm)
+    console | registry | mcp-server | registry-ui | olm | ansible-project)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -138,8 +138,8 @@ for arg in "$@"; do
       export "$arg"
       ;;
     *)
-      # Commands that accept arbitrary path args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ]; then
+      # Commands that accept arbitrary arguments
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -2688,10 +2688,10 @@ case "$COMMAND" in
     cmd_test "${EXTRA_ARGS[@]}"
     ;;
   enable)
-    cmd_enable "${EXTRA_ARGS[0]:-}"
+    cmd_enable "${EXTRA_ARGS[@]}"
     ;;
   disable)
-    cmd_disable "${EXTRA_ARGS[0]:-}"
+    cmd_disable "${EXTRA_ARGS[@]}"
     ;;
   deploy | deploy-all)
     cmd_deploy
