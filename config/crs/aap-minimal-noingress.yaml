@@ -30,22 +30,9 @@ spec:
   controller:
     disabled: false
     ingress_type: none
-    # Fix git "dubious ownership" error on vanilla k8s
-    # Project directories may have different ownership than the running process
-    task_extra_env: |
-      - name: GIT_CONFIG_COUNT
-        value: "1"
-      - name: GIT_CONFIG_KEY_0
-        value: safe.directory
-      - name: GIT_CONFIG_VALUE_0
-        value: "*"
-    ee_extra_env: |
-      - name: GIT_CONFIG_COUNT
-        value: "1"
-      - name: GIT_CONFIG_KEY_0
-        value: safe.directory
-      - name: GIT_CONFIG_VALUE_0
-        value: "*"
+    # Fix git "dubious ownership" on project sync (emptyDir /var/lib/awx/projects)
+    security_context_settings:
+      fsGroup: 996  # awx UID — makes project volume group-owned by awx
 
   eda:
     disabled: false

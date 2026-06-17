@@ -8,6 +8,9 @@ spec:
 
   controller:
     disabled: false
+    # Fix git "dubious ownership" on project sync (emptyDir /var/lib/awx/projects)
+    security_context_settings:
+      fsGroup: 996  # awx UID — makes project volume group-owned by awx
 
   eda:
     disabled: false

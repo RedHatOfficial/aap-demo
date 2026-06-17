@@ -8,7 +8,8 @@
 # Usage:
 #   kubectl patch ansibleautomationplatform aap -n aap-operator --patch-file config/patches/controller-git-safe-directory.yaml --type=merge
 #
-# Or integrate into aap-demo.sh deploy flow
+# New deployments: included in config/crs/aap-minimal.yaml
+# Existing deployments: apply this patch manually (see Usage above)
 
 spec:
   controller:
