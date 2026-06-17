@@ -1,0 +1,46 @@
+---
+# Ansible Project Configuration (Non-Sensitive)
+# Copy this to project.yml and customize for your project
+# For secrets (git/AAP credentials), see vault.yml.example
+
+# Project identification
+project_name: my-ansible-project
+organization: Default
+
+# Git repository configuration
+git_url: https://github.com/your-org/your-repo.git
+git_branch: main
+
+# Descriptions
+project_description: "My Ansible automation project"
+credential_description: "Git credentials for my-ansible-project"
+aap_credential_description: "AAP Controller API credential for my-ansible-project"
+inventory_description: "Target inventory for my-ansible-project"
+job_template_description: "Configure AAP using my-ansible-project"
+
+# Inventory variables (optional)
+inventory_variables: |
+  ---
+  # Add inventory-level variables here
+  # ansible_connection: local
+  # custom_var: value
+
+# Job Template settings
+ask_variables_on_launch: true
+ask_limit_on_launch: false
+verbosity: 0
+
+# Extra vars for job template (optional)
+extra_vars: |
+  ---
+  # Add default extra vars here
+  # env: dev
+  # deploy_version: latest
+
+# Project SCM options (optional)
+scm_clean: true
+scm_delete_on_update: false
+scm_track_submodules: false
+scm_update_on_launch: true
+scm_update_cache_timeout: 0
+allow_override: false

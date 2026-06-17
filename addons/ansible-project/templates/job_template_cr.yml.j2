@@ -1,0 +1,26 @@
+---
+apiVersion: controller.ansible.com/v1beta1
+kind: JobTemplate
+metadata:
+  name: {{ project_name }}
+  namespace: {{ namespace }}
+spec:
+  name: "{{ project_name }}"
+  description: "{{ job_template_description | default('Configure AAP using ' + project_name) }}"
+  organization: "{{ organization | default('Default') }}"
+  inventory: "{{ project_name }}"
+  project: "{{ project_name }}"
+  playbook: "playbooks/configure_aap.yml"
+  job_type: run
+  credentials:
+    - "{{ project_name }}-aap"
+  ask_credentials_on_launch: {{ ask_credentials_on_launch | default(false) | lower }}
+  ask_variables_on_launch: {{ ask_variables_on_launch | default(true) | lower }}
+  ask_limit_on_launch: {{ ask_limit_on_launch | default(false) | lower }}
+  ask_tags_on_launch: {{ ask_tags_on_launch | default(false) | lower }}
+  ask_skip_tags_on_launch: {{ ask_skip_tags_on_launch | default(false) | lower }}
+  ask_diff_mode_on_launch: {{ ask_diff_mode_on_launch | default(false) | lower }}
+  ask_verbosity_on_launch: {{ ask_verbosity_on_launch | default(false) | lower }}
+  verbosity: {{ verbosity | default(0) }}
+  extra_vars: |
+{{ extra_vars | default('---') | indent(4, first=True) }}

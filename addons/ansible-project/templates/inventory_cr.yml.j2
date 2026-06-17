@@ -1,0 +1,12 @@
+---
+apiVersion: controller.ansible.com/v1beta1
+kind: Inventory
+metadata:
+  name: {{ project_name }}
+  namespace: {{ namespace }}
+spec:
+  name: "{{ project_name }}"
+  description: "{{ inventory_description | default('Inventory for ' + project_name) }}"
+  organization: "{{ organization | default('Default') }}"
+  variables: |
+{{ inventory_variables | default('---') | indent(4, first=True) }}

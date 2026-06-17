@@ -1,0 +1,66 @@
+---
+# Ansible Project Secrets (Vault)
+# Copy this to vault.yml and customize with your credentials
+# IMPORTANT: Encrypt this file with: ansible-vault encrypt vault.yml
+
+# ============================================================================
+# Git HTTPS Credentials (for SCM access to private repos)
+# ============================================================================
+
+# For HTTPS authentication (GitHub, GitLab, Bitbucket, etc.)
+# IMPORTANT: Use personal access tokens or app passwords, NOT your login password
+
+# For public repositories: leave empty or omit these fields
+git_username: ""
+git_password: ""
+
+# Examples:
+# GitHub:
+#   git_username: "your-username"
+#   git_password: "ghp_YourPersonalAccessToken"
+#
+# GitLab:
+#   git_username: "your-username"
+#   git_password: "glpat-YourPersonalAccessToken"
+#
+# Bitbucket:
+#   git_username: "your-username"
+#   git_password: "your-app-password"
+
+# NOTE: SSH URLs (git@...) are NOT supported by this addon.
+#       Only HTTPS URLs (https://...) are supported.
+
+# ============================================================================
+# AAP Controller Credentials (for playbook API access)
+# ============================================================================
+
+# The job template will use these credentials to access the Controller API
+# By default, these are auto-populated from the current AAP instance
+# Only override if you want your playbook to configure a DIFFERENT Controller
+
+# aap_host: https://controller.example.com
+# aap_username: admin
+# aap_password: supersecret
+# aap_verify_ssl: false
+
+# ============================================================================
+# Usage
+# ============================================================================
+
+# 1. Copy this file:
+#    cp vault.yml.example vault.yml
+#
+# 2. Edit vault.yml with your secrets
+#
+# 3. Encrypt the file:
+#    ansible-vault encrypt vault.yml
+#
+# 4. Deploy your project:
+#    ./deploy.sh --vault-password-file ~/.vault_pass
+#    # Or let ansible-vault prompt for password
+#
+# 5. To edit encrypted vault:
+#    ansible-vault edit vault.yml
+#
+# 6. To view encrypted vault:
+#    ansible-vault view vault.yml
