@@ -19,6 +19,102 @@ _YELLOW='\033[0;33m'
 _BOLD='\033[1m'
 _NC='\033[0m'
 
+configure_coredns() {
+  local current_preset route_domain current_domain escaped_domain current_corefile corefile
+  local crc_ssh_key crc_ssh_opts
+
+  crc_ssh_key="${HOME}/.crc/machines/crc/id_ed25519"
+  crc_ssh_opts="-i ${crc_ssh_key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+
+  current_preset="${CURRENT_PRESET:-}"
+  if [ -z "$current_preset" ]; then
+    current_preset=$(crc config get preset 2>/dev/null || echo "")
+    [ -n "$current_preset" ] && current_preset=$(echo "$current_preset" | awk '{print $NF}')
+  fi
+  current_preset="${current_preset:-${CRC_PRESET:-microshift}}"
+
+  printf "${_GREEN}▸${_NC} Configuring CoreDNS for in-cluster route resolution...\n"
+
+  export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
+
+  if [ "$current_preset" = "microshift" ]; then
+    route_domain="apps.crc.testing"
+    current_domain=$(ssh -p 2222 $crc_ssh_opts core@127.0.0.1 'grep -h baseDomain /etc/microshift/config.d/99-aap-demo-dns.yaml /etc/microshift/config.yaml 2>/dev/null | head -1' 2>/dev/null | awk '{print $2}' || true)
+    if [ -n "$current_domain" ]; then
+      route_domain="apps.${current_domain}"
+    fi
+  else
+    route_domain="apps-crc.testing"
+  fi
+
+  escaped_domain=$(echo "$route_domain" | sed 's/\./\\./g')
+
+  current_corefile=$(kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+  if echo "$current_corefile" | grep -q "router-internal-default"; then
+    echo "  ✓ CoreDNS already configured for ${route_domain}"
+    return 0
+  fi
+
+  echo "  Patching CoreDNS ConfigMap..."
+  corefile=$(
+    cat <<COREFILE_EOF
+.:5353 {
+    bufsize 1232
+    errors
+    log . {
+        class error
+    }
+    health {
+        lameduck 20s
+    }
+    ready
+    rewrite stop {
+        name regex (.*)\.${escaped_domain} router-internal-default.openshift-ingress.svc.cluster.local
+        answer auto
+    }
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+        pods insecure
+        fallthrough in-addr.arpa ip6.arpa
+    }
+    prometheus 127.0.0.1:9153
+    forward . /etc/resolv.conf {
+        policy sequential
+    }
+    cache 900 {
+        denial 9984 30
+    }
+    reload
+}
+COREFILE_EOF
+  )
+  kubectl patch configmap dns-default -n openshift-dns --type merge \
+    -p "{\"data\":{\"Corefile\":$(echo "$corefile" | jq -Rs .)}}"
+  kubectl rollout restart daemonset/dns-default -n openshift-dns 2>/dev/null || true
+  kubectl rollout status daemonset/dns-default -n openshift-dns --timeout=60s 2>/dev/null || true
+
+  sleep 5
+  if kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null | grep -q "router-internal-default"; then
+    echo "  ✓ CoreDNS configured: ${route_domain} → router service"
+    return 0
+  fi
+
+  echo "  CoreDNS config was overwritten by DNS operator — re-patching..."
+  kubectl patch configmap dns-default -n openshift-dns --type merge \
+    -p "{\"data\":{\"Corefile\":$(echo "$corefile" | jq -Rs .)}}"
+  kubectl rollout restart daemonset/dns-default -n openshift-dns 2>/dev/null || true
+  kubectl rollout status daemonset/dns-default -n openshift-dns --timeout=60s 2>/dev/null || true
+  sleep 5
+  if kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null | grep -q "router-internal-default"; then
+    echo "  ✓ CoreDNS configured (re-patched): ${route_domain} → router service"
+  else
+    printf "  ${_YELLOW}WARNING: CoreDNS config not persisting — DNS operator keeps overwriting${_NC}\n"
+    echo "  If pods can't resolve nip.io routes, run: crc start"
+  fi
+}
+
+# When sourced for CoreDNS only (aap-demo start), skip cluster creation.
+[[ "${AAP_DEMO_CONFIGURE_COREDNS_ONLY:-}" == "1" ]] && return 0
+
 echo ""
 printf "${_BOLD}aap-demo create${_NC} - Creating CRC cluster...\n"
 echo ""
@@ -369,85 +465,7 @@ fi
 # (Deferred to end of create flow — MicroShift's DNS controller overwrites
 # the configmap during startup, so we must wait for it to finish first)
 # ---------------------------------------------------------------------------
-printf "${_GREEN}▸${_NC} Configuring CoreDNS for in-cluster route resolution...\n"
-
-export KUBECONFIG="$HOME/.crc/machines/crc/kubeconfig"
-
-# Determine route domain
-if [ "$CURRENT_PRESET" = "microshift" ]; then
-  ROUTE_DOMAIN="apps.crc.testing"
-  CURRENT_DOMAIN=$(ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'grep -h baseDomain /etc/microshift/config.d/99-aap-demo-dns.yaml /etc/microshift/config.yaml 2>/dev/null | head -1' 2>/dev/null | awk '{print $2}' || true)
-  if [ -n "$CURRENT_DOMAIN" ]; then
-    ROUTE_DOMAIN="apps.${CURRENT_DOMAIN}"
-  fi
-else
-  ROUTE_DOMAIN="apps-crc.testing"
-fi
-
-ESCAPED_DOMAIN=$(echo "$ROUTE_DOMAIN" | sed 's/\./\\./g')
-
-# Check if CoreDNS already configured with our rewrite rule
-CURRENT_COREFILE=$(kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
-if echo "$CURRENT_COREFILE" | grep -q "router-internal-default"; then
-  echo "  ✓ CoreDNS already configured for ${ROUTE_DOMAIN}"
-else
-  echo "  Patching CoreDNS ConfigMap..."
-  COREFILE=$(
-    cat <<COREFILE_EOF
-.:5353 {
-    bufsize 1232
-    errors
-    log . {
-        class error
-    }
-    health {
-        lameduck 20s
-    }
-    ready
-    rewrite stop {
-        name regex (.*)\.${ESCAPED_DOMAIN} router-internal-default.openshift-ingress.svc.cluster.local
-        answer auto
-    }
-    kubernetes cluster.local in-addr.arpa ip6.arpa {
-        pods insecure
-        fallthrough in-addr.arpa ip6.arpa
-    }
-    prometheus 127.0.0.1:9153
-    forward . /etc/resolv.conf {
-        policy sequential
-    }
-    cache 900 {
-        denial 9984 30
-    }
-    reload
-}
-COREFILE_EOF
-  )
-  kubectl patch configmap dns-default -n openshift-dns --type merge \
-    -p "{\"data\":{\"Corefile\":$(echo "$COREFILE" | jq -Rs .)}}"
-  kubectl rollout restart daemonset/dns-default -n openshift-dns 2>/dev/null || true
-  kubectl rollout status daemonset/dns-default -n openshift-dns --timeout=60s 2>/dev/null || true
-
-  # Wait for rollout to complete, then verify config persisted
-  # MicroShift's DNS operator may reconcile the configmap — re-patch if needed
-  sleep 5
-  if kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null | grep -q "router-internal-default"; then
-    echo "  ✓ CoreDNS configured: ${ROUTE_DOMAIN} → router service"
-  else
-    echo "  CoreDNS config was overwritten by DNS operator — re-patching..."
-    kubectl patch configmap dns-default -n openshift-dns --type merge \
-      -p "{\"data\":{\"Corefile\":$(echo "$COREFILE" | jq -Rs .)}}"
-    kubectl rollout restart daemonset/dns-default -n openshift-dns 2>/dev/null || true
-    kubectl rollout status daemonset/dns-default -n openshift-dns --timeout=60s 2>/dev/null || true
-    sleep 5
-    if kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null | grep -q "router-internal-default"; then
-      echo "  ✓ CoreDNS configured (re-patched): ${ROUTE_DOMAIN} → router service"
-    else
-      printf "  ${_YELLOW}WARNING: CoreDNS config not persisting — DNS operator keeps overwriting${_NC}\n"
-      echo "  If pods can't resolve nip.io routes, run: crc start"
-    fi
-  fi
-fi
+configure_coredns
 
 # ---------------------------------------------------------------------------
 # Set sysctl for performance (inotify limits for operator watchers)

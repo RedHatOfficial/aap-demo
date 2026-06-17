@@ -1812,11 +1812,11 @@ cmd_start() {
 
   # Re-apply CoreDNS config (fixes DNS after restarts)
   if [ -f "${SCRIPT_DIR}/includes/crc-create.sh" ]; then
-    # Extract and re-run just the CoreDNS config function
     bash -c "
+      AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
       source '${SCRIPT_DIR}/includes/crc-create.sh'
-      configure_coredns 2>/dev/null || true
-    "
+      configure_coredns
+    " || true
   fi
 
   echo "✓ CRC cluster started"
@@ -1826,7 +1826,9 @@ cmd_start() {
 
 _start_crc_cluster() {
   crc start || true
-  [ -f /etc/resolver/testing ] && sudo rm -f /etc/resolver/testing
+  if [ -f /etc/resolver/testing ]; then
+    sudo rm -f /etc/resolver/testing
+  fi
 }
 
 cmd_create() {
