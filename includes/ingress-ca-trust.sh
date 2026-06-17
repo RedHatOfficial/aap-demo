@@ -19,6 +19,7 @@ if [ -n "${_INGRESS_CA_TRUST_LOADED:-}" ]; then return 0; fi
 _INGRESS_CA_TRUST_LOADED=1
 
 _INGRESS_CA_ANCHOR_NAME='crc-ingress-ca.crt'
+_INGRESS_CA_NSS_NICKNAME='crc-ingress-ca'
 _INGRESS_CA_RHEL_ANCHOR="/etc/pki/ca-trust/source/anchors/${_INGRESS_CA_ANCHOR_NAME}"
 _INGRESS_CA_DEBIAN_ANCHOR="/usr/local/share/ca-certificates/${_INGRESS_CA_ANCHOR_NAME}"
 
@@ -80,6 +81,46 @@ _ingress_ca_in_trust_store() {
   [ -n "$installed_fingerprint" ] && [ "$fingerprint" = "$installed_fingerprint" ]
 }
 
+_ingress_ca_nss_db_paths() {
+  # Chrome/Chromium use NSS, not system ca-trust. Chromium prefers ~/.pki/nssdb
+  # when it exists, otherwise ~/.local/share/pki/nssdb (since M146).
+  if [ -d "${HOME}/.pki/nssdb" ]; then
+    echo "sql:${HOME}/.pki/nssdb"
+  fi
+  if [ -d "${HOME}/.local/share/pki/nssdb" ]; then
+    echo "sql:${HOME}/.local/share/pki/nssdb"
+  fi
+}
+
+_ingress_ca_in_nss_store() {
+  local path="$1"
+  local db fingerprint
+
+  command -v certutil &>/dev/null || return 1
+
+  fingerprint=$(_ingress_ca_fingerprint "$path")
+  [ -n "$fingerprint" ] || return 1
+
+  while IFS= read -r db; do
+    [ -n "$db" ] || continue
+    certutil -d "$db" -L 2>/dev/null | grep -Fq "$_INGRESS_CA_NSS_NICKNAME" || return 1
+  done < <(_ingress_ca_nss_db_paths)
+
+  # No NSS DB yet — browser has not created one; import will initialize trust.
+  if [ -z "$(_ingress_ca_nss_db_paths)" ]; then
+    return 1
+  fi
+
+  return 0
+}
+
+_ingress_ca_fully_trusted() {
+  local path="$1"
+
+  _ingress_ca_in_trust_store "$path" || return 1
+  _ingress_ca_in_nss_store "$path" || return 1
+}
+
 _ingress_ca_export_env() {
   local ca_path="$1"
   export CURL_CA_BUNDLE="$ca_path"
@@ -122,6 +163,42 @@ _import_ingress_ca_linux() {
   return 1
 }
 
+_import_ingress_ca_nss() {
+  local path="$1"
+  local db imported=false
+
+  if ! command -v certutil &>/dev/null; then
+    echo "  Chrome/Firefox: install nss-tools for browser trust (sudo dnf install nss-tools)" >&2
+    return 1
+  fi
+
+  local dbs=()
+  while IFS= read -r db; do
+    [ -n "$db" ] && dbs+=("$db")
+  done < <(_ingress_ca_nss_db_paths)
+
+  if [ "${#dbs[@]}" -eq 0 ]; then
+    mkdir -p "${HOME}/.pki/nssdb"
+    dbs=("sql:${HOME}/.pki/nssdb")
+  fi
+
+  for db in "${dbs[@]}"; do
+    certutil -d "$db" -D -n "$_INGRESS_CA_NSS_NICKNAME" 2>/dev/null || true
+    if certutil -d "$db" -A -t "C,," -n "$_INGRESS_CA_NSS_NICKNAME" -i "$path" 2>/dev/null; then
+      imported=true
+    fi
+  done
+
+  if [ "$imported" = true ]; then
+    echo "  ✓ Ingress CA trusted (Chrome/Firefox NSS)"
+    echo "  Fully quit Chrome and reopen the AAP URL if it still shows untrusted"
+    return 0
+  fi
+
+  echo "  Could not import ingress CA to browser certificate store" >&2
+  return 1
+}
+
 _import_ingress_ca_macos() {
   local path="$1"
 
@@ -141,16 +218,19 @@ import_ingress_ca_certificate() {
   [ -f "$path" ] || return 1
   grep -q 'BEGIN CERTIFICATE' "$path" || return 1
 
-  if _ingress_ca_in_trust_store "$path"; then
+  if _ingress_ca_fully_trusted "$path"; then
     echo "  ✓ Ingress CA already trusted"
     return 0
   fi
 
+  local ok=true
   if [[ "$(uname)" == "Darwin" ]]; then
-    _import_ingress_ca_macos "$path"
+    _import_ingress_ca_macos "$path" || ok=false
   else
-    _import_ingress_ca_linux "$path"
+    _ingress_ca_in_trust_store "$path" || _import_ingress_ca_linux "$path" || ok=false
+    _ingress_ca_in_nss_store "$path" || _import_ingress_ca_nss "$path" || ok=false
   fi
+  [ "$ok" = true ]
 }
 
 install_ingress_ca_trust() {
@@ -162,7 +242,7 @@ install_ingress_ca_trust() {
   ca_path=$(get_ingress_ca_cert_path)
   mkdir -p "$(dirname "$ca_path")"
 
-  if [ -f "$ca_path" ] && _ingress_ca_in_trust_store "$ca_path"; then
+  if [ -f "$ca_path" ] && _ingress_ca_fully_trusted "$ca_path"; then
     _ingress_ca_export_env "$ca_path"
     return 0
   fi
