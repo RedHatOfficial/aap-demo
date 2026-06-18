@@ -202,6 +202,7 @@ aap-demo must-gather /tmp/d  # Collect to specific directory
 aap-demo enable console      # Enable OpenShift console addon
 aap-demo enable registry     # Enable in-cluster container registry
 aap-demo enable mcp-server   # Enable MCP server for AI assistants
+aap-demo enable portal       # Enable Self-Service Portal
 
 # Maintenance
 aap-demo clean               # Remove AAP deployment (keeps cluster)
