@@ -113,7 +113,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
+    deploy | deploy-all | deploy-operator | deploy-aap | portal | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
     --ai | --reset)
@@ -361,6 +361,7 @@ Usage: aap-demo [options] <command>
 Commands:
   deploy          Deploy AAP 2.7
   deploy-operator Deploy operator only
+  portal          Deploy Self-Service Portal
   status          Show cluster and AAP status
   idle [true|false] Scale down/up AAP to save resources
   diagnose [--ai] Check environment health (--ai for Claude analysis)
@@ -375,6 +376,7 @@ Cluster management:
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
+  aap-demo portal                 # Deploy with Self-Service Portal
 
 Run 'aap-demo help' for full documentation.
 EOF
@@ -399,6 +401,7 @@ COMMANDS (all infrastructure types):
     deploy-operator Deploy operator only, skip AAP CR
     deploy-aap      Apply AAP CR only (assumes operator installed)
                     Options: CR=name PUBLIC_URL=https://...
+    portal          Deploy AAP with Self-Service Portal enabled
     status          Show cluster and AAP status
     clean           Remove AAP deployment
     watch           Watch AAP deployment status
@@ -1855,6 +1858,74 @@ cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
 }
 
+cmd_deploy_portal() {
+  # Deploy AAP with Self-Service Portal enabled
+  echo ""
+  printf "\033[1maap-demo portal\033[0m - Deploying AAP with Self-Service Portal...\n"
+  echo ""
+
+  # Show notice/disclaimer
+  if [ "$QUIET" != "true" ] && [ "${AAP_DEMO_NOTICE_SHOWN:-}" != "1" ]; then
+    bash "${SCRIPT_DIR}/includes/aap-demo-notice.sh" || true
+    AAP_DEMO_NOTICE_SHOWN=1
+  fi
+
+  # Ensure OpenShift Local is running
+  local crc_state
+  crc_state=$(infra_get_state 2>/dev/null || echo "not_created")
+  if [ "$crc_state" = "not_created" ]; then
+    echo "No cluster found. Creating one first..."
+    cmd_create
+  elif [ "$crc_state" = "stopped" ]; then
+    echo "Cluster is stopped. Starting..."
+    _start_crc_cluster
+  fi
+
+  # Install OLM if not present
+  KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"
+
+  echo "Infrastructure: OpenShift Local"
+  if ! kubectl cluster-info &>/dev/null; then
+    echo "ERROR: Cannot connect to cluster"
+    echo "  Current context: $(kubectl config current-context 2>/dev/null || echo 'none')"
+    exit 1
+  fi
+  echo "Connected to: $(kubectl config current-context 2>/dev/null)"
+  echo ""
+
+  # Check if AAP already exists
+  if [ "$FORCE" != "true" ]; then
+    AAP_EXISTS=$(kubectl get aap -n "$NAMESPACE" 2>/dev/null | grep -v NAME | head -1 | awk '{print $1}' || true)
+    if [ -n "$AAP_EXISTS" ]; then
+      echo ""
+      echo "✓ AAP instance '$AAP_EXISTS' already exists in namespace $NAMESPACE"
+      echo "  To deploy portal, patch existing AAP or use FORCE=true to reinstall"
+      echo ""
+      # Check if portal is already enabled
+      local portal_disabled
+      portal_disabled=$(kubectl get aap "$AAP_EXISTS" -n "$NAMESPACE" -o jsonpath='{.spec.portal.disabled}' 2>/dev/null || echo "true")
+      if [ "$portal_disabled" = "true" ]; then
+        echo "  Portal is currently disabled. Enable it with:"
+        echo "  kubectl patch aap $AAP_EXISTS -n $NAMESPACE --type merge -p '{\"spec\":{\"portal\":{\"disabled\":false}}}'"
+      else
+        echo "  Portal is already enabled"
+      fi
+      exit 0
+    fi
+  fi
+
+  # Refresh kubeconfig before deploy
+  _verify_cluster || exit 1
+
+  # Set CR to use portal-enabled configuration
+  export CR="${CR:-with-portal}"
+  echo "Using CR: $CR (includes Self-Service Portal)"
+  echo ""
+
+  # Deploy AAP 2.7 with portal
+  deploy_latest
+}
+
 cmd_deploy() {
   # Show notice/disclaimer
   if [ "$QUIET" != "true" ] && [ "${AAP_DEMO_NOTICE_SHOWN:-}" != "1" ]; then
@@ -2635,6 +2706,10 @@ case "$COMMAND" in
     # Deploy just the AAP CR (assumes operator is already installed)
     create_aap_instance
     watch_aap
+    ;;
+  portal)
+    # Deploy AAP with Self-Service Portal
+    cmd_deploy_portal
     ;;
   *)
     # Default: show welcome if no command specified, or error for unknown commands

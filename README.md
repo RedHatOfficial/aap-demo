@@ -70,6 +70,7 @@ cd aap-demo && ./install.sh
 
 ```bash
 aap-demo deploy        # Deploy AAP 2.7
+aap-demo portal        # Deploy AAP 2.7 with Self-Service Portal
 aap-demo status        # Check deployment status
 ```
 
@@ -149,11 +150,36 @@ Enabled Addons:
   registry        https://registry.apps.127.0.0.1.nip.io
 ```
 
+### Self-Service Portal (AAP 2.7)
+
+AAP 2.7 includes a Self-Service Automation Portal for end-user workflow requests:
+
+```bash
+aap-demo portal              # Deploy AAP with Portal enabled
+```
+
+**Portal features:**
+
+- Self-service workflow catalog for end users
+- User-friendly automation request interface
+- Integrated with Controller, Hub, and EDA
+- Credential and inventory management
+
+**Access credentials:**
+Portal uses the same credentials as the AAP gateway (shown in `aap-demo status`).
+
+**Enable on existing deployment:**
+
+```bash
+kubectl patch aap aap -n aap-operator --type merge -p '{"spec":{"portal":{"disabled":false}}}'
+```
+
 ### Common Commands
 
 ```bash
 # Deployment
 aap-demo deploy              # Deploy AAP 2.7
+aap-demo portal              # Deploy AAP 2.7 with Self-Service Portal
 
 # Cluster management
 aap-demo status              # Show cluster status, routes, credentials
