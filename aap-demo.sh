@@ -113,7 +113,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | deploy-operator | deploy-aap | portal | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
+    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
     --ai | --reset)
@@ -361,7 +361,6 @@ Usage: aap-demo [options] <command>
 Commands:
   deploy          Deploy AAP 2.7
   deploy-operator Deploy operator only
-  portal          Deploy Self-Service Portal
   status          Show cluster and AAP status
   idle [true|false] Scale down/up AAP to save resources
   diagnose [--ai] Check environment health (--ai for Claude analysis)
@@ -374,9 +373,13 @@ Cluster management:
   stop            Stop cluster
   ssh             SSH into cluster node
 
+Addons:
+  enable portal   Enable Self-Service Portal
+  enable mcp-server Enable MCP server for AI assistants
+
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
-  aap-demo portal                 # Deploy with Self-Service Portal
+  aap-demo enable portal          # Enable Self-Service Portal addon
 
 Run 'aap-demo help' for full documentation.
 EOF
@@ -401,7 +404,6 @@ COMMANDS (all infrastructure types):
     deploy-operator Deploy operator only, skip AAP CR
     deploy-aap      Apply AAP CR only (assumes operator installed)
                     Options: CR=name PUBLIC_URL=https://...
-    portal          Deploy AAP with Self-Service Portal enabled
     status          Show cluster and AAP status
     clean           Remove AAP deployment
     watch           Watch AAP deployment status
