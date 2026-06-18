@@ -1731,7 +1731,7 @@ cmd_status() {
         console) url="https://console.apps.127.0.0.1.nip.io" ;;
         registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
         mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
-        portal) url="https://aap-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io (integrated portal)" ;;
+        portal) url="https://developer-hub-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io (via developer-hub)" ;;
         registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
         prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
       esac
