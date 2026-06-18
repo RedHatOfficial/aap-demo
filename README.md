@@ -152,10 +152,11 @@ Enabled Addons:
 
 ### Self-Service Portal (AAP 2.7)
 
-AAP 2.7 includes a Self-Service Automation Portal for end-user workflow requests:
+AAP 2.7 includes a Self-Service Automation Portal for end-user workflow requests. Enable it as an addon:
 
 ```bash
-aap-demo portal              # Deploy AAP with Portal enabled
+aap-demo enable portal       # Enable Portal on existing AAP deployment
+aap-demo disable portal      # Disable Portal
 ```
 
 **Portal features:**
@@ -165,10 +166,9 @@ aap-demo portal              # Deploy AAP with Portal enabled
 - Integrated with Controller, Hub, and EDA
 - Credential and inventory management
 
-**Access credentials:**
-Portal uses the same credentials as the AAP gateway (shown in `aap-demo status`).
+**Access:** Portal is integrated into the main AAP UI shown in `aap-demo status`.
 
-**Enable on existing deployment:**
+**Manual enable:**
 
 ```bash
 kubectl patch aap aap -n aap-operator --type merge -p '{"spec":{"portal":{"disabled":false}}}'
@@ -179,7 +179,6 @@ kubectl patch aap aap -n aap-operator --type merge -p '{"spec":{"portal":{"disab
 ```bash
 # Deployment
 aap-demo deploy              # Deploy AAP 2.7
-aap-demo portal              # Deploy AAP 2.7 with Self-Service Portal
 
 # Cluster management
 aap-demo status              # Show cluster status, routes, credentials
