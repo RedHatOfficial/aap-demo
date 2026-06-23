@@ -308,15 +308,12 @@ start_portal_vm() {
   warn "⚠️  x86 emulation on ARM is slow - boot may take 3-10 minutes"
   echo ""
   echo "After boot completes:"
-  echo "  Portal UI:      https://localhost:8443"
-  echo "  Console access: tmux attach -t portal-vm"
-  echo "                  Login: admin / admin"
-  echo "                  Detach: Ctrl-b d"
+  echo "  Portal UI:  https://localhost:8443"
+  echo "  SSH access: ssh -i $PORTAL_DIR/id_ed25519 -p 2223 admin@localhost"
+  echo "  Console:    tmux attach -t portal-vm (Login: admin / admin, Detach: Ctrl-b d)"
   echo ""
-  echo "Check status: sudo systemctl status portal postgres devtools (from console)"
+  echo "Check status: sudo systemctl status portal postgres devtools (from SSH or console)"
   echo "Stop VM:      $0 --delete"
-  echo ""
-  info "Note: SSH from host currently unavailable (QEMU networking). Use console."
 }
 
 # Main
