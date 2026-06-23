@@ -1,21 +1,28 @@
 #!/usr/bin/env bash
-# Deploy AAP Portal via QEMU x86 emulation on macOS
+# Deploy AAP Portal via QEMU (multi-platform)
 # ADDON_REQUIRES_AAP=true
 #
-# Uses qemu-system-x86_64 to run portal appliance qcow2 on ARM Mac.
-# Slow (x86 emulation on ARM) but functional for dev/testing.
+# Detects OS and delegates to platform-specific implementation:
+#   - macOS: qemu-system-x86_64 with x86 emulation (slow on ARM)
+#   - Linux: qemu-kvm with native acceleration (fast)
 #
 # Prerequisites:
-#   - macOS (ARM or Intel)
+#   - macOS: brew install qemu cdrtools
+#   - Linux: dnf install qemu-kvm genisoimage
 #   - AAP deployed in aap-operator namespace
 #   - Portal qcow2 downloaded from Red Hat Customer Portal
-#   - brew install qemu cdrtools
 #
 # Usage:
 #   ./deploy.sh          # Start portal VM
 #   ./deploy.sh --delete # Stop and cleanup portal VM
 
 set -e
+
+# OS detection - delegate to Linux implementation if not macOS
+if [[ "$(uname -s)" == "Linux" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  exec "$SCRIPT_DIR/deploy-linux.sh" "$@"
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-aap-operator}"
