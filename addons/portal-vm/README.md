@@ -175,11 +175,11 @@ users:
 
 aap:
   host_url: "https://aap-aap-operator.apps.127.0.0.1.nip.io"
-  token: "<aap-admin-password>"
+  token: "<generated-from-aap-admin-password-secret>"
   check_ssl: false
   oauth:
     client_id: "portal-vm"
-    client_secret: "auto"
+    client_secret: "<generated-oauth-secret>"
 
 database:
   type: builtin
