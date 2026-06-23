@@ -25,6 +25,7 @@ PORTAL_DIR="${PORTAL_DIR:-$HOME/.aap-demo/portal-vm}"
 # Auto-discover qcow2 if not explicitly set
 if [ -z "$QCOW2_PATH" ]; then
   QCOW2_PATTERN="$HOME/Downloads/ansible-automation-portal-*-x86_64.qcow2"
+  # shellcheck disable=SC2086
   QCOW2_FOUND=$(ls $QCOW2_PATTERN 2>/dev/null | head -1)
   QCOW2_PATH="${QCOW2_FOUND:-$HOME/Downloads/ansible-automation-portal-2.2.1-x86_64.qcow2}"
 fi
@@ -55,7 +56,8 @@ cleanup() {
 
     # Kill QEMU process
     if [ -f "$PORTAL_DIR/qemu.pid" ]; then
-      local pid=$(cat "$PORTAL_DIR/qemu.pid")
+      local pid
+      pid=$(cat "$PORTAL_DIR/qemu.pid")
       if kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null || true
         sleep 2
@@ -129,8 +131,10 @@ check_prerequisites() {
 }
 
 get_aap_credentials() {
-  local aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
-  local admin_pass=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+  local aap_route
+  local admin_pass
+  aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+  admin_pass=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
 
   if [ -z "$aap_route" ] || [ -z "$admin_pass" ]; then
     error "Failed to get AAP credentials"
@@ -147,7 +151,8 @@ create_oauth_app() {
   info "Creating OAuth application in AAP..." >&2
 
   # Check if app exists
-  local existing=$(curl -sk -u "admin:$admin_pass" \
+  local existing
+  existing=$(curl -sk -u "admin:$admin_pass" \
     "https://$aap_route/api/gateway/v1/applications/?name=portal-vm" | jq -r '.results[0].id // empty')
 
   if [ -n "$existing" ]; then
@@ -157,7 +162,10 @@ create_oauth_app() {
   fi
 
   # Create OAuth app in AAP
-  local oauth_data=$(curl -sk -u "admin:$admin_pass" \
+  local oauth_data
+  local client_id
+  local client_secret
+  oauth_data=$(curl -sk -u "admin:$admin_pass" \
     -X POST -H "Content-Type: application/json" \
     "https://$aap_route/api/gateway/v1/applications/" \
     -d '{
@@ -169,8 +177,8 @@ create_oauth_app() {
       "organization": 1
     }')
 
-  local client_id=$(echo "$oauth_data" | jq -r '.client_id' 2>/dev/null)
-  local client_secret=$(echo "$oauth_data" | jq -r '.client_secret' 2>/dev/null)
+  client_id=$(echo "$oauth_data" | jq -r '.client_id' 2>/dev/null)
+  client_secret=$(echo "$oauth_data" | jq -r '.client_secret' 2>/dev/null)
 
   if [ -z "$client_id" ] || [ "$client_id" = "null" ]; then
     error "Failed to create OAuth app"
@@ -197,7 +205,8 @@ generate_cloud_init() {
     ssh-keygen -t ed25519 -N "" -f "$PORTAL_DIR/id_ed25519" -C "portal-vm" >/dev/null
   fi
 
-  local ssh_pub=$(cat "$PORTAL_DIR/id_ed25519.pub")
+  local ssh_pub
+  ssh_pub=$(cat "$PORTAL_DIR/id_ed25519.pub")
 
   # Create user-data
   cat > "$PORTAL_DIR/user-data" <<EOF
@@ -245,7 +254,8 @@ start_portal_vm() {
 
   # Check if already running
   if [ -f "$PORTAL_DIR/qemu.pid" ]; then
-    local pid=$(cat "$PORTAL_DIR/qemu.pid")
+    local pid
+    pid=$(cat "$PORTAL_DIR/qemu.pid")
     if kill -0 "$pid" 2>/dev/null; then
       warn "Portal VM already running (PID: $pid)"
       echo ""
@@ -272,6 +282,7 @@ start_portal_vm() {
   fi
 
   # Start QEMU in background with RHEL appliance optimizations
+  # shellcheck disable=SC2086
   nohup qemu-system-x86_64 \
     $accel_arg \
     -machine q35 \
