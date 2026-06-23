@@ -4,7 +4,9 @@ This directory contains Architecture Decision Records for the aap-demo project.
 
 ## What is an ADR?
 
-An Architecture Decision Record (ADR) captures an important architectural decision made along with its context and consequences. ADRs help us understand why certain decisions were made and provide a historical record of the project's evolution.
+An Architecture Decision Record (ADR) captures an important architectural decision made along with its
+context and consequences. ADRs help us understand why certain decisions were made and provide a
+historical record of the project's evolution.
 
 ## ADR Format
 
