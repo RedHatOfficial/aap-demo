@@ -27,6 +27,17 @@ Uses x86 emulation on ARM Macs - slow but functional for dev/testing.
    brew install qemu cdrtools
    ```
 
+5. **socket_vmnet** (required):
+
+   ```bash
+   brew install socket_vmnet
+
+   # Post-install setup (one-time)
+   sudo brew services start socket_vmnet
+   ```
+
+   Portal requires socket_vmnet for bridged networking to reach AAP routes.
+
 ### Download Portal QCOW2
 
 1. Login to Red Hat Customer Portal (requires AAP subscription)
@@ -51,14 +62,20 @@ not appliance downloads. Manual download required.
 2. Gets AAP credentials from cluster
 3. Generates cloud-init configuration with SSH keys
 4. Starts QEMU VM in background
-5. Portal accessible at `https://localhost:8443`
+5. Waits for SSH (up to 10 minutes)
+6. Extracts portal cert and adds to login keychain (no sudo)
+7. Adds 'portal' vanity URL to /etc/hosts (requires sudo)
+8. Portal accessible at `https://portal:8443` (trusted cert in Chrome/Safari)
 
 ### Access Portal
 
 After 3-10 minute boot:
 
 ```bash
-# Portal UI (primary access)
+# Portal UI (primary access - vanity URL)
+open https://portal:8443
+
+# Or via localhost
 open https://localhost:8443
 
 # Console access (for debugging/config)
@@ -129,37 +146,42 @@ PORTAL_VM_NAME=my-portal ./deploy.sh
 ## Architecture
 
 ```
-┌─────────────────────────────────────┐
-│         macOS Host                  │
-│                                     │
-│  ┌───────────────────────────────┐ │
-│  │  QEMU (x86 emulation)         │ │
-│  │                               │ │
-│  │  ┌─────────────────────────┐ │ │
-│  │  │ Portal VM (RHEL 9 x86)  │ │ │
-│  │  │                         │ │ │
-│  │  │ - portal.service        │ │ │
-│  │  │ - postgres.service      │ │ │
-│  │  │ - devtools.service      │ │ │
-│  │  └─────────────────────────┘ │ │
-│  │                               │ │
-│  │  Port forwarding:             │ │
-│  │  - 443 → localhost:8443       │ │
-│  │  - 80  → localhost:8080       │ │
-│  │  - 22  → localhost:2223       │ │
-│  └───────────────────────────────┘ │
-│                                     │
-│  ┌───────────────────────────────┐ │
-│  │  OpenShift Local (CRC)        │ │
-│  │                               │ │
-│  │  - AAP Gateway (OAuth)        │ │
-│  │  - AAP Controller             │ │
-│  │  - Hub                        │ │
-│  └───────────────────────────────┘ │
-└─────────────────────────────────────┘
-        │
-        └─> Portal connects to AAP via https://aap-aap-operator.apps.127.0.0.1.nip.io
+┌───────────────────────────────────────────────────┐
+│         macOS Host (192.168.68.81)                │
+│                                                   │
+│  ┌─────────────────────────────────────────────┐ │
+│  │  socket_vmnet (bridge to en0)               │ │
+│  └─────────────────────────────────────────────┘ │
+│                │                                  │
+│  ┌─────────────┴─────────────┐  ┌──────────────┐ │
+│  │  QEMU VM (x86 emulation)  │  │  CRC         │ │
+│  │  192.168.68.x (DHCP)      │  │  127.0.0.1   │ │
+│  │                           │  │              │ │
+│  │  - portal.service         │  │  AAP routes: │ │
+│  │  - postgres.service       │  │  - aap...    │ │
+│  │  - devtools.service       │  │    .apps.    │ │
+│  └───────────────────────────┘  │    192...    │ │
+│         │                        │    .nip.io   │ │
+│         └────────────────────────>              │ │
+│           Reaches AAP via        └──────────────┘ │
+│           192.168.68.81.nip.io                    │
+└───────────────────────────────────────────────────┘
 ```
+
+**Key Points:**
+
+- VM gets real IP on host network (192.168.68.0/22)
+- AAP routes use `<host-ip>.nip.io` instead of `127.0.0.1.nip.io`
+- Portal resolves AAP routes via `/etc/hosts` → host IP
+- No port forwarding needed - direct L2 connectivity
+
+**Known Limitation:**
+
+Portal configuration hardcodes host LAN IP in `/etc/hosts`. Breaks if host network changes (WiFi → Ethernet, different network).
+
+**Planned Fix:**
+
+Modify CRC haproxy to bind `0.0.0.0` (not `127.0.0.1`) so routes accessible from socket_vmnet gateway IP (`192.168.105.1`). Then portal can use dnsmasq wildcard `*.apps.*.nip.io` → gateway — fully network-portable.
 
 ## Cloud-Init Configuration
 
@@ -174,7 +196,7 @@ users:
       - <generated-ssh-key>
 
 aap:
-  host_url: "https://aap-aap-operator.apps.127.0.0.1.nip.io"
+  host_url: "https://aap-aap-operator.apps.192.168.68.81.nip.io"
   token: "<generated-from-aap-admin-password-secret>"
   check_ssl: false
   oauth:
@@ -183,19 +205,42 @@ aap:
 
 database:
   type: builtin
-  builtin:
-    password: "auto"
-    admin_password: "auto"
 
-security:
-  backend_secret: "auto"
+# /etc/hosts entries for AAP route resolution
+write_files:
+  - path: /etc/hosts
+    append: true
+    content: |
+      192.168.68.81 aap-aap-operator.apps.192.168.68.81.nip.io
+      192.168.68.81 aap-mcp-aap-operator.apps.192.168.68.81.nip.io
 
-network:
-  port: 443
-  base_url: "https://portal-vm.local"
+runcmd:
+  - systemctl restart systemd-resolved
 ```
 
 ## Troubleshooting
+
+### socket_vmnet not found or not running
+
+**Install:**
+
+```bash
+brew install socket_vmnet
+```
+
+**Start service:**
+
+```bash
+sudo brew services start socket_vmnet
+```
+
+**Verify running:**
+
+```bash
+pgrep -x socket_vmnet && echo "✓ Running" || echo "✗ Not running"
+```
+
+Deploy script will fail without socket_vmnet running.
 
 ### QEMU not found
 
@@ -270,15 +315,44 @@ Check logs via serial console:
 tail -f ~/.aap-demo/portal-vm/qemu.log | grep -E "(portal|postgres|devtools)"
 ```
 
-### Can't connect to AAP
+### Certificate errors in browser
 
-From portal VM, test AAP route:
+Portal generates self-signed cert with VM IP in SAN on first boot. If cert doesn't match:
 
 ```bash
-curl -k https://aap-aap-operator.apps.127.0.0.1.nip.io/api/v2/ping/
+# Check current cert
+ssh -i ~/.aap-demo/portal-vm/id_ed25519 admin@<vm-ip> \
+  'openssl x509 -in /etc/portal/ssl/cert.pem -noout -text | grep -A1 "Subject Alternative"'
+
+# Regenerate cert if VM IP changed
+ssh -i ~/.aap-demo/portal-vm/id_ed25519 admin@<vm-ip> 'sudo /root/generate-portal-cert.sh'
 ```
 
-Verify AAP admin password matches cloud-init config.
+Browser will show self-signed warning - accept once to proceed.
+
+### Can't connect to AAP
+
+From portal VM SSH:
+
+```bash
+# Check /etc/hosts entries
+cat /etc/hosts | grep aap
+
+# Resolve AAP route (should return host IP)
+dig +short aap-aap-operator.apps.<host-ip>.nip.io
+
+# Test connectivity
+curl -k https://aap-aap-operator.apps.<host-ip>.nip.io/api/v2/ping/
+
+# Check VM can reach host
+ping <host-ip>
+```
+
+Check socket_vmnet running on host:
+
+```bash
+pgrep -x socket_vmnet && echo "✓ Running" || echo "✗ Not running"
+```
 
 ### Performance too slow
 
