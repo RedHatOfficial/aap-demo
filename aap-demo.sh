@@ -120,7 +120,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm | portal)
+    console | registry | mcp-server | registry-ui | olm | portal | portal-vm)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -374,7 +374,12 @@ Cluster management:
   ssh             SSH into cluster node
 
 Addons:
-  enable portal   Enable Self-Service Portal
+  enable portal   Enable Self-Service Portal (Helm chart)
+  enable portal-vm Enable Self-Service Portal VM (macOS QEMU, x86 emulation - slow)
+                  ⚠️  3-10 min boot, UI latency noticeable (dev/test only)
+                  Download qcow2: https://access.redhat.com/downloads/content/480
+                  Look for "Ansible automation portal QCOW2" under AAP 2.7
+                  Save to: ~/Downloads/ansible-automation-portal-*-x86_64.qcow2
   enable mcp-server Enable MCP server for AI assistants
 
 Examples:
@@ -422,7 +427,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal)
+    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal, portal-vm)
     disable [addon] Disable an addon
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
@@ -1732,6 +1737,7 @@ cmd_status() {
         registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
         mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
         portal) url="https://developer-hub-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io (via developer-hub)" ;;
+        portal-vm) url="https://localhost:8443 (QEMU VM, SSH: ssh -i ~/.aap-demo/portal-vm/id_ed25519 -p 2223 admin@localhost)" ;;
         registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
         prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
       esac
@@ -2424,7 +2430,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal"
+AVAILABLE_ADDONS="mcp-server portal portal-vm"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
