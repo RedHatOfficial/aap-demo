@@ -22,7 +22,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [001](001-self-service-portal-integration.md) | Self-Service Portal Integration | Accepted |
+| [002](002-portal-vm-macos-deployment.md) | Portal VM Addon for macOS QEMU Deployment | Accepted |
 
 ## Creating a New ADR
 
