@@ -367,19 +367,30 @@ start_portal_vm() {
     fi
   fi
 
-  info "Starting portal VM (x86 emulation - expect 3-10min boot time)..."
-
-  # Detect HVF support (macOS Hypervisor framework)
+  # Detect acceleration: KVM (Linux x86), HVF (macOS), or TCG (fallback)
   # Portal requires x86-64-v2 CPU features (SSE4.2, POPCNT, etc)
   local accel_arg="-accel tcg"
   local cpu_arg="-cpu Nehalem"  # x86-64-v2 compatible
-  if sysctl kern.hv_support 2>/dev/null | grep -q ": 1" && qemu-system-x86_64 -accel help 2>&1 | grep -q hvf; then
+  local platform_msg="x86 emulation (TCG)"
+
+  if [ -e /dev/kvm ] && qemu-system-x86_64 -accel help 2>&1 | grep -q kvm; then
+    # Linux x86 with KVM
+    accel_arg="-accel kvm"
+    cpu_arg="-cpu host"
+    platform_msg="native KVM acceleration"
+    info "Using KVM acceleration"
+  elif sysctl kern.hv_support 2>/dev/null | grep -q ": 1" && qemu-system-x86_64 -accel help 2>&1 | grep -q hvf; then
+    # macOS with HVF
     accel_arg="-accel hvf"
     cpu_arg="-cpu host"
+    platform_msg="HVF acceleration (x86 on ARM)"
     info "Using HVF acceleration"
   else
-    warn "HVF not available, using TCG (slower)"
+    # Fallback to TCG emulation
+    warn "No hardware acceleration available, using TCG (slow)"
   fi
+
+  info "Starting portal VM ($platform_msg)..."
 
   # Bridged networking via socket_vmnet
   local net_device="-device virtio-net-pci,netdev=net0,mac=52:55:00:d1:55:01"
