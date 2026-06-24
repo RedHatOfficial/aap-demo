@@ -1737,7 +1737,7 @@ cmd_status() {
         registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
         mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
         portal) url="https://developer-hub-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io (via developer-hub)" ;;
-        portal-vm) url="https://localhost:8443 (QEMU VM, SSH: ssh -i ~/.aap-demo/portal-vm/id_ed25519 -p 2223 admin@localhost)" ;;
+        portal-vm) url="https://localhost:8443 (QEMU VM, SSH: ssh -i ~/.aap-demo/portal-vm/id_ed25519 -p 2223 -o StrictHostKeyChecking=no admin@localhost)" ;;
         registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
         prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
       esac

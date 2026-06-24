@@ -24,10 +24,10 @@ PORTAL_DIR="${PORTAL_DIR:-$HOME/.aap-demo/portal-vm}"
 
 # Auto-discover qcow2 if not explicitly set
 if [ -z "$QCOW2_PATH" ]; then
-  QCOW2_PATTERN="$HOME/Downloads/ansible-automation-portal-*-x86_64.qcow2"
-  # shellcheck disable=SC2086
-  QCOW2_FOUND=$(ls $QCOW2_PATTERN 2>/dev/null | head -1)
-  QCOW2_PATH="${QCOW2_FOUND:-$HOME/Downloads/ansible-automation-portal-2.2.1-x86_64.qcow2}"
+  # Use array + nullglob for safe expansion
+  shopt -s nullglob
+  qcow2_candidates=( "$HOME/Downloads"/ansible-automation-portal-*-x86_64.qcow2 )
+  QCOW2_PATH="${qcow2_candidates[0]:-$HOME/Downloads/ansible-automation-portal-2.2.1-x86_64.qcow2}"
 fi
 
 ACTION="${1:-deploy}"
@@ -220,7 +220,7 @@ users:
       - $ssh_pub
 
 aap:
-  host_url: "https://aap-aap-operator.apps.10.0.2.2.nip.io"
+  host_url: "https://$aap_route"
   token: "$aap_token"
   check_ssl: false
   oauth:
@@ -256,18 +256,31 @@ start_portal_vm() {
   if [ -f "$PORTAL_DIR/qemu.pid" ]; then
     local pid
     pid=$(cat "$PORTAL_DIR/qemu.pid")
-    if kill -0 "$pid" 2>/dev/null; then
+
+    # Check if process exists AND is qemu
+    if kill -0 "$pid" 2>/dev/null && ps -p "$pid" | grep -q qemu; then
       warn "Portal VM already running (PID: $pid)"
       echo ""
       echo "Access portal at: https://localhost:8443"
-      echo "SSH: ssh -i $PORTAL_DIR/id_ed25519 -p 2223 admin@localhost"
+      echo "SSH: ssh -i $PORTAL_DIR/id_ed25519 -p 2223 -o StrictHostKeyChecking=no admin@localhost"
       echo ""
       echo "Stop with: $0 --delete"
       exit 0
+    else
+      warn "Stale PID file found (process $pid not running), removing"
+      rm -f "$PORTAL_DIR/qemu.pid"
     fi
   fi
 
   info "Starting portal VM (x86 emulation - expect 3-10min boot time)..."
+
+  # Rotate logs before starting
+  if [ -f "$PORTAL_DIR/qemu.log" ]; then
+    mv "$PORTAL_DIR/qemu.log" "$PORTAL_DIR/qemu.log.$(date +%Y%m%d-%H%M%S)"
+    # Keep only last 5 logs
+    # shellcheck disable=SC2012
+    ls -t "$PORTAL_DIR"/qemu.log.* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null || true
+  fi
 
   # Detect HVF support (macOS Hypervisor framework)
   # Portal requires x86-64-v2 CPU features (SSE4.2, POPCNT, etc)
@@ -282,6 +295,7 @@ start_portal_vm() {
   fi
 
   # Start QEMU in background with RHEL appliance optimizations
+  # Separate serial console (contains cloud-init secrets) from process logs
   # shellcheck disable=SC2086
   nohup qemu-system-x86_64 \
     $accel_arg \
@@ -290,7 +304,7 @@ start_portal_vm() {
     -m 8192 \
     -smp cpus=4 \
     -nographic \
-    -serial mon:stdio \
+    -serial file:"$PORTAL_DIR/serial.log" \
     -device virtio-blk-pci,drive=disk0 \
     -drive id=disk0,if=none,format=qcow2,file="$PORTAL_DIR/portal.qcow2" \
     -drive file="$PORTAL_DIR/cloud-init.iso",media=cdrom,readonly=on \
@@ -301,9 +315,16 @@ start_portal_vm() {
   local qemu_pid=$!
   echo "$qemu_pid" > "$PORTAL_DIR/qemu.pid"
 
+  # Redact secrets in user-data after VM starts
+  if [ -f "$PORTAL_DIR/user-data" ]; then
+    sed -i.bak 's/client_secret:.*/client_secret: <redacted>/' "$PORTAL_DIR/user-data"
+    sed -i.bak 's/token:.*/token: <redacted>/' "$PORTAL_DIR/user-data"
+    rm -f "$PORTAL_DIR/user-data.bak"
+  fi
+
   info "✓ Portal VM started (PID: $qemu_pid)"
   echo ""
-  echo "Boot progress: tail -f $PORTAL_DIR/qemu.log"
+  echo "Boot progress: tail -f $PORTAL_DIR/serial.log"
   echo ""
   warn "⚠️  x86 emulation on ARM is slow - boot may take 3-10 minutes"
   echo ""
