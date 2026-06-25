@@ -384,8 +384,13 @@ create_registry_secret() {
 get_cluster_info() {
   echo "Getting cluster information..."
 
-  # Get cluster base URL
+  # Get cluster base URL from ingresses.config (OCP) or derive from AAP route (MicroShift)
   CLUSTER_BASE_URL=$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' 2>/dev/null)
+
+  if [ -z "$CLUSTER_BASE_URL" ]; then
+    # MicroShift doesn't have ingresses.config, derive from AAP route
+    CLUSTER_BASE_URL=$(echo "$AAP_ROUTE" | sed 's/^aap-aap-operator\.//')
+  fi
 
   if [ -z "$CLUSTER_BASE_URL" ]; then
     echo "❌ Failed to get cluster base URL"
