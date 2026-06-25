@@ -12,9 +12,22 @@
 if [ -n "$_INFRA_CRC_LOADED" ]; then return 0; fi
 _INFRA_CRC_LOADED=1
 
-# CRC SSH key and port
-CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
+# CRC SSH port
 CRC_SSH_PORT=2222
+
+# Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
+_detect_crc_ssh_key() {
+  local base="${HOME}/.crc/machines/crc"
+  if [ -f "${base}/id_ed25519" ]; then
+    echo "${base}/id_ed25519"
+  elif [ -f "${base}/id_ecdsa" ]; then
+    echo "${base}/id_ecdsa"
+  else
+    return 1
+  fi
+}
+
+CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null || echo "${HOME}/.crc/machines/crc/id_ed25519")"
 CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # ---------------------------------------------------------------------------

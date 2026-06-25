@@ -39,11 +39,17 @@ kubectl wait --for=condition=available deployment/registry -n aap-demo-registry 
 REGISTRY_SVC_IP=$(kubectl get svc registry -n aap-demo-registry -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 
 if [ -n "$REGISTRY_SVC_IP" ]; then
-  # Detect SSH method for CRC
-  CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
+  # Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
+  if [ -f "${HOME}/.crc/machines/crc/id_ed25519" ]; then
+    CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
+  elif [ -f "${HOME}/.crc/machines/crc/id_ecdsa" ]; then
+    CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ecdsa"
+  else
+    CRC_SSH_KEY=""
+  fi
   CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
-  if [ -f "$CRC_SSH_KEY" ]; then
+  if [ -n "$CRC_SSH_KEY" ]; then
     # Add registry mirror: route hostname -> ClusterIP (for CRI-O pulls)
     ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 "sudo tee /etc/containers/registries.conf.d/999-aap-demo-registry.conf > /dev/null <<REGEOF
 [[registry]]

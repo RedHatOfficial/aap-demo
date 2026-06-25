@@ -129,10 +129,16 @@ _ingress_ca_export_env() {
 
 _fetch_ingress_ca_from_cluster() {
   local dest="$1"
-  local crc_ssh_key="${HOME}/.crc/machines/crc/id_ed25519"
-  local crc_ssh_opts
+  local crc_ssh_key crc_ssh_opts
 
-  [ -f "$crc_ssh_key" ] || return 1
+  # Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
+  if [ -f "${HOME}/.crc/machines/crc/id_ed25519" ]; then
+    crc_ssh_key="${HOME}/.crc/machines/crc/id_ed25519"
+  elif [ -f "${HOME}/.crc/machines/crc/id_ecdsa" ]; then
+    crc_ssh_key="${HOME}/.crc/machines/crc/id_ecdsa"
+  else
+    return 1
+  fi
 
   crc_ssh_opts="-i ${crc_ssh_key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
   ssh -p 2222 $crc_ssh_opts core@127.0.0.1 \
