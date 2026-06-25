@@ -498,8 +498,8 @@ update_oauth_redirect() {
     return 1
   fi
 
-  # Update OAuth app with real redirect URI
-  local redirect_uri="https://$PORTAL_ROUTE/api/auth/oauth2/handler/frame"
+  # Update OAuth app with real redirect URI (rhaap provider uses /api/auth/rhaap/handler/frame)
+  local redirect_uri="https://$PORTAL_ROUTE/api/auth/rhaap/handler/frame"
 
   curl -k -u "admin:$ADMIN_PASS" \
     -X PATCH "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
