@@ -52,6 +52,9 @@ cleanup() {
   kubectl delete secret "$RELEASE_NAME-dynamic-plugins-registry-auth" \
     -n "$NAMESPACE" &>/dev/null || true
 
+  # Delete AAP credentials secret
+  kubectl delete secret secrets-rhaap-portal -n "$NAMESPACE" &>/dev/null || true
+
   # Cleanup portal directory
   rm -rf "$PORTAL_DIR"
 
@@ -400,6 +403,23 @@ get_cluster_info() {
   echo "✓ Cluster base URL: $CLUSTER_BASE_URL"
 }
 
+create_aap_secrets() {
+  echo "Creating AAP credentials secret..."
+
+  # Delete existing secret if present
+  kubectl delete secret secrets-rhaap-portal -n "$NAMESPACE" &>/dev/null || true
+
+  # Create secret with AAP credentials
+  kubectl create secret generic secrets-rhaap-portal \
+    -n "$NAMESPACE" \
+    --from-literal=aap-host-url="https://$AAP_ROUTE" \
+    --from-literal=oauth-client-id="$CLIENT_ID" \
+    --from-literal=oauth-client-secret="$CLIENT_SECRET" \
+    --from-literal=aap-token="$API_TOKEN"
+
+  echo "✓ AAP credentials secret created"
+}
+
 create_helm_values() {
   echo "Creating Helm values file..."
 
@@ -523,6 +543,7 @@ main() {
   get_registry_credentials
   create_registry_secret
   get_cluster_info
+  create_aap_secrets
   create_helm_values
   install_helm_chart
   wait_for_deployment
