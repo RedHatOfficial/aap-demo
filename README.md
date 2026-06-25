@@ -70,7 +70,7 @@ cd aap-demo && ./install.sh
 
 ```bash
 aap-demo deploy        # Deploy AAP 2.7
-aap-demo enable portal # Enable Self-Service Portal (optional)
+aap-demo enable portal-vm    # Enable Self-Service Portal VM (optional)
 aap-demo status        # Check deployment status
 ```
 
