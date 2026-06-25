@@ -1,19 +1,20 @@
 # ADR-001: Portal OAuth Port Configuration via Systemd Drop-in
 
-**Status:** Accepted
-**Date:** 2026-06-25
-**Author:** Chad Ferman
+**Status:** Accepted **Date:** 2026-06-25 **Author:** Chad Ferman
 
 ## Context
 
-Portal VM addon deploys AAP Portal appliance (QCOW2) via QEMU x86 emulation on macOS. OAuth integration with AAP Gateway failed due to port mismatch between QEMU port forwarding and portal container configuration.
+Portal VM addon deploys AAP Portal appliance (QCOW2) via QEMU x86 emulation on macOS. OAuth integration with AAP Gateway
+failed due to port mismatch between QEMU port forwarding and portal container configuration.
 
 ### Problem Chain
 
-1. **Portal appliance defaults:** Container listens on internal port 7007, published to VM host port **8443** (default in `/etc/containers/systemd/portal.container`)
-2. **QEMU forwarding:** Initially forwarded macOS port 8443 → VM port **443** (wrong)
-3. **OAuth redirect:** AAP OAuth app configured with `redirect_uris: "https://localhost:8443/api/auth/rhaap/handler/frame"`
-4. **Result:** macOS → 8443 → VM 443 → **nothing listening** → OAuth fails
+1. **Portal appliance defaults:** Container listens on internal port 7007, published to VM host port **8443** (default
+   in `/etc/containers/systemd/portal.container`)
+1. **QEMU forwarding:** Initially forwarded macOS port 8443 → VM port **443** (wrong)
+1. **OAuth redirect:** AAP OAuth app configured with
+   `redirect_uris: "https://localhost:8443/api/auth/rhaap/handler/frame"`
+1. **Result:** macOS → 8443 → VM 443 → **nothing listening** → OAuth fails
 
 ### Investigation Findings
 
@@ -27,9 +28,9 @@ Portal appliance uses `/usr/local/bin/detect-and-set-base-url.sh` (ExecStartPre)
 Attempted fixes that **failed**:
 
 1. ❌ Set `network.port: 443` in cloud-init → appliance ignores it
-2. ❌ Patch Quadlet via `sed` in `runcmd` → `detect-and-set-base-url.sh` runs **before** runcmd, reverts changes
-3. ❌ Copy + patch detect script to `/etc` → `/usr/local/bin` read-only on bootc, complex override chain
-4. ❌ Remove `network` section, patch Quadlet manually → script still overwrites on every restart
+1. ❌ Patch Quadlet via `sed` in `runcmd` → `detect-and-set-base-url.sh` runs **before** runcmd, reverts changes
+1. ❌ Copy + patch detect script to `/etc` → `/usr/local/bin` read-only on bootc, complex override chain
+1. ❌ Remove `network` section, patch Quadlet manually → script still overwrites on every restart
 
 ## Decision
 
@@ -54,13 +55,10 @@ OAuth redirect `https://localhost:8443/...` now reaches portal correctly.
 
 ### Why systemd drop-in over alternatives?
 
-| Approach | Result |
-|----------|--------|
-| Modify cloud-init `network.port` | Appliance ignores field |
-| Patch Quadlet via `runcmd` | Script overwrites before runcmd runs |
-| Modify detect script in `/usr` | Read-only filesystem (bootc) |
-| Copy script to `/etc`, override | Complex, fragile, multi-step |
-| **Systemd drop-in (chosen)** | ✅ Clean, standard, survives script overwrites |
+| Approach | Result | |----------|--------| | Modify cloud-init `network.port` | Appliance ignores field | | Patch
+Quadlet via `runcmd` | Script overwrites before runcmd runs | | Modify detect script in `/usr` | Read-only filesystem
+(bootc) | | Copy script to `/etc`, override | Complex, fragile, multi-step | | **Systemd drop-in (chosen)** | ✅ Clean,
+standard, survives script overwrites |
 
 **Systemd drop-in wins because:**
 
@@ -98,9 +96,9 @@ Portal appliance defaults to 8443. Fighting defaults = complexity. Simpler to:
 ### Required Components
 
 1. **Cloud-init:** `write_files` creates drop-in before portal starts
-2. **QEMU:** Forward macOS 8443 → VM 8443 (match portal container port)
-3. **OAuth app:** `redirect_uris` uses `https://localhost:8443` (matches access URL)
-4. **Full config files:** See AAP Extend docs page 214 (`database.builtin`, `security.backend_secret`)
+1. **QEMU:** Forward macOS 8443 → VM 8443 (match portal container port)
+1. **OAuth app:** `redirect_uris` uses `https://localhost:8443` (matches access URL)
+1. **Full config files:** See AAP Extend docs page 214 (`database.builtin`, `security.backend_secret`)
 
 ## References
 
@@ -128,6 +126,6 @@ Portal appliance defaults to 8443. Fighting defaults = complexity. Simpler to:
 
 **Rejected:**
 
-- Requires root for port <1024 binding (Podman rootless won't work)
+- Requires root for port \<1024 binding (Podman rootless won't work)
 - QEMU user-mode networking can't forward privileged ports on macOS
 - Appliance defaults to 8443 for this reason

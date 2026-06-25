@@ -259,7 +259,7 @@ sudo systemctl restart portal
 
 **Credentials:**
 
-- Username: `admin`
+- Username: admin
 - Password: `admin`
 
 If password doesn't work:

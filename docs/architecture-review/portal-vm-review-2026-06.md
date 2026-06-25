@@ -8,7 +8,9 @@
 
 ## Executive Summary
 
-The portal-vm addon achieves its goal (enable ARM Mac development), but implementation has **significant operational and security debt**. Architecture is fundamentally sound (QEMU + cloud-init), but execution needs hardening.
+The portal-vm addon achieves its goal (enable ARM Mac development), 
+but implementation has **significant operational and security debt**. 
+Architecture is fundamentally sound (QEMU + cloud-init), but execution needs hardening.
 
 **Issue Summary**:
 
@@ -46,7 +48,8 @@ addons/portal-vm/
     └── cloud-init-template.yaml  # Template with placeholders
 ```
 
-**Rationale**: Separation of concerns enables unit testing (e.g., OAuth creation can be tested against mock AAP API), easier maintenance, and reusability.
+**Rationale**: Separation of concerns enables unit testing (e.g., OAuth creation can be tested against mock AAP API), 
+easier maintenance, and reusability.
 
 ---
 
@@ -76,7 +79,8 @@ aap_route_fqdn=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}
 
 ### **CRITICAL: Missing Idempotency in OAuth Creation**
 
-**Issue**: Lines 154-162 delete-then-create OAuth app on every run. If deployment fails mid-flight, OAuth credentials in existing `user-data` become invalid.
+**Issue**: Lines 154-162 delete-then-create OAuth app on every run. 
+If deployment fails mid-flight, OAuth credentials in existing `user-data` become invalid.
 
 **Scenario**:
 
@@ -96,7 +100,8 @@ create_or_update_oauth_app() {
 }
 ```
 
-**Rationale**: Prevents credential mismatch between retries. Cache OAuth credentials outside `user-data` so they survive QEMU failures.
+**Rationale**: Prevents credential mismatch between retries. 
+Cache OAuth credentials outside `user-data` so they survive QEMU failures.
 
 ---
 
@@ -229,13 +234,15 @@ start_portal_vm() {
 }
 ```
 
-**Note**: SSH issue mentioned in ARM-DEPLOYMENT.md (line 110-116) means this won't work on ARM Macs. Alternative: parse serial console for systemd target reached.
+**Note**: SSH issue mentioned in ARM-DEPLOYMENT.md (line 110-116) means this won't work on ARM Macs. 
+Alternative: parse serial console for systemd target reached.
 
 ---
 
 ### **MAJOR: Resource Management - No Memory/CPU Checks**
 
-**Issue**: Script allocates 8GB RAM (line 290) without checking host availability. Will OOM if only 16GB total RAM + CRC running.
+**Issue**: Script allocates 8GB RAM (line 290) without checking host availability. 
+Will OOM if only 16GB total RAM + CRC running.
 
 **Fix**: Pre-flight resource checks:
 
@@ -362,7 +369,8 @@ echo "  1. Install: brew install qemu"
 echo "  2. Verify: qemu-system-x86_64 --version"
 echo "  3. Re-run: $0"
 echo ""
-echo "If Homebrew not installed: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+echo "If Homebrew not installed: https://brew.sh"
+echo "  Command: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
 ```
 
 **Pattern**: Error → Fix steps → Verification command → Next action.
@@ -377,7 +385,8 @@ echo "If Homebrew not installed: /bin/bash -c \"\$(curl -fsSL https://raw.github
 - `ARM-DEPLOYMENT.md` (ARM-specific)
 - `ADR-002` (technical background)
 
-Users don't know which to read first. ARM-specific guide says "SSH broken" (line 110), but main README shows SSH instructions (line 76).
+Users don't know which to read first. 
+ARM-specific guide says "SSH broken" (line 110), but main README shows SSH instructions (line 76).
 
 **Fix**: Single `README.md` with platform-specific sections:
 
@@ -410,7 +419,8 @@ Move ADR-002 content to `docs/adr/` (keep) and link from README "Design Rational
 
 **Issue**: Line 299 redirects all output to `qemu.log`, including cloud-init which contains OAuth secrets.
 
-**Impact**: OAuth `client_secret` visible in log file. Anyone with access to `~/.aap-demo/portal-vm/qemu.log` can extract credentials.
+**Impact**: OAuth `client_secret` visible in log file. 
+Anyone with access to `~/.aap-demo/portal-vm/qemu.log` can extract credentials.
 
 **Fix**: Don't log cloud-init ISO contents:
 
@@ -439,7 +449,8 @@ fi
 
 ### **MAJOR: OAuth Credentials in User-Data Persist**
 
-**Issue**: OAuth secrets in `~/.aap-demo/portal-vm/user-data` remain after deployment. If user commits directory to Git or backs up to cloud, secrets leak.
+**Issue**: OAuth secrets in `~/.aap-demo/portal-vm/user-data` remain after deployment. 
+If user commits directory to Git or backs up to cloud, secrets leak.
 
 **Fix**: Ephemeral credentials:
 
@@ -624,7 +635,8 @@ Let users choose based on platform. Document performance matrix.
 
 ### 🚨 **CRITICAL: OAuth Delete-on-Deploy Pattern**
 
-Lines 160-162 delete OAuth app before recreating. This breaks any running portal instances that depend on it. In multi-user dev env, one person's redeploy kills everyone's session.
+Lines 160-162 delete OAuth app before recreating. This breaks any running portal instances that depend on it. 
+In multi-user dev env, one person's redeploy kills everyone's session.
 
 **Impact**: High in shared environments (CI, team demos).
 
@@ -697,8 +709,12 @@ Apply 6 quick wins to eliminate immediate risks and technical debt.
 
 ## Conclusion
 
-The portal-vm addon achieves its goal (enable ARM Mac development), but implementation has **significant operational and security debt**. Architecture is fundamentally sound (QEMU + cloud-init), but execution needs hardening.
+The portal-vm addon achieves its goal (enable ARM Mac development), 
+but implementation has **significant operational and security debt**. 
+Architecture is fundamentally sound (QEMU + cloud-init), but execution needs hardening.
 
-Post-refactor, this becomes a **reference implementation** for complex addon patterns (external VM lifecycle, OAuth integration, cloud-init automation).
+Post-refactor, this becomes a **reference implementation** for complex addon patterns (external VM lifecycle, 
+OAuth integration, cloud-init automation).
 
-**Priority**: Address **4 CRITICAL** issues immediately (OAuth leaks, idempotency, health checks, secrets in logs) before wider adoption.
+**Priority**: Address **4 CRITICAL** issues immediately (OAuth leaks, idempotency, health checks, 
+secrets in logs) before wider adoption.

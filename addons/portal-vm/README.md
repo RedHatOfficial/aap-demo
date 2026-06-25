@@ -233,7 +233,7 @@ database:
     admin_password: "auto"
 
 security:
-  backend_secret: "auto"
+  backend_secret: "auto"  # Auto-generated
 
 network:
   base_url: "https://localhost:8443"

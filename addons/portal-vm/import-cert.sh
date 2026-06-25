@@ -18,8 +18,8 @@ fi
 echo "Fetching portal certificate via openssl..."
 
 # Extract cert from HTTPS connection
-openssl s_client -connect localhost:8443 -showcerts </dev/null 2>/dev/null | \
-  openssl x509 -outform PEM > "$PORTAL_DIR/portal.crt"
+openssl s_client -connect localhost:8443 -showcerts </dev/null 2>/dev/null \
+  | openssl x509 -outform PEM >"$PORTAL_DIR/portal.crt"
 
 echo "Certificate saved to: $PORTAL_DIR/portal.crt"
 echo ""

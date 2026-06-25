@@ -1,9 +1,7 @@
 # ADR-003: Dynamic Plugins Lock File Workaround
 
-**Status:** Accepted
-**Date:** 2026-06-24
-**Author:** Chad Ferman
-**Related:** Portal appliance bug (all deployment methods)
+**Status:** Accepted **Date:** 2026-06-24 **Author:** Chad Ferman **Related:** Portal appliance bug (all deployment
+methods)
 
 ## Context
 
@@ -21,9 +19,9 @@ Portal appliance 2.2.1 fails to start dynamic plugins on second and subsequent b
 Lock file mechanism prevents concurrent plugin installations. Expected behavior:
 
 1. Portal service starts
-2. Plugin installer creates lock file
-3. Plugins install
-4. Lock file deleted on completion
+1. Plugin installer creates lock file
+1. Plugins install
+1. Lock file deleted on completion
 
 **Bug:** Lock file not deleted on clean shutdown. Persists across reboots on bootc image.
 
@@ -59,11 +57,13 @@ runcmd:
 
 ### Why `sudo`
 
-Lock file owned by `root:root` (portal service runs as root). Cloud-init `runcmd` executes as configured user (`admin`), needs `sudo`.
+Lock file owned by `root:root` (portal service runs as root). Cloud-init `runcmd` executes as configured user (`admin`),
+needs `sudo`.
 
 ### Why before `systemctl restart`
 
-Portal service auto-starts via systemd. By time cloud-init runs, portal already started with stale lock. Must delete + restart.
+Portal service auto-starts via systemd. By time cloud-init runs, portal already started with stale lock. Must delete +
+restart.
 
 ## Alternatives Considered
 
@@ -124,8 +124,8 @@ runcmd:
 Placement in `runcmd`:
 
 1. After network setup (if needed)
-2. After /etc/hosts injection (if needed)
-3. **Before** any portal health checks
+1. After /etc/hosts injection (if needed)
+1. **Before** any portal health checks
 
 ### Verification
 
@@ -185,9 +185,9 @@ Check Red Hat portal appliance release notes for:
 **When Red Hat fixes bug:**
 
 1. Test new appliance version (boot → reboot → verify plugins load)
-2. Remove `runcmd` lock deletion line from `deploy.sh`
-3. Remove `systemctl restart portal.service` line (unless needed for other reasons)
-4. Update this ADR status to "Superseded"
-5. Document in changelog
+1. Remove `runcmd` lock deletion line from `deploy.sh`
+1. Remove `systemctl restart portal.service` line (unless needed for other reasons)
+1. Update this ADR status to "Superseded"
+1. Document in changelog
 
 **Tracking:** Check AAP release notes starting with 2.8+ releases.

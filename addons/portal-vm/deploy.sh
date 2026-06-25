@@ -26,7 +26,7 @@ PORTAL_DIR="${PORTAL_DIR:-$HOME/.aap-demo/portal-vm}"
 if [ -z "$QCOW2_PATH" ]; then
   # Use array + nullglob for safe expansion
   shopt -s nullglob
-  qcow2_candidates=( "$HOME/Downloads"/ansible-automation-portal-*-x86_64.qcow2 )
+  qcow2_candidates=("$HOME/Downloads"/ansible-automation-portal-*-x86_64.qcow2)
   QCOW2_PATH="${qcow2_candidates[0]:-$HOME/Downloads/ansible-automation-portal-2.2.1-x86_64.qcow2}"
 fi
 
@@ -152,13 +152,13 @@ get_aap_credentials() {
 
   # Get cluster CA bundle for TLS verification
   local ca_bundle="/tmp/aap-ca-$$.crt"
-  kubectl get secret router-certs-default -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d > "$ca_bundle"
+  kubectl get secret router-certs-default -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d >"$ca_bundle"
 
   api_token=$(curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" \
     -X POST "https://$aap_route/api/gateway/v1/tokens/" \
     -H "Content-Type: application/json" \
-    -d '{"description":"Portal backend catalog","application":null,"scope":"write"}' | \
-    jq -r '.token // empty')
+    -d '{"description":"Portal backend catalog","application":null,"scope":"write"}' \
+    | jq -r '.token // empty')
 
   rm -f "$ca_bundle"
 
@@ -178,7 +178,7 @@ create_oauth_app() {
 
   # Get cluster CA bundle for TLS verification
   local ca_bundle="/tmp/aap-ca-oauth-$$.crt"
-  kubectl get secret router-certs-default -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d > "$ca_bundle"
+  kubectl get secret router-certs-default -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d >"$ca_bundle"
 
   # Check if app exists
   local existing
@@ -247,7 +247,7 @@ generate_cloud_init() {
   ssh_pub=$(cat "$PORTAL_DIR/id_ed25519.pub")
 
   # Create user-data (ADR-002 partial: simplified runcmd, port 443)
-  cat > "$PORTAL_DIR/user-data" <<EOF
+  cat >"$PORTAL_DIR/user-data" <<EOF
 #cloud-config
 
 users:
@@ -271,7 +271,7 @@ database:
     admin_password: "auto"
 
 security:
-  backend_secret: "auto"
+  backend_secret: "auto"  # Auto-generated
 
 network:
   base_url: "https://localhost:8443"
@@ -298,7 +298,7 @@ runcmd:
 EOF
 
   # Create meta-data
-  echo "instance-id: $PORTAL_VM_NAME" > "$PORTAL_DIR/meta-data"
+  echo "instance-id: $PORTAL_VM_NAME" >"$PORTAL_DIR/meta-data"
 
   # Create cloud-init ISO
   info "Creating cloud-init ISO..."
@@ -351,7 +351,7 @@ start_portal_vm() {
   # Detect HVF support (macOS Hypervisor framework)
   # Portal requires x86-64-v2 CPU features (SSE4.2, POPCNT, etc)
   local accel_arg="-accel tcg"
-  local cpu_arg="-cpu Nehalem"  # x86-64-v2 compatible
+  local cpu_arg="-cpu Nehalem" # x86-64-v2 compatible
   if sysctl kern.hv_support 2>/dev/null | grep -q ": 1" && qemu-system-x86_64 -accel help 2>&1 | grep -q hvf; then
     accel_arg="-accel hvf"
     cpu_arg="-cpu host"
@@ -376,10 +376,10 @@ start_portal_vm() {
     -drive file="$PORTAL_DIR/cloud-init.iso",media=cdrom,readonly=on \
     -device virtio-net-pci,netdev=net0 \
     -netdev user,id=net0,hostfwd=tcp::8443-:443,hostfwd=tcp::8080-:80,hostfwd=tcp::2223-:22,dns=10.0.2.3 \
-    > "$PORTAL_DIR/qemu.log" 2>&1 &
+    >"$PORTAL_DIR/qemu.log" 2>&1 &
 
   local qemu_pid=$!
-  echo "$qemu_pid" > "$PORTAL_DIR/qemu.pid"
+  echo "$qemu_pid" >"$PORTAL_DIR/qemu.pid"
 
   # No socat needed - CRC already listens on 0.0.0.0:443 (all interfaces including 10.0.2.2)
   # Portal VM → 10.0.2.2:443 (QEMU host gateway) → CRC directly

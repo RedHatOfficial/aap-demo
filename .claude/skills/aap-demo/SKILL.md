@@ -102,7 +102,7 @@ When the user has multiple AAP deployments (e.g., operator in `aap-operator` + a
 
 ## Pull Secret Management
 
-Pull secrets are required for image pulls and live in `~/.aap-demo/`:
+Pull secrets are required for image pulls and live in `~/.aap-demo/`: # pragma: allowlist secret
 - `pull-secret.txt` or `pull-secret.json` (from console.redhat.com)
 - ATF tests: `atf-vault-password` (for vaulted test vars)  # pragma: allowlist secret
 

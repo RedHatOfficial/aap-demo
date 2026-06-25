@@ -1,9 +1,7 @@
 # ADR-004: Cloud-Init Environment Variable Conversion Issue
 
-**Status:** Active Investigation
-**Date:** 2026-06-25
-**Author:** Investigation
-**Related:** Portal appliance 2.2.1 deployment
+**Status:** Active Investigation **Date:** 2026-06-25 **Author:** Investigation **Related:** Portal appliance 2.2.1
+deployment
 
 ## Context
 
@@ -18,11 +16,11 @@ Portal appliance cloud-init processing incomplete. Some AAP config fields conver
 ```yaml
 aap:
   host_url: "https://aap-aap-operator.apps.127.0.0.1.nip.io"
-  token: "yGGsR5h4KJYwILVerEiBLDAsxldKCWgw"
+  token: "<API_TOKEN>"
   check_ssl: false
   oauth:
-    client_id: "XK4f3RTrwLDXaEfnWmJJbHFMtJB4QQ4zHXF7i4E7"
-    client_secret: "y6rqg7ChLG6iEMmHpP4L3wHx6oiAsaA1nnrVJxHV..."
+    client_id: "<OAUTH_CLIENT_ID>"
+    client_secret: "<OAUTH_CLIENT_SECRET>..."
 ```
 
 **Portal container env vars (actual):**
@@ -41,10 +39,10 @@ AAP_TOKEN=yGGsR5h4KJYwILVerEiBLDAsxldKCWgw
 ### Error Chain
 
 1. Portal OAuth flow succeeds (has client_id from somewhere - maybe app-config.production.yaml hardcoded default)
-2. After OAuth, catalog backend plugin tries fetch AAP user entity
-3. Plugin uses `AAP_HOST_URL` env var for backend API calls
-4. Env var missing → API calls fail or go to wrong host
-5. User entity fetch fails → "Failed to fetch user details"
+1. After OAuth, catalog backend plugin tries fetch AAP user entity
+1. Plugin uses `AAP_HOST_URL` env var for backend API calls
+1. Env var missing → API calls fail or go to wrong host
+1. User entity fetch fails → "Failed to fetch user details"
 
 ## Root Cause Hypothesis
 
@@ -56,7 +54,8 @@ Portal appliance cloud-init processor (custom cloud-init module) has bug convert
 - ✅ Nested scalar: `aap.oauth.client_secret` → `AAP_OAUTH_CLIENT_SECRET` (works)
 - ❌ Nested scalar: `aap.oauth.client_id` → `AAP_OAUTH_CLIENT_ID` (FAILS)
 
-Pattern: Underscored field names (`host_url`, `client_id`) not converting. Non-underscored work (`token`, `check_ssl` → `checkssl`).
+Pattern: Underscored field names (`host_url`, `client_id`) not converting. Non-underscored work (`token`, `check_ssl` →
+`checkssl`).
 
 ## Workarounds Implemented
 
@@ -81,7 +80,8 @@ Verified fix: all env vars now present in container.
 
 Second bug discovered: `AAP_TOKEN` was admin password, not API token.
 
-**Root cause:** Portal backend catalog plugin needs Bearer token for `/api/gateway/v1/*` API calls. Admin password works for OAuth app creation but fails for catalog operations.
+**Root cause:** Portal backend catalog plugin needs Bearer token for `/api/gateway/v1/*` API calls. Admin password works
+for OAuth app creation but fails for catalog operations.
 
 **Fix:** Modified `get_aap_credentials()` to create API token via AAP Gateway API:
 
@@ -102,7 +102,7 @@ Status: **RESOLVED**
 Both bugs fixed in deploy.sh:
 
 1. Cloud-init env conversion bug → systemd `Environment=` override
-2. Wrong token type → API token creation via Gateway API
+1. Wrong token type → API token creation via Gateway API
 
 Portal login now works end-to-end.
 
