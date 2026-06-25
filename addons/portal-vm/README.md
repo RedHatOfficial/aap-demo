@@ -79,6 +79,18 @@ ssh -i ~/.aap-demo/portal-vm/id_ed25519 -p 2223 admin@localhost
 
 **Note:** Portal VM uses port 2223 for SSH (CRC uses 2222). Password auth disabled for security.
 
+### Optional: Import SSL Certificate
+
+Eliminate browser SSL warnings by importing portal's self-signed certificate to macOS keychain:
+
+```bash
+# After portal finishes booting
+cd addons/portal-vm
+./import-cert.sh
+```
+
+Requires sudo to add cert to macOS System keychain. Restart browser after import to clear warnings.
+
 ### Monitor Boot Progress
 
 ```bash
