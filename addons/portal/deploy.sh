@@ -385,9 +385,9 @@ get_cluster_info() {
   echo "Getting cluster information..."
 
   # Get cluster base URL from ingresses.config (OCP) or derive from AAP route (MicroShift)
-  CLUSTER_BASE_URL=$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>/dev/null)
+  CLUSTER_BASE_URL=$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>&1 >/dev/null)
 
-  if [ -z "$CLUSTER_BASE_URL" ]; then
+  if [ -z "$CLUSTER_BASE_URL" ] || [[ "$CLUSTER_BASE_URL" == *"error"* ]]; then
     # MicroShift doesn't have ingresses.config, derive from AAP route
     CLUSTER_BASE_URL=$(echo "$AAP_ROUTE" | sed 's/^aap-aap-operator\.//')
   fi
