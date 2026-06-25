@@ -63,21 +63,24 @@ cleanup() {
         sleep 2
         kill -9 "$pid" 2>/dev/null || true
       fi
-      rm -f "$PORTAL_DIR/qemu.pid"
     fi
 
-    # Kill socat proxy
+    # Kill socat proxy (may require sudo if started with sudo)
     if [ -f "$PORTAL_DIR/socat.pid" ]; then
       local socat_pid
       socat_pid=$(cat "$PORTAL_DIR/socat.pid")
       if kill -0 "$socat_pid" 2>/dev/null; then
-        kill "$socat_pid" 2>/dev/null || true
+        kill "$socat_pid" 2>/dev/null || sudo kill "$socat_pid" 2>/dev/null || true
       fi
-      rm -f "$PORTAL_DIR/socat.pid"
     fi
 
-    # Keep portal directory (contains qcow2, SSH keys, logs for next start)
-    info "✓ Portal VM stopped (kept directory: $PORTAL_DIR)"
+    # Remove entire portal directory (qcow2, SSH keys, logs, cloud-init)
+    if [ -d "$PORTAL_DIR" ]; then
+      rm -rf "$PORTAL_DIR"
+      info "✓ Portal VM stopped and removed: $PORTAL_DIR"
+    else
+      info "✓ Portal VM stopped"
+    fi
 
     exit 0
   fi
@@ -134,6 +137,8 @@ check_prerequisites() {
 get_aap_credentials() {
   local aap_route
   local admin_pass
+  local api_token
+
   aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
   admin_pass=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
 
@@ -142,7 +147,27 @@ get_aap_credentials() {
     exit 1
   fi
 
-  echo "$aap_route|$admin_pass"
+  # Create API token for portal backend catalog (not OAuth - separate auth)
+  info "Creating AAP API token for portal backend..." >&2
+
+  # Get cluster CA bundle for TLS verification
+  local ca_bundle="/tmp/aap-ca-$$.crt"
+  kubectl get secret router-certs-default -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d > "$ca_bundle"
+
+  api_token=$(curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" \
+    -X POST "https://$aap_route/api/gateway/v1/tokens/" \
+    -H "Content-Type: application/json" \
+    -d '{"description":"Portal backend catalog","application":null,"scope":"write"}' | \
+    jq -r '.token // empty')
+
+  rm -f "$ca_bundle"
+
+  if [ -z "$api_token" ]; then
+    error "Failed to create AAP API token"
+    exit 1
+  fi
+
+  echo "$aap_route|$admin_pass|$api_token"
 }
 
 create_oauth_app() {
@@ -151,14 +176,18 @@ create_oauth_app() {
 
   info "Creating OAuth application in AAP..." >&2
 
+  # Get cluster CA bundle for TLS verification
+  local ca_bundle="/tmp/aap-ca-oauth-$$.crt"
+  kubectl get secret router-certs-default -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d > "$ca_bundle"
+
   # Check if app exists
   local existing
-  existing=$(curl -sk -u "admin:$admin_pass" \
+  existing=$(curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" \
     "https://$aap_route/api/gateway/v1/applications/?name=portal-vm" | jq -r '.results[0].id // empty')
 
   if [ -n "$existing" ]; then
     # Delete existing
-    curl -sk -u "admin:$admin_pass" -X DELETE \
+    curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" -X DELETE \
       "https://$aap_route/api/gateway/v1/applications/$existing/" >/dev/null 2>&1
   fi
 
@@ -166,7 +195,7 @@ create_oauth_app() {
   local oauth_data
   local client_id
   local client_secret
-  oauth_data=$(curl -sk -u "admin:$admin_pass" \
+  oauth_data=$(curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" \
     -X POST -H "Content-Type: application/json" \
     "https://$aap_route/api/gateway/v1/applications/" \
     -d '{
@@ -177,6 +206,8 @@ create_oauth_app() {
       "redirect_uris": "https://localhost:8443/api/auth/rhaap/handler/frame",
       "organization": 1
     }')
+
+  rm -f "$ca_bundle"
 
   client_id=$(echo "$oauth_data" | jq -r '.client_id' 2>/dev/null)
   client_secret=$(echo "$oauth_data" | jq -r '.client_secret' 2>/dev/null)
@@ -193,8 +224,14 @@ create_oauth_app() {
 generate_cloud_init() {
   local aap_creds="$1"
   local oauth_creds="$2"
-  local aap_route="${aap_creds%%|*}"
-  local aap_token="${aap_creds##*|}"
+
+  # Parse AAP creds: route|password|api_token
+  local aap_route admin_pass aap_token
+  aap_route="${aap_creds%%|*}"
+  admin_pass="${aap_creds#*|}"
+  admin_pass="${admin_pass%|*}"
+  aap_token="${aap_creds##*|}"
+
   local client_id="${oauth_creds%%|*}"
   local client_secret="${oauth_creds##*|}"
 
@@ -209,7 +246,7 @@ generate_cloud_init() {
   local ssh_pub
   ssh_pub=$(cat "$PORTAL_DIR/id_ed25519.pub")
 
-  # Create user-data (official minimal template from AAP Extend docs p212-213)
+  # Create user-data (ADR-002 partial: simplified runcmd, port 443)
   cat > "$PORTAL_DIR/user-data" <<EOF
 #cloud-config
 
@@ -229,21 +266,34 @@ aap:
 
 database:
   type: builtin
+  builtin:
+    password: "auto"
+    admin_password: "auto"
+
+security:
+  backend_secret: "auto"
+
+network:
+  base_url: "https://localhost:8443"
+
+write_files:
+  - path: /etc/containers/systemd/portal.container.d/10-port-override.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Container]
+      PublishPort=443:7007
+  - path: /etc/containers/systemd/portal.container.d/20-aap-env.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      [Container]
+      Environment=AAP_HOST_URL=https://$aap_route
+      Environment=AAP_OAUTH_CLIENT_ID=$client_id
 
 runcmd:
   - echo "10.0.2.2 $aap_route" >> /etc/hosts
-  - |
-    # Disable GitHub and GitLab auth plugins via config override
-    # Portal loads configs/* in lexical order; zz- prefix loads last
-    cat > /etc/portal/configs/app-config/zz-disable-scm-oauth.yaml <<'PLUGIN_EOF'
-# Disable SCM OAuth providers (GitHub/GitLab) - only use RHAAP
-dynamicPlugins:
-  plugins:
-    - package: '@backstage/plugin-auth-backend-module-github-provider-dynamic'
-      disabled: true
-    - package: '@backstage/plugin-auth-backend-module-gitlab-provider-dynamic'
-      disabled: true
-PLUGIN_EOF
+  - sudo rm -f /var/lib/portal/dynamic-plugins-root/install-dynamic-plugins.lock
   - systemctl restart portal.service
 EOF
 
@@ -310,8 +360,8 @@ start_portal_vm() {
     warn "HVF not available, using TCG (slower)"
   fi
 
-  # Start QEMU in background with RHEL appliance optimizations
-  # Separate serial console (contains cloud-init secrets) from process logs
+  # Start QEMU (ADR-002 partial: hostfwd only, guestfwd needs socat fallback)
+  # Portal reaches AAP via /etc/hosts override in cloud-init (10.0.2.2 → AAP route)
   # shellcheck disable=SC2086
   nohup qemu-system-x86_64 \
     $accel_arg \
@@ -331,14 +381,9 @@ start_portal_vm() {
   local qemu_pid=$!
   echo "$qemu_pid" > "$PORTAL_DIR/qemu.pid"
 
-  # Start socat proxy for AAP connectivity (QEMU guest → macOS host → CRC)
-  # Portal VM uses 10.0.2.2 (QEMU host gateway) to reach AAP
-  if ! pgrep -f "socat.*TCP-LISTEN:443.*127.0.0.1:443" >/dev/null 2>&1; then
-    info "Starting socat proxy for AAP connectivity..."
-    nohup socat TCP-LISTEN:443,bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:443 \
-      > "$PORTAL_DIR/socat-https.log" 2>&1 &
-    echo $! > "$PORTAL_DIR/socat.pid"
-  fi
+  # No socat needed - CRC already listens on 0.0.0.0:443 (all interfaces including 10.0.2.2)
+  # Portal VM → 10.0.2.2:443 (QEMU host gateway) → CRC directly
+  # /etc/hosts in cloud-init maps AAP route to 10.0.2.2
 
   info "✓ Portal VM started (PID: $qemu_pid)"
   echo ""
@@ -348,6 +393,7 @@ start_portal_vm() {
   echo ""
   echo "After boot completes:"
   echo "  Portal UI:  https://localhost:8443"
+  echo "  AAP route:  https://$AAP_ROUTE (portal connects to this)"
   echo "  SSH access: ssh -i $PORTAL_DIR/id_ed25519 -p 2223 -o StrictHostKeyChecking=no admin@localhost"
   echo ""
   echo "Check status: sudo systemctl status portal postgres devtools (from SSH)"
@@ -365,8 +411,10 @@ check_prerequisites
 info "Getting AAP credentials..."
 AAP_CREDS=$(get_aap_credentials)
 
+# Parse: route|password|api_token
 AAP_ROUTE="${AAP_CREDS%%|*}"
-ADMIN_PASS="${AAP_CREDS##*|}"
+ADMIN_PASS="${AAP_CREDS#*|}"
+ADMIN_PASS="${ADMIN_PASS%|*}"
 
 OAUTH_CREDS=$(create_oauth_app "$AAP_ROUTE" "$ADMIN_PASS")
 

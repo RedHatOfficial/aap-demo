@@ -47,6 +47,35 @@ Available addons: olm, console, registry, mcp-server, devspaces, prometheus
 
 `aap-demo deploy` deploys AAP 2.7.
 
+## Portal VM Addon
+
+Portal VM runs AAP Self-Service Portal via QEMU x86 emulation on macOS:
+
+| Command | Purpose |
+|---------|---------|
+| `./addons/portal-vm/deploy.sh` | Start portal VM |
+| `./addons/portal-vm/deploy.sh --delete` | Stop and cleanup portal VM |
+
+**Access after boot (3-10min)**:
+- Portal UI: `https://localhost:8443` (AAP OAuth login)
+- SSH: `ssh -i ~/.aap-demo/portal-vm/id_ed25519 -p 2223 admin@localhost`
+
+**Boot progress**: `tail -f ~/.aap-demo/portal-vm/serial.log`
+
+**Prerequisites**:
+```bash
+brew install qemu cdrtools
+```
+
+Portal qcow2 must exist in `~/Downloads/ansible-automation-portal-*-x86_64.qcow2` (download from Red Hat Customer Portal).
+
+**Configuration**: Portal uses AAP OAuth (not GitHub). OAuth app auto-created in AAP during deployment. Cloud-init applies:
+- AAP host URL
+- OAuth client ID/secret
+- Admin SSH key
+
+If login shows GitHub instead of AAP OAuth, portal may have started before cloud-init completed. Wait for cloud-init finish (`cloud-init status --wait` from SSH), then restart portal service.
+
 ## Workflow
 
 Before any command, run `aap-demo status` to understand current state. The standard

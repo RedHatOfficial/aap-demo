@@ -126,39 +126,72 @@ PORTAL_VM_NAME=my-portal ./deploy.sh
 └── serial.log          # VM serial console output
 ```
 
-## Architecture
+## Architecture (ADR-002)
+
+**Port flow (no socat, no sudo required):**
 
 ```
-┌─────────────────────────────────────┐
-│         macOS Host                  │
-│                                     │
-│  ┌───────────────────────────────┐ │
-│  │  QEMU (x86 emulation)         │ │
-│  │                               │ │
-│  │  ┌─────────────────────────┐ │ │
-│  │  │ Portal VM (RHEL 9 x86)  │ │ │
-│  │  │                         │ │ │
-│  │  │ - portal.service        │ │ │
-│  │  │ - postgres.service      │ │ │
-│  │  │ - devtools.service      │ │ │
-│  │  └─────────────────────────┘ │ │
-│  │                               │ │
-│  │  Port forwarding:             │ │
-│  │  - 443 → localhost:8443       │ │
-│  │  - 80  → localhost:8080       │ │
-│  │  - 22  → localhost:2223       │ │
-│  └───────────────────────────────┘ │
-│                                     │
-│  ┌───────────────────────────────┐ │
-│  │  OpenShift Local (CRC)        │ │
-│  │                               │ │
-│  │  - AAP Gateway (OAuth)        │ │
-│  │  - AAP Controller             │ │
-│  │  - Hub                        │ │
-│  └───────────────────────────────┘ │
-└─────────────────────────────────────┘
-        │
-        └─> Portal connects to AAP via https://aap-aap-operator.apps.127.0.0.1.nip.io
+macOS Browser
+  ↓ https://localhost:8443
+QEMU hostfwd tcp::8443-:443
+  ↓
+Portal VM :443
+  ↓ systemd override PublishPort=443:7007
+Portal Container :7007 (internal)
+```
+
+**AAP connectivity (QEMU guestfwd):**
+
+```
+Portal Container → AAP route
+  ↓ DNS resolves to 10.0.2.2 (QEMU host gateway)
+Portal VM → 10.0.2.2:443
+  ↓ QEMU guestfwd=tcp:10.0.2.2:443-tcp:127.0.0.1:443
+macOS 127.0.0.1:443 → OpenShift Local
+```
+
+**Component diagram:**
+
+```
+┌─────────────────────────────────────────────────┐
+│         macOS Host                              │
+│                                                 │
+│  ┌─────────────────────────────────────────┐   │
+│  │  QEMU (x86 emulation) - ADR-002         │   │
+│  │                                         │   │
+│  │  ┌───────────────────────────────────┐ │   │
+│  │  │ Portal VM (RHEL 9 bootc x86)     │ │   │
+│  │  │                                   │ │   │
+│  │  │ Container: portal:7007            │ │   │
+│  │  │ VM host: 0.0.0.0:443 (override)   │ │   │
+│  │  │                                   │ │   │
+│  │  │ Services:                         │ │   │
+│  │  │ - portal.service                  │ │   │
+│  │  │ - postgres.service                │ │   │
+│  │  │ - devtools.service                │ │   │
+│  │  └───────────────────────────────────┘ │   │
+│  │                                         │   │
+│  │  QEMU networking (user mode, slirp):   │   │
+│  │  hostfwd: macOS:8443 → VM:443          │   │
+│  │  hostfwd: macOS:8080 → VM:80           │   │
+│  │  hostfwd: macOS:2223 → VM:22           │   │
+│  │  guestfwd: VM:10.0.2.2:443 → macOS:443 │   │
+│  └─────────────────────────────────────────┘   │
+│                                                 │
+│  ┌─────────────────────────────────────────┐   │
+│  │  OpenShift Local (127.0.0.1:443)        │   │
+│  │                                         │   │
+│  │  - AAP Gateway (OAuth provider)         │   │
+│  │  - AAP Controller                       │   │
+│  │  - Hub                                  │   │
+│  └─────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────┘
+
+Key improvements vs ADR-001:
+- No socat proxy (QEMU guestfwd handles AAP connectivity)
+- No sudo required (guestfwd runs in user QEMU process)
+- No /etc/hosts DNS hacks (standard resolution via QEMU DNS)
+- Port 443 on VM (matches appliance default, cleaner override)
 ```
 
 ## Cloud-Init Configuration
@@ -191,8 +224,13 @@ security:
   backend_secret: "auto"
 
 network:
-  port: 443
-  base_url: "https://portal-vm.local"
+  base_url: "https://localhost:8443"
+
+write_files:
+  - path: /etc/containers/systemd/portal.container.d/10-port-override.conf
+    content: |
+      [Container]
+      PublishPort=443:7007
 ```
 
 ## Troubleshooting
@@ -272,13 +310,35 @@ tail -f ~/.aap-demo/portal-vm/qemu.log | grep -E "(portal|postgres|devtools)"
 
 ### Can't connect to AAP
 
-From portal VM, test AAP route:
+**ADR-002:** Portal reaches AAP via QEMU guestfwd (no socat):
 
-```bash
-curl -k https://aap-aap-operator.apps.127.0.0.1.nip.io/api/v2/ping/
+```
+Portal → 10.0.2.2:443 → guestfwd → macOS 127.0.0.1:443 → OpenShift Local
 ```
 
-Verify AAP admin password matches cloud-init config.
+Test from portal VM SSH:
+
+```bash
+# Should reach AAP Gateway
+curl -k https://10.0.2.2:443/api/v2/ping/
+```
+
+If fails, check macOS:
+
+```bash
+# AAP should respond on 127.0.0.1:443
+curl -k https://127.0.0.1:443/api/v2/ping/
+
+# Check CRC routes
+oc get route aap -n aap-operator
+```
+
+Verify QEMU guestfwd enabled:
+
+```bash
+# Check qemu.log for guestfwd line
+grep guestfwd ~/.aap-demo/portal-vm/qemu.log
+```
 
 ### Performance too slow
 
