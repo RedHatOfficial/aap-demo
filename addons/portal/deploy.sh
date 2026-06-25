@@ -43,7 +43,7 @@ cleanup() {
     if [ -n "$aap_route" ] && [ -n "$admin_pass" ] && [ -n "$app_id" ]; then
       echo "Deleting OAuth application (ID: $app_id) from AAP"
       curl -k -u "admin:$admin_pass" \
-        -X DELETE "https://$aap_route/api/gateway/v1/oauth2_applications/$app_id/" \
+        -X DELETE "https://$aap_route/api/gateway/v1/applications/$app_id/" \
         -H "Content-Type: application/json" &>/dev/null || true
     fi
   fi
@@ -217,7 +217,7 @@ create_oauth_app() {
   # Check if app already exists
   local existing_app
   existing_app=$(curl -k -u "admin:$ADMIN_PASS" \
-    "https://$AAP_ROUTE/api/gateway/v1/oauth2_applications/?name=ansible-automation-portal" \
+    "https://$AAP_ROUTE/api/gateway/v1/applications/?name=ansible-automation-portal" \
     -H "Content-Type: application/json" 2>/dev/null)
 
   local existing_count
@@ -232,7 +232,7 @@ create_oauth_app() {
     # Create new OAuth app with placeholder redirect URI
     local oauth_response
     oauth_response=$(curl -k -u "admin:$ADMIN_PASS" \
-      -X POST "https://$AAP_ROUTE/api/gateway/v1/oauth2_applications/" \
+      -X POST "https://$AAP_ROUTE/api/gateway/v1/applications/" \
       -H "Content-Type: application/json" \
       -d "{
         \"name\": \"ansible-automation-portal\",
@@ -477,7 +477,7 @@ update_oauth_redirect() {
   local redirect_uri="https://$PORTAL_ROUTE/api/auth/oauth2/handler/frame"
 
   curl -k -u "admin:$ADMIN_PASS" \
-    -X PATCH "https://$AAP_ROUTE/api/gateway/v1/oauth2_applications/$OAUTH_APP_ID/" \
+    -X PATCH "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
     -H "Content-Type: application/json" \
     -d "{\"redirect_uris\": \"$redirect_uri\"}" \
     &>/dev/null
