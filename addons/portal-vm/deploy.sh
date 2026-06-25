@@ -66,17 +66,18 @@ cleanup() {
       rm -f "$PORTAL_DIR/qemu.pid"
     fi
 
-    # Cleanup portal directory
-    if [ -d "$PORTAL_DIR" ]; then
-      info "Remove portal directory? (y/N)"
-      read -r response
-      if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
-        rm -rf "$PORTAL_DIR"
-        info "✓ Portal VM cleaned up"
-      else
-        info "Kept portal directory: $PORTAL_DIR"
+    # Kill socat proxy
+    if [ -f "$PORTAL_DIR/socat.pid" ]; then
+      local socat_pid
+      socat_pid=$(cat "$PORTAL_DIR/socat.pid")
+      if kill -0 "$socat_pid" 2>/dev/null; then
+        kill "$socat_pid" 2>/dev/null || true
       fi
+      rm -f "$PORTAL_DIR/socat.pid"
     fi
+
+    # Keep portal directory (contains qcow2, SSH keys, logs for next start)
+    info "✓ Portal VM stopped (kept directory: $PORTAL_DIR)"
 
     exit 0
   fi
@@ -173,7 +174,7 @@ create_oauth_app() {
       "description": "Portal VM QEMU deployment",
       "client_type": "confidential",
       "authorization_grant_type": "authorization-code",
-      "redirect_uris": "https://localhost:8443/api/auth/callback",
+      "redirect_uris": "https://localhost:8443/api/auth/rhaap/handler/frame",
       "organization": 1
     }')
 
@@ -208,13 +209,12 @@ generate_cloud_init() {
   local ssh_pub
   ssh_pub=$(cat "$PORTAL_DIR/id_ed25519.pub")
 
-  # Create user-data
+  # Create user-data (official minimal template from AAP Extend docs p212-213)
   cat > "$PORTAL_DIR/user-data" <<EOF
 #cloud-config
-ssh_pwauth: false
+
 users:
   - name: admin
-    groups: sudo
     sudo: ALL=(ALL) NOPASSWD:ALL
     ssh_authorized_keys:
       - $ssh_pub
@@ -229,6 +229,22 @@ aap:
 
 database:
   type: builtin
+
+runcmd:
+  - echo "10.0.2.2 $aap_route" >> /etc/hosts
+  - |
+    # Disable GitHub and GitLab auth plugins via config override
+    # Portal loads configs/* in lexical order; zz- prefix loads last
+    cat > /etc/portal/configs/app-config/zz-disable-scm-oauth.yaml <<'PLUGIN_EOF'
+# Disable SCM OAuth providers (GitHub/GitLab) - only use RHAAP
+dynamicPlugins:
+  plugins:
+    - package: '@backstage/plugin-auth-backend-module-github-provider-dynamic'
+      disabled: true
+    - package: '@backstage/plugin-auth-backend-module-gitlab-provider-dynamic'
+      disabled: true
+PLUGIN_EOF
+  - systemctl restart portal.service
 EOF
 
   # Create meta-data
@@ -264,7 +280,7 @@ start_portal_vm() {
       echo "Access portal at: https://localhost:8443"
       echo "SSH: ssh -i $PORTAL_DIR/id_ed25519 -p 2223 -o StrictHostKeyChecking=no admin@localhost"
       echo ""
-      echo "Stop with: $0 --delete"
+      echo "Stop with: aap-demo disable portal-vm"
       exit 0
     else
       warn "Stale PID file found (process $pid not running), removing"
@@ -315,11 +331,13 @@ start_portal_vm() {
   local qemu_pid=$!
   echo "$qemu_pid" > "$PORTAL_DIR/qemu.pid"
 
-  # Redact secrets in user-data after VM starts
-  if [ -f "$PORTAL_DIR/user-data" ]; then
-    sed -i.bak 's/client_secret:.*/client_secret: <redacted>/' "$PORTAL_DIR/user-data"
-    sed -i.bak 's/token:.*/token: <redacted>/' "$PORTAL_DIR/user-data"
-    rm -f "$PORTAL_DIR/user-data.bak"
+  # Start socat proxy for AAP connectivity (QEMU guest → macOS host → CRC)
+  # Portal VM uses 10.0.2.2 (QEMU host gateway) to reach AAP
+  if ! pgrep -f "socat.*TCP-LISTEN:443.*127.0.0.1:443" >/dev/null 2>&1; then
+    info "Starting socat proxy for AAP connectivity..."
+    nohup socat TCP-LISTEN:443,bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:443 \
+      > "$PORTAL_DIR/socat-https.log" 2>&1 &
+    echo $! > "$PORTAL_DIR/socat.pid"
   fi
 
   info "✓ Portal VM started (PID: $qemu_pid)"
@@ -330,11 +348,10 @@ start_portal_vm() {
   echo ""
   echo "After boot completes:"
   echo "  Portal UI:  https://localhost:8443"
-  echo "  SSH access: ssh -i $PORTAL_DIR/id_ed25519 -p 2223 admin@localhost"
-  echo "  Console:    tmux attach -t portal-vm (Login: admin / admin, Detach: Ctrl-b d)"
+  echo "  SSH access: ssh -i $PORTAL_DIR/id_ed25519 -p 2223 -o StrictHostKeyChecking=no admin@localhost"
   echo ""
-  echo "Check status: sudo systemctl status portal postgres devtools (from SSH or console)"
-  echo "Stop VM:      $0 --delete"
+  echo "Check status: sudo systemctl status portal postgres devtools (from SSH)"
+  echo "Stop VM:      aap-demo disable portal-vm"
 }
 
 # Main
