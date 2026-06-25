@@ -1,0 +1,84 @@
+# Ansible Automation Portal Helm Values Template
+# This file is used by deploy.sh to generate values.yaml with actual values
+
+global:
+  # OpenShift cluster base URL (auto-detected from cluster)
+  clusterRouterBase: __CLUSTER_BASE_URL__
+
+  # Plugin delivery method: oci (recommended) or tarball (deprecated)
+  pluginMode: oci
+
+  # Portal plugin version (must match AAP version compatibility)
+  # See: https://access.redhat.com/support/policy/updates/ansible-automation-platform
+  imageTagInfo: "__PLUGIN_VERSION__"
+
+upstream:
+  backstage:
+    appConfig:
+      catalog:
+        providers:
+          # AAP integration configuration
+          rhaap:
+            # Organization name for job template synchronization
+            orgs: "__AAP_ORG_NAME__"
+
+# ---------------------------------------------------------------------------
+# Advanced Configuration (optional)
+# ---------------------------------------------------------------------------
+
+# Uncomment and customize sections below as needed
+
+# # External PostgreSQL database (instead of built-in)
+# upstream:
+#   backstage:
+#     appConfig:
+#       backend:
+#         database:
+#           client: pg
+#           connection:
+#             host: postgres.example.com
+#             port: 5432
+#             user: portal
+#             password: <password>
+#             database: portal
+
+# # Resource limits and requests
+# upstream:
+#   backstage:
+#     resources:
+#       limits:
+#         cpu: 2
+#         memory: 4Gi
+#       requests:
+#         cpu: 500m
+#         memory: 1Gi
+
+# # Custom environment variables
+# upstream:
+#   backstage:
+#     extraEnvVars:
+#       - name: CUSTOMER_SUPPORT_URL
+#         value: https://access.redhat.com/support
+#       - name: LOG_LEVEL
+#         value: debug
+
+# # High Availability (multiple replicas)
+# upstream:
+#   backstage:
+#     replicaCount: 3
+
+# # Custom domain (instead of default OpenShift route)
+# global:
+#   clusterRouterBase: custom-domain.example.com
+
+# # Additional AAP organizations to sync
+# upstream:
+#   backstage:
+#     appConfig:
+#       catalog:
+#         providers:
+#           rhaap:
+#             orgs:
+#               - Default
+#               - Production
+#               - Development
