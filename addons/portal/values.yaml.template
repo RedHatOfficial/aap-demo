@@ -1,15 +1,12 @@
 # Ansible Automation Portal Helm Values Template
-# This file is used by deploy.sh to generate values.yaml with actual values
+# deploy.sh generates ~/.aap-demo/portal/values.yaml at install time.
+#
+# x86 clusters: top-level global/upstream keys (Red Hat RHDH hub from chart).
+# arm64 clusters: redhat-developer-hub wrapper + community RHDH + RHEL9 PostgreSQL.
 
 global:
-  # OpenShift cluster base URL (auto-detected from cluster)
   clusterRouterBase: __CLUSTER_BASE_URL__
-
-  # Plugin delivery method: oci (recommended) or tarball (deprecated)
   pluginMode: oci
-
-  # Portal plugin version (must match AAP version compatibility)
-  # See: https://access.redhat.com/support/policy/updates/ansible-automation-platform
   imageTagInfo: "__PLUGIN_VERSION__"
 
 upstream:
@@ -17,68 +14,24 @@ upstream:
     appConfig:
       catalog:
         providers:
-          # AAP integration configuration
           rhaap:
-            # Organization name for job template synchronization
-            orgs: "__AAP_ORG_NAME__"
+            production:
+              orgs: "__AAP_ORG_NAME__"
 
-# ---------------------------------------------------------------------------
-# Advanced Configuration (optional)
-# ---------------------------------------------------------------------------
-
-# Uncomment and customize sections below as needed
-
-# # External PostgreSQL database (instead of built-in)
-# upstream:
-#   backstage:
-#     appConfig:
-#       backend:
-#         database:
-#           client: pg
-#           connection:
-#             host: postgres.example.com
-#             port: 5432
-#             user: portal
-#             password: <password>
-#             database: portal
-
-# # Resource limits and requests
-# upstream:
-#   backstage:
-#     resources:
-#       limits:
-#         cpu: 2
-#         memory: 4Gi
-#       requests:
-#         cpu: 500m
-#         memory: 1Gi
-
-# # Custom environment variables
-# upstream:
-#   backstage:
-#     extraEnvVars:
-#       - name: CUSTOMER_SUPPORT_URL
-#         value: https://access.redhat.com/support
-#       - name: LOG_LEVEL
-#         value: debug
-
-# # High Availability (multiple replicas)
-# upstream:
-#   backstage:
-#     replicaCount: 3
-
-# # Custom domain (instead of default OpenShift route)
-# global:
-#   clusterRouterBase: custom-domain.example.com
-
-# # Additional AAP organizations to sync
-# upstream:
-#   backstage:
-#     appConfig:
-#       catalog:
-#         providers:
-#           rhaap:
-#             orgs:
-#               - Default
-#               - Production
-#               - Development
+# ARM profile example (auto-generated on arm64 clusters):
+# redhat-developer-hub:
+#   global:
+#     clusterRouterBase: __CLUSTER_BASE_URL__
+#     pluginMode: oci
+#     imageTagInfo: "__PLUGIN_VERSION__"
+#   upstream:
+#     backstage:
+#       image:
+#         registry: quay.io
+#         repository: rhdh-community/rhdh
+#         tag: "1.10"
+#   postgresql:
+#     image:
+#       registry: registry.redhat.io
+#       repository: rhel9/postgresql-15
+#       tag: "9.8-1782419742"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Portal Helm addon deployment script
-# Installs Ansible Automation Portal via OpenShift Helm chart
+# Portal Helm addon — Ansible Automation Portal via OpenShift Helm chart
+# Auto-detects cluster CPU (arm64 vs amd64) and selects the correct image set.
 
 set -e
 
@@ -16,6 +16,25 @@ CHART_REPO="openshift-helm-charts/redhat-rhaap-portal"
 
 # Default plugin version (AAP 2.7 compatible)
 DEFAULT_PLUGIN_VERSION="2.2"
+
+# OAuth app name in AAP
+OAUTH_APP_NAME="${OAUTH_APP_NAME:-ansible-automation-portal}"
+
+# ARM profile: upstream community RHDH (multi-arch) + RHEL9 PostgreSQL
+DEFAULT_RHDH_REGISTRY="${DEFAULT_RHDH_REGISTRY:-quay.io}"
+DEFAULT_RHDH_REPOSITORY="${DEFAULT_RHDH_REPOSITORY:-rhdh-community/rhdh}"
+DEFAULT_RHDH_TAG="${DEFAULT_RHDH_TAG:-1.10}"
+DEFAULT_POSTGRES_REGISTRY="${DEFAULT_POSTGRES_REGISTRY:-registry.redhat.io}"
+DEFAULT_POSTGRES_REPOSITORY="${DEFAULT_POSTGRES_REPOSITORY:-rhel9/postgresql-15}"
+DEFAULT_POSTGRES_TAG="${DEFAULT_POSTGRES_TAG:-9.8-1782419742}"
+
+# Legacy portal-arm addon (pre-merge installs)
+LEGACY_ARM_NAMESPACE="redhat-rhaap-portal-arm"
+LEGACY_ARM_RELEASE="redhat-rhaap-portal-arm"
+LEGACY_ARM_DIR="${HOME}/.aap-demo/portal-arm"
+LEGACY_ARM_OAUTH_APP="ansible-automation-portal-arm"
+
+IS_ARM_CLUSTER=false
 
 # ---------------------------------------------------------------------------
 # Delete/Cleanup Handler
@@ -34,10 +53,45 @@ cleanup_portal_namespace() {
   kubectl delete secret secrets-rhaap-portal -n "$ns" &>/dev/null || true
 }
 
+cleanup_legacy_arm_install() {
+  if ! helm list -n "$LEGACY_ARM_NAMESPACE" 2>/dev/null | grep -q "^$LEGACY_ARM_RELEASE"; then
+    if [ ! -d "$LEGACY_ARM_DIR" ]; then
+      return 0
+    fi
+  fi
+
+  echo "Removing legacy portal-arm install..."
+
+  if helm list -n "$LEGACY_ARM_NAMESPACE" 2>/dev/null | grep -q "^$LEGACY_ARM_RELEASE"; then
+    helm uninstall "$LEGACY_ARM_RELEASE" -n "$LEGACY_ARM_NAMESPACE" || true
+  fi
+
+  kubectl delete secret "${LEGACY_ARM_RELEASE}-dynamic-plugins-registry-auth" \
+    -n "$LEGACY_ARM_NAMESPACE" &>/dev/null || true
+  kubectl delete secret secrets-rhaap-portal -n "$LEGACY_ARM_NAMESPACE" &>/dev/null || true
+  kubectl delete namespace "$LEGACY_ARM_NAMESPACE" --timeout=120s 2>/dev/null || true
+
+  if [ -f "$LEGACY_ARM_DIR/oauth_app_id" ]; then
+    local legacy_app_id aap_route admin_pass
+    legacy_app_id=$(cat "$LEGACY_ARM_DIR/oauth_app_id")
+    aap_route=$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+    admin_pass=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
+      -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+    if [ -n "$aap_route" ] && [ -n "$admin_pass" ] && [ -n "$legacy_app_id" ]; then
+      curl -k -u "admin:$admin_pass" \
+        -X DELETE "https://$aap_route/api/gateway/v1/applications/$legacy_app_id/" \
+        -H "Content-Type: application/json" &>/dev/null || true
+    fi
+  fi
+
+  rm -rf "$LEGACY_ARM_DIR"
+}
+
 cleanup() {
   echo "Disabling portal addon..."
 
   cleanup_portal_namespace "$PORTAL_NAMESPACE"
+  cleanup_legacy_arm_install
 
   # Remove legacy install from AAP namespace (pre-dedicated-namespace deployments)
   if [ "$AAP_NAMESPACE" != "$PORTAL_NAMESPACE" ]; then
@@ -90,32 +144,67 @@ detect_arch() {
   fi
 }
 
-check_architecture() {
-  if [[ "$(detect_arch)" == "arm" ]]; then
-    echo "⚠️  Portal requires x86_64 architecture"
-    echo "Your local machine is ARM (Apple Silicon)"
-    echo ""
-    echo "Options:"
-    echo "1. Use portal-vm addon instead (works on ARM Mac via emulation)"
-    echo "   $ aap-demo enable portal-vm"
-    echo ""
-    echo "2. Deploy to x86_64 OpenShift cluster (not MicroShift on this Mac)"
-    echo "   Configure KUBECONFIG to point to remote x86 cluster"
-    echo ""
-    return 1
+detect_cluster_arch() {
+  if [ -n "${PORTAL_ARCH:-}" ]; then
+    case "$PORTAL_ARCH" in
+      arm|arm64|aarch64) echo "arm64"; return ;;
+      x86|amd64|x86_64) echo "amd64"; return ;;
+      *)
+        echo "❌ Unknown PORTAL_ARCH: $PORTAL_ARCH (use arm or x86)"
+        exit 1
+        ;;
+    esac
   fi
+
+  kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true
+}
+
+resolve_portal_profile() {
+  local cluster_arch
+  cluster_arch=$(detect_cluster_arch)
+
+  if [ -z "$cluster_arch" ]; then
+    echo "⚠️  Could not detect cluster architecture; defaulting to x86 profile"
+    IS_ARM_CLUSTER=false
+    return
+  fi
+
+  echo "✓ Cluster architecture: $cluster_arch"
+
+  if [[ "$cluster_arch" == "arm64" ]] || [[ "$cluster_arch" == "aarch64" ]]; then
+    IS_ARM_CLUSTER=true
+    echo "✓ Using ARM profile (upstream community RHDH images)"
+  else
+    IS_ARM_CLUSTER=false
+    echo "✓ Using x86 profile (Red Hat RHDH images)"
+  fi
+}
+
+check_architecture() {
+  local local_arch
+  local_arch=$(detect_arch)
+
+  if [ "$IS_ARM_CLUSTER" = true ]; then
+    if [ "$local_arch" = "arm" ]; then
+      echo "✓ Local machine is ARM — matches cluster"
+    else
+      echo "ℹ️  Local machine is x86 — deploying to ARM cluster via KUBECONFIG"
+    fi
+    return 0
+  fi
+
+  if [ "$local_arch" = "arm" ]; then
+    echo "ℹ️  Local machine is ARM (Apple Silicon) — cluster is x86_64"
+    echo "   For local ARM cluster testing, use portal-vm or deploy to this ARM cluster with:"
+    echo "   aap-demo enable portal"
+    echo ""
+  fi
+
   return 0
 }
 
 check_prerequisites() {
   echo "Checking prerequisites..."
-
-  # Architecture check (warning only, cluster may be x86)
-  if ! check_architecture; then
-    echo ""
-    echo "⚠️  Proceeding anyway - cluster architecture may differ from local"
-    echo ""
-  fi
 
   # Check kubectl/oc connectivity
   if ! kubectl cluster-info &>/dev/null; then
@@ -123,6 +212,9 @@ check_prerequisites() {
     echo "Ensure oc/kubectl is configured and cluster is accessible"
     exit 1
   fi
+
+  resolve_portal_profile
+  check_architecture
 
   # Check AAP deployment
   if ! kubectl get route aap -n "$AAP_NAMESPACE" &>/dev/null; then
@@ -307,7 +399,7 @@ create_oauth_app() {
   # Check if app already exists
   local existing_app
   existing_app=$(curl -k -u "admin:$ADMIN_PASS" \
-    "https://$AAP_ROUTE/api/gateway/v1/applications/?name=ansible-automation-portal" \
+    "https://$AAP_ROUTE/api/gateway/v1/applications/?name=${OAUTH_APP_NAME}" \
     -H "Content-Type: application/json" 2>/dev/null)
 
   local existing_count
@@ -348,7 +440,7 @@ create_oauth_app() {
       -X POST "https://$AAP_ROUTE/api/gateway/v1/applications/" \
       -H "Content-Type: application/json" \
       -d "{
-        \"name\": \"ansible-automation-portal\",
+        \"name\": \"${OAUTH_APP_NAME}\",
         \"organization\": $ORG_ID,
         \"authorization_grant_type\": \"authorization-code\",
         \"client_type\": \"confidential\",
@@ -528,15 +620,61 @@ get_cluster_info() {
 }
 
 get_aap_host_url() {
-  # On MicroShift/CRC, CoreDNS rewrites route hostnames to in-cluster Services
-  # (port 80). Portal backend OAuth token exchange to https://<route> times out
-  # because nothing listens on :443 at the Service IP. Use http://<route> so
-  # pod→service calls work; browsers still reach AAP via ingress TLS redirect.
+  # On MicroShift/CRC, portal backend OAuth token exchange must use http://<route>
+  # (not https://) because in-cluster traffic hits the Service on port 80.
+  # nip.io hostnames resolve to 127.0.0.1 inside pods, so patch_aap_route_host_alias()
+  # maps the route hostname to the AAP Service ClusterIP. Browsers still reach AAP
+  # over HTTPS via ingress.
   if [ "${IS_MICROSHIFT:-false}" = true ]; then
     echo "http://${AAP_ROUTE}"
   else
     echo "https://${AAP_ROUTE}"
   fi
+}
+
+patch_aap_route_host_alias() {
+  if [ "${IS_MICROSHIFT:-false}" != true ]; then
+    return 0
+  fi
+
+  echo "Configuring AAP route host alias for in-pod OAuth token exchange..."
+
+  local aap_ip
+  aap_ip=$(kubectl get svc aap -n aap-operator -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+
+  if [ -z "$aap_ip" ]; then
+    echo "⚠️  Could not resolve AAP service ClusterIP; skipping host alias"
+    return 1
+  fi
+
+  local current_ip
+  current_ip=$(kubectl get deployment "$RELEASE_NAME" -n "$PORTAL_NAMESPACE" \
+    -o jsonpath="{.spec.template.spec.hostAliases[?(@.hostnames[0]=='${AAP_ROUTE}')].ip}" 2>/dev/null)
+
+  if [ "$current_ip" = "$aap_ip" ]; then
+    echo "✓ AAP route host alias already configured ($AAP_ROUTE → $aap_ip)"
+    return 0
+  fi
+
+  kubectl patch deployment "$RELEASE_NAME" -n "$PORTAL_NAMESPACE" --type=merge -p "{
+    \"spec\": {
+      \"template\": {
+        \"spec\": {
+          \"hostAliases\": [
+            {\"ip\": \"$aap_ip\", \"hostnames\": [\"$AAP_ROUTE\"]}
+          ]
+        }
+      }
+    }
+  }"
+
+  if ! kubectl rollout status deployment/"$RELEASE_NAME" \
+    -n "$PORTAL_NAMESPACE" \
+    --timeout=600s 2>/dev/null; then
+    echo "⚠️  Portal rollout after host alias patch is still in progress"
+  fi
+
+  echo "✓ AAP route host alias: $AAP_ROUTE → $aap_ip"
 }
 
 create_aap_secrets() {
@@ -563,6 +701,17 @@ create_helm_values() {
 
   local ssl_values=""
   if [ "${IS_MICROSHIFT:-false}" = true ]; then
+  if [ "${IS_ARM_CLUSTER}" = true ]; then
+    ssl_values="
+        ansible:
+          rhaap:
+            checkSSL: false
+        auth:
+          providers:
+            rhaap:
+              production:
+                checkSSL: false"
+  else
     ssl_values="
       ansible:
         rhaap:
@@ -572,6 +721,49 @@ create_helm_values() {
           rhaap:
             production:
               checkSSL: false"
+  fi
+  fi
+
+  if [ "${IS_ARM_CLUSTER}" = true ]; then
+    cat > "$PORTAL_DIR/values.yaml" <<EOF
+redhat-developer-hub:
+  global:
+    clusterRouterBase: $CLUSTER_BASE_URL
+    pluginMode: oci
+    imageTagInfo: "$DEFAULT_PLUGIN_VERSION"
+  upstream:
+    backstage:
+      image:
+        registry: ${DEFAULT_RHDH_REGISTRY}
+        repository: ${DEFAULT_RHDH_REPOSITORY}
+        tag: "${DEFAULT_RHDH_TAG}"
+      appConfig:${ssl_values}
+        dynamicPlugins:
+          frontend:
+            default.main-menu-items:
+              menuItems:
+                default.home:
+                  title: Home
+                default.catalog:
+                  title: Catalog
+                default.create:
+                  title: Create
+                default.apis:
+                  title: APIs
+                default.learning-path:
+                  title: Learning Paths
+                default.my-group:
+                  title: My Group
+    postgresql:
+      image:
+        registry: ${DEFAULT_POSTGRES_REGISTRY}
+        repository: ${DEFAULT_POSTGRES_REPOSITORY}
+        tag: "${DEFAULT_POSTGRES_TAG}"
+EOF
+    echo "✓ Helm values created (ARM profile)"
+    echo "  RHDH hub: ${DEFAULT_RHDH_REGISTRY}/${DEFAULT_RHDH_REPOSITORY}:${DEFAULT_RHDH_TAG}"
+    echo "  PostgreSQL: ${DEFAULT_POSTGRES_REGISTRY}/${DEFAULT_POSTGRES_REPOSITORY}:${DEFAULT_POSTGRES_TAG}"
+    return
   fi
 
   cat > "$PORTAL_DIR/values.yaml" <<EOF
@@ -583,10 +775,11 @@ global:
 upstream:
   backstage:
     appConfig:${ssl_values}
-      catalog:
-        providers:
-          rhaap:
-            orgs: "$ORG_NAME"
+        catalog:
+          providers:
+            rhaap:
+              production:
+                orgs: "$ORG_NAME"
       dynamicPlugins:
         frontend:
           default.main-menu-items:
@@ -605,7 +798,7 @@ upstream:
                 title: My Group
 EOF
 
-  echo "✓ Helm values created"
+  echo "✓ Helm values created (x86 profile)"
 }
 
 install_helm_chart() {
@@ -620,6 +813,12 @@ install_helm_chart() {
   fi
 
   helm repo update &>/dev/null
+
+  if [ "${IS_ARM_CLUSTER}" = true ]; then
+    # kubectl patches to dynamic-plugins conflict with helm server-side apply
+    kubectl delete configmap "${RELEASE_NAME}-dynamic-plugins" \
+      -n "$PORTAL_NAMESPACE" --ignore-not-found 2>/dev/null || true
+  fi
 
   # Install or upgrade
   if helm list -n "$PORTAL_NAMESPACE" 2>/dev/null | grep -q "^$RELEASE_NAME"; then
@@ -636,6 +835,52 @@ install_helm_chart() {
   fi
 
   echo "✓ Helm chart installed"
+}
+
+# Community RHDH on ARM ships a broken quay scaffolder plugin dist — disable after Helm render.
+patch_disable_quay_plugin() {
+  echo "Patching dynamic-plugins configmap..."
+
+  local cm="${RELEASE_NAME}-dynamic-plugins"
+  local plugins_yaml
+
+  plugins_yaml=$(kubectl get cm "$cm" -n "$PORTAL_NAMESPACE" \
+    -o jsonpath='{.data.dynamic-plugins\.yaml}' 2>/dev/null || true)
+
+  if [ -z "$plugins_yaml" ]; then
+    echo "❌ dynamic-plugins configmap not found or empty"
+    return 1
+  fi
+
+  if ! echo "$plugins_yaml" | grep -q 'ansible-automation-platform'; then
+    echo "❌ AAP OCI plugins missing from dynamic-plugins configmap"
+    return 1
+  fi
+
+  if echo "$plugins_yaml" | grep -B1 'scaffolder-backend-module-quay-dynamic' | grep -q '^- disabled: true'; then
+    echo "✓ Quay plugin override already present"
+    return 0
+  fi
+
+  plugins_yaml=$(echo "$plugins_yaml" | grep -v 'scaffolder-backend-module-quay-dynamic' | sed '/^    - disabled: true$/d')
+
+  plugins_yaml="${plugins_yaml}"$'\n'"- disabled: true"$'\n'"  package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-quay-dynamic"
+
+  kubectl create configmap "$cm" \
+    --from-literal=dynamic-plugins.yaml="$plugins_yaml" \
+    -n "$PORTAL_NAMESPACE" \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  echo "✓ Disabled broken quay scaffolder plugin (preserving AAP OCI plugins)"
+}
+
+reset_dynamic_plugins_pvc() {
+  echo "Resetting dynamic-plugins PVC for clean plugin install..."
+
+  kubectl get pvc -n "$PORTAL_NAMESPACE" -o name 2>/dev/null | grep dynamic-plugins | \
+    while read -r pvc; do
+      kubectl delete "$pvc" -n "$PORTAL_NAMESPACE" --timeout=120s 2>/dev/null || true
+    done
 }
 
 restart_portal_deployment() {
@@ -735,6 +980,13 @@ verify_oauth_client() {
         -d "grant_type=authorization_code&code=invalid&redirect_uri=https://'"${PORTAL_ROUTE}"'/api/auth/rhaap/handler/frame"
     ' 2>/dev/null || echo "000")
 
+  if [ "$http_code" = "000" ]; then
+    echo "❌ Portal pod cannot reach AAP token endpoint at ${AAP_HOST_URL}/o/token/"
+    echo "   On CRC/MicroShift, nip.io resolves to 127.0.0.1 inside pods."
+    echo "   Re-run: aap-demo enable portal"
+    return 1
+  fi
+
   # 400 = client auth OK, invalid grant (expected); 401 = invalid_client
   if [ "$http_code" = "401" ]; then
     echo "❌ OAuth client credentials rejected by AAP (invalid_client)"
@@ -752,6 +1004,11 @@ display_success() {
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
   echo "Portal URL: https://$PORTAL_ROUTE"
+  if [ "${IS_ARM_CLUSTER}" = true ]; then
+    echo "Profile: ARM (${DEFAULT_RHDH_REGISTRY}/${DEFAULT_RHDH_REPOSITORY}:${DEFAULT_RHDH_TAG})"
+  else
+    echo "Profile: x86 (Red Hat RHDH hub image from chart)"
+  fi
   echo ""
   echo "Next steps:"
   echo "1. Open the portal URL in your browser"
@@ -783,10 +1040,15 @@ main() {
   create_aap_secrets
   create_helm_values
   install_helm_chart
-  if [ "${HELM_WAS_UPGRADE:-false}" = true ]; then
+  if [ "${IS_ARM_CLUSTER}" = true ]; then
+    patch_disable_quay_plugin
+    reset_dynamic_plugins_pvc
+    restart_portal_deployment
+  elif [ "${HELM_WAS_UPGRADE:-false}" = true ]; then
     restart_portal_deployment
   fi
   wait_for_deployment
+  patch_aap_route_host_alias
   update_oauth_redirect
   verify_aap_host_url
   verify_oauth_client
