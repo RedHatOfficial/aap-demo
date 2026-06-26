@@ -1,0 +1,37 @@
+# Ansible Automation Portal Helm Values Template
+# deploy.sh generates ~/.aap-demo/portal/values.yaml at install time.
+#
+# x86 clusters: top-level global/upstream keys (Red Hat RHDH hub from chart).
+# arm64 clusters: redhat-developer-hub wrapper + community RHDH + RHEL9 PostgreSQL.
+
+global:
+  clusterRouterBase: __CLUSTER_BASE_URL__
+  pluginMode: oci
+  imageTagInfo: "__PLUGIN_VERSION__"
+
+upstream:
+  backstage:
+    appConfig:
+      catalog:
+        providers:
+          rhaap:
+            production:
+              orgs: "__AAP_ORG_NAME__"
+
+# ARM profile example (auto-generated on arm64 clusters):
+# redhat-developer-hub:
+#   global:
+#     clusterRouterBase: __CLUSTER_BASE_URL__
+#     pluginMode: oci
+#     imageTagInfo: "__PLUGIN_VERSION__"
+#   upstream:
+#     backstage:
+#       image:
+#         registry: quay.io
+#         repository: rhdh-community/rhdh
+#         tag: "1.10"
+#   postgresql:
+#     image:
+#       registry: registry.redhat.io
+#       repository: rhel9/postgresql-15
+#       tag: "9.8-1782419742"

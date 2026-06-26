@@ -120,7 +120,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm)
+    console | registry | mcp-server | registry-ui | olm | portal)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -375,8 +375,14 @@ Cluster management:
   stop            Stop cluster
   ssh             SSH into cluster node
 
+Addons:
+  enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
+                  Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
+  enable mcp-server Enable MCP server for AI assistants
+
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
+  aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
 
 Run 'aap-demo help' for full documentation.
 EOF
@@ -419,7 +425,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (olm, console, registry, mcp-server)
+    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
@@ -1732,6 +1738,7 @@ cmd_status() {
         console) url="https://console.apps.127.0.0.1.nip.io" ;;
         registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
         mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
+        portal) url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
         registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
         prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
       esac
@@ -2426,7 +2433,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server"
+AVAILABLE_ADDONS="mcp-server portal"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"

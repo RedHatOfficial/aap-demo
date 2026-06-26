@@ -150,6 +150,29 @@ Enabled Addons:
   registry        https://registry.apps.127.0.0.1.nip.io
 ```
 
+### Self-Service Portal (AAP 2.7)
+
+Deploy the Ansible Automation Portal (Red Hat Developer Hub + AAP plugins) as a Helm addon:
+
+```bash
+aap-demo enable portal       # Auto-detects cluster CPU (amd64 vs arm64)
+aap-demo disable portal
+aap-demo status portal       # Portal route URL
+```
+
+**Requirements:** AAP deployed, Helm 3.10+, `registry.redhat.io` credentials for OCI plugins.
+
+**Profiles:** x86 clusters use Red Hat RHDH chart images; arm64 clusters (e.g. CRC on Apple
+Silicon) use community multi-arch RHDH overrides. See
+[ADR-002](docs/adr/002-portal-helm-deployment.md) and [addons/portal/README.md](addons/portal/README.md).
+
+## Deploy MCP Server
+
+```bash
+aap-demo enable mcp-server     # MCP server for AI assistants
+aap-demo disable mcp-server
+```
+
 ### Common Commands
 
 ```bash
@@ -174,11 +197,6 @@ aap-demo diagnose            # Quick health check (cluster, storage, SCCs, pods)
 aap-demo must-gather         # Collect full diagnostics (AAP + cluster)
 aap-demo must-gather /tmp/d  # Collect to specific directory
 
-# Addons
-aap-demo enable console      # Enable OpenShift console addon
-aap-demo enable registry     # Enable in-cluster container registry
-aap-demo enable mcp-server   # Enable MCP server for AI assistants
-
 # Maintenance
 aap-demo clean               # Remove AAP deployment (keeps cluster)
 aap-demo update              # Pull latest code and reinstall
@@ -193,15 +211,6 @@ aap-demo help                # Full command reference
 - **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
 - **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust/
   Windows via certutil
-
-## Addons
-
-```bash
-aap-demo enable                # List all addons with status
-aap-demo enable mcp-server     # MCP server for AI assistants (requires AAP)
-```
-
-Addons are saved to `~/.aap-demo/config` and auto-deployed on `aap-demo create`.
 
 ## Environment Variables
 

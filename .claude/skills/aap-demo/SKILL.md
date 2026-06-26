@@ -41,11 +41,19 @@ CLI commands — do not reimplement their logic.
 | Destroy and rebuild from scratch | `aap-demo redeploy-all` |
 | Show help | `aap-demo help` |
 
-Available addons: olm, console, registry, mcp-server, devspaces, prometheus
+Available addons: olm, console, registry, mcp-server, devspaces, prometheus, portal
 
-## Deploy Selection
+## Portal Addon
 
-`aap-demo deploy` deploys AAP 2.7.
+Helm-based Self-Service Portal on OpenShift (`aap-demo enable portal`):
+
+- Auto-detects cluster CPU (`amd64` vs `arm64`) and selects x86 or ARM image profile
+- Namespace: `redhat-rhaap-portal`
+- Architecture: see `docs/adr/002-portal-helm-deployment.md`
+
+**Access**: `aap-demo status portal` for route URL. Sign in with AAP OAuth (admin credentials).
+
+**Prerequisites**: AAP deployed, Helm 3.10+, `registry.redhat.io` pull secret for OCI plugins.
 
 ## Workflow
 
