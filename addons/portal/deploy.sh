@@ -816,12 +816,14 @@ install_helm_chart() {
     HELM_WAS_UPGRADE=true
     helm upgrade "$RELEASE_NAME" "$CHART_REPO" \
       -n "$PORTAL_NAMESPACE" \
-      -f "$PORTAL_DIR/values.yaml"
+      -f "$PORTAL_DIR/values.yaml" \
+      --hide-notes
   else
     echo "Installing Helm release..."
     helm install "$RELEASE_NAME" "$CHART_REPO" \
       -n "$PORTAL_NAMESPACE" \
-      -f "$PORTAL_DIR/values.yaml"
+      -f "$PORTAL_DIR/values.yaml" \
+      --hide-notes
   fi
 
   echo "✓ Helm chart installed"
