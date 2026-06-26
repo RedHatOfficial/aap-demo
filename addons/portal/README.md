@@ -130,7 +130,7 @@ Shows:
 aap-demo status portal
 
 # Open in browser (example output)
-https://redhat-rhaap-portal-backstage-aap-operator.apps.127.0.0.1.nip.io
+https://redhat-rhaap-portal-aap-operator.apps.127.0.0.1.nip.io
 ```
 
 1. Click "Sign In"
@@ -247,15 +247,53 @@ upstream:
 
 ### OAuth Login Fails
 
-**Symptom:** "Invalid redirect URI" error during sign-in.
+**Symptom:** "Invalid redirect URI" error during sign-in, or browser redirects to
+an unreachable `*.svc.cluster.local` / `*.svc` URL ("page can't be displayed").
 
-**Cause:** OAuth app redirect URI doesn't match portal route.
+**Cause:** The portal OAuth flow sends the browser to `AAP_HOST_URL` for AAP
+login. That value comes from the `secrets-rhaap-portal` secret key `aap-host-url`.
+If it points at an in-cluster service (for example `http://aap.aap-operator.svc`)
+instead of the external AAP route, the browser cannot resolve the hostname.
 
-**Fix:**
+Updating the secret alone is not enough — portal pods read env vars at startup,
+so they must be restarted after the secret changes.
+
+**Fix (recommended):** Re-run enable (updates secret, restarts portal, fixes OAuth redirect):
 
 ```bash
-# Get portal route
-PORTAL_ROUTE=$(kubectl get route redhat-rhaap-portal-backstage \
+aap-demo enable portal
+```
+
+**Fix (manual):**
+
+```bash
+AAP_ROUTE=$(kubectl get route aap -n aap-operator -o jsonpath='{.spec.host}')
+
+kubectl create secret generic secrets-rhaap-portal \
+  -n aap-operator \
+  --from-literal=aap-host-url="https://$AAP_ROUTE" \
+  --from-literal=oauth-client-id="$(kubectl get secret secrets-rhaap-portal -n aap-operator -o jsonpath='{.data.oauth-client-id}' | base64 -d)" \
+  --from-literal=oauth-client-secret="$(kubectl get secret secrets-rhaap-portal -n aap-operator -o jsonpath='{.data.oauth-client-secret}' | base64 -d)" \
+  --from-literal=aap-token="$(kubectl get secret secrets-rhaap-portal -n aap-operator -o jsonpath='{.data.aap-token}' | base64 -d)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deployment/redhat-rhaap-portal -n aap-operator
+kubectl rollout status deployment/redhat-rhaap-portal -n aap-operator
+```
+
+Verify the running pod has the external URL (not `.svc`):
+
+```bash
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator -- \
+  printenv AAP_HOST_URL
+# Expected: https://aap-aap-operator.apps.127.0.0.1.nip.io
+```
+
+**OAuth redirect URI mismatch** (separate issue — invalid redirect URI after login):
+
+```bash
+# Get portal route (Helm release name, not release-name-backstage)
+PORTAL_ROUTE=$(kubectl get route redhat-rhaap-portal \
   -n aap-operator -o jsonpath='{.spec.host}')
 
 # Get OAuth app ID
@@ -266,11 +304,33 @@ AAP_ROUTE=$(kubectl get route aap -n aap-operator -o jsonpath='{.spec.host}')
 ADMIN_PASS=$(kubectl get secret aap-admin-password -n aap-operator \
   -o jsonpath='{.data.password}' | base64 -d)
 
-# Update redirect URI
+# Update redirect URI (rhaap provider uses /api/auth/rhaap/handler/frame)
 curl -k -u "admin:$ADMIN_PASS" \
-  -X PATCH "https://$AAP_ROUTE/api/gateway/v1/oauth2_applications/$OAUTH_APP_ID/" \
+  -X PATCH "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
   -H "Content-Type: application/json" \
-  -d "{\"redirect_uris\": \"https://$PORTAL_ROUTE/api/auth/oauth2/handler/frame\"}"
+  -d "{\"redirect_uris\": \"https://$PORTAL_ROUTE/api/auth/rhaap/handler/frame\"}"
+```
+
+### Login Failed: "fetch failed" on Token Exchange
+
+**Symptom:** AAP login page works, but portal shows
+`Login failed; caused by Error: Failed to send POST request: fetch failed`.
+
+**Cause:** After OAuth, the portal backend POSTs to `{AAP_HOST_URL}/o/token/`.
+On CRC/MicroShift, CoreDNS rewrites route hostnames to in-cluster Services on
+port 80. If `AAP_HOST_URL` uses `https://`, the backend tries TLS on port 443
+where nothing is listening → timeout → fetch failed.
+
+**Fix:** Re-run `aap-demo enable portal`. On MicroShift the addon sets
+`AAP_HOST_URL` to `http://<aap-route>` (not `https://`). Browsers still reach
+AAP over HTTPS via ingress; only the pod→service token exchange uses HTTP.
+
+Verify:
+
+```bash
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator -- \
+  printenv AAP_HOST_URL
+# MicroShift/CRC expected: http://aap-aap-operator.apps.127.0.0.1.nip.io
 ```
 
 ### No Job Templates in Catalog
@@ -294,7 +354,7 @@ curl -k -u "admin:<password>" \
   "https://$AAP_ROUTE/api/gateway/v1/job_templates/"
 
 # Check portal logs
-kubectl logs -l app.kubernetes.io/name=backstage -n aap-operator --tail=100
+kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator --tail=100
 ```
 
 ### ARM Architecture Warning
@@ -348,13 +408,27 @@ helm search repo redhat-rhaap-portal
 
 ```bash
 # Check pod resources
-kubectl top pod -l app.kubernetes.io/name=backstage -n aap-operator
+kubectl top pod -l app.kubernetes.io/instance=redhat-rhaap-portal,app.kubernetes.io/component=backstage -n aap-operator
 
 # Increase resource limits in values.yaml (see Configuration section)
 # Then re-run: aap-demo enable portal
 ```
 
 ## Advanced
+
+### Kubernetes Resources
+
+The `redhat-rhaap-portal` Helm chart creates resources named after the release
+(not `release-name-backstage`):
+
+| Resource | Name |
+|----------|------|
+| Deployment | `redhat-rhaap-portal` |
+| Route | `redhat-rhaap-portal` |
+| Service | `redhat-rhaap-portal` |
+| PostgreSQL StatefulSet | `redhat-rhaap-portal-postgresql` |
+
+Route host format: `redhat-rhaap-portal-<namespace>.apps.<cluster-domain>`
 
 ### Inspecting Helm Release
 
@@ -390,10 +464,10 @@ ADMIN_PASS=$(kubectl get secret aap-admin-password -n aap-operator \
   -o jsonpath='{.data.password}' | base64 -d)
 
 curl -k -u "admin:$ADMIN_PASS" \
-  "https://$AAP_ROUTE/api/gateway/v1/oauth2_applications/" | jq
+  "https://$AAP_ROUTE/api/gateway/v1/applications/" | jq
 
 # Check portal OAuth config in pod
-kubectl exec -it deploy/redhat-rhaap-portal-backstage -n aap-operator -- \
+kubectl exec -it deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator -- \
   env | grep -i oauth
 ```
 
@@ -401,7 +475,7 @@ kubectl exec -it deploy/redhat-rhaap-portal-backstage -n aap-operator -- \
 
 ```bash
 # Portal application logs
-kubectl logs -l app.kubernetes.io/name=backstage -n aap-operator --tail=100 -f
+kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator --tail=100 -f
 
 # PostgreSQL logs (if using built-in database)
 kubectl logs -l app.kubernetes.io/name=postgresql -n aap-operator --tail=100

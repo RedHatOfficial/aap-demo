@@ -99,10 +99,17 @@ Portal requires these AAP settings:
 3. API token with Write scope
 4. Organization selected for template synchronization
 
+**AAP host URL:** Store the external AAP route in `secrets-rhaap-portal` key
+`aap-host-url` (for example `https://aap-aap-operator.apps.127.0.0.1.nip.io`).
+Do not use in-cluster service DNS such as `http://aap.aap-operator.svc` — the
+browser OAuth redirect sends users to `AAP_HOST_URL`, which must be reachable
+from the user's machine. Portal pods read this value at startup, so the
+deployment must be restarted after updating the secret.
+
 **Automation via AAP API:**
 
 - Create organization if needed (or use existing)
-- Create OAuth app: `POST /api/gateway/v1/oauth2_applications/`
+- Create OAuth app: `POST /api/gateway/v1/applications/`
 - Enable OAuth tokens: `PATCH /api/gateway/v1/settings/`
 - Generate API token: `POST /api/gateway/v1/tokens/`
 
@@ -196,7 +203,7 @@ status portal    Check Portal deployment status
 
 ```bash
 portal)
-  url=$(kubectl get route redhat-rhaap-portal-backstage -n "$NAMESPACE" \
+  url=$(kubectl get route redhat-rhaap-portal -n "$NAMESPACE" \
     -o jsonpath='{.spec.host}' 2>/dev/null)
   [ -n "$url" ] && echo "https://$url" || echo "not-deployed"
   ;;
@@ -228,7 +235,7 @@ get_aap_credentials() {
 }
 
 create_oauth_app() {
-  # POST /api/gateway/v1/oauth2_applications/
+  # POST /api/gateway/v1/applications/
   # Store client_id, client_secret, app_id
 }
 
@@ -294,7 +301,7 @@ OAuth redirect URI must match deployed portal route for security. Helm chart req
 **Alternatives considered:**
 
 1. **Dynamic DNS with predictable route:** OpenShift route names are deterministic but require namespace. Still need to update OAuth app post-install.
-2. **Pre-calculate route name:** Route format is `<release-name>-backstage-<namespace>.apps.<cluster-domain>`. Works but brittle if Helm chart changes naming.
+2. **Pre-calculate route name:** Route format is `<release-name>-<namespace>.apps.<cluster-domain>`. Works but brittle if Helm chart changes naming.
 3. **Manual OAuth configuration:** Forces user to create OAuth app. Defeats automation goal.
 
 **Chosen approach:** Placeholder → real redirect URI post-install. AAP API supports PATCH, no downtime.
@@ -355,12 +362,12 @@ $ aap-demo enable portal
 # ✓ OAuth app created: <app-id>
 # ✓ API token generated
 # ✓ Helm chart installed: redhat-rhaap-portal
-# ✓ Portal route: https://redhat-rhaap-portal-backstage-aap-operator.apps.127.0.0.1.nip.io
+# ✓ Portal route: https://redhat-rhaap-portal-aap-operator.apps.127.0.0.1.nip.io
 # ✓ OAuth app updated with redirect URI
 
 # Check status
 $ aap-demo status portal
-# Output: https://redhat-rhaap-portal-backstage-aap-operator.apps.127.0.0.1.nip.io
+# Output: https://redhat-rhaap-portal-aap-operator.apps.127.0.0.1.nip.io
 
 # Disable portal
 $ aap-demo disable portal

@@ -217,6 +217,9 @@ select_organization() {
 create_oauth_app() {
   echo "Creating OAuth application in AAP..."
 
+  mkdir -p "$PORTAL_DIR"
+  local oauth_credentials_file="$PORTAL_DIR/oauth_credentials.json"
+
   # Check if app already exists
   local existing_app
   existing_app=$(curl -k -u "admin:$ADMIN_PASS" \
@@ -227,11 +230,34 @@ create_oauth_app() {
   existing_count=$(echo "$existing_app" | jq -r '.count' 2>/dev/null || echo "0")
 
   if [ "$existing_count" -gt 0 ]; then
-    echo "OAuth app already exists, using existing..."
     OAUTH_APP_ID=$(echo "$existing_app" | jq -r '.results[0].id')
     CLIENT_ID=$(echo "$existing_app" | jq -r '.results[0].client_id')
-    CLIENT_SECRET=$(echo "$existing_app" | jq -r '.results[0].client_secret')
-  else
+    CLIENT_SECRET=""
+
+    # AAP only returns client_secret at creation time — never trust GET responses
+    if [ -f "$oauth_credentials_file" ]; then
+      local saved_id saved_secret
+      saved_id=$(jq -r '.oauth_app_id // empty' "$oauth_credentials_file")
+      saved_secret=$(jq -r '.client_secret // empty' "$oauth_credentials_file")
+      if [ "$saved_id" = "$OAUTH_APP_ID" ] && [ -n "$saved_secret" ]; then
+        CLIENT_SECRET="$saved_secret"
+        echo "Using saved OAuth client secret for existing app..."
+      fi
+    fi
+
+    # No saved secret — delete and recreate the OAuth app
+    if [ -z "$CLIENT_SECRET" ]; then
+      echo "OAuth app exists but client secret unavailable — recreating..."
+      curl -k -u "admin:$ADMIN_PASS" \
+        -X DELETE "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
+        -H "Content-Type: application/json" &>/dev/null || true
+      existing_count=0
+    else
+      echo "OAuth app already exists, using existing..."
+    fi
+  fi
+
+  if [ "$existing_count" -eq 0 ]; then
     # Create new OAuth app with placeholder redirect URI
     local oauth_response
     oauth_response=$(curl -k -u "admin:$ADMIN_PASS" \
@@ -255,11 +281,22 @@ create_oauth_app() {
     exit 1
   fi
 
-  # Save app ID for cleanup
-  mkdir -p "$PORTAL_DIR"
+  if [ -z "$CLIENT_SECRET" ] || [ "$CLIENT_SECRET" = "null" ]; then
+    echo "❌ Failed to obtain OAuth client secret"
+    exit 1
+  fi
+
+  # Persist credentials — AAP will not return client_secret on subsequent reads
+  jq -n \
+    --arg oauth_app_id "$OAUTH_APP_ID" \
+    --arg client_id "$CLIENT_ID" \
+    --arg client_secret "$CLIENT_SECRET" \
+    '{oauth_app_id: $oauth_app_id, client_id: $client_id, client_secret: $client_secret}' \
+    > "$oauth_credentials_file"
+
   echo "$OAUTH_APP_ID" > "$PORTAL_DIR/oauth_app_id"
 
-  echo "✓ OAuth app created (ID: $OAUTH_APP_ID)"
+  echo "✓ OAuth app ready (ID: $OAUTH_APP_ID)"
 }
 
 enable_oauth_tokens() {
@@ -392,7 +429,10 @@ get_cluster_info() {
 
   if [ -z "$CLUSTER_BASE_URL" ]; then
     # MicroShift doesn't have ingresses.config, derive from AAP route
+    IS_MICROSHIFT=true
     CLUSTER_BASE_URL=$(echo "$AAP_ROUTE" | sed 's/^aap-aap-operator\.//')
+  else
+    IS_MICROSHIFT=false
   fi
 
   if [ -z "$CLUSTER_BASE_URL" ]; then
@@ -403,25 +443,52 @@ get_cluster_info() {
   echo "✓ Cluster base URL: $CLUSTER_BASE_URL"
 }
 
+get_aap_host_url() {
+  # On MicroShift/CRC, CoreDNS rewrites route hostnames to in-cluster Services
+  # (port 80). Portal backend OAuth token exchange to https://<route> times out
+  # because nothing listens on :443 at the Service IP. Use http://<route> so
+  # pod→service calls work; browsers still reach AAP via ingress TLS redirect.
+  if [ "${IS_MICROSHIFT:-false}" = true ]; then
+    echo "http://${AAP_ROUTE}"
+  else
+    echo "https://${AAP_ROUTE}"
+  fi
+}
+
 create_aap_secrets() {
   echo "Creating AAP credentials secret..."
+
+  AAP_HOST_URL=$(get_aap_host_url)
 
   # Delete existing secret if present
   kubectl delete secret secrets-rhaap-portal -n "$NAMESPACE" &>/dev/null || true
 
-  # Create secret with AAP credentials
   kubectl create secret generic secrets-rhaap-portal \
     -n "$NAMESPACE" \
-    --from-literal=aap-host-url="https://$AAP_ROUTE" \
+    --from-literal=aap-host-url="$AAP_HOST_URL" \
     --from-literal=oauth-client-id="$CLIENT_ID" \
     --from-literal=oauth-client-secret="$CLIENT_SECRET" \
     --from-literal=aap-token="$API_TOKEN"
 
   echo "✓ AAP credentials secret created"
+  echo "✓ AAP host URL: $AAP_HOST_URL"
 }
 
 create_helm_values() {
   echo "Creating Helm values file..."
+
+  local ssl_values=""
+  if [ "${IS_MICROSHIFT:-false}" = true ]; then
+    ssl_values="
+      ansible:
+        rhaap:
+          checkSSL: false
+      auth:
+        providers:
+          rhaap:
+            production:
+              checkSSL: false"
+  fi
 
   cat > "$PORTAL_DIR/values.yaml" <<EOF
 global:
@@ -431,7 +498,7 @@ global:
 
 upstream:
   backstage:
-    appConfig:
+    appConfig:${ssl_values}
       catalog:
         providers:
           rhaap:
@@ -468,12 +535,21 @@ install_helm_chart() {
   echo "✓ Helm chart installed"
 }
 
+restart_portal_deployment() {
+  echo "Restarting portal to apply credential updates..."
+
+  if ! kubectl rollout restart deployment/"$RELEASE_NAME" -n "$NAMESPACE" &>/dev/null; then
+    echo "⚠️  Failed to restart portal deployment"
+    return 1
+  fi
+
+  echo "✓ Portal deployment restarted"
+}
+
 wait_for_deployment() {
   echo "Waiting for portal deployment to be ready..."
 
-  # Wait for deployment with timeout
-  if ! kubectl wait --for=condition=available \
-    deployment/"$RELEASE_NAME-backstage" \
+  if ! kubectl rollout status deployment/"$RELEASE_NAME" \
     -n "$NAMESPACE" \
     --timeout=600s 2>/dev/null; then
 
@@ -489,7 +565,7 @@ update_oauth_redirect() {
   echo "Updating OAuth redirect URI..."
 
   # Get portal route
-  PORTAL_ROUTE=$(kubectl get route "$RELEASE_NAME-backstage" -n "$NAMESPACE" \
+  PORTAL_ROUTE=$(kubectl get route "$RELEASE_NAME" -n "$NAMESPACE" \
     -o jsonpath='{.spec.host}' 2>/dev/null)
 
   if [ -z "$PORTAL_ROUTE" ]; then
@@ -508,6 +584,62 @@ update_oauth_redirect() {
     &>/dev/null
 
   echo "✓ OAuth redirect URI updated: $redirect_uri"
+}
+
+verify_aap_host_url() {
+  echo "Verifying AAP host URL in portal pod..."
+
+  local aap_host_url
+  aap_host_url=$(kubectl exec deployment/"$RELEASE_NAME" \
+    -c backstage-backend \
+    -n "$NAMESPACE" \
+    -- printenv AAP_HOST_URL 2>/dev/null || true)
+
+  if [ -z "$aap_host_url" ]; then
+    echo "⚠️  Could not read AAP_HOST_URL from portal pod"
+    return 1
+  fi
+
+  if [[ "$aap_host_url" == *".svc"* ]]; then
+    echo "❌ Portal is configured with in-cluster AAP URL: $aap_host_url"
+    echo "   Browser OAuth redirects require the external AAP route hostname."
+    echo "   Re-run: aap-demo enable portal"
+    return 1
+  fi
+
+  if [ "${IS_MICROSHIFT:-false}" = true ] && [[ "$aap_host_url" == https://* ]]; then
+    echo "❌ Portal AAP URL uses HTTPS on MicroShift: $aap_host_url"
+    echo "   In-cluster OAuth token exchange requires http://<aap-route> on CRC/MicroShift."
+    echo "   Re-run: aap-demo enable portal"
+    return 1
+  fi
+
+  echo "✓ AAP host URL: $aap_host_url"
+}
+
+verify_oauth_client() {
+  echo "Verifying OAuth client credentials..."
+
+  local http_code
+  http_code=$(kubectl exec deployment/"$RELEASE_NAME" \
+    -c backstage-backend \
+    -n "$NAMESPACE" \
+    -- sh -c '
+      AUTH=$(printf "%s:%s" "$OAUTH_CLIENT_ID" "$OAUTH_CLIENT_SECRET" | base64 -w0)
+      curl -s -o /dev/null -w "%{http_code}" -X POST "'"${AAP_HOST_URL}"'/o/token/" \
+        -H "Authorization: Basic $AUTH" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=authorization_code&code=invalid&redirect_uri=https://'"${PORTAL_ROUTE}"'/api/auth/rhaap/handler/frame"
+    ' 2>/dev/null || echo "000")
+
+  # 400 = client auth OK, invalid grant (expected); 401 = invalid_client
+  if [ "$http_code" = "401" ]; then
+    echo "❌ OAuth client credentials rejected by AAP (invalid_client)"
+    echo "   Re-run: aap-demo enable portal"
+    return 1
+  fi
+
+  echo "✓ OAuth client credentials accepted by AAP (HTTP $http_code)"
 }
 
 display_success() {
@@ -546,8 +678,11 @@ main() {
   create_aap_secrets
   create_helm_values
   install_helm_chart
+  restart_portal_deployment
   wait_for_deployment
   update_oauth_redirect
+  verify_aap_host_url
+  verify_oauth_client
   display_success
 }
 
