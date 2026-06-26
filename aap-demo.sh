@@ -162,6 +162,8 @@ fi
 
 # Load infrastructure abstraction layer
 source "${SCRIPT_DIR}/includes/infra-api.sh"
+# shellcheck source=includes/ingress-ca-trust.sh
+source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 
 # -----------------------------------------------------------------------------
 # Prerequisite Checks
@@ -1343,8 +1345,10 @@ _run_atf() {
   aap_version=$(kubectl get csv -n "$test_namespace" -o jsonpath='{.items[0].spec.version}' 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
   if [ -z "$aap_version" ]; then
     # Fallback: gateway API ping (may report base version, not dev version)
-    local _curl_tls="--cacert /tmp/crc-ingress-ca.crt"
-    [ ! -f /tmp/crc-ingress-ca.crt ] && _curl_tls="-k"
+    local _ca_cert
+    _ca_cert=$(get_ingress_ca_cert_path)
+    local _curl_tls="--cacert ${_ca_cert}"
+    [ ! -f "$_ca_cert" ] && _curl_tls="-k"
     aap_version=$(curl -s $_curl_tls "https://${gateway_host}/api/gateway/v1/ping/" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version',''))" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
   fi
   aap_version="${aap_version:-2.7}"
@@ -1596,6 +1600,8 @@ cmd_status() {
     echo "Start with: aap-demo create"
     return 0
   fi
+
+  install_ingress_ca_trust
 
   # Show kubeconfig
   echo "Kubeconfig:  $KUBECONFIG"
@@ -1879,6 +1885,8 @@ cmd_deploy() {
     echo "Cluster is stopped. Starting..."
     _start_crc_cluster
   fi
+
+  install_ingress_ca_trust
 
   # Install OLM if not present (OpenShift Local doesn't include it)
   KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"
