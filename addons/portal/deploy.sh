@@ -700,7 +700,7 @@ create_helm_values() {
         auth:
           providers:
             rhaap:
-              production:
+              'production':
                 checkSSL: false"
     else
       ssl_values="
@@ -710,7 +710,7 @@ create_helm_values() {
       auth:
         providers:
           rhaap:
-            production:
+            'production':
               checkSSL: false"
     fi
   fi
@@ -729,11 +729,6 @@ redhat-developer-hub:
         repository: ${DEFAULT_RHDH_REPOSITORY}
         tag: "${DEFAULT_RHDH_TAG}"
       appConfig:${ssl_values}
-        catalog:
-          providers:
-            rhaap:
-              production:
-                orgs: "$ORG_NAME"
         dynamicPlugins:
           frontend:
             default.main-menu-items:
@@ -771,11 +766,6 @@ global:
 upstream:
   backstage:
     appConfig:${ssl_values}
-      catalog:
-        providers:
-          rhaap:
-            production:
-              orgs: "$ORG_NAME"
     dynamicPlugins:
       frontend:
         default.main-menu-items:
