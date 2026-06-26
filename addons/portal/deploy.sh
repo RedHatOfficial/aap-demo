@@ -735,16 +735,6 @@ redhat-developer-hub:
               menuItems:
                 default.home:
                   title: Home
-                default.catalog:
-                  title: Catalog
-                default.create:
-                  title: Create
-                default.apis:
-                  title: APIs
-                default.learning-path:
-                  title: Learning Paths
-                default.my-group:
-                  title: My Group
     postgresql:
       image:
         registry: ${DEFAULT_POSTGRES_REGISTRY}
