@@ -84,12 +84,15 @@ aap-demo enable portal
 3. **Registry setup:**
    - Tries existing pull secrets first
    - Prompts for credentials if not found
-   - Creates namespace-scoped secret
-4. **Helm deployment:**
+   - Creates namespace-scoped secret in `redhat-rhaap-portal`
+4. **Namespace setup:**
+   - Creates `redhat-rhaap-portal` namespace
+   - Grants SCCs and copies pull secret from AAP namespace
+5. **Helm deployment:**
    - Adds OpenShift Helm Charts repo
-   - Installs `redhat-rhaap-portal` chart
+   - Installs `redhat-rhaap-portal` chart into `redhat-rhaap-portal` namespace
    - Configures cluster base URL, OCI plugins, org name
-5. **Post-install:**
+6. **Post-install:**
    - Waits for deployment ready (up to 10 minutes)
    - Updates OAuth redirect URI with real portal route
 
@@ -130,7 +133,7 @@ Shows:
 aap-demo status portal
 
 # Open in browser (example output)
-https://redhat-rhaap-portal-aap-operator.apps.127.0.0.1.nip.io
+https://redhat-rhaap-portal-redhat-rhaap-portal.apps.127.0.0.1.nip.io
 ```
 
 1. Click "Sign In"
@@ -154,10 +157,14 @@ aap-demo disable portal
 
 Cleanup:
 
-- Helm release uninstalled
+- Helm release uninstalled from `redhat-rhaap-portal` namespace
+- `redhat-rhaap-portal` namespace deleted
 - OAuth application deleted from AAP
 - Registry secret removed
 - Local config directory deleted
+
+If upgrading from an older install that placed portal resources in `aap-operator`,
+re-run `aap-demo enable portal` to migrate automatically.
 
 ## Configuration
 
@@ -169,7 +176,7 @@ Portal addon uses these default values (see `deploy.sh`):
 global:
   clusterRouterBase: <auto-detected-from-cluster>
   pluginMode: oci                      # OCI container delivery (recommended)
-  imageTagInfo: "2.1"                  # Portal plugin version (AAP 2.7 compatible)
+  imageTagInfo: "2.2"                  # Must match chart app version (e.g. 2.2.1 chart → 2.2 plugins)
 
 upstream:
   backstage:
@@ -226,7 +233,7 @@ upstream:
 
 ### Deployment Stuck in Pending
 
-**Symptom:** `kubectl get pods -n aap-operator` shows backstage pod pending.
+**Symptom:** `kubectl get pods -n redhat-rhaap-portal` shows backstage pod pending.
 
 **Causes:**
 
@@ -234,13 +241,13 @@ upstream:
 
    ```bash
    kubectl get secret redhat-rhaap-portal-dynamic-plugins-registry-auth \
-     -n aap-operator -o jsonpath='{.data.auth\.json}' | base64 -d | jq
+     -n redhat-rhaap-portal -o jsonpath='{.data.auth\.json}' | base64 -d | jq
    ```
 
 2. **Resource constraints:** Check node resources
 
    ```bash
-   kubectl describe pod <backstage-pod> -n aap-operator
+   kubectl describe pod <backstage-pod> -n redhat-rhaap-portal
    ```
 
 **Fix:** Ensure registry credentials valid, cluster has resources.
@@ -270,21 +277,21 @@ aap-demo enable portal
 AAP_ROUTE=$(kubectl get route aap -n aap-operator -o jsonpath='{.spec.host}')
 
 kubectl create secret generic secrets-rhaap-portal \
-  -n aap-operator \
+  -n redhat-rhaap-portal \
   --from-literal=aap-host-url="https://$AAP_ROUTE" \
-  --from-literal=oauth-client-id="$(kubectl get secret secrets-rhaap-portal -n aap-operator -o jsonpath='{.data.oauth-client-id}' | base64 -d)" \
-  --from-literal=oauth-client-secret="$(kubectl get secret secrets-rhaap-portal -n aap-operator -o jsonpath='{.data.oauth-client-secret}' | base64 -d)" \
-  --from-literal=aap-token="$(kubectl get secret secrets-rhaap-portal -n aap-operator -o jsonpath='{.data.aap-token}' | base64 -d)" \
+  --from-literal=oauth-client-id="$(kubectl get secret secrets-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.data.oauth-client-id}' | base64 -d)" \
+  --from-literal=oauth-client-secret="$(kubectl get secret secrets-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.data.oauth-client-secret}' | base64 -d)" \
+  --from-literal=aap-token="$(kubectl get secret secrets-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.data.aap-token}' | base64 -d)" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl rollout restart deployment/redhat-rhaap-portal -n aap-operator
-kubectl rollout status deployment/redhat-rhaap-portal -n aap-operator
+kubectl rollout restart deployment/redhat-rhaap-portal -n redhat-rhaap-portal
+kubectl rollout status deployment/redhat-rhaap-portal -n redhat-rhaap-portal
 ```
 
 Verify the running pod has the external URL (not `.svc`):
 
 ```bash
-kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator -- \
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- \
   printenv AAP_HOST_URL
 # Expected: https://aap-aap-operator.apps.127.0.0.1.nip.io
 ```
@@ -294,7 +301,7 @@ kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator -- 
 ```bash
 # Get portal route (Helm release name, not release-name-backstage)
 PORTAL_ROUTE=$(kubectl get route redhat-rhaap-portal \
-  -n aap-operator -o jsonpath='{.spec.host}')
+  -n redhat-rhaap-portal -o jsonpath='{.spec.host}')
 
 # Get OAuth app ID
 OAUTH_APP_ID=$(cat ~/.aap-demo/portal/oauth_app_id)
@@ -328,7 +335,7 @@ AAP over HTTPS via ingress; only the pod→service token exchange uses HTTP.
 Verify:
 
 ```bash
-kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator -- \
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- \
   printenv AAP_HOST_URL
 # MicroShift/CRC expected: http://aap-aap-operator.apps.127.0.0.1.nip.io
 ```
@@ -354,7 +361,7 @@ curl -k -u "admin:<password>" \
   "https://$AAP_ROUTE/api/gateway/v1/job_templates/"
 
 # Check portal logs
-kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator --tail=100
+kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal --tail=100
 ```
 
 ### ARM Architecture Warning
@@ -408,7 +415,7 @@ helm search repo redhat-rhaap-portal
 
 ```bash
 # Check pod resources
-kubectl top pod -l app.kubernetes.io/instance=redhat-rhaap-portal,app.kubernetes.io/component=backstage -n aap-operator
+kubectl top pod -l app.kubernetes.io/instance=redhat-rhaap-portal,app.kubernetes.io/component=backstage -n redhat-rhaap-portal
 
 # Increase resource limits in values.yaml (see Configuration section)
 # Then re-run: aap-demo enable portal
@@ -429,18 +436,22 @@ The `redhat-rhaap-portal` Helm chart creates resources named after the release
 | PostgreSQL StatefulSet | `redhat-rhaap-portal-postgresql` |
 
 Route host format: `redhat-rhaap-portal-<namespace>.apps.<cluster-domain>`
+(e.g. `redhat-rhaap-portal-redhat-rhaap-portal.apps.127.0.0.1.nip.io`)
+
+Portal installs into the dedicated `redhat-rhaap-portal` namespace (override with
+`PORTAL_NAMESPACE`). AAP remains in `aap-operator` (override with `AAP_NAMESPACE`).
 
 ### Inspecting Helm Release
 
 ```bash
 # List Helm releases
-helm list -n aap-operator
+helm list -n redhat-rhaap-portal
 
 # Get release values
-helm get values redhat-rhaap-portal -n aap-operator
+helm get values redhat-rhaap-portal -n redhat-rhaap-portal
 
 # Get release manifest
-helm get manifest redhat-rhaap-portal -n aap-operator
+helm get manifest redhat-rhaap-portal -n redhat-rhaap-portal
 ```
 
 ### Manual Helm Upgrade
@@ -451,7 +462,7 @@ vim ~/.aap-demo/portal/values.yaml
 
 # Upgrade release
 helm upgrade redhat-rhaap-portal openshift-helm-charts/redhat-rhaap-portal \
-  -n aap-operator \
+  -n redhat-rhaap-portal \
   -f ~/.aap-demo/portal/values.yaml
 ```
 
@@ -467,7 +478,7 @@ curl -k -u "admin:$ADMIN_PASS" \
   "https://$AAP_ROUTE/api/gateway/v1/applications/" | jq
 
 # Check portal OAuth config in pod
-kubectl exec -it deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator -- \
+kubectl exec -it deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- \
   env | grep -i oauth
 ```
 
@@ -475,13 +486,13 @@ kubectl exec -it deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator
 
 ```bash
 # Portal application logs
-kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n aap-operator --tail=100 -f
+kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal --tail=100 -f
 
 # PostgreSQL logs (if using built-in database)
-kubectl logs -l app.kubernetes.io/name=postgresql -n aap-operator --tail=100
+kubectl logs -l app.kubernetes.io/name=postgresql -n redhat-rhaap-portal --tail=100
 
 # All portal components
-kubectl logs -l app.kubernetes.io/instance=redhat-rhaap-portal -n aap-operator --tail=50
+kubectl logs -l app.kubernetes.io/instance=redhat-rhaap-portal -n redhat-rhaap-portal --tail=50
 ```
 
 ## References

@@ -137,21 +137,26 @@ All credentials stored in OpenShift secret, read by Helm chart.
                  │     - Enable external OAuth tokens
                  │     - Generate API token
                  │
-                 ├─> 3. OpenShift Secrets
+                 ├─> 3. Portal Namespace (`redhat-rhaap-portal`)
+                 │     - Create namespace, grant SCCs, copy pull secret from AAP ns
+                 │     - Migrate legacy install from `aap-operator` if present
+                 │
+                 ├─> 4. OpenShift Secrets (in portal namespace)
                  │     - redhat-rhaap-portal-dynamic-plugins-registry-auth
                  │       (auth.json with registry.redhat.io credentials)
+                 │     - secrets-rhaap-portal (AAP host URL, OAuth, API token)
                  │
-                 ├─> 4. Helm Install
+                 ├─> 5. Helm Install (namespace: redhat-rhaap-portal)
                  │     - Repo: openshift-helm-charts/redhat-rhaap-portal
                  │     - Values: clusterRouterBase, pluginMode=oci, imageTagInfo
                  │     - Upstream: AAP org name for template sync
                  │
-                 ├─> 5. Post-Install
+                 ├─> 6. Post-Install
                  │     - Get portal route from OpenShift
                  │     - Update OAuth app redirect URI
                  │     - Verify deployment ready
                  │
-                 └─> 6. Status Display
+                 └─> 7. Status Display
                        - Portal URL
                        - OAuth login instructions
 ```
@@ -203,7 +208,7 @@ status portal    Check Portal deployment status
 
 ```bash
 portal)
-  url=$(kubectl get route redhat-rhaap-portal -n "$NAMESPACE" \
+  url=$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal \
     -o jsonpath='{.spec.host}' 2>/dev/null)
   [ -n "$url" ] && echo "https://$url" || echo "not-deployed"
   ;;
@@ -362,16 +367,17 @@ $ aap-demo enable portal
 # ✓ OAuth app created: <app-id>
 # ✓ API token generated
 # ✓ Helm chart installed: redhat-rhaap-portal
-# ✓ Portal route: https://redhat-rhaap-portal-aap-operator.apps.127.0.0.1.nip.io
+# ✓ Portal route: https://redhat-rhaap-portal-redhat-rhaap-portal.apps.127.0.0.1.nip.io
 # ✓ OAuth app updated with redirect URI
 
 # Check status
 $ aap-demo status portal
-# Output: https://redhat-rhaap-portal-aap-operator.apps.127.0.0.1.nip.io
+# Output: https://redhat-rhaap-portal-redhat-rhaap-portal.apps.127.0.0.1.nip.io
 
 # Disable portal
 $ aap-demo disable portal
-# ✓ Helm release uninstalled
+# ✓ Helm release uninstalled from redhat-rhaap-portal namespace
+# ✓ redhat-rhaap-portal namespace deleted
 # ✓ OAuth app deleted
 # ✓ Registry secret removed
 ```

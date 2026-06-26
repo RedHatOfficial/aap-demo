@@ -5,7 +5,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NAMESPACE="${NAMESPACE:-aap-operator}"
+AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
+PORTAL_NAMESPACE="${PORTAL_NAMESPACE:-redhat-rhaap-portal}"
 ACTION="${1:-deploy}"
 PORTAL_DIR="${HOME}/.aap-demo/portal"
 
@@ -14,19 +15,33 @@ RELEASE_NAME="redhat-rhaap-portal"
 CHART_REPO="openshift-helm-charts/redhat-rhaap-portal"
 
 # Default plugin version (AAP 2.7 compatible)
-DEFAULT_PLUGIN_VERSION="2.1"
+DEFAULT_PLUGIN_VERSION="2.2"
 
 # ---------------------------------------------------------------------------
 # Delete/Cleanup Handler
 # ---------------------------------------------------------------------------
 
+cleanup_portal_namespace() {
+  local ns="$1"
+
+  if helm list -n "$ns" 2>/dev/null | grep -q "^$RELEASE_NAME"; then
+    echo "Uninstalling Helm release: $RELEASE_NAME (namespace: $ns)"
+    helm uninstall "$RELEASE_NAME" -n "$ns" || true
+  fi
+
+  kubectl delete secret "$RELEASE_NAME-dynamic-plugins-registry-auth" \
+    -n "$ns" &>/dev/null || true
+  kubectl delete secret secrets-rhaap-portal -n "$ns" &>/dev/null || true
+}
+
 cleanup() {
   echo "Disabling portal addon..."
 
-  # Delete Helm release
-  if helm list -n "$NAMESPACE" 2>/dev/null | grep -q "^$RELEASE_NAME"; then
-    echo "Uninstalling Helm release: $RELEASE_NAME"
-    helm uninstall "$RELEASE_NAME" -n "$NAMESPACE" || true
+  cleanup_portal_namespace "$PORTAL_NAMESPACE"
+
+  # Remove legacy install from AAP namespace (pre-dedicated-namespace deployments)
+  if [ "$AAP_NAMESPACE" != "$PORTAL_NAMESPACE" ]; then
+    cleanup_portal_namespace "$AAP_NAMESPACE"
   fi
 
   # Delete OAuth app from AAP
@@ -36,8 +51,8 @@ cleanup() {
     local aap_route
     local admin_pass
 
-    aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)
-    admin_pass=$(kubectl get secret aap-admin-password -n "$NAMESPACE" \
+    aap_route=$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+    admin_pass=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
       -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
 
     if [ -n "$aap_route" ] && [ -n "$admin_pass" ] && [ -n "$app_id" ]; then
@@ -48,12 +63,7 @@ cleanup() {
     fi
   fi
 
-  # Delete registry secret
-  kubectl delete secret "$RELEASE_NAME-dynamic-plugins-registry-auth" \
-    -n "$NAMESPACE" &>/dev/null || true
-
-  # Delete AAP credentials secret
-  kubectl delete secret secrets-rhaap-portal -n "$NAMESPACE" &>/dev/null || true
+  kubectl delete namespace "$PORTAL_NAMESPACE" --timeout=120s 2>/dev/null || true
 
   # Cleanup portal directory
   rm -rf "$PORTAL_DIR"
@@ -115,8 +125,8 @@ check_prerequisites() {
   fi
 
   # Check AAP deployment
-  if ! kubectl get route aap -n "$NAMESPACE" &>/dev/null; then
-    echo "❌ AAP not deployed in namespace: $NAMESPACE"
+  if ! kubectl get route aap -n "$AAP_NAMESPACE" &>/dev/null; then
+    echo "❌ AAP not deployed in namespace: $AAP_NAMESPACE"
     echo "Run 'aap-demo deploy' first"
     exit 1
   fi
@@ -151,16 +161,90 @@ check_prerequisites() {
   echo "✓ Prerequisites met"
 }
 
+grant_portal_sccs() {
+  if command -v oc &>/dev/null; then
+    oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${PORTAL_NAMESPACE}" 2>/dev/null || true
+    oc adm policy add-scc-to-group privileged "system:serviceaccounts:${PORTAL_NAMESPACE}" 2>/dev/null || true
+    return
+  fi
+
+  for scc_name in anyuid privileged; do
+    local crb_name="system:openshift:scc:${scc_name}:${PORTAL_NAMESPACE}"
+    if ! kubectl get clusterrolebinding "$crb_name" &>/dev/null; then
+      kubectl create clusterrolebinding "$crb_name" \
+        --clusterrole="system:openshift:scc:${scc_name}" \
+        --group="system:serviceaccounts:${PORTAL_NAMESPACE}" 2>/dev/null || true
+    fi
+  done
+}
+
+copy_pull_secret_to_portal_namespace() {
+  if ! kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" &>/dev/null; then
+    return 0
+  fi
+
+  mkdir -p "$PORTAL_DIR"
+  kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d > "$PORTAL_DIR/pull-secret.json" || return 0
+
+  kubectl delete secret redhat-operators-pull-secret -n "$PORTAL_NAMESPACE" 2>/dev/null || true
+  kubectl create secret generic redhat-operators-pull-secret \
+    --from-file=.dockerconfigjson="$PORTAL_DIR/pull-secret.json" \
+    --type=kubernetes.io/dockerconfigjson \
+    -n "$PORTAL_NAMESPACE" 2>/dev/null || true
+
+  local existing_secrets
+  existing_secrets=$(kubectl get serviceaccount default -n "$PORTAL_NAMESPACE" \
+    -o jsonpath='{.imagePullSecrets[*].name}' 2>/dev/null || echo "")
+  if echo "$existing_secrets" | grep -q "redhat-operators-pull-secret"; then
+    return 0
+  fi
+
+  local secrets_json='[{"name": "redhat-operators-pull-secret"}'
+  for secret in $existing_secrets; do
+    secrets_json="${secrets_json}, {\"name\": \"${secret}\"}"
+  done
+  secrets_json="${secrets_json}]"
+  kubectl patch serviceaccount default -n "$PORTAL_NAMESPACE" \
+    -p "{\"imagePullSecrets\": ${secrets_json}}" 2>/dev/null || true
+}
+
+setup_portal_namespace() {
+  echo "Setting up portal namespace: $PORTAL_NAMESPACE"
+
+  kubectl create namespace "$PORTAL_NAMESPACE" 2>/dev/null || true
+  kubectl label namespace "$PORTAL_NAMESPACE" \
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged --overwrite 2>/dev/null || true
+
+  grant_portal_sccs
+  copy_pull_secret_to_portal_namespace
+
+  echo "✓ Portal namespace ready"
+}
+
+cleanup_legacy_install() {
+  if [ "$AAP_NAMESPACE" = "$PORTAL_NAMESPACE" ]; then
+    return 0
+  fi
+
+  if helm list -n "$AAP_NAMESPACE" 2>/dev/null | grep -q "^$RELEASE_NAME"; then
+    echo "Migrating portal from $AAP_NAMESPACE to $PORTAL_NAMESPACE..."
+    cleanup_portal_namespace "$AAP_NAMESPACE"
+  fi
+}
+
 get_aap_credentials() {
   echo "Fetching AAP credentials..."
 
-  AAP_ROUTE=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
+  AAP_ROUTE=$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
   if [ -z "$AAP_ROUTE" ]; then
     echo "❌ Failed to get AAP route"
     exit 1
   fi
 
-  ADMIN_PASS=$(kubectl get secret aap-admin-password -n "$NAMESPACE" \
+  ADMIN_PASS=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
   if [ -z "$ADMIN_PASS" ]; then
     echo "❌ Failed to get AAP admin password"
@@ -367,8 +451,8 @@ get_registry_credentials() {
   fi
 
   # Check for redhat-operators-pull-secret (created by aap-demo)
-  if kubectl get secret redhat-operators-pull-secret -n "$NAMESPACE" &>/dev/null; then
-    kubectl get secret redhat-operators-pull-secret -n "$NAMESPACE" \
+  if kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" &>/dev/null; then
+    kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" \
       -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d > "$PORTAL_DIR/auth.json" || true
 
     if jq -e '.auths."registry.redhat.io"' "$PORTAL_DIR/auth.json" &>/dev/null; then
@@ -411,12 +495,12 @@ create_registry_secret() {
 
   # Delete existing secret if present
   kubectl delete secret "$RELEASE_NAME-dynamic-plugins-registry-auth" \
-    -n "$NAMESPACE" &>/dev/null || true
+    -n "$PORTAL_NAMESPACE" &>/dev/null || true
 
   # Create secret from auth.json
   kubectl create secret generic "$RELEASE_NAME-dynamic-plugins-registry-auth" \
     --from-file=auth.json="$PORTAL_DIR/auth.json" \
-    -n "$NAMESPACE"
+    -n "$PORTAL_NAMESPACE"
 
   echo "✓ Registry secret created"
 }
@@ -461,10 +545,10 @@ create_aap_secrets() {
   AAP_HOST_URL=$(get_aap_host_url)
 
   # Delete existing secret if present
-  kubectl delete secret secrets-rhaap-portal -n "$NAMESPACE" &>/dev/null || true
+  kubectl delete secret secrets-rhaap-portal -n "$PORTAL_NAMESPACE" &>/dev/null || true
 
   kubectl create secret generic secrets-rhaap-portal \
-    -n "$NAMESPACE" \
+    -n "$PORTAL_NAMESPACE" \
     --from-literal=aap-host-url="$AAP_HOST_URL" \
     --from-literal=oauth-client-id="$CLIENT_ID" \
     --from-literal=oauth-client-secret="$CLIENT_SECRET" \
@@ -503,6 +587,22 @@ upstream:
         providers:
           rhaap:
             orgs: "$ORG_NAME"
+      dynamicPlugins:
+        frontend:
+          default.main-menu-items:
+            menuItems:
+              default.home:
+                title: Home
+              default.catalog:
+                title: Catalog
+              default.create:
+                title: Create
+              default.apis:
+                title: APIs
+              default.learning-path:
+                title: Learning Paths
+              default.my-group:
+                title: My Group
 EOF
 
   echo "✓ Helm values created"
@@ -510,6 +610,8 @@ EOF
 
 install_helm_chart() {
   echo "Installing Helm chart..."
+
+  HELM_WAS_UPGRADE=false
 
   # Add Helm repo if not present
   if ! helm repo list 2>/dev/null | grep -q openshift-helm-charts; then
@@ -520,15 +622,16 @@ install_helm_chart() {
   helm repo update &>/dev/null
 
   # Install or upgrade
-  if helm list -n "$NAMESPACE" 2>/dev/null | grep -q "^$RELEASE_NAME"; then
+  if helm list -n "$PORTAL_NAMESPACE" 2>/dev/null | grep -q "^$RELEASE_NAME"; then
     echo "Upgrading existing Helm release..."
+    HELM_WAS_UPGRADE=true
     helm upgrade "$RELEASE_NAME" "$CHART_REPO" \
-      -n "$NAMESPACE" \
+      -n "$PORTAL_NAMESPACE" \
       -f "$PORTAL_DIR/values.yaml"
   else
     echo "Installing Helm release..."
     helm install "$RELEASE_NAME" "$CHART_REPO" \
-      -n "$NAMESPACE" \
+      -n "$PORTAL_NAMESPACE" \
       -f "$PORTAL_DIR/values.yaml"
   fi
 
@@ -538,7 +641,7 @@ install_helm_chart() {
 restart_portal_deployment() {
   echo "Restarting portal to apply credential updates..."
 
-  if ! kubectl rollout restart deployment/"$RELEASE_NAME" -n "$NAMESPACE" &>/dev/null; then
+  if ! kubectl rollout restart deployment/"$RELEASE_NAME" -n "$PORTAL_NAMESPACE" &>/dev/null; then
     echo "⚠️  Failed to restart portal deployment"
     return 1
   fi
@@ -550,11 +653,11 @@ wait_for_deployment() {
   echo "Waiting for portal deployment to be ready..."
 
   if ! kubectl rollout status deployment/"$RELEASE_NAME" \
-    -n "$NAMESPACE" \
+    -n "$PORTAL_NAMESPACE" \
     --timeout=600s 2>/dev/null; then
 
     echo "⚠️  Deployment taking longer than expected"
-    echo "Check status with: kubectl get pods -n $NAMESPACE"
+    echo "Check status with: kubectl get pods -n $PORTAL_NAMESPACE"
     echo "Proceeding anyway..."
   else
     echo "✓ Deployment ready"
@@ -565,7 +668,7 @@ update_oauth_redirect() {
   echo "Updating OAuth redirect URI..."
 
   # Get portal route
-  PORTAL_ROUTE=$(kubectl get route "$RELEASE_NAME" -n "$NAMESPACE" \
+  PORTAL_ROUTE=$(kubectl get route "$RELEASE_NAME" -n "$PORTAL_NAMESPACE" \
     -o jsonpath='{.spec.host}' 2>/dev/null)
 
   if [ -z "$PORTAL_ROUTE" ]; then
@@ -592,7 +695,7 @@ verify_aap_host_url() {
   local aap_host_url
   aap_host_url=$(kubectl exec deployment/"$RELEASE_NAME" \
     -c backstage-backend \
-    -n "$NAMESPACE" \
+    -n "$PORTAL_NAMESPACE" \
     -- printenv AAP_HOST_URL 2>/dev/null || true)
 
   if [ -z "$aap_host_url" ]; then
@@ -623,7 +726,7 @@ verify_oauth_client() {
   local http_code
   http_code=$(kubectl exec deployment/"$RELEASE_NAME" \
     -c backstage-backend \
-    -n "$NAMESPACE" \
+    -n "$PORTAL_NAMESPACE" \
     -- sh -c '
       AUTH=$(printf "%s:%s" "$OAUTH_CLIENT_ID" "$OAUTH_CLIENT_SECRET" | base64 -w0)
       curl -s -o /dev/null -w "%{http_code}" -X POST "'"${AAP_HOST_URL}"'/o/token/" \
@@ -667,6 +770,8 @@ display_success() {
 
 main() {
   check_prerequisites
+  cleanup_legacy_install
+  setup_portal_namespace
   get_aap_credentials
   select_organization
   create_oauth_app
@@ -678,7 +783,9 @@ main() {
   create_aap_secrets
   create_helm_values
   install_helm_chart
-  restart_portal_deployment
+  if [ "${HELM_WAS_UPGRADE:-false}" = true ]; then
+    restart_portal_deployment
+  fi
   wait_for_deployment
   update_oauth_redirect
   verify_aap_host_url

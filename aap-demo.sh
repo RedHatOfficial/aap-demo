@@ -1738,7 +1738,7 @@ cmd_status() {
         console) url="https://console.apps.127.0.0.1.nip.io" ;;
         registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
         mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
-        portal) url="https://$(kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
+        portal) url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
         portal-vm) url="https://localhost:8443 (QEMU VM, SSH: ssh -i ~/.aap-demo/portal-vm/id_ed25519 -p 2223 -o StrictHostKeyChecking=no admin@localhost)" ;;
         registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
         prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
