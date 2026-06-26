@@ -13,15 +13,14 @@ Portal provides a self-service web interface for running AAP job templates witho
 - OAuth integration with AAP for authentication
 - Built-in PostgreSQL database (can use external)
 
-**Comparison with portal-vm:**
+**Architecture profiles:**
 
-| Feature | portal (Helm) | portal-vm (QEMU) |
-|---------|--------------|------------------|
-| Platform | OpenShift | macOS only |
-| Deployment | Production-ready | Dev/test only |
-| Performance | Native | Slow (x86 emulation on ARM) |
-| Architecture | x86_64 cluster | x86_64 appliance |
-| Use case | Long-term deployment | Quick local testing |
+| Profile | Cluster CPU | RHDH hub |
+|---------|-------------|----------|
+| x86 | `amd64` | Red Hat chart default |
+| ARM | `arm64` | `quay.io/rhdh-community/rhdh:1.10` (experimental) |
+
+See [ADR-002](../../docs/adr/002-portal-helm-deployment.md) for full architecture.
 
 ## Prerequisites
 
@@ -57,10 +56,13 @@ Portal provides a self-service web interface for running AAP job templates witho
 
 ### Architecture
 
-- **x86_64 cluster required** (portal container images are x86 only)
-- If local machine is ARM (Apple Silicon):
-  - Deployment still works if cluster is x86
-  - Use `portal-vm` addon for local ARM testing instead
+Portal auto-detects **cluster node CPU** (`kubectl get nodes`) and selects x86 or ARM
+Helm values. Laptop architecture does not matter — only the cluster does.
+
+- **amd64:** Red Hat RHDH hub from the Helm chart
+- **arm64:** Community multi-arch RHDH + RHEL9 PostgreSQL (experimental)
+
+Override: `PORTAL_ARCH=arm` or `PORTAL_ARCH=x86`.
 
 ## Installation
 
@@ -75,7 +77,7 @@ aap-demo enable portal
 
 ### What Happens During Install
 
-1. **Prerequisites check:** Verifies AAP, Helm, oc, architecture
+1. **Prerequisites check:** Verifies AAP, Helm, oc, cluster CPU (x86 vs ARM profile)
 2. **AAP configuration:**
    - Selects/creates organization for template sync
    - Creates OAuth application (placeholder redirect URI)
@@ -95,6 +97,8 @@ aap-demo enable portal
 6. **Post-install:**
    - Waits for deployment ready (up to 10 minutes)
    - Updates OAuth redirect URI with real portal route
+   - On MicroShift: AAP route host alias for OAuth token exchange
+   - On ARM clusters: disables broken quay plugin, resets dynamic-plugins PVC
 
 ### Manual Registry Credentials Setup
 
@@ -324,13 +328,12 @@ curl -k -u "admin:$ADMIN_PASS" \
 `Login failed; caused by Error: Failed to send POST request: fetch failed`.
 
 **Cause:** After OAuth, the portal backend POSTs to `{AAP_HOST_URL}/o/token/`.
-On CRC/MicroShift, CoreDNS rewrites route hostnames to in-cluster Services on
-port 80. If `AAP_HOST_URL` uses `https://`, the backend tries TLS on port 443
-where nothing is listening → timeout → fetch failed.
+On CRC/MicroShift this fails when:
 
-**Fix:** Re-run `aap-demo enable portal`. On MicroShift the addon sets
-`AAP_HOST_URL` to `http://<aap-route>` (not `https://`). Browsers still reach
-AAP over HTTPS via ingress; only the pod→service token exchange uses HTTP.
+1. **`AAP_HOST_URL` uses `https://`** — in-cluster traffic hits the AAP Service on port 80, not 443.
+2. **nip.io resolves to `127.0.0.1` inside pods** — connection refused.
+
+**Fix:** Re-run `aap-demo enable portal`. On MicroShift the addon sets `AAP_HOST_URL` to `http://<aap-route>` and patches a `hostAliases` entry for the AAP route hostname.
 
 Verify:
 
@@ -338,6 +341,9 @@ Verify:
 kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- \
   printenv AAP_HOST_URL
 # MicroShift/CRC expected: http://aap-aap-operator.apps.127.0.0.1.nip.io
+
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- getent hosts aap-aap-operator.apps.127.0.0.1.nip.io
+# Expected: <aap-service-ip> (not 127.0.0.1)
 ```
 
 ### No Job Templates in Catalog
@@ -364,22 +370,14 @@ curl -k -u "admin:<password>" \
 kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal --tail=100
 ```
 
-### ARM Architecture Warning
+### Cluster architecture and profiles
 
-**Symptom:** "Portal requires x86_64 architecture" warning during enable.
+Portal selects x86 or ARM Helm values from **cluster** node CPU.
 
-**Explanation:**
+- **amd64:** Red Hat RHDH chart images (supported)
+- **arm64:** Community RHDH + RHEL9 PostgreSQL (experimental)
 
-- Local machine is ARM (Apple Silicon)
-- Portal images are x86_64 only
-- Cluster architecture matters, not local machine
-
-**Options:**
-
-1. **If cluster is x86:** Ignore warning, proceed with install
-2. **If cluster is ARM (MicroShift on Apple Silicon):**
-   - Use `aap-demo enable portal-vm` instead
-   - Or provision x86 OpenShift cluster
+Override: `PORTAL_ARCH=arm` or `PORTAL_ARCH=x86`. See [ADR-002](../../docs/adr/002-portal-helm-deployment.md).
 
 **Verify cluster architecture:**
 
@@ -501,9 +499,9 @@ kubectl logs -l app.kubernetes.io/instance=redhat-rhaap-portal -n redhat-rhaap-p
 - [Portal Lifecycle](https://access.redhat.com/support/policy/updates/ansible-automation-platform) - Version compatibility matrix
 - [RHDH Documentation](https://developers.redhat.com/rhdh/overview) - Red Hat Developer Hub overview
 - [Helm Documentation](https://helm.sh/docs/) - Helm command reference
+- [ADR-002](../../docs/adr/002-portal-helm-deployment.md) - Portal Helm deployment (x86 and ARM profiles)
 - [ADR-004](../../docs/adr/ADR-004-portal-helm-addon.md) - Portal Helm addon architecture decision
 
 ## See Also
 
-- `addons/portal-vm/` - QEMU-based portal appliance for macOS local testing
 - `aap-demo.sh` - Main aap-demo CLI script

@@ -1,25 +1,21 @@
 # ADR-004: Portal Helm Addon Architecture
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-06-25
 **Author:** DevOps Automator Agent
 
 ## Context
 
-aap-demo currently provides two options for running the Ansible Automation Portal:
+aap-demo deploys the Ansible Automation Portal via the `portal` Helm addon on
+OpenShift. Portal provides a self-service web interface built on Red Hat Developer
+Hub (RHDH) with AAP-specific plugins.
 
-1. **portal-vm** (macOS only): QEMU-based x86_64 appliance for local development on Apple Silicon
-2. **portal** (this ADR): Helm-based deployment on OpenShift for production-like environments
+**Why Helm deployment:**
 
-Portal provides a self-service web interface built on Red Hat Developer Hub (RHDH) with AAP-specific plugins. Users can launch AAP job templates through guided forms without needing to understand playbooks or automation workflows.
-
-**Why Helm deployment needed:**
-
-- Portal-vm is dev/test only (slow x86 emulation, macOS-specific)
-- Helm chart is official Red Hat supported deployment method
+- Official Red Hat supported deployment method on x86 OpenShift
 - Production-ready architecture (HA, resource management, OCP native)
 - Aligns with AAP operator deployment patterns
-- x86_64-only limitation applies to both VM and Helm (upstream constraint)
+- Single addon auto-detects cluster CPU for x86 vs ARM image profiles (see ADR-002)
 
 ## Decision
 
@@ -49,31 +45,20 @@ Portal uses OCI container delivery from `registry.redhat.io` (recommended over d
 
 #### 3. Architecture-Aware Deployment
 
-Portal requires x86_64 architecture (no ARM64 support from Red Hat).
+Portal uses **cluster node architecture** (not laptop CPU) to select Helm values:
 
-**Detection Strategy:**
+- **amd64:** Chart-default Red Hat RHDH images (supported)
+- **arm64:** Community multi-arch RHDH + image overrides (experimental)
 
-```bash
-detect_arch() {
-  local arch=$(uname -m)
-  [[ "$arch" =~ ^(arm64|aarch64)$ ]] && echo "arm" || echo "x86"
-}
-```
+See [ADR-002](002-portal-helm-deployment.md) for profile details, MicroShift OAuth,
+and ARM-specific post-install steps.
 
 **Behavior:**
 
-- On x86 host: Deploy directly
-- On ARM host: Display clear error explaining x86 requirement, suggest portal-vm for local dev
-
-**Rationale for not supporting remote SSH execution:**
-
-Unlike portal-vm (which required remote SSH to work around local emulation), Helm-based portal deployment:
-
-1. Runs on OpenShift cluster (not local machine)
-2. Cluster architecture is what matters (not laptop architecture)
-3. User controls cluster provisioning (can use x86 nodes)
-4. If user's MicroShift is ARM, they should use portal-vm instead
-5. Remote SSH adds complexity without clear benefit (user can `ssh` + `aap-demo enable portal` themselves)
+- Detect arch via `kubectl get nodes`
+- Optional override: `PORTAL_ARCH=arm` or `PORTAL_ARCH=x86`
+- ARM Mac with x86 remote cluster: deploy normally (cluster arch wins)
+- ARM Mac with CRC/MicroShift: ARM profile applied automatically
 
 #### 4. Helm Version Pinning
 
@@ -192,13 +177,13 @@ addons/portal/
 ### Argument Parsing (Line 123)
 
 ```bash
-console | registry | mcp-server | registry-ui | olm | portal | portal-vm)
+console | registry | mcp-server | registry-ui | olm | portal)
 ```
 
 ### Help Text (Lines 377-387)
 
 ```bash
-enable portal    Enable Self-Service Portal (Helm chart, x86 only)
+enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
                  Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
 disable portal   Disable Portal addon
 status portal    Check Portal deployment status
@@ -217,7 +202,7 @@ portal)
 ### Available Addons (Line 2433)
 
 ```bash
-AVAILABLE_ADDONS="mcp-server portal portal-vm"
+AVAILABLE_ADDONS="mcp-server portal"
 ```
 
 ## Deploy Script Functions
@@ -280,24 +265,15 @@ cleanup() {
 
 ## Rationale
 
-### Why Not Remote SSH Execution?
+### Cluster vs laptop architecture
 
-Portal-vm required SSH to remote x86 host because:
+Helm-based portal deployment runs on the OpenShift cluster, not the laptop:
 
-1. QEMU emulation too slow on local ARM Mac
-2. Appliance file (qcow2) runs on local machine via QEMU
-3. No other option for ARM users
+1. Cluster node architecture selects the x86 or ARM Helm profile
+2. ARM Mac developers use CRC/MicroShift with the ARM profile (native, no emulation)
+3. Remote x86 clusters work from any laptop via KUBECONFIG
 
-Portal Helm addon differs:
-
-1. Deploys to OpenShift cluster (not local machine)
-2. Cluster architecture determines compatibility
-3. User provisions cluster with x86 nodes if needed
-4. If MicroShift is ARM → use portal-vm instead
-5. Remote SSH adds complexity without clear benefit
-6. User can manually SSH and run `aap-demo enable portal` if needed
-
-**Decision:** Detect architecture, display clear error on ARM, suggest portal-vm.
+See [ADR-002](002-portal-helm-deployment.md) for profile differences and MicroShift OAuth.
 
 ### Why Two-Phase OAuth Configuration?
 
@@ -340,17 +316,19 @@ Portal supports two plugin delivery methods:
 
 ### Negative
 
-1. **x86_64 limitation:** Cannot run on ARM clusters (upstream constraint)
+1. **ARM profile experimental:** Community RHDH overrides are not Red Hat supported
 2. **Registry dependency:** Requires registry.redhat.io access or mirroring
 3. **OAuth complexity:** Two-phase configuration may confuse debugging
 4. **Helm version requirement:** Older Helm versions unsupported
+5. **MicroShift OAuth:** Requires host alias and HTTP token URL (see ADR-002)
 
 ### Mitigation Strategies
 
-1. **Architecture detection:** Clear error message pointing to portal-vm alternative
+1. **Profile detection:** Auto-select x86 vs ARM from cluster nodes; `PORTAL_ARCH` override
 2. **Registry fallback:** Auto-detect existing secret before prompting
 3. **OAuth logging:** Verbose output showing placeholder → real URI transition
 4. **Helm version check:** Fail fast with upgrade instructions
+5. **OAuth verification:** Post-install curl check from portal pod to AAP `/o/token/`
 
 ## Verification
 
@@ -406,19 +384,16 @@ $ aap-demo disable portal
 - OpenShift Helm catalog: `openshift-helm-charts/redhat-rhaap-portal`
 - AAP API docs: OAuth applications, settings, tokens
 - Ansible Automation Portal lifecycle: Version compatibility matrix
-- ADR-001, ADR-002: Portal-vm architecture (comparison)
+- [ADR-002](002-portal-helm-deployment.md): x86 and ARM Helm profiles, MicroShift OAuth
 
 ## Related ADRs
 
-- **ADR-001, ADR-002:** Portal-vm (macOS QEMU approach)
-- **ADR-003:** Portal-vm dynamic plugins lock workaround (not applicable to Helm)
+- **[ADR-002](002-portal-helm-deployment.md):** x86 and ARM Helm profiles, MicroShift OAuth
 
 ## Next Steps
 
-1. Implement `addons/portal/deploy.sh` with functions outlined above
-2. Create `addons/portal/README.md` with prerequisites and troubleshooting
-3. Create `addons/portal/values.yaml.template` for Helm values generation
-4. Update `aap-demo.sh` integration points (argument parsing, help, status)
-5. Test on x86_64 OpenShift Local cluster
-6. Document registry credentials setup in README
-7. Add architecture detection with clear error messaging
+Implemented in `addons/portal/deploy.sh`. Ongoing maintenance:
+
+1. Test both x86 and ARM profiles on chart upgrades
+2. Switch ARM profile to Red Hat RHDH images when multi-arch hub is available
+3. Keep troubleshooting in `addons/portal/README.md` aligned with deploy script behavior

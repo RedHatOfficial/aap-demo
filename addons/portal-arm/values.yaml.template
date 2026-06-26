@@ -1,3 +1,0 @@
-# Deprecated — see addons/portal/values.yaml.template
-
-This file is kept for reference. Use `aap-demo enable portal` (auto-detects CPU).

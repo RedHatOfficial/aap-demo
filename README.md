@@ -70,7 +70,6 @@ cd aap-demo && ./install.sh
 
 ```bash
 aap-demo deploy        # Deploy AAP 2.7
-aap-demo enable portal # Enable Self-Service Portal (optional)
 aap-demo status        # Check deployment status
 ```
 
@@ -152,26 +151,25 @@ Enabled Addons:
 
 ### Self-Service Portal (AAP 2.7)
 
-AAP 2.7 includes a Self-Service Automation Portal for end-user workflow requests. Enable it as an addon:
+Deploy the Ansible Automation Portal (Red Hat Developer Hub + AAP plugins) as a Helm addon:
 
 ```bash
-aap-demo enable portal       # Enable Portal on existing AAP deployment
-aap-demo disable portal      # Disable Portal
+aap-demo enable portal       # Auto-detects cluster CPU (amd64 vs arm64)
+aap-demo disable portal
+aap-demo status portal       # Portal route URL
 ```
 
-**Portal features:**
+**Requirements:** AAP deployed, Helm 3.10+, `registry.redhat.io` credentials for OCI plugins.
 
-- Self-service workflow catalog for end users
-- User-friendly automation request interface
-- Integrated with Controller, Hub, and EDA
-- Credential and inventory management
+**Profiles:** x86 clusters use Red Hat RHDH chart images; arm64 clusters (e.g. CRC on Apple
+Silicon) use community multi-arch RHDH overrides. See
+[ADR-002](docs/adr/002-portal-helm-deployment.md) and [addons/portal/README.md](addons/portal/README.md).
 
-**Access:** Portal is integrated into the main AAP UI shown in `aap-demo status`.
-
-**Manual enable:**
+## Deploy MCP Server
 
 ```bash
-kubectl patch aap aap -n aap-operator --type merge -p '{"spec":{"portal":{"disabled":false}}}'
+aap-demo enable mcp-server     # MCP server for AI assistants
+aap-demo disable mcp-server
 ```
 
 ### Common Commands
@@ -198,12 +196,6 @@ aap-demo diagnose            # Quick health check (cluster, storage, SCCs, pods)
 aap-demo must-gather         # Collect full diagnostics (AAP + cluster)
 aap-demo must-gather /tmp/d  # Collect to specific directory
 
-# Addons
-aap-demo enable console      # Enable OpenShift console addon
-aap-demo enable registry     # Enable in-cluster container registry
-aap-demo enable mcp-server   # Enable MCP server for AI assistants
-aap-demo enable portal       # Enable Self-Service Portal
-
 # Maintenance
 aap-demo clean               # Remove AAP deployment (keeps cluster)
 aap-demo update              # Pull latest code and reinstall
@@ -218,15 +210,6 @@ aap-demo help                # Full command reference
 - **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
 - **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust/
   Windows via certutil
-
-## Addons
-
-```bash
-aap-demo enable                # List all addons with status
-aap-demo enable mcp-server     # MCP server for AI assistants (requires AAP)
-```
-
-Addons are saved to `~/.aap-demo/config` and auto-deployed on `aap-demo create`.
 
 ## Environment Variables
 

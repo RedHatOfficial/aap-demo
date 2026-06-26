@@ -22,7 +22,8 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 
 | ADR | Title | Status |
 |-----|-------|--------|
-| [002](002-portal-vm-macos-deployment.md) | Portal VM Addon for macOS QEMU Deployment | Accepted |
+| [002](002-portal-helm-deployment.md) | Portal Helm Deployment Architecture (x86 and ARM) | Accepted |
+| [004](ADR-004-portal-helm-addon.md) | Portal Helm Addon Architecture | Accepted |
 
 ## Creating a New ADR
 

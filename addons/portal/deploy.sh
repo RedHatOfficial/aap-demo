@@ -28,12 +28,6 @@ DEFAULT_POSTGRES_REGISTRY="${DEFAULT_POSTGRES_REGISTRY:-registry.redhat.io}"
 DEFAULT_POSTGRES_REPOSITORY="${DEFAULT_POSTGRES_REPOSITORY:-rhel9/postgresql-15}"
 DEFAULT_POSTGRES_TAG="${DEFAULT_POSTGRES_TAG:-9.8-1782419742}"
 
-# Legacy portal-arm addon (pre-merge installs)
-LEGACY_ARM_NAMESPACE="redhat-rhaap-portal-arm"
-LEGACY_ARM_RELEASE="redhat-rhaap-portal-arm"
-LEGACY_ARM_DIR="${HOME}/.aap-demo/portal-arm"
-LEGACY_ARM_OAUTH_APP="ansible-automation-portal-arm"
-
 IS_ARM_CLUSTER=false
 
 # ---------------------------------------------------------------------------
@@ -53,45 +47,10 @@ cleanup_portal_namespace() {
   kubectl delete secret secrets-rhaap-portal -n "$ns" &>/dev/null || true
 }
 
-cleanup_legacy_arm_install() {
-  if ! helm list -n "$LEGACY_ARM_NAMESPACE" 2>/dev/null | grep -q "^$LEGACY_ARM_RELEASE"; then
-    if [ ! -d "$LEGACY_ARM_DIR" ]; then
-      return 0
-    fi
-  fi
-
-  echo "Removing legacy portal-arm install..."
-
-  if helm list -n "$LEGACY_ARM_NAMESPACE" 2>/dev/null | grep -q "^$LEGACY_ARM_RELEASE"; then
-    helm uninstall "$LEGACY_ARM_RELEASE" -n "$LEGACY_ARM_NAMESPACE" || true
-  fi
-
-  kubectl delete secret "${LEGACY_ARM_RELEASE}-dynamic-plugins-registry-auth" \
-    -n "$LEGACY_ARM_NAMESPACE" &>/dev/null || true
-  kubectl delete secret secrets-rhaap-portal -n "$LEGACY_ARM_NAMESPACE" &>/dev/null || true
-  kubectl delete namespace "$LEGACY_ARM_NAMESPACE" --timeout=120s 2>/dev/null || true
-
-  if [ -f "$LEGACY_ARM_DIR/oauth_app_id" ]; then
-    local legacy_app_id aap_route admin_pass
-    legacy_app_id=$(cat "$LEGACY_ARM_DIR/oauth_app_id")
-    aap_route=$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)
-    admin_pass=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
-      -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
-    if [ -n "$aap_route" ] && [ -n "$admin_pass" ] && [ -n "$legacy_app_id" ]; then
-      curl -k -u "admin:$admin_pass" \
-        -X DELETE "https://$aap_route/api/gateway/v1/applications/$legacy_app_id/" \
-        -H "Content-Type: application/json" &>/dev/null || true
-    fi
-  fi
-
-  rm -rf "$LEGACY_ARM_DIR"
-}
-
 cleanup() {
   echo "Disabling portal addon..."
 
   cleanup_portal_namespace "$PORTAL_NAMESPACE"
-  cleanup_legacy_arm_install
 
   # Remove legacy install from AAP namespace (pre-dedicated-namespace deployments)
   if [ "$AAP_NAMESPACE" != "$PORTAL_NAMESPACE" ]; then
@@ -195,8 +154,7 @@ check_architecture() {
 
   if [ "$local_arch" = "arm" ]; then
     echo "ℹ️  Local machine is ARM (Apple Silicon) — cluster is x86_64"
-    echo "   For local ARM cluster testing, use portal-vm or deploy to this ARM cluster with:"
-    echo "   aap-demo enable portal"
+    echo "   Deploy to an ARM cluster (e.g. CRC on Apple Silicon) with: aap-demo enable portal"
     echo ""
   fi
 
