@@ -290,9 +290,31 @@ write_files:
       [Container]
       Environment=AAP_HOST_URL=https://$aap_route
       Environment=AAP_OAUTH_CLIENT_ID=$client_id
+  - path: /etc/portal/configs/dynamic-plugins/zz-disable-scm-auth.yaml
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Disable SCM auth backend plugins (match package paths in dynamic-plugins.override.yaml)
+      plugins:
+        - package: ./ansible-plugins/backstage-plugin-auth-backend-module-github-provider
+          disabled: true
+        - package: ./ansible-plugins/backstage-plugin-auth-backend-module-gitlab-provider
+          disabled: true
+  - path: /etc/portal/configs/app-config/zz-auth-rhaap-only.yaml
+    owner: root:root
+    permissions: '0644'
+    content: |
+      # Force RHAAP sign-in page; hide default GitHub provider from bundled frontend
+      auth:
+        signInPage: rhaap
+      app:
+        signInPage: rhaap
+
+bootcmd:
+  - grep -q "$aap_route" /etc/hosts || echo "10.0.2.2 $aap_route" >> /etc/hosts
 
 runcmd:
-  - echo "10.0.2.2 $aap_route" >> /etc/hosts
+  - grep -q "$aap_route" /etc/hosts || echo "10.0.2.2 $aap_route" >> /etc/hosts
   - sudo rm -f /var/lib/portal/dynamic-plugins-root/install-dynamic-plugins.lock
   - systemctl restart portal.service
 EOF
@@ -381,9 +403,19 @@ start_portal_vm() {
   local qemu_pid=$!
   echo "$qemu_pid" >"$PORTAL_DIR/qemu.pid"
 
-  # No socat needed - CRC already listens on 0.0.0.0:443 (all interfaces including 10.0.2.2)
-  # Portal VM → 10.0.2.2:443 (QEMU host gateway) → CRC directly
-  # /etc/hosts in cloud-init maps AAP route to 10.0.2.2
+  # Portal VM reaches AAP via 10.0.2.2 (QEMU host gateway) + /etc/hosts route mapping.
+  # socat forwards 0.0.0.0:443 → 127.0.0.1:443 for environments where CRC only binds localhost.
+  if ! pgrep -f "socat.*TCP-LISTEN:443.*127.0.0.1:443" >/dev/null 2>&1; then
+    if command -v socat >/dev/null 2>&1; then
+      info "Starting socat proxy for AAP connectivity..."
+      nohup socat TCP-LISTEN:443,bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:443 \
+        >"$PORTAL_DIR/socat-https.log" 2>&1 &
+      echo $! >"$PORTAL_DIR/socat.pid"
+    else
+      warn "socat not installed; AAP connectivity may fail if CRC does not bind 0.0.0.0:443"
+      warn "Install with: brew install socat"
+    fi
+  fi
 
   info "✓ Portal VM started (PID: $qemu_pid)"
   echo ""

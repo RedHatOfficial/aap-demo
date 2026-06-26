@@ -1,7 +1,7 @@
 # ADR-002: Improved Portal VM Architecture for macOS
 
-**Status:** Rejected (guestfwd implementation failed) **Date:** 2026-06-24 **Updated:** 2026-06-25 **Author:** Backend
-Architect Agent **Supersedes:** ADR-001 (partial) **Superseded by:** Hybrid approach (see below)
+**Status:** Rejected (guestfwd implementation failed) **Date:** 2026-06-24 **Updated:** 2026-06-26 **Author:** Backend
+Architect Agent **Supersedes:** ADR-001 (partial) **Superseded by:** Hybrid approach (see Implementation Outcome)
 
 ## Context
 
@@ -361,7 +361,7 @@ lock via systemd.
 - ADR-001: Original port configuration approach
 - OpenShift Local: Uses `nip.io` for DNS (`<ip>.nip.io` resolves to `<ip>`)
 
-## Implementation Outcome (2026-06-25)
+## Implementation Outcome (2026-06-25, revised 2026-06-26)
 
 **guestfwd approach FAILED.** QEMU guestfwd syntax accepted but no traffic forwarded to macOS host.
 
@@ -379,36 +379,77 @@ Deployed version uses:
          PublishPort=443:7007  # Lock at default
    ```
 
-1. **Environment variable fix:** Cloud-init→env conversion bug workaround
+1. **Environment variable fix:** Cloud-init→env conversion bug workaround (ADR-004)
 
    ```yaml
    write_files:
      - path: /etc/containers/systemd/portal.container.d/20-aap-env.conf
        content: |
          [Container]
-         Environment=AAP_HOST_URL=https://aap-aap-operator.apps.127.0.0.1.nip.io
+         Environment=AAP_HOST_URL=https://<aap-route>
          Environment=AAP_OAUTH_CLIENT_ID=<oauth-client-id>
    ```
 
-1. **AAP connectivity:** ADR-001 approach (/etc/hosts + direct 10.0.2.2)
+1. **AAP route resolution:** `/etc/hosts` in both `bootcmd` and `runcmd`
+
+   Portal starts before cloud-init `runcmd` completes on first boot. Mapping the AAP route to `10.0.2.2` in `bootcmd`
+   ensures the VM can reach AAP before the portal container initializes.
 
    ```yaml
+   bootcmd:
+     - grep -q "<aap-route>" /etc/hosts || echo "10.0.2.2 <aap-route>" >> /etc/hosts
+
    runcmd:
-     - echo "10.0.2.2 aap-aap-operator.apps.127.0.0.1.nip.io" >> /etc/hosts
+     - grep -q "<aap-route>" /etc/hosts || echo "10.0.2.2 <aap-route>" >> /etc/hosts
+     - sudo rm -f /var/lib/portal/dynamic-plugins-root/install-dynamic-plugins.lock
+     - systemctl restart portal.service
    ```
 
-1. **QEMU networking:** No guestfwd, relies on QEMU slirp automatic forwarding
+1. **RHAAP-only sign-in:** Disable SCM auth plugins and force RHAAP sign-in page
+
+   The bundled portal ships GitHub/GitLab auth plugins enabled by default. Disabling them requires package paths that
+   match `dynamic-plugins.override.yaml` (not npm-style `@backstage/...` names). A separate app-config override forces
+   `signInPage: rhaap` on both `auth` and `app`.
+
+   ```yaml
+   write_files:
+     - path: /etc/portal/configs/dynamic-plugins/zz-disable-scm-auth.yaml
+       content: |
+         plugins:
+           - package: ./ansible-plugins/backstage-plugin-auth-backend-module-github-provider
+             disabled: true
+           - package: ./ansible-plugins/backstage-plugin-auth-backend-module-gitlab-provider
+             disabled: true
+     - path: /etc/portal/configs/app-config/zz-auth-rhaap-only.yaml
+       content: |
+         auth:
+           signInPage: rhaap
+         app:
+           signInPage: rhaap
+   ```
+
+1. **QEMU networking:** hostfwd only (no guestfwd)
 
    ```bash
    -netdev user,id=net0,hostfwd=tcp::8443-:443,hostfwd=tcp::8080-:80,hostfwd=tcp::2223-:22,dns=10.0.2.3
    ```
 
-### Why It Works Without guestfwd
+1. **AAP connectivity on macOS host:** socat fallback restored
 
-QEMU user-mode networking (slirp) automatically forwards VM connections to 10.0.2.2 → macOS host. When macOS service
-listens on `0.0.0.0:443` or `*:443`, QEMU makes it reachable from VM at 10.0.2.2:443.
+   QEMU slirp forwards VM connections to `10.0.2.2:443` on the macOS host. When CRC/OpenShift Local binds AAP on
+   `*:443`, this works without socat. When the router only binds `127.0.0.1:443`, the VM cannot reach AAP and the
+   portal login page falls back to GitHub (RHAAP provider fails to initialize).
 
-**Flow:**
+   ```bash
+   socat TCP-LISTEN:443,bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:443
+   ```
+
+   `deploy.sh` starts socat if not already running. Requires `brew install socat`. Does not require sudo on macOS when
+   CRC already owns port 443 — socat is skipped if an existing listener is present.
+
+### Why It Works
+
+**Primary path (CRC binds `*:443`):**
 
 ```
 Portal container → aap-aap-operator.apps.127.0.0.1.nip.io
@@ -420,7 +461,15 @@ macOS → CRC route (*:443)
 AAP Gateway
 ```
 
-No socat, no guestfwd needed. /etc/hosts injection sufficient.
+**Fallback path (CRC binds `127.0.0.1:443` only):**
+
+```
+Portal VM → 10.0.2.2:443
+  ↓ QEMU slirp → macOS 0.0.0.0:443
+socat → 127.0.0.1:443 → CRC → AAP Gateway
+```
+
+Without either `*:443` binding or socat, AAP OAuth does not appear on the login page even when portal UI is reachable.
 
 ### Why guestfwd Failed
 
@@ -440,23 +489,28 @@ Attempted syntax:
 
 ### Lessons Learned
 
-1. **QEMU slirp already does what we need** — automatic 10.0.2.2 → host forwarding for services on `*:443`
+1. **QEMU slirp forwards 10.0.2.2 → macOS host** — but only if something listens on `0.0.0.0:443`; otherwise use socat
 1. **ADR-002 port alignment still valuable** — VM on 443 (default) cleaner than 8443
-1. **Cloud-init runcmd can't be eliminated** — /etc/hosts injection required until guestfwd works
-1. **Document actual behavior not aspirational** — deploy.sh comment "no socat needed" was accurate but misleading
-   (implied guestfwd, actually uses slirp auto-forward)
+1. **Cloud-init `bootcmd` + `runcmd` both needed** — portal auto-starts before `runcmd`; hosts mapping must exist early
+1. **Document actual behavior not aspirational** — a comment claiming "no socat needed" hid regressions when CRC bind
+   address differed
 1. **Portal appliance cloud-init conversion bug** — `aap.host_url` and `aap.oauth.client_id` fields don't convert to env
    vars. Must inject via systemd `Environment=` directives. See ADR-004.
 1. **AAP API requires Bearer tokens not passwords** — Portal backend catalog auth needs API token from
-   `/api/gateway/v1/tokens/`, not admin password. Password worked for OAuth app creation but fails for catalog API
-   calls.
+   `/api/gateway/v1/tokens/`, not admin password. See ADR-004.
+1. **GitHub login ≠ working OAuth** — bundled GitHub auth plugins must be disabled with `./ansible-plugins/...` package
+   paths; wrong disable config leaves a broken GitHub button instead of RHAAP sign-in
+1. **Symptom: GitHub-only login** — usually AAP unreachable from VM (network) or SCM plugins not disabled (config), not
+   missing OAuth app credentials
 
 ## Next Steps
 
 1. ~~Update `deploy.sh` with new QEMU netdev config~~ DONE (partial: no guestfwd)
-1. ~~Update cloud-init generator (remove write_files, runcmd)~~ BLOCKED (need /etc/hosts)
+1. ~~Update cloud-init generator (remove write_files, runcmd)~~ BLOCKED (need /etc/hosts + auth overrides)
 1. ✅ Test on Intel Mac (hvf acceleration)
 1. ✅ Test on ARM Mac (tcg emulation)
+1. ✅ Restore socat fallback for localhost-only CRC bind
+1. ✅ Fix RHAAP sign-in (dynamic-plugin disable + signInPage override)
 1. ~~Add fallback for QEMU without guestfwd support~~ N/A (not using guestfwd)
 1. ✅ Update README with new architecture
 1. ✅ Document hybrid approach in ADR-002
