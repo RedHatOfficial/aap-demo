@@ -23,7 +23,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | ADR | Title | Status |
 |-----|-------|--------|
 | [002](002-portal-helm-deployment.md) | Portal Helm Deployment Architecture (x86 and ARM) | Accepted |
-| [004](ADR-004-portal-helm-addon.md) | Portal Helm Addon Architecture | Accepted |
+| [004](004-portal-helm-addon.md) | Portal Helm Addon Architecture | Accepted |
 
 ## Creating a New ADR
 
@@ -32,3 +32,5 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 3. Fill in the sections
 4. Update this index
 5. Commit with message: `docs(adr): Add ADR-XXX: Title`
+
+Note: Numbers may not be sequential; gaps indicate removed or consolidated drafts.

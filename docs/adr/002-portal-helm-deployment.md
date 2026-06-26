@@ -167,7 +167,7 @@ when available.
 
 ## References
 
-- [ADR-004](ADR-004-portal-helm-addon.md) — Initial Helm addon design decisions
+- [ADR-004](004-portal-helm-addon.md) — Initial Helm addon design decisions
 - OpenShift Helm chart: `openshift-helm-charts/redhat-rhaap-portal`
 - Community RHDH: https://github.com/redhat-developer/rhdh-local
 - AAP Extend docs: Portal installation (Helm, OCI plugins)

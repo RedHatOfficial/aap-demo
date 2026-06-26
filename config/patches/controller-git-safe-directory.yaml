@@ -14,7 +14,7 @@
 spec:
   controller:
     security_context_settings:
-      fsGroup: 996
+      fsGroup: 996  # awx GID
     task_extra_env: |
       - name: GIT_CONFIG_COUNT
         value: "1"

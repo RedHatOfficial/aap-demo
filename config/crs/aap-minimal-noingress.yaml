@@ -32,7 +32,7 @@ spec:
     ingress_type: none
     # Fix git "dubious ownership" on project sync (emptyDir /var/lib/awx/projects)
     security_context_settings:
-      fsGroup: 996  # awx UID — group ownership on project volume
+      fsGroup: 996  # awx GID — group ownership on project volume
     # fsGroup alone is insufficient: AWX clones as root, awx user runs git later
     task_extra_env: |
       - name: GIT_CONFIG_COUNT

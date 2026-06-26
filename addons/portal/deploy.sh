@@ -234,8 +234,10 @@ copy_pull_secret_to_portal_namespace() {
   fi
 
   mkdir -p "$PORTAL_DIR"
+  chmod 700 "$PORTAL_DIR"
   kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" \
     -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d > "$PORTAL_DIR/pull-secret.json" || return 0
+  chmod 600 "$PORTAL_DIR/pull-secret.json"
 
   kubectl delete secret redhat-operators-pull-secret -n "$PORTAL_NAMESPACE" 2>/dev/null || true
   kubectl create secret generic redhat-operators-pull-secret \
@@ -250,13 +252,11 @@ copy_pull_secret_to_portal_namespace() {
     return 0
   fi
 
-  local secrets_json='[{"name": "redhat-operators-pull-secret"}'
-  for secret in $existing_secrets; do
-    secrets_json="${secrets_json}, {\"name\": \"${secret}\"}"
-  done
-  secrets_json="${secrets_json}]"
+  local patch_json
+  patch_json=$(echo "$existing_secrets redhat-operators-pull-secret" | xargs -n1 | sort -u | \
+    jq -R -s 'split("\n") | map(select(length > 0)) | map({name: .}) | {imagePullSecrets: .}')
   kubectl patch serviceaccount default -n "$PORTAL_NAMESPACE" \
-    -p "{\"imagePullSecrets\": ${secrets_json}}" 2>/dev/null || true
+    -p "$patch_json" 2>/dev/null || true
 }
 
 setup_portal_namespace() {
@@ -352,12 +352,15 @@ create_oauth_app() {
   echo "Creating OAuth application in AAP..."
 
   mkdir -p "$PORTAL_DIR"
+  chmod 700 "$PORTAL_DIR"
   local oauth_credentials_file="$PORTAL_DIR/oauth_credentials.json"
 
   # Check if app already exists
+  local encoded_app_name
+  encoded_app_name=$(jq -rn --arg n "$OAUTH_APP_NAME" '$n|@uri')
   local existing_app
   existing_app=$(curl -k -u "admin:$ADMIN_PASS" \
-    "https://$AAP_ROUTE/api/gateway/v1/applications/?name=${OAUTH_APP_NAME}" \
+    "https://$AAP_ROUTE/api/gateway/v1/applications/?name=${encoded_app_name}" \
     -H "Content-Type: application/json" 2>/dev/null)
 
   local existing_count
@@ -427,8 +430,10 @@ create_oauth_app() {
     --arg client_secret "$CLIENT_SECRET" \
     '{oauth_app_id: $oauth_app_id, client_id: $client_id, client_secret: $client_secret}' \
     > "$oauth_credentials_file"
+  chmod 600 "$oauth_credentials_file"
 
   echo "$OAUTH_APP_ID" > "$PORTAL_DIR/oauth_app_id"
+  chmod 600 "$PORTAL_DIR/oauth_app_id"
 
   echo "✓ OAuth app ready (ID: $OAUTH_APP_ID)"
 }
@@ -469,7 +474,7 @@ create_api_token() {
     -H "Content-Type: application/json" \
     -d "{
       \"description\": \"Portal backend catalog access\",
-      \"scope\": \"write\",
+      \"scope\": \"read\",
       \"application\": $OAUTH_APP_ID
     }" 2>/dev/null)
 
@@ -487,6 +492,7 @@ get_registry_credentials() {
   echo "Configuring registry credentials..."
 
   mkdir -p "$PORTAL_DIR"
+  chmod 700 "$PORTAL_DIR"
 
   # Try to extract from existing pull secret
   if kubectl get secret pull-secret -n openshift-config &>/dev/null; then
@@ -495,6 +501,7 @@ get_registry_credentials() {
 
     # Check if registry.redhat.io credentials exist
     if jq -e '.auths."registry.redhat.io"' "$PORTAL_DIR/auth.json" &>/dev/null; then
+      chmod 600 "$PORTAL_DIR/auth.json"
       echo "✓ Using existing registry.redhat.io credentials from cluster"
       return 0
     fi
@@ -506,9 +513,28 @@ get_registry_credentials() {
       -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d > "$PORTAL_DIR/auth.json" || true
 
     if jq -e '.auths."registry.redhat.io"' "$PORTAL_DIR/auth.json" &>/dev/null; then
+      chmod 600 "$PORTAL_DIR/auth.json"
       echo "✓ Using existing registry.redhat.io credentials from namespace"
       return 0
     fi
+  fi
+
+  # Check environment variables
+  if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
+    local auth_string
+    auth_string=$(echo -n "$REGISTRY_USERNAME:$REGISTRY_PASSWORD" | base64)
+    cat > "$PORTAL_DIR/auth.json" <<ENVEOF
+{
+  "auths": {
+    "registry.redhat.io": {
+      "auth": "$auth_string"
+    }
+  }
+}
+ENVEOF
+    chmod 600 "$PORTAL_DIR/auth.json"
+    echo "✓ Using registry credentials from environment"
+    return 0
   fi
 
   # Prompt user
@@ -536,6 +562,7 @@ get_registry_credentials() {
   }
 }
 EOF
+  chmod 600 "$PORTAL_DIR/auth.json"
 
   echo "✓ Registry credentials configured"
 }
@@ -564,7 +591,7 @@ get_cluster_info() {
   if [ -z "$CLUSTER_BASE_URL" ]; then
     # MicroShift doesn't have ingresses.config, derive from AAP route
     IS_MICROSHIFT=true
-    CLUSTER_BASE_URL=$(echo "$AAP_ROUTE" | sed 's/^aap-aap-operator\.//')
+    CLUSTER_BASE_URL=$(echo "$AAP_ROUTE" | sed "s/^aap-${AAP_NAMESPACE}\.//")
   else
     IS_MICROSHIFT=false
   fi
@@ -598,7 +625,7 @@ patch_aap_route_host_alias() {
   echo "Configuring AAP route host alias for in-pod OAuth token exchange..."
 
   local aap_ip
-  aap_ip=$(kubectl get svc aap -n aap-operator -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+  aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
 
   if [ -z "$aap_ip" ]; then
     echo "⚠️  Could not resolve AAP service ClusterIP; skipping host alias"
@@ -696,6 +723,11 @@ redhat-developer-hub:
         repository: ${DEFAULT_RHDH_REPOSITORY}
         tag: "${DEFAULT_RHDH_TAG}"
       appConfig:${ssl_values}
+        catalog:
+          providers:
+            rhaap:
+              production:
+                orgs: "$ORG_NAME"
         dynamicPlugins:
           frontend:
             default.main-menu-items:
@@ -733,27 +765,27 @@ global:
 upstream:
   backstage:
     appConfig:${ssl_values}
-        catalog:
-          providers:
-            rhaap:
-              production:
-                orgs: "$ORG_NAME"
-      dynamicPlugins:
-        frontend:
-          default.main-menu-items:
-            menuItems:
-              default.home:
-                title: Home
-              default.catalog:
-                title: Catalog
-              default.create:
-                title: Create
-              default.apis:
-                title: APIs
-              default.learning-path:
-                title: Learning Paths
-              default.my-group:
-                title: My Group
+      catalog:
+        providers:
+          rhaap:
+            production:
+              orgs: "$ORG_NAME"
+    dynamicPlugins:
+      frontend:
+        default.main-menu-items:
+          menuItems:
+            default.home:
+              title: Home
+            default.catalog:
+              title: Catalog
+            default.create:
+              title: Create
+            default.apis:
+              title: APIs
+            default.learning-path:
+              title: Learning Paths
+            default.my-group:
+              title: My Group
 EOF
 
   echo "✓ Helm values created (x86 profile)"
@@ -1008,8 +1040,8 @@ main() {
   wait_for_deployment
   patch_aap_route_host_alias
   update_oauth_redirect
-  verify_aap_host_url
-  verify_oauth_client
+  verify_aap_host_url || echo "⚠️  AAP host URL verification failed (portal may still work)"
+  verify_oauth_client || echo "⚠️  OAuth client verification failed (portal may still work)"
   display_success
 }
 
