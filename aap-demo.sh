@@ -1595,7 +1595,12 @@ cmd_status() {
     return 0
   fi
 
-  install_ingress_ca_trust
+  # Export CA env vars if installed, don't prompt for sudo
+  local ca_path
+  ca_path=$(get_ingress_ca_cert_path)
+  if [ -f "$ca_path" ]; then
+    _ingress_ca_export_env "$ca_path"
+  fi
 
   # Show kubeconfig
   echo "Kubeconfig:  $KUBECONFIG"
