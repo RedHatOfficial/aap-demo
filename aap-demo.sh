@@ -249,15 +249,10 @@ setup_kubeconfig() {
     fi
     # Test if kubeconfig works, refresh from VM if not
     if ! kubectl cluster-info &>/dev/null 2>&1; then
-      # Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
-      local _crc_ssh_key=""
-      if [ -f "$HOME/.crc/machines/crc/id_ed25519" ]; then
-        _crc_ssh_key="$HOME/.crc/machines/crc/id_ed25519"
-      elif [ -f "$HOME/.crc/machines/crc/id_ecdsa" ]; then
-        _crc_ssh_key="$HOME/.crc/machines/crc/id_ecdsa"
-      fi
-      if [ -n "$_crc_ssh_key" ]; then
-        if ssh -p 2222 -i "$_crc_ssh_key" \
+      # Ensure infra backend is loaded to set CRC_SSH_KEY
+      _infra_ensure_backend 2>/dev/null || true
+      if [ -n "$CRC_SSH_KEY" ]; then
+        if ssh -p 2222 -i "$CRC_SSH_KEY" \
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
           -o ConnectTimeout=2 -o BatchMode=yes \
           core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' \
@@ -1436,17 +1431,13 @@ INVEOF
 }
 
 cmd_ssh() {
-  # Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
-  local crc_ssh_key
-  if [ -f "${HOME}/.crc/machines/crc/id_ed25519" ]; then
-    crc_ssh_key="${HOME}/.crc/machines/crc/id_ed25519"
-  elif [ -f "${HOME}/.crc/machines/crc/id_ecdsa" ]; then
-    crc_ssh_key="${HOME}/.crc/machines/crc/id_ecdsa"
-  else
+  # Ensure infra backend is loaded to set CRC_SSH_KEY
+  _infra_ensure_backend 2>/dev/null || true
+  if [ -z "$CRC_SSH_KEY" ]; then
     _err "No CRC SSH key found. Is OpenShift Local running?"
     return 1
   fi
-  exec ssh -p 2222 -i "$crc_ssh_key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null core@127.0.0.1
+  exec ssh -p 2222 -i "$CRC_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null core@127.0.0.1
 }
 
 cmd_kubeconfig() {

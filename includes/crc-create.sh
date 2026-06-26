@@ -21,17 +21,13 @@ _NC='\033[0m'
 
 configure_coredns() {
   local current_preset route_domain current_domain escaped_domain current_corefile corefile
-  local crc_ssh_key crc_ssh_opts
-
-  # Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
-  if [ -f "${HOME}/.crc/machines/crc/id_ed25519" ]; then
-    crc_ssh_key="${HOME}/.crc/machines/crc/id_ed25519"
-  elif [ -f "${HOME}/.crc/machines/crc/id_ecdsa" ]; then
-    crc_ssh_key="${HOME}/.crc/machines/crc/id_ecdsa"
-  else
-    crc_ssh_key="${HOME}/.crc/machines/crc/id_ed25519"
+  # Use centralized SSH key detection from infra-crc.sh
+  # CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
+  if [ -z "$CRC_SSH_KEY" ]; then
+    echo "ERROR: No CRC SSH key found. Cannot configure CoreDNS." >&2
+    return 1
   fi
-  crc_ssh_opts="-i ${crc_ssh_key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+  local crc_ssh_opts="$CRC_SSH_OPTS"
 
   current_preset="${CURRENT_PRESET:-}"
   if [ -z "$current_preset" ]; then
@@ -287,15 +283,11 @@ fi
 # ---------------------------------------------------------------------------
 # Configure nip.io baseDomain (MicroShift only)
 # ---------------------------------------------------------------------------
-# Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
-if [ -f "${HOME}/.crc/machines/crc/id_ed25519" ]; then
-  CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
-elif [ -f "${HOME}/.crc/machines/crc/id_ecdsa" ]; then
-  CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ecdsa"
-else
-  CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
+# CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
+if [ -z "$CRC_SSH_KEY" ]; then
+  echo "ERROR: No CRC SSH key found. Cannot configure nip.io baseDomain." >&2
+  exit 1
 fi
-CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 if [ "$CURRENT_PRESET" = "microshift" ]; then
   printf "${_GREEN}▸${_NC} Configuring nip.io baseDomain...\n"

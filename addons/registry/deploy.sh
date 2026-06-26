@@ -13,6 +13,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Source CRC SSH helpers for registry mirror configuration
+# shellcheck source=../../includes/infra-crc.sh
+source "${SCRIPT_DIR}/../../includes/infra-crc.sh" 2>/dev/null || true
+
 ACTION="${1:-deploy}"
 
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
@@ -39,16 +43,7 @@ kubectl wait --for=condition=available deployment/registry -n aap-demo-registry 
 REGISTRY_SVC_IP=$(kubectl get svc registry -n aap-demo-registry -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
 
 if [ -n "$REGISTRY_SVC_IP" ]; then
-  # Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
-  if [ -f "${HOME}/.crc/machines/crc/id_ed25519" ]; then
-    CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
-  elif [ -f "${HOME}/.crc/machines/crc/id_ecdsa" ]; then
-    CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ecdsa"
-  else
-    CRC_SSH_KEY=""
-  fi
-  CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
-
+  # CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
   if [ -n "$CRC_SSH_KEY" ]; then
     # Add registry mirror: route hostname -> ClusterIP (for CRI-O pulls)
     ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 "sudo tee /etc/containers/registries.conf.d/999-aap-demo-registry.conf > /dev/null <<REGEOF

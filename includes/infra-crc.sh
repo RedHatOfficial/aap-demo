@@ -27,14 +27,23 @@ _detect_crc_ssh_key() {
   fi
 }
 
-CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null || echo "${HOME}/.crc/machines/crc/id_ed25519")"
-CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+# Initialize SSH key — callers should check CRC_SSH_KEY before use
+if CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)"; then
+  CRC_SSH_OPTS="-i \"${CRC_SSH_KEY}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+else
+  CRC_SSH_KEY=""
+  CRC_SSH_OPTS=""
+fi
 
 # ---------------------------------------------------------------------------
 # SSH helpers
 # ---------------------------------------------------------------------------
 
 _crc_exec() {
+  if [ -z "$CRC_SSH_KEY" ]; then
+    echo "ERROR: No CRC SSH key found" >&2
+    return 1
+  fi
   ssh -p "$CRC_SSH_PORT" $CRC_SSH_OPTS core@127.0.0.1 "$@"
 }
 
