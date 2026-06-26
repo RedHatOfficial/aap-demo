@@ -120,7 +120,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm | portal | portal-vm)
+    console | registry | mcp-server | registry-ui | olm | portal | portal-arm | portal-vm)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -376,6 +376,8 @@ Cluster management:
 Addons:
   enable portal    Enable Self-Service Portal (Helm chart, x86 cluster)
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
+  enable portal-arm Enable Self-Service Portal on ARM (Helm + upstream RHDH community)
+                  Uses quay.io/rhdh-community/rhdh:1.10; still needs registry.redhat.io for AAP plugins
   enable portal-vm Enable Self-Service Portal VM (macOS only - QEMU, x86 emulation - slow)
                   ⚠️  3-10 min boot, UI latency noticeable (dev/test only)
                   Download qcow2: https://access.redhat.com/downloads/content/480
@@ -385,7 +387,8 @@ Addons:
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
-  aap-demo enable portal          # Enable Self-Service Portal (Helm)
+  aap-demo enable portal          # Enable Self-Service Portal (Helm, x86)
+  aap-demo enable portal-arm      # Enable Self-Service Portal on ARM clusters
   aap-demo enable portal-vm       # Enable Self-Service Portal VM (macOS only)
 
 Run 'aap-demo help' for full documentation.
@@ -429,7 +432,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal, portal-vm)
+    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal, portal-arm, portal-vm)
     disable [addon] Disable an addon
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
@@ -1739,6 +1742,7 @@ cmd_status() {
         registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
         mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
         portal) url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
+        portal-arm) url="https://$(kubectl get route redhat-rhaap-portal-arm -n redhat-rhaap-portal-arm -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
         portal-vm) url="https://localhost:8443 (QEMU VM, SSH: ssh -i ~/.aap-demo/portal-vm/id_ed25519 -p 2223 -o StrictHostKeyChecking=no admin@localhost)" ;;
         registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
         prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
@@ -2432,7 +2436,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal portal-vm"
+AVAILABLE_ADDONS="mcp-server portal portal-arm portal-vm"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
