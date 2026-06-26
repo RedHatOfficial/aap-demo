@@ -170,31 +170,63 @@ get_aap_credentials() {
   echo "$aap_route|$admin_pass|$api_token"
 }
 
+save_oauth_credentials() {
+  local client_id="$1"
+  local client_secret="$2"
+  umask 077
+  printf '%s\n%s\n' "$client_id" "$client_secret" >"$PORTAL_DIR/oauth.credentials"
+}
+
+load_oauth_credentials() {
+  if [ ! -f "$PORTAL_DIR/oauth.credentials" ]; then
+    return 1
+  fi
+  local client_id client_secret
+  client_id=$(sed -n '1p' "$PORTAL_DIR/oauth.credentials")
+  client_secret=$(sed -n '2p' "$PORTAL_DIR/oauth.credentials")
+  if [ -z "$client_id" ] || [ -z "$client_secret" ]; then
+    return 1
+  fi
+  echo "$client_id|$client_secret"
+}
+
 create_oauth_app() {
   local aap_route="$1"
   local admin_pass="$2"
-
-  info "Creating OAuth application in AAP..." >&2
 
   # Get cluster CA bundle for TLS verification
   local ca_bundle="/tmp/aap-ca-oauth-$$.crt"
   kubectl get secret router-certs-default -n openshift-ingress -o jsonpath='{.data.tls\.crt}' | base64 -d >"$ca_bundle"
 
-  # Check if app exists
+  local aap_client_id
+  aap_client_id=$(curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" \
+    "https://$aap_route/api/gateway/v1/applications/?name=portal-vm" \
+    | jq -r '.results[0].client_id // empty')
+
+  local saved_creds saved_id saved_secret
+  if saved_creds=$(load_oauth_credentials 2>/dev/null); then
+    saved_id="${saved_creds%%|*}"
+    saved_secret="${saved_creds##*|}"
+    if [ -n "$aap_client_id" ] && [ "$aap_client_id" = "$saved_id" ]; then
+      info "Reusing existing OAuth application in AAP (client_id matches saved credentials)" >&2
+      rm -f "$ca_bundle"
+      echo "$saved_id|$saved_secret"
+      return 0
+    fi
+  fi
+
+  info "Creating OAuth application in AAP..." >&2
+
   local existing
   existing=$(curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" \
     "https://$aap_route/api/gateway/v1/applications/?name=portal-vm" | jq -r '.results[0].id // empty')
 
   if [ -n "$existing" ]; then
-    # Delete existing
     curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" -X DELETE \
       "https://$aap_route/api/gateway/v1/applications/$existing/" >/dev/null 2>&1
   fi
 
-  # Create OAuth app in AAP
-  local oauth_data
-  local client_id
-  local client_secret
+  local oauth_data client_id client_secret
   oauth_data=$(curl --cacert "$ca_bundle" -s -u "admin:$admin_pass" \
     -X POST -H "Content-Type: application/json" \
     "https://$aap_route/api/gateway/v1/applications/" \
@@ -218,7 +250,44 @@ create_oauth_app() {
     exit 1
   fi
 
+  save_oauth_credentials "$client_id" "$client_secret"
   echo "$client_id|$client_secret"
+}
+
+sync_oauth_to_vm() {
+  local aap_route="$1"
+  local client_id="$2"
+  local client_secret="$3"
+
+  if [ ! -f "$PORTAL_DIR/id_ed25519" ]; then
+    return 0
+  fi
+
+  if ! ssh -i "$PORTAL_DIR/id_ed25519" -p 2223 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+    -o BatchMode=yes admin@localhost true 2>/dev/null; then
+    return 0
+  fi
+
+  info "Syncing OAuth credentials to portal VM..."
+  local secret_b64
+  secret_b64=$(printf '%s' "$client_secret" | base64 | tr -d '\n')
+
+  ssh -i "$PORTAL_DIR/id_ed25519" -p 2223 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost \
+    "sudo mkdir -p /etc/containers/systemd/portal.container.d
+sudo tee /etc/containers/systemd/portal.container.d/20-aap-env.conf >/dev/null <<CONF
+[Container]
+Environment=AAP_HOST_URL=https://$aap_route
+Environment=AAP_OAUTH_CLIENT_ID=$client_id
+CONF
+sudo sed -i 's/^        clientId: .*/        clientId: $client_id/' /etc/portal/configs/app-config/app-config.production.yaml
+sudo podman secret rm portal_aap_oauth_client_secret 2>/dev/null || true
+echo '$secret_b64' | base64 -d | sudo podman secret create portal_aap_oauth_client_secret -
+sudo systemctl daemon-reload" >/dev/null 2>&1 || {
+    warn "Failed to sync OAuth credentials to portal VM"
+    return 1
+  }
 }
 
 generate_cloud_init() {
@@ -300,21 +369,16 @@ write_files:
           disabled: true
         - package: ./ansible-plugins/backstage-plugin-auth-backend-module-gitlab-provider
           disabled: true
-  - path: /etc/portal/configs/app-config/zz-auth-rhaap-only.yaml
-    owner: root:root
-    permissions: '0644'
-    content: |
-      # Force RHAAP sign-in page; hide default GitHub provider from bundled frontend
-      auth:
-        signInPage: rhaap
-      app:
-        signInPage: rhaap
-
 bootcmd:
   - grep -q "$aap_route" /etc/hosts || echo "10.0.2.2 $aap_route" >> /etc/hosts
 
 runcmd:
   - grep -q "$aap_route" /etc/hosts || echo "10.0.2.2 $aap_route" >> /etc/hosts
+  - rm -f /etc/portal/configs/app-config/zz-disable-scm-oauth.yaml
+  - rm -f /etc/portal/configs/app-config/zz-auth-rhaap-only.yaml
+  - sed -i '/backstage-plugin-auth-backend-module-github-provider/,+1 s/disabled: false/disabled: true/' /etc/portal/configs/dynamic-plugins/dynamic-plugins.override.yaml
+  - sed -i '/backstage-plugin-auth-backend-module-gitlab-provider/,+1 s/disabled: false/disabled: true/' /etc/portal/configs/dynamic-plugins/dynamic-plugins.override.yaml
+  - for i in $(seq 1 60); do curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 3 "https://$aap_route/api/gateway/v1/" | grep -q 200 && break; sleep 2; done
   - sudo rm -f /var/lib/portal/dynamic-plugins-root/install-dynamic-plugins.lock
   - systemctl restart portal.service
 EOF
@@ -333,7 +397,118 @@ EOF
     >/dev/null 2>&1
 }
 
+start_socat_proxy() {
+  if pgrep -f "socat.*TCP-LISTEN:443.*127.0.0.1:443" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # CRC may bind 127.0.0.1:443 only; QEMU slirp reaches the host via 10.0.2.2
+  if lsof -iTCP:443 -sTCP:LISTEN 2>/dev/null | grep -qE '(\*|0\.0\.0\.0).*443'; then
+    return 0
+  fi
+
+  if command -v socat >/dev/null 2>&1; then
+    info "Starting socat proxy for AAP connectivity (CRC binds localhost:443 only)..."
+    nohup socat TCP-LISTEN:443,bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:443 \
+      >"$PORTAL_DIR/socat-https.log" 2>&1 &
+    echo $! >"$PORTAL_DIR/socat.pid"
+  else
+    warn "socat not installed; VM may not reach AAP when CRC binds 127.0.0.1:443"
+    warn "Install with: brew install socat"
+  fi
+}
+
+vm_aap_reachable() {
+  local aap_route="$1"
+
+  if [ ! -f "$PORTAL_DIR/id_ed25519" ]; then
+    return 1
+  fi
+
+  local code
+  code=$(ssh -i "$PORTAL_DIR/id_ed25519" -p 2223 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+    -o BatchMode=yes admin@localhost \
+    "curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 -H 'Host: $aap_route' https://10.0.2.2/api/gateway/v1/" 2>/dev/null || echo "000")
+
+  [ "$code" = "200" ]
+}
+
+ensure_aap_networking() {
+  local aap_route="$1"
+
+  start_socat_proxy
+
+  if [ ! -f "$PORTAL_DIR/id_ed25519" ]; then
+    return 0
+  fi
+
+  if ! ssh -i "$PORTAL_DIR/id_ed25519" -p 2223 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+    -o BatchMode=yes admin@localhost true 2>/dev/null; then
+    warn "Portal VM SSH not ready; networking check skipped"
+    return 0
+  fi
+
+  info "Ensuring VM can reach AAP at $aap_route via 10.0.2.2..."
+  ssh -i "$PORTAL_DIR/id_ed25519" -p 2223 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost \
+    "grep -q '$aap_route' /etc/hosts || echo '10.0.2.2 $aap_route' | sudo tee -a /etc/hosts >/dev/null" \
+    >/dev/null 2>&1 || true
+
+  local attempt=1
+  while [ "$attempt" -le 30 ]; do
+    if vm_aap_reachable "$aap_route"; then
+      info "VM → AAP connectivity OK"
+      return 0
+    fi
+    if [ "$attempt" -eq 1 ]; then
+      warn "VM cannot reach AAP yet; waiting (check CRC/VPN and socat)..."
+    fi
+    start_socat_proxy
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+
+  warn "VM still cannot reach AAP — portal may show GitHub-only login until networking is fixed"
+  return 1
+}
+
+repair_portal_auth() {
+  local aap_route="$1"
+  local client_id="$2"
+  local client_secret="$3"
+
+  if [ ! -f "$PORTAL_DIR/id_ed25519" ]; then
+    return 0
+  fi
+
+  if ! ssh -i "$PORTAL_DIR/id_ed25519" -p 2223 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+    -o BatchMode=yes admin@localhost true 2>/dev/null; then
+    warn "Portal VM SSH not ready; auth repair skipped"
+    return 0
+  fi
+
+  ensure_aap_networking "$aap_route" || true
+  sync_oauth_to_vm "$aap_route" "$client_id" "$client_secret" || true
+
+  info "Repairing portal auth config and restarting portal..."
+  ssh -i "$PORTAL_DIR/id_ed25519" -p 2223 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@localhost \
+    "sudo rm -f /etc/portal/configs/app-config/zz-disable-scm-oauth.yaml
+sudo rm -f /etc/portal/configs/app-config/zz-auth-rhaap-only.yaml
+sudo sed -i '/backstage-plugin-auth-backend-module-github-provider/,+1 s/disabled: false/disabled: true/' /etc/portal/configs/dynamic-plugins/dynamic-plugins.override.yaml
+sudo sed -i '/backstage-plugin-auth-backend-module-gitlab-provider/,+1 s/disabled: false/disabled: true/' /etc/portal/configs/dynamic-plugins/dynamic-plugins.override.yaml
+sudo rm -f /var/lib/portal/dynamic-plugins-root/install-dynamic-plugins.lock
+sudo systemctl restart portal.service" >/dev/null 2>&1 || \
+    warn "Portal auth repair failed; try: aap-demo disable portal-vm && aap-demo enable portal-vm"
+}
+
 start_portal_vm() {
+  local aap_route="${1:-}"
+  local client_id="${2:-}"
+  local client_secret="${3:-}"
   # Copy qcow2 to portal dir (don't modify original)
   if [ ! -f "$PORTAL_DIR/portal.qcow2" ]; then
     info "Copying qcow2 to portal directory..."
@@ -347,6 +522,11 @@ start_portal_vm() {
 
     # Check if process exists AND is qemu
     if kill -0 "$pid" 2>/dev/null && ps -p "$pid" | grep -q qemu; then
+      if [ -n "$aap_route" ] && [ -n "$client_id" ] && [ -n "$client_secret" ]; then
+        repair_portal_auth "$aap_route" "$client_id" "$client_secret"
+      else
+        start_socat_proxy
+      fi
       warn "Portal VM already running (PID: $pid)"
       echo ""
       echo "Access portal at: https://localhost:8443"
@@ -403,18 +583,10 @@ start_portal_vm() {
   local qemu_pid=$!
   echo "$qemu_pid" >"$PORTAL_DIR/qemu.pid"
 
-  # Portal VM reaches AAP via 10.0.2.2 (QEMU host gateway) + /etc/hosts route mapping.
-  # socat forwards 0.0.0.0:443 → 127.0.0.1:443 for environments where CRC only binds localhost.
-  if ! pgrep -f "socat.*TCP-LISTEN:443.*127.0.0.1:443" >/dev/null 2>&1; then
-    if command -v socat >/dev/null 2>&1; then
-      info "Starting socat proxy for AAP connectivity..."
-      nohup socat TCP-LISTEN:443,bind=0.0.0.0,fork,reuseaddr TCP:127.0.0.1:443 \
-        >"$PORTAL_DIR/socat-https.log" 2>&1 &
-      echo $! >"$PORTAL_DIR/socat.pid"
-    else
-      warn "socat not installed; AAP connectivity may fail if CRC does not bind 0.0.0.0:443"
-      warn "Install with: brew install socat"
-    fi
+  if [ -n "$aap_route" ]; then
+    ensure_aap_networking "$aap_route" || true
+  else
+    start_socat_proxy
   fi
 
   info "✓ Portal VM started (PID: $qemu_pid)"
@@ -449,8 +621,10 @@ ADMIN_PASS="${AAP_CREDS#*|}"
 ADMIN_PASS="${ADMIN_PASS%|*}"
 
 OAUTH_CREDS=$(create_oauth_app "$AAP_ROUTE" "$ADMIN_PASS")
+OAUTH_CLIENT_ID="${OAUTH_CREDS%%|*}"
+OAUTH_CLIENT_SECRET="${OAUTH_CREDS##*|}"
 
 info "Generating cloud-init configuration..."
 generate_cloud_init "$AAP_CREDS" "$OAUTH_CREDS"
 
-start_portal_vm
+start_portal_vm "$AAP_ROUTE" "$OAUTH_CLIENT_ID" "$OAUTH_CLIENT_SECRET"
