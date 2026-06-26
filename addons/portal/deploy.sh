@@ -106,8 +106,14 @@ detect_arch() {
 detect_cluster_arch() {
   if [ -n "${PORTAL_ARCH:-}" ]; then
     case "$PORTAL_ARCH" in
-      arm|arm64|aarch64) echo "arm64"; return ;;
-      x86|amd64|x86_64) echo "amd64"; return ;;
+      arm | arm64 | aarch64)
+        echo "arm64"
+        return
+        ;;
+      x86 | amd64 | x86_64)
+        echo "amd64"
+        return
+        ;;
       *)
         echo "❌ Unknown PORTAL_ARCH: $PORTAL_ARCH (use arm or x86)"
         exit 1
@@ -236,7 +242,7 @@ copy_pull_secret_to_portal_namespace() {
   mkdir -p "$PORTAL_DIR"
   chmod 700 "$PORTAL_DIR"
   kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" \
-    -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d > "$PORTAL_DIR/pull-secret.json" || return 0
+    -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d >"$PORTAL_DIR/pull-secret.json" || return 0
   chmod 600 "$PORTAL_DIR/pull-secret.json"
 
   kubectl delete secret redhat-operators-pull-secret -n "$PORTAL_NAMESPACE" 2>/dev/null || true
@@ -253,8 +259,8 @@ copy_pull_secret_to_portal_namespace() {
   fi
 
   local patch_json
-  patch_json=$(echo "$existing_secrets redhat-operators-pull-secret" | xargs -n1 | sort -u | \
-    jq -R -s 'split("\n") | map(select(length > 0)) | map({name: .}) | {imagePullSecrets: .}')
+  patch_json=$(echo "$existing_secrets redhat-operators-pull-secret" | xargs -n1 | sort -u \
+    | jq -R -s 'split("\n") | map(select(length > 0)) | map({name: .}) | {imagePullSecrets: .}')
   kubectl patch serviceaccount default -n "$PORTAL_NAMESPACE" \
     -p "$patch_json" 2>/dev/null || true
 }
@@ -429,10 +435,10 @@ create_oauth_app() {
     --arg client_id "$CLIENT_ID" \
     --arg client_secret "$CLIENT_SECRET" \
     '{oauth_app_id: $oauth_app_id, client_id: $client_id, client_secret: $client_secret}' \
-    > "$oauth_credentials_file"
+    >"$oauth_credentials_file"
   chmod 600 "$oauth_credentials_file"
 
-  echo "$OAUTH_APP_ID" > "$PORTAL_DIR/oauth_app_id"
+  echo "$OAUTH_APP_ID" >"$PORTAL_DIR/oauth_app_id"
   chmod 600 "$PORTAL_DIR/oauth_app_id"
 
   echo "✓ OAuth app ready (ID: $OAUTH_APP_ID)"
@@ -497,7 +503,7 @@ get_registry_credentials() {
   # Try to extract from existing pull secret
   if kubectl get secret pull-secret -n openshift-config &>/dev/null; then
     kubectl get secret pull-secret -n openshift-config \
-      -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d > "$PORTAL_DIR/auth.json" || true
+      -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d >"$PORTAL_DIR/auth.json" || true
 
     # Check if registry.redhat.io credentials exist
     if jq -e '.auths."registry.redhat.io"' "$PORTAL_DIR/auth.json" &>/dev/null; then
@@ -510,7 +516,7 @@ get_registry_credentials() {
   # Check for redhat-operators-pull-secret (created by aap-demo)
   if kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" &>/dev/null; then
     kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" \
-      -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d > "$PORTAL_DIR/auth.json" || true
+      -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d >"$PORTAL_DIR/auth.json" || true
 
     if jq -e '.auths."registry.redhat.io"' "$PORTAL_DIR/auth.json" &>/dev/null; then
       chmod 600 "$PORTAL_DIR/auth.json"
@@ -523,7 +529,7 @@ get_registry_credentials() {
   if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
     local auth_string
     auth_string=$(echo -n "$REGISTRY_USERNAME:$REGISTRY_PASSWORD" | base64)
-    cat > "$PORTAL_DIR/auth.json" <<ENVEOF
+    cat >"$PORTAL_DIR/auth.json" <<ENVEOF
 {
   "auths": {
     "registry.redhat.io": {
@@ -553,7 +559,7 @@ ENVEOF
   local auth_string
   auth_string=$(echo -n "$registry_username:$registry_password" | base64)
 
-  cat > "$PORTAL_DIR/auth.json" <<EOF
+  cat >"$PORTAL_DIR/auth.json" <<EOF
 {
   "auths": {
     "registry.redhat.io": {
@@ -686,8 +692,8 @@ create_helm_values() {
 
   local ssl_values=""
   if [ "${IS_MICROSHIFT:-false}" = true ]; then
-  if [ "${IS_ARM_CLUSTER}" = true ]; then
-    ssl_values="
+    if [ "${IS_ARM_CLUSTER}" = true ]; then
+      ssl_values="
         ansible:
           rhaap:
             checkSSL: false
@@ -696,8 +702,8 @@ create_helm_values() {
             rhaap:
               production:
                 checkSSL: false"
-  else
-    ssl_values="
+    else
+      ssl_values="
       ansible:
         rhaap:
           checkSSL: false
@@ -706,11 +712,11 @@ create_helm_values() {
           rhaap:
             production:
               checkSSL: false"
-  fi
+    fi
   fi
 
   if [ "${IS_ARM_CLUSTER}" = true ]; then
-    cat > "$PORTAL_DIR/values.yaml" <<EOF
+    cat >"$PORTAL_DIR/values.yaml" <<EOF
 redhat-developer-hub:
   global:
     clusterRouterBase: $CLUSTER_BASE_URL
@@ -756,7 +762,7 @@ EOF
     return
   fi
 
-  cat > "$PORTAL_DIR/values.yaml" <<EOF
+  cat >"$PORTAL_DIR/values.yaml" <<EOF
 global:
   clusterRouterBase: $CLUSTER_BASE_URL
   pluginMode: oci
@@ -869,8 +875,8 @@ patch_disable_quay_plugin() {
 reset_dynamic_plugins_pvc() {
   echo "Resetting dynamic-plugins PVC for clean plugin install..."
 
-  kubectl get pvc -n "$PORTAL_NAMESPACE" -o name 2>/dev/null | grep dynamic-plugins | \
-    while read -r pvc; do
+  kubectl get pvc -n "$PORTAL_NAMESPACE" -o name 2>/dev/null | grep dynamic-plugins \
+    | while read -r pvc; do
       kubectl delete "$pvc" -n "$PORTAL_NAMESPACE" --timeout=120s 2>/dev/null || true
     done
 }

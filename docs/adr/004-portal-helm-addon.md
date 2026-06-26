@@ -19,7 +19,8 @@ Hub (RHDH) with AAP-specific plugins.
 
 ## Decision
 
-Add `portal` addon to aap-demo following the established addon architecture pattern. Deploy portal via official OpenShift Helm chart from `openshift-helm-charts/redhat-rhaap-portal`.
+Add `portal` addon to aap-demo following the established addon architecture pattern.
+Deploy portal via official OpenShift Helm chart from `openshift-helm-charts/redhat-rhaap-portal`.
 
 ### Key Implementation Decisions
 
@@ -281,8 +282,10 @@ OAuth redirect URI must match deployed portal route for security. Helm chart req
 
 **Alternatives considered:**
 
-1. **Dynamic DNS with predictable route:** OpenShift route names are deterministic but require namespace. Still need to update OAuth app post-install.
-2. **Pre-calculate route name:** Route format is `<release-name>-<namespace>.apps.<cluster-domain>`. Works but brittle if Helm chart changes naming.
+1. **Dynamic DNS with predictable route:** OpenShift route names are deterministic but require namespace.
+   Still need to update OAuth app post-install.
+2. **Pre-calculate route name:** Route format is `<release-name>-<namespace>.apps.<cluster-domain>`.
+   Works but brittle if Helm chart changes naming.
 3. **Manual OAuth configuration:** Forces user to create OAuth app. Defeats automation goal.
 
 **Chosen approach:** Placeholder → real redirect URI post-install. AAP API supports PATCH, no downtime.

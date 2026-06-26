@@ -4,7 +4,9 @@ Production-ready deployment of Ansible Automation Portal via OpenShift Helm char
 
 ## Overview
 
-Portal provides a self-service web interface for running AAP job templates without needing to understand playbooks or automation workflows. Built on Red Hat Developer Hub (RHDH) with AAP-specific plugins.
+Portal provides a self-service web interface for running AAP job templates
+without needing to understand playbooks or automation workflows.
+Built on Red Hat Developer Hub (RHDH) with AAP-specific plugins.
 
 **Architecture:**
 
@@ -142,7 +144,7 @@ https://redhat-rhaap-portal-redhat-rhaap-portal.apps.127.0.0.1.nip.io
 
 1. Click "Sign In"
 2. Redirects to AAP OAuth login
-3. Enter AAP credentials (admin / <aap-admin-password>)
+3. Enter AAP credentials (admin / `<aap-admin-password>`)
 4. Returns to portal catalog
 5. Browse AAP job templates as self-service automation
 
@@ -331,7 +333,8 @@ curl -k -u "admin:$ADMIN_PASS" \
 On CRC/MicroShift this fails when:
 
 1. **`AAP_HOST_URL` uses `https://`** — in-cluster traffic hits the AAP Service on port 80, not 443.
-2. **nip.io resolves to `127.0.0.1` inside pods** — connection refused.
+2. **nip.io resolves to `127.0.0.1` inside pods** —
+   connection refused.
 
 **Fix:** Re-run `aap-demo enable portal`. On MicroShift the addon sets `AAP_HOST_URL` to `http://<aap-route>` and patches a `hostAliases` entry for the AAP route hostname.
 
@@ -495,8 +498,10 @@ kubectl logs -l app.kubernetes.io/instance=redhat-rhaap-portal -n redhat-rhaap-p
 
 ## References
 
-- [AAP Extend 2.7 Docs](https://access.redhat.com/documentation/en-us/red_hat_ansible_automation_platform/2.7/html/extending_automation/index) - Official portal installation guide (pages 128-145)
-- [Portal Lifecycle](https://access.redhat.com/support/policy/updates/ansible-automation-platform) - Version compatibility matrix
+- [AAP Extend 2.7 Docs](https://access.redhat.com/documentation/en-us/red_hat_ansible_automation_platform/2.7/html/extending_automation/index) -
+  Official portal installation guide (pages 128-145)
+- [Portal Lifecycle](https://access.redhat.com/support/policy/updates/ansible-automation-platform) -
+  Version compatibility matrix
 - [RHDH Documentation](https://developers.redhat.com/rhdh/overview) - Red Hat Developer Hub overview
 - [Helm Documentation](https://helm.sh/docs/) - Helm command reference
 - [ADR-002](../../docs/adr/002-portal-helm-deployment.md) - Portal Helm deployment (x86 and ARM profiles)
