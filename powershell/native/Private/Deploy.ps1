@@ -74,19 +74,7 @@ function Invoke-AapDemoDeploy {
 
   Write-AapHeader 'aap-demo deploy'
 
-  $crc = Get-AapCrcStatus
-  if ([string]$crc.crcStatus -eq 'Stopped') {
-    Write-AapStep 'Cluster stopped - starting CRC...'
-    & crc start
-    if ($LASTEXITCODE -ne 0) { throw 'crc start failed' }
-  } elseif ([string]$crc.crcStatus -eq 'Unknown') {
-    throw 'No cluster found. Run: aap-demo create'
-  }
-
-  Initialize-AapKubeEnvironment
-  if ((Invoke-AapOcQuiet @('cluster-info')) -ne 0) {
-    throw 'oc cannot connect to cluster'
-  }
+  Invoke-AapEnsureCluster -CreateIfMissing
 
   Install-AapIngressCaTrust
 

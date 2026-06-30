@@ -17,13 +17,13 @@ function Invoke-AapDemoStatus {
     'Stopped' {
       Write-Host 'Cluster:     stopped' -ForegroundColor Yellow
       Write-Host ''
-      Write-Host 'Start with: crc start  or  aap-demo create'
+      Write-Host 'Start with: aap-demo deploy'
       return
     }
     default {
       Write-Host 'Cluster:     not running' -ForegroundColor Red
       Write-Host ''
-      Write-Host 'Create with: aap-demo create'
+      Write-Host 'Run: aap-demo deploy'
       return
     }
   }
@@ -42,10 +42,21 @@ function Invoke-AapDemoStatus {
 
   Write-Host 'Namespaces:'
   Write-Host '-----------'
+  $hiddenNamespaces = @(
+    'default',
+    'kube-node-lease',
+    'kube-public',
+    'openshift-controller-manager',
+    'openshift-infra',
+    'openshift-kube-controller-manager',
+    'openshift-route-controller-manager',
+    'operators'
+  )
   $nsResult = Invoke-AapOcCapture @('get', 'ns', '--no-headers', '-o', 'custom-columns=:metadata.name')
   $namespaces = if ($nsResult.ExitCode -eq 0) { $nsResult.Lines } else { @() }
   foreach ($ns in $namespaces) {
     if ([string]::IsNullOrWhiteSpace($ns)) { continue }
+    if ($hiddenNamespaces -contains $ns.Trim()) { continue }
     $podsResult = Invoke-AapOcCapture @('get', 'pods', '-n', $ns, '--no-headers')
     $pods = if ($podsResult.ExitCode -eq 0) { $podsResult.Lines } else { @() }
     if (-not $pods) { continue }
@@ -105,6 +116,20 @@ function Invoke-AapDemoStatus {
     }
   }
   if (-not $foundCred) { Write-Host '  (no admin password secret found yet)' }
+
+  $savedAddons = @(Get-AapAddonsList)
+  Write-Host ''
+  Write-Host 'Addons:'
+  Write-Host '-------'
+  foreach ($a in $Script:AapAvailableAddons) {
+    $enabled = $savedAddons -contains $a
+    $label = Get-AapAddonStatusLabel -Addon $a -Namespace $Namespace -Enabled $enabled
+    if ($label) {
+      Write-Host ("  {0,-15} {1}" -f $a, $label)
+    } else {
+      Write-Host "  $a"
+    }
+  }
   Write-Host ''
 }
 
@@ -116,18 +141,14 @@ USAGE:
     aap-demo <command> [options]
 
 CLUSTER:
-    create          Create OpenShift Local (CRC) cluster
-    stop            Stop CRC cluster
-    destroy         Delete CRC cluster (--reset clears saved preset)
-    repair          Show CRC repair instructions
-    setup           CRC setup info (handled by create)
-    kubeconfig      Sync and merge kubeconfig (context: aap-demo)
-    ssh             SSH into CRC VM
+    stop            Stop cluster
+    start           Start stopped cluster
+    destroy         Deletes cluster (--reset clears saved preset)
+    repair          Show repair instructions
+    ssh             SSH into VM
 
 DEPLOY:
-    deploy          Deploy AAP 2.7 via OLM (alias: deploy-all)
-    deploy-operator Deploy operator only (no AAP CR)
-    deploy-aap      Apply AAP CR only (operator must exist)
+    deploy          Deploy AAP 2.7 via OLM (creates cluster if missing; alias: deploy-all)
     redeploy        Clean namespace and redeploy AAP
     redeploy-all    Destroy cluster and full redeploy
     clean           Remove AAP namespace and resources
@@ -141,36 +162,13 @@ STATUS:
     must-gather     Collect diagnostic bundle
 
 ADDONS:
-    enable <name>   Enable addon (PowerShell + oc)
-    disable <name>  Disable addon
-
-OTHER:
-    config [k] [v]  Show or set ~/.aap-demo/config values
-    update          git pull and reinstall launcher
-    help            Show this help
-
-OPTIONS:
-    -Force          Redeploy even if AAP CR exists
-    -Namespace=ns   Target namespace (default: aap-operator)
-    -Channel=ch     OLM channel (default: stable-2.7)
-    CR=name         AAP CR template (default: minimal)
-    PUBLIC_URL=url  Required for noingress CRs
-    --ai            AI-assisted diagnose (requires Git Bash + claude CLI)
-
-EXAMPLES:
-    aap-demo create
-    aap-demo deploy
-    aap-demo deploy -Force
-    aap-demo deploy-operator
-    aap-demo deploy-aap CR=minimal
-    aap-demo status
-    aap-demo diagnose
-    aap-demo watch
-    aap-demo idle true
+    enable portal   Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
+                    Requires: AAP 2.6+, Helm 3.10+, Red Hat pull secret
+    enable mcp-server  Enable MCP server for AI assistants
+    disable <name>  Disable an addon (portal, mcp-server)
 
 NOTES:
     Requires oc and crc on PATH. OpenShift Local needs Hyper-V.
     Pull secret: %USERPROFILE%\.aap-demo\pull-secret.txt
-    Git Bash: only needed for diagnose --ai.
 '@
 }

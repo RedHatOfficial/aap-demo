@@ -87,9 +87,10 @@ function Write-AapClusterSummary {
 function Invoke-AapDemoStop {
   Write-Host ''
   Write-Host 'aap-demo stop - Stopping CRC cluster...' -ForegroundColor Cyan
-  & crc stop
-  Write-AapStep 'CRC cluster stopped'
-  Write-Host 'To restart: crc start'
+  if (-not (Invoke-AapCrcStop)) {
+    throw 'crc stop failed'
+  }
+  Write-Host 'To restart: aap-demo deploy'
 }
 
 function Invoke-AapDemoDestroy {
@@ -108,27 +109,21 @@ function Invoke-AapDemoDestroy {
   Write-Host ''
   Wait-AapUserContinue
 
-  $deleted = $false
-  & crc delete -f 2>$null
-  if ($LASTEXITCODE -eq 0) {
-    $deleted = $true
-  } else {
-    & crc delete
-    if ($LASTEXITCODE -eq 0) { $deleted = $true }
-  }
-
-  if ($deleted) {
-    & podman system connection remove aap-demo 2>$null
+  if (Invoke-AapCrcDelete -Force) {
     Write-AapStep 'CRC cluster deleted'
     if ($Reset) {
       $configPath = Get-AapConfigPath
       if (Test-Path -LiteralPath $configPath) {
         Remove-Item -LiteralPath $configPath -Force
       }
-      Write-AapStep "Config reset - next 'aap-demo create' will re-prompt for preset"
+      Write-AapStep "Config reset - next deploy will re-prompt for preset"
     }
   } else {
     Write-AapErr 'CRC delete failed - config preserved'
+    Write-Host ''
+    Write-Host 'Try manually:'
+    Write-Host '  crc stop'
+    Write-Host '  crc delete -f'
     exit 1
   }
 }
@@ -614,7 +609,7 @@ function Write-AapClusterSummary {
 
   $crc = Get-AapCrcStatus
   if ([string]$crc.crcStatus -eq 'Stopped') {
-    & crc start | Out-Null
+    Invoke-AapCrcStart
   } elseif ([string]$crc.crcStatus -eq 'Unknown') {
     throw 'No cluster found. Run: aap-demo create'
   }
