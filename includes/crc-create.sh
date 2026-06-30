@@ -12,6 +12,10 @@ set -eo pipefail
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
+# Source CRC infra backend (sets CRC_SSH_KEY, CRC_SSH_OPTS)
+# shellcheck source=includes/infra-crc.sh
+source "${SCRIPT_DIR}/includes/infra-crc.sh"
+
 # Colors
 _RED='\033[0;31m'
 _GREEN='\033[0;32m'
