@@ -629,7 +629,6 @@ function Wait-AapCatalogSourceReady {
     [Parameter(Mandatory)][string]$Namespace,
     [int]$Attempts = 60
   )
-  Write-Host '  Waiting for CatalogSource...'
   for ($i = 1; $i -le $Attempts; $i++) {
     $result = Invoke-AapOcCapture @(
       'get', 'catalogsource', 'redhat-operators', '-n', $Namespace,
@@ -640,7 +639,6 @@ function Wait-AapCatalogSourceReady {
       Write-AapStep 'CatalogSource ready'
       return
     }
-    Write-Host "    attempt $i/$Attempts ($state)"
     Start-Sleep -Seconds 5
   }
   Write-AapWarn 'CatalogSource not READY after timeout — continuing'
@@ -651,7 +649,6 @@ function Wait-AapCsv {
     [Parameter(Mandatory)][string]$Namespace,
     [int]$Attempts = 60
   )
-  Write-Host '  Waiting for operator CSV...'
   $csv = $null
   for ($i = 1; $i -le $Attempts; $i++) {
     $result = Invoke-AapOcCapture @('get', 'csv', '-n', $Namespace, '--no-headers')
@@ -665,14 +662,12 @@ function Wait-AapCsv {
         break
       }
     }
-    Write-Host "    attempt $i/$Attempts"
     Start-Sleep -Seconds 10
   }
   if (-not $csv) {
     throw 'CSV not found after timeout'
   }
 
-  Write-Host '  Waiting for CSV to reach Succeeded phase...'
   if ((Invoke-AapOcQuiet @('wait', "--for=jsonpath={.status.phase}=Succeeded", "csv/$csv", '-n', $Namespace, '--timeout=600s')) -ne 0) {
     $phaseResult = Invoke-AapOcCapture @('get', 'csv', $csv, '-n', $Namespace, '-o', 'jsonpath={.status.phase}')
     $phase = if ($phaseResult.ExitCode -eq 0) { $phaseResult.Output.Trim() } else { 'unknown' }
@@ -733,36 +728,35 @@ function Remove-AapIngressCaCertificates {
   }
 }
 
-function Add-AapCertToRootStoreViaCertutil {
+function Add-AapCertToRootStore {
   param(
     [Parameter(Mandatory)][string]$Path,
     [ValidateSet('CurrentUser', 'LocalMachine')]
-    [string]$Location = 'CurrentUser',
-    [switch]$Elevated
+    [string]$Location = 'CurrentUser'
   )
-  $certutilArgs = if ($Location -eq 'CurrentUser') {
-    @('-user', '-addstore', 'Root', $Path)
-  } else {
-    @('-addstore', 'Root', $Path)
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', $Location)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
+    $store.Add($cert)
+    $store.Close()
+    return $true
+  } catch {
+    return $false
   }
-
-  if ($Elevated -and $Location -eq 'LocalMachine') {
-    try {
-      $proc = Start-Process -FilePath 'certutil.exe' -ArgumentList $certutilArgs -Verb RunAs -Wait -PassThru -WindowStyle Hidden
-      return $proc.ExitCode -eq 0
-    } catch {
-      return $false
-    }
-  }
-
-  $result = Invoke-AapExternal certutil.exe $certutilArgs
-  return $result.ExitCode -eq 0
 }
 
 function Set-AapIngressCaEnv {
   param([Parameter(Mandatory)][string]$Path)
   $env:CURL_CA_BUNDLE = $Path
   $env:SSL_CERT_FILE = $Path
+}
+
+function Set-AapIngressCaEnvFromSaved {
+  $caPath = Get-AapIngressCaCertPath
+  if (Test-Path -LiteralPath $caPath) {
+    Set-AapIngressCaEnv -Path $caPath
+  }
 }
 
 function Update-AapIngressCaFromCluster {
@@ -809,43 +803,12 @@ function Import-AapIngressCaCertificate {
   Remove-AapIngressCaCertificates -Location 'CurrentUser'
   Remove-AapIngressCaCertificates -Location 'LocalMachine'
 
-  $userTrusted = Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser'
-  if (-not $userTrusted) {
-    $userOk = $false
-    try {
-      $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser')
-      $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-      $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
-      $store.Add($cert)
-      $store.Close()
-      $userOk = $true
-    } catch {
-      $userOk = Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'CurrentUser'
-    }
-    if ($userOk) {
-      Write-AapStep 'Ingress CA trusted (Windows user certificate store)'
-    } else {
-      Write-AapWarn 'Could not import ingress CA to user certificate store'
-    }
-  }
-
-  if (Test-AapIsAdministrator) {
-    if (Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'LocalMachine') {
-      Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
-      Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
-    } else {
-      Write-AapWarn 'Could not import ingress CA to system certificate store'
-    }
-    return
-  }
-
-  if (Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'LocalMachine' -Elevated) {
+  if (Add-AapCertToRootStore -Path $Path -Location 'LocalMachine') {
     Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
     Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
-    return
+  } else {
+    Write-AapWarn 'Could not import ingress CA to system certificate store'
   }
-
-  Write-AapWarn 'System trust skipped (UAC declined or unavailable). Fully quit Chrome/Edge and retry, or run aap-demo status from an elevated PowerShell.'
 }
 
 function Install-AapIngressCaTrust {
@@ -876,6 +839,13 @@ function Install-AapIngressCaTrust {
   }
 
   Write-AapStep 'Trusting ingress CA for browser TLS...'
+  if (-not (Test-AapIsAdministrator)) {
+    Write-AapWarn 'Ingress CA not trusted for browsers (Chrome/Edge require an elevated PowerShell).'
+    Write-Host '  Open PowerShell as Administrator and run: aap-demo deploy'
+    Set-AapIngressCaEnv -Path $caPath
+    return
+  }
+
   Import-AapIngressCaCertificate -Path $caPath
   Set-AapIngressCaEnv -Path $caPath
 }

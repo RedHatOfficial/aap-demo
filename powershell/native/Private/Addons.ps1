@@ -2,7 +2,7 @@ $Script:AapAvailableAddons = @('mcp-server', 'portal')
 
 function Invoke-AapEnsureClusterReady {
   Invoke-AapEnsureCluster
-  Install-AapIngressCaTrust
+  Set-AapIngressCaEnvFromSaved
 }
 
 function Invoke-AapDeployMcpServerAddon {

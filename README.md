@@ -209,8 +209,9 @@ aap-demo help                # Full command reference
 
 - **Networking:** SSH (2222), API (6443), HTTP/HTTPS (443) — all on localhost
 - **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
-- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust/
-  Windows via certutil
+- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust;
+  on Windows, run `aap-demo deploy` from an elevated PowerShell (see
+  [powershell/README.md](powershell/README.md#ingress-ca-and-browser-tls))
 
 ## Environment Variables
 

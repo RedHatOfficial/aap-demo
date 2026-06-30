@@ -119,7 +119,6 @@ function Invoke-AapDemoCreate {
   }
 
   Install-AapOlm
-  Install-AapIngressCaTrust
 
   $kubeConfig = Get-AapKubeconfigPath
   Write-Host ''

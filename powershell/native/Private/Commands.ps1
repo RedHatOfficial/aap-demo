@@ -647,7 +647,7 @@ function Invoke-AapDemoDeployAap {
   )
 
   Initialize-AapKubeEnvironment
-  Install-AapIngressCaTrust
+  Set-AapIngressCaEnvFromSaved
   Invoke-AapApplyAapCr -Namespace $Namespace -CrName $CrName -PublicUrl $PublicUrl
   Invoke-AapDemoWatch -Namespace $Namespace
 }

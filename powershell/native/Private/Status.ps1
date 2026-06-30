@@ -38,7 +38,7 @@ function Invoke-AapDemoStatus {
     return
   }
 
-  Install-AapIngressCaTrust
+  Set-AapIngressCaEnvFromSaved
 
   Write-Host 'Namespaces:'
   Write-Host '-----------'

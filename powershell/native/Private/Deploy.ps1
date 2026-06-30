@@ -144,7 +144,6 @@ function Invoke-AapDemoDeploy {
 function Initialize-AapNamespace {
   param([Parameter(Mandatory)][string]$Namespace)
 
-  Write-AapStep "Setting up namespace $Namespace"
   Invoke-AapOcQuiet @('create', 'namespace', $Namespace) | Out-Null
   Grant-AapNamespaceSccs -Namespace $Namespace
   Invoke-AapOc @(

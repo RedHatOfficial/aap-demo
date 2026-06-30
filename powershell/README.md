@@ -56,15 +56,15 @@ aap-demo help
 ```powershell
 aap-demo create        # Create OpenShift Local cluster (~10–20 min first time)
 aap-demo deploy        # Deploy AAP 2.7 (~5–15 min)
-aap-demo status        # Routes, credentials, pod counts; trusts ingress CA if needed
+aap-demo status        # Routes, credentials, pod counts
 ```
 
 On first `create`, you are prompted to choose a CRC preset (MicroShift is
 recommended). The choice is saved to `%USERPROFILE%\.aap-demo\config`.
 
-After deploy, open the AAP route from `aap-demo status`. If your browser still
-shows a certificate warning, run `aap-demo status` again and accept the UAC
-prompt — see [Ingress CA and browser TLS](#ingress-ca-and-browser-tls) below.
+After deploy, open the AAP route from `aap-demo status`. If your browser shows a
+certificate warning, trust the ingress CA from an elevated PowerShell — see
+[Ingress CA and browser TLS](#ingress-ca-and-browser-tls) below.
 
 ## Commands
 
@@ -192,33 +192,33 @@ MicroShift routes (for example `https://aap-aap-operator.apps.127.0.0.1.nip.io`)
 use a cluster-local CA. Browsers and CLI tools will warn or fail until that CA
 is trusted on Windows.
 
-#### Automatic trust
+#### To trust the CA for Chrome/Edge
 
-`create`, `deploy`, and `status` call **Install-AapIngressCaTrust** automatically:
+1. Right-click PowerShell → **Run as administrator**
+2. Run `aap-demo deploy`
 
-1. Fetch the ingress CA from the CRC VM:
-  `/var/lib/microshift/certs/ingress-ca/ca.crt`
-2. Save a copy to `%USERPROFILE%\.aap-demo\crc-ingress-ca.crt`
-3. Import into **Current User → Trusted Root Certification Authorities**
-4. Import into **Local Machine → Trusted Root Certification Authorities**
-  (requires Administrator / UAC — needed for Chrome and Edge)
+`deploy` fetches the ingress CA from the CRC VM, saves a copy to
+`%USERPROFILE%\.aap-demo\crc-ingress-ca.crt`, and imports it into **Local
+Machine → Trusted Root Certification Authorities** (required for Chrome and
+Edge). When the CA is already trusted, `deploy` stays silent.
 
-When the CA is already trusted, these commands stay silent. Failures are
-warnings only; `status` never aborts because of certificate import.
+If you are not running as Administrator, `deploy` warns and skips the system
+store import. `status` does not import certificates — it only uses a previously
+saved CA for `CURL_CA_BUNDLE` / `SSL_CERT_FILE` when one exists.
 
 Skip automatic import:
 
 ```powershell
 $env:AAP_DEMO_TRUST_CA = 'false'
-aap-demo status
+aap-demo deploy
 ```
 
 #### Chrome or Edge still shows a red certificate banner
 
-1. Run `aap-demo status` and **accept the UAC prompt** when it appears.
-  You should see: `Ingress CA trusted (Windows system certificate store)`.
+1. Confirm you ran `aap-demo deploy` from an **elevated** PowerShell. You should
+   see: `Ingress CA trusted (Windows system certificate store)`.
 2. **Fully quit** the browser (taskbar icon → Exit, or close every window).
-  Reloading a tab is not enough — the trust store is read at startup.
+   Reloading a tab is not enough — the trust store is read at startup.
 3. Open the AAP URL from `aap-demo status` again.
 
 If you opened the route **before** the CA was trusted, clear cached security
@@ -246,26 +246,25 @@ Use `--ssl-no-revoke` for local CRC routes:
 curl.exe --ssl-no-revoke -I https://aap-aap-operator.apps.127.0.0.1.nip.io
 ```
 
-During `create` / `deploy` / `status`, the saved CA path is also exported as
-`CURL_CA_BUNDLE` and `SSL_CERT_FILE` for tools that read those variables.
+During `deploy`, the saved CA path is also exported as `CURL_CA_BUNDLE` and
+`SSL_CERT_FILE` for tools that read those variables.
 
 #### Manual import
 
-If UAC is blocked (corporate policy) or auto-trust fails:
+If automatic trust fails (for example corporate policy blocks store writes):
 
 ```powershell
-certutil -user -addstore Root "$env:USERPROFILE\.aap-demo\crc-ingress-ca.crt"
-# Chrome/Edge also need the system store (elevated PowerShell):
 certutil -addstore Root "$env:USERPROFILE\.aap-demo\crc-ingress-ca.crt"
 ```
 
-Or import via **certmgr.msc** → Trusted Root Certification Authorities.
+Run that from an elevated PowerShell. Or import via **certmgr.msc** → Trusted
+Root Certification Authorities.
 
 #### After cluster recreate
 
 Destroying and recreating the cluster issues a new ingress CA. Run
-`aap-demo status` (or `create` / `deploy`) again to replace the saved cert and
-refresh both certificate stores.
+`aap-demo deploy` from an elevated PowerShell again to replace the saved cert and
+refresh the system certificate store.
 
 ### PowerShell vs PowerShell 7
 
