@@ -676,6 +676,39 @@ cmd_config() {
   mkdir -p "$(dirname "$AAP_DEMO_CONFIG")"
 }
 
+cmd_update() {
+  echo ""
+  printf "\033[1maap-demo update\033[0m - Pulling latest code and reinstalling...\n"
+  echo ""
+
+  local repo_root="$SCRIPT_DIR"
+  if [ ! -f "${repo_root}/aap-demo.sh" ]; then
+    _err "aap-demo repo not found at ${repo_root}"
+    echo "  Run from the repo directory or reinstall with ./install.sh"
+    return 1
+  fi
+
+  if ! git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null; then
+    _err "Not a git repository: ${repo_root}"
+    return 1
+  fi
+
+  echo "  Pulling latest code..."
+  if ! git -C "$repo_root" pull; then
+    _err "git pull failed"
+    return 1
+  fi
+
+  echo "  Reinstalling launcher..."
+  if ! bash "${repo_root}/install.sh"; then
+    _err "install.sh failed"
+    return 1
+  fi
+
+  echo ""
+  echo "  ✓ Update complete"
+}
+
 cmd_redhat_status() {
   echo ""
   printf "\033[1maap-demo redhat-status\033[0m - Checking Red Hat service status...\n"
@@ -1204,9 +1237,11 @@ cmd_test() {
   # Find all namespaces with AAP deployments
   local aap_namespaces=()
   # Operator deploys: namespaces with AAP CRDs
-  local ns_list
-  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' || true)
-  # Sort alphabetically by namespace name
+  local ns_list ns
+  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort -u || true)
+  while IFS= read -r ns; do
+    [ -n "$ns" ] && aap_namespaces+=("$ns")
+  done <<<"$ns_list"
 
   if [ ${#aap_namespaces[@]} -eq 0 ]; then
     _err "No AAP deployments found on cluster"
