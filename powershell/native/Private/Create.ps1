@@ -120,6 +120,12 @@ function Invoke-AapDemoCreate {
 
   Install-AapOlm
 
+  try {
+    Sync-AapKubeconfig -Quiet
+  } catch {
+    Write-AapWarn "Kubeconfig sync skipped: $($_.Exception.Message)"
+  }
+
   $kubeConfig = Get-AapKubeconfigPath
   Write-Host ''
   Write-AapStep 'CRC cluster ready'

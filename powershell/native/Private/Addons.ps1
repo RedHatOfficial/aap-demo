@@ -97,6 +97,11 @@ function Get-AapMcpServerRouteHost {
   return $null
 }
 
+function Get-AapAddonEnableCommand {
+  param([Parameter(Mandatory)][string]$Addon)
+  return "aap-demo enable $Addon"
+}
+
 function Get-AapAddonStatusLabel {
   param(
     [Parameter(Mandatory)][string]$Addon,

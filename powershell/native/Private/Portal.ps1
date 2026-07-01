@@ -1035,16 +1035,92 @@ function Wait-AapPortalDeployment {
 
   Write-Host 'Waiting for portal deployment to be ready...'
   $release = $Script:AapPortalState.ReleaseName
-  $status = Invoke-AapOcCapture @(
-    'rollout', 'status', "deployment/$release", '-n', $PortalNamespace, '--timeout=600s'
-  )
-  if ($status.ExitCode -ne 0) {
+  if ((Wait-AapOcRollout -Resource "deployment/$release" -Namespace $PortalNamespace -TimeoutSeconds 600) -ne 0) {
     Write-AapWarn 'Deployment taking longer than expected'
     Write-Host "Check status with: oc get pods -n $PortalNamespace"
     Write-Host 'Proceeding anyway...'
   } else {
     Write-AapStep 'Deployment ready'
   }
+}
+
+function Get-AapRouteServiceClusterIp {
+  param(
+    [Parameter(Mandatory)][string]$RouteName,
+    [Parameter(Mandatory)][string]$Namespace
+  )
+  $routeResult = Invoke-AapOcCapture @('get', 'route', $RouteName, '-n', $Namespace, '-o', 'json')
+  if ($routeResult.ExitCode -ne 0) { return '' }
+  try {
+    $route = $routeResult.Output | ConvertFrom-Json
+    $svcName = [string]$route.spec.to.name
+    if (-not $svcName) { return '' }
+    $ipResult = Invoke-AapOcCapture @(
+      'get', 'svc', $svcName, '-n', $Namespace, '-o', 'jsonpath={.spec.clusterIP}'
+    )
+    if ($ipResult.ExitCode -eq 0) { return $ipResult.Output.Trim() }
+  } catch {
+    return ''
+  }
+  return ''
+}
+
+function Test-AapPortalRouteHostResolution {
+  param(
+    [Parameter(Mandatory)][string]$PortalNamespace,
+    [Parameter(Mandatory)][string]$Hostname,
+    [string]$ExpectedIp = ''
+  )
+  $release = $Script:AapPortalState.ReleaseName
+  $result = Invoke-AapOcCapture @(
+    'exec', "deployment/$release", '-c', 'backstage-backend', '-n', $PortalNamespace, '--',
+    'getent', 'hosts', $Hostname
+  )
+  if ($result.ExitCode -ne 0 -or -not $result.Output.Trim()) { return $false }
+  $line = $result.Output.Trim()
+  if ($line -match '127\.0\.0\.1') { return $false }
+  if ($ExpectedIp -and $line -notmatch [regex]::Escape($ExpectedIp)) { return $false }
+  return $true
+}
+
+function Wait-AapPortalRouteHostAliasReady {
+  param(
+    [Parameter(Mandatory)][string]$PortalNamespace,
+    [Parameter(Mandatory)][string]$Hostname,
+    [Parameter(Mandatory)][string]$ExpectedIp,
+    [int]$Attempts = 30
+  )
+  for ($i = 1; $i -le $Attempts; $i++) {
+    if (Test-AapPortalRouteHostResolution -PortalNamespace $PortalNamespace `
+        -Hostname $Hostname -ExpectedIp $ExpectedIp) {
+      return $true
+    }
+    Start-Sleep -Seconds 5
+  }
+  return $false
+}
+
+function Get-AapPortalDeploymentHostAliasIp {
+  param(
+    [Parameter(Mandatory)][string]$Release,
+    [Parameter(Mandatory)][string]$PortalNamespace,
+    [Parameter(Mandatory)][string]$Hostname
+  )
+  $result = Invoke-AapOcCapture @('get', 'deployment', $Release, '-n', $PortalNamespace, '-o', 'json')
+  if ($result.ExitCode -ne 0) { return '' }
+  try {
+    $deployment = $result.Output | ConvertFrom-Json
+    $aliases = $deployment.spec.template.spec.hostAliases
+    if (-not $aliases) { return '' }
+    foreach ($alias in @($aliases)) {
+      if ($alias.hostnames -contains $Hostname) {
+        return [string]$alias.ip
+      }
+    }
+  } catch {
+    return ''
+  }
+  return ''
 }
 
 function Update-AapPortalAapRouteHostAlias {
@@ -1059,21 +1135,36 @@ function Update-AapPortalAapRouteHostAlias {
   $release = $Script:AapPortalState.ReleaseName
   $aapRoute = $Script:AapPortalState.AapRoute
 
-  $ipResult = Invoke-AapOcCapture @('get', 'svc', 'aap', '-n', $AapNamespace, '-o', 'jsonpath={.spec.clusterIP}')
-  $aapIp = if ($ipResult.ExitCode -eq 0) { $ipResult.Output.Trim() } else { '' }
+  $aapIp = Get-AapRouteServiceClusterIp -RouteName 'aap' -Namespace $AapNamespace
+  if (-not $aapIp) {
+    $ipResult = Invoke-AapOcCapture @('get', 'svc', 'aap', '-n', $AapNamespace, '-o', 'jsonpath={.spec.clusterIP}')
+    $aapIp = if ($ipResult.ExitCode -eq 0) { $ipResult.Output.Trim() } else { '' }
+  }
   if (-not $aapIp) {
     Write-AapWarn 'Could not resolve AAP service ClusterIP; skipping host alias'
     return
   }
 
-  $currentResult = Invoke-AapOcCapture @(
-    'get', 'deployment', $release, '-n', $PortalNamespace,
-    '-o', "jsonpath={.spec.template.spec.hostAliases[?(@.hostnames[0]=='$aapRoute')].ip}"
-  )
-  $currentIp = if ($currentResult.ExitCode -eq 0) { $currentResult.Output.Trim() } else { '' }
+  $currentIp = Get-AapPortalDeploymentHostAliasIp -Release $release -PortalNamespace $PortalNamespace -Hostname $aapRoute
+  $podResolves = Test-AapPortalRouteHostResolution -PortalNamespace $PortalNamespace `
+    -Hostname $aapRoute -ExpectedIp $aapIp
 
-  if ($currentIp -eq $aapIp) {
+  if ($currentIp -eq $aapIp -and $podResolves) {
     Write-AapStep "AAP route host alias already configured ($aapRoute → $aapIp)"
+    return
+  }
+
+  if ($currentIp -eq $aapIp -and -not $podResolves) {
+    Write-Host '  Deployment has host alias but portal pod still resolves nip.io to 127.0.0.1 — restarting...'
+    Invoke-AapOcQuiet @('rollout', 'restart', "deployment/$release", '-n', $PortalNamespace) | Out-Null
+    if ((Wait-AapOcRollout -Resource "deployment/$release" -Namespace $PortalNamespace -TimeoutSeconds 600) -ne 0) {
+      Write-AapWarn 'Portal rollout after restart is still in progress'
+    }
+    if (Wait-AapPortalRouteHostAliasReady -PortalNamespace $PortalNamespace -Hostname $aapRoute -ExpectedIp $aapIp) {
+      Write-AapStep "AAP route host alias active ($aapRoute → $aapIp)"
+      return
+    }
+    Write-AapWarn "Portal pod still cannot resolve $aapRoute to $aapIp"
     return
   }
 
@@ -1090,14 +1181,18 @@ function Update-AapPortalAapRouteHostAlias {
   } | ConvertTo-Json -Depth 6 -Compress)
   Invoke-AapOcPatch @('patch', 'deployment', $release, '-n', $PortalNamespace) -Patch $patch | Out-Null
 
-  $rollout = Invoke-AapOcCapture @(
-    'rollout', 'status', "deployment/$release", '-n', $PortalNamespace, '--timeout=600s'
-  )
-  if ($rollout.ExitCode -ne 0) {
+  Write-Host '  Restarting portal pod to apply host alias...'
+  if ((Wait-AapOcRollout -Resource "deployment/$release" -Namespace $PortalNamespace -TimeoutSeconds 600) -ne 0) {
     Write-AapWarn 'Portal rollout after host alias patch is still in progress'
   }
 
-  Write-AapStep "AAP route host alias: $aapRoute → $aapIp"
+  if (Wait-AapPortalRouteHostAliasReady -PortalNamespace $PortalNamespace -Hostname $aapRoute -ExpectedIp $aapIp) {
+    Write-AapStep "AAP route host alias: $aapRoute → $aapIp"
+    return
+  }
+
+  Write-AapWarn "Portal pod cannot resolve $aapRoute to AAP service IP $aapIp"
+  Write-Host '  Check: oc exec deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- getent hosts $aapRoute'
 }
 
 function Update-AapPortalOAuthRedirect {
@@ -1120,7 +1215,7 @@ function Update-AapPortalOAuthRedirect {
   $user = "admin:$($Script:AapPortalState.AdminPass)"
   $body = (@{ redirect_uris = $redirectUri } | ConvertTo-Json -Compress)
 
-  Invoke-AapPortalCurl -Method PATCH `
+  Invoke-AapPortalCurl -Method PATCH -MaxTime 60 `
     -Url "https://$route/api/gateway/v1/applications/$($Script:AapPortalState.OAuthAppId)/" `
     -User $user -Body $body | Out-Null
 
@@ -1168,10 +1263,23 @@ function Test-AapPortalOAuthClient {
   $release = $Script:AapPortalState.ReleaseName
   $aapHostUrl = $Script:AapPortalState.AapHostUrl
   $portalRoute = $Script:AapPortalState.PortalRoute
+  if (-not $portalRoute) {
+    $routeResult = Invoke-AapOcCapture @(
+      'get', 'route', $release, '-n', $PortalNamespace, '-o', 'jsonpath={.spec.host}'
+    )
+    if ($routeResult.ExitCode -eq 0) {
+      $portalRoute = $routeResult.Output.Trim()
+      $Script:AapPortalState.PortalRoute = $portalRoute
+    }
+  }
+  if (-not $portalRoute) {
+    Write-AapWarn 'Portal route not found — skipping OAuth client verification'
+    return $false
+  }
 
   $script = @"
 AUTH=`$(printf '%s:%s' "`$OAUTH_CLIENT_ID" "`$OAUTH_CLIENT_SECRET" | base64 -w0)
-curl -s -o /dev/null -w '%{http_code}' -X POST '${aapHostUrl}/o/token/' \
+curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 -X POST '${aapHostUrl}/o/token/' \
   -H "Authorization: Basic `$AUTH" \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -d 'grant_type=authorization_code&code=invalid&redirect_uri=https://${portalRoute}/api/auth/rhaap/handler/frame'
@@ -1186,6 +1294,14 @@ curl -s -o /dev/null -w '%{http_code}' -X POST '${aapHostUrl}/o/token/' \
   if ($httpCode -eq '000') {
     Write-Host "  ERROR Portal pod cannot reach AAP token endpoint at ${aapHostUrl}/o/token/" -ForegroundColor Red
     Write-Host '  On CRC/MicroShift, nip.io resolves to 127.0.0.1 inside pods.'
+    $aapRoute = $Script:AapPortalState.AapRoute
+    $resolveResult = Invoke-AapOcCapture @(
+      'exec', "deployment/$release", '-c', 'backstage-backend', '-n', $PortalNamespace, '--',
+      'getent', 'hosts', $aapRoute
+    )
+    if ($resolveResult.ExitCode -eq 0 -and $resolveResult.Output.Trim()) {
+      Write-Host "  Pod DNS for ${aapRoute}: $($resolveResult.Output.Trim())"
+    }
     Write-Host '  Re-run: aap-demo enable portal'
     return $false
   }

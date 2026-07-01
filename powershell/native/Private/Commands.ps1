@@ -198,7 +198,17 @@ function Invoke-AapDemoClean {
 }
 
 function Invoke-AapDemoRepair {
-  Write-Host 'CRC repair: run crc stop; then crc start'
+  Write-Host ''
+  Write-Host 'aap-demo repair - Refreshing cluster access and TLS trust...' -ForegroundColor Cyan
+  Write-Host ''
+  Sync-AapKubeconfig -Quiet
+  Install-AapIngressCaTrust
+  Write-Host ''
+  Write-Host 'If Chrome/Edge still shows a certificate warning:'
+  Write-Host '  1. Run this command from an elevated PowerShell'
+  Write-Host '  2. Fully quit the browser (all windows), then reopen the AAP URL'
+  Write-Host '  3. Clear HSTS for 127.0.0.1.nip.io at chrome://net-internals/#hsts'
+  Write-Host ''
 }
 
 function Invoke-AapDemoSetup {
@@ -220,143 +230,11 @@ function Invoke-AapDemoKubeconfig {
   Write-Host 'aap-demo kubeconfig - Syncing local aap-demo kubeconfig...' -ForegroundColor Cyan
   Write-Host ''
 
-  $crc = Get-AapCrcStatus
-  if ([string]$crc.crcStatus -ne 'Running') {
-    throw 'Cluster not running. Run: aap-demo create'
-  }
+  Sync-AapKubeconfig
 
-  $crcKube = Join-Path $env:USERPROFILE '.crc\machines\crc\kubeconfig'
-  if (-not (Test-Path -LiteralPath $crcKube)) {
-    throw 'CRC kubeconfig not found. OpenShift Local may still be initializing.'
-  }
-
-  $ctxName = 'aap-demo'
-  $tempKube = [System.IO.Path]::GetTempFileName()
-  Copy-Item -LiteralPath $crcKube -Destination $tempKube -Force
-
-  try {
-    $config = Get-AapOcConfigJson -KubeConfig $tempKube
-    $contextNames = @($config.contexts | ForEach-Object { [string]$_.name })
-    $sourceCtx = if ($contextNames -contains 'microshift') {
-      'microshift'
-    } elseif ($contextNames -contains $ctxName) {
-      $ctxName
-    } elseif ($contextNames.Count -eq 1) {
-      $contextNames[0]
-    } else {
-      [string]$config.'current-context'
-    }
-
-    if ($sourceCtx -and $sourceCtx -ne $ctxName) {
-      $rename = Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
-        'config', 'rename-context', $sourceCtx, $ctxName
-      )
-      if ($rename.ExitCode -ne 0) {
-        throw "Failed to rename context $sourceCtx to $ctxName"
-      }
-      $config = Get-AapOcConfigJson -KubeConfig $tempKube
-    }
-
-    $ctx = $config.contexts | Where-Object { $_.name -eq $ctxName } | Select-Object -First 1
-    $sourceCluster = if ($ctx) { [string]$ctx.context.cluster } else { 'microshift' }
-    $cluster = $config.clusters | Where-Object { $_.name -eq $sourceCluster } | Select-Object -First 1
-    $server = if ($cluster) { [string]$cluster.cluster.server } else { 'https://localhost:6443' }
-
-    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
-      'config', 'set-cluster', $ctxName, "--server=$server", '--insecure-skip-tls-verify=true'
-    ) | Out-Null
-    if ($sourceCluster -ne $ctxName) {
-      Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
-        'config', 'unset', "clusters.$sourceCluster"
-      ) | Out-Null
-    }
-
-    $sourceUser = $config.users | Where-Object {
-      $null -ne $_.user -and $_.user.'client-certificate-data' -and $_.user.'client-key-data'
-    } | Select-Object -First 1
-
-    if ($sourceUser -and [string]$sourceUser.name -ne $ctxName) {
-      $certBytes = ConvertFrom-AapKubeBase64 ([string]$sourceUser.user.'client-certificate-data')
-      $keyBytes = ConvertFrom-AapKubeBase64 ([string]$sourceUser.user.'client-key-data')
-      if ($certBytes -and $keyBytes) {
-        $certFile = [System.IO.Path]::GetTempFileName()
-        $keyFile = [System.IO.Path]::GetTempFileName()
-        try {
-          [IO.File]::WriteAllBytes($certFile, $certBytes)
-          [IO.File]::WriteAllBytes($keyFile, $keyBytes)
-          Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
-            'config', 'set-credentials', $ctxName,
-            "--client-certificate=$certFile",
-            "--client-key=$keyFile",
-            '--embed-certs=true'
-          ) | Out-Null
-        } finally {
-          Remove-Item -LiteralPath $certFile, $keyFile -Force -ErrorAction SilentlyContinue
-        }
-        Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
-          'config', 'unset', "users.$($sourceUser.name)"
-        ) | Out-Null
-      } else {
-        Write-AapWarn 'Could not decode kubeconfig credentials - keeping existing user entry'
-      }
-    }
-
-    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
-      'config', 'set-context', $ctxName, "--cluster=$ctxName", "--user=$ctxName"
-    ) | Out-Null
-    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
-      'config', 'use-context', $ctxName
-    ) | Out-Null
-
-    $crcDir = Split-Path -Parent $crcKube
-    New-Item -ItemType Directory -Force -Path $crcDir | Out-Null
-    Move-Item -LiteralPath $tempKube -Destination $crcKube -Force
-    Write-AapStep 'Saved to ~/.crc/machines/crc/kubeconfig'
-    $tempKube = $null
-  } finally {
-    if ($tempKube -and (Test-Path -LiteralPath $tempKube)) {
-      Remove-Item -LiteralPath $tempKube -Force -ErrorAction SilentlyContinue
-    }
-  }
-
-  $userKubeDir = Join-Path $env:USERPROFILE '.kube'
-  $userKube = Join-Path $userKubeDir 'config'
-  New-Item -ItemType Directory -Force -Path $userKubeDir | Out-Null
-
-  if (Test-Path -LiteralPath $userKube) {
-    Write-Host '  Removing old aap-demo entries...'
-    foreach ($name in @($ctxName, 'microshift')) {
-      Invoke-AapOcConfig -KubeConfig $userKube -Arguments @('config', 'delete-context', $name) | Out-Null
-      Invoke-AapOcConfig -KubeConfig $userKube -Arguments @('config', 'delete-cluster', $name) | Out-Null
-      Invoke-AapOcConfig -KubeConfig $userKube -Arguments @('config', 'delete-user', $name) | Out-Null
-    }
-
-    Write-Host '  Merging into existing ~/.kube/config...'
-    $merged = [System.IO.Path]::GetTempFileName()
-    $prev = $env:KUBECONFIG
-    try {
-      $env:KUBECONFIG = "$userKube;$crcKube"
-      $flat = Invoke-AapExternal oc @('config', 'view', '--flatten')
-      if ($flat.ExitCode -ne 0) { throw 'Failed to merge kubeconfigs' }
-      Set-Content -LiteralPath $merged -Value $flat.Output -Encoding ascii
-      Move-Item -LiteralPath $merged -Destination $userKube -Force
-      Write-AapStep 'Merged context into ~/.kube/config'
-    } finally {
-      $env:KUBECONFIG = $prev
-      if (Test-Path -LiteralPath $merged) {
-        Remove-Item -LiteralPath $merged -Force -ErrorAction SilentlyContinue
-      }
-    }
-  } else {
-    Copy-Item -LiteralPath $crcKube -Destination $userKube -Force
-    Write-AapStep 'Created ~/.kube/config'
-  }
-
-  Invoke-AapOcConfig -KubeConfig $userKube -Arguments @('config', 'use-context', $ctxName) | Out-Null
-  Write-AapStep "Current context set to $ctxName"
   Write-Host ''
   Write-Host '  oc now connects to OpenShift Local cluster.'
-  Write-Host "  Context: $ctxName"
+  Write-Host '  Context: aap-demo'
 }
 
 function Invoke-AapDemoIdle {

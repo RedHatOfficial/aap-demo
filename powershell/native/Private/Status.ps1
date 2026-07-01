@@ -124,10 +124,13 @@ function Invoke-AapDemoStatus {
   foreach ($a in $Script:AapAvailableAddons) {
     $enabled = $savedAddons -contains $a
     $label = Get-AapAddonStatusLabel -Addon $a -Namespace $Namespace -Enabled $enabled
-    if ($label) {
+    $enableCmd = Get-AapAddonEnableCommand -Addon $a
+    if ($label -in @('disabled', 'not-deployed')) {
+      Write-Host ("  {0,-15} {1}  ({2})" -f $a, $label, $enableCmd)
+    } elseif ($label) {
       Write-Host ("  {0,-15} {1}" -f $a, $label)
     } else {
-      Write-Host "  $a"
+      Write-Host ("  {0,-15} ({1})" -f $a, $enableCmd)
     }
   }
   Write-Host ''

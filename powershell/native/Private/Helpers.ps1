@@ -249,6 +249,23 @@ function Invoke-AapExternal {
   }
 }
 
+function Wait-AapOcRollout {
+  param(
+    [Parameter(Mandatory)][string]$Resource,
+    [Parameter(Mandatory)][string]$Namespace,
+    [int]$TimeoutSeconds = 600
+  )
+  Initialize-AapKubeEnvironment
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & oc rollout status $Resource -n $Namespace --timeout="${TimeoutSeconds}s"
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+}
+
 function Invoke-AapOc {
   param([Parameter(Mandatory)][string[]]$Args)
   Assert-AapCommand oc 'Install oc: winget install --id RedHat.OpenShift-Client -e --source winget'
@@ -367,6 +384,11 @@ function Invoke-AapCrcStart {
     }
 
     Write-AapCrcStartOutput -Lines $output
+    try {
+      Sync-AapKubeconfig -Quiet
+    } catch {
+      Write-AapWarn "Kubeconfig sync skipped: $($_.Exception.Message)"
+    }
     Initialize-AapKubeEnvironment
     $kube = Get-AapKubeconfigPath
     if ($kube) {
@@ -768,85 +790,152 @@ function Update-AapIngressCaFromCluster {
   }
 
   $newContent = $caPem.Trim()
-  $rotated = $true
   if (Test-Path -LiteralPath $CaPath) {
     try {
       $existing = (Get-Content -LiteralPath $CaPath -Raw).Trim()
       if ($existing -eq $newContent) {
-        $rotated = $false
+        return $true
       }
     } catch {
-      $rotated = $true
+      # Overwrite unreadable saved copy.
     }
   }
 
   New-Item -ItemType Directory -Force -Path $Script:AapDemoConfigDir | Out-Null
   Set-AapUtf8Content -Path $CaPath -Value $newContent
 
-  if ($rotated) {
-    Remove-AapIngressCaCertificates -Location 'CurrentUser'
-    Remove-AapIngressCaCertificates -Location 'LocalMachine'
-  }
-
   return $true
 }
 
-function Import-AapIngressCaCertificate {
+function Test-AapIngressCaTrusted {
   param([Parameter(Mandatory)][string]$Path)
+  $thumbprint = Get-AapX509Thumbprint -Path $Path
+  return (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') -or
+    (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser')
+}
 
+function Test-AapIngressCaBrowserTrusted {
+  param([Parameter(Mandatory)][string]$Path)
   $thumbprint = Get-AapX509Thumbprint -Path $Path
   if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') {
-    Write-AapStep 'Ingress CA already trusted (Windows system certificate store)'
-    return
+    return $true
+  }
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    $stale = @($store.Certificates | Where-Object {
+        $_.Subject -match 'CN=ingress-ca' -and $_.Thumbprint.ToUpperInvariant() -ne $thumbprint
+      })
+    $store.Close()
+    if ($stale.Count -gt 0) { return $false }
+  } catch {
+    # Cannot read LocalMachine store — fall back to CurrentUser trust.
+  }
+  return (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser')
+}
+
+function Import-AapIngressCaToUserStore {
+  param([Parameter(Mandatory)][string]$Path)
+  if (Add-AapCertToRootStore -Path $Path -Location 'CurrentUser') {
+    return $true
+  }
+  if (-not (Get-Command certutil -ErrorAction SilentlyContinue)) {
+    return $false
+  }
+  $result = Invoke-AapExternal certutil @('-user', '-addstore', 'Root', $Path)
+  return $result.ExitCode -eq 0
+}
+
+function Import-AapIngressCaCertificate {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [switch]$Quiet
+  )
+
+  $thumbprint = Get-AapX509Thumbprint -Path $Path
+  if (Test-AapIngressCaBrowserTrusted -Path $Path) {
+    if (-not $Quiet) {
+      Write-AapStep 'Ingress CA already trusted (Windows certificate store)'
+    }
+    return $true
   }
 
   Remove-AapIngressCaCertificates -Location 'CurrentUser'
   Remove-AapIngressCaCertificates -Location 'LocalMachine'
 
-  if (Add-AapCertToRootStore -Path $Path -Location 'LocalMachine') {
-    Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
-    Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
-  } else {
-    Write-AapWarn 'Could not import ingress CA to system certificate store'
+  if (Test-AapIsAdministrator) {
+    if (Add-AapCertToRootStore -Path $Path -Location 'LocalMachine') {
+      if (-not $Quiet) {
+        Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+        Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
+      }
+      return $true
+    }
   }
+
+  if (Import-AapIngressCaToUserStore -Path $Path) {
+    if (-not $Quiet) {
+      Write-AapStep 'Ingress CA trusted (Current User certificate store)'
+      if (-not (Test-AapIsAdministrator)) {
+        Write-AapWarn 'Chrome/Edge may still warn until you import from an elevated PowerShell:'
+        Write-Host "  certutil -delstore Root `"ingress-ca`""
+        Write-Host "  certutil -addstore Root `"$Path`""
+      }
+    }
+    return $true
+  }
+
+  if (-not $Quiet) {
+    Write-AapWarn 'Could not import ingress CA to Windows certificate store'
+  }
+  return $false
 }
 
 function Install-AapIngressCaTrust {
+  [CmdletBinding()]
+  param([switch]$Quiet)
+
   if ($env:AAP_DEMO_TRUST_CA -eq 'false') { return }
 
   $caPath = Get-AapIngressCaCertPath
   try {
     Update-AapIngressCaFromCluster -CaPath $caPath | Out-Null
   } catch {
-    Write-AapWarn "Could not fetch ingress CA from cluster: $($_.Exception.Message)"
+    if (-not $Quiet) {
+      Write-AapWarn "Could not fetch ingress CA from cluster: $($_.Exception.Message)"
+    }
   }
 
   if (-not (Test-Path -LiteralPath $caPath)) {
-    Write-AapWarn 'Could not fetch ingress CA from cluster and no saved copy exists'
+    if (-not $Quiet) {
+      Write-AapWarn 'Could not fetch ingress CA from cluster and no saved copy exists'
+    }
     return
   }
 
   try {
-    $thumbprint = Get-AapX509Thumbprint -Path $caPath
+    $null = Get-AapX509Thumbprint -Path $caPath
   } catch {
-    Write-AapWarn "Could not read ingress CA: $($_.Exception.Message)"
+    if (-not $Quiet) {
+      Write-AapWarn "Could not read ingress CA: $($_.Exception.Message)"
+    }
     return
   }
 
-  if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') {
+  if (Test-AapIngressCaBrowserTrusted -Path $caPath) {
     Set-AapIngressCaEnv -Path $caPath
     return
   }
 
-  Write-AapStep 'Trusting ingress CA for browser TLS...'
-  if (-not (Test-AapIsAdministrator)) {
-    Write-AapWarn 'Ingress CA not trusted for browsers (Chrome/Edge require an elevated PowerShell).'
-    Write-Host '  Open PowerShell as Administrator and run: aap-demo deploy'
-    Set-AapIngressCaEnv -Path $caPath
-    return
+  if (-not $Quiet) {
+    Write-AapStep 'Trusting ingress CA for browser TLS...'
   }
-
-  Import-AapIngressCaCertificate -Path $caPath
+  $imported = Import-AapIngressCaCertificate -Path $caPath -Quiet:$Quiet
+  if (-not $imported -and -not (Test-AapIngressCaBrowserTrusted -Path $caPath) -and -not $Quiet) {
+    Write-AapWarn 'Chrome/Edge need the ingress CA in the Local Machine trust store (elevated PowerShell):'
+    Write-Host "  certutil -delstore Root `"ingress-ca`""
+    Write-Host "  certutil -addstore Root `"$caPath`""
+  }
   Set-AapIngressCaEnv -Path $caPath
 }
 
@@ -1044,6 +1133,184 @@ function Invoke-AapOcConfig {
     return $result
   } finally {
     $env:KUBECONFIG = $prev
+  }
+}
+
+function Remove-AapStaleCrcKubeEntries {
+  param([Parameter(Mandatory)][string]$KubeConfig)
+  if (-not (Test-Path -LiteralPath $KubeConfig)) { return }
+
+  foreach ($name in @('aap-demo', 'microshift', 'user/api-crc-testing:6443', 'user')) {
+    Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-context', $name) | Out-Null
+    Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-cluster', $name) | Out-Null
+    Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-user', $name) | Out-Null
+  }
+
+  try {
+    $config = Get-AapOcConfigJson -KubeConfig $KubeConfig
+    foreach ($cluster in @($config.clusters)) {
+      $server = [string]$cluster.cluster.server
+      if ($server -match 'api\.crc\.testing') {
+        $clusterName = [string]$cluster.name
+        Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-context', $clusterName) | Out-Null
+        Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-cluster', $clusterName) | Out-Null
+      }
+    }
+  } catch {
+    # Ignore invalid kubeconfig during cleanup.
+  }
+}
+
+function Sync-AapKubeconfig {
+  [CmdletBinding()]
+  param(
+    [switch]$Quiet
+  )
+
+  $crc = Get-AapCrcStatus
+  if ([string]$crc.crcStatus -ne 'Running') {
+    throw 'Cluster not running. Run: aap-demo create'
+  }
+
+  $crcKube = Join-Path $env:USERPROFILE '.crc\machines\crc\kubeconfig'
+  if (-not (Test-Path -LiteralPath $crcKube)) {
+    throw 'CRC kubeconfig not found. OpenShift Local may still be initializing.'
+  }
+
+  $ctxName = 'aap-demo'
+  $tempKube = [System.IO.Path]::GetTempFileName()
+  Copy-Item -LiteralPath $crcKube -Destination $tempKube -Force
+
+  try {
+    $config = Get-AapOcConfigJson -KubeConfig $tempKube
+    $contextNames = @($config.contexts | ForEach-Object { [string]$_.name })
+    $sourceCtx = if ($contextNames -contains 'microshift') {
+      'microshift'
+    } elseif ($contextNames -contains $ctxName) {
+      $ctxName
+    } elseif ($contextNames.Count -eq 1) {
+      $contextNames[0]
+    } else {
+      [string]$config.'current-context'
+    }
+
+    if ($sourceCtx -and $sourceCtx -ne $ctxName) {
+      $rename = Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+        'config', 'rename-context', $sourceCtx, $ctxName
+      )
+      if ($rename.ExitCode -ne 0) {
+        throw "Failed to rename context $sourceCtx to $ctxName"
+      }
+      $config = Get-AapOcConfigJson -KubeConfig $tempKube
+    }
+
+    $ctx = $config.contexts | Where-Object { $_.name -eq $ctxName } | Select-Object -First 1
+    $sourceCluster = if ($ctx) { [string]$ctx.context.cluster } else { 'microshift' }
+    $cluster = $config.clusters | Where-Object { $_.name -eq $sourceCluster } | Select-Object -First 1
+    $server = if ($cluster) { [string]$cluster.cluster.server } else { 'https://localhost:6443' }
+    if ($server -match 'api\.crc\.testing') {
+      $server = 'https://localhost:6443'
+    }
+
+    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+      'config', 'set-cluster', $ctxName, "--server=$server", '--insecure-skip-tls-verify=true'
+    ) | Out-Null
+    if ($sourceCluster -ne $ctxName) {
+      Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+        'config', 'unset', "clusters.$sourceCluster"
+      ) | Out-Null
+    }
+
+    $sourceUser = $config.users | Where-Object {
+      $null -ne $_.user -and $_.user.'client-certificate-data' -and $_.user.'client-key-data'
+    } | Select-Object -First 1
+
+    if ($sourceUser -and [string]$sourceUser.name -ne $ctxName) {
+      $certBytes = ConvertFrom-AapKubeBase64 ([string]$sourceUser.user.'client-certificate-data')
+      $keyBytes = ConvertFrom-AapKubeBase64 ([string]$sourceUser.user.'client-key-data')
+      if ($certBytes -and $keyBytes) {
+        $certFile = [System.IO.Path]::GetTempFileName()
+        $keyFile = [System.IO.Path]::GetTempFileName()
+        try {
+          [IO.File]::WriteAllBytes($certFile, $certBytes)
+          [IO.File]::WriteAllBytes($keyFile, $keyBytes)
+          Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+            'config', 'set-credentials', $ctxName,
+            "--client-certificate=$certFile",
+            "--client-key=$keyFile",
+            '--embed-certs=true'
+          ) | Out-Null
+        } finally {
+          Remove-Item -LiteralPath $certFile, $keyFile -Force -ErrorAction SilentlyContinue
+        }
+        Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+          'config', 'unset', "users.$($sourceUser.name)"
+        ) | Out-Null
+      } elseif (-not $Quiet) {
+        Write-AapWarn 'Could not decode kubeconfig credentials - keeping existing user entry'
+      }
+    }
+
+    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+      'config', 'set-context', $ctxName, "--cluster=$ctxName", "--user=$ctxName"
+    ) | Out-Null
+    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+      'config', 'use-context', $ctxName
+    ) | Out-Null
+
+    $crcDir = Split-Path -Parent $crcKube
+    New-Item -ItemType Directory -Force -Path $crcDir | Out-Null
+    Move-Item -LiteralPath $tempKube -Destination $crcKube -Force
+    if (-not $Quiet) {
+      Write-AapStep 'Saved to ~/.crc/machines/crc/kubeconfig'
+    }
+    $tempKube = $null
+  } finally {
+    if ($tempKube -and (Test-Path -LiteralPath $tempKube)) {
+      Remove-Item -LiteralPath $tempKube -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  $userKubeDir = Join-Path $env:USERPROFILE '.kube'
+  $userKube = Join-Path $userKubeDir 'config'
+  New-Item -ItemType Directory -Force -Path $userKubeDir | Out-Null
+
+  if (Test-Path -LiteralPath $userKube) {
+    if (-not $Quiet) {
+      Write-Host '  Removing stale OpenShift Local kubeconfig entries...'
+    }
+    Remove-AapStaleCrcKubeEntries -KubeConfig $userKube
+
+    if (-not $Quiet) {
+      Write-Host '  Merging into existing ~/.kube/config...'
+    }
+    $merged = [System.IO.Path]::GetTempFileName()
+    $prev = $env:KUBECONFIG
+    try {
+      $env:KUBECONFIG = "$userKube;$crcKube"
+      $flat = Invoke-AapExternal oc @('config', 'view', '--flatten')
+      if ($flat.ExitCode -ne 0) { throw 'Failed to merge kubeconfigs' }
+      Set-Content -LiteralPath $merged -Value $flat.Output -Encoding ascii
+      Move-Item -LiteralPath $merged -Destination $userKube -Force
+      if (-not $Quiet) {
+        Write-AapStep 'Merged context into ~/.kube/config'
+      }
+    } finally {
+      $env:KUBECONFIG = $prev
+      if (Test-Path -LiteralPath $merged) {
+        Remove-Item -LiteralPath $merged -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } else {
+    Copy-Item -LiteralPath $crcKube -Destination $userKube -Force
+    if (-not $Quiet) {
+      Write-AapStep 'Created ~/.kube/config'
+    }
+  }
+
+  Invoke-AapOcConfig -KubeConfig $userKube -Arguments @('config', 'use-context', $ctxName) | Out-Null
+  if (-not $Quiet) {
+    Write-AapStep "Current context set to $ctxName"
   }
 }
 

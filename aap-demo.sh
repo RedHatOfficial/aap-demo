@@ -1731,30 +1731,48 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
-  # Show enabled addons with URLs
+  # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
-  if [ -n "$saved_addons" ]; then
-    echo "Enabled Addons:"
-    echo "---------------"
-    for a in $saved_addons; do
-      local url=""
-      case "$a" in
-        console) url="https://console.apps.127.0.0.1.nip.io" ;;
-        registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
-        mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
-        portal) url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
-        registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
-        prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
-      esac
-      if [ -n "$url" ]; then
-        printf "  %-15s %s\n" "$a" "$url"
-      else
-        printf "  %s\n" "$a"
-      fi
-    done
-    echo ""
-  fi
+  echo "Addons:"
+  echo "-------"
+  for a in $AVAILABLE_ADDONS; do
+    local url="" label="" enabled=false
+    if echo "$saved_addons" | grep -qw "$a"; then
+      enabled=true
+    fi
+    case "$a" in
+      mcp-server)
+        if [ "$enabled" = true ]; then
+          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
+          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+    esac
+    if [ -n "$url" ] && [ -z "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$url"
+    elif [ -n "$label" ]; then
+      printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+    else
+      printf "  %-15s (aap-demo enable %s)\n" "$a" "$a"
+    fi
+  done
+  echo ""
 }
 
 cmd_redeploy() {
