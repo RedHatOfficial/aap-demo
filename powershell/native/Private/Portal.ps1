@@ -813,13 +813,41 @@ function Write-AapPortalHelmValuesFile {
   Set-AapUtf8Content -Path $Path -Value $normalized
 }
 
+function Get-AapPortalHelmHostAliasesYaml {
+  param([string]$Indent = '    ')
+
+  if (-not $Script:AapPortalState.IsMicroshift) { return '' }
+
+  $aapRoute = $Script:AapPortalState.AapRoute
+  $aapNs = $Script:AapPortalState.AapNamespace
+  if (-not $aapRoute) { return '' }
+
+  $aapIp = Get-AapRouteServiceClusterIp -RouteName 'aap' -Namespace $aapNs
+  if (-not $aapIp) {
+    $ipResult = Invoke-AapOcCapture @(
+      'get', 'svc', 'aap', '-n', $aapNs, '-o', 'jsonpath={.spec.clusterIP}'
+    )
+    $aapIp = if ($ipResult.ExitCode -eq 0) { $ipResult.Output.Trim() } else { '' }
+  }
+  if (-not $aapIp) { return '' }
+
+  return @"
+${Indent}hostAliases:
+${Indent}  - ip: "$aapIp"
+${Indent}    hostnames:
+${Indent}      - "$aapRoute"
+"@
+}
+
 function New-AapPortalHelmValues {
   $valuesPath = Join-Path $Script:AapPortalState.PortalDir 'values.yaml'
   $sslValues = Get-AapPortalSslValuesYaml
   $clusterBase = $Script:AapPortalState.ClusterBaseUrl
   $pluginVersion = $Script:AapPortalState.DefaultPluginVersion
+  $hostAliases = Get-AapPortalHelmHostAliasesYaml -Indent '    '
 
   if ($Script:AapPortalState.IsArmCluster) {
+    $armHostAliases = Get-AapPortalHelmHostAliasesYaml -Indent '      '
     $values = @"
 redhat-developer-hub:
   global:
@@ -832,6 +860,7 @@ redhat-developer-hub:
         registry: quay.io
         repository: rhdh-community/rhdh
         tag: "1.10"
+$armHostAliases
       appConfig:
 $sslValues
         dynamicPlugins:
@@ -861,6 +890,7 @@ global:
 
 upstream:
   backstage:
+$hostAliases
     appConfig:
 $sslValues
     dynamicPlugins:
@@ -1256,12 +1286,63 @@ function Test-AapPortalAapHostUrl {
   return $true
 }
 
+function Get-AapPortalPodAapHostUrl {
+  param([Parameter(Mandatory)][string]$PortalNamespace)
+
+  $release = $Script:AapPortalState.ReleaseName
+  $result = Invoke-AapOcCapture @(
+    'exec', "deployment/$release", '-c', 'backstage-backend', '-n', $PortalNamespace, '--',
+    'printenv', 'AAP_HOST_URL'
+  )
+  if ($result.ExitCode -eq 0 -and $result.Output.Trim()) {
+    return $result.Output.Trim()
+  }
+  return [string]$Script:AapPortalState.AapHostUrl
+}
+
+function Get-AapPortalOAuthHttpCode {
+  param($Result)
+  $line = @($Result.Lines | Where-Object { $_ -match '^\d{3}$' } | Select-Object -Last 1)
+  if ($line) { return [string]$line }
+  if ($Result.Output -match '\b(\d{3})\b') { return $Matches[1] }
+  if ($Result.ExitCode -eq 0 -and $Result.Output.Trim() -match '^\d{3}$') {
+    return $Result.Output.Trim()
+  }
+  return '000'
+}
+
+function Invoke-AapPortalOAuthTokenProbe {
+  param(
+    [Parameter(Mandatory)][string]$PortalNamespace,
+    [Parameter(Mandatory)][string]$AapHostUrl,
+    [Parameter(Mandatory)][string]$PortalRoute,
+    [int]$Attempts = 12,
+    [int]$DelaySeconds = 5
+  )
+
+  $release = $Script:AapPortalState.ReleaseName
+  $script = @"
+AUTH=`$(printf '%s:%s' "`$OAUTH_CLIENT_ID" "`$OAUTH_CLIENT_SECRET" | base64 -w0); curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 -X POST '${AapHostUrl}/o/token/' -H "Authorization: Basic `$AUTH" -H 'Content-Type: application/x-www-form-urlencoded' -d 'grant_type=authorization_code&code=invalid&redirect_uri=https://${PortalRoute}/api/auth/rhaap/handler/frame'
+"@
+
+  for ($i = 1; $i -le $Attempts; $i++) {
+    $result = Invoke-AapOcCapture @(
+      'exec', "deployment/$release", '-c', 'backstage-backend', '-n', $PortalNamespace, '--',
+      'sh', '-c', $script
+    )
+    $httpCode = Get-AapPortalOAuthHttpCode -Result $result
+    if ($httpCode -ne '000') { return $httpCode }
+    if ($i -lt $Attempts) { Start-Sleep -Seconds $DelaySeconds }
+  }
+  return '000'
+}
+
 function Test-AapPortalOAuthClient {
   param([Parameter(Mandatory)][string]$PortalNamespace)
 
   Write-Host 'Verifying OAuth client credentials...'
   $release = $Script:AapPortalState.ReleaseName
-  $aapHostUrl = $Script:AapPortalState.AapHostUrl
+  $aapHostUrl = Get-AapPortalPodAapHostUrl -PortalNamespace $PortalNamespace
   $portalRoute = $Script:AapPortalState.PortalRoute
   if (-not $portalRoute) {
     $routeResult = Invoke-AapOcCapture @(
@@ -1276,20 +1357,33 @@ function Test-AapPortalOAuthClient {
     Write-AapWarn 'Portal route not found — skipping OAuth client verification'
     return $false
   }
+  if (-not $aapHostUrl) {
+    Write-AapWarn 'AAP host URL not found in portal pod — skipping OAuth client verification'
+    return $false
+  }
 
-  $script = @"
-AUTH=`$(printf '%s:%s' "`$OAUTH_CLIENT_ID" "`$OAUTH_CLIENT_SECRET" | base64 -w0)
-curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 -X POST '${aapHostUrl}/o/token/' \
-  -H "Authorization: Basic `$AUTH" \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  -d 'grant_type=authorization_code&code=invalid&redirect_uri=https://${portalRoute}/api/auth/rhaap/handler/frame'
-"@
+  if ($Script:AapPortalState.IsMicroshift) {
+    $aapRoute = $Script:AapPortalState.AapRoute
+    if ($aapRoute -and -not (Test-AapPortalRouteHostResolution -PortalNamespace $PortalNamespace `
+          -Hostname $aapRoute -ExpectedIp '')) {
+      Write-Host '  Waiting for AAP route host alias in portal pod...'
+      $aapIp = Get-AapRouteServiceClusterIp -RouteName 'aap' -Namespace $Script:AapPortalState.AapNamespace
+      if (-not $aapIp) {
+        $ipResult = Invoke-AapOcCapture @(
+          'get', 'svc', 'aap', '-n', $Script:AapPortalState.AapNamespace,
+          '-o', 'jsonpath={.spec.clusterIP}'
+        )
+        $aapIp = if ($ipResult.ExitCode -eq 0) { $ipResult.Output.Trim() } else { '' }
+      }
+      if ($aapIp) {
+        Wait-AapPortalRouteHostAliasReady -PortalNamespace $PortalNamespace `
+          -Hostname $aapRoute -ExpectedIp $aapIp | Out-Null
+      }
+    }
+  }
 
-  $result = Invoke-AapOcCapture @(
-    'exec', "deployment/$release", '-c', 'backstage-backend', '-n', $PortalNamespace, '--',
-    'sh', '-c', $script
-  )
-  $httpCode = if ($result.ExitCode -eq 0) { $result.Output.Trim() } else { '000' }
+  $httpCode = Invoke-AapPortalOAuthTokenProbe -PortalNamespace $PortalNamespace `
+    -AapHostUrl $aapHostUrl -PortalRoute $portalRoute
 
   if ($httpCode -eq '000') {
     Write-Host "  ERROR Portal pod cannot reach AAP token endpoint at ${aapHostUrl}/o/token/" -ForegroundColor Red
@@ -1302,7 +1396,7 @@ curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 -X POST '${aapHostUr
     if ($resolveResult.ExitCode -eq 0 -and $resolveResult.Output.Trim()) {
       Write-Host "  Pod DNS for ${aapRoute}: $($resolveResult.Output.Trim())"
     }
-    Write-Host '  Re-run: aap-demo enable portal'
+    Write-Host '  Host alias may still be rolling out — re-run: aap-demo enable portal'
     return $false
   }
 
