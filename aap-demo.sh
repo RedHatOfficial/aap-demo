@@ -109,6 +109,12 @@ for arg in "$@"; do
       kubeconfig)
         KUBECTL_KUBECONFIG="$arg"
         ;;
+      seed)
+        SEED_COUNT="$arg"
+        ;;
+      image)
+        SEED_IMAGE="$arg"
+        ;;
     esac
     PENDING_FLAG=""
     continue
@@ -133,14 +139,30 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | nodes | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
       esac
       ;;
+    --seed=*)
+      SEED_COUNT="${arg#*=}"
+      ;;
+    --seed)
+      PENDING_FLAG="seed"
+      ;;
+    --image=*)
+      SEED_IMAGE="${arg#*=}"
+      ;;
+    --image)
+      PENDING_FLAG="image"
+      ;;
     --ai | --reset | --force | --refresh-catalog | --purge-data | --purge-creds)
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
+      EXTRA_ARGS+=("$arg")
+      ;;
+    add | remove | list)
+      # Subcommand args for nodes command
       EXTRA_ARGS+=("$arg")
       ;;
     mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
@@ -170,8 +192,8 @@ for arg in "$@"; do
       export "$arg"
       ;;
     *)
-      # Commands that accept arbitrary path args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ]; then
+      # Commands that accept arbitrary args
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "nodes" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -196,6 +218,10 @@ fi
 source "${SCRIPT_DIR}/includes/infra-api.sh"
 # shellcheck source=includes/ingress-ca-trust.sh
 source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
+# shellcheck source=includes/seed-nodes.sh
+source "${SCRIPT_DIR}/includes/seed-nodes.sh"
+# shellcheck source=includes/seed-nodes-aap.sh
+source "${SCRIPT_DIR}/includes/seed-nodes-aap.sh"
 
 # -----------------------------------------------------------------------------
 # Prerequisite Checks
@@ -408,6 +434,12 @@ Cluster management:
   stop            Stop cluster
   ssh             SSH into cluster node
 
+Seed nodes (managed VMs for demos):
+  nodes add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
+  nodes list                    List running seed node VMs
+  nodes remove [N|name]         Remove seed node VMs
+  nodes destroy                 Remove all VMs and AAP resources
+
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
                    Requires: AAP 2.6+, registry.redhat.io credentials (Helm auto-installed if missing)
@@ -421,6 +453,8 @@ Addons:
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
+  aap-demo deploy --seed 3 --image ~/rhel9.qcow2  # Deploy AAP + 3 VMs
+  aap-demo nodes add 2 --image ~/rhel9.qcow2      # Add 2 managed VMs
   aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
   aap-demo enable setup-pah       # Configure Private Automation Hub
 
@@ -438,9 +472,13 @@ USAGE:
 OPTIONS:
     --kubeconfig=FILE   Path to kubeconfig file (default: ~/.aap-demo/kubeconfig.microshift)
     --context=NAME      kubectl context to use (default: current context)
+    --seed=N            Create N seed node VMs after deploy
+    --image=PATH        QCOW2 image for seed nodes (saved for reuse)
     NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
     QUIET=true          Suppress disclaimer
     FORCE=true          Force reinstall even if AAP exists
+    SEED_NODE_MEM=N     Seed node VM memory in MB (default: 1024)
+    SEED_NODE_CPUS=N    Seed node VM CPU count (default: 2)
 
 COMMANDS (all infrastructure types):
     deploy          Deploy AAP 2.7 (operator + CR)
@@ -462,6 +500,10 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
+    nodes add [N] --image <path>  Create N managed RHEL VMs (default: 1)
+    nodes remove [N|name]  Remove last N VMs or a specific VM by name
+    nodes list             List running seed node VMs
+    nodes destroy          Remove all VMs and AAP resources
     enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama)
                     portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
@@ -491,6 +533,11 @@ ENVIRONMENT:
 EXAMPLES:
     aap-demo create                  # Create OpenShift Local cluster
     aap-demo deploy                  # Deploy AAP 2.7
+    aap-demo deploy --seed 3 --image ~/rhel9.qcow2  # Deploy AAP + 3 VMs
+    aap-demo nodes add 2 --image ~/rhel9.qcow2      # Add 2 managed VMs
+    aap-demo nodes list              # Show running seed nodes
+    aap-demo nodes remove 1          # Remove last seed node
+    aap-demo nodes destroy           # Remove all seed nodes
     aap-demo status                  # Show cluster and AAP status
     aap-demo stop                    # Stop cluster
     aap-demo start                   # Start stopped cluster
@@ -1923,6 +1970,16 @@ cmd_status() {
     fi
   done
   echo ""
+
+  # Show seed nodes
+  local _node_count
+  _node_count=$(seed_nodes_count 2>/dev/null || echo "0")
+  if [ "$_node_count" -gt 0 ] 2>/dev/null; then
+    echo "Seed Nodes:"
+    echo "-----------"
+    seed_nodes_list
+    echo ""
+  fi
 }
 
 cmd_redeploy() {
@@ -1992,6 +2049,12 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
+
+  # Clean up seed nodes before destroying cluster
+  if [ -d "${HOME}/.aap-demo/nodes" ]; then
+    seed_nodes_destroy_all
+  fi
+
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
@@ -2009,6 +2072,13 @@ cmd_destroy() {
 cmd_stop() {
   echo ""
   printf "\033[1maap-demo stop\033[0m - Stopping CRC cluster...\n"
+
+  # Stop seed node VMs (ephemeral — must be recreated after start)
+  if [ -d "${HOME}/.aap-demo/nodes" ]; then
+    seed_nodes_stop_all
+    echo "  (Seed nodes are ephemeral — recreate with: aap-demo nodes add)"
+  fi
+
   crc stop || true
   echo "✓ CRC cluster stopped"
   echo "To restart: aap-demo start"
@@ -2129,6 +2199,21 @@ cmd_deploy() {
 
   # Deploy AAP 2.7
   deploy_latest
+
+  # Create seed nodes if --seed was specified
+  if [ -n "${SEED_COUNT:-}" ]; then
+    local _seed_img="${SEED_IMAGE:-}"
+    if [ -z "$_seed_img" ]; then
+      _err "--seed requires --image <path-to-qcow2>"
+      echo "  Example: aap-demo deploy --seed 3 --image ~/rhel9.qcow2"
+      exit 1
+    fi
+    _seed_img=$(cd "$(dirname "$_seed_img")" 2>/dev/null && echo "$(pwd)/$(basename "$_seed_img")")
+    seed_nodes_check_prereqs "$_seed_img" || exit 1
+    seed_nodes_create_all "$SEED_COUNT" "$_seed_img"
+    _seed_save_image_config "$_seed_img"
+    seed_nodes_register_aap
+  fi
 }
 
 # -----------------------------------------------------------------------------
@@ -2690,6 +2775,112 @@ watch_aap() {
 }
 
 # ---------------------------------------------------------------------------
+# Seed nodes: managed RHEL VMs for AAP demos
+# ---------------------------------------------------------------------------
+
+cmd_nodes() {
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    add)
+      local count="" image=""
+      # Parse remaining args: count (numeric) and --image
+      for narg in "$@"; do
+        if [[ "$narg" =~ ^[0-9]+$ ]]; then
+          count="$narg"
+        elif [[ "$narg" == --image=* ]]; then
+          image="${narg#*=}"
+        else
+          image="$narg"
+        fi
+      done
+
+      # Also check top-level flags
+      count="${count:-${SEED_COUNT:-1}}"
+      image="${image:-${SEED_IMAGE:-}}"
+
+      if [ -z "$image" ]; then
+        _err "No QCOW2 image specified"
+        echo ""
+        echo "Usage: aap-demo nodes add [count] --image <path-to-qcow2>"
+        echo ""
+        echo "  count    Number of VMs to create (default: 1)"
+        echo "  --image  Path to a RHEL/CentOS QCOW2 cloud image"
+        return 1
+      fi
+
+      # Resolve to absolute path
+      image=$(cd "$(dirname "$image")" 2>/dev/null && echo "$(pwd)/$(basename "$image")")
+
+      _verify_cluster || return 1
+      seed_nodes_check_prereqs "$image" || return 1
+      seed_nodes_create_all "$count" "$image"
+      _seed_save_image_config "$image"
+      seed_nodes_register_aap
+      ;;
+    remove)
+      local target="${1:-1}"
+      if [[ "$target" =~ ^[0-9]+$ ]]; then
+        # Remove last N nodes
+        for narg in "$@"; do
+          if [[ "$narg" =~ ^[0-9]+$ ]]; then
+            target="$narg"
+            break
+          fi
+        done
+        # Deregister from AAP first
+        local indices
+        indices=$(_seed_running_indices)
+        local to_remove
+        to_remove=$(echo "$indices" | tail -n "$target")
+        for idx in $to_remove; do
+          local hn="aap-node-${idx}"
+          seed_node_deregister_host "$hn" 2>/dev/null || true
+        done
+        seed_nodes_remove_last "$target"
+      else
+        # Remove by name
+        local hn="$target"
+        [[ "$hn" != aap-node-* ]] && hn="aap-node-${hn}"
+        seed_node_deregister_host "$hn" 2>/dev/null || true
+        seed_nodes_remove_by_name "$target"
+      fi
+      ;;
+    list)
+      echo ""
+      printf "\033[1mSeed Nodes\033[0m\n"
+      echo ""
+      seed_nodes_list
+      ;;
+    destroy)
+      _verify_cluster 2>/dev/null && seed_nodes_deregister_aap 2>/dev/null || true
+      seed_nodes_destroy_all
+      ;;
+    *)
+      echo "Usage: aap-demo nodes <subcommand>"
+      echo ""
+      echo "Subcommands:"
+      echo "  add [count] --image <path>   Create seed node VMs"
+      echo "  remove [count|name]          Remove seed node VMs"
+      echo "  list                         List seed node VMs"
+      echo "  destroy                      Remove all VMs and AAP resources"
+      echo ""
+      echo "Options:"
+      echo "  --image <path>    Path to RHEL/CentOS QCOW2 cloud image"
+      echo "  SEED_NODE_MEM=N   VM memory in MB (default: 1024)"
+      echo "  SEED_NODE_CPUS=N  VM CPU count (default: 2)"
+      echo ""
+      echo "Examples:"
+      echo "  aap-demo nodes add 3 --image ~/rhel9.qcow2"
+      echo "  aap-demo nodes list"
+      echo "  aap-demo nodes remove 1"
+      echo "  aap-demo nodes destroy"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
@@ -3096,6 +3287,9 @@ case "$COMMAND" in
     ;;
   test)
     cmd_test "${EXTRA_ARGS[@]}"
+    ;;
+  nodes)
+    cmd_nodes "${EXTRA_ARGS[@]}"
     ;;
   enable)
     cmd_enable "${EXTRA_ARGS[@]}"
