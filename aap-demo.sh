@@ -2166,6 +2166,9 @@ cmd_deploy() {
     exit 1
   fi
   echo "Connected to: $(kubectl config current-context 2>/dev/null)"
+  if [ -n "${SEED_COUNT:-}" ]; then
+    echo "  Seed nodes: ${SEED_COUNT} VM(s) will be created after AAP deploys successfully"
+  fi
   echo ""
 
   # Verify CRC version matches required version
@@ -2341,7 +2344,13 @@ deploy_latest() {
 
   if [ -z "$CSV_NAME" ]; then
     echo "✗ CSV not found after 10 minutes"
-    echo "Check: kubectl get subscription -n $NAMESPACE"
+    echo "  Check: kubectl get subscription -n $NAMESPACE"
+    if [ -n "${SEED_COUNT:-}" ]; then
+      echo ""
+      echo "  Seed node VMs were not created — AAP must be running first."
+      echo "  Once AAP is deployed, create them with:"
+      echo "    aap-demo nodes add ${SEED_COUNT}${SEED_IMAGE:+ --image ${SEED_IMAGE}}"
+    fi
     exit 1
   fi
 
@@ -2499,6 +2508,14 @@ setup_namespace() {
     fi
   else
     echo "WARNING: No pull secret found"
+    echo "  AAP requires a pull secret to pull images from registry.redhat.io"
+    echo "  Download: https://console.redhat.com/openshift/install/pull-secret"
+    echo "  Save to:  ~/.aap-demo/pull-secret.txt"
+    if [ -n "${SEED_COUNT:-}" ]; then
+      echo ""
+      echo "  Seed node VMs will be created automatically once AAP is deployed."
+      echo "  Add your pull secret and re-run: aap-demo deploy --seed ${SEED_COUNT}${SEED_IMAGE:+ --image ${SEED_IMAGE}}"
+    fi
   fi
 }
 
@@ -2766,7 +2783,13 @@ watch_aap() {
     # Check timeout
     if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
       echo "WARNING: Deployment not complete after 60 minutes"
-      echo "Check: kubectl get aap -n $NAMESPACE -o yaml"
+      echo "  Check: kubectl get aap -n $NAMESPACE -o yaml"
+      if [ -n "${SEED_COUNT:-}" ]; then
+        echo ""
+        echo "  Seed node VMs were not created — AAP must be running first."
+        echo "  Once AAP is deployed, create them with:"
+        echo "    aap-demo nodes add ${SEED_COUNT}${SEED_IMAGE:+ --image ${SEED_IMAGE}}"
+      fi
       return 1
     fi
 
