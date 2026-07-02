@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 # =============================================================================
-# seed-nodes-aap.sh — Register/deregister seed nodes in AAP via REST API
+# fleet-aap.sh — Register/deregister fleet nodes in AAP via REST API
 # =============================================================================
 
-if [ -n "${_SEED_NODES_AAP_LOADED:-}" ]; then return 0; fi
-_SEED_NODES_AAP_LOADED=1
+if [ -n "${_FLEET_AAP_LOADED:-}" ]; then return 0; fi
+_FLEET_AAP_LOADED=1
 
-SEED_NODES_DIR="${HOME}/.aap-demo/nodes"
+FLEET_DIR="${HOME}/.aap-demo/fleet"
 
-_SEED_AAP_URL=""
-_SEED_AAP_PASSWORD=""
-_SEED_AAP_CURL_TLS=""
+_FLEET_AAP_URL=""
+_FLEET_AAP_PASSWORD=""
+_FLEET_AAP_CURL_TLS=""
 
 # -----------------------------------------------------------------------------
 # AAP API connection
 # -----------------------------------------------------------------------------
 
-_seed_aap_get_auth() {
-  if [ -n "$_SEED_AAP_URL" ] && [ -n "$_SEED_AAP_PASSWORD" ]; then
+_fleet_aap_get_auth() {
+  if [ -n "$_FLEET_AAP_URL" ] && [ -n "$_FLEET_AAP_PASSWORD" ]; then
     return 0
   fi
 
@@ -40,21 +40,21 @@ _seed_aap_get_auth() {
     _err "Could not find AAP gateway route"
     return 1
   fi
-  _SEED_AAP_URL="https://${gateway_host}"
+  _FLEET_AAP_URL="https://${gateway_host}"
 
   # Discover admin password
   local pw_secret
   pw_secret=$(kubectl get aap "$aap_name" -n "$ns" -o jsonpath='{.status.adminPasswordSecret}' 2>/dev/null || echo "")
   if [ -n "$pw_secret" ]; then
-    _SEED_AAP_PASSWORD=$(kubectl get secret "$pw_secret" -n "$ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+    _FLEET_AAP_PASSWORD=$(kubectl get secret "$pw_secret" -n "$ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
   fi
-  if [ -z "$_SEED_AAP_PASSWORD" ]; then
+  if [ -z "$_FLEET_AAP_PASSWORD" ]; then
     for secret_name in "${aap_name}-admin-password" aap-admin-password; do
-      _SEED_AAP_PASSWORD=$(kubectl get secret "$secret_name" -n "$ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-      [ -n "$_SEED_AAP_PASSWORD" ] && break
+      _FLEET_AAP_PASSWORD=$(kubectl get secret "$secret_name" -n "$ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+      [ -n "$_FLEET_AAP_PASSWORD" ] && break
     done
   fi
-  if [ -z "$_SEED_AAP_PASSWORD" ]; then
+  if [ -z "$_FLEET_AAP_PASSWORD" ]; then
     _err "Could not retrieve AAP admin password"
     return 1
   fi
@@ -63,29 +63,29 @@ _seed_aap_get_auth() {
   local ca_path
   ca_path=$(get_ingress_ca_cert_path 2>/dev/null || echo "")
   if [ -n "$ca_path" ] && [ -f "$ca_path" ]; then
-    _SEED_AAP_CURL_TLS="--cacert ${ca_path}"
+    _FLEET_AAP_CURL_TLS="--cacert ${ca_path}"
   else
-    _SEED_AAP_CURL_TLS="-k"
+    _FLEET_AAP_CURL_TLS="-k"
   fi
 
   return 0
 }
 
-_seed_aap_api() {
+_fleet_aap_api() {
   local method="$1"
   local endpoint="$2"
   local body="${3:-}"
 
-  local url="${_SEED_AAP_URL}/api/controller/v2${endpoint}"
+  local url="${_FLEET_AAP_URL}/api/controller/v2${endpoint}"
   local curl_args=(
     -s -S
     -X "$method"
     -H "Content-Type: application/json"
-    -u "admin:${_SEED_AAP_PASSWORD}"
+    -u "admin:${_FLEET_AAP_PASSWORD}"
   )
 
   # shellcheck disable=SC2206
-  [ -n "$_SEED_AAP_CURL_TLS" ] && curl_args+=($_SEED_AAP_CURL_TLS)
+  [ -n "$_FLEET_AAP_CURL_TLS" ] && curl_args+=($_FLEET_AAP_CURL_TLS)
 
   if [ -n "$body" ]; then
     curl_args+=(-d "$body")
@@ -98,8 +98,8 @@ _seed_aap_api() {
 # Host gateway IP (how cluster reaches the host)
 # -----------------------------------------------------------------------------
 
-_seed_aap_get_host_gateway_ip() {
-  local cached="${SEED_NODES_DIR}/host_gateway_ip"
+_fleet_aap_get_host_gateway_ip() {
+  local cached="${FLEET_DIR}/host_gateway_ip"
   if [ -f "$cached" ]; then
     cat "$cached"
     return 0
@@ -131,7 +131,7 @@ _seed_aap_get_host_gateway_ip() {
     return 1
   fi
 
-  mkdir -p "$SEED_NODES_DIR"
+  mkdir -p "$FLEET_DIR"
   echo "$gw_ip" >"$cached"
   echo "$gw_ip"
 }
@@ -140,35 +140,35 @@ _seed_aap_get_host_gateway_ip() {
 # AAP resource management
 # -----------------------------------------------------------------------------
 
-_seed_aap_get_org_id() {
+_fleet_aap_get_org_id() {
   local resp
-  resp=$(_seed_aap_api GET "/organizations/?name=Default")
+  resp=$(_fleet_aap_api GET "/organizations/?name=Default")
   echo "$resp" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['results'][0]['id'] if r.get('count',0)>0 else '')" 2>/dev/null
 }
 
-_seed_aap_get_credential_type_id() {
+_fleet_aap_get_credential_type_id() {
   local resp
-  resp=$(_seed_aap_api GET "/credential_types/?name=Machine")
+  resp=$(_fleet_aap_api GET "/credential_types/?name=Machine")
   echo "$resp" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['results'][0]['id'] if r.get('count',0)>0 else '')" 2>/dev/null
 }
 
-_seed_aap_find_resource() {
+_fleet_aap_find_resource() {
   local endpoint="$1"
   local name="$2"
   local resp
-  resp=$(_seed_aap_api GET "${endpoint}?name=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${name}'))")")
+  resp=$(_fleet_aap_api GET "${endpoint}?name=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${name}'))")")
   echo "$resp" | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['results'][0]['id'] if r.get('count',0)>0 else '')" 2>/dev/null
 }
 
-_seed_aap_create_credential() {
+_fleet_aap_create_credential() {
   local org_id="$1"
   local cred_type_id="$2"
   local ssh_key_path="$3"
-  local cred_name="Seed Nodes SSH Key"
+  local cred_name="Fleet SSH Key"
 
   # Check if already exists
   local existing
-  existing=$(_seed_aap_find_resource "/credentials/" "$cred_name")
+  existing=$(_fleet_aap_find_resource "/credentials/" "$cred_name")
   if [ -n "$existing" ]; then
     echo "  ✓ Credential '${cred_name}' exists (id: ${existing})" >&2
     echo "$existing"
@@ -197,7 +197,7 @@ CRED_EOF
 )
 
   local resp
-  resp=$(_seed_aap_api POST "/credentials/" "$body")
+  resp=$(_fleet_aap_api POST "/credentials/" "$body")
   local cred_id
   cred_id=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
 
@@ -211,12 +211,12 @@ CRED_EOF
   fi
 }
 
-_seed_aap_create_inventory() {
+_fleet_aap_create_inventory() {
   local org_id="$1"
-  local inv_name="Seed Nodes"
+  local inv_name="Fleet"
 
   local existing
-  existing=$(_seed_aap_find_resource "/inventories/" "$inv_name")
+  existing=$(_fleet_aap_find_resource "/inventories/" "$inv_name")
   if [ -n "$existing" ]; then
     echo "  ✓ Inventory '${inv_name}' exists (id: ${existing})" >&2
     echo "$existing"
@@ -233,7 +233,7 @@ INV_EOF
 )
 
   local resp
-  resp=$(_seed_aap_api POST "/inventories/" "$body")
+  resp=$(_fleet_aap_api POST "/inventories/" "$body")
   local inv_id
   inv_id=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
 
@@ -247,7 +247,7 @@ INV_EOF
   fi
 }
 
-_seed_aap_create_host() {
+_fleet_aap_create_host() {
   local inv_id="$1"
   local hostname="$2"
   local host_ip="$3"
@@ -255,7 +255,7 @@ _seed_aap_create_host() {
 
   # Check if already exists
   local existing
-  existing=$(_seed_aap_find_resource "/hosts/" "$hostname")
+  existing=$(_fleet_aap_find_resource "/hosts/" "$hostname")
   if [ -n "$existing" ]; then
     echo "  ✓ Host '${hostname}' exists (id: ${existing})"
     return 0
@@ -275,7 +275,7 @@ HOST_EOF
 )
 
   local resp
-  resp=$(_seed_aap_api POST "/hosts/" "$body")
+  resp=$(_fleet_aap_api POST "/hosts/" "$body")
   local host_id
   host_id=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
 
@@ -288,7 +288,7 @@ HOST_EOF
   fi
 }
 
-_seed_aap_run_ping() {
+_fleet_aap_run_ping() {
   local inv_id="$1"
   local cred_id="$2"
 
@@ -306,7 +306,7 @@ PING_EOF
 )
 
   local resp
-  resp=$(_seed_aap_api POST "/inventories/${inv_id}/ad_hoc_commands/" "$body")
+  resp=$(_fleet_aap_api POST "/inventories/${inv_id}/ad_hoc_commands/" "$body")
   local job_id
   job_id=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
 
@@ -318,7 +318,7 @@ PING_EOF
     while [ "$attempts" -lt 15 ]; do
       sleep 2
       local status
-      status=$(_seed_aap_api GET "/ad_hoc_commands/${job_id}/")
+      status=$(_fleet_aap_api GET "/ad_hoc_commands/${job_id}/")
       local job_status
       job_status=$(echo "$status" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null)
 
@@ -349,28 +349,28 @@ PING_EOF
 # Public registration functions
 # -----------------------------------------------------------------------------
 
-seed_nodes_register_aap() {
+fleet_register_aap() {
   echo ""
-  echo "Registering seed nodes in AAP..."
+  echo "Registering fleet nodes in AAP..."
 
-  _seed_aap_get_auth || return 1
+  _fleet_aap_get_auth || return 1
 
   local org_id
-  org_id=$(_seed_aap_get_org_id)
+  org_id=$(_fleet_aap_get_org_id)
   if [ -z "$org_id" ]; then
     _err "Could not find Default organization"
     return 1
   fi
 
   local cred_type_id
-  cred_type_id=$(_seed_aap_get_credential_type_id)
+  cred_type_id=$(_fleet_aap_get_credential_type_id)
   if [ -z "$cred_type_id" ]; then
     _err "Could not find Machine credential type"
     return 1
   fi
 
   local host_gw_ip
-  host_gw_ip=$(_seed_aap_get_host_gateway_ip)
+  host_gw_ip=$(_fleet_aap_get_host_gateway_ip)
   if [ -z "$host_gw_ip" ]; then
     return 1
   fi
@@ -378,10 +378,10 @@ seed_nodes_register_aap() {
 
   # Status messages go to stderr, IDs to stdout
   local cred_id
-  cred_id=$(_seed_aap_create_credential "$org_id" "$cred_type_id" "$(_seed_ssh_private_key_path)")
+  cred_id=$(_fleet_aap_create_credential "$org_id" "$cred_type_id" "$(_fleet_ssh_private_key_path)")
 
   local inv_id
-  inv_id=$(_seed_aap_create_inventory "$org_id")
+  inv_id=$(_fleet_aap_create_inventory "$org_id")
 
   if [ -z "$inv_id" ] || [ -z "$cred_id" ]; then
     _err "Failed to create AAP resources"
@@ -389,7 +389,7 @@ seed_nodes_register_aap() {
   fi
 
   # Create hosts
-  for meta in "${SEED_NODES_DIR}"/node-*/meta; do
+  for meta in "${FLEET_DIR}"/node-*/meta; do
     [ -f "$meta" ] || continue
     local hostname port pid
     hostname=$(grep '^HOSTNAME=' "$meta" | cut -d= -f2)
@@ -398,45 +398,45 @@ seed_nodes_register_aap() {
 
     # Only register running nodes
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      _seed_aap_create_host "$inv_id" "$hostname" "$host_gw_ip" "$port"
+      _fleet_aap_create_host "$inv_id" "$hostname" "$host_gw_ip" "$port"
     fi
   done
 
   # Run ad-hoc ping
-  _seed_aap_run_ping "$inv_id" "$cred_id"
+  _fleet_aap_run_ping "$inv_id" "$cred_id"
 
   echo ""
-  echo "✓ Seed nodes registered in AAP"
-  echo "  Inventory: Seed Nodes"
-  echo "  Credential: Seed Nodes SSH Key"
-  echo "  AAP UI: ${_SEED_AAP_URL}"
+  echo "✓ Fleet nodes registered in AAP"
+  echo "  Inventory: Fleet"
+  echo "  Credential: Fleet SSH Key"
+  echo "  AAP UI: ${_FLEET_AAP_URL}"
 }
 
-seed_node_deregister_host() {
+fleet_node_deregister_host() {
   local hostname="$1"
 
-  _seed_aap_get_auth || return 1
+  _fleet_aap_get_auth || return 1
 
   local host_id
-  host_id=$(_seed_aap_find_resource "/hosts/" "$hostname")
+  host_id=$(_fleet_aap_find_resource "/hosts/" "$hostname")
   if [ -n "$host_id" ]; then
-    _seed_aap_api DELETE "/hosts/${host_id}/" >/dev/null
+    _fleet_aap_api DELETE "/hosts/${host_id}/" >/dev/null
     echo "  ✓ Deregistered host '${hostname}'"
   fi
 }
 
-seed_nodes_deregister_aap() {
-  _seed_aap_get_auth 2>/dev/null || return 0
+fleet_deregister_aap() {
+  _fleet_aap_get_auth 2>/dev/null || return 0
 
-  echo "Removing AAP seed node resources..."
+  echo "Removing AAP fleet resources..."
 
   # Remove all hosts from inventory
   local inv_id
-  inv_id=$(_seed_aap_find_resource "/inventories/" "Seed Nodes")
+  inv_id=$(_fleet_aap_find_resource "/inventories/" "Fleet")
   if [ -n "$inv_id" ]; then
     # Get all hosts in the inventory
     local hosts_resp
-    hosts_resp=$(_seed_aap_api GET "/inventories/${inv_id}/hosts/")
+    hosts_resp=$(_fleet_aap_api GET "/inventories/${inv_id}/hosts/")
     local host_ids
     host_ids=$(echo "$hosts_resp" | python3 -c "
 import sys, json
@@ -446,21 +446,21 @@ for h in r.get('results', []):
 " 2>/dev/null || true)
 
     for hid in $host_ids; do
-      _seed_aap_api DELETE "/hosts/${hid}/" >/dev/null 2>&1
+      _fleet_aap_api DELETE "/hosts/${hid}/" >/dev/null 2>&1
     done
 
-    _seed_aap_api DELETE "/inventories/${inv_id}/" >/dev/null 2>&1
-    echo "  ✓ Removed inventory 'Seed Nodes'"
+    _fleet_aap_api DELETE "/inventories/${inv_id}/" >/dev/null 2>&1
+    echo "  ✓ Removed inventory 'Fleet'"
   fi
 
   # Remove credential
   local cred_id
-  cred_id=$(_seed_aap_find_resource "/credentials/" "Seed Nodes SSH Key")
+  cred_id=$(_fleet_aap_find_resource "/credentials/" "Fleet SSH Key")
   if [ -n "$cred_id" ]; then
-    _seed_aap_api DELETE "/credentials/${cred_id}/" >/dev/null 2>&1
-    echo "  ✓ Removed credential 'Seed Nodes SSH Key'"
+    _fleet_aap_api DELETE "/credentials/${cred_id}/" >/dev/null 2>&1
+    echo "  ✓ Removed credential 'Fleet SSH Key'"
   fi
 
   # Clean cached gateway IP
-  rm -f "${SEED_NODES_DIR}/host_gateway_ip"
+  rm -f "${FLEET_DIR}/host_gateway_ip"
 }

@@ -89,11 +89,11 @@ for arg in "$@"; do
       kubeconfig)
         KUBECTL_KUBECONFIG="$arg"
         ;;
-      seed)
-        SEED_COUNT="$arg"
+      fleet)
+        FLEET_COUNT="$arg"
         ;;
       image)
-        SEED_IMAGE="$arg"
+        FLEET_IMAGE="$arg"
         ;;
     esac
     PENDING_FLAG=""
@@ -119,21 +119,21 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | nodes | help | --help | -h)
+    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | fleet | help | --help | -h)
       if [ -z "$COMMAND" ]; then
         COMMAND="$arg"
       else
         EXTRA_ARGS+=("$arg")
       fi
       ;;
-    --seed=*)
-      SEED_COUNT="${arg#*=}"
+    --fleet=*)
+      FLEET_COUNT="${arg#*=}"
       ;;
-    --seed)
-      PENDING_FLAG="seed"
+    --fleet)
+      PENDING_FLAG="fleet"
       ;;
     --image=*)
-      SEED_IMAGE="${arg#*=}"
+      FLEET_IMAGE="${arg#*=}"
       ;;
     --image)
       PENDING_FLAG="image"
@@ -143,7 +143,7 @@ for arg in "$@"; do
       EXTRA_ARGS+=("$arg")
       ;;
     add | remove | list)
-      # Subcommand args for nodes command
+      # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
     console | registry | mcp-server | registry-ui | olm | portal)
@@ -165,7 +165,7 @@ for arg in "$@"; do
       ;;
     *)
       # Commands that accept arbitrary args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "nodes" ]; then
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "fleet" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -190,10 +190,10 @@ fi
 source "${SCRIPT_DIR}/includes/infra-api.sh"
 # shellcheck source=includes/ingress-ca-trust.sh
 source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
-# shellcheck source=includes/seed-nodes.sh
-source "${SCRIPT_DIR}/includes/seed-nodes.sh"
-# shellcheck source=includes/seed-nodes-aap.sh
-source "${SCRIPT_DIR}/includes/seed-nodes-aap.sh"
+# shellcheck source=includes/fleet.sh
+source "${SCRIPT_DIR}/includes/fleet.sh"
+# shellcheck source=includes/fleet-aap.sh
+source "${SCRIPT_DIR}/includes/fleet-aap.sh"
 
 # -----------------------------------------------------------------------------
 # Prerequisite Checks
@@ -405,11 +405,11 @@ Cluster management:
   stop            Stop cluster
   ssh             SSH into cluster node
 
-Seed nodes (managed VMs for demos):
-  nodes add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
-  nodes list                    List running seed node VMs
-  nodes remove [N|name]         Remove seed node VMs
-  nodes destroy                 Remove all VMs and AAP resources
+Fleet (managed VMs for demos):
+  fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
+  fleet list                    List running fleet node VMs
+  fleet remove [N|name]         Remove fleet node VMs
+  fleet destroy                 Remove all VMs and AAP resources
 
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
@@ -418,8 +418,8 @@ Addons:
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
-  aap-demo deploy --seed 3 --image ~/rhel9.qcow2  # Deploy AAP + 3 VMs
-  aap-demo nodes add 2 --image ~/rhel9.qcow2      # Add 2 managed VMs
+  aap-demo deploy --fleet 3 --image ~/rhel9.qcow2  # Deploy AAP + 3 VMs
+  aap-demo fleet add 2 --image ~/rhel9.qcow2      # Add 2 managed VMs
   aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
 
 Run 'aap-demo help' for full documentation.
@@ -436,13 +436,13 @@ USAGE:
 OPTIONS:
     --kubeconfig=FILE   Path to kubeconfig file (default: ~/.kube/config)
     --context=NAME      kubectl context to use (default: current context)
-    --seed=N            Create N seed node VMs after deploy
-    --image=PATH        QCOW2 image for seed nodes (saved for reuse)
+    --fleet=N           Create N fleet node VMs after deploy
+    --image=PATH        QCOW2 image for fleet nodes (saved for reuse)
     NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
     QUIET=true          Suppress disclaimer
     FORCE=true          Force reinstall even if AAP exists
-    SEED_NODE_MEM=N     Seed node VM memory in MB (default: 1024)
-    SEED_NODE_CPUS=N    Seed node VM CPU count (default: 2)
+    FLEET_NODE_MEM=N     Fleet node VM memory in MB (default: 1024)
+    FLEET_NODE_CPUS=N    Fleet node VM CPU count (default: 2)
 
 COMMANDS (all infrastructure types):
     deploy          Deploy AAP 2.7 (operator + CR)
@@ -467,10 +467,10 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    nodes add [N] --image <path>  Create N managed RHEL VMs (default: 1)
-    nodes remove [N|name]  Remove last N VMs or a specific VM by name
-    nodes list             List running seed node VMs
-    nodes destroy          Remove all VMs and AAP resources
+    fleet add [N] --image <path>  Create N managed RHEL VMs (default: 1)
+    fleet remove [N|name]  Remove last N VMs or a specific VM by name
+    fleet list             List running fleet node VMs
+    fleet destroy          Remove all VMs and AAP resources
     enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
     redhat-status   Check Red Hat registry status (alias: rh-status)
@@ -495,11 +495,11 @@ ENVIRONMENT:
 EXAMPLES:
     aap-demo create                  # Create OpenShift Local cluster
     aap-demo deploy                  # Deploy AAP 2.7
-    aap-demo deploy --seed 3 --image ~/rhel9.qcow2  # Deploy AAP + 3 VMs
-    aap-demo nodes add 2 --image ~/rhel9.qcow2      # Add 2 managed VMs
-    aap-demo nodes list              # Show running seed nodes
-    aap-demo nodes remove 1          # Remove last seed node
-    aap-demo nodes destroy           # Remove all seed nodes
+    aap-demo deploy --fleet 3 --image ~/rhel9.qcow2  # Deploy AAP + 3 VMs
+    aap-demo fleet add 2 --image ~/rhel9.qcow2      # Add 2 managed VMs
+    aap-demo fleet list              # Show running fleet nodes
+    aap-demo fleet remove 1          # Remove last fleet node
+    aap-demo fleet destroy           # Remove all fleet nodes
     aap-demo status                  # Show cluster and AAP status
     aap-demo stop                    # Stop cluster
     aap-demo start                   # Start stopped cluster
@@ -1807,13 +1807,13 @@ cmd_status() {
     echo ""
   fi
 
-  # Show seed nodes
+  # Show fleet nodes
   local _node_count
-  _node_count=$(seed_nodes_count 2>/dev/null || echo "0")
+  _node_count=$(fleet_count 2>/dev/null || echo "0")
   if [ "$_node_count" -gt 0 ] 2>/dev/null; then
-    echo "Seed Nodes:"
+    echo "Fleet:"
     echo "-----------"
-    seed_nodes_list
+    fleet_list
     echo ""
   fi
 }
@@ -1864,9 +1864,9 @@ cmd_destroy() {
     echo ""
   fi
 
-  # Clean up seed nodes before destroying cluster
-  if [ -d "${HOME}/.aap-demo/nodes" ]; then
-    seed_nodes_destroy_all
+  # Clean up fleet nodes before destroying cluster
+  if [ -d "${HOME}/.aap-demo/fleet" ]; then
+    fleet_destroy_all
   fi
 
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
@@ -1885,10 +1885,10 @@ cmd_stop() {
   echo ""
   printf "\033[1maap-demo stop\033[0m - Stopping CRC cluster...\n"
 
-  # Stop seed node VMs (ephemeral — must be recreated after start)
-  if [ -d "${HOME}/.aap-demo/nodes" ]; then
-    seed_nodes_stop_all
-    echo "  (Seed nodes are ephemeral — recreate with: aap-demo nodes add)"
+  # Stop fleet node VMs (ephemeral — must be recreated after start)
+  if [ -d "${HOME}/.aap-demo/fleet" ]; then
+    fleet_stop_all
+    echo "  (Fleet nodes are ephemeral — recreate with: aap-demo fleet add)"
   fi
 
   crc stop || true
@@ -1982,8 +1982,8 @@ cmd_deploy() {
     exit 1
   fi
   echo "Connected to: $(kubectl config current-context 2>/dev/null)"
-  if [ -n "${SEED_COUNT:-}" ]; then
-    echo "  Seed nodes: ${SEED_COUNT} VM(s) will be created after AAP deploys successfully"
+  if [ -n "${FLEET_COUNT:-}" ]; then
+    echo "  Fleet nodes: ${FLEET_COUNT} VM(s) will be created after AAP deploys successfully"
   fi
   echo ""
 
@@ -2007,19 +2007,19 @@ cmd_deploy() {
   # Deploy AAP 2.7
   deploy_latest
 
-  # Create seed nodes if --seed was specified
-  if [ -n "${SEED_COUNT:-}" ]; then
-    local _seed_img="${SEED_IMAGE:-}"
-    if [ -z "$_seed_img" ]; then
-      _err "--seed requires --image <path-to-qcow2>"
-      echo "  Example: aap-demo deploy --seed 3 --image ~/rhel9.qcow2"
+  # Create fleet nodes if --fleet was specified
+  if [ -n "${FLEET_COUNT:-}" ]; then
+    local _fleet_img="${FLEET_IMAGE:-}"
+    if [ -z "$_fleet_img" ]; then
+      _err "--fleet requires --image <path-to-qcow2>"
+      echo "  Example: aap-demo deploy --fleet 3 --image ~/rhel9.qcow2"
       exit 1
     fi
-    _seed_img=$(cd "$(dirname "$_seed_img")" 2>/dev/null && echo "$(pwd)/$(basename "$_seed_img")")
-    seed_nodes_check_prereqs "$_seed_img" || exit 1
-    seed_nodes_create_all "$SEED_COUNT" "$_seed_img"
-    _seed_save_image_config "$_seed_img"
-    seed_nodes_register_aap
+    _fleet_img=$(cd "$(dirname "$_fleet_img")" 2>/dev/null && echo "$(pwd)/$(basename "$_fleet_img")")
+    fleet_check_prereqs "$_fleet_img" || exit 1
+    fleet_create_all "$FLEET_COUNT" "$_fleet_img"
+    _fleet_save_image_config "$_fleet_img"
+    fleet_register_aap
   fi
 }
 
@@ -2140,11 +2140,11 @@ deploy_latest() {
   if [ -z "$CSV_NAME" ]; then
     echo "✗ CSV not found after 10 minutes"
     echo "  Check: kubectl get subscription -n $NAMESPACE"
-    if [ -n "${SEED_COUNT:-}" ]; then
+    if [ -n "${FLEET_COUNT:-}" ]; then
       echo ""
-      echo "  Seed node VMs were not created — AAP must be running first."
+      echo "  Fleet node VMs were not created — AAP must be running first."
       echo "  Once AAP is deployed, create them with:"
-      echo "    aap-demo nodes add ${SEED_COUNT}${SEED_IMAGE:+ --image ${SEED_IMAGE}}"
+      echo "    aap-demo fleet add ${FLEET_COUNT}${FLEET_IMAGE:+ --image ${FLEET_IMAGE}}"
     fi
     exit 1
   fi
@@ -2304,10 +2304,10 @@ setup_namespace() {
     echo "  AAP requires a pull secret to pull images from registry.redhat.io"
     echo "  Download: https://console.redhat.com/openshift/install/pull-secret"
     echo "  Save to:  ~/.aap-demo/pull-secret.txt"
-    if [ -n "${SEED_COUNT:-}" ]; then
+    if [ -n "${FLEET_COUNT:-}" ]; then
       echo ""
-      echo "  Seed node VMs will be created automatically once AAP is deployed."
-      echo "  Add your pull secret and re-run: aap-demo deploy --seed ${SEED_COUNT}${SEED_IMAGE:+ --image ${SEED_IMAGE}}"
+      echo "  Fleet node VMs will be created automatically once AAP is deployed."
+      echo "  Add your pull secret and re-run: aap-demo deploy --fleet ${FLEET_COUNT}${FLEET_IMAGE:+ --image ${FLEET_IMAGE}}"
     fi
   fi
 }
@@ -2534,11 +2534,11 @@ watch_aap() {
     if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
       echo "WARNING: Deployment not complete after 60 minutes"
       echo "  Check: kubectl get aap -n $NAMESPACE -o yaml"
-      if [ -n "${SEED_COUNT:-}" ]; then
+      if [ -n "${FLEET_COUNT:-}" ]; then
         echo ""
-        echo "  Seed node VMs were not created — AAP must be running first."
+        echo "  Fleet node VMs were not created — AAP must be running first."
         echo "  Once AAP is deployed, create them with:"
-        echo "    aap-demo nodes add ${SEED_COUNT}${SEED_IMAGE:+ --image ${SEED_IMAGE}}"
+        echo "    aap-demo fleet add ${FLEET_COUNT}${FLEET_IMAGE:+ --image ${FLEET_IMAGE}}"
       fi
       return 1
     fi
@@ -2548,10 +2548,10 @@ watch_aap() {
 }
 
 # ---------------------------------------------------------------------------
-# Seed nodes: managed RHEL VMs for AAP demos
+# Fleet nodes: managed RHEL VMs for AAP demos
 # ---------------------------------------------------------------------------
 
-cmd_nodes() {
+cmd_fleet() {
   local subcmd="${1:-}"
   shift 2>/dev/null || true
 
@@ -2570,13 +2570,13 @@ cmd_nodes() {
       done
 
       # Also check top-level flags
-      count="${count:-${SEED_COUNT:-1}}"
-      image="${image:-${SEED_IMAGE:-}}"
+      count="${count:-${FLEET_COUNT:-1}}"
+      image="${image:-${FLEET_IMAGE:-}}"
 
       if [ -z "$image" ]; then
         _err "No QCOW2 image specified"
         echo ""
-        echo "Usage: aap-demo nodes add [count] --image <path-to-qcow2>"
+        echo "Usage: aap-demo fleet add [count] --image <path-to-qcow2>"
         echo ""
         echo "  count    Number of VMs to create (default: 1)"
         echo "  --image  Path to a RHEL/CentOS QCOW2 cloud image"
@@ -2587,10 +2587,10 @@ cmd_nodes() {
       image=$(cd "$(dirname "$image")" 2>/dev/null && echo "$(pwd)/$(basename "$image")")
 
       _verify_cluster || return 1
-      seed_nodes_check_prereqs "$image" || return 1
-      seed_nodes_create_all "$count" "$image"
-      _seed_save_image_config "$image"
-      seed_nodes_register_aap
+      fleet_check_prereqs "$image" || return 1
+      fleet_create_all "$count" "$image"
+      _fleet_save_image_config "$image"
+      fleet_register_aap
       ;;
     remove)
       local target="${1:-1}"
@@ -2604,51 +2604,51 @@ cmd_nodes() {
         done
         # Deregister from AAP first
         local indices
-        indices=$(_seed_running_indices)
+        indices=$(_fleet_running_indices)
         local to_remove
         to_remove=$(echo "$indices" | tail -n "$target")
         for idx in $to_remove; do
-          local hn="aap-node-${idx}"
-          seed_node_deregister_host "$hn" 2>/dev/null || true
+          local hn="aap-fleet-node-${idx}"
+          fleet_node_deregister_host "$hn" 2>/dev/null || true
         done
-        seed_nodes_remove_last "$target"
+        fleet_remove_last "$target"
       else
         # Remove by name
         local hn="$target"
-        [[ "$hn" != aap-node-* ]] && hn="aap-node-${hn}"
-        seed_node_deregister_host "$hn" 2>/dev/null || true
-        seed_nodes_remove_by_name "$target"
+        [[ "$hn" != aap-fleet-node-* ]] && hn="aap-fleet-node-${hn}"
+        fleet_node_deregister_host "$hn" 2>/dev/null || true
+        fleet_remove_by_name "$target"
       fi
       ;;
     list)
       echo ""
-      printf "\033[1mSeed Nodes\033[0m\n"
+      printf "\033[1mFleet Nodes\033[0m\n"
       echo ""
-      seed_nodes_list
+      fleet_list
       ;;
     destroy)
-      _verify_cluster 2>/dev/null && seed_nodes_deregister_aap 2>/dev/null || true
-      seed_nodes_destroy_all
+      _verify_cluster 2>/dev/null && fleet_deregister_aap 2>/dev/null || true
+      fleet_destroy_all
       ;;
     *)
-      echo "Usage: aap-demo nodes <subcommand>"
+      echo "Usage: aap-demo fleet <subcommand>"
       echo ""
       echo "Subcommands:"
-      echo "  add [count] --image <path>   Create seed node VMs"
-      echo "  remove [count|name]          Remove seed node VMs"
-      echo "  list                         List seed node VMs"
+      echo "  add [count] --image <path>   Create fleet node VMs"
+      echo "  remove [count|name]          Remove fleet node VMs"
+      echo "  list                         List fleet node VMs"
       echo "  destroy                      Remove all VMs and AAP resources"
       echo ""
       echo "Options:"
       echo "  --image <path>    Path to RHEL/CentOS QCOW2 cloud image"
-      echo "  SEED_NODE_MEM=N   VM memory in MB (default: 1024)"
-      echo "  SEED_NODE_CPUS=N  VM CPU count (default: 2)"
+      echo "  FLEET_NODE_MEM=N   VM memory in MB (default: 1024)"
+      echo "  FLEET_NODE_CPUS=N  VM CPU count (default: 2)"
       echo ""
       echo "Examples:"
-      echo "  aap-demo nodes add 3 --image ~/rhel9.qcow2"
-      echo "  aap-demo nodes list"
-      echo "  aap-demo nodes remove 1"
-      echo "  aap-demo nodes destroy"
+      echo "  aap-demo fleet add 3 --image ~/rhel9.qcow2"
+      echo "  aap-demo fleet list"
+      echo "  aap-demo fleet remove 1"
+      echo "  aap-demo fleet destroy"
       ;;
   esac
 }
@@ -2857,8 +2857,8 @@ case "$COMMAND" in
   test)
     cmd_test "${EXTRA_ARGS[@]}"
     ;;
-  nodes)
-    cmd_nodes "${EXTRA_ARGS[@]}"
+  fleet)
+    cmd_fleet "${EXTRA_ARGS[@]}"
     ;;
   enable)
     cmd_enable "${EXTRA_ARGS[0]:-}"
