@@ -500,6 +500,57 @@ fleet_list() {
   fi
 }
 
+_fleet_get_available_ram_mb() {
+  if [[ "$OSTYPE" == darwin* ]]; then
+    local page_size free_pages
+    page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 4096)
+    free_pages=$(vm_stat 2>/dev/null | awk '/Pages free:/{gsub(/\./, ""); print $3}')
+    local inactive_pages
+    inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive:/{gsub(/\./, ""); print $3}')
+    echo $(( (${free_pages:-0} + ${inactive_pages:-0}) * page_size / 1024 / 1024 ))
+  else
+    free -m 2>/dev/null | awk '/Mem:/{print $7}'
+  fi
+}
+
+_fleet_check_ram() {
+  local requested="$1"
+  local existing
+  existing=$(fleet_count 2>/dev/null || echo 0)
+  local total_after=$((existing + requested))
+  local ram_needed=$((total_after * FLEET_NODE_MEM))
+
+  local available
+  available=$(_fleet_get_available_ram_mb)
+  if [ -z "$available" ] || [ "$available" -eq 0 ] 2>/dev/null; then
+    return 0
+  fi
+
+  if [ "$ram_needed" -gt "$available" ]; then
+    _err "Not enough memory for ${requested} node(s)"
+    echo ""
+    echo "  Each node uses ${FLEET_NODE_MEM} MB RAM"
+    [ "$existing" -gt 0 ] && echo "  Already running: ${existing} node(s) (${existing} × ${FLEET_NODE_MEM} MB)"
+    echo "  Total needed:    ${total_after} × ${FLEET_NODE_MEM} MB = ${ram_needed} MB"
+    echo "  Available:       ${available} MB"
+    echo ""
+    echo "  Options:"
+    echo "    • Request fewer nodes"
+    echo "    • Reduce per-node memory: FLEET_NODE_MEM=512 aap-demo fleet add ${requested}"
+    echo "    • Remove existing nodes first: aap-demo fleet destroy"
+    return 1
+  fi
+
+  local ram_after_pct=$(( ram_needed * 100 / available ))
+  if [ "$ram_after_pct" -gt 80 ]; then
+    printf "  \033[1;33mWARNING: Fleet nodes will use %d MB of %d MB available RAM (%d%%)\033[0m\n"       "$ram_needed" "$available" "$ram_after_pct"
+    echo "  Reduce with: FLEET_NODE_MEM=512"
+    echo ""
+  fi
+
+  return 0
+}
+
 fleet_create_all() {
   local count="$1"
   local image_path="$2"
@@ -514,6 +565,9 @@ fleet_create_all() {
     echo "  Use: --image <path-to-qcow2>"
     return 1
   fi
+
+  # Check available RAM before creating nodes
+  _fleet_check_ram "$count" || return 1
 
   _fleet_generate_ssh_key
 
