@@ -12,6 +12,56 @@ FLEET_NODE_CPUS="${FLEET_NODE_CPUS:-2}"
 FLEET_NODE_PORT_BASE=2200
 
 # -----------------------------------------------------------------------------
+# Migration from seed-nodes → fleet (one-time)
+# -----------------------------------------------------------------------------
+
+_fleet_migrate_from_seed_nodes() {
+  local old_dir="${HOME}/.aap-demo/nodes"
+  [ -d "$old_dir" ] || return 0
+  # Already migrated if fleet dir has node subdirs
+  if compgen -G "${FLEET_DIR}/node-*" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Migrating fleet data from ~/.aap-demo/nodes/ to ~/.aap-demo/fleet/..."
+  mkdir -p "$FLEET_DIR"
+
+  # Move shared files
+  for f in base.qcow2 ssh_key ssh_key.pub host_gateway_ip; do
+    [ -f "${old_dir}/${f}" ] && mv "${old_dir}/${f}" "${FLEET_DIR}/${f}"
+  done
+
+  # Move node directories and update hostnames in meta files
+  for node_dir in "${old_dir}"/node-*; do
+    [ -d "$node_dir" ] || continue
+    local name
+    name=$(basename "$node_dir")
+    mv "$node_dir" "${FLEET_DIR}/${name}"
+    # Update hostname in meta (aap-node-N → aap-fleet-node-N)
+    if [ -f "${FLEET_DIR}/${name}/meta" ]; then
+      sed -i.bak 's/^HOSTNAME=aap-node-/HOSTNAME=aap-fleet-node-/' "${FLEET_DIR}/${name}/meta"
+      rm -f "${FLEET_DIR}/${name}/meta.bak"
+    fi
+  done
+
+  # Migrate SEED_IMAGE → FLEET_IMAGE in config
+  local config="${HOME}/.aap-demo/config"
+  if [ -f "$config" ] && grep -q '^SEED_IMAGE=' "$config"; then
+    if ! grep -q '^FLEET_IMAGE=' "$config"; then
+      sed -i.bak 's/^SEED_IMAGE=/FLEET_IMAGE=/' "$config" && rm -f "${config}.bak"
+    else
+      sed -i.bak '/^SEED_IMAGE=/d' "$config" && rm -f "${config}.bak"
+    fi
+  fi
+
+  rmdir "$old_dir" 2>/dev/null || true
+  echo "  ✓ Migration complete"
+}
+
+_fleet_migrate_from_seed_nodes
+
+
+# -----------------------------------------------------------------------------
 # Architecture detection
 # -----------------------------------------------------------------------------
 
