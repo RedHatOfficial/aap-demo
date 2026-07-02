@@ -78,7 +78,7 @@ CoreDNS fixes general in-cluster DNS; OAuth-specific workarounds address TLS and
 ### Neutral
 
 - External (browser) traffic still uses nip.io → 127.0.0.1 — unchanged
-- Ingress CA trust is separate (see ADR-010 / `ingress-ca-trust.sh`)
+- Ingress CA trust is separate (see ADR-015 / `ingress-ca-trust.sh`)
 
 ## Alternatives Considered
 

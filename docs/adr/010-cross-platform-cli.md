@@ -69,6 +69,9 @@ CA saved to `~/.aap-demo/crc-ingress-ca.crt`; `CURL_CA_BUNDLE` exported for CLI 
 
 Skip with `AAP_DEMO_TRUST_CA=false`.
 
+See [ADR-015](015-ingress-ca-user-store-trust.md) for the user-store trust strategy
+(Windows CurrentUser, Linux NSS, macOS keychain).
+
 ### Configuration parity
 
 Both platforms read `%USERPROFILE%\.aap-demo\config` / `~/.aap-demo/config` with `CRC_PRESET`,

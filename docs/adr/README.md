@@ -54,6 +54,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [012](012-scc-and-pod-security.md) | Security Context Constraints and Pod Security | Accepted |
 | [013](013-in-cluster-registry.md) | In-Cluster Container Registry | Accepted |
 | [014](014-testing-strategy.md) | CLI Testing Strategy | Accepted |
+| [015](015-ingress-ca-user-store-trust.md) | Ingress CA Trust via User Certificate Stores | Accepted |
 
 ## Creating a New ADR
 
