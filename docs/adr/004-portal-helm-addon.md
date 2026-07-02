@@ -1,7 +1,7 @@
 # ADR-004: Portal Helm Addon Architecture
 
 **Status:** Accepted
-**Date:** 2026-06-25
+**Date:** 2026-06-26
 **Author:** DevOps Automator Agent
 
 ## Context

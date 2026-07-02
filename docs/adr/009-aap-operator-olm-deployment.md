@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-07-02
+**Date**: 2026-06-10
 
 **Authors**: aap-demo maintainers
 
