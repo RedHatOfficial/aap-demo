@@ -121,7 +121,34 @@ SSH access is still needed for other operations (`aap-demo ssh`, registry mirror
 - Users would still encounter timing bugs if they chose nip.io
 - Adds CLI complexity for marginal benefit
 
-### Alternative 3: Automated DNS Setup
+### Alternative 3: /etc/hosts File Entries
+
+**Description**: Add static entries to `/etc/hosts` for known AAP routes instead of configuring DNS resolver.
+
+**Why rejected**:
+
+- `/etc/hosts` doesn't support wildcards — must list every route individually
+- AAP creates 5+ routes dynamically (controller, hub, eda, gateway, automation-job-*...)
+- Additional services or test deployments require manual `/etc/hosts` updates
+- Routes change between AAP versions or deployment configurations
+- Windows has 4KB `/etc/hosts` file size limit (can hit with many entries)
+- Brittle: forgot one route = broken functionality, hard to debug
+
+**Example of the problem**:
+
+```bash
+# Would need ALL of these (and more as AAP adds services):
+127.0.0.1 aap-aap-operator.apps.crc.testing
+127.0.0.1 controller-aap-operator.apps.crc.testing
+127.0.0.1 hub-aap-operator.apps.crc.testing
+127.0.0.1 eda-aap-operator.apps.crc.testing
+127.0.0.1 gateway-aap-operator.apps.crc.testing
+# ... plus any job execution routes, webhooks, etc.
+```
+
+DNS resolver with wildcard (`*.apps.crc.testing`) handles all current and future routes automatically.
+
+### Alternative 4: Automated DNS Setup
 
 **Description**: Keep `crc.testing` but auto-configure host DNS during `aap-demo create`.
 
