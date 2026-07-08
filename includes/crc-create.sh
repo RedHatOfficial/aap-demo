@@ -25,13 +25,15 @@ _NC='\033[0m'
 
 configure_coredns() {
   local current_preset route_domain current_domain escaped_domain current_corefile corefile
-  # Use centralized SSH key detection from infra-crc.sh
-  # CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
-  if [ -z "$CRC_SSH_KEY" ]; then
+  local crc_ssh_key crc_ssh_opts
+
+  # Re-detect SSH key now that cluster is running
+  if crc_ssh_key="$(_detect_crc_ssh_key 2>/dev/null)"; then
+    crc_ssh_opts="-i ${crc_ssh_key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+  else
     echo "ERROR: No CRC SSH key found. Cannot configure CoreDNS." >&2
     return 1
   fi
-  local crc_ssh_opts="$CRC_SSH_OPTS"
 
   current_preset="${CURRENT_PRESET:-}"
   if [ -z "$current_preset" ]; then
@@ -287,8 +289,10 @@ fi
 # ---------------------------------------------------------------------------
 # Configure nip.io baseDomain (MicroShift only)
 # ---------------------------------------------------------------------------
-# CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
-if [ -z "$CRC_SSH_KEY" ]; then
+# Re-detect SSH key now that cluster is running (sourcing infra-crc.sh happened before crc start)
+if CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)"; then
+  CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+else
   echo "ERROR: No CRC SSH key found. Cannot configure nip.io baseDomain." >&2
   exit 1
 fi
