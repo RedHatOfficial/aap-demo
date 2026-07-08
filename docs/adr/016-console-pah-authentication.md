@@ -50,10 +50,16 @@ Implement a **multi-source authentication and collection management system** tha
 
 1. **Detects credentials** from local config files (`~/.aap-demo/galaxy-token`,
    `~/.aap-demo/pah-config.yml`)
-2. **Auto-generates ansible.cfg** with prioritized galaxy servers
-3. **Installs collections** from `config/requirements.yml` during `deploy`
-4. **Validates authentication** before attempting collection downloads
-5. **Reports source status** in `aap-demo status`
+2. **Configures AAP's integrated Private Automation Hub** with console.redhat.com
+   and external PAH remotes
+3. **Syncs certified collections** into local PAH from console.redhat.com
+4. **Auto-generates ansible.cfg** with prioritized galaxy servers for local use
+5. **Validates authentication** before attempting collection downloads
+6. **Reports source status** in `aap-demo status`
+
+**Key insight**: AAP 2.7 includes an integrated Private Automation Hub instance.
+Rather than configuring Controller to pull from external sources, we configure
+PAH to **sync** from console.redhat.com, then Controller uses the local PAH.
 
 ### Credential detection and storage
 
@@ -129,9 +135,13 @@ console_redhat and galaxy in `server_list`).
 
 During `aap-demo deploy`:
 
-1. Detect credentials from `~/.aap-demo/`
-2. Generate `ansible.cfg` in `~/.aap-demo/ansible.cfg`
-3. Read `config/requirements.yml`:
+1. **Detect credentials** from `~/.aap-demo/`
+2. **Configure AAP PAH remotes** via Pulp API:
+   - Update `rh-certified` remote with offline token from `galaxy-token`
+   - Trigger background sync of certified collections
+   - Create `external-pah` remote if `pah-config.yml` exists
+3. **Generate ansible.cfg** in `~/.aap-demo/ansible.cfg` for local dev use
+4. **Install collections locally** (optional) from `config/requirements.yml`:
 
    ```yaml
    collections:
@@ -140,17 +150,29 @@ During `aap-demo deploy`:
      - name: containers.podman
    ```
 
-4. Run `ansible-galaxy collection install -r config/requirements.yml` with
-   `ANSIBLE_CONFIG=~/.aap-demo/ansible.cfg`
-5. Report installation status:
-   - Success → log collection name and version
-   - Auth failure → clear error with link to token generation
-   - Missing collection → suggest checking PAH or console.redhat.com availability
-   - Network failure → retry once, then warn and continue
+#### PAH Remote Configuration
 
-Collections install to `~/.ansible/collections` by default (not cluster-bound).
-Cluster recreate does **not** re-download already installed collections unless
-versions change.
+Uses Pulp API (`/api/galaxy/pulp/api/v3/`) to configure collection sources:
+
+```bash
+# Update rh-certified remote token
+PATCH /remotes/ansible/collection/{uuid}/
+{
+  "token": "<offline-token-from-galaxy-token>"
+}
+
+# Sync repository
+POST /repositories/ansible/ansible/{uuid}/sync/
+{
+  "mirror": false
+}
+```
+
+Collections sync into PAH's `rh-certified` repository. Controller jobs then
+pull from local PAH (`https://aap.../api/galaxy/content/rh-certified/`), not
+external console.redhat.com.
+
+Local `ansible.cfg` generation remains for CLI/dev use outside Controller.
 
 ### Error handling and user feedback
 

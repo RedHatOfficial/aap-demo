@@ -2136,7 +2136,7 @@ EOF
   if [ -n "$GALAXY_TOKEN" ]; then
     cat >> "$cfg_file" <<EOF
 [galaxy_server.console]
-url = https://console.redhat.com/api/automation-hub/
+url = https://console.redhat.com/api/automation-hub/content/published/
 token = ${GALAXY_TOKEN}
 
 EOF
@@ -2175,6 +2175,108 @@ install_collections() {
     echo "  Token setup: https://console.redhat.com/ansible/automation-hub/token"
     return 1
   fi
+}
+
+configure_pah_remotes() {
+  echo "Configuring Private Automation Hub remotes..."
+
+  # Detect credentials
+  detect_galaxy_credentials
+
+  # Get AAP route and admin password
+  local aap_route
+  aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
+  if [ -z "$aap_route" ]; then
+    _err "AAP route not found"
+    return 1
+  fi
+
+  local admin_pass
+  admin_pass=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+  if [ -z "$admin_pass" ]; then
+    _err "Admin password not found"
+    return 1
+  fi
+
+  local api_base="https://${aap_route}/api/galaxy/pulp/api/v3"
+
+  # Configure rh-certified remote if token present
+  if [ -n "$GALAXY_TOKEN" ]; then
+    printf "  Configuring console.redhat.com remote... "
+
+    # Find rh-certified remote
+    local remote_href
+    remote_href=$(curl -sk -u "admin:${admin_pass}" \
+      "${api_base}/remotes/ansible/collection/?name=rh-certified" 2>/dev/null \
+      | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+
+    if [ -n "$remote_href" ]; then
+      # Update token
+      local task_url
+      task_url=$(curl -sk -u "admin:${admin_pass}" \
+        -X PATCH \
+        -H "Content-Type: application/json" \
+        -d "{\"token\": \"${GALAXY_TOKEN}\"}" \
+        "${api_base}${remote_href}" 2>/dev/null \
+        | python3 -c "import sys, json; print(json.load(sys.stdin).get('task', ''))" 2>/dev/null)
+
+      if [ -n "$task_url" ]; then
+        # Wait for task
+        for i in {1..10}; do
+          sleep 1
+          local state
+          state=$(curl -sk -u "admin:${admin_pass}" "${api_base}${task_url}" 2>/dev/null \
+            | python3 -c "import sys, json; print(json.load(sys.stdin).get('state', ''))" 2>/dev/null)
+          [ "$state" = "completed" ] && break
+        done
+        echo "✓"
+
+        # Trigger sync
+        printf "  Syncing certified collections... "
+        local repo_href
+        repo_href=$(curl -sk -u "admin:${admin_pass}" \
+          "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
+          | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+
+        if [ -n "$repo_href" ]; then
+          curl -sk -u "admin:${admin_pass}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"mirror": false}' \
+            "${api_base}${repo_href}sync/" >/dev/null 2>&1
+          echo "✓ (running in background)"
+        fi
+      fi
+    fi
+  else
+    printf "  ${_YELLOW}▸${_NC} No galaxy token found, skipping rh-certified sync\n"
+  fi
+
+  # Configure PAH remote if configured
+  if [ -n "$PAH_URL" ] && [ -n "$PAH_TOKEN" ]; then
+    printf "  Configuring Private Automation Hub remote... "
+
+    # Create PAH remote
+    local create_result
+    create_result=$(curl -sk -u "admin:${admin_pass}" \
+      -X POST \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"name\": \"external-pah\",
+        \"url\": \"${PAH_URL}\",
+        \"token\": \"${PAH_TOKEN}\",
+        \"tls_validation\": true
+      }" \
+      "${api_base}/remotes/ansible/collection/" 2>&1)
+
+    if echo "$create_result" | grep -q '"pulp_href"'; then
+      echo "✓"
+    else
+      echo "⚠ (may already exist or invalid config)"
+    fi
+  fi
+
+  echo "  ✓ PAH configuration complete"
 }
 
 cmd_setup() {
@@ -2483,6 +2585,10 @@ deploy_latest() {
 
     # Watch deployment
     watch_aap
+
+    # Configure PAH remotes with galaxy credentials
+    echo ""
+    configure_pah_remotes
 
     # Install collections from requirements.yml
     echo ""
