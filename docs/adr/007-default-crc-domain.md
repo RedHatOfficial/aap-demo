@@ -112,6 +112,72 @@ SSH access is still needed for other operations (`aap-demo ssh`, registry mirror
 - Risk of breaking existing DNS config
 - Better as optional convenience feature after manual setup proven
 
+**Implementation requirements** (if automated in future):
+
+**macOS**:
+
+```bash
+# Create /etc/resolver/testing (requires sudo)
+sudo mkdir -p /etc/resolver
+sudo tee /etc/resolver/testing > /dev/null <<EOF
+nameserver 127.0.0.1
+domain testing
+search_order 1
+EOF
+
+# Verify with: scutil --dns | grep testing
+```
+
+**Linux (systemd-resolved)**:
+
+```bash
+# Add DNS stub for .testing domain
+sudo mkdir -p /etc/systemd/resolved.conf.d
+sudo tee /etc/systemd/resolved.conf.d/testing.conf > /dev/null <<EOF
+[Resolve]
+DNS=127.0.0.1
+Domains=~testing
+EOF
+
+sudo systemctl restart systemd-resolved
+
+# Verify with: resolvectl query aap.apps.crc.testing
+```
+
+**Linux (NetworkManager + dnsmasq)**:
+
+```bash
+# Add dnsmasq config for .testing domain
+sudo tee /etc/NetworkManager/dnsmasq.d/testing.conf > /dev/null <<EOF
+server=/testing/127.0.0.1
+EOF
+
+sudo systemctl restart NetworkManager
+
+# Verify with: dig aap.apps.crc.testing
+```
+
+**Windows (PowerShell as Administrator)**:
+
+```powershell
+# Add hosts file entries (wildcard not supported, must add per-route)
+# Or configure local DNS server (dnsmasq-for-windows, Acrylic DNS Proxy)
+
+# Example hosts approach (limited):
+Add-Content -Path C:\Windows\System32\drivers\etc\hosts -Value "127.0.0.1 aap.apps.crc.testing"
+
+# Better: Install Acrylic DNS Proxy and configure *.testing → 127.0.0.1
+```
+
+**Automation challenges**:
+
+- **Privilege escalation**: All platforms require admin/sudo for DNS config
+- **Conflict detection**: Must check for existing `.testing` DNS config
+- **Rollback on destroy**: Must track what was auto-configured vs manual
+- **Platform detection**: Distinguish systemd-resolved vs NetworkManager vs other
+- **Verification**: Must test DNS resolution works before proceeding
+- **User consent**: Explicit warning before modifying system DNS config
+
 ## References
 
 - Issue: [#39 - aap-demo ssh fails on MicroShift preset](https://github.com/RedHatOfficial/aap-demo/issues/39)
