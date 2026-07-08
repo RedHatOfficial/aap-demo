@@ -66,6 +66,11 @@ if [ -f "$AAP_DEMO_CONFIG" ]; then
   done <"$AAP_DEMO_CONFIG"
 fi
 
+# Collection authentication environment variables
+GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}"
+PAH_CONFIG_FILE="${PAH_CONFIG_FILE:-$HOME/.aap-demo/pah-config.yml}"
+SKIP_COLLECTIONS="${SKIP_COLLECTIONS:-false}"
+
 # Infrastructure type (OpenShift Local only)
 INFRA_TYPE="crc"
 KUBECTL_CONTEXT=""
@@ -1113,8 +1118,57 @@ cmd_diagnose() {
   echo ""
 
   # =========================================================================
+  # Collection Sources
+  # =========================================================================
+  echo ""
+  echo "Collection Sources:"
+
+  # Check ansible.cfg existence
+  if [ -f "ansible.cfg" ]; then
+    _check_pass "ansible.cfg exists"
+
+    # Check for galaxy server configuration
+    if grep -q "\[galaxy\]" ansible.cfg; then
+      _check_pass "Galaxy server configuration present"
+    else
+      _check_warn "No galaxy server configuration in ansible.cfg"
+      _check_info "Run: aap-demo deploy to regenerate config"
+    fi
+  else
+    _check_warn "ansible.cfg not found"
+  fi
+
+  # Check credential files
+  if [ -f "$HOME/.aap-demo/galaxy-token" ]; then
+    _check_pass "console.redhat.com token present"
+  else
+    _check_info "console.redhat.com token not configured"
+    _check_info "Get token from: https://console.redhat.com/ansible/automation-hub/token"
+  fi
+
+  if [ -f "$HOME/.aap-demo/pah-config.yml" ]; then
+    _check_pass "Private Automation Hub config present"
+  else
+    _check_info "Private Automation Hub not configured (optional)"
+  fi
+
+  # Check collection installation
+  if command -v ansible-galaxy >/dev/null 2>&1; then
+    required_collections=("ansible.controller" "infra.aap_configuration")
+    for collection in "${required_collections[@]}"; do
+      if ansible-galaxy collection list 2>/dev/null | grep -q "^$collection"; then
+        _check_pass "Collection $collection installed"
+      else
+        _check_warn "Collection $collection not found"
+        _check_info "Run: aap-demo deploy to install collections"
+      fi
+    done
+  fi
+
+  # =========================================================================
   # DNS
   # =========================================================================
+  echo ""
   echo "DNS:"
   local coredns_running
   coredns_running=$(kubectl get pods -n openshift-dns --no-headers 2>/dev/null | grep -c "Running" || echo "0")
@@ -1767,8 +1821,30 @@ cmd_status() {
   fi
 
   # Show addons with URLs or enable instructions
+  echo ""
+  echo "Collection Sources:"
+  echo "-------------------"
+
+  if [ -n "$PAH_URL" ]; then
+    printf "  %-20s %s\n" "Private Hub:" "$PAH_URL"
+  fi
+
+  if [ -n "$GALAXY_TOKEN" ]; then
+    printf "  %-20s %s\n" "Red Hat Certified:" "console.redhat.com (authenticated)"
+  else
+    printf "  %-20s %s\n" "Red Hat Certified:" "Not configured"
+  fi
+
+  printf "  %-20s %s\n" "Community:" "galaxy.ansible.com"
+
+  if command -v ansible-galaxy >/dev/null 2>&1; then
+    collection_count=$(ansible-galaxy collection list 2>/dev/null | grep -c "^ansible\|^infra" || echo "0")
+    printf "  %-20s %s\n" "Installed:" "$collection_count certified collections"
+  fi
+
   local saved_addons
   saved_addons=$(_addons_list)
+  echo ""
   echo "Addons:"
   echo "-------"
   for a in $AVAILABLE_ADDONS; do
@@ -1922,6 +1998,173 @@ cmd_create() {
   }
 }
 
+detect_galaxy_credentials() {
+  # Detect console.redhat.com offline token
+  if [ -f "$GALAXY_TOKEN_FILE" ]; then
+    GALAXY_TOKEN=$(cat "$GALAXY_TOKEN_FILE")
+    export GALAXY_TOKEN
+  fi
+
+  # Detect PAH configuration
+  if [ -f "$PAH_CONFIG_FILE" ]; then
+    # Parse YAML for URL and authentication
+    if command -v yq >/dev/null 2>&1; then
+      PAH_URL=$(yq eval '.url' "$PAH_CONFIG_FILE" 2>/dev/null)
+      PAH_TOKEN=$(yq eval '.token' "$PAH_CONFIG_FILE" 2>/dev/null)
+      PAH_USER=$(yq eval '.username' "$PAH_CONFIG_FILE" 2>/dev/null)
+      PAH_PASS=$(yq eval '.password' "$PAH_CONFIG_FILE" 2>/dev/null)
+    else
+      # Fallback: basic grep parsing
+      PAH_URL=$(grep -E '^\s*url:' "$PAH_CONFIG_FILE" | sed 's/^[^:]*: *//' | tr -d '"' | tr -d "'")
+      PAH_TOKEN=$(grep -E '^\s*token:' "$PAH_CONFIG_FILE" | sed 's/^[^:]*: *//' | tr -d '"' | tr -d "'")
+      PAH_USER=$(grep -E '^\s*username:' "$PAH_CONFIG_FILE" | sed 's/^[^:]*: *//' | tr -d '"' | tr -d "'")
+      PAH_PASS=$(grep -E '^\s*password:' "$PAH_CONFIG_FILE" | sed 's/^[^:]*: *//' | tr -d '"' | tr -d "'")
+    fi
+
+    export PAH_URL PAH_TOKEN PAH_USER PAH_PASS
+  fi
+}
+
+validate_galaxy_token() {
+  if [ -z "$GALAXY_TOKEN" ]; then
+    return 0  # Not configured, skip validation
+  fi
+
+  # Check token format (offline tokens are typically 1500+ chars)
+  local token_len=${#GALAXY_TOKEN}
+  if [ "$token_len" -lt 100 ]; then
+    printf "${_RED}▸${_NC} Invalid galaxy token format (too short: $token_len chars)\n"
+    echo "  Offline tokens from console.redhat.com are typically 1500+ characters"
+    echo "  Get token from: https://console.redhat.com/ansible/automation-hub/token"
+    return 1
+  fi
+
+  return 0
+}
+
+validate_pah_config() {
+  if [ -z "$PAH_URL" ]; then
+    return 0  # Not configured, skip validation
+  fi
+
+  # Check URL format
+  if ! [[ "$PAH_URL" =~ ^https?:// ]]; then
+    printf "${_RED}▸${_NC} Invalid PAH URL format: $PAH_URL\n"
+    echo "  URL must start with http:// or https://"
+    return 1
+  fi
+
+  # Check authentication method
+  if [ -z "$PAH_TOKEN" ] && [ -z "$PAH_USER" ]; then
+    printf "${_RED}▸${_NC} PAH config missing authentication\n"
+    echo "  Provide either 'token' or 'username'/'password' in $PAH_CONFIG_FILE"
+    return 1
+  fi
+
+  return 0
+}
+
+generate_ansible_cfg() {
+  local cfg_file="${1:-ansible.cfg}"
+  local galaxy_servers=""
+
+  # Build galaxy_server_list based on available credentials
+  if [ -n "$PAH_URL" ]; then
+    galaxy_servers+="pah,"
+  fi
+  if [ -n "$GALAXY_TOKEN" ]; then
+    galaxy_servers+="console,"
+  fi
+  galaxy_servers+="community"
+
+  # Remove trailing comma
+  galaxy_servers="${galaxy_servers%,}"
+
+  # Generate ansible.cfg with [galaxy] section
+  cat > "$cfg_file" <<'EOF'
+[defaults]
+roles_path = ./ansible/roles
+inventory = ./ansible/inventory/localhost.yml
+gathering = smart
+fact_caching = jsonfile
+fact_caching_connection = /tmp/ansible_facts
+fact_caching_timeout = 3600
+
+EOF
+
+  # Add galaxy configuration
+  cat >> "$cfg_file" <<EOF
+[galaxy]
+server_list = ${galaxy_servers}
+
+EOF
+
+  # Append PAH server configuration
+  if [ -n "$PAH_URL" ]; then
+    cat >> "$cfg_file" <<EOF
+[galaxy_server.pah]
+url = ${PAH_URL}
+EOF
+
+    if [ -n "$PAH_TOKEN" ]; then
+      cat >> "$cfg_file" <<EOF
+token = ${PAH_TOKEN}
+
+EOF
+    elif [ -n "$PAH_USER" ] && [ -n "$PAH_PASS" ]; then
+      cat >> "$cfg_file" <<EOF
+username = ${PAH_USER}
+password = ${PAH_PASS}
+
+EOF
+    fi
+  fi
+
+  # Append console.redhat.com server configuration
+  if [ -n "$GALAXY_TOKEN" ]; then
+    cat >> "$cfg_file" <<EOF
+[galaxy_server.console]
+url = https://console.redhat.com/api/automation-hub/
+token = ${GALAXY_TOKEN}
+
+EOF
+  fi
+
+  # Append community galaxy server
+  cat >> "$cfg_file" <<'EOF'
+[galaxy_server.community]
+url = https://galaxy.ansible.com/
+
+EOF
+
+  printf "${_GREEN}▸${_NC} Generated ansible.cfg with galaxy servers: $galaxy_servers\n"
+}
+
+install_collections() {
+  local requirements_file="${1:-config/requirements.yml}"
+
+  if [ "$SKIP_COLLECTIONS" = "true" ]; then
+    printf "${_YELLOW}▸${_NC} Skipping collection installation (SKIP_COLLECTIONS=true)\n"
+    return 0
+  fi
+
+  if [ ! -f "$requirements_file" ]; then
+    printf "${_YELLOW}▸${_NC} No $requirements_file found, skipping collection installation\n"
+    return 0
+  fi
+
+  echo "Installing collections from $requirements_file..."
+  if ansible-galaxy collection install -r "$requirements_file" 2>&1; then
+    echo "  ✓ Collections installed successfully"
+    return 0
+  else
+    _err "Failed to install collections"
+    echo "  Check authentication to galaxy servers or run with SKIP_COLLECTIONS=true"
+    echo "  Token setup: https://console.redhat.com/ansible/automation-hub/token"
+    return 1
+  fi
+}
+
 cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
 }
@@ -2023,6 +2266,12 @@ deploy_latest() {
     exit 1
   fi
 
+  # Detect and validate collection authentication
+  detect_galaxy_credentials
+  validate_galaxy_token || exit 1
+  validate_pah_config || exit 1
+  generate_ansible_cfg
+
   # Setup namespace (creates aap-operator namespace + pull secret)
   setup_namespace
   verify_coredns
@@ -2115,6 +2364,10 @@ deploy_latest() {
 
     # Watch deployment
     watch_aap
+
+    # Install collections from requirements.yml
+    echo ""
+    install_collections
   else
     echo ""
     echo "✓ AAP operator deployed!"
