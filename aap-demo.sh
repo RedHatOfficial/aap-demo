@@ -2209,7 +2209,7 @@ configure_pah_remotes() {
       | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$remote_href" ]; then
-      # Update token
+      # Update existing token
       local task_url
       task_url=$(curl -sk -u "admin:${admin_pass}" \
         -X PATCH \
@@ -2228,9 +2228,27 @@ configure_pah_remotes() {
           [ "$state" = "completed" ] && break
         done
         echo "✓"
+      fi
+    else
+      # Create rh-certified remote
+      local create_result
+      create_result=$(curl -sk -u "admin:${admin_pass}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"name\": \"rh-certified\",
+          \"url\": \"https://console.redhat.com/api/automation-hub/content/published/\",
+          \"token\": \"${GALAXY_TOKEN}\",
+          \"tls_validation\": true
+        }" \
+        "${api_base}/remotes/ansible/collection/" 2>/dev/null)
 
-        # Trigger sync
-        printf "  Syncing rh-certified... "
+      remote_href=$(echo "$create_result" | python3 -c "import sys, json; print(json.load(sys.stdin).get('pulp_href', ''))" 2>/dev/null)
+
+      if [ -n "$remote_href" ]; then
+        echo "✓"
+
+        # Link to rh-certified repository
         local repo_href
         repo_href=$(curl -sk -u "admin:${admin_pass}" \
           "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
@@ -2238,14 +2256,30 @@ configure_pah_remotes() {
 
         if [ -n "$repo_href" ]; then
           curl -sk -u "admin:${admin_pass}" \
-            -X POST \
+            -X PATCH \
             -H "Content-Type: application/json" \
-            -d '{"mirror": false}' \
-            "${api_base}${repo_href}sync/" >/dev/null 2>&1
-          echo "✓ (background)"
+            -d "{\"remote\": \"${remote_href}\"}" \
+            "${api_base}${repo_href}" >/dev/null 2>&1
         fi
       fi
     fi
+
+    # Trigger sync
+    printf "  Syncing rh-certified... "
+    local repo_href
+    repo_href=$(curl -sk -u "admin:${admin_pass}" \
+      "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
+      | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+
+    if [ -n "$repo_href" ]; then
+      curl -sk -u "admin:${admin_pass}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d '{"mirror": false}' \
+        "${api_base}${repo_href}sync/" >/dev/null 2>&1
+      echo "✓ (background)"
+    fi
+
 
     # Create and configure rh-validated remote
     printf "  Configuring rh-validated remote... "
