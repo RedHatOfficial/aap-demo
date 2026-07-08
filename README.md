@@ -199,14 +199,17 @@ fleets may require increasing host memory or reducing node sizes.
 ### Usage
 
 ```bash
-# Deploy AAP with fleet nodes in one command
-aap-demo deploy --fleet 3 --image ~/rhel9.qcow2
+# Enable the fleet addon
+aap-demo enable fleet
 
-# Or add nodes to an existing AAP deployment
-aap-demo fleet add 2 --image ~/rhel9.qcow2
+# Add fleet nodes to an existing AAP deployment
+aap-demo fleet add 3 --image ~/rhel9.qcow2
 aap-demo fleet list
 aap-demo fleet remove 1
 aap-demo fleet destroy
+
+# Disable the fleet addon (destroys all VMs and AAP resources)
+aap-demo disable fleet
 ```
 
 The `--image` path is saved to `~/.aap-demo/config`, so subsequent `fleet add`

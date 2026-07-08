@@ -6,6 +6,7 @@
 if [ -n "${_FLEET_LOADED:-}" ]; then return 0; fi
 _FLEET_LOADED=1
 
+FLEET_ADDON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET_DIR="${HOME}/.aap-demo/fleet"
 FLEET_NODE_MEM="${FLEET_NODE_MEM:-1024}"
 FLEET_NODE_CPUS="${FLEET_NODE_CPUS:-2}"
@@ -257,11 +258,11 @@ _fleet_create_cloud_init_iso() {
   pub_key=$(_fleet_ssh_public_key)
 
   sed "s|__SSH_PUBLIC_KEY__|${pub_key}|g" \
-    "${SCRIPT_DIR}/config/cloud-init/user-data.template" >"${ci_dir}/user-data"
+    "${FLEET_ADDON_DIR}/cloud-init/user-data.template" >"${ci_dir}/user-data"
 
   sed -e "s|__INSTANCE_ID__|${hostname}|g" \
     -e "s|__HOSTNAME__|${hostname}|g" \
-    "${SCRIPT_DIR}/config/cloud-init/meta-data.template" >"${ci_dir}/meta-data"
+    "${FLEET_ADDON_DIR}/cloud-init/meta-data.template" >"${ci_dir}/meta-data"
 
   local mkiso_cmd
   mkiso_cmd=$(_fleet_mkisofs_cmd)
