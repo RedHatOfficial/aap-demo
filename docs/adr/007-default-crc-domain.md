@@ -148,7 +148,78 @@ SSH access is still needed for other operations (`aap-demo ssh`, registry mirror
 
 DNS resolver with wildcard (`*.apps.crc.testing`) handles all current and future routes automatically.
 
-### Alternative 4: Automated DNS Setup
+### Alternative 4: Defer nip.io Change to Deploy
+
+**Description**: Keep nip.io approach but move domain change from `aap-demo create` to `aap-demo deploy`.
+
+```bash
+# aap-demo create - fast, no domain change
+crc start  # defaults to crc.testing
+
+# aap-demo deploy - change domain before deploying AAP
+if [ "$(current_domain)" = "crc.testing" ]; then
+  ssh ... write nip.io config
+  ssh ... wipe /var/lib/microshift, restart
+  wait for API ready
+fi
+# deploy AAP operator
+```
+
+**Why rejected**:
+
+- Still requires MicroShift wipe/restart (same 30-60s penalty, just later)
+- Still fragile SSH operations (timing bugs just moved to deploy)
+- Deploy becomes stateful (must detect if already converted)
+- Partial failure state (domain changed but AAP not deployed)
+- User re-running deploy triggers domain detection logic every time
+- Doesn't eliminate complexity, just relocates it
+
+### Alternative 5: Managed DNS Daemon (dnsmasq/CoreDNS)
+
+**Description**: Bundle and manage a local DNS daemon (dnsmasq or CoreDNS) as part of aap-demo. Start/stop it with the cluster.
+
+```bash
+# aap-demo create
+crc start
+aap-demo-dns start  # launch local DNS daemon on port 5353
+configure host to query 127.0.0.1:5353 for .testing domain
+```
+
+**Why rejected**:
+
+- Adds persistent daemon management (start, stop, restart, monitor)
+- Still requires host DNS config (point to local daemon)
+- Cross-platform daemon binaries (dnsmasq not on macOS by default)
+- Process lifecycle: what if daemon crashes? Port conflicts?
+- Cleanup complexity: must ensure daemon stops on destroy
+- Overkill: full DNS server to resolve one wildcard domain
+- Most complexity of automated DNS without the "works everywhere" benefit
+
+### Alternative 6: HTTP Proxy on Host
+
+**Description**: Run nginx/haproxy on host port 80/443, proxy `*.apps.127.0.0.1.nip.io` to cluster ingress.
+
+```bash
+# nginx config
+server {
+  listen 80;
+  server_name *.apps.127.0.0.1.nip.io;
+  location / {
+    proxy_pass http://router-internal-default.openshift-ingress.svc.cluster.local;
+  }
+}
+```
+
+**Why rejected**:
+
+- Requires nginx/haproxy installation
+- Conflicts with other services on port 80/443
+- TLS complexity (certificates, SNI routing)
+- Can't access routes from inside cluster (only from host)
+- Adds infrastructure layer that can fail independently
+- Doesn't solve DNS (nip.io still needs to resolve to 127.0.0.1)
+
+### Alternative 7: Automated DNS Setup
 
 **Description**: Keep `crc.testing` but auto-configure host DNS during `aap-demo create`.
 
