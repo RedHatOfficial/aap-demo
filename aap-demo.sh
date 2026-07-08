@@ -445,8 +445,8 @@ COMMANDS:
     ssh             SSH into cluster node
     repair          Repair cluster after crash
     setup           Run setup only (storage, coredns, mkcert)
-    setup-auth      Open browser to configure collection authentication
-    check-auth      Validate collection authentication (galaxy token, PAH)
+    setup-auth      Open browser to configure console.redhat.com token
+    check-auth      Validate collection authentication (console.redhat.com, PAH)
     kubeconfig      Extract and merge kubeconfig
     redeploy-all    Destroy cluster and redeploy fresh
 
@@ -2417,6 +2417,21 @@ cmd_check_auth() {
 cmd_setup_auth() {
   echo "Setting up collection authentication..."
   echo ""
+
+  # Check if token already exists
+  if [ -f "$GALAXY_TOKEN_FILE" ]; then
+    echo "✓ Galaxy token already configured at $GALAXY_TOKEN_FILE"
+    echo ""
+    echo "To update the token:"
+    echo "  1. Visit: https://console.redhat.com/ansible/automation-hub/token"
+    echo "  2. Copy the Offline Token"
+    echo "  3. Run: echo \"YOUR_TOKEN\" > $GALAXY_TOKEN_FILE"
+    echo ""
+    echo "Or delete the existing token to reconfigure:"
+    echo "  rm $GALAXY_TOKEN_FILE"
+    echo "  aap-demo setup-auth"
+    return 0
+  fi
 
   local url="https://console.redhat.com/ansible/automation-hub/token"
 
