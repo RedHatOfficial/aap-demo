@@ -118,7 +118,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | setup-auth | check-auth | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
+    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
     --ai | --reset)
@@ -445,8 +445,7 @@ COMMANDS:
     ssh             SSH into cluster node
     repair          Repair cluster after crash
     setup           Run setup only (storage, coredns, mkcert)
-    setup-auth      Open browser to configure console.redhat.com token
-    check-auth      Validate collection authentication (console.redhat.com, PAH)
+    setup-pah       Configure PAH remotes with console.redhat.com token
     kubeconfig      Extract and merge kubeconfig
     redeploy-all    Destroy cluster and redeploy fresh
 
@@ -2041,7 +2040,6 @@ validate_galaxy_token() {
     echo "  aap-demo setup-auth     # Opens browser to token page"
     echo "  aap-demo check-auth     # Validates saved token"
     echo ""
-    echo "Manual setup:"
     echo "  1. Visit: https://console.redhat.com/ansible/automation-hub/token"
     echo "  2. Click 'Load token'"
     echo "  3. Copy Offline Token (~1500 characters)"
@@ -2345,126 +2343,53 @@ cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
 }
 
-cmd_check_auth() {
-  echo "Checking collection authentication..."
-  echo ""
 
-  # Detect credentials first
-  detect_galaxy_credentials
-
-  local has_auth=false
-
-  # Check galaxy token
-  if [ -f "$GALAXY_TOKEN_FILE" ]; then
-    local token_len=${#GALAXY_TOKEN}
-    printf "Galaxy Token:\n"
-    printf "  File:         %s\n" "$GALAXY_TOKEN_FILE"
-    printf "  Length:       %d characters\n" "$token_len"
-
-    if [ "$token_len" -lt 100 ]; then
-      printf "  ${_RED}Status:       Invalid (too short, expected ~1500)${_NC}\n"
-    else
-      printf "  ${_GREEN}Status:       Valid format${_NC}\n"
-      has_auth=true
-    fi
-    echo ""
-  else
-    printf "Galaxy Token:     ${_YELLOW}Not configured${_NC}\n"
-    printf "  File:           %s\n" "$GALAXY_TOKEN_FILE"
-    echo ""
-  fi
-
-  # Check PAH config
-  if [ -f "$PAH_CONFIG_FILE" ]; then
-    printf "Private Automation Hub:\n"
-    printf "  File:         %s\n" "$PAH_CONFIG_FILE"
-    if [ -n "$PAH_URL" ]; then
-      printf "  URL:          %s\n" "$PAH_URL"
-      if [ -n "$PAH_TOKEN" ]; then
-        printf "  Auth:         Token (configured)\n"
-      elif [ -n "$PAH_USER" ]; then
-        printf "  Auth:         Username/Password (configured)\n"
-      else
-        printf "  ${_RED}Auth:         Missing${_NC}\n"
-      fi
-      printf "  ${_GREEN}Status:       Valid format${_NC}\n"
-      has_auth=true
-    else
-      printf "  ${_RED}Status:       Invalid (no URL)${_NC}\n"
-    fi
-    echo ""
-  else
-    printf "Private Automation Hub: ${_YELLOW}Not configured (optional)${_NC}\n"
-    echo ""
-  fi
-
-  # Summary
-  if [ "$has_auth" = true ]; then
-    printf "${_GREEN}✓${_NC} Collection authentication configured\n"
-    return 0
-  else
-    printf "${_YELLOW}▸${_NC} No collection authentication configured\n"
-    echo ""
-    echo "Setup authenticated collection access:"
-    echo "  aap-demo setup-auth     # Opens browser to token page"
-    echo ""
-    echo "Or manually configure:"
-    echo "  https://console.redhat.com/ansible/automation-hub/token"
-    return 1
-  fi
-}
-
-cmd_setup_auth() {
-  echo "Setting up collection authentication..."
+cmd_setup_pah() {
+  echo "Setting up Private Automation Hub..."
   echo ""
 
   # Check if token already exists
   if [ -f "$GALAXY_TOKEN_FILE" ]; then
     echo "✓ Galaxy token already configured at $GALAXY_TOKEN_FILE"
     echo ""
-    echo "To update the token:"
-    echo "  1. Visit: https://console.redhat.com/ansible/automation-hub/token"
-    echo "  2. Copy the Offline Token"
-    echo "  3. Run: echo \"YOUR_TOKEN\" > $GALAXY_TOKEN_FILE"
+  else
+    # Get token first
+    local url="https://console.redhat.com/ansible/automation-hub/token"
+
+    # Open browser
+    if command -v open >/dev/null 2>&1; then
+      open "$url"  # macOS
+      echo "Opening browser to Red Hat Automation Hub..."
+    elif command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "$url"  # Linux
+      echo "Opening browser to Red Hat Automation Hub..."
+    elif command -v start >/dev/null 2>&1; then
+      start "$url"  # Windows/Git Bash
+      echo "Opening browser to Red Hat Automation Hub..."
+    else
+      echo "Visit this URL in your browser:"
+      echo "  $url"
+    fi
+
     echo ""
-    echo "Or delete the existing token to reconfigure:"
-    echo "  rm $GALAXY_TOKEN_FILE"
-    echo "  aap-demo setup-auth"
+    echo "Steps:"
+    echo "  1. Log in with your Red Hat account"
+    echo "  2. Click 'Load token' button"
+    echo "  3. Copy the 'Offline Token' (long base64 string, ~1500 characters)"
+    echo "  4. Run this command to save it:"
+    echo ""
+    echo "     echo \"YOUR_OFFLINE_TOKEN\" > ~/.aap-demo/galaxy-token"
+    echo "     chmod 600 ~/.aap-demo/galaxy-token"
+    echo ""
+    echo "  5. Re-run: aap-demo setup-pah"
+    echo ""
+    echo "Documentation: docs/collection-authentication.md"
     return 0
   fi
 
-  local url="https://console.redhat.com/ansible/automation-hub/token"
-
-  # Open browser
-  if command -v open >/dev/null 2>&1; then
-    open "$url"  # macOS
-    echo "Opening browser to Red Hat Automation Hub..."
-  elif command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$url"  # Linux
-    echo "Opening browser to Red Hat Automation Hub..."
-  elif command -v start >/dev/null 2>&1; then
-    start "$url"  # Windows/Git Bash
-    echo "Opening browser to Red Hat Automation Hub..."
-  else
-    echo "Visit this URL in your browser:"
-    echo "  $url"
-  fi
-
-  echo ""
-  echo "Steps:"
-  echo "  1. Log in with your Red Hat account"
-  echo "  2. Click 'Load token' button"
-  echo "  3. Copy the 'Offline Token' (long base64 string, ~1500 characters)"
-  echo "  4. Run this command to save it:"
-  echo ""
-  echo "     echo \"YOUR_OFFLINE_TOKEN\" > ~/.aap-demo/galaxy-token"
-  echo "     chmod 600 ~/.aap-demo/galaxy-token"
-  echo ""
-  echo "  5. Verify with:"
-  echo ""
-  echo "     aap-demo check-auth"
-  echo ""
-  echo "Documentation: docs/collection-authentication.md"
+  # Configure PAH remotes
+  echo "Configuring AAP Private Automation Hub remotes..."
+  configure_pah_remotes
 }
 
 cmd_deploy() {
@@ -2663,13 +2588,14 @@ deploy_latest() {
     # Watch deployment
     watch_aap
 
-    # Configure PAH remotes with galaxy credentials
-    echo ""
-    configure_pah_remotes
-
     # Install collections from requirements.yml
     echo ""
     install_collections
+
+    # Remind to configure PAH
+    echo ""
+    echo "To configure Private Automation Hub remotes:"
+    echo "  aap-demo setup-pah"
   else
     echo ""
     echo "✓ AAP operator deployed!"
@@ -3204,11 +3130,8 @@ case "$COMMAND" in
   setup)
     cmd_setup
     ;;
-  setup-auth)
-    cmd_setup_auth
-    ;;
-  check-auth)
-    cmd_check_auth
+  setup-pah)
+    cmd_setup_pah
     ;;
   watch)
     watch_aap
