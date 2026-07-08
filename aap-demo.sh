@@ -2249,23 +2249,23 @@ configure_pah_remotes() {
       fi
     fi
 
-    # Create and configure validated remote
-    printf "  Configuring validated remote... "
+    # Create and configure rh-validated remote
+    printf "  Configuring rh-validated remote... "
 
-    # Check if validated remote exists
+    # Check if rh-validated remote exists
     local validated_remote
     validated_remote=$(curl -sk -u "admin:${admin_pass}" \
-      "${api_base}/remotes/ansible/collection/?name=validated" 2>/dev/null \
+      "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null \
       | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -z "$validated_remote" ]; then
-      # Create validated remote
+      # Create rh-validated remote
       local create_result
       create_result=$(curl -sk -u "admin:${admin_pass}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d "{
-          \"name\": \"validated\",
+          \"name\": \"rh-validated\",
           \"url\": \"https://console.redhat.com/api/automation-hub/content/validated/\",
           \"token\": \"${GALAXY_TOKEN}\",
           \"tls_validation\": true
