@@ -16,6 +16,8 @@ $PrivateDir = Join-Path $PSScriptRoot 'Private'
 
 . (Join-Path $PrivateDir 'Watch.ps1')
 
+. (Join-Path $PrivateDir 'Portal.ps1')
+
 . (Join-Path $PrivateDir 'Addons.ps1')
 
 . (Join-Path $PrivateDir 'Commands.ps1')
@@ -69,8 +71,6 @@ Export-ModuleMember -Function @(
   'Invoke-AapDemoRedeployAll'
 
   'Get-AapDemoHelp'
-
-  'Invoke-AapBashCli'
 
 )
 

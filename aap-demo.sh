@@ -676,6 +676,39 @@ cmd_config() {
   mkdir -p "$(dirname "$AAP_DEMO_CONFIG")"
 }
 
+cmd_update() {
+  echo ""
+  printf "\033[1maap-demo update\033[0m - Pulling latest code and reinstalling...\n"
+  echo ""
+
+  local repo_root="$SCRIPT_DIR"
+  if [ ! -f "${repo_root}/aap-demo.sh" ]; then
+    _err "aap-demo repo not found at ${repo_root}"
+    echo "  Run from the repo directory or reinstall with ./install.sh"
+    return 1
+  fi
+
+  if ! git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null; then
+    _err "Not a git repository: ${repo_root}"
+    return 1
+  fi
+
+  echo "  Pulling latest code..."
+  if ! git -C "$repo_root" pull; then
+    _err "git pull failed"
+    return 1
+  fi
+
+  echo "  Reinstalling launcher..."
+  if ! bash "${repo_root}/install.sh"; then
+    _err "install.sh failed"
+    return 1
+  fi
+
+  echo ""
+  echo "  ✓ Update complete"
+}
+
 cmd_redhat_status() {
   echo ""
   printf "\033[1maap-demo redhat-status\033[0m - Checking Red Hat service status...\n"
@@ -1204,9 +1237,11 @@ cmd_test() {
   # Find all namespaces with AAP deployments
   local aap_namespaces=()
   # Operator deploys: namespaces with AAP CRDs
-  local ns_list
-  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' || true)
-  # Sort alphabetically by namespace name
+  local ns_list ns
+  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort -u || true)
+  while IFS= read -r ns; do
+    [ -n "$ns" ] && aap_namespaces+=("$ns")
+  done <<<"$ns_list"
 
   if [ ${#aap_namespaces[@]} -eq 0 ]; then
     _err "No AAP deployments found on cluster"
@@ -1731,30 +1766,48 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
-  # Show enabled addons with URLs
+  # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
-  if [ -n "$saved_addons" ]; then
-    echo "Enabled Addons:"
-    echo "---------------"
-    for a in $saved_addons; do
-      local url=""
-      case "$a" in
-        console) url="https://console.apps.127.0.0.1.nip.io" ;;
-        registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
-        mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
-        portal) url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
-        registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
-        prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
-      esac
-      if [ -n "$url" ]; then
-        printf "  %-15s %s\n" "$a" "$url"
-      else
-        printf "  %s\n" "$a"
-      fi
-    done
-    echo ""
-  fi
+  echo "Addons:"
+  echo "-------"
+  for a in $AVAILABLE_ADDONS; do
+    local url="" label="" enabled=false
+    if echo "$saved_addons" | grep -qw "$a"; then
+      enabled=true
+    fi
+    case "$a" in
+      mcp-server)
+        if [ "$enabled" = true ]; then
+          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
+          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+    esac
+    if [ -n "$url" ] && [ -z "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$url"
+    elif [ -n "$label" ]; then
+      printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+    else
+      printf "  %-15s (aap-demo enable %s)\n" "$a" "$a"
+    fi
+  done
+  echo ""
 }
 
 cmd_redeploy() {

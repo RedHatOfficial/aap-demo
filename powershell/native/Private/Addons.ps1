@@ -1,19 +1,8 @@
-$Script:AapAvailableAddons = @('mcp-server')
+$Script:AapAvailableAddons = @('mcp-server', 'portal')
 
 function Invoke-AapEnsureClusterReady {
-  $crc = Get-AapCrcStatus
-  if ([string]$crc.crcStatus -eq 'Stopped') {
-    Write-AapStep 'Cluster stopped - starting CRC...'
-    & crc start
-    if ($LASTEXITCODE -ne 0) { throw 'crc start failed' }
-  } elseif ([string]$crc.crcStatus -eq 'Unknown') {
-    throw 'No cluster found. Run: aap-demo create'
-  }
-
-  Initialize-AapKubeEnvironment
-  if ((Invoke-AapOcQuiet @('cluster-info')) -ne 0) {
-    throw 'Cluster is not accessible'
-  }
+  Invoke-AapEnsureCluster
+  Set-AapIngressCaEnvFromSaved
 }
 
 function Invoke-AapDeployMcpServerAddon {
@@ -88,7 +77,52 @@ function Invoke-AapAddonEnable {
 
   switch ($Addon) {
     'mcp-server' { Invoke-AapDeployMcpServerAddon -Namespace $Namespace }
+    'portal' { Invoke-AapDeployPortalAddon -Namespace $Namespace }
     default { throw "Unknown addon: $Addon`nAvailable: $($Script:AapAvailableAddons -join ', ')" }
+  }
+}
+
+function Get-AapMcpServerRouteHost {
+  param([string]$Namespace = $Script:AapDemoDefaultNamespace)
+
+  $result = Invoke-AapOcCapture @(
+    'get', 'ansiblemcpserver', 'aap-mcp-server', '-n', $Namespace,
+    '-o', 'jsonpath={.spec.route_host}'
+  )
+  if ($result.ExitCode -ne 0) { return $null }
+  $routeHost = $result.Output.Trim()
+  if ($routeHost -and $routeHost -notmatch '\s' -and $routeHost -notmatch ':') {
+    return $routeHost
+  }
+  return $null
+}
+
+function Get-AapAddonEnableCommand {
+  param([Parameter(Mandatory)][string]$Addon)
+  return "aap-demo enable $Addon"
+}
+
+function Get-AapAddonStatusLabel {
+  param(
+    [Parameter(Mandatory)][string]$Addon,
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [Parameter(Mandatory)][bool]$Enabled
+  )
+
+  if (-not $Enabled) { return 'disabled' }
+
+  switch ($Addon) {
+    'mcp-server' {
+      $mcpHost = Get-AapMcpServerRouteHost -Namespace $Namespace
+      if ($mcpHost) { return "https://$mcpHost/mcp" }
+      return 'not-deployed'
+    }
+    'portal' {
+      $portalHost = Get-AapPortalRouteHost -AapNamespace $Namespace
+      if ($portalHost) { return "https://$portalHost" }
+      return 'not-deployed'
+    }
+    default { return $null }
   }
 }
 
@@ -100,6 +134,7 @@ function Invoke-AapAddonDisable {
 
   switch ($Addon) {
     'mcp-server' { Invoke-AapRemoveMcpServerAddon -Namespace $Namespace }
+    'portal' { Invoke-AapRemovePortalAddon -Namespace $Namespace }
     default { throw "Unknown addon: $Addon" }
   }
 }
