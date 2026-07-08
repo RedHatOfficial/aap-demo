@@ -53,6 +53,26 @@ Changes:
 
 SSH access is still needed for other operations (`aap-demo ssh`, registry mirror, ingress CA fetch), but **not during cluster creation**.
 
+## Comparison Matrix
+
+| Aspect | Current (nip.io) | Proposed (crc.testing + manual DNS) | Future (automated DNS) |
+|--------|------------------|-------------------------------------|------------------------|
+| **Setup complexity** | High (SSH timing, domain switching) | Low (use CRC defaults) | Medium (platform detection) |
+| **User DNS config** | None | Manual (one-time per platform) | Automated (requires sudo) |
+| **Cluster creation time** | +30-60s (MicroShift wipe/restart) | Baseline (no extra steps) | Baseline + DNS check |
+| **SSH during create** | ✅ Required | ❌ Not needed | ❌ Not needed |
+| **Timing bugs** | ❌ Fragile (key detection race) | ✅ None | ✅ None |
+| **Failure modes** | Many (SSH, key types, restart) | Few (CRC, DNS misconfiguration) | Medium (privilege, conflicts) |
+| **Maintenance burden** | High (SSH timing, edge cases) | Low (standard CRC workflow) | Medium (platform-specific code) |
+| **Works out-of-box** | ✅ Yes (after cluster starts) | ❌ No (DNS setup required) | ⚠️ Yes (if automation succeeds) |
+| **Platform support** | All (same code) | All (different docs) | Varies (platform-specific) |
+| **Debugging** | Hard (SSH, domain, timing) | Easy (DNS or CRC issue) | Medium (DNS automation state) |
+| **Rollback on destroy** | Automatic (VM deleted) | None needed (DNS persists) | Required (undo DNS changes) |
+| **Risk to host system** | None | None | Medium (modify system DNS) |
+| **Code complexity** | High (150+ lines SSH logic) | Low (~20 lines removed) | High (platform-specific sudo) |
+
+**Key takeaway**: Proposed approach trades one-time manual DNS setup for significantly simpler, faster, more reliable cluster creation. Automated DNS is possible future work but adds new complexity.
+
 ## Consequences
 
 ### Positive
