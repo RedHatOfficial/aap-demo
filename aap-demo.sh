@@ -2255,7 +2255,7 @@ configure_pah_remotes() {
     # Check if validated remote exists
     local validated_remote
     validated_remote=$(curl -sk -u "admin:${admin_pass}" \
-      "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null \
+      "${api_base}/remotes/ansible/collection/?name=validated" 2>/dev/null \
       | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -z "$validated_remote" ]; then
@@ -2265,7 +2265,7 @@ configure_pah_remotes() {
         -X POST \
         -H "Content-Type: application/json" \
         -d "{
-          \"name\": \"rh-validated\",
+          \"name\": \"validated\",
           \"url\": \"https://console.redhat.com/api/automation-hub/content/validated/\",
           \"token\": \"${GALAXY_TOKEN}\",
           \"tls_validation\": true
