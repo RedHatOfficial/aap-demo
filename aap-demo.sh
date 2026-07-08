@@ -2200,11 +2200,11 @@ configure_pah_remotes() {
 
   local api_base="https://${aap_route}/api/galaxy/pulp/api/v3"
 
-  # Configure rh-certified remote if token present
+  # Configure console.redhat.com remotes if token present
   if [ -n "$GALAXY_TOKEN" ]; then
-    printf "  Configuring console.redhat.com remote... "
+    # Configure rh-certified remote
+    printf "  Configuring rh-certified remote... "
 
-    # Find rh-certified remote
     local remote_href
     remote_href=$(curl -sk -u "admin:${admin_pass}" \
       "${api_base}/remotes/ansible/collection/?name=rh-certified" 2>/dev/null \
@@ -2232,7 +2232,7 @@ configure_pah_remotes() {
         echo "✓"
 
         # Trigger sync
-        printf "  Syncing certified collections... "
+        printf "  Syncing rh-certified... "
         local repo_href
         repo_href=$(curl -sk -u "admin:${admin_pass}" \
           "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
@@ -2244,12 +2244,74 @@ configure_pah_remotes() {
             -H "Content-Type: application/json" \
             -d '{"mirror": false}' \
             "${api_base}${repo_href}sync/" >/dev/null 2>&1
-          echo "✓ (running in background)"
+          echo "✓ (background)"
         fi
       fi
     fi
+
+    # Create and configure validated remote
+    printf "  Configuring validated remote... "
+
+    # Check if validated remote exists
+    local validated_remote
+    validated_remote=$(curl -sk -u "admin:${admin_pass}" \
+      "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null \
+      | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+
+    if [ -z "$validated_remote" ]; then
+      # Create validated remote
+      local create_result
+      create_result=$(curl -sk -u "admin:${admin_pass}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"name\": \"rh-validated\",
+          \"url\": \"https://console.redhat.com/api/automation-hub/content/validated/\",
+          \"token\": \"${GALAXY_TOKEN}\",
+          \"tls_validation\": true
+        }" \
+        "${api_base}/remotes/ansible/collection/" 2>/dev/null)
+
+      validated_remote=$(echo "$create_result" | python3 -c "import sys, json; print(json.load(sys.stdin).get('pulp_href', ''))" 2>/dev/null)
+    else
+      # Update existing remote token
+      curl -sk -u "admin:${admin_pass}" \
+        -X PATCH \
+        -H "Content-Type: application/json" \
+        -d "{\"token\": \"${GALAXY_TOKEN}\"}" \
+        "${api_base}${validated_remote}" >/dev/null 2>&1
+    fi
+
+    if [ -n "$validated_remote" ]; then
+      echo "✓"
+
+      # Link remote to validated repository
+      printf "  Linking validated remote to repository... "
+      local validated_repo
+      validated_repo=$(curl -sk -u "admin:${admin_pass}" \
+        "${api_base}/repositories/ansible/ansible/?name=validated" 2>/dev/null \
+        | python3 -c "import sys, json; data=json.load(sys.stdin); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+
+      if [ -n "$validated_repo" ]; then
+        curl -sk -u "admin:${admin_pass}" \
+          -X PATCH \
+          -H "Content-Type: application/json" \
+          -d "{\"remote\": \"${validated_remote}\"}" \
+          "${api_base}${validated_repo}" >/dev/null 2>&1
+        echo "✓"
+
+        # Trigger sync
+        printf "  Syncing validated... "
+        curl -sk -u "admin:${admin_pass}" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d '{"mirror": false}' \
+          "${api_base}${validated_repo}sync/" >/dev/null 2>&1
+        echo "✓ (background)"
+      fi
+    fi
   else
-    printf "  ${_YELLOW}▸${_NC} No galaxy token found, skipping rh-certified sync\n"
+    printf "  ${_YELLOW}▸${_NC} No galaxy token found, skipping console.redhat.com remotes\n"
   fi
 
   # Configure PAH remote if configured
