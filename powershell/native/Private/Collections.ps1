@@ -231,6 +231,11 @@ function Join-AapPulpUrl {
   )
 
   if ($Href -match '^https?://') { return $Href }
+  if ($Href -match '^/api/galaxy/') {
+    if ($ApiBase -match '^(https?://[^/]+)') {
+      return "$($Matches[1])$Href"
+    }
+  }
   return "$ApiBase$Href"
 }
 
@@ -257,8 +262,11 @@ function Invoke-AapPulpCurl {
     'PATCH' { $curlArgs += '-X', 'PATCH' }
   }
 
+  $bodyFile = $null
   if ($Body) {
-    $curlArgs += '-H', 'Content-Type: application/json', '-d', $Body
+    $bodyFile = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($bodyFile, $Body, [System.Text.UTF8Encoding]::new($false))
+    $curlArgs += '-H', 'Content-Type: application/json', '--data-binary', "@$bodyFile"
   }
 
   $curlArgs += $Url
@@ -270,6 +278,9 @@ function Invoke-AapPulpCurl {
     $exitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousEap
+    if ($bodyFile -and (Test-Path -LiteralPath $bodyFile)) {
+      Remove-Item -LiteralPath $bodyFile -Force -ErrorAction SilentlyContinue
+    }
   }
 
   $httpCode = 0
@@ -294,7 +305,7 @@ function Format-AapPulpErrorDetail {
   )
 
   if ($HttpCode -in 502, 503, 504) {
-    return "Hub returned HTTP $HttpCode (temporary upstream error - hub may be busy; re-run: aap-demo setup-pah)"
+    return "Hub returned HTTP $HttpCode (gateway or upstream error; re-run: aap-demo setup-pah)"
   }
 
   if ($ResponseBody -and $ResponseBody -notmatch '__HTTP_CODE__') {
@@ -314,6 +325,34 @@ function Format-AapPulpErrorDetail {
   return 'No response from hub API'
 }
 
+function Invoke-AapPulpMutatingWithRetry {
+  param(
+    [Parameter(Mandatory)][string]$Url,
+    [Parameter(Mandatory)][string]$AdminPassword,
+    [ValidateSet('POST', 'PATCH')]
+    [string]$Method = 'POST',
+    [Parameter(Mandatory)][string]$Body,
+    [int]$MaxAttempts = 6,
+    [int]$DelaySeconds = 8,
+    [int]$TimeoutSeconds = 60
+  )
+
+  $result = $null
+  for ($i = 1; $i -le $MaxAttempts; $i++) {
+    $result = Invoke-AapPulpCurl -Url $Url -AdminPassword $AdminPassword -Method $Method `
+      -Body $Body -TimeoutSeconds $TimeoutSeconds
+    if ($result.Ok) { return $result }
+    if ($Method -eq 'POST' -and $result.HttpCode -eq 400 -and $result.Body -match 'unique|already exists|must be unique') {
+      return $result
+    }
+    if ($result.HttpCode -notin 502, 503, 504) { return $result }
+    if ($i -lt $MaxAttempts) {
+      Start-Sleep -Seconds $DelaySeconds
+    }
+  }
+  return $result
+}
+
 function Invoke-AapPulpPostWithRetry {
   param(
     [Parameter(Mandatory)][string]$Url,
@@ -324,20 +363,8 @@ function Invoke-AapPulpPostWithRetry {
     [int]$TimeoutSeconds = 60
   )
 
-  $result = $null
-  for ($i = 1; $i -le $MaxAttempts; $i++) {
-    $result = Invoke-AapPulpCurl -Url $Url -AdminPassword $AdminPassword -Method 'POST' `
-      -Body $Body -TimeoutSeconds $TimeoutSeconds
-    if ($result.Ok) { return $result }
-    if ($result.HttpCode -eq 400 -and $result.Body -match 'unique|already exists|must be unique') {
-      return $result
-    }
-    if ($result.HttpCode -notin 502, 503, 504) { return $result }
-    if ($i -lt $MaxAttempts) {
-      Start-Sleep -Seconds $DelaySeconds
-    }
-  }
-  return $result
+  return Invoke-AapPulpMutatingWithRetry -Url $Url -AdminPassword $AdminPassword -Method 'POST' `
+    -Body $Body -MaxAttempts $MaxAttempts -DelaySeconds $DelaySeconds -TimeoutSeconds $TimeoutSeconds
 }
 
 function Invoke-AapPulpRequest {
@@ -351,9 +378,14 @@ function Invoke-AapPulpRequest {
 
   $result = Invoke-AapPulpCurl -Url $Url -AdminPassword $AdminPassword -Method $Method -Body $Body
   if ($result.ExitCode -ne 0 -and [string]::IsNullOrWhiteSpace($result.Body)) {
-    return $null
+    return [PSCustomObject]@{
+      Body     = $null
+      HttpCode = $result.HttpCode
+      ExitCode = $result.ExitCode
+      Ok       = $false
+    }
   }
-  return $result.Body
+  return $result
 }
 
 function Get-AapPulpApiAvailability {
@@ -416,6 +448,8 @@ function Write-AapPulpCreateFailureHint {
     [Parameter(Mandatory)][string]$AdminPassword,
     [Parameter(Mandatory)][string]$Namespace,
     [Parameter(Mandatory)][string]$AapRoute,
+    [ValidateSet('create', 'update', 'link', 'sync')]
+    [string]$Operation = 'create',
     [int]$HttpCode = 0,
     [AllowNull()][string]$ResponseBody = $null
   )
@@ -431,7 +465,13 @@ function Write-AapPulpCreateFailureHint {
     return
   }
 
-  Write-Host '    Pulp API is reachable; remote create failed' -ForegroundColor Yellow
+  $operationLabel = switch ($Operation) {
+    'update' { 'remote update failed' }
+    'link'   { 'repository link failed' }
+    'sync'   { 'repository sync failed' }
+    default  { 'remote create failed' }
+  }
+  Write-Host "    Pulp API is reachable; $operationLabel" -ForegroundColor Yellow
   $detail = Format-AapPulpErrorDetail -HttpCode $HttpCode -ResponseBody $ResponseBody
   Write-Host "    $detail"
 }
@@ -445,8 +485,9 @@ function Get-AapPulpResourceHref {
   )
 
   $url = if ($Name) { "${ResourceUrl}?name=${Name}" } else { $ResourceUrl }
-  $raw = Invoke-AapPulpRequest -Url $url -AdminPassword $AdminPassword
-  return Get-AapPulpFirstHref -Data (ConvertFrom-AapPulpJson -Raw $raw)
+  $result = Invoke-AapPulpRequest -Url $url -AdminPassword $AdminPassword
+  if (-not $result.Ok) { return $null }
+  return Get-AapPulpFirstHref -Data (ConvertFrom-AapPulpJson -Raw $result.Body)
 }
 
 function Wait-AapPulpTask {
@@ -459,13 +500,62 @@ function Wait-AapPulpTask {
   for ($i = 1; $i -le 10; $i++) {
     Start-Sleep -Seconds 1
     $taskUrl = Join-AapPulpUrl -ApiBase $ApiBase -Href $TaskHref
-    $raw = Invoke-AapPulpRequest -Url $taskUrl -AdminPassword $AdminPassword
-    $task = ConvertFrom-AapPulpJson -Raw $raw
+    $result = Invoke-AapPulpRequest -Url $taskUrl -AdminPassword $AdminPassword
+    if (-not $result.Ok) { continue }
+    $task = ConvertFrom-AapPulpJson -Raw $result.Body
     if ($task -and [string]$task.state -eq 'completed') {
       return $true
     }
   }
   return $false
+}
+
+function Update-AapPulpRemoteToken {
+  param(
+    [Parameter(Mandatory)][string]$ApiBase,
+    [Parameter(Mandatory)][string]$AdminPassword,
+    [Parameter(Mandatory)][string]$RemoteHref,
+    [Parameter(Mandatory)][string]$Token
+  )
+
+  $patchBody = (@{ token = $Token } | ConvertTo-Json -Compress)
+  $patchUrl = Join-AapPulpUrl -ApiBase $ApiBase -Href $RemoteHref
+  $patchResult = Invoke-AapPulpMutatingWithRetry -Url $patchUrl -AdminPassword $AdminPassword `
+    -Method 'PATCH' -Body $patchBody
+  if (-not $patchResult.Ok) {
+    return $patchResult
+  }
+
+  $patchData = ConvertFrom-AapPulpJson -Raw $patchResult.Body
+  if ($patchData -and $patchData.task) {
+    Wait-AapPulpTask -ApiBase $ApiBase -AdminPassword $AdminPassword -TaskHref ([string]$patchData.task) | Out-Null
+  }
+  return $patchResult
+}
+
+function Set-AapPulpCollectionRemote {
+  param(
+    [Parameter(Mandatory)][string]$ApiBase,
+    [Parameter(Mandatory)][string]$AdminPassword,
+    [Parameter(Mandatory)][string]$RemotesUrl,
+    [Parameter(Mandatory)][string]$Name,
+    [Parameter(Mandatory)][string]$RemoteUrl,
+    [Parameter(Mandatory)][string]$Token
+  )
+
+  $href = Get-AapPulpResourceHref -AdminPassword $AdminPassword -ResourceUrl $RemotesUrl -Name $Name
+  if ($href) {
+    return Update-AapPulpRemoteToken -ApiBase $ApiBase -AdminPassword $AdminPassword `
+      -RemoteHref $href -Token $Token
+  }
+
+  $createBody = (@{
+      name           = $Name
+      url            = $RemoteUrl
+      token          = $Token
+      tls_validation = $true
+    } | ConvertTo-Json -Compress)
+  return Invoke-AapPulpPostWithRetry -Url $RemotesUrl -AdminPassword $AdminPassword -Body $createBody
 }
 
 function Set-AapPahRemotes {
@@ -502,93 +592,64 @@ function Set-AapPahRemotes {
   }
 
   if ($Credentials.GalaxyToken) {
-    Write-Host -NoNewline '  Configuring rh-certified remote... '
-    $certifiedRemote = Get-AapPulpResourceHref -ApiBase $apiBase -AdminPassword $adminPass `
-      -ResourceUrl $remotesUrl -Name 'rh-certified'
-    $certifiedCreateResult = $null
+    $certifiedRemote = $null
+    $validatedRemote = $null
 
-    if ($certifiedRemote) {
-      $patchBody = (@{ token = $Credentials.GalaxyToken } | ConvertTo-Json -Compress)
-      $patchUrl = Join-AapPulpUrl -ApiBase $apiBase -Href $certifiedRemote
-      $patchRaw = Invoke-AapPulpRequest -Url $patchUrl -AdminPassword $adminPass -Method 'PATCH' -Body $patchBody
-      $patchData = ConvertFrom-AapPulpJson -Raw $patchRaw
-      if ($patchData -and $patchData.task) {
-        Wait-AapPulpTask -ApiBase $apiBase -AdminPassword $adminPass -TaskHref ([string]$patchData.task) | Out-Null
-      }
+    Write-Host -NoNewline '  Configuring rh-certified remote... '
+    $certifiedResult = Set-AapPulpCollectionRemote -ApiBase $apiBase -AdminPassword $adminPass `
+      -RemotesUrl $remotesUrl -Name 'rh-certified' `
+      -RemoteUrl 'https://console.redhat.com/api/automation-hub/content/published/' `
+      -Token $Credentials.GalaxyToken
+    $certifiedRemote = Get-AapPulpResourceHref -AdminPassword $adminPass -ResourceUrl $remotesUrl -Name 'rh-certified'
+    if (-not $certifiedRemote) {
+      $certifiedRemote = Get-AapPulpFirstHref -Data (ConvertFrom-AapPulpJson -Raw $certifiedResult.Body)
+    }
+    if ($certifiedResult.Ok -and $certifiedRemote) {
       Write-Host 'OK' -ForegroundColor Green
     } else {
-      $createBody = (@{
-          name           = 'rh-certified'
-          url            = 'https://console.redhat.com/api/automation-hub/content/published/'
-          token          = $Credentials.GalaxyToken
-          tls_validation = $true
-        } | ConvertTo-Json -Compress)
-      $certifiedCreateResult = Invoke-AapPulpPostWithRetry -Url $remotesUrl -AdminPassword $adminPass -Body $createBody
-      $certifiedRemote = Get-AapPulpFirstHref -Data (ConvertFrom-AapPulpJson -Raw $certifiedCreateResult.Body)
-
-      if ($certifiedRemote) {
-        Write-Host 'OK' -ForegroundColor Green
-      } else {
-        Write-Host 'WARN (create failed)' -ForegroundColor Yellow
-        Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
-          -Namespace $Namespace -AapRoute $aapRoute -HttpCode $certifiedCreateResult.HttpCode `
-          -ResponseBody $certifiedCreateResult.Body
-      }
-    }
-
-    if ($certifiedRemote) {
-      $certifiedRepo = Get-AapPulpResourceHref -ApiBase $apiBase -AdminPassword $adminPass `
-        -ResourceUrl $reposUrl -Name 'rh-certified'
-      if ($certifiedRepo) {
-        $linkBody = (@{ remote = $certifiedRemote } | ConvertTo-Json -Compress)
-        $linkUrl = Join-AapPulpUrl -ApiBase $apiBase -Href $certifiedRepo
-        Invoke-AapPulpRequest -Url $linkUrl -AdminPassword $adminPass -Method 'PATCH' -Body $linkBody | Out-Null
-      }
-    }
-
-    Write-Host -NoNewline '  Syncing rh-certified... '
-    $certifiedRepo = Get-AapPulpResourceHref -ApiBase $apiBase -AdminPassword $adminPass `
-      -ResourceUrl $reposUrl -Name 'rh-certified'
-    if ($certifiedRepo) {
-      $syncUrl = (Join-AapPulpUrl -ApiBase $apiBase -Href $certifiedRepo).TrimEnd('/') + 'sync/'
-      Invoke-AapPulpRequest -Url $syncUrl -AdminPassword $adminPass -Method 'POST' -Body '{"mirror":false}' | Out-Null
-      Write-Host 'OK (background)' -ForegroundColor Green
-    } else {
-      Write-Host 'WARN (repository not found)' -ForegroundColor Yellow
+      Write-Host 'WARN (configure failed)' -ForegroundColor Yellow
+      Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
+        -Namespace $Namespace -AapRoute $aapRoute -Operation $(if ($certifiedRemote) { 'update' } else { 'create' }) `
+        -HttpCode $certifiedResult.HttpCode -ResponseBody $certifiedResult.Body
     }
 
     Write-Host -NoNewline '  Configuring rh-validated remote... '
-    $validatedRemote = Get-AapPulpResourceHref -ApiBase $apiBase -AdminPassword $adminPass `
-      -ResourceUrl $remotesUrl -Name 'rh-validated'
-    $validatedCreateResult = $null
-
-    if ($validatedRemote) {
-      $patchBody = (@{ token = $Credentials.GalaxyToken } | ConvertTo-Json -Compress)
-      $patchUrl = Join-AapPulpUrl -ApiBase $apiBase -Href $validatedRemote
-      $patchRaw = Invoke-AapPulpRequest -Url $patchUrl -AdminPassword $adminPass -Method 'PATCH' -Body $patchBody
-      $patchData = ConvertFrom-AapPulpJson -Raw $patchRaw
-      if ($patchData -and $patchData.task) {
-        Wait-AapPulpTask -ApiBase $apiBase -AdminPassword $adminPass -TaskHref ([string]$patchData.task) | Out-Null
-      }
+    $validatedResult = Set-AapPulpCollectionRemote -ApiBase $apiBase -AdminPassword $adminPass `
+      -RemotesUrl $remotesUrl -Name 'rh-validated' `
+      -RemoteUrl 'https://console.redhat.com/api/automation-hub/content/validated/' `
+      -Token $Credentials.GalaxyToken
+    $validatedRemote = Get-AapPulpResourceHref -AdminPassword $adminPass -ResourceUrl $remotesUrl -Name 'rh-validated'
+    if (-not $validatedRemote) {
+      $validatedRemote = Get-AapPulpFirstHref -Data (ConvertFrom-AapPulpJson -Raw $validatedResult.Body)
+    }
+    if ($validatedResult.Ok -and $validatedRemote) {
       Write-Host 'OK' -ForegroundColor Green
     } else {
-      $createBody = (@{
-          name           = 'rh-validated'
-          url            = 'https://console.redhat.com/api/automation-hub/content/validated/'
-          token          = $Credentials.GalaxyToken
-          tls_validation = $true
-        } | ConvertTo-Json -Compress)
-      $validatedCreateResult = Invoke-AapPulpCurl -Url $remotesUrl -AdminPassword $adminPass `
-        -Method 'POST' -Body $createBody
-      $validatedRemote = Get-AapPulpFirstHref -Data (ConvertFrom-AapPulpJson -Raw $validatedCreateResult.Body)
+      Write-Host 'WARN (configure failed)' -ForegroundColor Yellow
+      Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
+        -Namespace $Namespace -AapRoute $aapRoute -Operation $(if ($validatedRemote) { 'update' } else { 'create' }) `
+        -HttpCode $validatedResult.HttpCode -ResponseBody $validatedResult.Body
+    }
 
-      if ($validatedRemote) {
-        Write-Host 'OK' -ForegroundColor Green
+    if ($certifiedRemote) {
+      Write-Host -NoNewline '  Linking rh-certified remote to repository... '
+      $certifiedRepoHref = Get-AapPulpResourceHref -ApiBase $apiBase -AdminPassword $adminPass `
+        -ResourceUrl $reposUrl -Name 'rh-certified'
+      if ($certifiedRepoHref) {
+        $linkBody = (@{ remote = $certifiedRemote } | ConvertTo-Json -Compress)
+        $linkUrl = Join-AapPulpUrl -ApiBase $apiBase -Href $certifiedRepoHref
+        $linkResult = Invoke-AapPulpMutatingWithRetry -Url $linkUrl -AdminPassword $adminPass `
+          -Method 'PATCH' -Body $linkBody
+        if ($linkResult.Ok) {
+          Write-Host 'OK' -ForegroundColor Green
+        } else {
+          Write-Host 'WARN (link failed)' -ForegroundColor Yellow
+          Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
+            -Namespace $Namespace -AapRoute $aapRoute -Operation 'link' `
+            -HttpCode $linkResult.HttpCode -ResponseBody $linkResult.Body
+        }
       } else {
-        Write-Host 'WARN (create failed)' -ForegroundColor Yellow
-        Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
-          -Namespace $Namespace -AapRoute $aapRoute -HttpCode $validatedCreateResult.HttpCode `
-          -ResponseBody $validatedCreateResult.Body
+        Write-Host 'WARN (repository not found)' -ForegroundColor Yellow
       }
     }
 
@@ -599,13 +660,56 @@ function Set-AapPahRemotes {
       if ($validatedRepoHref) {
         $linkBody = (@{ remote = $validatedRemote } | ConvertTo-Json -Compress)
         $linkUrl = Join-AapPulpUrl -ApiBase $apiBase -Href $validatedRepoHref
-        Invoke-AapPulpRequest -Url $linkUrl -AdminPassword $adminPass -Method 'PATCH' -Body $linkBody | Out-Null
-        Write-Host 'OK' -ForegroundColor Green
+        $linkResult = Invoke-AapPulpMutatingWithRetry -Url $linkUrl -AdminPassword $adminPass `
+          -Method 'PATCH' -Body $linkBody
+        if ($linkResult.Ok) {
+          Write-Host 'OK' -ForegroundColor Green
+        } else {
+          Write-Host 'WARN (link failed)' -ForegroundColor Yellow
+          Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
+            -Namespace $Namespace -AapRoute $aapRoute -Operation 'link' `
+            -HttpCode $linkResult.HttpCode -ResponseBody $linkResult.Body
+        }
+      } else {
+        Write-Host 'WARN (validated repository not found)' -ForegroundColor Yellow
+      }
+    }
 
-        Write-Host -NoNewline '  Syncing validated... '
-        $syncUrl = (Join-AapPulpUrl -ApiBase $apiBase -Href $validatedRepoHref).TrimEnd('/') + 'sync/'
-        Invoke-AapPulpRequest -Url $syncUrl -AdminPassword $adminPass -Method 'POST' -Body '{"mirror":false}' | Out-Null
+    Write-Host -NoNewline '  Syncing rh-certified... '
+    $certifiedRepoHref = Get-AapPulpResourceHref -ApiBase $apiBase -AdminPassword $adminPass `
+      -ResourceUrl $reposUrl -Name 'rh-certified'
+    if ($certifiedRepoHref) {
+      $syncUrl = (Join-AapPulpUrl -ApiBase $apiBase -Href $certifiedRepoHref).TrimEnd('/') + '/sync/'
+      $syncResult = Invoke-AapPulpMutatingWithRetry -Url $syncUrl -AdminPassword $adminPass `
+        -Method 'POST' -Body '{"mirror":false}'
+      if ($syncResult.Ok) {
         Write-Host 'OK (background)' -ForegroundColor Green
+      } else {
+        Write-Host 'WARN (sync failed)' -ForegroundColor Yellow
+        Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
+          -Namespace $Namespace -AapRoute $aapRoute -Operation 'sync' `
+          -HttpCode $syncResult.HttpCode -ResponseBody $syncResult.Body
+      }
+    } else {
+      Write-Host 'WARN (repository not found)' -ForegroundColor Yellow
+    }
+
+    if ($validatedRemote) {
+      Write-Host -NoNewline '  Syncing validated... '
+      $validatedRepoHref = Get-AapPulpResourceHref -ApiBase $apiBase -AdminPassword $adminPass `
+        -ResourceUrl $reposUrl -Name 'validated'
+      if ($validatedRepoHref) {
+        $syncUrl = (Join-AapPulpUrl -ApiBase $apiBase -Href $validatedRepoHref).TrimEnd('/') + '/sync/'
+        $syncResult = Invoke-AapPulpMutatingWithRetry -Url $syncUrl -AdminPassword $adminPass `
+          -Method 'POST' -Body '{"mirror":false}'
+        if ($syncResult.Ok) {
+          Write-Host 'OK (background)' -ForegroundColor Green
+        } else {
+          Write-Host 'WARN (sync failed)' -ForegroundColor Yellow
+          Write-AapPulpCreateFailureHint -ApiBase $apiBase -AdminPassword $adminPass `
+            -Namespace $Namespace -AapRoute $aapRoute -Operation 'sync' `
+            -HttpCode $syncResult.HttpCode -ResponseBody $syncResult.Body
+        }
       } else {
         Write-Host 'WARN (validated repository not found)' -ForegroundColor Yellow
       }
@@ -614,19 +718,24 @@ function Set-AapPahRemotes {
     Write-AapWarn 'No galaxy token found, skipping console.redhat.com remotes'
   }
 
-  if ($Credentials.PahUrl -and $Credentials.PahToken) {
-    Write-Host -NoNewline '  Configuring Private Automation Hub remote... '
-    $pahBody = (@{
-        name           = 'external-pah'
-        url            = $Credentials.PahUrl
-        token          = $Credentials.PahToken
-        tls_validation = $true
-      } | ConvertTo-Json -Compress)
-    $createRaw = Invoke-AapPulpRequest -Url $remotesUrl -AdminPassword $adminPass -Method 'POST' -Body $pahBody
-    if ($createRaw -match 'pulp_href') {
-      Write-Host 'OK' -ForegroundColor Green
-    } else {
-      Write-Host 'WARN (may already exist or invalid config)' -ForegroundColor Yellow
+  if ($Credentials.PahUrl) {
+    if (-not (Test-AapPahConfigFormat -Credentials $Credentials)) {
+      Write-AapWarn 'Invalid PAH config, skipping external Private Automation Hub remote'
+    } elseif ($Credentials.PahToken) {
+      Write-Host -NoNewline '  Configuring Private Automation Hub remote... '
+      $pahBody = (@{
+          name           = 'external-pah'
+          url            = $Credentials.PahUrl
+          token          = $Credentials.PahToken
+          tls_validation = $true
+        } | ConvertTo-Json -Compress)
+      $createResult = Invoke-AapPulpMutatingWithRetry -Url $remotesUrl -AdminPassword $adminPass `
+        -Method 'POST' -Body $pahBody
+      if ($createResult.Ok -and $createResult.Body -match 'pulp_href') {
+        Write-Host 'OK' -ForegroundColor Green
+      } else {
+        Write-Host 'WARN (may already exist or invalid config)' -ForegroundColor Yellow
+      }
     }
   }
 
@@ -711,9 +820,6 @@ function Invoke-AapDemoSetupPah {
   Write-Host ''
 
   $creds = Get-AapGalaxyCredentials
-  if (-not (Test-AapPahConfigFormat -Credentials $creds)) {
-    throw 'Invalid PAH config'
-  }
 
   $crc = Get-AapCrcStatus
   if ([string]$crc.crcStatus -ne 'Running') {

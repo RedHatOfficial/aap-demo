@@ -1822,6 +1822,7 @@ cmd_status() {
   fi
 
   # Show addons with URLs or enable instructions
+  detect_galaxy_credentials
   echo ""
   echo "Collection Sources:"
   echo "-------------------"
@@ -2530,6 +2531,7 @@ deploy_latest() {
   validate_galaxy_token || exit 1
   validate_pah_config || exit 1
   generate_ansible_cfg
+  install_collections || exit 1
 
   # Setup namespace (creates aap-operator namespace + pull secret)
   setup_namespace
