@@ -2188,25 +2188,6 @@ configure_pah_remotes() {
 
   # Check jq availability
 
-  # Retry wrapper for transient Pulp API failures (matches PowerShell: 6 attempts, 8s delay)
-  _retry_pulp_call() {
-    local max_attempts=6
-    local delay=8
-    local attempt=1
-
-    while [ $attempt -le $max_attempts ]; do
-      if "$@" 2>&1; then
-        return 0
-      fi
-
-      if [ $attempt -lt $max_attempts ]; then
-        printf "${_YELLOW}▸${_NC} API call failed (attempt $attempt/$max_attempts), retrying in ${delay}s...\n" >&2
-        sleep "$delay"
-      fi
-      attempt=$((attempt + 1))
-    done
-    return 1
-  }
   if ! command -v jq >/dev/null 2>&1; then
     _err "jq is required for PAH remote configuration"
     echo "  Install: brew install jq (macOS) or sudo dnf install jq (RHEL/Fedora)"
@@ -2307,7 +2288,7 @@ configure_pah_remotes() {
       | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$repo_href" ]; then
-      _retry_pulp_call curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      curl -sk --max-time 10 -u "admin:${admin_pass}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d '{"mirror": false}' \
