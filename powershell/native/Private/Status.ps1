@@ -117,6 +117,8 @@ function Invoke-AapDemoStatus {
   }
   if (-not $foundCred) { Write-Host '  (no admin password secret found yet)' }
 
+  Write-AapCollectionSourcesStatus
+
   $savedAddons = @(Get-AapAddonsList)
   Write-Host ''
   Write-Host 'Addons:'
@@ -156,6 +158,7 @@ DEPLOY:
     redeploy-all    Destroy cluster and full redeploy
     clean           Remove AAP namespace and resources
     watch           Monitor AAP deployment progress
+    setup-pah       Configure integrated PAH remotes (console.redhat.com token)
 
 STATUS:
     status          Show cluster and AAP status
@@ -173,5 +176,6 @@ ADDONS:
 NOTES:
     Requires oc and crc on PATH. OpenShift Local needs Hyper-V.
     Pull secret: %USERPROFILE%\.aap-demo\pull-secret.txt
+    Galaxy token: %USERPROFILE%\.aap-demo\galaxy-token (for setup-pah)
 '@
 }

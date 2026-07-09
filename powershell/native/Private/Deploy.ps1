@@ -86,6 +86,7 @@ function Invoke-AapDemoDeploy {
       Write-AapStep ('AAP instance ''{0}'' already exists in {1} - watching progress' -f $existingName, $Namespace)
       Write-Host ''
       Invoke-AapDemoWatch -Namespace $Namespace
+      Write-AapSetupPahReminder
       return
     }
   }
@@ -138,7 +139,7 @@ function Invoke-AapDemoDeploy {
   Write-Host ''
   Write-Host '  Monitor: aap-demo watch'
   Write-Host '  Or:      aap-demo status'
-  Write-Host ''
+  Write-AapSetupPahReminder
 }
 
 function Initialize-AapNamespace {
