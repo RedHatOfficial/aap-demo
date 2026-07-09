@@ -2433,7 +2433,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal"
+AVAILABLE_ADDONS="mcp-server portal devspaces"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
