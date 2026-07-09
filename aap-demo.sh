@@ -120,7 +120,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm | ansible-project)
+    console | registry | mcp-server | registry-ui | olm | portal | ansible-project)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -162,6 +162,8 @@ fi
 
 # Load infrastructure abstraction layer
 source "${SCRIPT_DIR}/includes/infra-api.sh"
+# shellcheck source=includes/ingress-ca-trust.sh
+source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 
 # -----------------------------------------------------------------------------
 # Prerequisite Checks
@@ -247,8 +249,10 @@ setup_kubeconfig() {
     fi
     # Test if kubeconfig works, refresh from VM if not
     if ! kubectl cluster-info &>/dev/null 2>&1; then
-      if [ -f "$HOME/.crc/machines/crc/id_ed25519" ]; then
-        if ssh -p 2222 -i "$HOME/.crc/machines/crc/id_ed25519" \
+      # Ensure infra backend is loaded to set CRC_SSH_KEY
+      _infra_ensure_backend 2>/dev/null || true
+      if [ -n "$CRC_SSH_KEY" ]; then
+        if ssh -p 2222 -i "$CRC_SSH_KEY" \
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
           -o ConnectTimeout=2 -o BatchMode=yes \
           core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' \
@@ -338,7 +342,7 @@ check_mkcert_ca() {
     echo ""
     echo "      mkcert -install"
     echo ""
-    echo "  You will be prompted for your administrator password."
+    echo "  You will be prompted for your system administrator password (sudo)."
     echo "  This is a one-time setup per machine."
     echo ""
     echo "  Firefox: Install certutil first (brew install nss / apt install libnss3-tools)"
@@ -347,66 +351,6 @@ check_mkcert_ca() {
     echo ""
     exit 1
   fi
-}
-
-# -----------------------------------------------------------------------------
-# Preflight: operator-sdk (for DEV bundle deployments)
-# -----------------------------------------------------------------------------
-ensure_operator_sdk() {
-  if command -v operator-sdk >/dev/null 2>&1; then
-    return 0
-  fi
-
-  echo "operator-sdk not found. Installing..."
-  echo ""
-
-  local SDK_OS SDK_ARCH SDK_VERSION SDK_URL SDK_DEST SDK_BIN_DIR
-  case "$(uname -s)" in
-    Darwin) SDK_OS="darwin" ;;
-    Linux) SDK_OS="linux" ;;
-    MINGW* | MSYS* | CYGWIN*)
-      SDK_OS="windows"
-      ;;
-    *)
-      echo "ERROR: Unsupported OS: $(uname -s)"
-      exit 1
-      ;;
-  esac
-  case "$(uname -m)" in
-    x86_64) SDK_ARCH="amd64" ;;
-    aarch64 | arm64) SDK_ARCH="arm64" ;;
-    *)
-      echo "ERROR: Unsupported architecture: $(uname -m)"
-      exit 1
-      ;;
-  esac
-
-  SDK_VERSION="v1.38.0"
-  SDK_URL="https://github.com/operator-framework/operator-sdk/releases/download/${SDK_VERSION}/operator-sdk_${SDK_OS}_${SDK_ARCH}"
-  echo "Downloading operator-sdk ${SDK_VERSION} for ${SDK_OS}/${SDK_ARCH}..."
-
-  SDK_BIN_DIR="${HOME}/.local/bin"
-  mkdir -p "$SDK_BIN_DIR"
-  SDK_DEST="${SDK_BIN_DIR}/operator-sdk"
-  [ "$SDK_OS" = "windows" ] && SDK_DEST="${SDK_DEST}.exe"
-
-  if ! curl -fsSL -o "$SDK_DEST" "$SDK_URL"; then
-    echo "ERROR: Failed to download operator-sdk"
-    exit 1
-  fi
-
-  chmod +x "$SDK_DEST"
-
-  if [ "$SDK_OS" = "windows" ]; then
-    echo "✓ operator-sdk installed to ${SDK_DEST}"
-  elif [ -w /usr/local/bin ]; then
-    mv "$SDK_DEST" /usr/local/bin/operator-sdk
-    echo "✓ operator-sdk installed to /usr/local/bin/"
-  else
-    echo "✓ operator-sdk installed to ${SDK_DEST}"
-    echo "  Ensure ${SDK_BIN_DIR} is in your PATH"
-  fi
-  echo ""
 }
 
 # -----------------------------------------------------------------------------
@@ -433,8 +377,14 @@ Cluster management:
   stop            Stop cluster
   ssh             SSH into cluster node
 
+Addons:
+  enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
+                  Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
+  enable mcp-server Enable MCP server for AI assistants
+
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
+  aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
 
 Run 'aap-demo help' for full documentation.
 EOF
@@ -477,7 +427,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (olm, console, registry, mcp-server)
+    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
@@ -726,6 +676,39 @@ cmd_config() {
 
   # Ensure config directory exists
   mkdir -p "$(dirname "$AAP_DEMO_CONFIG")"
+}
+
+cmd_update() {
+  echo ""
+  printf "\033[1maap-demo update\033[0m - Pulling latest code and reinstalling...\n"
+  echo ""
+
+  local repo_root="$SCRIPT_DIR"
+  if [ ! -f "${repo_root}/aap-demo.sh" ]; then
+    _err "aap-demo repo not found at ${repo_root}"
+    echo "  Run from the repo directory or reinstall with ./install.sh"
+    return 1
+  fi
+
+  if ! git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null; then
+    _err "Not a git repository: ${repo_root}"
+    return 1
+  fi
+
+  echo "  Pulling latest code..."
+  if ! git -C "$repo_root" pull; then
+    _err "git pull failed"
+    return 1
+  fi
+
+  echo "  Reinstalling launcher..."
+  if ! bash "${repo_root}/install.sh"; then
+    _err "install.sh failed"
+    return 1
+  fi
+
+  echo ""
+  echo "  ✓ Update complete"
 }
 
 cmd_redhat_status() {
@@ -1256,9 +1239,11 @@ cmd_test() {
   # Find all namespaces with AAP deployments
   local aap_namespaces=()
   # Operator deploys: namespaces with AAP CRDs
-  local ns_list
-  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' || true)
-  # Sort alphabetically by namespace name
+  local ns_list ns
+  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort -u || true)
+  while IFS= read -r ns; do
+    [ -n "$ns" ] && aap_namespaces+=("$ns")
+  done <<<"$ns_list"
 
   if [ ${#aap_namespaces[@]} -eq 0 ]; then
     _err "No AAP deployments found on cluster"
@@ -1397,8 +1382,10 @@ _run_atf() {
   aap_version=$(kubectl get csv -n "$test_namespace" -o jsonpath='{.items[0].spec.version}' 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
   if [ -z "$aap_version" ]; then
     # Fallback: gateway API ping (may report base version, not dev version)
-    local _curl_tls="--cacert /tmp/crc-ingress-ca.crt"
-    [ ! -f /tmp/crc-ingress-ca.crt ] && _curl_tls="-k"
+    local _ca_cert
+    _ca_cert=$(get_ingress_ca_cert_path)
+    local _curl_tls="--cacert ${_ca_cert}"
+    [ ! -f "$_ca_cert" ] && _curl_tls="-k"
     aap_version=$(curl -s $_curl_tls "https://${gateway_host}/api/gateway/v1/ping/" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('version',''))" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
   fi
   aap_version="${aap_version:-2.7}"
@@ -1485,7 +1472,12 @@ INVEOF
 }
 
 cmd_ssh() {
-  CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
+  # Ensure infra backend is loaded to set CRC_SSH_KEY
+  _infra_ensure_backend 2>/dev/null || true
+  if [ -z "$CRC_SSH_KEY" ]; then
+    _err "No CRC SSH key found. Is OpenShift Local running?"
+    return 1
+  fi
   exec ssh -p 2222 -i "$CRC_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null core@127.0.0.1
 }
 
@@ -1651,6 +1643,13 @@ cmd_status() {
     return 0
   fi
 
+  # Export CA env vars if installed, don't prompt for sudo
+  local ca_path
+  ca_path=$(get_ingress_ca_cert_path)
+  if [ -f "$ca_path" ]; then
+    _ingress_ca_export_env "$ca_path"
+  fi
+
   # Show kubeconfig
   echo "Kubeconfig:  $KUBECONFIG"
   local _script_dir _script_branch _script_remote
@@ -1774,29 +1773,48 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
-  # Show enabled addons with URLs
+  # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
-  if [ -n "$saved_addons" ]; then
-    echo "Enabled Addons:"
-    echo "---------------"
-    for a in $saved_addons; do
-      local url=""
-      case "$a" in
-        console) url="https://console.apps.127.0.0.1.nip.io" ;;
-        registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
-        mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
-        registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
-        prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
-      esac
-      if [ -n "$url" ]; then
-        printf "  %-15s %s\n" "$a" "$url"
-      else
-        printf "  %s\n" "$a"
-      fi
-    done
-    echo ""
-  fi
+  echo "Addons:"
+  echo "-------"
+  for a in $AVAILABLE_ADDONS; do
+    local url="" label="" enabled=false
+    if echo "$saved_addons" | grep -qw "$a"; then
+      enabled=true
+    fi
+    case "$a" in
+      mcp-server)
+        if [ "$enabled" = true ]; then
+          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
+          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+    esac
+    if [ -n "$url" ] && [ -z "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$url"
+    elif [ -n "$label" ]; then
+      printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+    else
+      printf "  %-15s (aap-demo enable %s)\n" "$a" "$a"
+    fi
+  done
+  echo ""
 }
 
 cmd_redeploy() {
@@ -1872,11 +1890,11 @@ cmd_start() {
 
   # Re-apply CoreDNS config (fixes DNS after restarts)
   if [ -f "${SCRIPT_DIR}/includes/crc-create.sh" ]; then
-    # Extract and re-run just the CoreDNS config function
     bash -c "
+      AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
       source '${SCRIPT_DIR}/includes/crc-create.sh'
-      configure_coredns 2>/dev/null || true
-    "
+      configure_coredns
+    " || true
   fi
 
   echo "✓ CRC cluster started"
@@ -1886,7 +1904,9 @@ cmd_start() {
 
 _start_crc_cluster() {
   crc start || true
-  [ -f /etc/resolver/testing ] && sudo rm -f /etc/resolver/testing
+  if [ -f /etc/resolver/testing ]; then
+    sudo rm -f /etc/resolver/testing
+  fi
 }
 
 cmd_create() {
@@ -1903,7 +1923,6 @@ cmd_create() {
 
   # Install OLM by default (OpenShift Local doesn't include it, needed for operator dev and latest deploys)
   setup_kubeconfig
-  ensure_operator_sdk
   bash "${SCRIPT_DIR}/addons/olm/deploy.sh" || {
     echo ""
     printf "  \033[1;33mWARNING: OLM install failed — you can retry with: aap-demo enable olm\033[0m\n"
@@ -1931,6 +1950,8 @@ cmd_deploy() {
     echo "Cluster is stopped. Starting..."
     _start_crc_cluster
   fi
+
+  install_ingress_ca_trust
 
   # Install OLM if not present (OpenShift Local doesn't include it)
   KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"
@@ -1992,7 +2013,6 @@ deploy_latest() {
   _check_disk_space || exit 1
 
   # Ensure OLM is installed (OpenShift Local doesn't include it)
-  ensure_operator_sdk
   KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"
 
   echo ""
@@ -2478,7 +2498,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server ansible-project"
+AVAILABLE_ADDONS="mcp-server portal ansible-project"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"

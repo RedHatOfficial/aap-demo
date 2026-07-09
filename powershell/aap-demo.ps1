@@ -10,7 +10,7 @@
 
 .DESCRIPTION
 
-  All commands run natively in PowerShell. Only diagnose --ai delegates to Git Bash.
+  All commands run natively in PowerShell.
 
 #>
 

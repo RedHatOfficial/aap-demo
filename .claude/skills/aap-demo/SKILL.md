@@ -41,11 +41,19 @@ CLI commands — do not reimplement their logic.
 | Destroy and rebuild from scratch | `aap-demo redeploy-all` |
 | Show help | `aap-demo help` |
 
-Available addons: olm, console, registry, mcp-server, devspaces, prometheus
+Available addons: olm, console, registry, mcp-server, devspaces, prometheus, portal
 
-## Deploy Selection
+## Portal Addon
 
-`aap-demo deploy` deploys AAP 2.7.
+Helm-based Self-Service Portal on OpenShift (`aap-demo enable portal`):
+
+- Auto-detects cluster CPU (`amd64` vs `arm64`) and selects x86 or ARM image profile
+- Namespace: `redhat-rhaap-portal`
+- Architecture: see `docs/adr/002-portal-helm-deployment.md`
+
+**Access**: `aap-demo status portal` for route URL. Sign in with AAP OAuth (admin credentials).
+
+**Prerequisites**: AAP deployed, Helm 3.10+, `registry.redhat.io` pull secret for OCI plugins.
 
 ## Workflow
 
@@ -126,6 +134,173 @@ After any deployment, verify health with this sequence:
 
 The AAP CR goes through phases: Pending → Running → Successful. A deployment typically
 takes 5-10 minutes. If stuck in Running for >15 minutes, check operator logs and diagnose.
+
+## AAP Interaction Tooling
+
+**NEVER use awxkit for AAP operations.** awxkit causes:
+- Inconsistent tooling across environments
+- Python dependency conflicts
+- Complex authentication setup
+- Windows compatibility issues
+
+### Priority Order for AAP Interactions
+
+Use the following tools in this order of preference:
+
+#### 1. MCP Server (Preferred)
+
+Check if `aap-mcp` MCP server is configured:
+
+```bash
+# Check MCP server availability
+aap-demo status | grep -i mcp
+```
+
+If configured, use MCP tools for AAP operations:
+- `aap-controller-*` tools for Controller operations
+- `aap-eda-*` tools for Event-Driven Ansible
+- `aap-hub-*` tools for Automation Hub
+
+MCP provides typed, validated API interactions without authentication complexity.
+
+#### 2. kubectl/oc for Operator Resources
+
+For operator-deployed AAP, use kubectl/oc to manage AAP resources directly:
+
+**Check AAP deployment status:**
+```bash
+kubectl get aap -n aap-operator -o yaml
+kubectl get aap -n aap-operator -o jsonpath='{.items[0].status.conditions}'
+```
+
+**Get AAP credentials:**
+```bash
+# Admin password
+kubectl get secret aap-admin-password -n aap-operator -o jsonpath='{.data.password}' | base64 -d
+
+# Database credentials
+kubectl get secret aap-postgres-configuration -n aap-operator -o yaml
+```
+
+**Get AAP routes:**
+```bash
+kubectl get routes -n aap-operator
+kubectl get route gateway -n aap-operator -o jsonpath='{.spec.host}'
+```
+
+**Manage AAP components via CR:**
+```bash
+# Scale down AAP (idle mode)
+kubectl patch aap aap -n aap-operator --type=merge -p '{"spec":{"idle_aap":true}}'
+
+# Scale back up
+kubectl patch aap aap -n aap-operator --type=merge -p '{"spec":{"idle_aap":false}}'
+```
+
+#### 3. Direct REST API via curl
+
+For AAP gateway endpoints when kubectl is insufficient:
+
+**Get authentication token:**
+```bash
+# Extract admin password
+ADMIN_PASSWORD=$(kubectl get secret aap-admin-password -n aap-operator -o jsonpath='{.data.password}' | base64 -d)
+
+# Get gateway route
+GATEWAY_HOST=$(kubectl get route gateway -n aap-operator -o jsonpath='{.spec.host}')
+
+# Authenticate and get token
+TOKEN=$(curl -sk -X POST "https://${GATEWAY_HOST}/api/gateway/v1/tokens/" \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"admin\",\"password\":\"${ADMIN_PASSWORD}\"}" | jq -r '.token')
+```
+
+**Common API operations:**
+
+```bash
+# List organizations
+curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${GATEWAY_HOST}/api/controller/v2/organizations/"
+
+# List job templates
+curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${GATEWAY_HOST}/api/controller/v2/job_templates/"
+
+# Launch job template
+curl -sk -X POST -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  "https://${GATEWAY_HOST}/api/controller/v2/job_templates/${TEMPLATE_ID}/launch/" \
+  -d '{"extra_vars": "{}"}'
+
+# Check job status
+curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${GATEWAY_HOST}/api/controller/v2/jobs/${JOB_ID}/"
+```
+
+**EDA API examples:**
+
+```bash
+# List activations
+curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${GATEWAY_HOST}/api/eda/v1/activations/"
+
+# List rulebook activations
+curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${GATEWAY_HOST}/api/eda/v1/rulebook-activations/"
+```
+
+**Hub API examples:**
+
+```bash
+# List collections
+curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${GATEWAY_HOST}/api/galaxy/_ui/v1/collection-versions/"
+
+# List execution environments
+curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${GATEWAY_HOST}/api/galaxy/pulp/api/v3/distributions/container/container/"
+```
+
+#### 4. Ansible Modules (Last Resort)
+
+Use Ansible modules only when kubectl/curl are insufficient for complex workflows:
+
+```yaml
+# ansible.controller modules
+- name: Create organization
+  ansible.controller.organization:
+    controller_host: "{{ gateway_host }}"
+    controller_username: admin
+    controller_password: "{{ admin_password }}"
+    name: "Demo Org"
+    state: present
+    validate_certs: false
+
+# ansible.eda modules
+- name: Create EDA project
+  ansible.eda.project:
+    controller_host: "{{ gateway_host }}"
+    controller_username: admin
+    controller_password: "{{ admin_password }}"
+    name: "Demo Project"
+    url: "https://github.com/example/repo.git"
+    state: present
+    validate_certs: false
+```
+
+**When to use Ansible modules:**
+- Complex multi-step AAP configuration workflows
+- Idempotent configuration management
+- Integration with existing Ansible playbooks
+- When MCP/kubectl/curl would require excessive scripting
+
+### Authentication Best Practices
+
+**For MCP:** Authentication is handled by the MCP server configuration — no manual auth required.
+
+**For curl:** Always extract credentials from Kubernetes secrets, never hardcode. Use environment variables for tokens.
+
+**For Ansible modules:** Use `controller_host`, `controller_username`, `controller_password` parameters. Set `validate_certs: false` for local development environments.
 
 ## Key Details
 

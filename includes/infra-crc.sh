@@ -12,16 +12,38 @@
 if [ -n "$_INFRA_CRC_LOADED" ]; then return 0; fi
 _INFRA_CRC_LOADED=1
 
-# CRC SSH key and port
-CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
+# CRC SSH port
 CRC_SSH_PORT=2222
-CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+
+# Detect SSH key — CRC creates id_ed25519 (OpenShift) or id_ecdsa (MicroShift)
+_detect_crc_ssh_key() {
+  local base="${HOME}/.crc/machines/crc"
+  if [ -f "${base}/id_ed25519" ]; then
+    echo "${base}/id_ed25519"
+  elif [ -f "${base}/id_ecdsa" ]; then
+    echo "${base}/id_ecdsa"
+  else
+    return 1
+  fi
+}
+
+# Initialize SSH key — callers should check CRC_SSH_KEY before use
+if CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)"; then
+  CRC_SSH_OPTS="-i \"${CRC_SSH_KEY}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+else
+  CRC_SSH_KEY=""
+  CRC_SSH_OPTS=""
+fi
 
 # ---------------------------------------------------------------------------
 # SSH helpers
 # ---------------------------------------------------------------------------
 
 _crc_exec() {
+  if [ -z "$CRC_SSH_KEY" ]; then
+    echo "ERROR: No CRC SSH key found" >&2
+    return 1
+  fi
   ssh -p "$CRC_SSH_PORT" $CRC_SSH_OPTS core@127.0.0.1 "$@"
 }
 

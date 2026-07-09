@@ -1,8 +1,12 @@
 function Invoke-AapDemoCreate {
   [CmdletBinding()]
-  param()
+  param(
+    [switch]$Embedded
+  )
 
-  Write-AapHeader 'aap-demo create'
+  if (-not $Embedded) {
+    Write-AapHeader 'aap-demo create'
+  }
 
   Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
 
@@ -51,11 +55,7 @@ function Invoke-AapDemoCreate {
   Write-AapStep "Pull secret: $pullSecret"
 
   Write-AapStep 'Starting CRC (this may take several minutes)...'
-  & crc start -p $pullSecret
-  if ($LASTEXITCODE -ne 0) {
-    Get-Content -LiteralPath $pullSecret -Raw | & crc start --pull-secret-file -
-    if ($LASTEXITCODE -ne 0) { throw 'crc start failed' }
-  }
+  Invoke-AapCrcStart -PullSecretPath $pullSecret
 
   Initialize-AapKubeEnvironment
 
@@ -103,13 +103,10 @@ function Invoke-AapDemoCreate {
     if ((Invoke-AapOcQuiet @('get', 'sc', 'nfs-local-rwx')) -ne 0) {
       Write-AapStep 'Setting up nfs-local-rwx storage...'
       Invoke-AapOc @('adm', 'policy', 'add-scc-to-group', 'privileged', 'system:serviceaccounts:nfs-storage') | Out-Null
-      $defaultSc = (Invoke-AapOcCapture @(
-        'get', 'sc', '-o', 'jsonpath={.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
-      )).Output
-      if (-not $defaultSc) { $defaultSc = 'topolvm-provisioner' }
+      $defaultSc = Get-AapDefaultStorageClass
       Apply-AapManifestTemplate 'config/manifests/nfs-server.yaml' @{ '__DEFAULT_SC__' = $defaultSc }
       Invoke-AapOc @('wait', '--for=condition=Available', 'deployment/nfs-server', '-n', 'nfs-storage', '--timeout=120s') | Out-Null
-      $nfsIp = (Invoke-AapOcCapture @('get', 'svc', 'nfs-server', '-n', 'nfs-storage', '-o', 'jsonpath={.spec.clusterIP}')).Output
+      $nfsIp = Get-AapServiceClusterIp -Name 'nfs-server' -Namespace 'nfs-storage'
       Apply-AapManifestTemplate 'config/manifests/nfs-provisioner.yaml' @{ '__NFS_SERVER_IP__' = $nfsIp }
       Invoke-AapOc @('wait', '--for=condition=Available', 'deployment/nfs-provisioner', '-n', 'nfs-storage', '--timeout=120s') | Out-Null
     }
@@ -122,14 +119,46 @@ function Invoke-AapDemoCreate {
   }
 
   Install-AapOlm
-  Install-AapIngressCaTrust
+
+  try {
+    Sync-AapKubeconfig -Quiet
+  } catch {
+    Write-AapWarn "Kubeconfig sync skipped: $($_.Exception.Message)"
+  }
 
   $kubeConfig = Get-AapKubeconfigPath
   Write-Host ''
   Write-AapStep 'CRC cluster ready'
   Write-Host "  Kubeconfig: $kubeConfig"
-  Write-Host '  Next: aap-demo deploy'
-  Write-Host ''
+  if (-not $Embedded) {
+    Write-Host '  Next: aap-demo deploy'
+    Write-Host ''
+  }
+}
+
+function Invoke-AapEnsureCluster {
+  param(
+    [switch]$CreateIfMissing
+  )
+
+  $crc = Get-AapCrcStatus
+  if ([string]$crc.crcStatus -eq 'Stopped') {
+    Write-AapStep 'Cluster stopped - starting CRC...'
+    Invoke-AapCrcStart
+  } elseif ([string]$crc.crcStatus -eq 'Unknown') {
+    if ($CreateIfMissing) {
+      Write-AapStep 'No cluster found - creating OpenShift Local cluster...'
+      Write-Host ''
+      Invoke-AapDemoCreate -Embedded
+    } else {
+      throw 'No cluster found. Run: aap-demo create'
+    }
+  }
+
+  Initialize-AapKubeEnvironment
+  if ((Invoke-AapOcQuiet @('cluster-info')) -ne 0) {
+    throw 'oc cannot connect to cluster'
+  }
 }
 
 function Set-AapCoreDns {

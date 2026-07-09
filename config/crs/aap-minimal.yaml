@@ -8,6 +8,24 @@ spec:
 
   controller:
     disabled: false
+    # Fix git "dubious ownership" on project sync (emptyDir /var/lib/awx/projects)
+    security_context_settings:
+      fsGroup: 996  # awx GID — group ownership on project volume
+    # fsGroup alone is insufficient: AWX clones as root, awx user runs git later
+    task_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: safe.directory
+      - name: GIT_CONFIG_VALUE_0
+        value: "*"
+    ee_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: safe.directory
+      - name: GIT_CONFIG_VALUE_0
+        value: "*"
 
   eda:
     disabled: false

@@ -6,8 +6,7 @@ function Invoke-AapDemoDiagnose {
   )
 
   if ($Ai) {
-    Invoke-AapBashCli @('diagnose', '--ai')
-    return
+    throw 'diagnose --ai is not available in the native PowerShell CLI. Use aap-demo diagnose without --ai.'
   }
 
   $counts = @{ Issues = 0; Warnings = 0 }

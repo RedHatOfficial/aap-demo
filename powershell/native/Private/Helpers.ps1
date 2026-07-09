@@ -41,6 +41,112 @@ function Test-AapCommand {
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Update-AapSessionPath {
+  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $env:Path = @($machinePath, $userPath) -join ';'
+}
+
+function Install-AapHelm {
+  if (Test-AapCommand 'helm') {
+    return $true
+  }
+
+  if (-not (Test-AapCommand 'winget')) {
+    Write-AapWarn 'helm not found and winget is unavailable'
+    return $false
+  }
+
+  Write-Host 'Installing Helm via winget (Helm.Helm)...'
+  $wingetArgs = @(
+    'install', '--id', 'Helm.Helm', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements',
+    '--disable-interactivity'
+  )
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & winget @wingetArgs
+    if ($LASTEXITCODE -ne 0) {
+      Write-AapWarn "winget install Helm.Helm failed (exit $LASTEXITCODE)"
+      return $false
+    }
+  } catch {
+    Write-AapWarn "Could not install Helm via winget: $($_.Exception.Message)"
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+
+  Update-AapSessionPath
+  return (Test-AapCommand 'helm')
+}
+
+function Ensure-AapHelm {
+  if (Test-AapCommand 'helm') { return }
+
+  Write-Host 'Helm not found — installing via winget...'
+  if (-not (Install-AapHelm)) {
+    throw @"
+helm not found.
+
+Install Helm 3.10+: winget install --id Helm.Helm -e --source winget
+"@
+  }
+  Write-AapStep 'Helm installed via winget'
+}
+
+function Install-AapJq {
+  if (Test-AapCommand 'jq') {
+    return $true
+  }
+
+  if (-not (Test-AapCommand 'winget')) {
+    Write-AapWarn 'jq not found and winget is unavailable'
+    return $false
+  }
+
+  Write-Host 'Installing jq via winget (jqlang.jq)...'
+  $wingetArgs = @(
+    'install', '--id', 'jqlang.jq', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements',
+    '--disable-interactivity'
+  )
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & winget @wingetArgs
+    if ($LASTEXITCODE -ne 0) {
+      Write-AapWarn "winget install jqlang.jq failed (exit $LASTEXITCODE)"
+      return $false
+    }
+  } catch {
+    Write-AapWarn "Could not install jq via winget: $($_.Exception.Message)"
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+
+  Update-AapSessionPath
+  return (Test-AapCommand 'jq')
+}
+
+function Ensure-AapJq {
+  if (Test-AapCommand 'jq') { return }
+
+  Write-Host 'jq not found — installing via winget...'
+  if (-not (Install-AapJq)) {
+    throw @"
+jq not found.
+
+Install jq: winget install --id jqlang.jq -e --source winget
+"@
+  }
+  Write-AapStep 'jq installed via winget'
+}
+
 function Assert-AapCommand {
   param(
     [Parameter(Mandatory)][string]$Name,
@@ -94,8 +200,8 @@ function Set-AapConfigValue {
 function Get-AapPullSecretPath {
   $candidates = @(
     $env:PULL_SECRET_PATH,
-    (Join-Path $Script:AapDemoConfigDir 'pull-secret.json'),
     (Join-Path $Script:AapDemoConfigDir 'pull-secret.txt'),
+    (Join-Path $Script:AapDemoConfigDir 'pull-secret.json'),
     (Join-Path $Script:AapDemoConfigDir 'pull-secret')
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
   return $candidates | Select-Object -First 1
@@ -140,6 +246,23 @@ function Invoke-AapExternal {
     ExitCode = $code
     Output   = ($output | Out-String).TrimEnd()
     Lines    = @($output)
+  }
+}
+
+function Wait-AapOcRollout {
+  param(
+    [Parameter(Mandatory)][string]$Resource,
+    [Parameter(Mandatory)][string]$Namespace,
+    [int]$TimeoutSeconds = 600
+  )
+  Initialize-AapKubeEnvironment
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & oc rollout status $Resource -n $Namespace --timeout="${TimeoutSeconds}s"
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousEap
   }
 }
 
@@ -217,6 +340,123 @@ function Get-AapCrcStatusJson {
     return $raw | ConvertFrom-Json
   } catch {
     return $null
+  }
+}
+
+function Write-AapCrcStartOutput {
+  param([string[]]$Lines)
+
+  $skipOcEnvBlock = $false
+  foreach ($line in $Lines) {
+    if ($line -match "Use the 'oc' command line interface") {
+      $skipOcEnvBlock = $true
+      continue
+    }
+    if ($skipOcEnvBlock) { continue }
+    if ($line -match '@FOR /f|^\s*>\s*oc COMMAND|^\s*>\s*@') { continue }
+    if ($line.Trim()) { Write-Host $line }
+  }
+}
+
+function Invoke-AapCrcStart {
+  param(
+    [string]$PullSecretPath = $null
+  )
+
+  Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    if ($PullSecretPath) {
+      $output = @(& crc start -p $PullSecretPath 2>&1 | ForEach-Object { "$_" })
+      if ($LASTEXITCODE -ne 0) {
+        $output = @(Get-Content -LiteralPath $PullSecretPath -Raw |
+          & crc start --pull-secret-file - 2>&1 | ForEach-Object { "$_" })
+      }
+    } else {
+      $output = @(& crc start 2>&1 | ForEach-Object { "$_" })
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+      $output | ForEach-Object { Write-Host $_ }
+      throw 'crc start failed'
+    }
+
+    Write-AapCrcStartOutput -Lines $output
+    try {
+      Sync-AapKubeconfig -Quiet
+    } catch {
+      Write-AapWarn "Kubeconfig sync skipped: $($_.Exception.Message)"
+    }
+    Initialize-AapKubeEnvironment
+    $kube = Get-AapKubeconfigPath
+    if ($kube) {
+      Write-Host "  Kubeconfig: $kube"
+    }
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+}
+
+function Invoke-AapCrcDelete {
+  param(
+    [switch]$Force
+  )
+
+  Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
+
+  $crc = Get-AapCrcStatus
+  $state = [string]$crc.crcStatus
+
+  if ($state -eq 'Running') {
+    Write-AapStep 'Stopping cluster before delete...'
+    Invoke-AapCrcStop -Quiet
+    Start-Sleep -Seconds 3
+  }
+
+  $deleteArgs = @('delete')
+  if ($Force) { $deleteArgs += '-f' }
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = @(& crc @deleteArgs 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -eq 0) { return $true }
+
+    $combined = ($output -join "`n")
+    if ($combined -match 'invalid state') {
+      Write-AapStep 'Cluster not fully stopped — retrying after crc stop...'
+      Invoke-AapCrcStop -Quiet
+      Start-Sleep -Seconds 5
+      $output = @(& crc delete -f 2>&1 | ForEach-Object { "$_" })
+      if ($LASTEXITCODE -eq 0) { return $true }
+    }
+
+    $output | ForEach-Object { if ($_.Trim()) { Write-Host $_ } }
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+}
+
+function Invoke-AapCrcStop {
+  param([switch]$Quiet)
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $output = @(& crc stop 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -ne 0) {
+      if (-not $Quiet) { $output | ForEach-Object { Write-Host $_ } }
+      return $false
+    }
+    if (-not $Quiet) {
+      Write-AapStep 'CRC cluster stopped'
+    }
+    return $true
+  } finally {
+    $ErrorActionPreference = $previousEap
   }
 }
 
@@ -305,6 +545,45 @@ function Read-AapManifest {
   return ($raw -replace "`r`n", "`n" -replace "`r", "`n")
 }
 
+function Get-AapDefaultStorageClass {
+  $fallback = 'topolvm-provisioner'
+  $result = Invoke-AapOcCapture @(
+    'get', 'sc', '-o', 'jsonpath={.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
+  )
+  if ($result.ExitCode -ne 0) { return $fallback }
+  $name = ($result.Output -split '\s+')[0].Trim()
+  if ($name -match '^[A-Za-z0-9][A-Za-z0-9._-]*$') { return $name }
+  return $fallback
+}
+
+function Get-AapServiceClusterIp {
+  param(
+    [Parameter(Mandatory)][string]$Name,
+    [Parameter(Mandatory)][string]$Namespace
+  )
+  $result = Invoke-AapOcCapture @(
+    'get', 'svc', $Name, '-n', $Namespace, '-o', 'jsonpath={.spec.clusterIP}'
+  )
+  if ($result.ExitCode -ne 0) {
+    throw "Could not resolve ClusterIP for service/$Name in $Namespace`: $($result.Output)"
+  }
+  $ip = ($result.Output -split '\s+')[0].Trim()
+  if (-not $ip) {
+    throw "Could not resolve ClusterIP for service/$Name in $Namespace"
+  }
+  return $ip
+}
+
+function Format-AapYamlReplacementValue {
+  param([AllowNull()][string]$Value)
+  if (-not $Value) { return '' }
+  $scalar = ($Value -split '[\r\n]', 2)[0].Trim()
+  if ($scalar -match '[:#@`'']|\s') {
+    return '"' + ($scalar -replace '\\', '\\' -replace '"', '\"') + '"'
+  }
+  return $scalar
+}
+
 function Apply-AapManifestTemplate {
   param(
     [Parameter(Mandatory)][string]$RelativePath,
@@ -314,11 +593,16 @@ function Apply-AapManifestTemplate {
   if (-not (Test-Path -LiteralPath $path)) {
     throw "Manifest not found: $path"
   }
-  $content = Get-Content -LiteralPath $path -Raw
+  $content = Read-AapManifest $RelativePath
   foreach ($key in $Replacements.Keys) {
-    $content = $content -replace [regex]::Escape($key), [string]$Replacements[$key]
+    $value = Format-AapYamlReplacementValue -Value ([string]$Replacements[$key])
+    $content = [regex]::Replace(
+      $content,
+      [regex]::Escape($key),
+      [System.Text.RegularExpressions.MatchEvaluator]{ $value }
+    )
   }
-  $temp = [System.IO.Path]::GetTempFileName()
+  $temp = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), '.yaml')
   try {
     Set-AapUtf8Content -Path $temp -Value $content
     Invoke-AapOc @('apply', '-f', $temp) | Out-Null
@@ -367,7 +651,6 @@ function Wait-AapCatalogSourceReady {
     [Parameter(Mandatory)][string]$Namespace,
     [int]$Attempts = 60
   )
-  Write-Host '  Waiting for CatalogSource...'
   for ($i = 1; $i -le $Attempts; $i++) {
     $result = Invoke-AapOcCapture @(
       'get', 'catalogsource', 'redhat-operators', '-n', $Namespace,
@@ -378,7 +661,6 @@ function Wait-AapCatalogSourceReady {
       Write-AapStep 'CatalogSource ready'
       return
     }
-    Write-Host "    attempt $i/$Attempts ($state)"
     Start-Sleep -Seconds 5
   }
   Write-AapWarn 'CatalogSource not READY after timeout — continuing'
@@ -389,7 +671,6 @@ function Wait-AapCsv {
     [Parameter(Mandatory)][string]$Namespace,
     [int]$Attempts = 60
   )
-  Write-Host '  Waiting for operator CSV...'
   $csv = $null
   for ($i = 1; $i -le $Attempts; $i++) {
     $result = Invoke-AapOcCapture @('get', 'csv', '-n', $Namespace, '--no-headers')
@@ -403,14 +684,12 @@ function Wait-AapCsv {
         break
       }
     }
-    Write-Host "    attempt $i/$Attempts"
     Start-Sleep -Seconds 10
   }
   if (-not $csv) {
     throw 'CSV not found after timeout'
   }
 
-  Write-Host '  Waiting for CSV to reach Succeeded phase...'
   if ((Invoke-AapOcQuiet @('wait', "--for=jsonpath={.status.phase}=Succeeded", "csv/$csv", '-n', $Namespace, '--timeout=600s')) -ne 0) {
     $phaseResult = Invoke-AapOcCapture @('get', 'csv', $csv, '-n', $Namespace, '-o', 'jsonpath={.status.phase}')
     $phase = if ($phaseResult.ExitCode -eq 0) { $phaseResult.Output.Trim() } else { 'unknown' }
@@ -471,123 +750,193 @@ function Remove-AapIngressCaCertificates {
   }
 }
 
-function Add-AapCertToRootStoreViaCertutil {
+function Add-AapCertToRootStore {
   param(
     [Parameter(Mandatory)][string]$Path,
     [ValidateSet('CurrentUser', 'LocalMachine')]
-    [string]$Location = 'CurrentUser',
-    [switch]$Elevated
+    [string]$Location = 'CurrentUser'
   )
-  $certutilArgs = if ($Location -eq 'CurrentUser') {
-    @('-user', '-addstore', 'Root', $Path)
-  } else {
-    @('-addstore', 'Root', $Path)
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', $Location)
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
+    $store.Add($cert)
+    $store.Close()
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Set-AapIngressCaEnv {
+  param([Parameter(Mandatory)][string]$Path)
+  $env:CURL_CA_BUNDLE = $Path
+  $env:SSL_CERT_FILE = $Path
+}
+
+function Set-AapIngressCaEnvFromSaved {
+  $caPath = Get-AapIngressCaCertPath
+  if (Test-Path -LiteralPath $caPath) {
+    Set-AapIngressCaEnv -Path $caPath
+  }
+}
+
+function Update-AapIngressCaFromCluster {
+  param([Parameter(Mandatory)][string]$CaPath)
+
+  $caPem = Invoke-AapCrcSsh 'sudo cat /var/lib/microshift/certs/ingress-ca/ca.crt' -AllowFailure
+  if (-not $caPem -or $caPem -notmatch 'BEGIN CERTIFICATE') {
+    return $false
   }
 
-  if ($Elevated -and $Location -eq 'LocalMachine') {
+  $newContent = $caPem.Trim()
+  if (Test-Path -LiteralPath $CaPath) {
     try {
-      $proc = Start-Process -FilePath 'certutil.exe' -ArgumentList $certutilArgs -Verb RunAs -Wait -PassThru -WindowStyle Hidden
-      return $proc.ExitCode -eq 0
+      $existing = (Get-Content -LiteralPath $CaPath -Raw).Trim()
+      if ($existing -eq $newContent) {
+        return $true
+      }
     } catch {
-      return $false
+      # Overwrite unreadable saved copy.
     }
   }
 
-  $result = Invoke-AapExternal certutil.exe $certutilArgs
+  New-Item -ItemType Directory -Force -Path $Script:AapDemoConfigDir | Out-Null
+  Set-AapUtf8Content -Path $CaPath -Value $newContent
+
+  return $true
+}
+
+function Test-AapIngressCaTrusted {
+  param([Parameter(Mandatory)][string]$Path)
+  $thumbprint = Get-AapX509Thumbprint -Path $Path
+  return (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') -or
+    (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser')
+}
+
+function Test-AapIngressCaBrowserTrusted {
+  param([Parameter(Mandatory)][string]$Path)
+  $thumbprint = Get-AapX509Thumbprint -Path $Path
+  if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') {
+    return $true
+  }
+  try {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+    $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+    $stale = @($store.Certificates | Where-Object {
+        $_.Subject -match 'CN=ingress-ca' -and $_.Thumbprint.ToUpperInvariant() -ne $thumbprint
+      })
+    $store.Close()
+    if ($stale.Count -gt 0) { return $false }
+  } catch {
+    # Cannot read LocalMachine store — fall back to CurrentUser trust.
+  }
+  return (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser')
+}
+
+function Import-AapIngressCaToUserStore {
+  param([Parameter(Mandatory)][string]$Path)
+  if (Add-AapCertToRootStore -Path $Path -Location 'CurrentUser') {
+    return $true
+  }
+  if (-not (Get-Command certutil -ErrorAction SilentlyContinue)) {
+    return $false
+  }
+  $result = Invoke-AapExternal certutil @('-user', '-addstore', 'Root', $Path)
   return $result.ExitCode -eq 0
 }
 
 function Import-AapIngressCaCertificate {
-  param([Parameter(Mandatory)][string]$Path)
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [switch]$Quiet
+  )
 
   $thumbprint = Get-AapX509Thumbprint -Path $Path
-  if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') {
-    Write-AapStep 'Ingress CA already trusted (Windows system certificate store)'
-    return
+  if (Test-AapIngressCaBrowserTrusted -Path $Path) {
+    if (-not $Quiet) {
+      Write-AapStep 'Ingress CA already trusted (Windows certificate store)'
+    }
+    return $true
   }
 
   Remove-AapIngressCaCertificates -Location 'CurrentUser'
   Remove-AapIngressCaCertificates -Location 'LocalMachine'
 
-  $userTrusted = Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser'
-  if (-not $userTrusted) {
-    $userOk = $false
-    try {
-      $store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'CurrentUser')
-      $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-      $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Path)
-      $store.Add($cert)
-      $store.Close()
-      $userOk = $true
-    } catch {
-      $userOk = Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'CurrentUser'
-    }
-    if ($userOk) {
-      Write-AapStep 'Ingress CA trusted (Windows user certificate store)'
-    } else {
-      Write-AapWarn 'Could not import ingress CA to user certificate store'
-    }
-  }
-
   if (Test-AapIsAdministrator) {
-    if (Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'LocalMachine') {
-      Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
-    } else {
-      Write-AapWarn 'Could not import ingress CA to system certificate store'
+    if (Add-AapCertToRootStore -Path $Path -Location 'LocalMachine') {
+      if (-not $Quiet) {
+        Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+        Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
+      }
+      return $true
     }
-    return
   }
 
-  if (Add-AapCertToRootStoreViaCertutil -Path $Path -Location 'LocalMachine' -Elevated) {
-    Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
-    return
+  if (Import-AapIngressCaToUserStore -Path $Path) {
+    if (-not $Quiet) {
+      Write-AapStep 'Ingress CA trusted (Current User certificate store)'
+      if (-not (Test-AapIsAdministrator)) {
+        Write-AapWarn 'Chrome/Edge may still warn until you import from an elevated PowerShell:'
+        Write-Host "  certutil -delstore Root `"ingress-ca`""
+        Write-Host "  certutil -addstore Root `"$Path`""
+      }
+    }
+    return $true
   }
 
-  Write-AapWarn 'System trust skipped (UAC declined or unavailable). Fully quit Chrome/Edge and retry, or run aap-demo status from an elevated PowerShell.'
+  if (-not $Quiet) {
+    Write-AapWarn 'Could not import ingress CA to Windows certificate store'
+  }
+  return $false
 }
 
 function Install-AapIngressCaTrust {
+  [CmdletBinding()]
+  param([switch]$Quiet)
+
   if ($env:AAP_DEMO_TRUST_CA -eq 'false') { return }
 
   $caPath = Get-AapIngressCaCertPath
-  if (Test-Path -LiteralPath $caPath) {
-    try {
-      $thumbprint = Get-AapX509Thumbprint -Path $caPath
-      if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'LocalMachine') {
-        $env:CURL_CA_BUNDLE = $caPath
-        $env:SSL_CERT_FILE = $caPath
-        return
-      }
-      if (Test-AapCertInRootStore -Thumbprint $thumbprint -Location 'CurrentUser') {
-        Import-AapIngressCaCertificate -Path $caPath
-        $env:CURL_CA_BUNDLE = $caPath
-        $env:SSL_CERT_FILE = $caPath
-        return
-      }
-    } catch {
-      Write-AapWarn "Could not verify saved ingress CA: $($_.Exception.Message)"
-    }
-  }
-
-  Write-AapStep 'Trusting ingress CA...'
   try {
-    $caPem = Invoke-AapCrcSsh 'sudo cat /var/lib/microshift/certs/ingress-ca/ca.crt' -AllowFailure
-    if (-not $caPem -or $caPem -notmatch 'BEGIN CERTIFICATE') {
-      Write-AapWarn 'Could not fetch ingress CA from cluster'
-      if (Test-Path -LiteralPath $caPath) {
-        Import-AapIngressCaCertificate -Path $caPath
-      }
-      return
-    }
-
-    New-Item -ItemType Directory -Force -Path $Script:AapDemoConfigDir | Out-Null
-    Set-AapUtf8Content -Path $caPath -Value $caPem.Trim()
-    Import-AapIngressCaCertificate -Path $caPath
-    $env:CURL_CA_BUNDLE = $caPath
-    $env:SSL_CERT_FILE = $caPath
+    Update-AapIngressCaFromCluster -CaPath $caPath | Out-Null
   } catch {
-    Write-AapWarn "Could not trust ingress CA: $($_.Exception.Message)"
+    if (-not $Quiet) {
+      Write-AapWarn "Could not fetch ingress CA from cluster: $($_.Exception.Message)"
+    }
   }
+
+  if (-not (Test-Path -LiteralPath $caPath)) {
+    if (-not $Quiet) {
+      Write-AapWarn 'Could not fetch ingress CA from cluster and no saved copy exists'
+    }
+    return
+  }
+
+  try {
+    $null = Get-AapX509Thumbprint -Path $caPath
+  } catch {
+    if (-not $Quiet) {
+      Write-AapWarn "Could not read ingress CA: $($_.Exception.Message)"
+    }
+    return
+  }
+
+  if (Test-AapIngressCaBrowserTrusted -Path $caPath) {
+    Set-AapIngressCaEnv -Path $caPath
+    return
+  }
+
+  if (-not $Quiet) {
+    Write-AapStep 'Trusting ingress CA for browser TLS...'
+  }
+  $imported = Import-AapIngressCaCertificate -Path $caPath -Quiet:$Quiet
+  if (-not $imported -and -not (Test-AapIngressCaBrowserTrusted -Path $caPath) -and -not $Quiet) {
+    Write-AapWarn 'Chrome/Edge need the ingress CA in the Local Machine trust store (elevated PowerShell):'
+    Write-Host "  certutil -delstore Root `"ingress-ca`""
+    Write-Host "  certutil -addstore Root `"$caPath`""
+  }
+  Set-AapIngressCaEnv -Path $caPath
 }
 
 function Get-AapExistingCrName {
@@ -787,6 +1136,184 @@ function Invoke-AapOcConfig {
   }
 }
 
+function Remove-AapStaleCrcKubeEntries {
+  param([Parameter(Mandatory)][string]$KubeConfig)
+  if (-not (Test-Path -LiteralPath $KubeConfig)) { return }
+
+  foreach ($name in @('aap-demo', 'microshift', 'user/api-crc-testing:6443', 'user')) {
+    Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-context', $name) | Out-Null
+    Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-cluster', $name) | Out-Null
+    Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-user', $name) | Out-Null
+  }
+
+  try {
+    $config = Get-AapOcConfigJson -KubeConfig $KubeConfig
+    foreach ($cluster in @($config.clusters)) {
+      $server = [string]$cluster.cluster.server
+      if ($server -match 'api\.crc\.testing') {
+        $clusterName = [string]$cluster.name
+        Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-context', $clusterName) | Out-Null
+        Invoke-AapOcConfig -KubeConfig $KubeConfig -Arguments @('config', 'delete-cluster', $clusterName) | Out-Null
+      }
+    }
+  } catch {
+    # Ignore invalid kubeconfig during cleanup.
+  }
+}
+
+function Sync-AapKubeconfig {
+  [CmdletBinding()]
+  param(
+    [switch]$Quiet
+  )
+
+  $crc = Get-AapCrcStatus
+  if ([string]$crc.crcStatus -ne 'Running') {
+    throw 'Cluster not running. Run: aap-demo create'
+  }
+
+  $crcKube = Join-Path $env:USERPROFILE '.crc\machines\crc\kubeconfig'
+  if (-not (Test-Path -LiteralPath $crcKube)) {
+    throw 'CRC kubeconfig not found. OpenShift Local may still be initializing.'
+  }
+
+  $ctxName = 'aap-demo'
+  $tempKube = [System.IO.Path]::GetTempFileName()
+  Copy-Item -LiteralPath $crcKube -Destination $tempKube -Force
+
+  try {
+    $config = Get-AapOcConfigJson -KubeConfig $tempKube
+    $contextNames = @($config.contexts | ForEach-Object { [string]$_.name })
+    $sourceCtx = if ($contextNames -contains 'microshift') {
+      'microshift'
+    } elseif ($contextNames -contains $ctxName) {
+      $ctxName
+    } elseif ($contextNames.Count -eq 1) {
+      $contextNames[0]
+    } else {
+      [string]$config.'current-context'
+    }
+
+    if ($sourceCtx -and $sourceCtx -ne $ctxName) {
+      $rename = Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+        'config', 'rename-context', $sourceCtx, $ctxName
+      )
+      if ($rename.ExitCode -ne 0) {
+        throw "Failed to rename context $sourceCtx to $ctxName"
+      }
+      $config = Get-AapOcConfigJson -KubeConfig $tempKube
+    }
+
+    $ctx = $config.contexts | Where-Object { $_.name -eq $ctxName } | Select-Object -First 1
+    $sourceCluster = if ($ctx) { [string]$ctx.context.cluster } else { 'microshift' }
+    $cluster = $config.clusters | Where-Object { $_.name -eq $sourceCluster } | Select-Object -First 1
+    $server = if ($cluster) { [string]$cluster.cluster.server } else { 'https://localhost:6443' }
+    if ($server -match 'api\.crc\.testing') {
+      $server = 'https://localhost:6443'
+    }
+
+    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+      'config', 'set-cluster', $ctxName, "--server=$server", '--insecure-skip-tls-verify=true'
+    ) | Out-Null
+    if ($sourceCluster -ne $ctxName) {
+      Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+        'config', 'unset', "clusters.$sourceCluster"
+      ) | Out-Null
+    }
+
+    $sourceUser = $config.users | Where-Object {
+      $null -ne $_.user -and $_.user.'client-certificate-data' -and $_.user.'client-key-data'
+    } | Select-Object -First 1
+
+    if ($sourceUser -and [string]$sourceUser.name -ne $ctxName) {
+      $certBytes = ConvertFrom-AapKubeBase64 ([string]$sourceUser.user.'client-certificate-data')
+      $keyBytes = ConvertFrom-AapKubeBase64 ([string]$sourceUser.user.'client-key-data')
+      if ($certBytes -and $keyBytes) {
+        $certFile = [System.IO.Path]::GetTempFileName()
+        $keyFile = [System.IO.Path]::GetTempFileName()
+        try {
+          [IO.File]::WriteAllBytes($certFile, $certBytes)
+          [IO.File]::WriteAllBytes($keyFile, $keyBytes)
+          Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+            'config', 'set-credentials', $ctxName,
+            "--client-certificate=$certFile",
+            "--client-key=$keyFile",
+            '--embed-certs=true'
+          ) | Out-Null
+        } finally {
+          Remove-Item -LiteralPath $certFile, $keyFile -Force -ErrorAction SilentlyContinue
+        }
+        Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+          'config', 'unset', "users.$($sourceUser.name)"
+        ) | Out-Null
+      } elseif (-not $Quiet) {
+        Write-AapWarn 'Could not decode kubeconfig credentials - keeping existing user entry'
+      }
+    }
+
+    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+      'config', 'set-context', $ctxName, "--cluster=$ctxName", "--user=$ctxName"
+    ) | Out-Null
+    Invoke-AapOcConfig -KubeConfig $tempKube -Arguments @(
+      'config', 'use-context', $ctxName
+    ) | Out-Null
+
+    $crcDir = Split-Path -Parent $crcKube
+    New-Item -ItemType Directory -Force -Path $crcDir | Out-Null
+    Move-Item -LiteralPath $tempKube -Destination $crcKube -Force
+    if (-not $Quiet) {
+      Write-AapStep 'Saved to ~/.crc/machines/crc/kubeconfig'
+    }
+    $tempKube = $null
+  } finally {
+    if ($tempKube -and (Test-Path -LiteralPath $tempKube)) {
+      Remove-Item -LiteralPath $tempKube -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  $userKubeDir = Join-Path $env:USERPROFILE '.kube'
+  $userKube = Join-Path $userKubeDir 'config'
+  New-Item -ItemType Directory -Force -Path $userKubeDir | Out-Null
+
+  if (Test-Path -LiteralPath $userKube) {
+    if (-not $Quiet) {
+      Write-Host '  Removing stale OpenShift Local kubeconfig entries...'
+    }
+    Remove-AapStaleCrcKubeEntries -KubeConfig $userKube
+
+    if (-not $Quiet) {
+      Write-Host '  Merging into existing ~/.kube/config...'
+    }
+    $merged = [System.IO.Path]::GetTempFileName()
+    $prev = $env:KUBECONFIG
+    try {
+      $env:KUBECONFIG = "$userKube;$crcKube"
+      $flat = Invoke-AapExternal oc @('config', 'view', '--flatten')
+      if ($flat.ExitCode -ne 0) { throw 'Failed to merge kubeconfigs' }
+      Set-Content -LiteralPath $merged -Value $flat.Output -Encoding ascii
+      Move-Item -LiteralPath $merged -Destination $userKube -Force
+      if (-not $Quiet) {
+        Write-AapStep 'Merged context into ~/.kube/config'
+      }
+    } finally {
+      $env:KUBECONFIG = $prev
+      if (Test-Path -LiteralPath $merged) {
+        Remove-Item -LiteralPath $merged -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } else {
+    Copy-Item -LiteralPath $crcKube -Destination $userKube -Force
+    if (-not $Quiet) {
+      Write-AapStep 'Created ~/.kube/config'
+    }
+  }
+
+  Invoke-AapOcConfig -KubeConfig $userKube -Arguments @('config', 'use-context', $ctxName) | Out-Null
+  if (-not $Quiet) {
+    Write-AapStep "Current context set to $ctxName"
+  }
+}
+
 function Invoke-AapPruneCrcImages {
   try {
     Write-Host ''
@@ -800,24 +1327,6 @@ function Invoke-AapPruneCrcImages {
   } catch {
     Write-AapWarn "Image prune skipped: $($_.Exception.Message)"
   }
-}
-
-function Find-AapGitBash {
-  $candidates = @(
-    (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
-    (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe'),
-    (Join-Path $env:LOCALAPPDATA 'Programs\Git\bin\bash.exe')
-  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
-
-  if (@($candidates).Count -eq 0) {
-    throw @"
-Git Bash not found.
-
-Install Git for Windows: https://git-scm.com/download/win
-Required for diagnose --ai only.
-"@
-  }
-  return @($candidates)[0]
 }
 
 function Get-AapInstalledRepoRoot {
@@ -835,32 +1344,4 @@ Run from the repo directory or install with:
 "@
   }
   return $repoRoot
-}
-
-function Invoke-AapBashCli {
-  param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$Arguments
-  )
-
-  $Arguments = @($Arguments)
-  $repoRoot = Get-AapInstalledRepoRoot
-  $bashExe = Find-AapGitBash
-
-  $env:HOME = $env:USERPROFILE
-
-  if ((Test-Path -LiteralPath $Script:AapDemoUserBin) -and ($env:Path -notlike "*$Script:AapDemoUserBin*")) {
-    $env:Path = "$Script:AapDemoUserBin;$env:Path"
-  }
-
-  if (-not $env:KUBECONFIG) {
-    $defaultKube = Join-Path $env:USERPROFILE '.crc\machines\crc\kubeconfig'
-    if (Test-Path -LiteralPath $defaultKube) {
-      $env:KUBECONFIG = $defaultKube
-    }
-  }
-
-  $scriptWin = Join-Path $repoRoot 'aap-demo.sh'
-  & $bashExe $scriptWin @Arguments
-  exit $LASTEXITCODE
 }
