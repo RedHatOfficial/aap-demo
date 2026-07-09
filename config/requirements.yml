@@ -1,6 +1,7 @@
 ---
 # Ansible collection requirements for aap-demo
-# Installed automatically during deployment from configured galaxy servers:
+# Install with: ansible-galaxy collection install -r config/requirements.yml
+# Priority order (tries in sequence):
 #   1. Private Automation Hub (if configured via ~/.aap-demo/pah-config.yml)
 #   2. console.redhat.com (if token present in ~/.aap-demo/galaxy-token)
 #   3. galaxy.ansible.com (community fallback)

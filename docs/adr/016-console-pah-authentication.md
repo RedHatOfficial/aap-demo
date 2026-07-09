@@ -70,10 +70,6 @@ File: `~/.aap-demo/galaxy-token` (Windows: `%USERPROFILE%\.aap-demo\galaxy-token
 Format: Single line containing the offline token from
 https://console.redhat.com/ansible/automation-hub/token
 
-```
-eyJhbGciOiJIUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICI...
-```
-
 Generation:
 
 - User logs into console.redhat.com
@@ -136,12 +132,21 @@ console_redhat and galaxy in `server_list`).
 During `aap-demo deploy`:
 
 1. **Detect credentials** from `~/.aap-demo/`
-2. **Configure AAP PAH remotes** via Pulp API:
-   - Update `rh-certified` remote with offline token from `galaxy-token`
-   - Trigger background sync of certified collections
-   - Create `external-pah` remote if `pah-config.yml` exists
-3. **Generate ansible.cfg** in `~/.aap-demo/ansible.cfg` for local dev use
-4. **Install collections locally** (optional) from `config/requirements.yml`:
+2. **Validate tokens** (format and presence checks)
+3. **Generate ansible.cfg** for local CLI use with prioritized galaxy servers
+4. **Install collections locally** (optional) from `config/requirements.yml`
+
+After deployment, configure AAP's integrated PAH:
+
+```bash
+aap-demo setup-pah
+```
+
+This command:
+
+- Updates `rh-certified` remote with offline token from `galaxy-token`
+- Triggers background sync of certified collections into local PAH
+- Creates `rh-validated` remote for validated content
 
    ```yaml
    collections:
@@ -152,13 +157,29 @@ During `aap-demo deploy`:
 
 #### PAH Remote Configuration
 
-Uses Pulp API (`/api/galaxy/pulp/api/v3/`) to configure collection sources:
+Uses Pulp API (`/api/galaxy/pulp/api/v3/`) to configure two collection remotes:
+
+**rh-certified**: Red Hat Certified Content Collections
+
+- Pre-configured in AAP 2.7
+- Updated with offline token from `~/.aap-demo/galaxy-token`
+- Syncs from `https://console.redhat.com/api/automation-hub/`
+- Repository: `rh-certified`
+
+**rh-validated**: Red Hat Validated Content Collections
+
+- Created by `setup-pah` if not present
+- Uses same offline token as rh-certified
+- Syncs from `https://console.redhat.com/api/automation-hub/v3/plugin/ansible/content/validated/`
+- Repository: `validated`
+
+API example:
 
 ```bash
-# Update rh-certified remote token
+# Update remote token
 PATCH /remotes/ansible/collection/{uuid}/
 {
-  "token": "<offline-token-from-galaxy-token>"
+  "token": "YOUR_OFFLINE_TOKEN"
 }
 
 # Sync repository
@@ -168,9 +189,9 @@ POST /repositories/ansible/ansible/{uuid}/sync/
 }
 ```
 
-Collections sync into PAH's `rh-certified` repository. Controller jobs then
-pull from local PAH (`https://aap.../api/galaxy/content/rh-certified/`), not
-external console.redhat.com.
+Collections sync into PAH's local repositories. Controller jobs then pull from
+local PAH (`https://aap.../api/galaxy/content/rh-certified/`), not external
+console.redhat.com.
 
 Local `ansible.cfg` generation remains for CLI/dev use outside Controller.
 

@@ -917,10 +917,10 @@ cmd_diagnose() {
   # =========================================================================
   echo "Cluster:"
   local crc_state
-  crc_state=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or "{}"); print(d.get('crcStatus','unknown'))" 2>/dev/null || echo "unknown")
+  crc_state=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('crcStatus','unknown'))" 2>/dev/null || echo "unknown")
   if [ "$crc_state" = "Running" ]; then
     local ms_version
-    ms_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or "{}"); print(d.get('openshiftVersion',''))" 2>/dev/null || echo "")
+    ms_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('openshiftVersion',''))" 2>/dev/null || echo "")
     _check_pass "OpenShift Local running"
   elif [ "$crc_state" = "Stopped" ]; then
     _check_fail "OpenShift Local is stopped — run: crc start"
@@ -966,7 +966,7 @@ cmd_diagnose() {
 
   # Check disk usage
   local disk_pct
-  disk_pct=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or "{}"); u=d.get('diskUse',0); t=d.get('diskSize',1); print(int(u/t*100))" 2>/dev/null || echo "0")
+  disk_pct=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); u=d.get('diskUse',0); t=d.get('diskSize',1); print(int(u/t*100))" 2>/dev/null || echo "0")
   if [ "$disk_pct" -gt 90 ]; then
     _check_fail "Disk usage: ${disk_pct}% — critically low space"
   elif [ "$disk_pct" -gt 80 ]; then
@@ -1439,7 +1439,7 @@ _run_atf() {
     _ca_cert=$(get_ingress_ca_cert_path)
     local _curl_tls="--cacert ${_ca_cert}"
     [ ! -f "$_ca_cert" ] && _curl_tls="-k"
-    aap_version=$(curl -s $_curl_tls "https://${gateway_host}/api/gateway/v1/ping/" 2>/dev/null | python3 -c "import sys,json; print(json.loads(sys.stdin.read() or "{}").get('version',''))" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
+    aap_version=$(curl -s $_curl_tls "https://${gateway_host}/api/gateway/v1/ping/" 2>/dev/null | python3 -c "import sys,json; print(json.loads(sys.stdin.read() or '{}').get('version',''))" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
   fi
   aap_version="${aap_version:-2.7}"
 
@@ -2177,6 +2177,8 @@ install_collections() {
 
 configure_pah_remotes() {
   echo "Configuring Private Automation Hub remotes..."
+  # Requires AAP 2.7+ (uses Pulp v3 API)
+
 
   # Detect credentials
   detect_galaxy_credentials
@@ -2206,7 +2208,7 @@ configure_pah_remotes() {
     local remote_href
     remote_href=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
       "${api_base}/remotes/ansible/collection/?name=rh-certified" 2>/dev/null \
-      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or "{}"); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$remote_href" ]; then
       # Update existing token
@@ -2216,7 +2218,7 @@ configure_pah_remotes() {
         -H "Content-Type: application/json" \
         -d "$(jq -n --arg token "${GALAXY_TOKEN}" '{token: $token}')" \
         "${api_base}${remote_href}" 2>/dev/null \
-        | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or "{}").get('task', ''))" 2>/dev/null)
+        | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('task', ''))" 2>/dev/null)
 
       if [ -n "$task_url" ]; then
         # Wait for task
@@ -2224,7 +2226,7 @@ configure_pah_remotes() {
           sleep 1
           local state
           state=$(curl -sk --max-time 10 -u "admin:${admin_pass}" "${api_base}${task_url}" 2>/dev/null \
-            | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or "{}").get('state', ''))" 2>/dev/null)
+            | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('state', ''))" 2>/dev/null)
           [ "$state" = "completed" ] && break
         done
         echo "✓"
@@ -2243,7 +2245,7 @@ configure_pah_remotes() {
         }" \
         "${api_base}/remotes/ansible/collection/" 2>/dev/null)
 
-      remote_href=$(echo "$create_result" | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or "{}").get('pulp_href', ''))" 2>/dev/null)
+      remote_href=$(echo "$create_result" | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('pulp_href', ''))" 2>/dev/null)
 
       if [ -n "$remote_href" ]; then
         echo "✓"
@@ -2252,7 +2254,7 @@ configure_pah_remotes() {
         local repo_href
         repo_href=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
           "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
-          | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or "{}"); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+          | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
         if [ -n "$repo_href" ]; then
           curl -sk --max-time 10 -u "admin:${admin_pass}" \
@@ -2269,7 +2271,7 @@ configure_pah_remotes() {
     local repo_href
     repo_href=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
       "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
-      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or "{}"); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$repo_href" ]; then
       curl -sk --max-time 10 -u "admin:${admin_pass}" \
@@ -2288,7 +2290,7 @@ configure_pah_remotes() {
     local validated_remote
     validated_remote=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
       "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null \
-      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or "{}"); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -z "$validated_remote" ]; then
       # Create rh-validated remote
@@ -2304,7 +2306,7 @@ configure_pah_remotes() {
         }" \
         "${api_base}/remotes/ansible/collection/" 2>/dev/null)
 
-      validated_remote=$(echo "$create_result" | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or "{}").get('pulp_href', ''))" 2>/dev/null)
+      validated_remote=$(echo "$create_result" | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('pulp_href', ''))" 2>/dev/null)
     else
       # Update existing remote token
       curl -sk --max-time 10 -u "admin:${admin_pass}" \
@@ -2322,7 +2324,7 @@ configure_pah_remotes() {
       local validated_repo
       validated_repo=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
         "${api_base}/repositories/ansible/ansible/?name=validated" 2>/dev/null \
-        | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or "{}"); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+        | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
       if [ -n "$validated_repo" ]; then
         curl -sk --max-time 10 -u "admin:${admin_pass}" \
@@ -2622,9 +2624,6 @@ deploy_latest() {
     # Watch deployment
     watch_aap
 
-    # Install collections from requirements.yml
-    echo ""
-    install_collections
 
     # Remind to configure PAH
     echo ""
@@ -2716,7 +2715,7 @@ setup_namespace() {
     # Force-clear if still stuck
     if [ "$_ns_status" = "Terminating" ]; then
       echo "  Force-clearing stuck namespace..."
-      kubectl get namespace "$NAMESPACE" -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or "{}"); d[\"spec\"][\"finalizers\"]=[];print(json.dumps(d))" | kubectl replace --raw "/api/v1/namespaces/$NAMESPACE/finalize" -f - 2>/dev/null || true
+      kubectl get namespace "$NAMESPACE" -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); d[\"spec\"][\"finalizers\"]=[];print(json.dumps(d))" | kubectl replace --raw "/api/v1/namespaces/$NAMESPACE/finalize" -f - 2>/dev/null || true
       sleep 2
     fi
   fi
