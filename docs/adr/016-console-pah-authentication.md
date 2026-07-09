@@ -97,7 +97,7 @@ Generation:
 
 ### ansible.cfg generation
 
-`includes/collection-install.sh` (bash) and
+`aap-demo.sh` (bash functions: detect_galaxy_credentials, generate_ansible_cfg, install_collections, configure_pah_remotes) and
 `powershell/native/Private/Helpers.ps1` (PowerShell) generate `ansible.cfg`:
 
 ```ini
@@ -270,7 +270,7 @@ Use cases:
 
 | File | Responsibility |
 |------|----------------|
-| `includes/collection-install.sh` | Bash implementation (Linux/macOS) |
+| `aap-demo.sh` (inline functions) | Bash implementation (Linux/macOS) |
 | `powershell/native/Private/Helpers.ps1` | PowerShell implementation (Windows) |
 | `config/requirements.yml` | Default collection manifest |
 | `~/.aap-demo/galaxy-token` | console.redhat.com offline token |

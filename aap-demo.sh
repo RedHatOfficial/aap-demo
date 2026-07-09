@@ -2038,8 +2038,7 @@ validate_galaxy_token() {
     printf "${_RED}▸${_NC} Invalid galaxy token format (too short: $token_len chars)\n"
     echo ""
     echo "Quick setup:"
-    echo "  aap-demo setup-auth     # Opens browser to token page"
-    echo "  aap-demo check-auth     # Validates saved token"
+    echo "  aap-demo setup-pah      # Configure PAH remotes with token"
     echo ""
     echo "  1. Visit: https://console.redhat.com/ansible/automation-hub/token"
     echo "  2. Click 'Load token'"
@@ -2148,6 +2147,13 @@ url = https://galaxy.ansible.com/
 
 EOF
 
+  # Secure file permissions and warn about plaintext tokens
+  chmod 600 "$cfg_file"
+  if [ -n "$GALAXY_TOKEN" ] || [ -n "$PAH_TOKEN" ] || [ -n "$PAH_PASS" ]; then
+    printf "${_YELLOW}▸${_NC} Warning: Tokens stored in plaintext in $cfg_file\n"
+    printf "  Do not commit this file. Consider using ANSIBLE_GALAXY_SERVER_*_TOKEN env vars instead.\n"
+  fi
+
   printf "${_GREEN}▸${_NC} Generated ansible.cfg with galaxy servers: $galaxy_servers\n"
 }
 
@@ -2180,6 +2186,32 @@ configure_pah_remotes() {
   echo "Configuring Private Automation Hub remotes..."
   # Requires AAP 2.7+ (uses Pulp v3 API)
 
+  # Check jq availability
+
+  # Retry wrapper for transient Pulp API failures (matches PowerShell: 6 attempts, 8s delay)
+  _retry_pulp_call() {
+    local max_attempts=6
+    local delay=8
+    local attempt=1
+
+    while [ $attempt -le $max_attempts ]; do
+      if "$@" 2>&1; then
+        return 0
+      fi
+
+      if [ $attempt -lt $max_attempts ]; then
+        printf "${_YELLOW}▸${_NC} API call failed (attempt $attempt/$max_attempts), retrying in ${delay}s...\n" >&2
+        sleep "$delay"
+      fi
+      attempt=$((attempt + 1))
+    done
+    return 1
+  }
+  if ! command -v jq >/dev/null 2>&1; then
+    _err "jq is required for PAH remote configuration"
+    echo "  Install: brew install jq (macOS) or sudo dnf install jq (RHEL/Fedora)"
+    return 1
+  fi
 
   # Detect credentials
   detect_galaxy_credentials
@@ -2275,7 +2307,7 @@ configure_pah_remotes() {
       | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$repo_href" ]; then
-      curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      _retry_pulp_call curl -sk --max-time 10 -u "admin:${admin_pass}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d '{"mirror": false}' \
