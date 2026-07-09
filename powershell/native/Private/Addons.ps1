@@ -23,7 +23,6 @@ function Invoke-AapAddonDeployScript {
     throw "Addon '$Addon' deploy failed (exit code: $LASTEXITCODE)"
   }
 }
-
 function Invoke-AapEnsureClusterReady {
   Invoke-AapEnsureCluster
   Set-AapIngressCaEnvFromSaved
@@ -146,6 +145,49 @@ function Get-AapAddonStatusLabel {
       if ($portalHost) { return "https://$portalHost" }
       return 'not-deployed'
     }
+    default { return $null }  }
+}
+
+function Get-AapMcpServerRouteHost {
+  param([string]$Namespace = $Script:AapDemoDefaultNamespace)
+
+  $result = Invoke-AapOcCapture @(
+    'get', 'ansiblemcpserver', 'aap-mcp-server', '-n', $Namespace,
+    '-o', 'jsonpath={.spec.route_host}'
+  )
+  if ($result.ExitCode -ne 0) { return $null }
+  $routeHost = $result.Output.Trim()
+  if ($routeHost -and $routeHost -notmatch '\s' -and $routeHost -notmatch ':') {
+    return $routeHost
+  }
+  return $null
+}
+
+function Get-AapAddonEnableCommand {
+  param([Parameter(Mandatory)][string]$Addon)
+  return "aap-demo enable $Addon"
+}
+
+function Get-AapAddonStatusLabel {
+  param(
+    [Parameter(Mandatory)][string]$Addon,
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [Parameter(Mandatory)][bool]$Enabled
+  )
+
+  if (-not $Enabled) { return 'disabled' }
+
+  switch ($Addon) {
+    'mcp-server' {
+      $mcpHost = Get-AapMcpServerRouteHost -Namespace $Namespace
+      if ($mcpHost) { return "https://$mcpHost/mcp" }
+      return 'not-deployed'
+    }
+    'portal' {
+      $portalHost = Get-AapPortalRouteHost -AapNamespace $Namespace
+      if ($portalHost) { return "https://$portalHost" }
+      return 'not-deployed'
+    }
     default { return $null }
   }
 }
@@ -159,6 +201,5 @@ function Invoke-AapAddonDisable {
   switch ($Addon) {
     'mcp-server' { Invoke-AapRemoveMcpServerAddon -Namespace $Namespace }
     'portal' { Invoke-AapRemovePortalAddon -Namespace $Namespace }
-    default { Invoke-AapAddonDeployScript -Addon $Addon -ScriptArgs @('--delete') }
-  }
+    default { Invoke-AapAddonDeployScript -Addon $Addon -ScriptArgs @('--delete') }  }
 }

@@ -147,7 +147,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -517,8 +517,6 @@ EXAMPLES:
     aap-demo enable fleet                        # Enable fleet addon
     aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
     aap-demo fleet list                          # Show running fleet nodes
-    aap-demo fleet remove 1                      # Remove last fleet node
-    aap-demo fleet destroy                       # Remove all fleet nodes
     aap-demo status                              # Show cluster and AAP status
     aap-demo stop                                # Stop cluster
     aap-demo start                               # Start stopped cluster
@@ -1930,24 +1928,87 @@ cmd_status() {
     fi
   fi
 
+  # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
-  echo ""
   echo "Addons:"
   echo "-------"
   for a in $AVAILABLE_ADDONS; do
-    local enabled=false
-    local note=""
-    [ "$a" = "portal-operator" ] && note=" (AMD64 only)"
+    local url="" label="" enabled=false
     if echo "$saved_addons" | grep -qw "$a"; then
       enabled=true
-    elif [ "$a" = "ao" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
-      enabled=true
     fi
-    if [ "$enabled" = true ]; then
-      printf "  %-15s enabled%s\n" "$a" "$note"
+    case "$a" in
+      fleet)
+        if [ "$enabled" = true ]; then
+          if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+            source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
+            local _fc
+            _fc=$(fleet_count 2>/dev/null || echo "0")
+            if [ "$_fc" -gt 0 ] 2>/dev/null; then
+              label="${_fc} node(s) running"
+            else
+              label="enabled (no nodes)"
+            fi
+          else
+            label="enabled"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      mcp-server)
+        if [ "$enabled" = true ]; then
+          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
+          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal-operator)
+        local _note=" (AMD64 only)"
+        if [ "$enabled" = true ]; then
+          label="enabled${_note}"
+        else
+          label="disabled${_note}"
+        fi
+        ;;
+      ao)
+        if [ "$enabled" = true ] || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+          label="enabled"
+        else
+          label="disabled"
+        fi
+        ;;
+      *)
+        if [ "$enabled" = true ]; then
+          label="enabled"
+        else
+          label="disabled"
+        fi
+        ;;
+    esac
+    if [ -n "$url" ] && [ -z "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$url"
+    elif [ -n "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$label"
     else
-      printf "  %-15s disabled%s\n" "$a" "$note"
+      printf "  %-15s disabled\n" "$a"
+    fi
+  done
     fi
   done
   echo ""
@@ -2033,7 +2094,6 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
-
   # Clean up fleet nodes before destroying cluster (addon)
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
@@ -2312,7 +2372,7 @@ deploy_latest() {
 
   if [ -z "$CSV_NAME" ]; then
     echo "✗ CSV not found after 10 minutes"
-    echo "  Check: kubectl get subscription -n $NAMESPACE"
+    echo "Check: kubectl get subscription -n $NAMESPACE"
     exit 1
   fi
 
@@ -2470,9 +2530,6 @@ setup_namespace() {
     fi
   else
     echo "WARNING: No pull secret found"
-    echo "  AAP requires a pull secret to pull images from registry.redhat.io"
-    echo "  Download: https://console.redhat.com/openshift/install/pull-secret"
-    echo "  Save to:  ~/.aap-demo/pull-secret.txt"
   fi
 }
 
@@ -2740,7 +2797,7 @@ watch_aap() {
     # Check timeout
     if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
       echo "WARNING: Deployment not complete after 60 minutes"
-      echo "  Check: kubectl get aap -n $NAMESPACE -o yaml"
+      echo "Check: kubectl get aap -n $NAMESPACE -o yaml"
       return 1
     fi
 
