@@ -33,7 +33,8 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
         │                       │                       │
         ├─ NFS RWX (006)        ├─ AAP CR              ├─ portal (002, 004)
         ├─ CoreDNS (007)        └─ SCC/PSA (012)       ├─ mcp-server (011)
-        └─ Registry (013)                              └─ registry (013)
+        └─ Registry (013)                              ├─ fleet (016)
+                                                       └─ registry (013)
 ```
 
 ## Index
@@ -64,6 +65,9 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [021](021-local-cache-addon.md) | Local Cache Addon | Accepted |
 | [022](022-apme-prebuilt-portal-hub.md) | APME Pre-Built Portal Hub Deployment | Accepted |
 | [023](023-addon-auto-wiring.md) | Addon Auto-Wiring | Accepted |
+| [024](024-ollama-addon.md) | Ollama Addon | Accepted |
+| [025](025-portal-operator-cpu-preflight.md) | Portal Operator CPU Preflight | Accepted |
+| [026](026-fleet-addon.md) | Fleet Addon — Local QEMU VMs as Managed Nodes | Accepted |
 
 ## Creating a New ADR
 
