@@ -114,11 +114,7 @@ for arg in "$@"; do
       PENDING_FLAG="kubeconfig"
       ;;
     deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | fleet | help | --help | -h)
-      if [ -z "$COMMAND" ]; then
-        COMMAND="$arg"
-      else
-        EXTRA_ARGS+=("$arg")
-      fi
+      COMMAND="$arg"
       ;;
     --ai | --reset)
       # Flags for diagnose --ai and destroy --reset
@@ -128,7 +124,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm | portal)
+    console | registry | mcp-server | registry-ui | olm | portal | fleet)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -472,8 +468,6 @@ EXAMPLES:
     aap-demo enable fleet                        # Enable fleet addon
     aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
     aap-demo fleet list                          # Show running fleet nodes
-    aap-demo fleet remove 1                      # Remove last fleet node
-    aap-demo fleet destroy                       # Remove all fleet nodes
     aap-demo status                              # Show cluster and AAP status
     aap-demo stop                                # Stop cluster
     aap-demo start                               # Start stopped cluster
@@ -699,6 +693,39 @@ cmd_config() {
 
   # Ensure config directory exists
   mkdir -p "$(dirname "$AAP_DEMO_CONFIG")"
+}
+
+cmd_update() {
+  echo ""
+  printf "\033[1maap-demo update\033[0m - Pulling latest code and reinstalling...\n"
+  echo ""
+
+  local repo_root="$SCRIPT_DIR"
+  if [ ! -f "${repo_root}/aap-demo.sh" ]; then
+    _err "aap-demo repo not found at ${repo_root}"
+    echo "  Run from the repo directory or reinstall with ./install.sh"
+    return 1
+  fi
+
+  if ! git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null; then
+    _err "Not a git repository: ${repo_root}"
+    return 1
+  fi
+
+  echo "  Pulling latest code..."
+  if ! git -C "$repo_root" pull; then
+    _err "git pull failed"
+    return 1
+  fi
+
+  echo "  Reinstalling launcher..."
+  if ! bash "${repo_root}/install.sh"; then
+    _err "install.sh failed"
+    return 1
+  fi
+
+  echo ""
+  echo "  ✓ Update complete"
 }
 
 cmd_redhat_status() {
@@ -1229,9 +1256,11 @@ cmd_test() {
   # Find all namespaces with AAP deployments
   local aap_namespaces=()
   # Operator deploys: namespaces with AAP CRDs
-  local ns_list
-  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' || true)
-  # Sort alphabetically by namespace name
+  local ns_list ns
+  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort -u || true)
+  while IFS= read -r ns; do
+    [ -n "$ns" ] && aap_namespaces+=("$ns")
+  done <<<"$ns_list"
 
   if [ ${#aap_namespaces[@]} -eq 0 ]; then
     _err "No AAP deployments found on cluster"
@@ -1756,30 +1785,66 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
-  # Show enabled addons with URLs
+  # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
-  if [ -n "$saved_addons" ]; then
-    echo "Enabled Addons:"
-    echo "---------------"
-    for a in $saved_addons; do
-      local url=""
-      case "$a" in
-        console) url="https://console.apps.127.0.0.1.nip.io" ;;
-        registry) url="https://registry.apps.127.0.0.1.nip.io" ;;
-        mcp-server) url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp" ;;
-        portal) url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || echo 'not-deployed')" ;;
-        registry-ui) url="https://registry-ui.apps.127.0.0.1.nip.io" ;;
-        prometheus) url="https://prometheus.apps.127.0.0.1.nip.io" ;;
-      esac
-      if [ -n "$url" ]; then
-        printf "  %-15s %s\n" "$a" "$url"
-      else
-        printf "  %s\n" "$a"
-      fi
-    done
-    echo ""
-  fi
+  echo "Addons:"
+  echo "-------"
+  for a in $AVAILABLE_ADDONS; do
+    local url="" label="" enabled=false
+    if echo "$saved_addons" | grep -qw "$a"; then
+      enabled=true
+    fi
+    case "$a" in
+      fleet)
+        if [ "$enabled" = true ]; then
+          if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+            source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
+            local _fc
+            _fc=$(fleet_count 2>/dev/null || echo "0")
+            if [ "$_fc" -gt 0 ] 2>/dev/null; then
+              label="${_fc} node(s) running"
+            else
+              label="enabled (no nodes)"
+            fi
+          else
+            label="enabled"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      mcp-server)
+        if [ "$enabled" = true ]; then
+          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
+          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+    esac
+    if [ -n "$url" ] && [ -z "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$url"
+    elif [ -n "$label" ]; then
+      printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+    else
+      printf "  %-15s (aap-demo enable %s)\n" "$a" "$a"
+    fi
+  done
+  echo ""
 
   # Show fleet nodes (addon)
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
@@ -1840,7 +1905,6 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
-
   # Clean up fleet nodes before destroying cluster (addon)
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
@@ -2100,7 +2164,7 @@ deploy_latest() {
 
   if [ -z "$CSV_NAME" ]; then
     echo "✗ CSV not found after 10 minutes"
-    echo "  Check: kubectl get subscription -n $NAMESPACE"
+    echo "Check: kubectl get subscription -n $NAMESPACE"
     exit 1
   fi
 
@@ -2256,9 +2320,6 @@ setup_namespace() {
     fi
   else
     echo "WARNING: No pull secret found"
-    echo "  AAP requires a pull secret to pull images from registry.redhat.io"
-    echo "  Download: https://console.redhat.com/openshift/install/pull-secret"
-    echo "  Save to:  ~/.aap-demo/pull-secret.txt"
   fi
 }
 
@@ -2483,7 +2544,7 @@ watch_aap() {
     # Check timeout
     if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
       echo "WARNING: Deployment not complete after 60 minutes"
-      echo "  Check: kubectl get aap -n $NAMESPACE -o yaml"
+      echo "Check: kubectl get aap -n $NAMESPACE -o yaml"
       return 1
     fi
 

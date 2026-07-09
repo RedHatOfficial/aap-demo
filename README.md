@@ -173,83 +173,7 @@ aap-demo enable mcp-server     # MCP server for AI assistants
 aap-demo disable mcp-server
 ```
 
-## Fleet — Local Managed Nodes
-
-Fleet spins up lightweight QEMU virtual machines on your host as managed nodes for AAP.
-Each VM runs a RHEL/CentOS cloud image with an `ansible` user and SSH key pre-injected,
-so AAP can run automation against real hosts without any external infrastructure.
-
-### Requirements
-
-- **QEMU** — `brew install qemu` (macOS) or `dnf install qemu-kvm` (Linux)
-- **mkisofs** — `brew install cdrtools` (macOS) or `dnf install genisoimage` (Linux)
-- **A RHEL/CentOS QCOW2 cloud image** matching your host architecture (aarch64 for Apple Silicon, x86_64 for Intel/AMD)
-- **macOS firewall** must allow QEMU connections (System Settings → Network → Firewall → allow `qemu-system-*`)
-
-### Resource Usage
-
-Each fleet node uses **1 GB RAM** and **2 vCPUs** by default (configurable via
-`FLEET_NODE_MEM` and `FLEET_NODE_CPUS`). Disk usage is minimal — the base QCOW2
-image is copied once (~700 MB–2 GB depending on the image), and each node gets a
-thin copy-on-write overlay (~200 KB initially, grows as the VM writes data).
-
-With the default CRC VM (16 GB RAM), 2–3 fleet nodes is a comfortable fit. Larger
-fleets may require increasing host memory or reducing node sizes.
-
-### Usage
-
-```bash
-# Enable the fleet addon
-aap-demo enable fleet
-
-# Add fleet nodes to an existing AAP deployment
-aap-demo fleet add 3 --image ~/rhel9.qcow2
-aap-demo fleet list
-aap-demo fleet remove 1
-aap-demo fleet destroy
-
-# Disable the fleet addon (destroys all VMs and AAP resources)
-aap-demo disable fleet
-```
-
-The `--image` path is saved to `~/.aap-demo/config`, so subsequent `fleet add`
-commands don't need it again.
-
-### What Happens on Deploy
-
-1. The base QCOW2 image is copied to `~/.aap-demo/fleet/base.qcow2`
-2. Each node gets a thin overlay disk and a cloud-init ISO (creates the `ansible` user with an auto-generated SSH key)
-3. QEMU launches each VM with a host port forward for SSH (ports 2200, 2201, …)
-4. Nodes are registered in AAP as an inventory called **"Fleet"** with a credential called **"Fleet SSH Key"**
-5. An ad-hoc ping verifies end-to-end connectivity
-
-### Using Fleet Nodes in AAP
-
-Fleet nodes appear in the **Fleet** inventory in the AAP UI. To run automation
-against them, create a Job Template and assign:
-
-- **Inventory:** Fleet
-- **Credential:** Fleet SSH Key
-
-The "Fleet SSH Key" credential is created automatically during registration with
-the generated SSH private key. You must select it on any Job Template that targets
-fleet nodes — it is not applied by default.
-
-### Lifecycle
-
-Fleet nodes are **ephemeral** — `aap-demo stop` kills all VMs, and `aap-demo destroy`
-removes them entirely. After a stop/start cycle, re-create nodes with `aap-demo fleet add`.
-This is by design: no VM state to corrupt, and fresh nodes spin up in seconds.
-
-### Fleet Environment Variables
-
-```bash
-FLEET_NODE_MEM=1024      # VM memory in MB (default: 1024)
-FLEET_NODE_CPUS=2        # VM CPU count (default: 2)
-FLEET_IMAGE=~/rhel9.qcow2  # Default QCOW2 image path
-```
-
-## Common Commands
+### Common Commands
 
 ```bash
 # Deployment
@@ -281,12 +205,16 @@ aap-demo help                # Full command reference
 
 ## Architecture
 
+Architecture decisions are documented in [docs/adr/](docs/adr/README.md) (14 ADRs covering CLI
+design, storage, OLM, addons, and cross-platform support).
+
 ### macOS / Linux / Windows
 
 - **Networking:** SSH (2222), API (6443), HTTP/HTTPS (443) — all on localhost
 - **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
-- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust/
-  Windows via certutil
+- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust;
+  on Windows, run `aap-demo deploy` from an elevated PowerShell (see
+  [powershell/README.md](powershell/README.md#ingress-ca-and-browser-tls))
 
 ## Environment Variables
 
