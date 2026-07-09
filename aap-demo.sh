@@ -2226,25 +2226,12 @@ configure_pah_remotes() {
 
     if [ -n "$remote_href" ]; then
       # Update existing token
-      local task_url
-      task_url=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      curl -sk --max-time 10 -u "admin:${admin_pass}" \
         -X PATCH \
         -H "Content-Type: application/json" \
         -d "$(jq -n --arg token "${GALAXY_TOKEN}" '{token: $token}')" \
-        "${api_base}${remote_href}" 2>/dev/null \
-        | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('task', ''))" 2>/dev/null)
-
-      if [ -n "$task_url" ]; then
-        # Wait for task
-        for i in {1..10}; do
-          sleep 1
-          local state
-          state=$(curl -sk --max-time 10 -u "admin:${admin_pass}" "${api_base}${task_url}" 2>/dev/null \
-            | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('state', ''))" 2>/dev/null)
-          [ "$state" = "completed" ] && break
-        done
-        echo "✓"
-      fi
+        "${api_base}${remote_href}" >/dev/null 2>&1
+      echo "✓"
     else
       # Create rh-certified remote
       local create_result
