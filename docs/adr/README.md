@@ -33,7 +33,8 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
         │                       │                       │
         ├─ NFS RWX (006)        ├─ AAP CR              ├─ portal (002, 004)
         ├─ CoreDNS (007)        └─ SCC/PSA (012)       ├─ mcp-server (011)
-        └─ Registry (013)                              └─ registry (013)
+        └─ Registry (013)                              ├─ fleet (016)
+                                                       └─ registry (013)
 ```
 
 ## Index
@@ -55,6 +56,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [013](013-in-cluster-registry.md) | In-Cluster Container Registry | Accepted |
 | [014](014-testing-strategy.md) | CLI Testing Strategy | Accepted |
 | [015](015-ingress-ca-user-store-trust.md) | Ingress CA Trust via User Certificate Stores | Accepted |
+| [016](016-fleet-addon.md) | Fleet Addon — Local QEMU VMs as Managed Nodes | Accepted |
 
 ## Creating a New ADR
 
