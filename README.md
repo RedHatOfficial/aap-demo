@@ -21,7 +21,7 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 aap-demo automatically configures Ansible Galaxy authentication for downloading certified and private collections:
 
-- **Red Hat Certified Collections**: Configure offline token from [console.redhat.com](https://console.redhat.com/ansible/automation-hub/token) in `~/.aap-demo/galaxy-token`
+- **Red Hat Certified Collections**: Offline token from console.redhat.com in `~/.aap-demo/galaxy-token`
 - **Private Automation Hub**: Configure URL and credentials in `~/.aap-demo/pah-config.yml`
 - **Priority-based fallback**: PAH → console.redhat.com → galaxy.ansible.com (community)
 

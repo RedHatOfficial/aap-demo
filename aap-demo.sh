@@ -2029,7 +2029,7 @@ detect_galaxy_credentials() {
 
 validate_galaxy_token() {
   if [ -z "$GALAXY_TOKEN" ]; then
-    return 0  # Not configured, skip validation
+    return 0 # Not configured, skip validation
   fi
 
   # Check token format (offline tokens are typically 1500+ chars)
@@ -2054,7 +2054,7 @@ validate_galaxy_token() {
 
 validate_pah_config() {
   if [ -z "$PAH_URL" ]; then
-    return 0  # Not configured, skip validation
+    return 0 # Not configured, skip validation
   fi
 
   # Check URL format
@@ -2091,7 +2091,7 @@ generate_ansible_cfg() {
   galaxy_servers="${galaxy_servers%,}"
 
   # Generate ansible.cfg with [galaxy] section
-  cat > "$cfg_file" <<'EOF'
+  cat >"$cfg_file" <<'EOF'
 [defaults]
 roles_path = ./ansible/roles
 inventory = ./ansible/inventory/localhost.yml
@@ -2103,7 +2103,7 @@ fact_caching_timeout = 3600
 EOF
 
   # Add galaxy configuration
-  cat >> "$cfg_file" <<EOF
+  cat >>"$cfg_file" <<EOF
 [galaxy]
 server_list = ${galaxy_servers}
 
@@ -2111,18 +2111,18 @@ EOF
 
   # Append PAH server configuration
   if [ -n "$PAH_URL" ]; then
-    cat >> "$cfg_file" <<EOF
+    cat >>"$cfg_file" <<EOF
 [galaxy_server.pah]
 url = ${PAH_URL}
 EOF
 
     if [ -n "$PAH_TOKEN" ]; then
-      cat >> "$cfg_file" <<EOF
+      cat >>"$cfg_file" <<EOF
 token = ${PAH_TOKEN}
 
 EOF
     elif [ -n "$PAH_USER" ] && [ -n "$PAH_PASS" ]; then
-      cat >> "$cfg_file" <<EOF
+      cat >>"$cfg_file" <<EOF
 username = ${PAH_USER}
 password = ${PAH_PASS}
 
@@ -2132,7 +2132,7 @@ EOF
 
   # Append console.redhat.com server configuration
   if [ -n "$GALAXY_TOKEN" ]; then
-    cat >> "$cfg_file" <<EOF
+    cat >>"$cfg_file" <<EOF
 [galaxy_server.console]
 url = https://console.redhat.com/api/automation-hub/content/published/
 token = ${GALAXY_TOKEN}
@@ -2141,7 +2141,7 @@ EOF
   fi
 
   # Append community galaxy server
-  cat >> "$cfg_file" <<'EOF'
+  cat >>"$cfg_file" <<'EOF'
 [galaxy_server.community]
 url = https://galaxy.ansible.com/
 
@@ -2283,7 +2283,6 @@ configure_pah_remotes() {
       echo "✓ (background)"
     fi
 
-
     # Create and configure rh-validated remote
     printf "  Configuring rh-validated remote... "
 
@@ -2380,7 +2379,6 @@ cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
 }
 
-
 cmd_setup_pah() {
   echo "Setting up Private Automation Hub..."
   echo ""
@@ -2395,13 +2393,13 @@ cmd_setup_pah() {
 
     # Open browser
     if command -v open >/dev/null 2>&1; then
-      open "$url"  # macOS
+      open "$url" # macOS
       echo "Opening browser to Red Hat Automation Hub..."
     elif command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "$url"  # Linux
+      xdg-open "$url" # Linux
       echo "Opening browser to Red Hat Automation Hub..."
     elif command -v start >/dev/null 2>&1; then
-      start "$url"  # Windows/Git Bash
+      start "$url" # Windows/Git Bash
       echo "Opening browser to Red Hat Automation Hub..."
     else
       echo "Visit this URL in your browser:"
@@ -2625,7 +2623,6 @@ deploy_latest() {
 
     # Watch deployment
     watch_aap
-
 
     # Remind to configure PAH
     echo ""

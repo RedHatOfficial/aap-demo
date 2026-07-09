@@ -1,6 +1,6 @@
 # Collection Authentication for aap-demo
 
-This guide explains how to configure authentication for downloading Ansible collections from Red Hat's certified content sources and Private Automation Hub (PAH).
+This guide explains how to configure authentication for downloading collections from Red Hat sources and Private Hub.
 
 ## Overview
 
@@ -87,19 +87,19 @@ aap-demo uses the first available source:
 
 ### Example Scenarios
 
-**Scenario 1: No authentication configured**
+#### Scenario 1: No authentication configured**
 
 - Downloads from `galaxy.ansible.com` only
 - Community collections install successfully
 - Certified collections (`ansible.controller`, `infra.aap_configuration`) fail
 
-**Scenario 2: console.redhat.com token configured**
+#### Scenario 2: console.redhat.com token configured**
 
 - Downloads certified collections from console.redhat.com
 - Falls back to galaxy.ansible.com for community-only collections
 - Recommended for most users
 
-**Scenario 3: PAH + console.redhat.com both configured**
+#### Scenario 3: PAH + console.redhat.com both configured**
 
 - Tries PAH first (for private collections)
 - Falls back to console.redhat.com (for certified collections)
@@ -233,7 +233,7 @@ Collection Sources:
 
 **Cause**: Token file contains a refresh token instead of an offline token, or is corrupted.
 
-**Solution**: Return to console.redhat.com and copy the **Offline Token** (not the Refresh Token). Offline tokens are ~1500 characters.
+**Solution**: Return to console.redhat.com and copy the **Offline Token** (not the Refresh Token). They are ~1500 characters.
 
 ### Warning: "Collection ansible.controller not found"
 

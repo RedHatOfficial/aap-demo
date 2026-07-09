@@ -97,7 +97,8 @@ Generation:
 
 ### ansible.cfg generation
 
-`aap-demo.sh` (bash functions: detect_galaxy_credentials, generate_ansible_cfg, install_collections, configure_pah_remotes) and
+`aap-demo.sh` (bash functions: detect_galaxy_credentials, generate_ansible_cfg, install_collections,
+configure_pah_remotes) and
 `powershell/native/Private/Helpers.ps1` (PowerShell) generate `ansible.cfg`:
 
 ```ini
