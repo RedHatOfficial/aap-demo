@@ -129,13 +129,13 @@ _ingress_ca_export_env() {
 
 _fetch_ingress_ca_from_cluster() {
   local dest="$1"
-  local crc_ssh_key="${HOME}/.crc/machines/crc/id_ed25519"
-  local crc_ssh_opts
 
-  [ -f "$crc_ssh_key" ] || return 1
+  # CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
+  if [ -z "$CRC_SSH_KEY" ]; then
+    return 1
+  fi
 
-  crc_ssh_opts="-i ${crc_ssh_key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
-  ssh -p 2222 $crc_ssh_opts core@127.0.0.1 \
+  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 \
     'sudo cat /var/lib/microshift/certs/ingress-ca/ca.crt' >"$dest" 2>/dev/null
 
   [ -s "$dest" ] && grep -q 'BEGIN CERTIFICATE' "$dest"

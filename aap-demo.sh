@@ -249,8 +249,10 @@ setup_kubeconfig() {
     fi
     # Test if kubeconfig works, refresh from VM if not
     if ! kubectl cluster-info &>/dev/null 2>&1; then
-      if [ -f "$HOME/.crc/machines/crc/id_ed25519" ]; then
-        if ssh -p 2222 -i "$HOME/.crc/machines/crc/id_ed25519" \
+      # Ensure infra backend is loaded to set CRC_SSH_KEY
+      _infra_ensure_backend 2>/dev/null || true
+      if [ -n "$CRC_SSH_KEY" ]; then
+        if ssh -p 2222 -i "$CRC_SSH_KEY" \
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
           -o ConnectTimeout=2 -o BatchMode=yes \
           core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' \
@@ -1470,7 +1472,12 @@ INVEOF
 }
 
 cmd_ssh() {
-  CRC_SSH_KEY="${HOME}/.crc/machines/crc/id_ed25519"
+  # Ensure infra backend is loaded to set CRC_SSH_KEY
+  _infra_ensure_backend 2>/dev/null || true
+  if [ -z "$CRC_SSH_KEY" ]; then
+    _err "No CRC SSH key found. Is OpenShift Local running?"
+    return 1
+  fi
   exec ssh -p 2222 -i "$CRC_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null core@127.0.0.1
 }
 
