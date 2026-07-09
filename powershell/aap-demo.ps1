@@ -236,6 +236,12 @@ try {
 
     'setup' { Invoke-AapDemoSetup }
 
+    'setup-pah' {
+      $params = @{}
+      if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
+      Invoke-AapDemoSetupPah @params
+    }
+
     'ssh' { Invoke-AapDemoSsh }
 
     'kubeconfig' { Invoke-AapDemoKubeconfig }

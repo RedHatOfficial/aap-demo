@@ -22,6 +22,8 @@ $PrivateDir = Join-Path $PSScriptRoot 'Private'
 
 . (Join-Path $PrivateDir 'Commands.ps1')
 
+. (Join-Path $PrivateDir 'Collections.ps1')
+
 
 
 Export-ModuleMember -Function @(
@@ -71,6 +73,8 @@ Export-ModuleMember -Function @(
   'Invoke-AapDemoRedeployAll'
 
   'Get-AapDemoHelp'
+
+  'Invoke-AapDemoSetupPah'
 
 )
 

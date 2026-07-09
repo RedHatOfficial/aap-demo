@@ -274,6 +274,14 @@ function Invoke-AapDemoDiagnose {
   }
   Write-Host ''
 
+  Write-AapCollectionSourcesDiagnose -WritePass {
+    param($Message)
+    Write-AapDiagPass $Message
+  } -WriteInfo {
+    param($Message)
+    Write-AapDiagInfo $Message
+  }
+
   # DNS
   Write-Host 'DNS:'
   $dnsResult = Invoke-AapOcCapture @('get', 'pods', '-n', 'openshift-dns', '--no-headers')

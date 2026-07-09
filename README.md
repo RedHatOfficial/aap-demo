@@ -17,6 +17,20 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 - Addon system: `aap-demo enable mcp-server`
 - Reproducible — destroy and recreate in minutes
 
+## Collection Authentication
+
+aap-demo automatically configures Ansible Galaxy authentication for downloading certified and private collections:
+
+- **Red Hat Certified Collections**: Offline token from console.redhat.com in `~/.aap-demo/galaxy-token`
+- **Private Automation Hub**: Configure URL and credentials in `~/.aap-demo/pah-config.yml`
+- **Priority-based fallback**: PAH → console.redhat.com → galaxy.ansible.com (community)
+
+Collections are installed automatically during deployment from `config/requirements.yml`. Skip with `SKIP_COLLECTIONS=true`.
+
+**Status**: View configured sources with `aap-demo status`
+**Diagnostics**: Validate authentication with `aap-demo diagnose`
+**Documentation**: See [docs/collection-authentication.md](docs/collection-authentication.md)
+
 ## Quick Start
 
 ### Prerequisites

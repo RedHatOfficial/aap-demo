@@ -123,6 +123,7 @@ function Invoke-AapDemoWatch {
         Write-Host "Password: (run: oc get secret -n $Namespace aap-admin-password -o jsonpath='{.data.password}')"
       }
       Write-Host ''
+      Write-AapSetupPahReminder
       return
     }
 
