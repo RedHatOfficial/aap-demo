@@ -23,6 +23,10 @@ echo ""
 # Check dependencies
 MISSING_DEPS=""
 
+if ! command -v oc &>/dev/null; then
+  MISSING_DEPS="$MISSING_DEPS oc"
+fi
+
 if ! command -v kubectl &>/dev/null; then
   MISSING_DEPS="$MISSING_DEPS kubectl"
 fi
@@ -58,11 +62,85 @@ if [ -n "$MISSING_DEPS" ]; then
   echo ""
 
   if [[ "$(uname)" == "Darwin" ]]; then
-    echo "Installing via Homebrew..."
+    echo "Installing via Homebrew and OpenShift mirror..."
     for dep in $MISSING_DEPS; do
       case "$dep" in
+        oc)
+          echo "Installing oc client..."
+          # Detect architecture
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            arm64 | aarch64)
+              OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac-arm64.tar.gz"
+              ;;
+            x86_64 | amd64)
+              OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac.tar.gz"
+              ;;
+            *)
+              echo "ERROR: Unsupported architecture: $ARCH"
+              echo "Supported: arm64, x86_64"
+              exit 1
+              ;;
+          esac
+
+          # Download and extract to temporary location
+          TMP_DIR=$(mktemp -d)
+          trap 'rm -rf "$TMP_DIR"' EXIT
+
+          echo "  Downloading from OpenShift mirror..."
+          if ! curl -fsSL "$OC_URL" -o "$TMP_DIR/oc.tar.gz"; then
+            echo "ERROR: Failed to download oc from $OC_URL"
+            exit 1
+          fi
+
+          # Verify checksum if available
+          if curl -fsSL "${OC_URL}.sha256" -o "$TMP_DIR/oc.sha256" 2>/dev/null; then
+            echo "  Verifying checksum..."
+            EXPECTED=$(cat "$TMP_DIR/oc.sha256" | awk '{print $1}')
+            ACTUAL=$(shasum -a 256 "$TMP_DIR/oc.tar.gz" | awk '{print $1}')
+            if [[ "$EXPECTED" != "$ACTUAL" ]]; then
+              echo "ERROR: Checksum mismatch"
+              echo "  Expected: $EXPECTED"
+              echo "  Actual:   $ACTUAL"
+              exit 1
+            fi
+          fi
+
+          if ! tar -xzf "$TMP_DIR/oc.tar.gz" -C "$TMP_DIR"; then
+            echo "ERROR: Failed to extract oc archive"
+            exit 1
+          fi
+
+          if [ ! -f "$TMP_DIR/oc" ]; then
+            echo "ERROR: oc binary not found in archive"
+            exit 1
+          fi
+
+          # Install to ~/.local/bin
+          mkdir -p ~/.local/bin
+          mv "$TMP_DIR/oc" ~/.local/bin/oc
+          chmod +x ~/.local/bin/oc
+          echo "✓ oc installed to ~/.local/bin/oc"
+
+          # Install kubectl if present in archive
+          if [ -f "$TMP_DIR/kubectl" ]; then
+            mv "$TMP_DIR/kubectl" ~/.local/bin/kubectl
+            chmod +x ~/.local/bin/kubectl
+            echo "✓ kubectl installed to ~/.local/bin/kubectl"
+          fi
+
+          # Warn if ~/.local/bin not in PATH
+          if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            echo "⚠  Add ~/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\""
+          fi
+          ;;
         kubectl)
-          brew install kubectl
+          # Skip if already installed via oc
+          if command -v kubectl &>/dev/null; then
+            echo "✓ kubectl already available"
+          else
+            brew install kubectl
+          fi
           ;;
         ansible)
           brew install ansible
