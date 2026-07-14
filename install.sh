@@ -70,10 +70,10 @@ if [ -n "$MISSING_DEPS" ]; then
           # Detect architecture
           ARCH=$(uname -m)
           case "$ARCH" in
-            arm64|aarch64)
+            arm64 | aarch64)
               OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac-arm64.tar.gz"
               ;;
-            x86_64|amd64)
+            x86_64 | amd64)
               OC_URL="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-mac.tar.gz"
               ;;
             *)
@@ -96,8 +96,12 @@ if [ -n "$MISSING_DEPS" ]; then
           # Verify checksum if available
           if curl -fsSL "${OC_URL}.sha256" -o "$TMP_DIR/oc.sha256" 2>/dev/null; then
             echo "  Verifying checksum..."
-            if ! (cd "$TMP_DIR" && shasum -a 256 -c oc.sha256 2>/dev/null | grep -q "OK"); then
-              echo "ERROR: Checksum verification failed"
+            EXPECTED=$(cat "$TMP_DIR/oc.sha256" | awk '{print $1}')
+            ACTUAL=$(shasum -a 256 "$TMP_DIR/oc.tar.gz" | awk '{print $1}')
+            if [[ "$EXPECTED" != "$ACTUAL" ]]; then
+              echo "ERROR: Checksum mismatch"
+              echo "  Expected: $EXPECTED"
+              echo "  Actual:   $ACTUAL"
               exit 1
             fi
           fi
@@ -123,6 +127,11 @@ if [ -n "$MISSING_DEPS" ]; then
             mv "$TMP_DIR/kubectl" ~/.local/bin/kubectl
             chmod +x ~/.local/bin/kubectl
             echo "✓ kubectl installed to ~/.local/bin/kubectl"
+          fi
+
+          # Warn if ~/.local/bin not in PATH
+          if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            echo "⚠  Add ~/.local/bin to PATH: export PATH=\"\$HOME/.local/bin:\$PATH\""
           fi
           ;;
         kubectl)

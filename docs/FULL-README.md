@@ -150,7 +150,7 @@ aap-demo status portal       # Portal route URL
 
 **Profiles:** x86 clusters use Red Hat RHDH chart images; arm64 clusters (e.g. CRC on Apple
 Silicon) use community multi-arch RHDH overrides. See
-[ADR-002](docs/adr/002-portal-helm-deployment.md) and [addons/portal/README.md](addons/portal/README.md).
+[ADR-002](adr/002-portal-helm-deployment.md) and [addons/portal/README.md](../addons/portal/README.md).
 
 ## Overview
 
