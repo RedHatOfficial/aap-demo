@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# galaxy-auth.sh — Galaxy / PAH credential detection, validation, and
-#                  ansible.cfg generation for aap-demo
+# galaxy-auth.sh — Galaxy / PAH credential detection and remote configuration
 # =============================================================================
 # Source this file; do not execute it directly.
 # Requires: _RED, _GREEN, _YELLOW, _NC colour vars and _err() from caller.
@@ -36,180 +35,9 @@ detect_galaxy_credentials() {
   fi
 }
 
-validate_galaxy_token() {
-  if [ -z "$GALAXY_TOKEN" ]; then
-    return 0 # Not configured, skip validation
-  fi
-
-  # Check token format (offline tokens are typically 1500+ chars)
-  local token_len=${#GALAXY_TOKEN}
-  if [ "$token_len" -lt 100 ]; then
-    printf "${_RED}▸${_NC} Invalid galaxy token format (too short: $token_len chars)\n"
-    echo ""
-    echo "Quick setup:"
-    echo "  aap-demo setup-pah      # Configure PAH remotes with token"
-    echo ""
-    echo "  1. Visit: https://console.redhat.com/ansible/automation-hub/token"
-    echo "  2. Click 'Load token'"
-    echo "  3. Copy Offline Token (~1500 characters)"
-    echo "  4. Save: echo \"TOKEN\" > ~/.aap-demo/galaxy-token"
-    echo ""
-    echo "Documentation: docs/collection-authentication.md"
-    return 1
-  fi
-
-  return 0
-}
-
-validate_pah_config() {
-  if [ -z "$PAH_URL" ]; then
-    return 0 # Not configured, skip validation
-  fi
-
-  # Check URL format
-  if ! [[ "$PAH_URL" =~ ^https?:// ]]; then
-    printf "${_RED}▸${_NC} Invalid PAH URL format: $PAH_URL\n"
-    echo "  URL must start with http:// or https://"
-    return 1
-  fi
-
-  # Check authentication method
-  if [ -z "$PAH_TOKEN" ] && [ -z "$PAH_USER" ]; then
-    printf "${_RED}▸${_NC} PAH config missing authentication\n"
-    echo "  Provide either 'token' or 'username'/'password' in $PAH_CONFIG_FILE"
-    return 1
-  fi
-
-  return 0
-}
-
-generate_ansible_cfg() {
-  local cfg_file="${1:-ansible.cfg}"
-  local galaxy_servers=""
-
-  # Build galaxy_server_list based on available credentials
-  if [ -n "$PAH_URL" ]; then
-    galaxy_servers+="pah,"
-  fi
-  if [ -n "$GALAXY_TOKEN" ]; then
-    galaxy_servers+="console,"
-  fi
-  galaxy_servers+="community"
-
-  # Remove trailing comma
-  galaxy_servers="${galaxy_servers%,}"
-
-  # Generate ansible.cfg with [galaxy] section
-  cat >"$cfg_file" <<'EOF'
-[defaults]
-roles_path = ./ansible/roles
-inventory = ./ansible/inventory/localhost.yml
-gathering = smart
-fact_caching = jsonfile
-fact_caching_connection = /tmp/ansible_facts
-fact_caching_timeout = 3600
-
-EOF
-
-  # Add galaxy configuration
-  cat >>"$cfg_file" <<EOF
-[galaxy]
-server_list = ${galaxy_servers}
-
-EOF
-
-  # Append PAH server configuration
-  if [ -n "$PAH_URL" ]; then
-    cat >>"$cfg_file" <<EOF
-[galaxy_server.pah]
-url = ${PAH_URL}
-EOF
-
-    if [ -n "$PAH_TOKEN" ]; then
-      cat >>"$cfg_file" <<EOF
-token = ${PAH_TOKEN}
-
-EOF
-    elif [ -n "$PAH_USER" ] && [ -n "$PAH_PASS" ]; then
-      cat >>"$cfg_file" <<EOF
-username = ${PAH_USER}
-password = ${PAH_PASS}
-
-EOF
-    fi
-  fi
-
-  # Append console.redhat.com server configuration
-  if [ -n "$GALAXY_TOKEN" ]; then
-    cat >>"$cfg_file" <<EOF
-[galaxy_server.console]
-url = https://console.redhat.com/api/automation-hub/content/published/
-token = ${GALAXY_TOKEN}
-
-EOF
-  fi
-
-  # Append community galaxy server
-  cat >>"$cfg_file" <<'EOF'
-[galaxy_server.community]
-url = https://galaxy.ansible.com/
-
-EOF
-
-  # Secure file permissions and warn about plaintext tokens
-  chmod 600 "$cfg_file"
-  if [ -n "$GALAXY_TOKEN" ] || [ -n "$PAH_TOKEN" ] || [ -n "$PAH_PASS" ]; then
-    printf "${_YELLOW}▸${_NC} Warning: Tokens stored in plaintext in $cfg_file\n"
-    printf "  Do not commit this file. Consider using ANSIBLE_GALAXY_SERVER_*_TOKEN env vars instead.\n"
-  fi
-
-  printf "${_GREEN}▸${_NC} Generated ansible.cfg with galaxy servers: $galaxy_servers\n"
-}
-
-install_collections() {
-  local requirements_file="${1:-config/requirements.yml}"
-
-  if [ "$SKIP_COLLECTIONS" = "true" ]; then
-    printf "${_YELLOW}▸${_NC} Skipping collection installation (SKIP_COLLECTIONS=true)\n"
-    return 0
-  fi
-
-  if [ ! -f "$requirements_file" ]; then
-    printf "${_YELLOW}▸${_NC} No $requirements_file found, skipping collection installation\n"
-    return 0
-  fi
-
-  local galaxy_opts=()
-  if [ "${GALAXY_IGNORE_CERTS:-false}" = "true" ]; then
-    galaxy_opts+=(--ignore-certs)
-    printf "${_YELLOW}▸${_NC} SSL cert verification disabled (GALAXY_IGNORE_CERTS=true)\n"
-  fi
-
-  # On macOS, Python's bundled certs often miss corporate/system CAs.
-  # /etc/ssl/cert.pem is the Keychain-sourced bundle — point requests at it.
-  local ssl_env=()
-  if [[ "$OSTYPE" == "darwin"* ]] && [ -f /etc/ssl/cert.pem ] && [ -z "${SSL_CERT_FILE:-}" ]; then
-    ssl_env=(SSL_CERT_FILE=/etc/ssl/cert.pem REQUESTS_CA_BUNDLE=/etc/ssl/cert.pem)
-  fi
-
-  echo "Installing collections from $requirements_file..."
-  if env "${ssl_env[@]}" ansible-galaxy collection install -r "$requirements_file" "${galaxy_opts[@]}" 2>&1; then
-    echo "  ✓ Collections installed successfully"
-    return 0
-  else
-    _err "Failed to install collections"
-    echo "  Check authentication to galaxy servers or run with SKIP_COLLECTIONS=true"
-    echo "  Token setup: https://console.redhat.com/ansible/automation-hub/token"
-    echo "  SSL errors: set GALAXY_IGNORE_CERTS=true to skip cert verification"
-    return 1
-  fi
-}
-
 configure_pah_remotes() {
   echo "Configuring Private Automation Hub remotes..."
   # Requires AAP 2.7+ (uses Pulp v3 API)
-
-  # Check jq availability
 
   if ! command -v jq >/dev/null 2>&1; then
     _err "jq is required for PAH remote configuration"
@@ -306,17 +134,15 @@ configure_pah_remotes() {
       echo "✓ (background)"
     fi
 
-    # Create and configure rh-validated remote
+    # Configure rh-validated remote
     printf "  Configuring rh-validated remote... "
 
-    # Check if rh-validated remote exists
     local validated_remote
     validated_remote=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
       "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null \
       | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -z "$validated_remote" ]; then
-      # Create rh-validated remote
       local create_result
       create_result=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
         -X POST \
@@ -331,7 +157,6 @@ configure_pah_remotes() {
 
       validated_remote=$(echo "$create_result" | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('pulp_href', ''))" 2>/dev/null)
     else
-      # Update existing remote token
       curl -sk --max-time 10 -u "admin:${admin_pass}" \
         -X PATCH \
         -H "Content-Type: application/json" \
@@ -342,7 +167,6 @@ configure_pah_remotes() {
     if [ -n "$validated_remote" ]; then
       echo "✓"
 
-      # Link remote to validated repository
       printf "  Linking validated remote to repository... "
       local validated_repo
       validated_repo=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
@@ -357,7 +181,6 @@ configure_pah_remotes() {
           "${api_base}${validated_repo}" >/dev/null 2>&1
         echo "✓"
 
-        # Trigger sync
         printf "  Syncing validated... "
         curl -sk --max-time 10 -u "admin:${admin_pass}" \
           -X POST \
@@ -375,7 +198,6 @@ configure_pah_remotes() {
   if [ -n "$PAH_URL" ] && [ -n "$PAH_TOKEN" ]; then
     printf "  Configuring Private Automation Hub remote... "
 
-    # Create PAH remote
     local create_result
     create_result=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
       -X POST \
