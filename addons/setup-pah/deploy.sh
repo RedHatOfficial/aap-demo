@@ -20,7 +20,7 @@ echo "Setting up Private Automation Hub..."
 echo ""
 
 if [ ! -f "$GALAXY_TOKEN_FILE" ]; then
-  local url="https://console.redhat.com/ansible/automation-hub/token"
+  url="https://console.redhat.com/ansible/automation-hub/token"
 
   if command -v open >/dev/null 2>&1; then
     open "$url"
