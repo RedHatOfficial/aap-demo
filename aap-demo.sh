@@ -2009,11 +2009,9 @@ cmd_create() {
 # shellcheck source=includes/galaxy-auth.sh
 source "${SCRIPT_DIR}/includes/galaxy-auth.sh"
 
-
 cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
 }
-
 
 cmd_deploy() {
   # Show notice/disclaimer
