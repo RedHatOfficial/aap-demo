@@ -118,7 +118,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | setup-pah | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
+    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
     --ai | --reset)
@@ -447,7 +447,6 @@ COMMANDS:
     ssh             SSH into cluster node
     repair          Repair cluster after crash
     setup           Run setup only (storage, coredns, mkcert)
-    setup-pah       Configure PAH remotes with console.redhat.com token
     kubeconfig      Extract and merge kubeconfig
     redeploy-all    Destroy cluster and redeploy fresh
 
@@ -2209,7 +2208,7 @@ deploy_latest() {
     # Remind to configure PAH
     echo ""
     echo "To configure Private Automation Hub remotes:"
-    echo "  aap-demo setup-pah"
+    echo "  aap-demo enable setup-pah"
   else
     echo ""
     echo "✓ AAP operator deployed!"
