@@ -71,7 +71,8 @@ configure_pah_remotes() {
 
   local api_base="https://${aap_route}/api/galaxy/pulp/api/v3"
   # Build Basic auth header to avoid curl misparse when password contains ':'
-  local auth_header="Authorization: Basic $(printf 'admin:%s' "${admin_pass}" | base64)"
+  local auth_header
+  auth_header="Authorization: Basic $(printf 'admin:%s' "${admin_pass}" | base64)"
 
   # Configure console.redhat.com remotes if token present
   if [ -n "$GALAXY_TOKEN" ]; then
@@ -199,7 +200,7 @@ configure_pah_remotes() {
       fi
     fi
   else
-    printf "  ${_YELLOW}▸${_NC} No galaxy token found, skipping console.redhat.com remotes\n"
+    printf "  %s▸%s No galaxy token found, skipping console.redhat.com remotes\n" "${_YELLOW}" "${_NC}"
   fi
 
   # Configure PAH remote if configured
