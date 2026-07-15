@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm | portal)
+    mcp-server | portal | setup-pah)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -432,7 +432,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal)
+    enable [addon]  Enable an addon (mcp-server, portal, setup-pah)
     disable [addon] Disable an addon
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
@@ -2015,53 +2015,6 @@ cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
 }
 
-cmd_setup_pah() {
-  echo "Setting up Private Automation Hub..."
-  echo ""
-
-  # Check if token already exists
-  if [ -f "$GALAXY_TOKEN_FILE" ]; then
-    echo "✓ Galaxy token already configured at $GALAXY_TOKEN_FILE"
-    echo ""
-  else
-    # Get token first
-    local url="https://console.redhat.com/ansible/automation-hub/token"
-
-    # Open browser
-    if command -v open >/dev/null 2>&1; then
-      open "$url" # macOS
-      echo "Opening browser to Red Hat Automation Hub..."
-    elif command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "$url" # Linux
-      echo "Opening browser to Red Hat Automation Hub..."
-    elif command -v start >/dev/null 2>&1; then
-      start "$url" # Windows/Git Bash
-      echo "Opening browser to Red Hat Automation Hub..."
-    else
-      echo "Visit this URL in your browser:"
-      echo "  $url"
-    fi
-
-    echo ""
-    echo "Steps:"
-    echo "  1. Log in with your Red Hat account"
-    echo "  2. Click 'Load token' button"
-    echo "  3. Copy the 'Offline Token' (long base64 string, ~1500 characters)"
-    echo "  4. Run this command to save it:"
-    echo ""
-    echo "     echo \"YOUR_OFFLINE_TOKEN\" > ~/.aap-demo/galaxy-token"
-    echo "     chmod 600 ~/.aap-demo/galaxy-token"
-    echo ""
-    echo "  5. Re-run: aap-demo setup-pah"
-    echo ""
-    echo "Documentation: docs/collection-authentication.md"
-    return 0
-  fi
-
-  # Configure PAH remotes
-  echo "Configuring AAP Private Automation Hub remotes..."
-  configure_pah_remotes
-}
 
 cmd_deploy() {
   # Show notice/disclaimer
@@ -2633,7 +2586,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal"
+AVAILABLE_ADDONS="mcp-server portal setup-pah"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
@@ -2792,7 +2745,7 @@ case "$COMMAND" in
     cmd_setup
     ;;
   setup-pah)
-    cmd_setup_pah
+    echo "setup-pah is now an addon. Run: aap-demo enable setup-pah"
     ;;
   watch)
     watch_aap
