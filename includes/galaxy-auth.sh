@@ -8,6 +8,12 @@
 if [ -n "${_GALAXY_AUTH_LOADED:-}" ]; then return 0; fi
 _GALAXY_AUTH_LOADED=1
 
+# Fallbacks when sourced outside aap-demo.sh (e.g. addon subprocesses)
+if ! declare -f _err >/dev/null 2>&1; then
+  _err() { printf 'ERROR: %s\n' "$*" >&2; }
+fi
+_YELLOW="${_YELLOW:-}"; _NC="${_NC:-}"
+
 detect_galaxy_credentials() {
   # Detect console.redhat.com offline token
   if [ -f "$GALAXY_TOKEN_FILE" ]; then
@@ -64,6 +70,8 @@ configure_pah_remotes() {
   fi
 
   local api_base="https://${aap_route}/api/galaxy/pulp/api/v3"
+  # Build Basic auth header to avoid curl misparse when password contains ':'
+  local auth_header="Authorization: Basic $(printf 'admin:%s' "${admin_pass}" | base64)"
 
   # Configure console.redhat.com remotes if token present
   if [ -n "$GALAXY_TOKEN" ]; then
@@ -71,13 +79,13 @@ configure_pah_remotes() {
     printf "  Configuring rh-certified remote... "
 
     local remote_href
-    remote_href=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+    remote_href=$(curl -sk --max-time 10 -H "${auth_header}" \
       "${api_base}/remotes/ansible/collection/?name=rh-certified" 2>/dev/null \
       | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$remote_href" ]; then
       # Update existing token
-      curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      curl -sk --max-time 10 -H "${auth_header}" \
         -X PATCH \
         -H "Content-Type: application/json" \
         -d "$(jq -n --arg token "${GALAXY_TOKEN}" '{token: $token}')" \
@@ -86,7 +94,7 @@ configure_pah_remotes() {
     else
       # Create rh-certified remote
       local create_result
-      create_result=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      create_result=$(curl -sk --max-time 10 -H "${auth_header}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d "{
@@ -104,12 +112,12 @@ configure_pah_remotes() {
 
         # Link to rh-certified repository
         local repo_href
-        repo_href=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+        repo_href=$(curl -sk --max-time 10 -H "${auth_header}" \
           "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
           | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
         if [ -n "$repo_href" ]; then
-          curl -sk --max-time 10 -u "admin:${admin_pass}" \
+          curl -sk --max-time 10 -H "${auth_header}" \
             -X PATCH \
             -H "Content-Type: application/json" \
             -d "{\"remote\": \"${remote_href}\"}" \
@@ -121,12 +129,12 @@ configure_pah_remotes() {
     # Trigger sync
     printf "  Syncing rh-certified... "
     local repo_href
-    repo_href=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+    repo_href=$(curl -sk --max-time 10 -H "${auth_header}" \
       "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
       | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$repo_href" ]; then
-      curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      curl -sk --max-time 10 -H "${auth_header}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d '{"mirror": false}' \
@@ -138,13 +146,13 @@ configure_pah_remotes() {
     printf "  Configuring rh-validated remote... "
 
     local validated_remote
-    validated_remote=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+    validated_remote=$(curl -sk --max-time 10 -H "${auth_header}" \
       "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null \
       | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -z "$validated_remote" ]; then
       local create_result
-      create_result=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      create_result=$(curl -sk --max-time 10 -H "${auth_header}" \
         -X POST \
         -H "Content-Type: application/json" \
         -d "{
@@ -157,7 +165,7 @@ configure_pah_remotes() {
 
       validated_remote=$(echo "$create_result" | python3 -c "import sys, json; print(json.loads(sys.stdin.read() or '{}').get('pulp_href', ''))" 2>/dev/null)
     else
-      curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      curl -sk --max-time 10 -H "${auth_header}" \
         -X PATCH \
         -H "Content-Type: application/json" \
         -d "$(jq -n --arg token "${GALAXY_TOKEN}" '{token: $token}')" \
@@ -169,12 +177,12 @@ configure_pah_remotes() {
 
       printf "  Linking validated remote to repository... "
       local validated_repo
-      validated_repo=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+      validated_repo=$(curl -sk --max-time 10 -H "${auth_header}" \
         "${api_base}/repositories/ansible/ansible/?name=validated" 2>/dev/null \
         | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
       if [ -n "$validated_repo" ]; then
-        curl -sk --max-time 10 -u "admin:${admin_pass}" \
+        curl -sk --max-time 10 -H "${auth_header}" \
           -X PATCH \
           -H "Content-Type: application/json" \
           -d "{\"remote\": \"${validated_remote}\"}" \
@@ -182,7 +190,7 @@ configure_pah_remotes() {
         echo "✓"
 
         printf "  Syncing validated... "
-        curl -sk --max-time 10 -u "admin:${admin_pass}" \
+        curl -sk --max-time 10 -H "${auth_header}" \
           -X POST \
           -H "Content-Type: application/json" \
           -d '{"mirror": false}' \
@@ -199,7 +207,7 @@ configure_pah_remotes() {
     printf "  Configuring Private Automation Hub remote... "
 
     local create_result
-    create_result=$(curl -sk --max-time 10 -u "admin:${admin_pass}" \
+    create_result=$(curl -sk --max-time 10 -H "${auth_header}" \
       -X POST \
       -H "Content-Type: application/json" \
       -d "{

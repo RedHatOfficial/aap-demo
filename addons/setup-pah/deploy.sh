@@ -14,7 +14,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../includes/galaxy-auth.sh
 source "${SCRIPT_DIR}/../../includes/galaxy-auth.sh"
 
+NAMESPACE="${NAMESPACE:-aap-operator}"
 GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}"
+PAH_CONFIG_FILE="${PAH_CONFIG_FILE:-$HOME/.aap-demo/pah-config.yml}"
+
+export NAMESPACE GALAXY_TOKEN_FILE PAH_CONFIG_FILE
 
 echo "Setting up Private Automation Hub..."
 echo ""
