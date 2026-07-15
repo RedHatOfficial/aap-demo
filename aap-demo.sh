@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    console | registry | mcp-server | registry-ui | olm | portal)
+    collections | console | registry | mcp-server | registry-ui | olm | portal)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
