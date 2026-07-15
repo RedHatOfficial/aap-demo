@@ -460,7 +460,7 @@ EXAMPLES:
     aap-demo stop                    # Stop cluster
     aap-demo start                   # Start stopped cluster
     aap-demo ssh                     # SSH into cluster node
-    aap-demo enable console          # Enable web console addon
+    aap-demo enable setup-pah        # Configure Private Automation Hub remotes
 
 REQUIREMENTS:
     - OpenShift Local — https://console.redhat.com/openshift/create/local
