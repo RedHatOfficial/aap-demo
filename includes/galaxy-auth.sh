@@ -12,7 +12,8 @@ _GALAXY_AUTH_LOADED=1
 if ! declare -f _err >/dev/null 2>&1; then
   _err() { printf 'ERROR: %s\n' "$*" >&2; }
 fi
-_YELLOW="${_YELLOW:-}"; _NC="${_NC:-}"
+_YELLOW="${_YELLOW:-}"
+_NC="${_NC:-}"
 
 detect_galaxy_credentials() {
   # Detect console.redhat.com offline token
@@ -81,8 +82,8 @@ configure_pah_remotes() {
 
     local remote_href
     remote_href=$(curl -sk --max-time 10 -H "${auth_header}" \
-      "${api_base}/remotes/ansible/collection/?name=rh-certified" 2>/dev/null \
-      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+      "${api_base}/remotes/ansible/collection/?name=rh-certified" 2>/dev/null |
+      python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$remote_href" ]; then
       # Update existing token
@@ -114,8 +115,8 @@ configure_pah_remotes() {
         # Link to rh-certified repository
         local repo_href
         repo_href=$(curl -sk --max-time 10 -H "${auth_header}" \
-          "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
-          | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+          "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null |
+          python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
         if [ -n "$repo_href" ]; then
           curl -sk --max-time 10 -H "${auth_header}" \
@@ -131,8 +132,8 @@ configure_pah_remotes() {
     printf "  Syncing rh-certified... "
     local repo_href
     repo_href=$(curl -sk --max-time 10 -H "${auth_header}" \
-      "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null \
-      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+      "${api_base}/repositories/ansible/ansible/?name=rh-certified" 2>/dev/null |
+      python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -n "$repo_href" ]; then
       curl -sk --max-time 10 -H "${auth_header}" \
@@ -148,8 +149,8 @@ configure_pah_remotes() {
 
     local validated_remote
     validated_remote=$(curl -sk --max-time 10 -H "${auth_header}" \
-      "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null \
-      | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+      "${api_base}/remotes/ansible/collection/?name=rh-validated" 2>/dev/null |
+      python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
     if [ -z "$validated_remote" ]; then
       local create_result
@@ -179,8 +180,8 @@ configure_pah_remotes() {
       printf "  Linking validated remote to repository... "
       local validated_repo
       validated_repo=$(curl -sk --max-time 10 -H "${auth_header}" \
-        "${api_base}/repositories/ansible/ansible/?name=validated" 2>/dev/null \
-        | python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
+        "${api_base}/repositories/ansible/ansible/?name=validated" 2>/dev/null |
+        python3 -c "import sys, json; data=json.loads(sys.stdin.read() or '{}'); print(data['results'][0]['pulp_href'] if data.get('results') else '')" 2>/dev/null)
 
       if [ -n "$validated_repo" ]; then
         curl -sk --max-time 10 -H "${auth_header}" \
