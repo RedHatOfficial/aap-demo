@@ -386,10 +386,12 @@ Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants
+  enable setup-pah Configure Private Automation Hub remotes and credentials
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
   aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
+  aap-demo enable setup-pah       # Configure Private Automation Hub
 
 Run 'aap-demo help' for full documentation.
 EOF
@@ -460,7 +462,7 @@ EXAMPLES:
     aap-demo stop                    # Stop cluster
     aap-demo start                   # Start stopped cluster
     aap-demo ssh                     # SSH into cluster node
-    aap-demo enable console          # Enable web console addon
+    aap-demo enable setup-pah        # Configure Private Automation Hub remotes
 
 REQUIREMENTS:
     - OpenShift Local — https://console.redhat.com/openshift/create/local
