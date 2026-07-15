@@ -21,3 +21,4 @@ __pycache__/
 .tox/
 node_modules/
 .npm/
+ansible.cfg
