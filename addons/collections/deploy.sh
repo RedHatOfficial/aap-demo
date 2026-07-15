@@ -16,44 +16,26 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AAP_DEMO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+ADDON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "${ADDON_DIR}/../.." && pwd)"
 
-# Source shared functions from main script without executing it
-# shellcheck source=../../aap-demo.sh
-_source_functions() {
-  # Extract and eval only the function definitions we need
-  local funcs=(detect_galaxy_credentials validate_galaxy_token validate_pah_config
-               generate_ansible_cfg install_collections)
-  local pattern
-  pattern=$(printf "%s\|" "${funcs[@]}")
-  pattern="${pattern%\\|}"
+# Colour vars used by galaxy-auth.sh functions
+_RED='\033[0;31m'
+_GREEN='\033[0;32m'
+_YELLOW='\033[0;33m'
+_NC='\033[0m'
+_err() { printf "${_RED}▸${_NC} %s\n" "$*" >&2; }
 
-  # Source colour vars and helpers by pulling them from the main script
-  # shellcheck disable=SC1090
-  source <(grep -E '^\s*(_RED|_GREEN|_YELLOW|_NC|_err)[= ]' "${AAP_DEMO_ROOT}/aap-demo.sh" || true)
-  _err() { printf "\033[0;31m▸\033[0m %s\n" "$*" >&2; }
+GALAXY_TOKEN_FILE="${HOME}/.aap-demo/galaxy-token"
+PAH_CONFIG_FILE="${HOME}/.aap-demo/pah-config.yml"
 
-  # Source config paths
-  GALAXY_TOKEN_FILE="${HOME}/.aap-demo/galaxy-token"
-  PAH_CONFIG_FILE="${HOME}/.aap-demo/pah-config.yml"
-}
-
-_source_functions
-
-# Inline the required functions (keeps addon self-contained)
-# shellcheck source=../../aap-demo.sh
-source <(sed -n '/^detect_galaxy_credentials()/,/^}/p;
-                 /^validate_galaxy_token()/,/^}/p;
-                 /^validate_pah_config()/,/^}/p;
-                 /^generate_ansible_cfg()/,/^}/p;
-                 /^install_collections()/,/^}/p' \
-         "${AAP_DEMO_ROOT}/aap-demo.sh")
+# shellcheck source=../../includes/galaxy-auth.sh
+source "${SCRIPT_DIR}/includes/galaxy-auth.sh"
 
 ACTION="${1:-deploy}"
 
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
-  cfg="${AAP_DEMO_ROOT}/ansible.cfg"
+  cfg="${SCRIPT_DIR}/ansible.cfg"
   if [ -f "$cfg" ]; then
     rm -f "$cfg"
     echo "✓ ansible.cfg removed"
@@ -63,10 +45,10 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   exit 0
 fi
 
-cd "${AAP_DEMO_ROOT}"
+cd "${SCRIPT_DIR}"
 
 detect_galaxy_credentials
 validate_galaxy_token || exit 1
 validate_pah_config   || exit 1
 generate_ansible_cfg
-install_collections "${AAP_DEMO_ROOT}/config/requirements.yml" || exit 1
+install_collections "${SCRIPT_DIR}/config/requirements.yml" || exit 1
