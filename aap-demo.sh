@@ -2177,14 +2177,28 @@ install_collections() {
     return 0
   fi
 
+  local galaxy_opts=()
+  if [ "${GALAXY_IGNORE_CERTS:-false}" = "true" ]; then
+    galaxy_opts+=(--ignore-certs)
+    printf "${_YELLOW}▸${_NC} SSL cert verification disabled (GALAXY_IGNORE_CERTS=true)\n"
+  fi
+
+  # On macOS, Python's bundled certs often miss corporate/system CAs.
+  # /etc/ssl/cert.pem is the Keychain-sourced bundle — point requests at it.
+  local ssl_env=()
+  if [[ "$OSTYPE" == "darwin"* ]] && [ -f /etc/ssl/cert.pem ] && [ -z "${SSL_CERT_FILE:-}" ]; then
+    ssl_env=(SSL_CERT_FILE=/etc/ssl/cert.pem REQUESTS_CA_BUNDLE=/etc/ssl/cert.pem)
+  fi
+
   echo "Installing collections from $requirements_file..."
-  if ansible-galaxy collection install -r "$requirements_file" 2>&1; then
+  if env "${ssl_env[@]}" ansible-galaxy collection install -r "$requirements_file" "${galaxy_opts[@]}" 2>&1; then
     echo "  ✓ Collections installed successfully"
     return 0
   else
     _err "Failed to install collections"
     echo "  Check authentication to galaxy servers or run with SKIP_COLLECTIONS=true"
     echo "  Token setup: https://console.redhat.com/ansible/automation-hub/token"
+    echo "  SSL errors: set GALAXY_IGNORE_CERTS=true to skip cert verification"
     return 1
   fi
 }
