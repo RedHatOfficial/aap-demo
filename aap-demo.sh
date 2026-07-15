@@ -2545,13 +2545,6 @@ deploy_latest() {
     exit 1
   fi
 
-  # Detect and validate collection authentication
-  detect_galaxy_credentials
-  validate_galaxy_token || exit 1
-  validate_pah_config || exit 1
-  generate_ansible_cfg
-  install_collections || exit 1
-
   # Setup namespace (creates aap-operator namespace + pull secret)
   setup_namespace
   verify_coredns
