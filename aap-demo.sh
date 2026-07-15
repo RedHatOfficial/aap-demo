@@ -432,7 +432,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (olm, console, registry, mcp-server, portal)
+    enable [addon]  Enable an addon (collections, olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
@@ -462,6 +462,7 @@ EXAMPLES:
     aap-demo start                   # Start stopped cluster
     aap-demo ssh                     # SSH into cluster node
     aap-demo enable console          # Enable web console addon
+    aap-demo enable collections      # Install Ansible collections (requires galaxy token)
 
 REQUIREMENTS:
     - OpenShift Local — https://console.redhat.com/openshift/create/local
@@ -3018,7 +3019,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal"
+AVAILABLE_ADDONS="collections mcp-server portal"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
