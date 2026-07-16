@@ -15,7 +15,7 @@ set -euo pipefail
 #   ./deploy.sh --delete # Remove Automation Orchestrator
 
 NAMESPACE="automation-orchestrator"
-MARKETPLACE_NAMESPACE="openshift-marketplace"
+MARKETPLACE_NAMESPACE="olm"
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
 QUAY_USERNAME_FILE="${QUAY_USERNAME_FILE:-$HOME/.aap-demo/quay-username}"
@@ -189,6 +189,12 @@ else
   echo "✓ aapctl: $(aapctl version 2>/dev/null | head -1 || echo "installed")"
 fi
 
+# Clean up any leftover CatalogSource from the old openshift-marketplace namespace
+kubectl delete catalogsource cs-automation-orchestrator \
+  -n openshift-marketplace 2>/dev/null || true
+kubectl delete secret quay-aap-viewer \
+  -n openshift-marketplace 2>/dev/null || true
+
 # --- Step 3: Namespace + SCCs ---
 echo "Creating namespaces..."
 kubectl create namespace "$NAMESPACE" 2>/dev/null || true
@@ -200,20 +206,6 @@ oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${MARKETPLACE_NAMESPACE}" 2>/dev/null || true
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${MARKETPLACE_NAMESPACE}" 2>/dev/null || true
 echo "✓ Namespaces ready"
-
-# --- Step 3b: Patch OLM catalog-operator namespace ---
-# operator-sdk installs the catalog-operator with --namespace=olm, so it only
-# watches CatalogSources in the olm namespace. Patch it to watch
-# openshift-marketplace where our CatalogSource lives.
-CURRENT_NS=$(kubectl get deployment catalog-operator -n olm \
-  -o jsonpath='{.spec.template.spec.containers[0].args[1]}' 2>/dev/null || echo "")
-if [ "$CURRENT_NS" != "$MARKETPLACE_NAMESPACE" ]; then
-  echo "Patching OLM catalog-operator to watch ${MARKETPLACE_NAMESPACE}..."
-  kubectl -n olm patch deployment catalog-operator --type=json \
-    -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/containers/0/args/1\",\"value\":\"${MARKETPLACE_NAMESPACE}\"}]"
-  kubectl rollout status deployment/catalog-operator -n olm --timeout=60s
-  echo "✓ OLM catalog-operator patched"
-fi
 
 # --- Step 4: Pull secret + CatalogSource ---
 AO_INDEX_IMAGE="quay.io/aap/ansible-automation-platform/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a"
@@ -246,13 +238,27 @@ for i in $(seq 1 30); do
   PHASE=$(kubectl get pods -n "$MARKETPLACE_NAMESPACE" \
     -l olm.catalogSource=cs-automation-orchestrator \
     -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+  CS_STATE=$(kubectl get catalogsource cs-automation-orchestrator \
+    -n "$MARKETPLACE_NAMESPACE" \
+    -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
   if [ "$PHASE" = "Running" ]; then
     echo "✓ CatalogSource ready"
     break
   fi
   if [ "$i" -eq 30 ]; then
-    echo "WARNING: CatalogSource pod not Running after 5 minutes. Continuing..."
+    echo ""
+    echo "ERROR: CatalogSource pod not Running after 5 minutes."
+    echo "  CatalogSource status:"
+    kubectl describe catalogsource cs-automation-orchestrator -n "$MARKETPLACE_NAMESPACE" 2>/dev/null | tail -20
+    echo "  Pods in $MARKETPLACE_NAMESPACE:"
+    kubectl get pods -n "$MARKETPLACE_NAMESPACE" 2>/dev/null
+    echo ""
+    echo "  Hint: check pull secret and image digest are still valid."
+    echo "        kubectl get events -n $MARKETPLACE_NAMESPACE --sort-by=.lastTimestamp | tail -20"
+    exit 1
   fi
+  POD_STATUS="${PHASE:-pending}"
+  echo "  [${i}/30] catalog pod: ${POD_STATUS} | CatalogSource: ${CS_STATE}"
   sleep 10
 done
 
@@ -446,9 +452,23 @@ for i in $(seq 1 30); do
     break
   fi
   if [ "$i" -eq 30 ]; then
-    echo "ERROR: CSV not found after 5 minutes. Check: kubectl get csv -n $NAMESPACE"
+    echo ""
+    echo "ERROR: CSV not found after 5 minutes."
+    echo "  Subscription status:"
+    kubectl get subscription automation-orchestrator-operator -n "$NAMESPACE" \
+      -o jsonpath='{.status}' 2>/dev/null | python3 -m json.tool 2>/dev/null || \
+      kubectl get subscription automation-orchestrator-operator -n "$NAMESPACE" 2>/dev/null
+    echo "  InstallPlans:"
+    kubectl get installplan -n "$NAMESPACE" 2>/dev/null
+    echo ""
+    echo "  Check: kubectl get csv -n $NAMESPACE"
     exit 1
   fi
+  SUB_STATE=$(kubectl get subscription automation-orchestrator-operator \
+    -n "$NAMESPACE" \
+    -o jsonpath='{.status.state}' 2>/dev/null || echo "unknown")
+  IP_COUNT=$(kubectl get installplan -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  echo "  [${i}/30] subscription: ${SUB_STATE} | installplans: ${IP_COUNT}"
   sleep 10
 done
 
