@@ -15,7 +15,15 @@ set -euo pipefail
 #   ./deploy.sh --delete # Remove Automation Orchestrator
 
 NAMESPACE="automation-orchestrator"
-MARKETPLACE_NAMESPACE="olm"
+# Detect which namespace catalog-operator is actually watching.
+# operator-sdk OLM (MicroShift/Linux) watches olm; OpenShift OLM watches openshift-marketplace.
+_CATALOG_OP_ARGS=$(kubectl get deployment catalog-operator -n olm \
+  -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null || echo "")
+if echo "$_CATALOG_OP_ARGS" | grep -q '"openshift-marketplace"'; then
+  MARKETPLACE_NAMESPACE="openshift-marketplace"
+else
+  MARKETPLACE_NAMESPACE="olm"
+fi
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
 QUAY_USERNAME_FILE="${QUAY_USERNAME_FILE:-$HOME/.aap-demo/quay-username}"
@@ -189,11 +197,12 @@ else
   echo "✓ aapctl: $(aapctl version 2>/dev/null | head -1 || echo "installed")"
 fi
 
-# Clean up any leftover CatalogSource from the old openshift-marketplace namespace
-kubectl delete catalogsource cs-automation-orchestrator \
-  -n openshift-marketplace 2>/dev/null || true
-kubectl delete secret quay-aap-viewer \
-  -n openshift-marketplace 2>/dev/null || true
+# Clean up any leftover CatalogSource from the other namespace (whichever we're not using)
+for _ns in olm openshift-marketplace; do
+  [ "$_ns" = "$MARKETPLACE_NAMESPACE" ] && continue
+  kubectl delete catalogsource cs-automation-orchestrator -n "$_ns" 2>/dev/null || true
+  kubectl delete secret quay-aap-viewer -n "$_ns" 2>/dev/null || true
+done
 
 # --- Step 3: Namespace + SCCs ---
 echo "Creating namespaces..."
@@ -205,6 +214,13 @@ oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 
 # images that specify a non-root UID outside the namespace's allocated range
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${MARKETPLACE_NAMESPACE}" 2>/dev/null || true
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${MARKETPLACE_NAMESPACE}" 2>/dev/null || true
+# PodSecurity admission (separate from SCCs) blocks catalog pods if namespace is restricted.
+# Relax to privileged so catalog-operator can create the registry-server pod.
+kubectl label namespace "$MARKETPLACE_NAMESPACE" \
+  pod-security.kubernetes.io/enforce=baseline \
+  pod-security.kubernetes.io/warn=baseline \
+  pod-security.kubernetes.io/audit=restricted \
+  --overwrite 2>/dev/null || true
 echo "✓ Namespaces ready"
 
 # --- Step 4: Pull secret + CatalogSource ---
@@ -241,7 +257,7 @@ for i in $(seq 1 30); do
   CS_STATE=$(kubectl get catalogsource cs-automation-orchestrator \
     -n "$MARKETPLACE_NAMESPACE" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
-  if [ "$PHASE" = "Running" ]; then
+  if [ "$PHASE" = "Running" ] && [ "$CS_STATE" = "READY" ]; then
     echo "✓ CatalogSource ready"
     break
   fi
@@ -480,6 +496,23 @@ echo "$CSV_JSON" \
 echo "✓ CSV patched"
 
 # --- Step 7: Copy secret to namespace, link to operator SA, restart ---
+# Wait for operator deployment to be created by OLM (CSV appears before deployment exists)
+echo "Waiting for operator deployment..."
+for i in $(seq 1 30); do
+  if kubectl get deployment automation-orchestrator-operator-controller-manager \
+      -n "$NAMESPACE" &>/dev/null; then
+    echo "✓ Operator deployment found"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "ERROR: Operator deployment not created after 5 minutes."
+    kubectl get csv -n "$NAMESPACE"
+    exit 1
+  fi
+  echo "  [${i}/30] waiting for deployment..."
+  sleep 10
+done
+
 echo "Linking pull secret to operator..."
 kubectl get secret quay-aap-viewer -n "$MARKETPLACE_NAMESPACE" -o json \
   | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid,
@@ -488,6 +521,10 @@ kubectl get secret quay-aap-viewer -n "$MARKETPLACE_NAMESPACE" -o json \
   | kubectl apply -n "$NAMESPACE" -f -
 
 kubectl patch serviceaccount automation-orchestrator-operator-controller-manager \
+  -n "$NAMESPACE" --type=merge \
+  -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
+
+kubectl patch serviceaccount default \
   -n "$NAMESPACE" --type=merge \
   -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
 

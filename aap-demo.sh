@@ -1911,15 +1911,27 @@ cmd_status() {
             url=""
             label="not-deployed"
           fi
+          _ao_total=$(kubectl get pods -n automation-orchestrator --no-headers 2>/dev/null | grep -cv Completed 2>/dev/null || echo 0)
+          _ao_running=$(kubectl get pods -n automation-orchestrator --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null || echo 0)
         else
           label="disabled"
+          _ao_total=0
+          _ao_running=0
         fi
         ;;
     esac
     if [ -n "$url" ] && [ -z "$label" ]; then
-      printf "  %-15s %s\n" "$a" "$url"
+      if [ "$a" = "ao-eap" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
+        printf "  %-15s %s/%s pods   %s\n" "$a" "$_ao_running" "$_ao_total" "$url"
+      else
+        printf "  %-15s %s\n" "$a" "$url"
+      fi
     elif [ -n "$label" ]; then
-      printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+      if [ "$a" = "ao-eap" ] && [ "$label" = "not-deployed" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
+        printf "  %-15s %s/%s pods  (deploying)\n" "$a" "$_ao_running" "$_ao_total"
+      else
+        printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+      fi
     else
       printf "  %-15s (aap-demo enable %s)\n" "$a" "$a"
     fi
