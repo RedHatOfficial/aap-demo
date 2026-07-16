@@ -21,6 +21,7 @@ STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
 QUAY_USERNAME_FILE="${QUAY_USERNAME_FILE:-$HOME/.aap-demo/quay-username}"
 QUAY_TOKEN_FILE="${QUAY_TOKEN_FILE:-$HOME/.aap-demo/quay-token}"
 AAPCTL_BIN="/usr/local/bin/aapctl"
+AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"
 
 ACTION="${1:-deploy}"
 
@@ -39,9 +40,14 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   kubectl delete namespace "$NAMESPACE" 2>/dev/null || true
   kubectl delete namespace cloudnative-pg 2>/dev/null || true
 
+  if [ -f "$AO_STATE_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$AO_STATE_FILE"
+  fi
   CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
   CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
   kubectl delete -f "$CNPG_MANIFEST" 2>/dev/null || true
+  rm -f "$AO_STATE_FILE"
 
   echo "✓ Automation Orchestrator removed"
   exit 0
@@ -74,6 +80,7 @@ else
 
   mkdir -p "$(dirname "$QUAY_USERNAME_FILE")"
   echo "$QUAY_USERNAME" > "$QUAY_USERNAME_FILE"
+  chmod 600 "$QUAY_USERNAME_FILE"
   echo "$QUAY_TOKEN" > "$QUAY_TOKEN_FILE"
   chmod 600 "$QUAY_TOKEN_FILE"
   echo "✓ Quay credentials saved"
@@ -86,21 +93,45 @@ if ! command -v aapctl >/dev/null 2>&1; then
   ARCH="$(uname -m)"
 
   case "${OS}-${ARCH}" in
-    Darwin-arm64)  BINARY="aapctl-darwin-arm64" ;;
-    Darwin-x86_64) BINARY="aapctl-darwin-amd64" ;;
-    Linux-x86_64)  BINARY="aapctl-linux-amd64" ;;
-    Linux-aarch64) BINARY="aapctl-linux-arm64" ;;
+    Darwin-arm64|Darwin-aarch64) OS_NAME="darwin"; ARCH_NAME="arm64" ;;
+    Darwin-x86_64)               OS_NAME="darwin"; ARCH_NAME="amd64" ;;
+    Linux-x86_64)                OS_NAME="linux";  ARCH_NAME="amd64" ;;
+    Linux-aarch64|Linux-arm64)   OS_NAME="linux";  ARCH_NAME="arm64" ;;
     *)
       echo "ERROR: Unsupported platform: ${OS}-${ARCH}"
       exit 1
       ;;
   esac
 
-  LATEST_URL="https://github.com/automation-nexus/aapctl/releases/latest/download/${BINARY}"
+  AAPCTL_VERSION="${AAPCTL_VERSION:-}"
+  if [ -z "$AAPCTL_VERSION" ]; then
+    echo "Fetching latest aapctl version..."
+    AAPCTL_VERSION=$(curl -fsSL \
+      https://api.github.com/repos/automation-nexus/aapctl/releases/latest \
+      | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    echo "  -> ${AAPCTL_VERSION}"
+  fi
+  VERSION_NUM="${AAPCTL_VERSION#v}"
+  BINARY="aapctl_${VERSION_NUM}_${OS_NAME}_${ARCH_NAME}"
+  AAPCTL_BASE="https://github.com/automation-nexus/aapctl/releases/download/${AAPCTL_VERSION}"
+
   TMP_FILE="$(mktemp)"
-  curl -fsSL "$LATEST_URL" -o "$TMP_FILE"
+  TMP_SHA="$(mktemp)"
+  curl -fsSL "${AAPCTL_BASE}/${BINARY}" -o "$TMP_FILE"
+  curl -fsSL "${AAPCTL_BASE}/${BINARY}.sha256" -o "$TMP_SHA"
+  EXPECTED_SHA=$(awk '{print $1}' "$TMP_SHA")
+  if [ "$OS" = "Darwin" ]; then
+    ACTUAL_SHA=$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')
+  else
+    ACTUAL_SHA=$(sha256sum "$TMP_FILE" | awk '{print $1}')
+  fi
+  if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+    echo "ERROR: aapctl checksum mismatch. Expected: $EXPECTED_SHA, Got: $ACTUAL_SHA"
+    rm -f "$TMP_FILE" "$TMP_SHA"
+    exit 1
+  fi
   sudo install -m 755 "$TMP_FILE" "$AAPCTL_BIN"
-  rm -f "$TMP_FILE"
+  rm -f "$TMP_FILE" "$TMP_SHA"
 
   if [ "$OS" = "Darwin" ]; then
     xattr -d com.apple.quarantine "$AAPCTL_BIN" 2>/dev/null || true
@@ -141,16 +172,14 @@ fi
 AO_INDEX_IMAGE="quay.io/aap/ansible-automation-platform/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a"
 
 echo "Creating pull secret and CatalogSource..."
+kubectl create secret docker-registry quay-aap-viewer \
+  --docker-server=quay.io \
+  --docker-username="$QUAY_USERNAME" \
+  --docker-password="$QUAY_TOKEN" \
+  -n "$MARKETPLACE_NAMESPACE" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl apply -f - <<EOF
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: quay-aap-viewer
-  namespace: ${MARKETPLACE_NAMESPACE}
-type: kubernetes.io/dockerconfigjson
-stringData:
-  .dockerconfigjson: '{"auths":{"quay.io":{"username":"${QUAY_USERNAME}","password":"${QUAY_TOKEN}"}}}'
 ---
 apiVersion: operators.coreos.com/v1alpha1
 kind: CatalogSource
@@ -195,6 +224,8 @@ else
     echo "ERROR: Failed to install CloudNativePG from ${CNPG_MANIFEST}"
     exit 1
   fi
+  mkdir -p "$(dirname "$AO_STATE_FILE")"
+  echo "CNPG_VERSION=${CNPG_VERSION}" > "$AO_STATE_FILE"
   oc adm policy add-scc-to-group anyuid "system:serviceaccounts:cnpg-system" 2>/dev/null || true
   oc adm policy add-scc-to-group privileged "system:serviceaccounts:cnpg-system" 2>/dev/null || true
 
@@ -211,7 +242,7 @@ EXISTING_PW=$(kubectl get secret orchestrator-postgres-secret -n "$NAMESPACE" \
 if [ -n "$EXISTING_PW" ]; then
   PG_PASSWORD="$EXISTING_PW"
 else
-  PG_PASSWORD="$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
+  PG_PASSWORD="$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
 fi
 
 kubectl apply -f - <<EOF
@@ -334,8 +365,8 @@ echo "✓ PostgreSQL databases created"
 # aapctl will skip these in step 8 since they already exist.
 echo "Creating AO operator subscription..."
 kubectl delete subscription automation-orchestrator-operator -n "$NAMESPACE" 2>/dev/null || true
-kubectl delete installplan -n "$NAMESPACE" --all 2>/dev/null || true
-kubectl delete csv -n "$NAMESPACE" --all 2>/dev/null || true
+kubectl get installplan -n "$NAMESPACE" -o name 2>/dev/null | xargs -r kubectl delete -n "$NAMESPACE" 2>/dev/null || true
+kubectl get csv -n "$NAMESPACE" -o name 2>/dev/null | grep "automation-orchestrator" | xargs -r kubectl delete -n "$NAMESPACE" 2>/dev/null || true
 kubectl apply -f - <<EOF
 ---
 apiVersion: operators.coreos.com/v1
@@ -378,7 +409,7 @@ echo "Patching CSV image references..."
 CSV_JSON=$(kubectl get "$CSV_NAME" -n "$NAMESPACE" -o json)
 echo "$CSV_JSON" \
   | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
-  | kubectl apply -f - 2>&1 | grep -v "^Warning:" || true
+  | kubectl apply -f - 2>&1 | grep -v "^Warning:"
 echo "✓ CSV patched"
 
 # --- Step 7: Copy secret to namespace, link to operator SA, restart ---

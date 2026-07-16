@@ -1844,6 +1844,7 @@ cmd_status() {
         echo "------------"
       fi
       printf "  %-20s admin / %s\n" "$_ao_ns:" "$_ao_pw"
+      _cred_found=true
       echo ""
     fi
   fi
