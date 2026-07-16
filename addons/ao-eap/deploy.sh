@@ -24,6 +24,7 @@ AAPCTL_BIN="/usr/local/bin/aapctl"
 AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"
 
 ACTION="${1:-deploy}"
+OS="$(uname -s)"
 
 # --- Delete ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
@@ -51,6 +52,46 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
 
   echo "✓ Automation Orchestrator removed"
   exit 0
+fi
+
+# --- Prerequisites ---
+if ! command -v gh >/dev/null 2>&1; then
+  echo "Installing gh CLI (GitHub CLI — required to download aapctl from private repo)..."
+  if [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    brew install gh
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "  (sudo required to install package — enter your local login password):"
+    sudo dnf install -y gh
+  elif command -v apt-get >/dev/null 2>&1; then
+    echo "  (sudo required to install package — enter your local login password):"
+    sudo apt-get install -y gh 2>/dev/null || {
+      curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+      echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        | sudo tee /etc/apt/sources.list.d/github-cli.list
+      sudo apt-get update && sudo apt-get install -y gh
+    }
+  else
+    GH_ARCH="$(uname -m)"
+    case "$GH_ARCH" in
+      x86_64)  GH_ARCH="amd64" ;;
+      aarch64|arm64) GH_ARCH="arm64" ;;
+    esac
+    GH_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    GH_VERSION=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest \
+      | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+    GH_TMP="$(mktemp -d)"
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_${GH_OS}_${GH_ARCH}.tar.gz" \
+      | tar -xz -C "$GH_TMP"
+    echo "  Installing gh to /usr/local/bin/gh (requires sudo — enter your local login password):"
+    sudo install -m 755 "$GH_TMP/gh_${GH_VERSION}_${GH_OS}_${GH_ARCH}/bin/gh" /usr/local/bin/gh
+    rm -rf "$GH_TMP"
+  fi
+  echo "✓ gh CLI installed"
+fi
+if ! gh auth status >/dev/null 2>&1; then
+  echo "ERROR: gh CLI not authenticated. Run: gh auth login"
+  exit 1
 fi
 
 # --- Step 1: Check credentials ---
@@ -89,7 +130,6 @@ fi
 # --- Step 2: Install aapctl ---
 if ! command -v aapctl >/dev/null 2>&1; then
   echo "Installing aapctl..."
-  OS="$(uname -s)"
   ARCH="$(uname -m)"
 
   case "${OS}-${ARCH}" in
@@ -106,20 +146,26 @@ if ! command -v aapctl >/dev/null 2>&1; then
   AAPCTL_VERSION="${AAPCTL_VERSION:-}"
   if [ -z "$AAPCTL_VERSION" ]; then
     echo "Fetching latest aapctl version..."
-    AAPCTL_VERSION=$(curl -fsSL \
-      https://api.github.com/repos/automation-nexus/aapctl/releases/latest \
-      | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    AAPCTL_VERSION=$(gh api repos/automation-nexus/aapctl/releases/latest --jq '.tag_name' 2>/dev/null || true)
+    if [ -z "$AAPCTL_VERSION" ]; then
+      echo "ERROR: Could not resolve latest aapctl version. Set AAPCTL_VERSION=vX.Y.Z and retry."
+      exit 1
+    fi
     echo "  -> ${AAPCTL_VERSION}"
   fi
   VERSION_NUM="${AAPCTL_VERSION#v}"
   BINARY="aapctl_${VERSION_NUM}_${OS_NAME}_${ARCH_NAME}"
-  AAPCTL_BASE="https://github.com/automation-nexus/aapctl/releases/download/${AAPCTL_VERSION}"
 
-  TMP_FILE="$(mktemp)"
-  TMP_SHA="$(mktemp)"
-  curl -fsSL "${AAPCTL_BASE}/${BINARY}" -o "$TMP_FILE"
-  curl -fsSL "${AAPCTL_BASE}/${BINARY}.sha256" -o "$TMP_SHA"
-  EXPECTED_SHA=$(awk '{print $1}' "$TMP_SHA")
+  TMP_DIR="$(mktemp -d)"
+  gh release download "$AAPCTL_VERSION" \
+    --repo automation-nexus/aapctl \
+    --pattern "$BINARY" \
+    --pattern "checksums.txt" \
+    --dir "$TMP_DIR"
+  TMP_FILE="$TMP_DIR/$BINARY"
+  TMP_SHA="$TMP_DIR/checksums.txt"
+
+  EXPECTED_SHA=$(grep "$BINARY" "$TMP_SHA" | awk '{print $1}')
   if [ "$OS" = "Darwin" ]; then
     ACTUAL_SHA=$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')
   else
@@ -127,11 +173,12 @@ if ! command -v aapctl >/dev/null 2>&1; then
   fi
   if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
     echo "ERROR: aapctl checksum mismatch. Expected: $EXPECTED_SHA, Got: $ACTUAL_SHA"
-    rm -f "$TMP_FILE" "$TMP_SHA"
+    rm -rf "$TMP_DIR"
     exit 1
   fi
+  echo "  Installing aapctl to ${AAPCTL_BIN} (requires sudo — enter your macOS/local login password):"
   sudo install -m 755 "$TMP_FILE" "$AAPCTL_BIN"
-  rm -f "$TMP_FILE" "$TMP_SHA"
+  rm -rf "$TMP_DIR"
 
   if [ "$OS" = "Darwin" ]; then
     xattr -d com.apple.quarantine "$AAPCTL_BIN" 2>/dev/null || true
