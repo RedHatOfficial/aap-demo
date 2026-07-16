@@ -29,7 +29,7 @@ _detect_crc_ssh_key() {
 
 # Initialize SSH key — callers should check CRC_SSH_KEY before use
 if CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)"; then
-  CRC_SSH_OPTS="-i \"${CRC_SSH_KEY}\" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+  CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 else
   CRC_SSH_KEY=""
   CRC_SSH_OPTS=""
