@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah)
+    mcp-server | portal | setup-pah | ao-eap)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
