@@ -1,8 +1,8 @@
 # ADR-017: Automation Orchestrator Early Access Addon (ao-eap)
 
-**Status**: Proposed
+**Status**: Accepted
 
-**Date**: 2026-07-15
+**Date**: 2026-07-15 (updated 2026-07-16)
 
 **Authors**: Chad Ferman
 
@@ -33,8 +33,8 @@ invoked via `aap-demo enable ao-eap`.
 - `~/.aap-demo/quay-username` — Quay.io username
 - `~/.aap-demo/quay-token` — Quay.io encrypted password/token (chmod 600)
 
-Script exits with setup instructions if either file is missing, following the same pattern
-as `setup-pah`.
+On first run, the script prompts interactively for credentials and saves them to the above
+files. On subsequent runs, credentials are read from disk.
 
 ### aapctl binary
 
@@ -53,28 +53,58 @@ Namespace: `automation-orchestrator`
 Storage class: `topolvm-provisioner` (RWO)
 Kubeconfig: `~/.crc/machines/crc/kubeconfig`
 
-1. Check credentials — exit with instructions if missing
+1. Check credentials — prompt interactively if not saved
 2. Install `aapctl` — skip if already in PATH
-3. Create `automation-orchestrator` namespace; grant `anyuid` + `privileged` SCCs
-4. Apply `quay-aap-viewer` Secret and `cs-automation-orchestrator` CatalogSource to
+3. Create `automation-orchestrator` and `openshift-marketplace` namespaces; grant
+   `anyuid` + `privileged` SCCs to both (marketplace namespace needs them for OLM
+   bundle unpack jobs that run as non-root UIDs outside the namespace range)
+4. Patch OLM catalog-operator — `operator-sdk olm install` sets `--namespace=olm`,
+   limiting CatalogSource discovery to the `olm` namespace. The script patches the
+   catalog-operator deployment to watch `openshift-marketplace` instead (idempotent —
+   skipped if already patched)
+5. Apply `quay-aap-viewer` Secret and `cs-automation-orchestrator` CatalogSource to
    `openshift-marketplace`; wait for catalog pod Running
-5. First-pass `aapctl install` with `--no-wait --set automation-orchestrator-cr.enabled=false`
-6. Wait for CSV; patch `registry.redhat.io/ansible-automation-platform` to
+6. Install CloudNativePG operator directly from the upstream release manifest
+   (`cnpg-1.25.1.yaml`); grant SCCs to `cnpg-system`; wait for controller-manager
+   Running. Skipped if CNPG CRDs already exist
+7. Create PostgreSQL cluster — apply secrets (`orchestrator-postgres-secret`,
+   `temporal-postgres-secret`, `temporal-visibility-postgres-secret`), CNPG `Cluster`
+   CR, wait for ready, then apply `Database` CRs. Reuses existing password on re-runs
+   to avoid bootstrap/secret mismatch
+8. Create AO operator OLM resources — pre-create `OperatorGroup` and `Subscription`
+   pointing to `cs-automation-orchestrator` catalog with `installPlanApproval: Automatic`.
+   Clears stale OLM state (subscription, installplans, CSVs) first
+9. Wait for CSV; patch `registry.redhat.io/ansible-automation-platform` →
    `quay.io/aap/ansible-automation-platform`
-7. Copy pull secret to namespace, link to operator service account, `rollout restart`;
-   wait for Running pod
-8. Second-pass `aapctl install` (full, with wait)
-9. Patch `AutomationOrchestrator` CR with `imagePullSecrets`; `rollout restart`
-10. Wait for all pods Running; retrieve admin password; print route URL
+10. Copy pull secret to namespace, link to operator service account, `rollout restart`;
+    wait for Running pod
+11. `aapctl install` with `--set cloudnative-pg-operator.enabled=false` — skips
+    existing OperatorGroup/Subscription, creates the `AutomationOrchestrator` CR
+12. Patch `AutomationOrchestrator` CR with `imagePullSecrets`; `rollout restart`
+13. Wait for all pods Running; retrieve admin password; print route URL
+
+### MicroShift compatibility workarounds
+
+`aapctl` assumes a full OpenShift environment. The following workarounds are needed on
+MicroShift:
+
+| Problem | Cause | Workaround |
+|---------|-------|------------|
+| CNPG subscription fails | `aapctl` hardcodes `source: certified-operators` which doesn't exist on MicroShift; the AO operator index doesn't bundle CNPG | Install CNPG directly from upstream release manifest; disable in `aapctl` |
+| AO subscription fails | `aapctl` hardcodes `source: redhat-operators`; `--set catalogSource` is silently ignored | Pre-create Subscription pointing to `cs-automation-orchestrator` |
+| OLM can't find CatalogSource | `operator-sdk olm install` sets catalog-operator `--namespace=olm`; CatalogSource is in `openshift-marketplace` | Patch catalog-operator deployment args |
+| Bundle unpack jobs fail | Unpack pods specify UID 1001 (from image), blocked by `restricted-v2` SCC | Grant `anyuid`/`privileged` SCCs to `openshift-marketplace` |
+| Migration auth failures on re-run | Password regenerated on each run; CNPG cluster retains bootstrap password | Preserve existing password from secret if it already exists |
 
 ### Delete flow
 
 `deploy.sh --delete`:
 
 1. `aapctl uninstall automation-orchestrator --force`
-2. `oc delete catalogsource cs-automation-orchestrator -n openshift-marketplace`
-3. `oc delete secret quay-aap-viewer -n openshift-marketplace`
-4. `oc delete namespace automation-orchestrator` (if exists)
+2. Delete `cs-automation-orchestrator` CatalogSource and `quay-aap-viewer` Secret from
+   `openshift-marketplace`
+3. Delete `automation-orchestrator` and `cloudnative-pg` namespaces
+4. Delete CloudNativePG operator (`kubectl delete -f` the upstream manifest)
 
 ### aap-demo.sh changes
 
@@ -94,12 +124,16 @@ Kubeconfig: `~/.crc/machines/crc/kubeconfig`
 ### Negative
 
 - Requires Quay access granted externally (Red Hat point of contact) — not self-service
-- 10-step process means the script is long and has multiple wait loops
+- Multiple MicroShift workarounds make the script complex; may break if `aapctl` changes
+  its hardcoded catalog names or install flow
 - EA limitations: no air-gap support, no HA, in-place upgrades not guaranteed
+- Patches the OLM catalog-operator deployment, which could interfere with other OLM
+  consumers if any expect the `olm` namespace for CatalogSources
 
 ### Neutral
 
 - AO runs in its own `automation-orchestrator` namespace, isolated from `aap-operator`
+- CloudNativePG installed directly (not via OLM), isolated in `cnpg-system` namespace
 - OLM is a prerequisite already satisfied by `aap-demo deploy`
 
 ## Alternatives Considered
