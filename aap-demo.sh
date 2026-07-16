@@ -1830,6 +1830,24 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
+  # Show credentials for Automation Orchestrator (ao-eap addon)
+  if echo "$(_addons_list)" | grep -qw "ao-eap"; then
+    local _ao_ns="automation-orchestrator"
+    local _ao_pw="" _ao_secret=""
+    _ao_secret=$(kubectl get secret -n "$_ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)
+    if [ -n "$_ao_secret" ]; then
+      _ao_pw=$(kubectl get "$_ao_secret" -n "$_ao_ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    fi
+    if [ -n "$_ao_pw" ]; then
+      if [ "$_cred_found" = "false" ]; then
+        echo "Credentials:"
+        echo "------------"
+      fi
+      printf "  %-20s admin / %s\n" "$_ao_ns:" "$_ao_pw"
+      echo ""
+    fi
+  fi
+
   # Show addons with URLs or enable instructions
   detect_galaxy_credentials
   echo ""
