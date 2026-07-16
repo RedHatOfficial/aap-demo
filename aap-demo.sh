@@ -387,6 +387,7 @@ Addons:
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
+  enable ao-eap   Install Automation Orchestrator Early Access
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -1884,6 +1885,17 @@ cmd_status() {
           label="disabled"
         fi
         ;;
+      ao-eap)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get routes -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
     esac
     if [ -n "$url" ] && [ -z "$label" ]; then
       printf "  %-15s %s\n" "$a" "$url"
@@ -2585,7 +2597,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
