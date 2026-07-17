@@ -161,6 +161,20 @@ if ! gh auth token >/dev/null 2>&1; then
   echo "ERROR: gh CLI not authenticated. Run: gh auth login"
   exit 1
 fi
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Installing jq (required for secret manipulation)..."
+  if [ "$OS" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+    brew install jq
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y jq
+  elif command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get install -y jq
+  else
+    echo "ERROR: jq not found and cannot auto-install. Install manually: https://jqlang.github.io/jq/download/"
+    exit 1
+  fi
+  echo "✓ jq installed"
+fi
 
 # --- Step 1: Check credentials ---
 if [ -f "$QUAY_USERNAME_FILE" ] && [ -f "$QUAY_TOKEN_FILE" ]; then
