@@ -7,7 +7,7 @@ default_language_version:
   python: python3
 
 repos:
-  # Shell formatting — matches CI: shfmt v3.8.0 with -i 2 -ci -bn
+  # Shell formatting — uses system shfmt (brew install shfmt); same args as CI
   - repo: local
     hooks:
       - id: shfmt

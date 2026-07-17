@@ -123,7 +123,7 @@ jobs:
 
       - name: Install shfmt
         run: |
-          wget -qO /usr/local/bin/shfmt https://github.com/mvdan/sh/releases/download/v3.8.0/shfmt_v3.8.0_linux_amd64
+          wget -qO /usr/local/bin/shfmt https://github.com/mvdan/sh/releases/download/v3.13.1/shfmt_v3.13.1_linux_amd64
           chmod +x /usr/local/bin/shfmt
 
       - name: Run shfmt check
