@@ -1004,13 +1004,7 @@ patch_aap_route_host_alias() {
     }
   }"
 
-  if ! kubectl rollout status deployment/"$deploy" \
-      -n "$APME_NAMESPACE" \
-      --timeout=600s 2>/dev/null; then
-    echo "⚠️  RHDH rollout after host alias patch is still in progress"
-  fi
-
-  echo "✓ AAP route host alias: $AAP_ROUTE → $aap_ip"
+  echo "✓ AAP route host alias: $AAP_ROUTE → $aap_ip (rollout continues in background)"
 }
 
 # ---------------------------------------------------------------------------
