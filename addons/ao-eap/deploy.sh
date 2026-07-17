@@ -712,9 +712,11 @@ else
 fi
 echo "  Username: admin"
 if [ -n "$PASS_SECRET" ]; then
-  AO_PASSWORD=$(kubectl get "$PASS_SECRET" -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-  if [ -n "$AO_PASSWORD" ]; then
-    echo "  Password: ${AO_PASSWORD}"
+  if [ "${CI:-}" != "true" ]; then
+    AO_PASSWORD=$(kubectl get "$PASS_SECRET" -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+    [ -n "$AO_PASSWORD" ] \
+      && echo "  Password: ${AO_PASSWORD}" \
+      || echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
   else
     echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
   fi
