@@ -549,11 +549,10 @@ create_helm_values() {
       local aap_ip
       aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
       if [ -n "$aap_ip" ]; then
-        host_aliases_block="      podSpec:
-        hostAliases:
-          - ip: \"${aap_ip}\"
-            hostnames:
-              - \"${AAP_ROUTE}\""
+        host_aliases_block="      hostAliases:
+        - ip: \"${aap_ip}\"
+          hostnames:
+            - \"${AAP_ROUTE}\""
         echo "  Host alias baked into values: ${AAP_ROUTE} → ${aap_ip}"
       fi
     fi
@@ -980,50 +979,6 @@ restart_rhdh_deployment() {
   echo "✓ RHDH deployment restarted"
 }
 
-# ---------------------------------------------------------------------------
-# Host alias (mirrors portal addon — maps nip.io route to ClusterIP inside pod)
-# ---------------------------------------------------------------------------
-
-patch_aap_route_host_alias() {
-  if [ "${IS_MICROSHIFT:-false}" != true ] || [ "${IS_ARM_CLUSTER}" != true ]; then
-    return 0
-  fi
-
-  echo "Configuring AAP route host alias for in-pod OAuth token exchange..."
-
-  local aap_ip
-  aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
-
-  if [ -z "$aap_ip" ]; then
-    echo "⚠️  Could not resolve AAP service ClusterIP; skipping host alias"
-    return 1
-  fi
-
-  local deploy="${RHDH_RELEASE_NAME}-rhaap-portal"
-
-  local current_ip
-  current_ip=$(kubectl get deployment "$deploy" -n "$APME_NAMESPACE" \
-    -o jsonpath="{.spec.template.spec.hostAliases[?(@.hostnames[0]=='${AAP_ROUTE}')].ip}" 2>/dev/null)
-
-  if [ "$current_ip" = "$aap_ip" ]; then
-    echo "✓ AAP route host alias already configured ($AAP_ROUTE → $aap_ip)"
-    return 0
-  fi
-
-  kubectl patch deployment "$deploy" -n "$APME_NAMESPACE" --type=merge -p "{
-    \"spec\": {
-      \"template\": {
-        \"spec\": {
-          \"hostAliases\": [
-            {\"ip\": \"$aap_ip\", \"hostnames\": [\"$AAP_ROUTE\"]}
-          ]
-        }
-      }
-    }
-  }"
-
-  echo "✓ AAP route host alias: $AAP_ROUTE → $aap_ip (rollout continues in background)"
-}
 
 # ---------------------------------------------------------------------------
 # OAuth redirect URI (mirrors portal addon — patches after route exists)
@@ -1219,7 +1174,6 @@ main() {
     label_dynamic_plugins_pvc
   fi
   update_oauth_redirect
-  patch_aap_route_host_alias
   display_success
 }
 
