@@ -2711,8 +2711,8 @@ cmd_enable() {
 
   echo "Enabling addon: $addon"
   _verify_cluster || return 1
-  bash "$addon_dir/deploy.sh"
   _addons_add "$addon"
+  bash "$addon_dir/deploy.sh"
   echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
 }
 
@@ -2734,7 +2734,7 @@ cmd_disable() {
   if [ -f "$addon_dir/deploy.sh" ]; then
     echo "Disabling addon: $addon"
     setup_kubeconfig
-    bash "$addon_dir/deploy.sh" --delete
+    bash "$addon_dir/deploy.sh" --delete || true
     _addons_remove "$addon"
     echo "  Removed from config"
   else
