@@ -276,7 +276,7 @@ kubectl label namespace "$MARKETPLACE_NAMESPACE" \
 echo "✓ Namespaces ready"
 
 # --- Step 4: Pull secret + CatalogSource ---
-AO_INDEX_IMAGE="quay.io/aap/ansible-automation-platform/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a"
+AO_INDEX_IMAGE="${AO_INDEX_IMAGE:-quay.io/aap/ansible-automation-platform/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a}"
 
 echo "Creating pull secret and CatalogSource..."
 kubectl create secret docker-registry quay-aap-viewer \
@@ -338,6 +338,8 @@ CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
 
 if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null; then
   echo "✓ CloudNativePG CRDs already registered"
+  mkdir -p "$(dirname "$AO_STATE_FILE")"
+  grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null || echo "CNPG_VERSION=${CNPG_VERSION}" >> "$AO_STATE_FILE"
 else
   echo "Installing CloudNativePG operator v${CNPG_VERSION}..."
   CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
@@ -443,6 +445,7 @@ for i in $(seq 1 60); do
   if [ "$i" -eq 60 ]; then
     echo "WARNING: PostgreSQL cluster not ready after 10 minutes. Continuing..."
   fi
+  echo "[${i}/60] readyInstances: ${READY}"
   sleep 10
 done
 
@@ -545,10 +548,20 @@ for i in $(seq 1 30); do
 done
 
 echo "Patching CSV image references..."
-CSV_JSON=$(kubectl get "$CSV_NAME" -n "$NAMESPACE" -o json)
-echo "$CSV_JSON" \
-  | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
-  | kubectl apply -f - 2>&1 | grep -v "^Warning:"
+# Use replace with retry — apply conflicts when OLM modifies the CSV between GET and apply
+for _attempt in $(seq 1 5); do
+  CSV_JSON=$(kubectl get "$CSV_NAME" -n "$NAMESPACE" -o json)
+  _result=$(echo "$CSV_JSON" \
+    | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
+    | kubectl replace -f - 2>&1) && break
+  if echo "$_result" | grep -q "conflict\|modified"; then
+    echo "  [${_attempt}/5] conflict — retrying..."
+    sleep 3
+    continue
+  fi
+  echo "$_result" | grep -v "^Warning:"
+  break
+done
 echo "✓ CSV patched"
 
 # --- Step 7: Copy secret to namespace, link to operator SA, restart ---
@@ -586,10 +599,16 @@ kubectl patch serviceaccount default \
 
 # Patch deployment images to quay.io before restart — OLM may not have reconciled CSV yet
 echo "Patching operator deployment images to quay.io..."
-kubectl get deployment automation-orchestrator-operator-controller-manager \
-  -n "$NAMESPACE" -o json \
-  | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
-  | kubectl apply -f - 2>&1 | grep -v "^Warning:" || true
+for _attempt in $(seq 1 5); do
+  _dep_json=$(kubectl get deployment automation-orchestrator-operator-controller-manager \
+    -n "$NAMESPACE" -o json)
+  _result=$(echo "$_dep_json" \
+    | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
+    | kubectl replace -f - 2>&1) && break
+  echo "$_result" | grep -q "conflict\|modified" && { echo "  [${_attempt}/5] conflict — retrying..."; sleep 3; continue; }
+  echo "$_result" | grep -v "^Warning:" || true
+  break
+done || true
 
 kubectl -n "$NAMESPACE" rollout restart \
   deployment/automation-orchestrator-operator-controller-manager
@@ -668,17 +687,37 @@ echo ""
 PASS_SECRET=$(kubectl get secret -n "$NAMESPACE" \
   -o name 2>/dev/null | grep -i "admin-password" | head -1 || echo "")
 
-AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
-  -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+echo "Waiting for route..."
+AO_ROUTE=""
+for i in $(seq 1 30); do
+  AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
+    -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  if [ -n "$AO_ROUTE" ]; then
+    echo "✓ Route ready"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "WARNING: Route not available after 5 minutes"
+  fi
+  echo "[${i}/30] waiting for route..."
+  sleep 10
+done
 
 echo "✓ Automation Orchestrator deployed!"
 echo ""
 if [ -n "$AO_ROUTE" ]; then
   echo "  URL:      https://${AO_ROUTE}"
+else
+  echo "  URL:      kubectl get routes -n ${NAMESPACE} -o jsonpath='{.items[0].spec.host}'"
 fi
 echo "  Username: admin"
 if [ -n "$PASS_SECRET" ]; then
-  echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
+  AO_PASSWORD=$(kubectl get "$PASS_SECRET" -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+  if [ -n "$AO_PASSWORD" ]; then
+    echo "  Password: ${AO_PASSWORD}"
+  else
+    echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
+  fi
 else
   echo "  Password: kubectl get secret -n $NAMESPACE | grep admin-password"
 fi
