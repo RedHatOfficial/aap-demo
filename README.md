@@ -70,15 +70,6 @@ aap-demo diagnose --ai # AI-powered analysis (requires claude CLI)
 aap-demo must-gather   # Collect full diagnostics for support
 ```
 
-## Addons
-
-```bash
-aap-demo enable console      # OpenShift Console (web UI)
-aap-demo enable registry     # In-cluster container registry
-aap-demo enable mcp-server   # MCP server for AI assistants
-aap-demo enable              # List all addons
-```
-
 ## Clean Up
 
 ```bash
