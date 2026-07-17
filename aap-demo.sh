@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah)
+    mcp-server | portal | setup-pah | ao-eap)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -387,6 +387,7 @@ Addons:
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
+  enable ao-eap   Install Automation Orchestrator Early Access
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -1829,6 +1830,25 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
+  # Show credentials for Automation Orchestrator (ao-eap addon)
+  if echo "$(_addons_list)" | grep -qw "ao-eap" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+    local _ao_ns="automation-orchestrator"
+    local _ao_pw="" _ao_secret=""
+    _ao_secret=$(kubectl get secret -n "$_ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)
+    if [ -n "$_ao_secret" ]; then
+      _ao_pw=$(kubectl get "$_ao_secret" -n "$_ao_ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+    fi
+    if [ -n "$_ao_pw" ]; then
+      if [ "$_cred_found" = "false" ]; then
+        echo "Credentials:"
+        echo "------------"
+      fi
+      printf "  %-20s admin / %s\n" "$_ao_ns:" "$_ao_pw"
+      _cred_found=true
+      echo ""
+    fi
+  fi
+
   # Show addons with URLs or enable instructions
   detect_galaxy_credentials
   echo ""
@@ -1884,11 +1904,34 @@ cmd_status() {
           label="disabled"
         fi
         ;;
+      ao-eap)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get routes -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+          _ao_total=$(kubectl get pods -n automation-orchestrator --no-headers 2>/dev/null | grep -cv Completed 2>/dev/null || echo 0)
+          _ao_running=$(kubectl get pods -n automation-orchestrator --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null || echo 0)
+        else
+          label="disabled"
+          _ao_total=0
+          _ao_running=0
+        fi
+        ;;
     esac
     if [ -n "$url" ] && [ -z "$label" ]; then
-      printf "  %-15s %s\n" "$a" "$url"
+      if [ "$a" = "ao-eap" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
+        printf "  %-15s %s/%s pods   %s\n" "$a" "$_ao_running" "$_ao_total" "$url"
+      else
+        printf "  %-15s %s\n" "$a" "$url"
+      fi
     elif [ -n "$label" ]; then
-      printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+      if [ "$a" = "ao-eap" ] && [ "$label" = "not-deployed" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
+        printf "  %-15s %s/%s pods  (deploying)\n" "$a" "$_ao_running" "$_ao_total"
+      else
+        printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
+      fi
     else
       printf "  %-15s (aap-demo enable %s)\n" "$a" "$a"
     fi
@@ -2585,7 +2628,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
@@ -2668,8 +2711,8 @@ cmd_enable() {
 
   echo "Enabling addon: $addon"
   _verify_cluster || return 1
-  bash "$addon_dir/deploy.sh"
   _addons_add "$addon"
+  bash "$addon_dir/deploy.sh"
   echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
 }
 
@@ -2691,7 +2734,7 @@ cmd_disable() {
   if [ -f "$addon_dir/deploy.sh" ]; then
     echo "Disabling addon: $addon"
     setup_kubeconfig
-    bash "$addon_dir/deploy.sh" --delete
+    bash "$addon_dir/deploy.sh" --delete || true
     _addons_remove "$addon"
     echo "  Removed from config"
   else
