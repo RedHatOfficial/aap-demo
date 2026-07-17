@@ -121,8 +121,8 @@ for arg in "$@"; do
     deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
-    --ai | --reset | --force)
-      # Flags for diagnose --ai, destroy --reset, enable --force
+    --ai | --reset)
+      # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
     mcp-server | portal | setup-pah | ao-eap)
@@ -387,7 +387,7 @@ Addons:
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao-eap   Install Automation Orchestrator Early Access (--force to reinstall)
+  enable ao-eap   Install Automation Orchestrator Early Access
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -2678,14 +2678,7 @@ _addons_remove() {
 }
 
 cmd_enable() {
-  local addon=""
-  for _arg in "$@"; do
-    case "$_arg" in
-      --force) FORCE=true ;;
-      -*) echo "Unknown argument for 'enable': $_arg"; echo "Run '$(basename "$0") help' for usage"; return 1 ;;
-      *) [ -z "$addon" ] && addon="$_arg" ;;
-    esac
-  done
+  local addon="${1:-}"
   if [ -z "$addon" ]; then
     echo "Usage: aap-demo enable <addon>"
     echo ""
@@ -2719,7 +2712,7 @@ cmd_enable() {
   echo "Enabling addon: $addon"
   _verify_cluster || return 1
   _addons_add "$addon"
-  FORCE="${FORCE}" bash "$addon_dir/deploy.sh"
+  bash "$addon_dir/deploy.sh"
   echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
 }
 
@@ -2840,7 +2833,7 @@ case "$COMMAND" in
     cmd_test "${EXTRA_ARGS[@]}"
     ;;
   enable)
-    cmd_enable "${EXTRA_ARGS[@]}"
+    cmd_enable "${EXTRA_ARGS[0]:-}"
     ;;
   disable)
     cmd_disable "${EXTRA_ARGS[0]:-}"
