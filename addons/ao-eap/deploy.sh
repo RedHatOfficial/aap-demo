@@ -376,7 +376,9 @@ echo "Creating PostgreSQL cluster for Automation Orchestrator..."
 if kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
   echo "  Existing postgres data found — deleting cluster and PVC for fresh init..."
   kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
-  kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" 2>/dev/null || true
+  # Wait for CNPG pods to terminate so the pvc-protection finalizer is released
+  kubectl wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || true
+  kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
 fi
 
 PG_PASSWORD="$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
