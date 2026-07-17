@@ -541,6 +541,23 @@ create_helm_values() {
 
   if [ "${IS_ARM_CLUSTER}" = true ]; then
     # ARM: community RHDH with APME appConfig (no engine/gateway — no arm64 images)
+
+    # Resolve hostAliases at values-write time so the first pod already has the alias.
+    # Without this, nip.io resolves to 127.0.0.1 inside pods on MicroShift, breaking OAuth.
+    local host_aliases_block=""
+    if [ "${IS_MICROSHIFT:-false}" = true ]; then
+      local aap_ip
+      aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+      if [ -n "$aap_ip" ]; then
+        host_aliases_block="      podSpec:
+        hostAliases:
+          - ip: \"${aap_ip}\"
+            hostnames:
+              - \"${AAP_ROUTE}\""
+        echo "  Host alias baked into values: ${AAP_ROUTE} → ${aap_ip}"
+      fi
+    fi
+
     cat >"$APME_DIR/values.yaml" <<EOF
 redhat-developer-hub:
   global:
@@ -573,6 +590,7 @@ redhat-developer-hub:
               menuItems:
                 default.home:
                   title: Home
+${host_aliases_block}
     postgresql:
       image:
         registry: ${DEFAULT_POSTGRES_REGISTRY}
