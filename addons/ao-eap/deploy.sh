@@ -667,11 +667,6 @@ echo ""
 
 PASS_SECRET=$(kubectl get secret -n "$NAMESPACE" \
   -o name 2>/dev/null | grep -i "admin-password" | head -1 || echo "")
-ADMIN_PASSWORD=""
-if [ -n "$PASS_SECRET" ]; then
-  ADMIN_PASSWORD=$(kubectl get "$PASS_SECRET" -n "$NAMESPACE" \
-    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-fi
 
 AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
   -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
@@ -682,8 +677,8 @@ if [ -n "$AO_ROUTE" ]; then
   echo "  URL:      https://${AO_ROUTE}"
 fi
 echo "  Username: admin"
-if [ -n "$ADMIN_PASSWORD" ]; then
-  echo "  Password: ${ADMIN_PASSWORD}"
+if [ -n "$PASS_SECRET" ]; then
+  echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
 else
   echo "  Password: kubectl get secret -n $NAMESPACE | grep admin-password"
 fi
