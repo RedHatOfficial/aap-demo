@@ -7,6 +7,16 @@ default_language_version:
   python: python3
 
 repos:
+  # Shell formatting — matches CI: shfmt v3.8.0 with -i 2 -ci -bn
+  - repo: local
+    hooks:
+      - id: shfmt
+        name: shfmt
+        entry: bash -c 'command -v shfmt >/dev/null 2>&1 && shfmt -d -i 2 -ci -bn "$@" || true' --
+        language: system
+        types: [shell]
+        exclude: ^(\.venv-lint/|\.git/)
+
   # Bash/Shell script linting (uses system shellcheck, no docker)
   - repo: local
     hooks:
