@@ -57,24 +57,28 @@ The `install-dynamic-plugins` init container then pulls from
 Override with `CI_ARTIFACT_ID=<id>` to pick up newer CI builds without
 changing script defaults.
 
-### Architecture Decision 3: PVC Label Caching to Avoid Plugin Reinstall
+### Architecture Decision 3: PVC Preservation for Plugin Caching
 
 The `install-dynamic-plugins` init container runs on every RHDH pod restart,
 reinstalling all plugins into the `dynamic-plugins` PVC. Without intervention,
 a config change (new OAuth token, updated AAP URL) triggering a rollout restart
 also forces a full plugin reinstall — adding 3–10 minutes per re-deploy.
 
-**Solution:** Label the `dynamic-plugins` PVC with `apme.io/artifact-id` after
-a successful deploy. On subsequent runs, `reset_dynamic_plugins_pvc` checks the
-label against `CI_ARTIFACT_ID`:
-
-- **Match:** Skip PVC deletion. Init container finds existing plugins on the
-  volume and skips reinstall (RHDH 1.10+ checks plugin hashes).
-- **Mismatch or no label:** Delete PVC, force clean install, relabel on success.
+**Solution:** Never delete the `dynamic-plugins` PVC. RHDH 1.10+ checks plugin
+hashes on init container startup and skips reinstall when plugins on the volume
+match the configured versions. The PVC is labeled with `apme.io/artifact-id`
+after a successful deploy for observability, but deletion is never triggered
+automatically.
 
 Restart of the RHDH Deployment still runs on every deploy to apply ConfigMap and
-Secret changes. Only the init container plugin reinstall is skipped when the
-artifact ID is unchanged.
+Secret changes. The init container plugin reinstall is skipped as long as the
+PVC contents are valid — regardless of whether `CI_ARTIFACT_ID` changed.
+
+To force a clean plugin install manually:
+
+```bash
+kubectl delete pvc -n apme -l app.kubernetes.io/name=apme-rhdh
+```
 
 ### Architecture Decision 4: OAuth Two-Phase Configuration
 
@@ -90,7 +94,34 @@ Credentials stored in `apme-rhdh-secrets-rhaap-portal` secret.
 Existing OAuth apps are reused across re-deploys. Client secret is cached in
 `~/.aap-demo/apme/` to survive re-runs (AAP only returns it on creation).
 
-### Architecture Decision 5: Namespace and Credential Isolation
+### Architecture Decision 5: AAP Host URL on MicroShift Uses Internal Service
+
+**Problem:** The `aap-host-url` value in `secrets-rhaap-portal` controls where the RHDH
+backend sends OAuth token exchange POST requests. On MicroShift the AAP route hostname
+uses nip.io wildcard DNS (`*.apps.127.0.0.1.nip.io`), which always resolves to `127.0.0.1`.
+From a pod, `127.0.0.1` is the pod's own loopback — no listener there — so every
+server-side OAuth POST fails with "fetch failed".
+
+**Solution:** `get_aap_host_url()` returns `http://<svc>.<namespace>.svc` when
+`IS_MICROSHIFT=true` instead of the external route hostname. The service name is
+resolved from the route's `spec.to.name` field so it stays accurate even if the
+service is renamed:
+
+```bash
+svc_name=$(kubectl get route aap -n "$AAP_NAMESPACE" \
+  -o jsonpath='{.spec.to.name}' 2>/dev/null || echo "aap")
+echo "http://${svc_name}.${AAP_NAMESPACE}.svc"
+```
+
+On non-MicroShift clusters the external HTTPS route is used as before.
+The `ansible.rhaap.checkSSL: false` values.yaml flag remains in place; the internal
+service is HTTP so TLS verification is not relevant on MicroShift.
+
+**Detection:** `IS_MICROSHIFT=true` when `kubectl get ingresses.config/cluster` returns
+empty — the same check used by the NFS provisioner for its `__NFS_SERVER_IP__`
+substitution (see CLAUDE.md).
+
+### Architecture Decision 6: Namespace and Credential Isolation
 
 APME deploys to its own `apme` namespace (separate from AAP's `aap-operator`
 and portal's `redhat-rhaap-portal`). This allows:
@@ -125,15 +156,15 @@ enable_oauth_tokens        # PATCH /api/gateway/v1/settings/
 create_api_token           # POST /api/gateway/v1/tokens/
 create_aap_secrets         # OpenShift secret with AAP creds
 create_helm_values         # Generate values.yaml from template
-install_helm_chart         # helm upgrade --install (community RHDH)
-download_ci_plugins        # gh api + curl; cached by CI_ARTIFACT_ID
+[background] download_ci_plugins  # gh api + curl; runs in parallel with Helm
+install_helm_chart         # helm upgrade --install (community RHDH); no --wait on ARM
+[wait] download_ci_plugins # join background download before registry steps
 deploy_plugin_registry     # docker registry v2 Deployment in apme ns
 push_plugins_to_registry   # port-forward + skopeo copy
 create_plugin_registry_secret  # registries.conf for insecure HTTP registry
 patch_plugin_configmap     # swap registry.redhat.io refs → in-cluster registry
-reset_dynamic_plugins_pvc  # skip if PVC labeled with current CI_ARTIFACT_ID
 restart_rhdh_deployment    # kubectl rollout restart
-wait_for_apme              # kubectl rollout status --timeout=600s
+wait_for_apme              # rollout status --timeout=360s; streams init container logs
 label_dynamic_plugins_pvc  # apme.io/artifact-id=<CI_ARTIFACT_ID>
 update_oauth_redirect      # PATCH OAuth app with real RHDH route
 display_success            # URLs, next steps
@@ -141,16 +172,40 @@ display_success            # URLs, next steps
 
 ### PVC Cache Mechanism
 
-```bash
-# reset_dynamic_plugins_pvc: skip delete if labeled
-kubectl get pvc -n apme \
-  --no-headers -o custom-columns=":metadata.name" \
-  -l "apme.io/artifact-id=${CI_ARTIFACT_ID}" | grep dynamic-plugins
+PVCs are never deleted automatically. After a successful rollout, the PVC is
+labeled for observability:
 
+```bash
 # label_dynamic_plugins_pvc: set after successful rollout
 kubectl label pvc <name> -n apme \
   "apme.io/artifact-id=${CI_ARTIFACT_ID}" --overwrite
+
+# Manual clean slate if needed
+kubectl delete pvc -n apme -l app.kubernetes.io/name=apme-rhdh
 ```
+
+### Helm Timeouts
+
+`helm repo update` is wrapped with `timeout 30` to prevent silent VPN hangs.
+x86 `helm install`/`helm upgrade` use `--timeout=300s --wait` — Helm waits for
+pod readiness before returning, making `wait_for_apme` a belt-and-suspenders
+fallback on x86. ARM skips `--wait` to avoid a deadlock: the RHDH pod cannot
+become Ready until the init container pulls plugins from the in-cluster registry,
+which is not deployed until after `install_helm_chart` returns.
+
+### x86 Readiness Wait
+
+`wait_for_apme` on x86 resolves the gateway deployment name by label
+(`app.kubernetes.io/component=gateway`) and delegates to
+`kubectl rollout status --timeout=300s`, replacing an unreliable
+`Running`-phase poll that could report false positives before readiness probes
+passed.
+
+### ARM Init Container Log Streaming
+
+`wait_for_apme` on ARM streams `install-dynamic-plugins` init container logs to
+stdout during the rollout wait, providing plugin-by-plugin install visibility
+instead of a silent 360s black hole.
 
 ### aap-demo.sh Integration
 
@@ -169,25 +224,30 @@ apme)
 ### Positive
 
 - ARM developers can test APME UI plugins with CI builds before official release
-- PVC label cache eliminates 3–10 min plugin reinstall on config-only re-deploys
+- PVC preservation eliminates 3–10 min plugin reinstall on re-deploys
+- CI plugin download runs in parallel with Helm, saving 60–120s on ARM
+- Init container log streaming gives plugin-by-plugin visibility during ARM wait
+- x86 readiness wait uses `kubectl rollout status` — no false positives
+- Helm repo update bounded to 30s — no silent VPN hangs
 - Consistent addon lifecycle (`enable`, `disable`, `status`) with other addons
 - `CI_ARTIFACT_ID` override makes it easy to test specific CI builds
 - OAuth app and API token are reused across re-deploys (no AAP churn)
+- RHDH backend OAuth token exchange works on MicroShift — internal service URL bypasses nip.io loopback resolution
 
 ### Negative
 
 - ARM path requires `skopeo` and authenticated `gh` CLI (two extra prerequisites)
 - Plugin registry is HTTP (insecure) — only internal to cluster, not exposed
 - ARM profile provides UI plugins only; no APME gateway/engine (x86-only feature)
-- `wait_for_apme` timeout is 600s on ARM (init container installs 6 plugins)
-- PVC label cache only skips reinstall when `CI_ARTIFACT_ID` is unchanged;
-  any artifact upgrade triggers full reinstall
+- `wait_for_apme` timeout is 360s on ARM (init container installs 6 plugins)
+- PVC contents can become stale if the in-cluster registry image changes but PVC
+  is not manually cleared — `kubectl delete pvc -n apme -l app.kubernetes.io/name=apme-rhdh`
 
 ### Neutral
 
 - Cached OCI artifact stored at `~/.aap-demo/apme/plugins-oci.tar.gz`
-- Re-running with same `CI_ARTIFACT_ID` skips download (file cache) and
-  optionally skips PVC wipe (label cache) — both independent mechanisms
+- Re-running with same `CI_ARTIFACT_ID` skips download (file cache); PVC plugin
+  cache is always preserved regardless of artifact ID
 
 ## Alternatives Considered
 

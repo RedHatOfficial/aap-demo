@@ -1887,8 +1887,15 @@ cmd_status() {
       apme)
         if [ "$enabled" = true ]; then
           if kubectl get pods -n apme -l "app.kubernetes.io/component=gateway" \
-              &>/dev/null 2>&1; then
+              --no-headers 2>/dev/null | grep -q .; then
             url="http://apme-gateway.apme.svc:8080 (cluster-internal)"
+          elif kubectl get pods -n apme -l "app.kubernetes.io/name=apme-rhdh" \
+              --no-headers 2>/dev/null | grep -q .; then
+            local rhdh_host
+            rhdh_host=$(kubectl get route apme-rhdh-rhaap-portal -n apme \
+              -o jsonpath='{.spec.host}' 2>/dev/null || true)
+            url="${rhdh_host:+https://${rhdh_host}}"
+            [ -z "$url" ] && url="apme-rhdh (route not found)"
           else
             url=""
             label="not-deployed"

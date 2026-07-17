@@ -118,7 +118,7 @@ detect_cluster_arch() {
         return
         ;;
       *)
-        echo "❌ Unknown APME_ARCH: $APME_ARCH (use arm or x86)"
+        echo "❌ Unknown APME_ARCH: $APME_ARCH (use arm or x86)" >&2
         exit 1
         ;;
     esac
@@ -481,7 +481,11 @@ create_api_token() {
 
 get_aap_host_url() {
   if [ "${IS_MICROSHIFT:-false}" = true ]; then
-    echo "http://${AAP_ROUTE}"
+    # nip.io route resolves to 127.0.0.1 inside pods — use internal cluster service
+    local svc_name
+    svc_name=$(kubectl get route aap -n "$AAP_NAMESPACE" \
+      -o jsonpath='{.spec.to.name}' 2>/dev/null || echo "aap")
+    echo "http://${svc_name}.${AAP_NAMESPACE}.svc"
   else
     echo "https://${AAP_ROUTE}"
   fi
@@ -603,12 +607,16 @@ install_helm_chart() {
       echo "Adding OpenShift Helm Charts repository..."
       helm repo add openshift-helm-charts https://charts.openshift.io/
     fi
-    helm repo update &>/dev/null
+    timeout 30 helm repo update &>/dev/null || true
 
     # kubectl patches to dynamic-plugins conflict with helm server-side apply
     kubectl delete configmap "${release}-dynamic-plugins" \
       -n "$APME_NAMESPACE" --ignore-not-found 2>/dev/null || true
 
+    # --wait is intentionally omitted on ARM: RHDH needs the in-cluster plugin registry
+    # to complete init-container startup, but that registry is deployed after helm returns.
+    # Readiness is enforced by wait_for_apme (kubectl rollout status) after registry setup.
+    # Long-term fix: embed in-cluster registry URL in values.yaml so helm install --wait works.
     if helm list -n "$APME_NAMESPACE" 2>/dev/null | grep -q "^${release}"; then
       echo "Upgrading existing Helm release..."
       helm upgrade "$release" "$chart" \
@@ -631,7 +639,7 @@ install_helm_chart() {
       echo "Adding APME Helm repository..."
       helm repo add apme https://ansible.github.io/apme
     fi
-    helm repo update &>/dev/null
+    timeout 30 helm repo update &>/dev/null || true
 
     if helm list -n "$APME_NAMESPACE" 2>/dev/null | grep -q "^${release}"; then
       echo "Upgrading existing Helm release..."
@@ -639,6 +647,7 @@ install_helm_chart() {
         -n "$APME_NAMESPACE" \
         -f "$APME_DIR/values.yaml" \
         ${APME_CHART_VERSION:+--version "$APME_CHART_VERSION"} \
+        --timeout=300s --wait \
         --hide-notes
     else
       echo "Installing Helm release..."
@@ -646,6 +655,7 @@ install_helm_chart() {
         -n "$APME_NAMESPACE" \
         -f "$APME_DIR/values.yaml" \
         ${APME_CHART_VERSION:+--version "$APME_CHART_VERSION"} \
+        --timeout=300s --wait \
         --hide-notes
     fi
   fi
@@ -729,7 +739,11 @@ download_ci_plugins() {
     exit 1
   fi
 
-  cp "$oci_file" "$cache_file"
+  if ! cp "$oci_file" "$cache_file"; then
+    echo "❌ Failed to cache plugin artifact to ${cache_file}" >&2
+    rm -rf "$tmp_dir" "$tmp_dl"
+    exit 1
+  fi
   echo "$CI_ARTIFACT_ID" > "$cache_id_file"
   rm -rf "$tmp_dir" "$tmp_dl"
 
@@ -793,6 +807,7 @@ push_plugins_to_registry() {
 
   kubectl port-forward svc/plugin-registry "${pf_port}:5000" -n "$APME_NAMESPACE" &
   local pf_pid=$!
+  trap 'kill "$pf_pid" 2>/dev/null || true; exit 1' INT TERM
 
   local attempts=0
   while ! curl -sf "http://localhost:${pf_port}/v2/" &>/dev/null; do
@@ -810,17 +825,18 @@ push_plugins_to_registry() {
   local push_ok=false
   if skopeo copy \
       "oci-archive:${cache_file}" \
-      "docker://localhost:${pf_port}/apme-plugins:latest" \
+      "docker://localhost:${pf_port}/apme-plugins:${CI_PLUGIN_IMAGE_TAG}" \
       --dest-tls-verify=false 2>&1; then
     push_ok=true
   elif skopeo copy \
       "oci-archive:${cache_file}:${CI_PLUGIN_IMAGE_TAG}" \
-      "docker://localhost:${pf_port}/apme-plugins:latest" \
+      "docker://localhost:${pf_port}/apme-plugins:${CI_PLUGIN_IMAGE_TAG}" \
       --dest-tls-verify=false 2>&1; then
     push_ok=true
   fi
 
   kill "$pf_pid" 2>/dev/null || true
+  trap - INT TERM
 
   if [ "$push_ok" = false ]; then
     echo "❌ Failed to push plugins to in-cluster registry"
@@ -852,7 +868,7 @@ patch_plugin_configmap() {
 
   local cm="${RHDH_RELEASE_NAME}-dynamic-plugins"
   local registry_host="plugin-registry.${APME_NAMESPACE}.svc:5000"
-  local registry_img="oci://${registry_host}/apme-plugins:latest!"
+  local registry_img="oci://${registry_host}/apme-plugins:${CI_PLUGIN_IMAGE_TAG}!"
   local old_img="oci://registry.redhat.io/ansible-automation-platform/automation-portal:${DEFAULT_PLUGIN_VERSION}!"
 
   local plugins_yaml
@@ -865,8 +881,10 @@ patch_plugin_configmap() {
   fi
 
   # Replace all registry.redhat.io OCI plugin references with in-cluster registry
+  local escaped_old_img
+  escaped_old_img=$(printf '%s' "$old_img" | sed 's/\./\\./g')
   plugins_yaml=$(printf '%s' "$plugins_yaml" | \
-    sed "s|${old_img}|${registry_img}|g")
+    sed "s|${escaped_old_img}|${registry_img}|g")
 
   # Helper: append a YAML block with guaranteed leading newline
   _append_plugin() {
@@ -900,30 +918,6 @@ patch_plugin_configmap() {
   echo "✓ Plugin configmap updated — 6 CI plugins via ${registry_host}"
 }
 
-reset_dynamic_plugins_pvc() {
-  local cached_id
-  local pvcs
-  pvcs=$(kubectl get pvc -n "$APME_NAMESPACE" -o name 2>/dev/null | grep dynamic-plugins || true)
-
-  if [ -z "$pvcs" ]; then
-    return 0
-  fi
-
-  # Check if dynamic-plugins PVCs are already labeled for this artifact
-  cached_id=$(kubectl get pvc -n "$APME_NAMESPACE" \
-    --no-headers -o custom-columns=":metadata.name" \
-    -l "apme.io/artifact-id=${CI_ARTIFACT_ID}" 2>/dev/null | grep dynamic-plugins || true)
-
-  if [ -n "$cached_id" ]; then
-    echo "✓ Dynamic-plugins PVC has cached plugins for artifact ${CI_ARTIFACT_ID} — skipping reset"
-    return 0
-  fi
-
-  echo "Resetting dynamic-plugins PVC for clean plugin install (artifact ${CI_ARTIFACT_ID})..."
-  echo "$pvcs" | while read -r pvc; do
-    kubectl delete "$pvc" -n "$APME_NAMESPACE" --timeout=120s 2>/dev/null || true
-  done
-}
 
 label_dynamic_plugins_pvc() {
   local pvc_names
@@ -1002,33 +996,41 @@ wait_for_apme() {
   if [ "${IS_ARM_CLUSTER}" = true ]; then
     echo "Waiting for RHDH (APME plugins) to become ready..."
     local deploy="${RHDH_RELEASE_NAME}-rhaap-portal"
+
+    # Stream init container logs so plugin-by-plugin progress is visible
+    kubectl logs -n "$APME_NAMESPACE" \
+      -l "app.kubernetes.io/name=${RHDH_RELEASE_NAME}" \
+      -c install-dynamic-plugins --follow 2>/dev/null &
+    local log_pid=$!
+
     if ! kubectl rollout status deployment/"$deploy" \
-        -n "$APME_NAMESPACE" --timeout=600s 2>/dev/null; then
-      echo "⚠️  RHDH deployment not ready after 600s — check: kubectl get pods -n $APME_NAMESPACE"
+        -n "$APME_NAMESPACE" --timeout=360s; then
+      echo "⚠️  RHDH deployment not ready after 360s — check: kubectl get pods -n $APME_NAMESPACE"
     else
       echo "✓ APME ready"
     fi
+    kill "$log_pid" 2>/dev/null || true
     return 0
   fi
 
-  # x86: wait for gateway component
-  local label="app.kubernetes.io/component=gateway"
-  local timeout=300 elapsed=0 interval=10
+  # x86: wait for gateway rollout
   echo "Waiting for APME gateway to become ready..."
+  local label="app.kubernetes.io/component=gateway"
+  local deploy
+  deploy=$(kubectl get deployment -n "$APME_NAMESPACE" -l "$label" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
-  while [ $elapsed -lt $timeout ]; do
-    if kubectl get pods -n "$APME_NAMESPACE" -l "$label" 2>/dev/null \
-        | grep -E 'Running' &>/dev/null; then
+  if [ -n "$deploy" ]; then
+    if ! kubectl rollout status deployment/"$deploy" \
+        -n "$APME_NAMESPACE" --timeout=300s; then
+      echo "⚠️  APME not ready after 300s — continuing"
+      echo "   Check status: kubectl get pods -n $APME_NAMESPACE"
+    else
       echo "✓ APME ready"
-      return 0
     fi
-    sleep $interval
-    elapsed=$((elapsed + interval))
-    echo "  Waiting... (${elapsed}s/${timeout}s)"
-  done
-
-  echo "⚠️  APME not ready after ${timeout}s — continuing"
-  echo "   Check status: kubectl get pods -n $APME_NAMESPACE"
+  else
+    echo "⚠️  No gateway deployment found — check: kubectl get deployments -n $APME_NAMESPACE"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1113,14 +1115,19 @@ main() {
   create_aap_secrets
   create_placeholder_secrets
   create_helm_values
+  # Start CI plugin download in background — no cluster dependency, runs in parallel with Helm
+  local download_pid=""
+  if [ "${IS_ARM_CLUSTER}" = true ]; then
+    download_ci_plugins &
+    download_pid=$!
+  fi
   install_helm_chart
   if [ "${IS_ARM_CLUSTER}" = true ]; then
-    download_ci_plugins
+    wait "$download_pid"
     deploy_plugin_registry
     push_plugins_to_registry
     create_plugin_registry_secret
     patch_plugin_configmap
-    reset_dynamic_plugins_pvc
     restart_rhdh_deployment
   fi
   wait_for_apme
