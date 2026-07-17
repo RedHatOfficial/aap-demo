@@ -502,9 +502,28 @@ echo "✓ PostgreSQL databases created"
 # and Subscription ourselves pointing to cs-automation-orchestrator.
 # aapctl will skip these in step 8 since they already exist.
 echo "Creating AO operator subscription..."
-kubectl delete subscription automation-orchestrator-operator -n "$NAMESPACE" 2>/dev/null || true
-kubectl get installplan -n "$NAMESPACE" -o name 2>/dev/null | xargs -r kubectl delete -n "$NAMESPACE" 2>/dev/null || true
-kubectl get csv -n "$NAMESPACE" -o name 2>/dev/null | grep "automation-orchestrator" | xargs -r kubectl delete -n "$NAMESPACE" 2>/dev/null || true
+kubectl delete subscription automation-orchestrator-operator -n "$NAMESPACE" --wait=false 2>/dev/null || true
+kubectl get installplan -n "$NAMESPACE" -o name 2>/dev/null \
+  | xargs -r kubectl delete -n "$NAMESPACE" --wait=false 2>/dev/null || true
+# CSV delete can hang forever if the OLM csv-cleanup finalizer is stuck
+# (common after --force when the namespace was briefly terminating). Delete
+# without waiting, then strip finalizers if it doesn't clear quickly.
+kubectl get csv -n "$NAMESPACE" -o name 2>/dev/null \
+  | grep "automation-orchestrator" \
+  | xargs -r kubectl delete -n "$NAMESPACE" --wait=false 2>/dev/null || true
+for _csv_wait in $(seq 1 12); do
+  _stuck_csv=$(kubectl get csv -n "$NAMESPACE" -o name 2>/dev/null \
+    | grep "automation-orchestrator" || true)
+  [ -z "$_stuck_csv" ] && break
+  if [ "$_csv_wait" -ge 6 ]; then
+    echo "  Clearing stuck CSV finalizers..."
+    echo "$_stuck_csv" | while read -r _csv; do
+      kubectl patch "$_csv" -n "$NAMESPACE" --type=json \
+        -p='[{"op":"remove","path":"/metadata/finalizers"}]' 2>/dev/null || true
+    done
+  fi
+  sleep 5
+done
 kubectl apply -f - <<EOF
 ---
 apiVersion: operators.coreos.com/v1
@@ -530,8 +549,20 @@ EOF
 echo "Waiting for CSV..."
 CSV_NAME=""
 for i in $(seq 1 30); do
-  CSV_NAME=$(kubectl get csv -n "$NAMESPACE" -o name 2>/dev/null \
-    | grep "automation-orchestrator-operator" | head -1 || echo "")
+  # Ignore CSVs that are still terminating from the stale-state cleanup above
+  CSV_NAME=$(kubectl get csv -n "$NAMESPACE" -o json 2>/dev/null \
+    | python3 -c '
+import json, sys
+items = json.load(sys.stdin).get("items", [])
+for item in items:
+  name = item.get("metadata", {}).get("name", "")
+  if "automation-orchestrator-operator" not in name:
+    continue
+  if item.get("metadata", {}).get("deletionTimestamp"):
+    continue
+  print(f"clusterserviceversion.operators.coreos.com/{name}")
+  break
+' 2>/dev/null || echo "")
   if [ -n "$CSV_NAME" ]; then
     echo "✓ CSV: $CSV_NAME"
     break
