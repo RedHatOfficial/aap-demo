@@ -481,11 +481,7 @@ create_api_token() {
 
 get_aap_host_url() {
   if [ "${IS_MICROSHIFT:-false}" = true ]; then
-    # nip.io route resolves to 127.0.0.1 inside pods — use internal cluster service
-    local svc_name
-    svc_name=$(kubectl get route aap -n "$AAP_NAMESPACE" \
-      -o jsonpath='{.spec.to.name}' 2>/dev/null || echo "aap")
-    echo "http://${svc_name}.${AAP_NAMESPACE}.svc"
+    echo "http://${AAP_ROUTE}"
   else
     echo "https://${AAP_ROUTE}"
   fi
@@ -558,6 +554,11 @@ redhat-developer-hub:
         repository: ${DEFAULT_RHDH_REPOSITORY}
         tag: "${DEFAULT_RHDH_TAG}"
       appConfig:
+        auth:
+          providers:
+            rhaap:
+              production:
+                checkSSL: false
         ansible:
           rhaap:
             checkSSL: false
@@ -634,6 +635,12 @@ install_helm_chart() {
     # x86: APME Helm chart
     local release="$APME_RELEASE_NAME"
     local chart="$APME_CHART_REPO"
+
+    # Clean up ARM RHDH release if present (switching from ARM to x86 path)
+    if helm list -n "$APME_NAMESPACE" 2>/dev/null | grep -q "^${RHDH_RELEASE_NAME}"; then
+      echo "Removing ARM RHDH release before x86 install..."
+      helm uninstall "$RHDH_RELEASE_NAME" -n "$APME_NAMESPACE" || true
+    fi
 
     if ! helm repo list 2>/dev/null | grep -q "^apme"; then
       echo "Adding APME Helm repository..."
@@ -883,8 +890,12 @@ patch_plugin_configmap() {
   # Replace all registry.redhat.io OCI plugin references with in-cluster registry
   local escaped_old_img
   escaped_old_img=$(printf '%s' "$old_img" | sed 's/\./\\./g')
-  plugins_yaml=$(printf '%s' "$plugins_yaml" | \
-    sed "s|${escaped_old_img}|${registry_img}|g")
+  local replaced_yaml
+  replaced_yaml=$(printf '%s' "$plugins_yaml" | sed "s|${escaped_old_img}|${registry_img}|g")
+  if [ "$replaced_yaml" = "$plugins_yaml" ]; then
+    echo "⚠️  No OCI plugin refs matched '${old_img}' — configmap may already reference in-cluster registry or version mismatch"
+  fi
+  plugins_yaml="$replaced_yaml"
 
   # Helper: append a YAML block with guaranteed leading newline
   _append_plugin() {
@@ -906,7 +917,7 @@ patch_plugin_configmap() {
       "ansible-plugin-backstage-apme"; do
     local pkg="${registry_img}${plugin}"
     if ! printf '%s' "$plugins_yaml" | grep -qF "$pkg"; then
-      _append_plugin "- disabled: false"$'\n'"  integrity: ''"$'\n'"  package: '${pkg}'"
+      _append_plugin "- disabled: false"$'\n'"  package: '${pkg}'"
     fi
   done
 
@@ -952,6 +963,57 @@ restart_rhdh_deployment() {
 }
 
 # ---------------------------------------------------------------------------
+# Host alias (mirrors portal addon — maps nip.io route to ClusterIP inside pod)
+# ---------------------------------------------------------------------------
+
+patch_aap_route_host_alias() {
+  if [ "${IS_MICROSHIFT:-false}" != true ] || [ "${IS_ARM_CLUSTER}" != true ]; then
+    return 0
+  fi
+
+  echo "Configuring AAP route host alias for in-pod OAuth token exchange..."
+
+  local aap_ip
+  aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+
+  if [ -z "$aap_ip" ]; then
+    echo "⚠️  Could not resolve AAP service ClusterIP; skipping host alias"
+    return 1
+  fi
+
+  local deploy="${RHDH_RELEASE_NAME}-rhaap-portal"
+
+  local current_ip
+  current_ip=$(kubectl get deployment "$deploy" -n "$APME_NAMESPACE" \
+    -o jsonpath="{.spec.template.spec.hostAliases[?(@.hostnames[0]=='${AAP_ROUTE}')].ip}" 2>/dev/null)
+
+  if [ "$current_ip" = "$aap_ip" ]; then
+    echo "✓ AAP route host alias already configured ($AAP_ROUTE → $aap_ip)"
+    return 0
+  fi
+
+  kubectl patch deployment "$deploy" -n "$APME_NAMESPACE" --type=merge -p "{
+    \"spec\": {
+      \"template\": {
+        \"spec\": {
+          \"hostAliases\": [
+            {\"ip\": \"$aap_ip\", \"hostnames\": [\"$AAP_ROUTE\"]}
+          ]
+        }
+      }
+    }
+  }"
+
+  if ! kubectl rollout status deployment/"$deploy" \
+      -n "$APME_NAMESPACE" \
+      --timeout=600s 2>/dev/null; then
+    echo "⚠️  RHDH rollout after host alias patch is still in progress"
+  fi
+
+  echo "✓ AAP route host alias: $AAP_ROUTE → $aap_ip"
+}
+
+# ---------------------------------------------------------------------------
 # OAuth redirect URI (mirrors portal addon — patches after route exists)
 # ---------------------------------------------------------------------------
 
@@ -979,13 +1041,23 @@ update_oauth_redirect() {
 
   local redirect_uri="https://$rhdh_route/api/auth/rhaap/handler/frame"
 
-  curl -k -u "admin:$ADMIN_PASS" \
+  local response http_code
+  response=$(curl -sk -u "admin:$ADMIN_PASS" \
     -X PATCH "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
     -H "Content-Type: application/json" \
     -d "{\"redirect_uris\": \"$redirect_uri\"}" \
-    &>/dev/null
+    -w "\n%{http_code}" 2>/dev/null)
+  http_code="${response##*$'\n'}"
 
-  echo "✓ OAuth redirect URI updated: $redirect_uri"
+  if [[ "$http_code" =~ ^2 ]]; then
+    echo "✓ OAuth redirect URI updated: $redirect_uri"
+  else
+    echo "❌ Failed to update OAuth redirect URI (HTTP $http_code)"
+    echo "   App ID: $OAUTH_APP_ID  Route: $AAP_ROUTE"
+    echo "   Manual fix: set redirect_uris to $redirect_uri"
+    echo "   Response: ${response%$'\n'*}"
+    return 1
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1135,6 +1207,7 @@ main() {
     label_dynamic_plugins_pvc
   fi
   update_oauth_redirect
+  patch_aap_route_host_alias
   display_success
 }
 

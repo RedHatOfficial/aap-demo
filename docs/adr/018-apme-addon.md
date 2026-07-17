@@ -94,34 +94,7 @@ Credentials stored in `apme-rhdh-secrets-rhaap-portal` secret.
 Existing OAuth apps are reused across re-deploys. Client secret is cached in
 `~/.aap-demo/apme/` to survive re-runs (AAP only returns it on creation).
 
-### Architecture Decision 5: AAP Host URL on MicroShift Uses Internal Service
-
-**Problem:** The `aap-host-url` value in `secrets-rhaap-portal` controls where the RHDH
-backend sends OAuth token exchange POST requests. On MicroShift the AAP route hostname
-uses nip.io wildcard DNS (`*.apps.127.0.0.1.nip.io`), which always resolves to `127.0.0.1`.
-From a pod, `127.0.0.1` is the pod's own loopback — no listener there — so every
-server-side OAuth POST fails with "fetch failed".
-
-**Solution:** `get_aap_host_url()` returns `http://<svc>.<namespace>.svc` when
-`IS_MICROSHIFT=true` instead of the external route hostname. The service name is
-resolved from the route's `spec.to.name` field so it stays accurate even if the
-service is renamed:
-
-```bash
-svc_name=$(kubectl get route aap -n "$AAP_NAMESPACE" \
-  -o jsonpath='{.spec.to.name}' 2>/dev/null || echo "aap")
-echo "http://${svc_name}.${AAP_NAMESPACE}.svc"
-```
-
-On non-MicroShift clusters the external HTTPS route is used as before.
-The `ansible.rhaap.checkSSL: false` values.yaml flag remains in place; the internal
-service is HTTP so TLS verification is not relevant on MicroShift.
-
-**Detection:** `IS_MICROSHIFT=true` when `kubectl get ingresses.config/cluster` returns
-empty — the same check used by the NFS provisioner for its `__NFS_SERVER_IP__`
-substitution (see CLAUDE.md).
-
-### Architecture Decision 6: Namespace and Credential Isolation
+### Architecture Decision 5: Namespace and Credential Isolation
 
 APME deploys to its own `apme` namespace (separate from AAP's `aap-operator`
 and portal's `redhat-rhaap-portal`). This allows:
@@ -232,7 +205,6 @@ apme)
 - Consistent addon lifecycle (`enable`, `disable`, `status`) with other addons
 - `CI_ARTIFACT_ID` override makes it easy to test specific CI builds
 - OAuth app and API token are reused across re-deploys (no AAP churn)
-- RHDH backend OAuth token exchange works on MicroShift — internal service URL bypasses nip.io loopback resolution
 
 ### Negative
 
