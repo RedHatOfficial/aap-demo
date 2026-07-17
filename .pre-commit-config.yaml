@@ -12,7 +12,7 @@ repos:
     hooks:
       - id: shfmt
         name: shfmt
-        entry: bash -c 'command -v shfmt >/dev/null 2>&1 && shfmt -d -i 2 -ci -bn "$@" || true' --
+        entry: bash -c 'command -v shfmt >/dev/null 2>&1 || { echo "shfmt not found (brew install shfmt)" >&2; exit 1; }; shfmt -d -i 2 -ci -bn "$@"' --
         language: system
         types: [shell]
         exclude: ^(\.venv-lint/|\.git/)
@@ -22,7 +22,7 @@ repos:
     hooks:
       - id: shellcheck
         name: shellcheck
-        entry: bash -c 'command -v shellcheck >/dev/null 2>&1 && shellcheck "$@" || true' --
+        entry: bash -c 'command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck not found (brew install shellcheck)" >&2; exit 1; }; shellcheck "$@"' --
         language: system
         types: [shell]
         args: ['--severity=warning', '--shell=bash']

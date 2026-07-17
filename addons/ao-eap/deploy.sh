@@ -40,7 +40,7 @@ OS="$(uname -s)"
 
 _HAT_IDX=0
 hat() {
-  _HAT_IDX=$(( (_HAT_IDX + 1) % 2 ))
+  _HAT_IDX=$(((_HAT_IDX + 1) % 2))
   case $_HAT_IDX in
     0) printf '⏳' ;;
     1) printf '⌛' ;;
@@ -142,8 +142,8 @@ if ! command -v gh >/dev/null 2>&1; then
   else
     GH_ARCH="$(uname -m)"
     case "$GH_ARCH" in
-      x86_64)  GH_ARCH="amd64" ;;
-      aarch64|arm64) GH_ARCH="arm64" ;;
+      x86_64) GH_ARCH="amd64" ;;
+      aarch64 | arm64) GH_ARCH="arm64" ;;
     esac
     GH_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
     GH_VERSION=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest \
@@ -188,9 +188,9 @@ else
   fi
 
   mkdir -p "$(dirname "$QUAY_USERNAME_FILE")"
-  echo "$QUAY_USERNAME" > "$QUAY_USERNAME_FILE"
+  echo "$QUAY_USERNAME" >"$QUAY_USERNAME_FILE"
   chmod 600 "$QUAY_USERNAME_FILE"
-  echo "$QUAY_TOKEN" > "$QUAY_TOKEN_FILE"
+  echo "$QUAY_TOKEN" >"$QUAY_TOKEN_FILE"
   chmod 600 "$QUAY_TOKEN_FILE"
   echo "✓ Quay credentials saved"
 fi
@@ -201,10 +201,22 @@ if ! command -v aapctl >/dev/null 2>&1; then
   ARCH="$(uname -m)"
 
   case "${OS}-${ARCH}" in
-    Darwin-arm64|Darwin-aarch64) OS_NAME="darwin"; ARCH_NAME="arm64" ;;
-    Darwin-x86_64)               OS_NAME="darwin"; ARCH_NAME="amd64" ;;
-    Linux-x86_64)                OS_NAME="linux";  ARCH_NAME="amd64" ;;
-    Linux-aarch64|Linux-arm64)   OS_NAME="linux";  ARCH_NAME="arm64" ;;
+    Darwin-arm64 | Darwin-aarch64)
+      OS_NAME="darwin"
+      ARCH_NAME="arm64"
+      ;;
+    Darwin-x86_64)
+      OS_NAME="darwin"
+      ARCH_NAME="amd64"
+      ;;
+    Linux-x86_64)
+      OS_NAME="linux"
+      ARCH_NAME="amd64"
+      ;;
+    Linux-aarch64 | Linux-arm64)
+      OS_NAME="linux"
+      ARCH_NAME="arm64"
+      ;;
     *)
       echo "ERROR: Unsupported platform: ${OS}-${ARCH}"
       exit 1
@@ -348,7 +360,7 @@ CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
 if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null; then
   echo "✓ CloudNativePG CRDs already registered"
   mkdir -p "$(dirname "$AO_STATE_FILE")"
-  grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null || echo "CNPG_VERSION=${CNPG_VERSION}" >> "$AO_STATE_FILE"
+  grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null || echo "CNPG_VERSION=${CNPG_VERSION}" >>"$AO_STATE_FILE"
 else
   echo "Installing CloudNativePG operator v${CNPG_VERSION}..."
   CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
@@ -357,7 +369,7 @@ else
     exit 1
   fi
   mkdir -p "$(dirname "$AO_STATE_FILE")"
-  echo "CNPG_VERSION=${CNPG_VERSION}" > "$AO_STATE_FILE"
+  echo "CNPG_VERSION=${CNPG_VERSION}" >"$AO_STATE_FILE"
   oc adm policy add-scc-to-group anyuid "system:serviceaccounts:cnpg-system" 2>/dev/null || true
   oc adm policy add-scc-to-group privileged "system:serviceaccounts:cnpg-system" 2>/dev/null || true
 
@@ -574,8 +586,8 @@ for item in items:
     echo "ERROR: CSV not found after 5 minutes."
     echo "  Subscription status:"
     kubectl get subscription automation-orchestrator-operator -n "$NAMESPACE" \
-      -o jsonpath='{.status}' 2>/dev/null | python3 -m json.tool 2>/dev/null || \
-      kubectl get subscription automation-orchestrator-operator -n "$NAMESPACE" 2>/dev/null
+      -o jsonpath='{.status}' 2>/dev/null | python3 -m json.tool 2>/dev/null \
+      || kubectl get subscription automation-orchestrator-operator -n "$NAMESPACE" 2>/dev/null
     echo "  InstallPlans:"
     kubectl get installplan -n "$NAMESPACE" 2>/dev/null
     echo ""
@@ -613,7 +625,7 @@ echo "✓ CSV patched"
 echo "Waiting for operator deployment..."
 for i in $(seq 1 30); do
   if kubectl get deployment automation-orchestrator-operator-controller-manager \
-      -n "$NAMESPACE" &>/dev/null; then
+    -n "$NAMESPACE" &>/dev/null; then
     echo "✓ Operator deployment found"
     break
   fi
@@ -650,7 +662,11 @@ for _attempt in $(seq 1 5); do
   _result=$(echo "$_dep_json" \
     | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
     | kubectl replace -f - 2>&1) && break
-  echo "$_result" | grep -q "conflict\|modified" && { echo "  [${_attempt}/5] conflict — retrying..."; sleep 3; continue; }
+  echo "$_result" | grep -q "conflict\|modified" && {
+    echo "  [${_attempt}/5] conflict — retrying..."
+    sleep 3
+    continue
+  }
   echo "$_result" | grep -v "^Warning:" || true
   break
 done || true
@@ -690,7 +706,6 @@ echo "Waiting for operator to restart and reconcile..."
 kubectl -n "$NAMESPACE" rollout status \
   deployment/automation-orchestrator-operator-controller-manager --timeout=5m
 
-
 # --- Step 10: Wait for pods, show credentials + route ---
 echo "Waiting for all pods to be ready (may take 10+ minutes)..."
 # After --no-wait install the operator pod may be the only Running pod; wait for AO
@@ -704,13 +719,13 @@ while [ "$_settle" -lt 120 ]; do
   _settle=$((_settle + 10))
 done
 echo ""
-_AO_TIMEOUT=1200  # 20 minutes
+_AO_TIMEOUT=1200 # 20 minutes
 _AO_START=$(date +%s)
 while true; do
   _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ')
   _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep "Running" || true; } | wc -l | tr -d ' ')
   _ao_problem=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -E "CrashLoopBackOff|Error|ImagePullBackOff" || true; } | wc -l | tr -d ' ')
-  _AO_ELAPSED=$(( $(date +%s) - _AO_START ))
+  _AO_ELAPSED=$(($(date +%s) - _AO_START))
   printf "\r  Pods: %s/%s running" "$_ao_running" "$_ao_total"
   [ "${_ao_problem:-0}" -gt 0 ] && printf "  (%s problem)" "$_ao_problem"
   printf " (%ds elapsed)    " "$_AO_ELAPSED"
