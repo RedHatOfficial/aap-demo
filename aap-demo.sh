@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah)
+    mcp-server | portal | setup-pah | apme)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -1884,6 +1884,19 @@ cmd_status() {
           label="disabled"
         fi
         ;;
+      apme)
+        if [ "$enabled" = true ]; then
+          if kubectl get pods -n apme -l "app.kubernetes.io/component=gateway" \
+              &>/dev/null 2>&1; then
+            url="http://apme-gateway.apme.svc:8080 (cluster-internal)"
+          else
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
     esac
     if [ -n "$url" ] && [ -z "$label" ]; then
       printf "  %-15s %s\n" "$a" "$url"
@@ -2585,7 +2598,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah"
+AVAILABLE_ADDONS="mcp-server portal setup-pah apme"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
