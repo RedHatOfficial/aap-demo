@@ -1831,7 +1831,7 @@ cmd_status() {
   fi
 
   # Show credentials for Automation Orchestrator (ao-eap addon)
-  if echo "$(_addons_list)" | grep -qw "ao-eap"; then
+  if echo "$(_addons_list)" | grep -qw "ao-eap" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
     local _ao_ns="automation-orchestrator"
     local _ao_pw="" _ao_secret=""
     _ao_secret=$(kubectl get secret -n "$_ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)

@@ -38,6 +38,15 @@ for _arg in "$@"; do
 done
 OS="$(uname -s)"
 
+_HAT_IDX=0
+hat() {
+  _HAT_IDX=$(( (_HAT_IDX + 1) % 2 ))
+  case $_HAT_IDX in
+    0) printf '⏳' ;;
+    1) printf '⌛' ;;
+  esac
+}
+
 # --- Delete ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing Automation Orchestrator..."
@@ -65,8 +74,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   for _i in $(seq 1 60); do
     _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    printf "\r  [%ds] automation-orchestrator: %s  cloudnative-pg: %s    " \
-      "$((_i * 5))" \
+    printf "\r  $(hat) automation-orchestrator: %s  cloudnative-pg: %s    " \
       "$([ "$_ao_ns" -eq 0 ] && echo "gone" || echo "terminating")" \
       "$([ "$_cnpg_ns" -eq 0 ] && echo "gone" || echo "terminating")"
     if [ "$_ao_ns" -eq 0 ] && [ "$_cnpg_ns" -eq 0 ]; then
@@ -326,9 +334,10 @@ for i in $(seq 1 30); do
     exit 1
   fi
   POD_STATUS="${PHASE:-pending}"
-  echo "  [${i}/30] catalog pod: ${POD_STATUS} | CatalogSource: ${CS_STATE}"
+  printf "\r  $(hat) catalog pod: %-10s | CatalogSource: %-10s    " "${POD_STATUS}" "${CS_STATE}"
   sleep 10
 done
+echo ""
 
 # --- Step 4b: Install CloudNativePG operator ---
 # aapctl hardcodes "certified-operators" as the CNPG catalog source, which
@@ -445,9 +454,10 @@ for i in $(seq 1 60); do
   if [ "$i" -eq 60 ]; then
     echo "WARNING: PostgreSQL cluster not ready after 10 minutes. Continuing..."
   fi
-  echo "[${i}/60] readyInstances: ${READY}"
+  printf "\r  $(hat) readyInstances: %-4s    " "${READY}"
   sleep 10
 done
+echo ""
 
 kubectl apply -f - <<EOF
 ---
@@ -543,9 +553,10 @@ for i in $(seq 1 30); do
     -n "$NAMESPACE" \
     -o jsonpath='{.status.state}' 2>/dev/null || echo "unknown")
   IP_COUNT=$(kubectl get installplan -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
-  echo "  [${i}/30] subscription: ${SUB_STATE} | installplans: ${IP_COUNT}"
+  printf "\r  $(hat) subscription: %-15s | installplans: %-3s    " "${SUB_STATE}" "${IP_COUNT}"
   sleep 10
 done
+echo ""
 
 echo "Patching CSV image references..."
 # Use replace with retry — apply conflicts when OLM modifies the CSV between GET and apply
@@ -578,9 +589,10 @@ for i in $(seq 1 30); do
     kubectl get csv -n "$NAMESPACE"
     exit 1
   fi
-  echo "  [${i}/30] waiting for deployment..."
+  printf "\r  $(hat) waiting for operator deployment...    "
   sleep 10
 done
+echo ""
 
 echo "Linking pull secret to operator..."
 kubectl get secret quay-aap-viewer -n "$MARKETPLACE_NAMESPACE" -o json \
@@ -699,9 +711,10 @@ for i in $(seq 1 30); do
   if [ "$i" -eq 30 ]; then
     echo "WARNING: Route not available after 5 minutes"
   fi
-  echo "[${i}/30] waiting for route..."
+  printf "\r  $(hat) waiting for route...    "
   sleep 10
 done
+echo ""
 
 echo "✓ Automation Orchestrator deployed!"
 echo ""
