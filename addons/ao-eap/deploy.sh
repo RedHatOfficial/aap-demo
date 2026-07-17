@@ -798,8 +798,3 @@ if [ -n "$PASS_SECRET" ]; then
 else
   echo "  Password: kubectl get secret -n $NAMESPACE | grep admin-password"
 fi
-echo ""
-echo "Pod Status:"
-kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
-  | awk 'NF {printf "  %-50s %s\n", $1, $3}' \
-  || echo "  (no pods found)"
