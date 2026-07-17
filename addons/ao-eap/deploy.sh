@@ -32,6 +32,10 @@ AAPCTL_BIN="/usr/local/bin/aapctl"
 AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"
 
 ACTION="${1:-deploy}"
+FORCE="${FORCE:-}"
+for _arg in "$@"; do
+  [ "$_arg" = "--force" ] && FORCE=1
+done
 OS="$(uname -s)"
 
 # --- Delete ---
@@ -39,15 +43,43 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing Automation Orchestrator..."
 
   if command -v aapctl >/dev/null 2>&1; then
-    aapctl uninstall automation-orchestrator --force 2>/dev/null || true
+    aapctl uninstall automation-orchestrator --force --yes 2>/dev/null || true
   fi
 
   kubectl delete catalogsource cs-automation-orchestrator \
     -n "$MARKETPLACE_NAMESPACE" 2>/dev/null || true
   kubectl delete secret quay-aap-viewer \
     -n "$MARKETPLACE_NAMESPACE" 2>/dev/null || true
-  kubectl delete namespace "$NAMESPACE" 2>/dev/null || true
-  kubectl delete namespace cloudnative-pg 2>/dev/null || true
+  # Strip finalizers so namespace doesn't hang when operator is already gone
+  kubectl get automationorchestrators.aap.ansible.com -n "$NAMESPACE" \
+    -o name 2>/dev/null \
+    | xargs -r -I{} kubectl patch {} -n "$NAMESPACE" \
+      --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+      2>/dev/null || true
+
+  kubectl delete namespace "$NAMESPACE" --wait=false 2>/dev/null || true
+  kubectl delete namespace cloudnative-pg --wait=false 2>/dev/null || true
+
+  # Poll until namespaces are gone (finalizers, CRD cleanup, etc. can delay termination)
+  echo "  Waiting for namespaces to terminate..."
+  for _i in $(seq 1 60); do
+    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    printf "\r  [%ds] automation-orchestrator: %s  cloudnative-pg: %s    " \
+      "$((_i * 5))" \
+      "$([ "$_ao_ns" -eq 0 ] && echo "gone" || echo "terminating")" \
+      "$([ "$_cnpg_ns" -eq 0 ] && echo "gone" || echo "terminating")"
+    if [ "$_ao_ns" -eq 0 ] && [ "$_cnpg_ns" -eq 0 ]; then
+      echo ""
+      break
+    fi
+    if [ "$_i" -eq 60 ]; then
+      echo ""
+      echo "  ⚠ Namespaces still terminating after 5 minutes — continuing anyway"
+      echo "  Check: kubectl get namespace $NAMESPACE cloudnative-pg"
+    fi
+    sleep 5
+  done
 
   if [ -f "$AO_STATE_FILE" ]; then
     # shellcheck source=/dev/null
@@ -60,6 +92,26 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
 
   echo "✓ Automation Orchestrator removed"
   exit 0
+fi
+
+# --- Skip if already running (unless --force) ---
+if [ -z "$FORCE" ]; then
+  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ')
+  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep "Running" || true; } | wc -l | tr -d ' ')
+  _cs_state=$(kubectl get catalogsource cs-automation-orchestrator \
+    -n "$MARKETPLACE_NAMESPACE" \
+    -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
+  if [ "${_ao_total:-0}" -gt 0 ] && [ "$_ao_running" -eq "$_ao_total" ] && [ "$_cs_state" = "READY" ]; then
+    echo "✓ Automation Orchestrator already running ($_ao_running/$_ao_total pods, CatalogSource READY)"
+    echo "  Use FORCE=1 or --force to reinstall."
+    echo ""
+    AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
+      -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+    [ -n "$AO_ROUTE" ] && echo "  URL:      https://${AO_ROUTE}"
+    echo "  Username: admin"
+    echo "  Status:   kubectl get pods -n $NAMESPACE"
+    exit 0
+  fi
 fi
 
 # --- Prerequisites ---
@@ -97,7 +149,7 @@ if ! command -v gh >/dev/null 2>&1; then
   fi
   echo "✓ gh CLI installed"
 fi
-if ! gh auth status >/dev/null 2>&1; then
+if ! gh auth token >/dev/null 2>&1; then
   echo "ERROR: gh CLI not authenticated. Run: gh auth login"
   exit 1
 fi
@@ -306,13 +358,17 @@ fi
 
 # --- Step 4c: Create PostgreSQL cluster ---
 echo "Creating PostgreSQL cluster for Automation Orchestrator..."
-EXISTING_PW=$(kubectl get secret orchestrator-postgres-secret -n "$NAMESPACE" \
-  -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
-if [ -n "$EXISTING_PW" ]; then
-  PG_PASSWORD="$EXISTING_PW"
-else
-  PG_PASSWORD="$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
+
+# If a PVC from a prior install exists, delete the cluster and PVC so postgres
+# reinitializes from scratch. This ensures the AO admin password in the
+# initial-admin-password secret matches what the migration job writes to the DB.
+if kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
+  echo "  Existing postgres data found — deleting cluster and PVC for fresh init..."
+  kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
+  kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" 2>/dev/null || true
 fi
+
+PG_PASSWORD="$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
 
 kubectl apply -f - <<EOF
 ---
@@ -528,6 +584,13 @@ kubectl patch serviceaccount default \
   -n "$NAMESPACE" --type=merge \
   -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
 
+# Patch deployment images to quay.io before restart — OLM may not have reconciled CSV yet
+echo "Patching operator deployment images to quay.io..."
+kubectl get deployment automation-orchestrator-operator-controller-manager \
+  -n "$NAMESPACE" -o json \
+  | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
+  | kubectl apply -f - 2>&1 | grep -v "^Warning:" || true
+
 kubectl -n "$NAMESPACE" rollout restart \
   deployment/automation-orchestrator-operator-controller-manager
 
@@ -536,12 +599,18 @@ kubectl rollout status deployment/automation-orchestrator-operator-controller-ma
   -n "$NAMESPACE" --timeout=5m
 echo "✓ Operator running"
 
-# --- Step 8: Second-pass install (full, with CR) ---
+# --- Step 8: Second-pass install (full, with CR) — apply without waiting, then monitor pods ---
+# Delete the initial admin password secret so the operator generates a fresh one.
+# If it's left over from a previous install the operator skips generation, leaving
+# a stale value that no longer matches the newly-initialized AO database.
+kubectl delete secret automation-orchestrator-initial-admin-password \
+  -n "$NAMESPACE" 2>/dev/null || true
 echo "Running full install (second pass)..."
 aapctl install automation-orchestrator \
   --kubeconfig "$KUBECONFIG_PATH" \
   --set automation-orchestrator-operator.namespace="$NAMESPACE" \
-  --set cloudnative-pg-operator.enabled=false
+  --set cloudnative-pg-operator.enabled=false \
+  --no-wait
 
 # --- Step 9: Patch CR with pull secret, restart ---
 echo "Patching AutomationOrchestrator CR..."
@@ -553,14 +622,46 @@ fi
 
 kubectl -n "$NAMESPACE" rollout restart \
   deployment/automation-orchestrator-operator-controller-manager
+echo "Waiting for operator to restart and reconcile..."
+kubectl -n "$NAMESPACE" rollout status \
+  deployment/automation-orchestrator-operator-controller-manager --timeout=5m
+
 
 # --- Step 10: Wait for pods, show credentials + route ---
 echo "Waiting for all pods to be ready (may take 10+ minutes)..."
-kubectl wait pods \
-  --all \
-  -n "$NAMESPACE" \
-  --for=condition=Ready \
-  --timeout=20m 2>/dev/null || true
+# After --no-wait install the operator pod may be the only Running pod; wait for AO
+# application pods to be scheduled before entering the progress loop.
+_settle=0
+while [ "$_settle" -lt 120 ]; do
+  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ')
+  [ "${_ao_total:-0}" -gt 2 ] && break
+  printf "\r  Waiting for AO pods to be scheduled... (%ds)    " "$_settle"
+  sleep 10
+  _settle=$((_settle + 10))
+done
+echo ""
+_AO_TIMEOUT=1200  # 20 minutes
+_AO_START=$(date +%s)
+while true; do
+  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ')
+  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep "Running" || true; } | wc -l | tr -d ' ')
+  _ao_problem=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -E "CrashLoopBackOff|Error|ImagePullBackOff" || true; } | wc -l | tr -d ' ')
+  _AO_ELAPSED=$(( $(date +%s) - _AO_START ))
+  printf "\r  Pods: %s/%s running" "$_ao_running" "$_ao_total"
+  [ "${_ao_problem:-0}" -gt 0 ] && printf "  (%s problem)" "$_ao_problem"
+  printf " (%ds elapsed)    " "$_AO_ELAPSED"
+  if [ "${_ao_total:-0}" -gt 0 ] && [ "${_ao_running:-0}" -eq "${_ao_total:-0}" ]; then
+    echo ""
+    break
+  fi
+  if [ "$_AO_ELAPSED" -ge "$_AO_TIMEOUT" ]; then
+    echo ""
+    echo "  ⚠ Pods not all ready after 20 minutes — continuing anyway"
+    echo "  Check: kubectl get pods -n $NAMESPACE"
+    break
+  fi
+  sleep 10
+done
 
 echo ""
 
@@ -587,4 +688,7 @@ else
   echo "  Password: kubectl get secret -n $NAMESPACE | grep admin-password"
 fi
 echo ""
-echo "  Status:   kubectl get pods -n $NAMESPACE"
+echo "Pod Status:"
+kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+  | awk 'NF {printf "  %-50s %s\n", $1, $3}' \
+  || echo "  (no pods found)"
