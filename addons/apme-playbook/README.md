@@ -17,21 +17,19 @@ This addon uses the **official APME EAP welcome pack playbooks** adapted for aap
 
 ### Prerequisites
 
-Install Ansible and required collections:
-
-```bash
-# Install Ansible
-pip install ansible
-
-# Collections are auto-installed by deploy.sh, or install manually:
-ansible-galaxy collection install -r addons/apme-playbook/requirements.yml
-```
-
-Other prerequisites (auto-checked by deploy.sh):
+**System requirements** (must be installed manually):
+- `python3` (3.8 or later)
 - `kubectl` or `oc`
 - `helm` (3.10 or later)
 - `skopeo`
 - AAP deployed (`aap-demo deploy`)
+
+**Ansible setup** (automated):
+The deploy script automatically sets up a Python virtual environment at `~/.aap-demo/apme-playbook-venv` with:
+- Latest Ansible
+- Required Ansible collections (kubernetes.core, community.okd, community.general)
+
+No manual Ansible installation or collection setup required!
 
 ### Deploy
 
@@ -40,11 +38,15 @@ aap-demo enable apme-playbook
 ```
 
 This will:
-1. Check prerequisites (Ansible, collections, tools)
-2. Auto-discover your aap-demo environment
-3. Generate playbook vars at `~/.aap-demo/apme-playbook-vars.yml`
-4. Run Ansible playbook to deploy APME
-5. Display next steps
+1. Check system prerequisites (kubectl, helm, skopeo)
+2. Set up Python virtual environment with Ansible (if not exists)
+3. Install Ansible collections in venv
+4. Auto-discover your aap-demo environment
+5. Generate playbook vars at `~/.aap-demo/apme-playbook-vars.yml`
+6. Run Ansible playbook to deploy APME
+7. Display next steps
+
+**First run** takes longer (~2-3 minutes) to set up the virtual environment. Subsequent runs reuse the existing venv and are faster.
 
 ### Check Status
 
@@ -58,6 +60,14 @@ kubectl get route -n apme
 
 ```bash
 aap-demo disable apme-playbook
+```
+
+This removes the APME namespace but preserves the virtual environment for future use.
+
+**To completely remove everything** (including venv):
+```bash
+aap-demo disable apme-playbook
+rm -rf ~/.aap-demo/apme-playbook-venv
 ```
 
 ## Architecture
@@ -191,13 +201,30 @@ addons/apme-playbook/
 
 ## Troubleshooting
 
+### Python venv creation fails
+
+**Symptom**: `python3 not found` or venv module errors
+
+**Solution**:
+```bash
+# macOS
+brew install python3
+
+# Verify
+python3 --version  # Should be 3.8 or later
+```
+
 ### Ansible collection missing
 
 **Symptom**: `ERROR! couldn't resolve module/action 'kubernetes.core.k8s'`
 
+**Cause**: Virtual environment was corrupted or collections install failed
+
 **Solution**:
 ```bash
-ansible-galaxy collection install -r addons/apme-playbook/requirements.yml
+# Remove and recreate venv
+rm -rf ~/.aap-demo/apme-playbook-venv
+aap-demo enable apme-playbook  # Will recreate venv
 ```
 
 ### Playbook fails with "AAP route not found"

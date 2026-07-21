@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-deploy}"
 NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-playbook-vars.yml"
+VENV_DIR="$HOME/.aap-demo/apme-playbook-venv"
 
 # Color output
 RED='\033[0;31m'
@@ -26,8 +27,53 @@ die() { error "$*"; exit 1; }
 # Prerequisites
 # ---------------------------------------------------------------------------
 
+setup_venv() {
+  info "Setting up Python virtual environment..."
+
+  # Check for Python 3
+  if ! command -v python3 &>/dev/null; then
+    die "python3 not found. Please install Python 3.8 or later."
+  fi
+
+  local python_version
+  python_version=$(python3 --version | awk '{print $2}')
+  info "Found python3 $python_version"
+
+  # Create venv if it doesn't exist
+  if [ ! -d "$VENV_DIR" ]; then
+    info "Creating virtual environment at $VENV_DIR"
+    python3 -m venv "$VENV_DIR"
+  else
+    info "Using existing virtual environment at $VENV_DIR"
+  fi
+
+  # Activate venv
+  # shellcheck disable=SC1091
+  source "$VENV_DIR/bin/activate"
+  info "Virtual environment activated"
+
+  # Upgrade pip
+  pip install --quiet --upgrade pip
+
+  # Install Ansible if not present or upgrade if present
+  if ! command -v ansible-playbook &>/dev/null; then
+    info "Installing Ansible in virtual environment..."
+    pip install --quiet ansible
+  else
+    local ansible_version
+    ansible_version=$(ansible-playbook --version | head -1 | awk '{print $2}')
+    info "Ansible $ansible_version already installed in venv"
+  fi
+
+  # Install Ansible collections
+  info "Installing Ansible collections..."
+  ansible-galaxy collection install -r "$SCRIPT_DIR/requirements.yml" --force
+
+  info "Virtual environment setup complete"
+}
+
 check_prerequisites() {
-  info "Checking prerequisites..."
+  info "Checking system prerequisites..."
 
   # Check kubectl
   if ! command -v kubectl &>/dev/null; then
@@ -37,29 +83,6 @@ check_prerequisites() {
   # Check cluster connectivity
   if ! kubectl cluster-info &>/dev/null; then
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
-  fi
-
-  # Check ansible-playbook
-  if ! command -v ansible-playbook &>/dev/null; then
-    die "ansible-playbook not found. Install with: pip install ansible"
-  fi
-
-  # Check Ansible version
-  local ansible_version
-  ansible_version=$(ansible-playbook --version | head -1 | awk '{print $2}')
-  info "Found ansible-playbook $ansible_version"
-
-  # Check Ansible collections
-  if ! ansible-galaxy collection list | grep -q "kubernetes.core"; then
-    warn "kubernetes.core collection not found"
-    info "Installing required collections..."
-    ansible-galaxy collection install -r "$SCRIPT_DIR/requirements.yml"
-  fi
-
-  if ! ansible-galaxy collection list | grep -q "community.okd"; then
-    warn "community.okd collection not found"
-    info "Installing required collections..."
-    ansible-galaxy collection install -r "$SCRIPT_DIR/requirements.yml"
   fi
 
   # Check helm
@@ -77,7 +100,10 @@ check_prerequisites() {
     warn "oc CLI not found (kubectl will be used instead)"
   fi
 
-  info "All prerequisites satisfied"
+  info "System prerequisites satisfied"
+
+  # Setup Python venv with Ansible and collections
+  setup_venv
 }
 
 # ---------------------------------------------------------------------------
@@ -144,7 +170,7 @@ discover_environment() {
   fi
 
   # 6. AAP admin password
-  AAP_PASSWORD=$(kubectl get secret -n aap-operator "${AAP_CR_NAME}" -o jsonpath='{.data.admin_password}' 2>/dev/null | base64 -d || echo "")
+  AAP_PASSWORD=$(kubectl get secret -n aap-operator "${AAP_CR_NAME}-admin-password" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
   if [ -z "$AAP_PASSWORD" ]; then
     die "Could not retrieve AAP admin password from secret"
   fi
@@ -234,6 +260,9 @@ deploy() {
 
   cd "$SCRIPT_DIR"
 
+  # Set roles path so Ansible can find the roles directory
+  export ANSIBLE_ROLES_PATH="${SCRIPT_DIR}/roles"
+
   # Run the playbook
   ansible-playbook playbooks/deploy_apme_portal.yml \
     -e "@$VARS_FILE" \
@@ -277,6 +306,12 @@ delete() {
   if [ -f "$VARS_FILE" ]; then
     info "Removing vars file: $VARS_FILE"
     rm -f "$VARS_FILE"
+  fi
+
+  # Optionally remove virtual environment
+  if [ -d "$VENV_DIR" ]; then
+    info "Virtual environment still exists at: $VENV_DIR"
+    info "To remove it completely: rm -rf $VENV_DIR"
   fi
 
   info "APME uninstalled successfully"
