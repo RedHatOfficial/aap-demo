@@ -1,0 +1,28 @@
+---
+# Install apme gateway Helm release in the same namespace as the portal
+
+- name: Validate APME gateway values file  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_gateway_helm_values_file }}"
+  register: apme_values_stat
+
+- name: Fail when apme-values.yaml is missing  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: "APME gateway values file not found: {{ apme_gateway_helm_values_file }}"
+  when: not apme_values_stat.stat.exists
+
+- name: Install or upgrade APME gateway Helm release  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.helm:
+    name: "{{ apme_helm_release_name }}"
+    chart_ref: "{{ apme_helm_chart_repo }}/{{ apme_helm_chart_name }}"
+    chart_version: "{{ apme_helm_chart_version }}"
+    release_namespace: "{{ openshift_project_name }}"
+    create_namespace: false
+    values_files:
+      - "{{ apme_gateway_helm_values_file }}"
+    wait: true
+    wait_timeout: "{{ apme_gateway_helm_timeout }}s"
+    api_key: "{{ openshift_token }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ apme_gateway_helm_validate_certs }}"
+  register: apme_gateway_helm_result

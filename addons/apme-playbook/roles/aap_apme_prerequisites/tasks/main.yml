@@ -1,0 +1,80 @@
+---
+# AAP OAuth application + secrets-rhaap-portal (Gateway API)
+
+- name: Validate required AAP variables  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - aap_host is defined and aap_host | length > 0
+      - >-
+        (aap_username is defined and aap_username | length > 0 and aap_password is defined and aap_password | length > 0)
+        or (aap_token is defined and aap_token | length > 0)
+    fail_msg: >-
+      Set aap_host and either aap_username/aap_password (recommended) or aap_token (admin bearer).
+      Deploy auto-creates aap_api_token when it is not set in vars.
+
+- name: Normalize AAP host URL  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_host_normalized: "{{ aap_host | regex_replace('/$', '') }}"
+
+- name: Set OAuth redirect URI  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_oauth_redirect_uri: "{{ portal_url }}/api/auth/rhaap/handler/frame"
+
+- name: Include OAuth application tasks  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: create_oauth_app.yml
+
+- name: Include API token tasks  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: create_api_token.yml
+
+- name: Create or update secrets-rhaap-portal  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
+    namespace: "{{ openshift_project_name }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ aap_apme_prerequisites_openshift_secret_name }}"
+      type: Opaque
+      stringData:
+        oauth-client-id: "{{ oauth_client_id }}"
+        oauth-client-secret: "{{ oauth_client_secret }}"
+        aap-host-url: "{{ aap_host_normalized }}"
+        aap-token: "{{ aap_api_token }}"
+  no_log: true
+  register: portal_oauth_secret_result
+
+- name: Check whether portal deployment already exists  # noqa: no-handler var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ portal_helm_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    api_key: "{{ openshift_token }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
+  register: portal_deployment_check
+  when: portal_oauth_secret_result is changed
+
+- name: Restart portal deployment when OAuth credentials changed  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    api_key: "{{ openshift_token }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
+    kind: Deployment
+    api_version: apps/v1
+    namespace: "{{ openshift_project_name }}"
+    name: "{{ portal_helm_release_name }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              apme.eap.welcome.pack/restartedAt: "{{ ansible_date_time.iso8601 }}"
+  when:
+    - portal_oauth_secret_result is changed
+    - portal_deployment_check.resources | default([]) | length > 0

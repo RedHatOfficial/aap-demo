@@ -1,0 +1,172 @@
+---
+# Push prototype OCI pack to the target registry (replaces push-apme-oci.sh)
+
+- name: Validate plugin SHA and registry  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - plugin_sha is defined and plugin_sha | length > 0
+      - oci_registry is defined and oci_registry | length > 0
+    fail_msg: "Set plugin_sha and oci_registry in vars."
+
+- name: Normalize OCI registry host  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    oci_registry_normalized: "{{ oci_registry | regex_replace('/$', '') }}"
+
+- name: Detect OpenShift integrated registry target  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_oci_openshift_registry: >-
+      {{ 'openshift-image-registry' in oci_registry_normalized
+         or 'image-registry' in oci_registry_normalized }}
+
+- name: Use explicit OCI tarball when provided  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ apme_oci_tar }}"
+  when:
+    - apme_oci_tar is defined
+    - apme_oci_tar | length > 0
+
+- name: Search for OCI tarball in welcome package directories  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.find:
+    paths: "{{ apme_oci_push_search_dirs }}"
+    patterns:
+      - "apme-prototype-plugins-{{ plugin_sha }}*.oci*.tar.gz"
+      - "early-access-plugins-prototype-apme-{{ plugin_sha }}*.oci*.tar.gz"
+    recurse: false
+  register: oci_tar_find
+  when:
+    - apme_oci_tar_resolved is not defined or apme_oci_tar_resolved | length == 0
+
+- name: Set resolved OCI tarball from search  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ oci_tar_find.files | map(attribute='path') | first }}"
+  when:
+    - apme_oci_tar_resolved is not defined
+    - oci_tar_find.files | default([]) | length > 0
+
+- name: Fail when OCI tarball is not found  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: >-
+      OCI pack not found for plugin_sha={{ plugin_sha }}.
+      Download from the EAP welcome package or set apme_oci_tar.
+  when: apme_oci_tar_resolved is not defined or apme_oci_tar_resolved | length == 0
+
+- name: Set OCI image reference  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_oci_image_reference: "{{ apme_oci_push_image_name }}:{{ plugin_sha }}"
+
+- name: Check whether plugin image already exists in OpenShift namespace  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: image.openshift.io/v1
+    kind: ImageStreamTag
+    namespace: "{{ openshift_project_name }}"
+    name: "{{ apme_oci_image_reference }}"
+    api_key: "{{ openshift_token }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: existing_oci_image
+  when: apme_oci_openshift_registry | bool
+  failed_when: false
+
+- name: Skip OCI push when image already exists  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      Reusing existing image {{ openshift_project_name }}/{{ apme_oci_image_reference }}.
+      Set apme_oci_push_force=true to push again.
+  when:
+    - apme_oci_openshift_registry | bool
+    - existing_oci_image.resources | default([]) | length > 0
+    - not (apme_oci_push_force | default(false) | bool)
+
+- name: Push OCI archive to registry  # noqa: var-naming[no-role-prefix]
+  when:
+    - apme_oci_openshift_registry | bool
+    - existing_oci_image.resources | default([]) | length == 0 or (apme_oci_push_force | default(false) | bool)
+  block:
+    - name: Resolve OpenShift registry auth file path  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        apme_oci_registry_authfile_resolved: >-
+          {{ registry_authfile | default((playbook_dir | dirname) + '/.rendered/oc-registry-auth.json') }}
+
+    - name: Ensure local directory for registry auth file exists  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.file:
+        path: "{{ apme_oci_registry_authfile_resolved | dirname }}"
+        state: directory
+        mode: "0755"
+
+    - name: Log in to OpenShift integrated registry  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - oc
+          - registry
+          - login
+          - --to={{ apme_oci_registry_authfile_resolved }}
+      environment:
+        KUBECONFIG: "{{ apme_oci_kubeconfig | default(lookup('env', 'KUBECONFIG')) }}"
+      changed_when: false
+
+    - name: Resolve external OpenShift registry hostname for push  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - oc
+          - registry
+          - info
+      register: openshift_registry_info
+      changed_when: false
+
+    - name: Set registry push destination  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        apme_oci_push_destination: >-
+          docker://{{ openshift_registry_info.stdout | trim }}/{{ openshift_project_name }}/{{ apme_oci_image_reference }}
+
+    - name: Display OCI source and target  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.debug:
+        msg:
+          - "Loading: {{ apme_oci_tar_resolved }}"
+          - "Target: {{ apme_oci_push_destination }}"
+
+    - name: Copy OCI archive to OpenShift registry with skopeo  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - "{{ apme_oci_push_skopeo_binary }}"
+          - copy
+          - "docker-archive:{{ apme_oci_tar_resolved }}"
+          - "{{ apme_oci_push_destination }}"
+          - "--dest-authfile={{ apme_oci_registry_authfile_resolved }}"
+          - --dest-tls-verify=false
+      register: skopeo_push_result
+      changed_when: skopeo_push_result.rc == 0
+      no_log: true
+
+- name: Push OCI archive to external registry with skopeo  # noqa: var-naming[no-role-prefix]
+  when: not (apme_oci_openshift_registry | bool)
+  block:
+    - name: Set external registry push destination  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        apme_oci_push_destination: >-
+          docker://{{ oci_registry_normalized }}/{{ apme_oci_image_reference }}
+
+    - name: Display OCI source and target  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.debug:
+        msg:
+          - "Loading: {{ apme_oci_tar_resolved }}"
+          - "Target: {{ apme_oci_push_destination }}"
+
+    - name: Build skopeo command for external registry push  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        apme_oci_skopeo_argv: >-
+          {{
+            [
+              apme_oci_push_skopeo_binary,
+              'copy',
+              'docker-archive:' + apme_oci_tar_resolved,
+              apme_oci_push_destination
+            ]
+            + (['--dest-authfile=' + registry_authfile] if registry_authfile is defined and registry_authfile | length > 0 else [])
+          }}
+
+    - name: Copy OCI archive to external registry with skopeo  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv: "{{ apme_oci_skopeo_argv }}"
+      register: skopeo_external_push_result
+      changed_when: skopeo_external_push_result.rc == 0
+      no_log: "{{ registry_authfile is defined and registry_authfile | length > 0 }}"

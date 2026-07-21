@@ -1,0 +1,45 @@
+---
+# Create secrets-scm for GitHub OAuth App + GitHub App (replaces setup-github-secrets.sh)
+
+- name: Validate GitHub secret variables  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - github_oauth_client_id is defined and github_oauth_client_id | length > 0
+      - github_oauth_client_secret is defined and github_oauth_client_secret | length > 0
+      - github_app_id is defined and github_app_id | length > 0
+      - github_app_client_id is defined and github_app_client_id | length > 0
+      - github_app_client_secret is defined and github_app_client_secret | length > 0
+      - github_app_private_key_path is defined and github_app_private_key_path | length > 0
+      - github_token is defined and github_token | length > 0
+    fail_msg: >-
+      configure_github_secrets is true but one or more github_* variables are missing.
+      See vars/apme_portal.yml.example.
+
+- name: Read GitHub App private key  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.slurp:
+    src: "{{ github_app_private_key_path }}"
+  register: github_app_private_key_file
+  no_log: true
+
+- name: Create or update secrets-scm  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    namespace: "{{ openshift_project_name }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ apme_scm_secrets_secret_name }}"
+      type: Opaque
+      stringData:
+        github-oauth-client-id: "{{ github_oauth_client_id }}"
+        github-oauth-client-secret: "{{ github_oauth_client_secret }}"
+        github-app-id: "{{ github_app_id }}"
+        github-app-client-id: "{{ github_app_client_id }}"
+        github-app-client-secret: "{{ github_app_client_secret }}"
+        github-app-private-key: "{{ github_app_private_key_file.content | b64decode }}"
+        github-token: "{{ github_token }}"
+  no_log: true
