@@ -710,7 +710,7 @@ metadata:
   name: automation-orchestrator-operator
   namespace: ${NAMESPACE}
 spec:
-  channel: candidate
+  channel: early-access
   installPlanApproval: Automatic
   name: automation-orchestrator-operator
   source: cs-automation-orchestrator
