@@ -68,11 +68,6 @@
         msg: "kubernetes.core collection not found. Run: ansible-playbook playbooks/setup.yml"
       when: "'kubernetes.core' not in collections_list.stdout"
 
-    - name: Fail when community.okd collection is missing
-      ansible.builtin.fail:
-        msg: "community.okd collection not found. Run: ansible-playbook playbooks/setup.yml"
-      when: "'community.okd' not in collections_list.stdout"
-
     - name: Verify helm CLI is available
       ansible.builtin.command:
         cmd: helm version --short
