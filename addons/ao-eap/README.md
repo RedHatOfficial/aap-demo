@@ -15,24 +15,21 @@ The addon prompts for the container registry path on first run. The registry loc
 
 ### Interactive Setup
 
-The addon requires two pieces of information from your Red Hat contact:
-1. Registry path (base path only)
-2. Index image reference (full image URL with tag)
-
 ```bash
-# Set the index image (provided by your Red Hat contact)
-export AO_INDEX_IMAGE="<index-image-provided-by-red-hat>"
-
-# Run the deployment
 ./deploy.sh
 ```
 
-On first run, you'll be prompted for:
-- Registry path (base path only, provided by your Red Hat contact)
+The addon will prompt for two pieces of information from your Red Hat contact:
 
-**Important**: Enter only the base registry path, not the full image reference with tag.
+1. **Registry path** (base path only)
+   - Example prompt: `Registry path: `
+   - Enter the base path, not a full image reference
 
-The registry path is saved to `~/.aap-demo/ao-registry` and reused on subsequent runs.
+2. **Index image** (full image URL with tag)
+   - Example prompt: `Index image (full URL with tag): `
+   - Enter the complete operator index image reference
+
+The registry path is saved to `~/.aap-demo/ao-registry` and reused on subsequent runs. The index image can also be provided via the `AO_INDEX_IMAGE` environment variable to skip the prompt.
 
 ### Authentication
 
@@ -92,13 +89,15 @@ The pull secret contains credentials for multiple Red Hat registries including `
 
 ### Environment Variables
 
-For automation or CI/CD, provide both required environment variables:
+For automation or CI/CD, provide both values via environment variables to skip prompts:
 
 ```bash
 export AO_INDEX_IMAGE="<index-image-provided-by-red-hat>"
 export AO_REGISTRY="<registry-path-provided-by-red-hat>"
 ./deploy.sh
 ```
+
+Both variables are optional - if not set, the addon will prompt interactively.
 
 
 ## Usage

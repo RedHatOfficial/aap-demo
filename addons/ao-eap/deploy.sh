@@ -416,18 +416,20 @@ kubectl label namespace "$MARKETPLACE_NAMESPACE" \
 echo "✓ Namespaces ready"
 
 # --- Step 4: Pull secret + CatalogSource ---
-# AO_INDEX_IMAGE must be provided by user via environment variable
+# Prompt for index image if not provided via environment variable
 if [ -z "${AO_INDEX_IMAGE:-}" ]; then
   echo ""
-  echo "ERROR: AO_INDEX_IMAGE environment variable is required."
+  echo "Index Image Configuration"
   echo ""
-  echo "Your Red Hat point of contact will provide the index image reference."
+  echo "Your Red Hat point of contact will provide the full operator index image reference."
   echo ""
-  echo "Set it before running the addon:"
-  echo "  export AO_INDEX_IMAGE=\"<image-provided-by-red-hat>\""
-  echo "  aap-demo enable ao-eap"
+  read -r -p "Index image (full URL with tag): " AO_INDEX_IMAGE
   echo ""
-  exit 1
+
+  if [ -z "$AO_INDEX_IMAGE" ]; then
+    echo "ERROR: Index image is required."
+    exit 1
+  fi
 fi
 
 echo "Creating pull secret and CatalogSource..."
