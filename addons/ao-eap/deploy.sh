@@ -798,7 +798,7 @@ done
 echo ""
 
 echo "Linking pull secret to operator..."
-kubectl get secret quay-aap-viewer -n "$MARKETPLACE_NAMESPACE" -o json \
+kubectl get secret ao-registry-pull-secret -n "$MARKETPLACE_NAMESPACE" -o json \
   | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid,
              .metadata.creationTimestamp, .metadata.annotations,
              .metadata.managedFields)' \
@@ -806,11 +806,11 @@ kubectl get secret quay-aap-viewer -n "$MARKETPLACE_NAMESPACE" -o json \
 
 kubectl patch serviceaccount automation-orchestrator-operator-controller-manager \
   -n "$NAMESPACE" --type=merge \
-  -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
+  -p '{"imagePullSecrets":[{"name":"ao-registry-pull-secret"}]}' 2>/dev/null || true
 
 kubectl patch serviceaccount default \
   -n "$NAMESPACE" --type=merge \
-  -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
+  -p '{"imagePullSecrets":[{"name":"ao-registry-pull-secret"}]}' 2>/dev/null || true
 
 # Patch deployment images to quay.io before restart — OLM may not have reconciled CSV yet
 echo "Patching operator deployment images..."
@@ -855,7 +855,7 @@ echo "Patching AutomationOrchestrator CR..."
 AO_CR=$(kubectl get automationorchestrator -n "$NAMESPACE" -o name 2>/dev/null | head -1 || echo "")
 if [ -n "$AO_CR" ]; then
   kubectl patch "$AO_CR" -n "$NAMESPACE" --type=merge \
-    -p '{"spec":{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}}'
+    -p '{"spec":{"imagePullSecrets":[{"name":"ao-registry-pull-secret"}]}}'
 fi
 
 kubectl -n "$NAMESPACE" rollout restart \
