@@ -2628,7 +2628,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-playbook"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
