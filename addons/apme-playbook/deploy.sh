@@ -55,15 +55,13 @@ setup_venv() {
   # Upgrade pip
   pip install --quiet --upgrade pip
 
-  # Install Ansible if not present or upgrade if present
-  if ! command -v ansible-playbook &>/dev/null; then
-    info "Installing Ansible in virtual environment..."
-    pip install --quiet ansible
-  else
-    local ansible_version
-    ansible_version=$(ansible-playbook --version | head -1 | awk '{print $2}')
-    info "Ansible $ansible_version already installed in venv"
-  fi
+  # Install Ansible and required Python libraries from requirements.txt
+  info "Installing Ansible and Python dependencies in venv..."
+  pip install --quiet -r "$SCRIPT_DIR/requirements.txt"
+
+  local ansible_version
+  ansible_version=$(ansible-playbook --version | head -1 | awk '{print $2}')
+  info "Ansible $ansible_version installed with dependencies"
 
   # Install Ansible collections
   info "Installing Ansible collections..."

@@ -26,10 +26,12 @@ This addon uses the **official APME EAP welcome pack playbooks** adapted for aap
 
 **Ansible setup** (automated):
 The deploy script automatically sets up a Python virtual environment at `~/.aap-demo/apme-playbook-venv` with:
-- Latest Ansible
+- Latest Ansible (2.15+)
+- Required Python libraries (PyYAML, kubernetes, openshift, requests, jmespath)
 - Required Ansible collections (kubernetes.core, community.okd, community.general)
 
-No manual Ansible installation or collection setup required!
+All dependencies are installed from `requirements.txt` and `requirements.yml`.  
+No manual Ansible installation or setup required!
 
 ### Deploy
 

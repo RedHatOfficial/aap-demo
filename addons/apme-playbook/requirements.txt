@@ -1,0 +1,12 @@
+# Python requirements for APME playbook addon
+# Installed in virtual environment at ~/.aap-demo/apme-playbook-venv
+
+# Ansible
+ansible>=2.15
+
+# Ansible module dependencies
+PyYAML>=5.4          # Required by kubernetes.core modules
+kubernetes>=26.0     # Required by kubernetes.core modules
+openshift>=0.13      # Required by community.okd modules
+requests>=2.28       # Required by URI/API modules
+jmespath>=1.0        # Required for JSON query in tasks
