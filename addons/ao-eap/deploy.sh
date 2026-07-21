@@ -4,11 +4,12 @@ set -euo pipefail
 # Deploy Automation Orchestrator Early Access to aap-demo
 #
 # Automates the full 10-step AO EAP install using aapctl CLI.
-# Requires Quay credentials from your Red Hat point of contact.
+# Prompts for registry location on first run. Uses cluster pull secret for authentication.
 #
 # Prerequisites:
-#   1. Quay.io credentials (prompted on first run, saved to ~/.aap-demo/)
-#   2. aap-demo cluster running with OLM installed (aap-demo deploy)
+#   1. Registry path for AO images (provided by Red Hat contact)
+#   2. Cluster pull secret with credentials for the registry
+#   3. aap-demo cluster running with OLM installed (aap-demo deploy)
 #
 # Usage:
 #   ./deploy.sh          # Install Automation Orchestrator EAP
@@ -26,6 +27,9 @@ else
 fi
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
+# Registry configuration file
+AO_REGISTRY_FILE="${AO_REGISTRY_FILE:-$HOME/.aap-demo/ao-registry}"
+# Legacy files for cleanup
 QUAY_USERNAME_FILE="${QUAY_USERNAME_FILE:-$HOME/.aap-demo/quay-username}"
 QUAY_TOKEN_FILE="${QUAY_TOKEN_FILE:-$HOME/.aap-demo/quay-token}"
 AAPCTL_BIN="/usr/local/bin/aapctl"
@@ -57,6 +61,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
 
   kubectl delete catalogsource cs-automation-orchestrator \
     -n "$MARKETPLACE_NAMESPACE" 2>/dev/null || true
+  kubectl delete secret ao-registry-pull-secret \
+    -n "$MARKETPLACE_NAMESPACE" 2>/dev/null || true
+  # Clean up legacy secret if it exists
   kubectl delete secret quay-aap-viewer \
     -n "$MARKETPLACE_NAMESPACE" 2>/dev/null || true
   # Strip finalizers so namespace doesn't hang when operator is already gone
@@ -176,38 +183,82 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "✓ jq installed"
 fi
 
-# --- Step 1: Check credentials ---
-if [ -f "$QUAY_USERNAME_FILE" ] && [ -f "$QUAY_TOKEN_FILE" ]; then
-  QUAY_USERNAME="$(cat "$QUAY_USERNAME_FILE")"
-  QUAY_TOKEN="$(cat "$QUAY_TOKEN_FILE")"
-  echo "✓ Quay credentials found"
-else
-  echo "Quay credentials required for Automation Orchestrator Early Access."
-  echo ""
-  echo "  1. Your Red Hat point of contact will grant your Quay.io account"
-  echo "     read access to the quay.io/aap organization."
-  echo "  2. Log in at https://quay.io"
-  echo "  3. Go to Account Settings > Generate Encrypted Password"
-  echo "     (https://quay.io/user/<you>?tab=settings)"
-  echo "  4. Re-enter your password when prompted"
-  echo "  5. Use your Quay username below, and the encrypted password as the token"
-  echo ""
-  read -r -p "Quay.io username: " QUAY_USERNAME
-  read -r -s -p "Quay.io encrypted password: " QUAY_TOKEN
-  echo ""
+# --- Step 1: Configure registry ---
+configure_registry() {
+  # Check for existing configuration
+  if [ -f "$AO_REGISTRY_FILE" ]; then
+    AO_REGISTRY="$(cat "$AO_REGISTRY_FILE")"
+    echo "✓ Using registry: $AO_REGISTRY"
+    return 0
+  fi
 
-  if [ -z "$QUAY_USERNAME" ] || [ -z "$QUAY_TOKEN" ]; then
-    echo "ERROR: Both username and token are required."
+  # Check environment variable
+  if [ -n "${AO_REGISTRY:-}" ]; then
+    mkdir -p "$(dirname "$AO_REGISTRY_FILE")"
+    echo "$AO_REGISTRY" > "$AO_REGISTRY_FILE"
+    chmod 600 "$AO_REGISTRY_FILE"
+    echo "✓ Using registry from environment: $AO_REGISTRY"
+    return 0
+  fi
+
+  # Clean up legacy credential files (no longer needed with pull secret auth)
+  if [ -f "$QUAY_USERNAME_FILE" ] || [ -f "$QUAY_TOKEN_FILE" ]; then
+    echo "Removing legacy Quay credential files (credentials now come from cluster pull secret)..."
+    rm -f "$QUAY_USERNAME_FILE" "$QUAY_TOKEN_FILE"
+  fi
+
+  # Prompt for registry configuration
+  echo "Container Registry Configuration for Automation Orchestrator"
+  echo ""
+  echo "The Automation Orchestrator Early Access containers are distributed"
+  echo "via a private container registry. Your Red Hat point of contact will"
+  echo "provide the registry path."
+  echo ""
+  echo "Example: registry.redhat.io/ansible-automation-platform"
+  echo ""
+  echo "Note: Registry credentials will be extracted from your cluster's"
+  echo "pull secret. Ensure your cluster has access to the registry."
+  echo ""
+  read -r -p "Registry path: " AO_REGISTRY
+
+  if [ -z "$AO_REGISTRY" ]; then
+    echo "ERROR: Registry path is required."
     exit 1
   fi
 
-  mkdir -p "$(dirname "$QUAY_USERNAME_FILE")"
-  echo "$QUAY_USERNAME" >"$QUAY_USERNAME_FILE"
-  chmod 600 "$QUAY_USERNAME_FILE"
-  echo "$QUAY_TOKEN" >"$QUAY_TOKEN_FILE"
-  chmod 600 "$QUAY_TOKEN_FILE"
-  echo "✓ Quay credentials saved"
-fi
+  # Save configuration
+  mkdir -p "$(dirname "$AO_REGISTRY_FILE")"
+  echo "$AO_REGISTRY" > "$AO_REGISTRY_FILE"
+  chmod 600 "$AO_REGISTRY_FILE"
+  echo "✓ Registry configuration saved to $AO_REGISTRY_FILE"
+}
+
+configure_registry
+
+# Extract registry credentials from cluster pull secret
+extract_pull_secret() {
+  local registry_host
+  registry_host=$(echo "$AO_REGISTRY" | cut -d'/' -f1)
+
+  if kubectl get secret pull-secret -n openshift-config &>/dev/null; then
+    kubectl get secret pull-secret -n openshift-config \
+      -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d > /tmp/ao-pull-secret.json
+
+    # Check if credentials exist for this registry
+    if jq -e ".auths.\"$registry_host\"" /tmp/ao-pull-secret.json &>/dev/null; then
+      echo "✓ Using pull secret credentials for $registry_host"
+      rm -f /tmp/ao-pull-secret.json
+      return 0
+    fi
+    rm -f /tmp/ao-pull-secret.json
+  fi
+
+  echo "ERROR: No credentials found in cluster pull secret for $registry_host"
+  echo "Ensure your cluster has registry credentials configured."
+  exit 1
+}
+
+extract_pull_secret
 
 # --- Step 2: Install aapctl ---
 if ! command -v aapctl >/dev/null 2>&1; then
@@ -287,6 +338,7 @@ fi
 for _ns in olm openshift-marketplace; do
   [ "$_ns" = "$MARKETPLACE_NAMESPACE" ] && continue
   kubectl delete catalogsource cs-automation-orchestrator -n "$_ns" 2>/dev/null || true
+  kubectl delete secret ao-registry-pull-secret -n "$_ns" 2>/dev/null || true
   kubectl delete secret quay-aap-viewer -n "$_ns" 2>/dev/null || true
 done
 
@@ -310,15 +362,21 @@ kubectl label namespace "$MARKETPLACE_NAMESPACE" \
 echo "✓ Namespaces ready"
 
 # --- Step 4: Pull secret + CatalogSource ---
-AO_INDEX_IMAGE="${AO_INDEX_IMAGE:-quay.io/aap/ansible-automation-platform/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a}"
+AO_INDEX_IMAGE="${AO_INDEX_IMAGE:-${AO_REGISTRY}/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a}"
 
 echo "Creating pull secret and CatalogSource..."
-kubectl create secret docker-registry quay-aap-viewer \
-  --docker-server=quay.io \
-  --docker-username="$QUAY_USERNAME" \
-  --docker-password="$QUAY_TOKEN" \
-  -n "$MARKETPLACE_NAMESPACE" \
-  --dry-run=client -o yaml | kubectl apply -f -
+# Copy registry credentials from cluster pull secret
+registry_host=$(echo "$AO_REGISTRY" | cut -d'/' -f1)
+
+# Extract just the credentials for this registry from the pull secret
+kubectl get secret pull-secret -n openshift-config \
+  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | \
+  jq "{\"auths\": {\"$registry_host\": .auths[\"$registry_host\"]}}" | \
+  kubectl create secret generic ao-registry-pull-secret \
+    --from-file=.dockerconfigjson=/dev/stdin \
+    --type=kubernetes.io/dockerconfigjson \
+    -n "$MARKETPLACE_NAMESPACE" \
+    --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl apply -f - <<EOF
 ---
@@ -332,7 +390,7 @@ spec:
   image: ${AO_INDEX_IMAGE}
   displayName: Automation Orchestrator
   secrets:
-  - quay-aap-viewer
+  - ao-registry-pull-secret
 EOF
 
 echo "Waiting for CatalogSource pod..."
@@ -622,7 +680,7 @@ echo "Patching CSV image references..."
 for _attempt in $(seq 1 5); do
   CSV_JSON=$(kubectl get "$CSV_NAME" -n "$NAMESPACE" -o json)
   _result=$(echo "$CSV_JSON" \
-    | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
+    | sed "s|registry.redhat.io/ansible-automation-platform|${AO_REGISTRY}|g" \
     | kubectl replace -f - 2>&1) && break
   if echo "$_result" | grep -q "conflict\|modified"; then
     echo "  [${_attempt}/5] conflict — retrying..."
@@ -669,12 +727,12 @@ kubectl patch serviceaccount default \
   -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
 
 # Patch deployment images to quay.io before restart — OLM may not have reconciled CSV yet
-echo "Patching operator deployment images to quay.io..."
+echo "Patching operator deployment images..."
 for _attempt in $(seq 1 5); do
   _dep_json=$(kubectl get deployment automation-orchestrator-operator-controller-manager \
     -n "$NAMESPACE" -o json)
   _result=$(echo "$_dep_json" \
-    | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
+    | sed "s|registry.redhat.io/ansible-automation-platform|${AO_REGISTRY}|g" \
     | kubectl replace -f - 2>&1) && break
   echo "$_result" | grep -q "conflict\|modified" && {
     echo "  [${_attempt}/5] conflict — retrying..."
