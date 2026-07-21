@@ -235,11 +235,12 @@ configure_registry() {
 
 configure_registry
 
-# Extract registry credentials from cluster pull secret
-extract_pull_secret() {
+# Extract or prompt for registry credentials
+setup_registry_credentials() {
   local registry_host
   registry_host=$(echo "$AO_REGISTRY" | cut -d'/' -f1)
 
+  # Try to extract from OpenShift global pull secret
   if kubectl get secret pull-secret -n openshift-config &>/dev/null; then
     kubectl get secret pull-secret -n openshift-config \
       -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d > /tmp/ao-pull-secret.json
@@ -248,17 +249,59 @@ extract_pull_secret() {
     if jq -e ".auths.\"$registry_host\"" /tmp/ao-pull-secret.json &>/dev/null; then
       echo "✓ Using pull secret credentials for $registry_host"
       rm -f /tmp/ao-pull-secret.json
+      REGISTRY_USERNAME=""
+      REGISTRY_PASSWORD=""
       return 0
     fi
     rm -f /tmp/ao-pull-secret.json
   fi
 
-  echo "ERROR: No credentials found in cluster pull secret for $registry_host"
-  echo "Ensure your cluster has registry credentials configured."
+  # Fallback: check for pull secret file in aap-demo directory
+  PULL_SECRET_FILE=""
+  for path in "${PULL_SECRET_PATH:-}" "$HOME/.aap-demo/pull-secret" "$HOME/.aap-demo/pull-secret.txt" "$HOME/.aap-demo/pull-secret.json"; do
+    if [ -n "$path" ] && [ -f "$path" ]; then
+      PULL_SECRET_FILE="$path"
+      break
+    fi
+  done
+
+  if [ -n "$PULL_SECRET_FILE" ]; then
+    # Check if pull secret contains credentials for this registry
+    if jq -e ".auths.\"$registry_host\"" "$PULL_SECRET_FILE" &>/dev/null; then
+      echo "✓ Using pull secret from $PULL_SECRET_FILE for $registry_host"
+      REGISTRY_USERNAME=""
+      REGISTRY_PASSWORD=""
+      PULL_SECRET_JSON="$PULL_SECRET_FILE"
+      return 0
+    fi
+  fi
+
+  # No pull secret found - provide instructions
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "ERROR: No pull secret found for $registry_host"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "To access Red Hat registries, you need to configure a pull secret."
+  echo ""
+  echo "Steps to configure:"
+  echo ""
+  echo "1. Download your pull secret from Red Hat:"
+  echo "   https://console.redhat.com/openshift/downloads#tool-pull-secret"
+  echo ""
+  echo "2. Save it to: ~/.aap-demo/pull-secret.txt"
+  echo ""
+  echo "3. Re-run: aap-demo enable ao-eap"
+  echo ""
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "For more details, see:"
+  echo "  https://access.redhat.com/RegistryAuthentication"
+  echo ""
   exit 1
 }
 
-extract_pull_secret
+setup_registry_credentials
 
 # --- Step 2: Install aapctl ---
 if ! command -v aapctl >/dev/null 2>&1; then
@@ -365,18 +408,36 @@ echo "✓ Namespaces ready"
 AO_INDEX_IMAGE="${AO_INDEX_IMAGE:-${AO_REGISTRY}/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a}"
 
 echo "Creating pull secret and CatalogSource..."
-# Copy registry credentials from cluster pull secret
 registry_host=$(echo "$AO_REGISTRY" | cut -d'/' -f1)
 
-# Extract just the credentials for this registry from the pull secret
-kubectl get secret pull-secret -n openshift-config \
-  -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | \
-  jq "{\"auths\": {\"$registry_host\": .auths[\"$registry_host\"]}}" | \
-  kubectl create secret generic ao-registry-pull-secret \
-    --from-file=.dockerconfigjson=/dev/stdin \
-    --type=kubernetes.io/dockerconfigjson \
+# Create secret from either OpenShift pull secret, file-based pull secret, or prompted credentials
+if kubectl get secret pull-secret -n openshift-config &>/dev/null && [ -z "$REGISTRY_USERNAME" ] && [ -z "$PULL_SECRET_JSON" ]; then
+  # OpenShift: Extract just the credentials for this registry from the cluster pull secret
+  kubectl get secret pull-secret -n openshift-config \
+    -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d | \
+    jq "{\"auths\": {\"$registry_host\": .auths[\"$registry_host\"]}}" | \
+    kubectl create secret generic ao-registry-pull-secret \
+      --from-file=.dockerconfigjson=/dev/stdin \
+      --type=kubernetes.io/dockerconfigjson \
+      -n "$MARKETPLACE_NAMESPACE" \
+      --dry-run=client -o yaml | kubectl apply -f -
+elif [ -n "$PULL_SECRET_JSON" ]; then
+  # MicroShift/CRC: Use pull secret file from ~/.aap-demo/
+  jq "{\"auths\": {\"$registry_host\": .auths[\"$registry_host\"]}}" "$PULL_SECRET_JSON" | \
+    kubectl create secret generic ao-registry-pull-secret \
+      --from-file=.dockerconfigjson=/dev/stdin \
+      --type=kubernetes.io/dockerconfigjson \
+      -n "$MARKETPLACE_NAMESPACE" \
+      --dry-run=client -o yaml | kubectl apply -f -
+else
+  # Fallback: Create secret from username/password (should not reach here with current logic)
+  kubectl create secret docker-registry ao-registry-pull-secret \
+    --docker-server="$registry_host" \
+    --docker-username="$REGISTRY_USERNAME" \
+    --docker-password="$REGISTRY_PASSWORD" \
     -n "$MARKETPLACE_NAMESPACE" \
     --dry-run=client -o yaml | kubectl apply -f -
+fi
 
 kubectl apply -f - <<EOF
 ---

@@ -25,14 +25,59 @@ The configuration is saved to `~/.aap-demo/ao-registry` and reused on subsequent
 
 ### Authentication
 
-Registry authentication is handled automatically via your cluster's pull secret:
+Registry authentication is handled automatically via your cluster's pull secret.
+
+#### OpenShift Clusters
+
+On OpenShift, verify the global pull secret exists:
 
 ```bash
-# Verify your cluster has registry credentials
 kubectl get secret pull-secret -n openshift-config
 ```
 
-The addon extracts credentials for the configured registry from the cluster's pull secret. Ensure your cluster has access to the registry before running the deployment.
+If you need to add registry credentials to an existing OpenShift cluster:
+
+```bash
+# Download your pull secret from https://console.redhat.com/openshift/downloads#tool-pull-secret
+oc set data secret/pull-secret -n openshift-config \
+  --from-file=.dockerconfigjson=~/Downloads/pull-secret.json
+```
+
+#### MicroShift Clusters
+
+MicroShift uses CRI-O's pull secret configuration. Configure it before starting MicroShift:
+
+```bash
+# 1. Download your pull secret from Red Hat
+#    https://console.redhat.com/openshift/downloads#tool-pull-secret
+
+# 2. Copy to CRI-O configuration directory
+sudo cp ~/Downloads/pull-secret.json /etc/crio/openshift-pull-secret
+sudo chmod 600 /etc/crio/openshift-pull-secret
+
+# 3. Restart services
+sudo systemctl restart crio
+sudo systemctl restart microshift
+```
+
+#### CRC (CodeReady Containers)
+
+Configure the pull secret when creating or recreating your CRC cluster:
+
+```bash
+crc stop
+crc config set pull-secret-file ~/Downloads/pull-secret.json
+crc start
+```
+
+#### Getting Your Pull Secret
+
+1. Log in to the Red Hat Hybrid Cloud Console
+2. Visit: https://console.redhat.com/openshift/downloads#tool-pull-secret
+3. Click "Download pull secret"
+4. Save to a secure location (e.g., `~/.aap-demo/pull-secret.json`)
+
+The pull secret contains credentials for multiple Red Hat registries including `registry.redhat.io`.
 
 ### Environment Variables
 
