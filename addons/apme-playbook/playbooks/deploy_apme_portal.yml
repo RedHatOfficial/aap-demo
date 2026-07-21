@@ -11,25 +11,6 @@
     apme_portal_helm_values_path: "{{ playbook_dir | dirname }}/.rendered/portal-apme-values.yaml"
 
   pre_tasks:
-    - name: Authenticate and generate token from username/password
-      community.okd.openshift_auth:
-        host: "{{ openshift_api_url }}"
-        username: "{{ openshift_username }}"
-        password: "{{ openshift_password }}"
-        validate_certs: "{{ openshift_validate_certs | default(false) }}"
-      register: k8s_auth_result
-      when:
-        - openshift_token is not defined or openshift_token | length == 0
-        - openshift_username is defined
-        - openshift_password is defined
-      no_log: true
-
-    - name: Set OpenShift token from authentication
-      ansible.builtin.set_fact:
-        openshift_token: "{{ k8s_auth_result.k8s_auth.api_key }}"
-      no_log: true
-      when: k8s_auth_result is defined and k8s_auth_result.k8s_auth is defined
-
     - name: Ensure directory for rendered kubeconfig
       ansible.builtin.file:
         path: "{{ collection_root }}/.rendered"
