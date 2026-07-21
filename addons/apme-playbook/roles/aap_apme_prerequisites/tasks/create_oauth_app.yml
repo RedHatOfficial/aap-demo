@@ -16,7 +16,8 @@
     kind: Secret
     name: "{{ aap_apme_prerequisites_openshift_secret_name }}"
     namespace: "{{ openshift_project_name }}"
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
   register: portal_oauth_secret_check

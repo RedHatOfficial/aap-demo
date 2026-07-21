@@ -22,7 +22,8 @@
       - "{{ apme_gateway_helm_values_file }}"
     wait: true
     wait_timeout: "{{ apme_gateway_helm_timeout }}s"
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ apme_gateway_helm_validate_certs }}"
   register: apme_gateway_helm_result
