@@ -214,7 +214,7 @@ configure_registry() {
   echo "via a private container registry. Your Red Hat point of contact will"
   echo "provide the registry path."
   echo ""
-  echo "Example: registry.redhat.io/ansible-automation-platform"
+  echo "Enter the BASE registry path (without image name or tag)."
   echo ""
   echo "Note: Registry credentials will be extracted from your cluster's"
   echo "pull secret. Ensure your cluster has access to the registry."
@@ -224,6 +224,17 @@ configure_registry() {
   if [ -z "$AO_REGISTRY" ]; then
     echo "ERROR: Registry path is required."
     exit 1
+  fi
+
+  # Validate: strip any image name or tag if user entered full reference
+  if [[ "$AO_REGISTRY" =~ :[a-zA-Z0-9._-]+$ ]]; then
+    echo ""
+    echo "⚠️  Warning: You entered a full image reference with a tag."
+    echo "   Stripping to base path..."
+    # Remove everything from the last slash onwards (image name and tag)
+    AO_REGISTRY=$(echo "$AO_REGISTRY" | sed 's|/[^/]*:[^:]*$||')
+    echo "   Using: $AO_REGISTRY"
+    echo ""
   fi
 
   # Save configuration
@@ -405,7 +416,19 @@ kubectl label namespace "$MARKETPLACE_NAMESPACE" \
 echo "✓ Namespaces ready"
 
 # --- Step 4: Pull secret + CatalogSource ---
-AO_INDEX_IMAGE="${AO_INDEX_IMAGE:-${AO_REGISTRY}/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a}"
+# AO_INDEX_IMAGE must be provided by user via environment variable
+if [ -z "${AO_INDEX_IMAGE:-}" ]; then
+  echo ""
+  echo "ERROR: AO_INDEX_IMAGE environment variable is required."
+  echo ""
+  echo "Your Red Hat point of contact will provide the index image reference."
+  echo ""
+  echo "Set it before running the addon:"
+  echo "  export AO_INDEX_IMAGE=\"<image-provided-by-red-hat>\""
+  echo "  aap-demo enable ao-eap"
+  echo ""
+  exit 1
+fi
 
 echo "Creating pull secret and CatalogSource..."
 registry_host=$(echo "$AO_REGISTRY" | cut -d'/' -f1)

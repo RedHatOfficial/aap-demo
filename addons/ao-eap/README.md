@@ -5,8 +5,9 @@ Deploys Automation Orchestrator Early Access to aap-demo clusters.
 ## Prerequisites
 
 1. **Registry path** for AO images (provided by your Red Hat contact)
-2. **Cluster pull secret** with credentials for the registry
-3. **aap-demo cluster** running with OLM installed (`aap-demo deploy`)
+2. **Index image reference** for the AO operator (provided by your Red Hat contact)
+3. **Cluster pull secret** with credentials for the registry
+4. **aap-demo cluster** running with OLM installed (`aap-demo deploy`)
 
 ## Registry Configuration
 
@@ -14,14 +15,24 @@ The addon prompts for the container registry path on first run. The registry loc
 
 ### Interactive Setup
 
+The addon requires two pieces of information from your Red Hat contact:
+1. Registry path (base path only)
+2. Index image reference (full image URL with tag)
+
 ```bash
+# Set the index image (provided by your Red Hat contact)
+export AO_INDEX_IMAGE="<index-image-provided-by-red-hat>"
+
+# Run the deployment
 ./deploy.sh
 ```
 
 On first run, you'll be prompted for:
-- Registry path (e.g., `registry.redhat.io/ansible-automation-platform`)
+- Registry path (base path only, provided by your Red Hat contact)
 
-The configuration is saved to `~/.aap-demo/ao-registry` and reused on subsequent runs.
+**Important**: Enter only the base registry path, not the full image reference with tag.
+
+The registry path is saved to `~/.aap-demo/ao-registry` and reused on subsequent runs.
 
 ### Authentication
 
@@ -81,21 +92,14 @@ The pull secret contains credentials for multiple Red Hat registries including `
 
 ### Environment Variables
 
-For automation or CI/CD, provide the registry path via environment variable:
+For automation or CI/CD, provide both required environment variables:
 
 ```bash
-export AO_REGISTRY="registry.redhat.io/ansible-automation-platform"
+export AO_INDEX_IMAGE="<index-image-provided-by-red-hat>"
+export AO_REGISTRY="<registry-path-provided-by-red-hat>"
 ./deploy.sh
 ```
 
-### Custom Index Image
-
-Override the operator index image if needed:
-
-```bash
-export AO_INDEX_IMAGE="registry.example.com/custom/ao-operator-index:v2.6.0"
-./deploy.sh
-```
 
 ## Usage
 
