@@ -22,16 +22,18 @@
   ansible.builtin.set_fact:
     system_arch: "{{ ansible_architecture }}"
 
-- name: Use upstream RHDH images for ARM64  # noqa: var-naming[no-role-prefix]
+- name: Use community RHDH images for ARM64  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     rhdh_image_registry: "quay.io"
-    rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
+    rhdh_image_repository: "rhdh-community/rhdh"
+    rhdh_image_tag: "1.10"
   when: system_arch in ['aarch64', 'arm64']
 
 - name: Use official Red Hat registry for x86_64  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     rhdh_image_registry: "registry.redhat.io"
     rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
+    rhdh_image_tag: "1.9"
   when: system_arch not in ['aarch64', 'arm64']
 
 - name: Substitute portal Helm value placeholders  # noqa: var-naming[no-role-prefix]
@@ -49,7 +51,7 @@
     - regexp: "<oci-registry>"
       replace: "{{ oci_registry_normalized }}"
 
-- name: Override RHDH image registry for ARM64  # noqa: var-naming[no-role-prefix]
+- name: Override RHDH image configuration  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: "{{ item.regexp }}"
@@ -59,6 +61,8 @@
       replace: "registry: {{ rhdh_image_registry }}"
     - regexp: 'repository: rhdh/rhdh-hub-rhel9'
       replace: "repository: {{ rhdh_image_repository }}"
+    - regexp: 'tag: "1.9"'
+      replace: 'tag: "{{ rhdh_image_tag }}"'
 
 - name: Normalize optional Dev Spaces base URL  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
