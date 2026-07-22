@@ -199,6 +199,9 @@
           openshift_token: "{{ openshift_token }}"
           openshift_project_name: "apme"
           openshift_validate_certs: false
+          oci_registry: "localhost:5000/apme"
+          apme_oci_push_skopeo_binary: "skopeo"
+          apme_oci_push_force: false
 
     - name: Check if job template exists
       ansible.builtin.uri:
