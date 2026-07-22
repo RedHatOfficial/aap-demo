@@ -18,7 +18,7 @@
 
     # Paths
     playbook_dir_local: "{{ playbook_dir | dirname }}"
-    playbook_path: "addons/apme-playbook/playbooks/deploy_apme_portal.yml"
+    playbook_path: "addons/apme-eap/playbooks/deploy_apme_portal.yml"
 
   tasks:
     - name: Verify AAP host and token are set
