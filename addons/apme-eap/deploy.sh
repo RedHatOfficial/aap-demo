@@ -81,6 +81,15 @@ check_prerequisites() {
     die "AAP not deployed. Run 'aap-demo deploy' first."
   fi
 
+  # Ensure the in-cluster registry addon is deployed — APME uses it to store
+  # plugin OCI images that the portal init container pulls at runtime.
+  if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
+    info "In-cluster registry not found — deploying registry addon..."
+    bash "${SCRIPT_DIR}/../registry/deploy.sh"
+  else
+    info "In-cluster registry already running"
+  fi
+
   info "Prerequisites check complete"
 }
 
