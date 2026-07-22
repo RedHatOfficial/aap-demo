@@ -72,8 +72,8 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   # Poll until namespaces are gone (finalizers, CRD cleanup, etc. can delay termination)
   echo "  Waiting for namespaces to terminate..."
   for _i in $(seq 1 60); do
-    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-    _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ') || _ao_ns=0
+    _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ') || _cnpg_ns=0
     printf "\r  $(hat) automation-orchestrator: %s  cloudnative-pg: %s    " \
       "$([ "$_ao_ns" -eq 0 ] && echo "gone" || echo "terminating")" \
       "$([ "$_cnpg_ns" -eq 0 ] && echo "gone" || echo "terminating")"
@@ -181,7 +181,7 @@ if [ -z "${AO_INDEX_IMAGE:-}" ]; then
   echo ""
   echo "Your Red Hat point of contact will provide the full operator index image reference."
   echo ""
-  read -r -p "Index image (full URL with tag): " AO_INDEX_IMAGE
+  read -r -p "Index image (registry/repo:tag, no http://): " AO_INDEX_IMAGE
   echo ""
 
   if [ -z "$AO_INDEX_IMAGE" ]; then
@@ -189,6 +189,9 @@ if [ -z "${AO_INDEX_IMAGE:-}" ]; then
     exit 1
   fi
 fi
+# Strip accidental http:// or https:// prefix
+AO_INDEX_IMAGE="${AO_INDEX_IMAGE#https://}"
+AO_INDEX_IMAGE="${AO_INDEX_IMAGE#http://}"
 echo "✓ Index image: $AO_INDEX_IMAGE"
 
 # Check for pull secret using the registry host from the index image
