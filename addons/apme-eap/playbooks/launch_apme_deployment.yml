@@ -19,31 +19,6 @@
         msg: "AAP_TOKEN environment variable must be set"
       when: aap_token == ""
 
-    - name: Collect all deployment variables
-      ansible.builtin.set_fact:
-        apme_extra_vars:
-          openshift_api_url: "{{ openshift_api_url | default('https://kubernetes.default.svc:443') }}"
-          openshift_token: "{{ openshift_token }}"
-          openshift_project_name: "{{ openshift_project_name | default('apme') }}"
-          openshift_validate_certs: "{{ openshift_validate_certs | default(false) }}"
-          openshift_cluster_domain: "{{ openshift_cluster_domain | default('apps.127.0.0.1.nip.io') }}"
-          portal_helm_chart_repo: "{{ portal_helm_chart_repo | default('openshift-helm-charts') }}"
-          portal_helm_chart_repo_url: "{{ portal_helm_chart_repo_url | default('https://charts.openshift.io/') }}"
-          portal_helm_chart_name: "{{ portal_helm_chart_name | default('redhat-rhaap-portal') }}"
-          portal_helm_chart_version: "{{ portal_helm_chart_version | default('2.2.3') }}"
-          portal_helm_release_name: "{{ portal_helm_release_name | default('redhat-rhaap-portal') }}"
-          portal_helm_install_timeout: "{{ portal_helm_install_timeout | default(1800) }}"
-          apme_helm_chart_repo: "{{ apme_helm_chart_repo | default('apme') }}"
-          apme_helm_chart_repo_url: "{{ apme_helm_chart_repo_url | default('https://ansible.github.io/apme') }}"
-          apme_helm_chart_name: "{{ apme_helm_chart_name | default('apme') }}"
-          apme_helm_chart_version: "{{ apme_helm_chart_version | default('0.1.2') }}"
-          apme_helm_release_name: "{{ apme_helm_release_name | default('apme') }}"
-          aap_organization: "{{ aap_organization | default('Default') }}"
-          aap_apme_prerequisites_oauth_application_name: "{{ aap_apme_prerequisites_oauth_application_name | default('APME Portal OAuth') }}"
-          configure_github_secrets: "{{ configure_github_secrets | default(false) }}"
-          apme_oci_push_force: "{{ apme_oci_push_force | default(false) }}"
-          apme_oci_push_skopeo_binary: "{{ apme_oci_push_skopeo_binary | default('skopeo') }}"
-
     - name: Get job template
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/job_templates/?name={{ job_template_name | urlencode }}"
@@ -59,21 +34,14 @@
         msg: "Job template '{{ job_template_name }}' not found. Run setup_aap_resources.yml first."
       when: template_result.json.count == 0
 
-    - name: Display variables being passed to job
-      ansible.builtin.debug:
-        msg:
-          - "Launching job with the following extra_vars:"
-          - "{{ apme_extra_vars | to_nice_yaml }}"
-
-    - name: Launch job
+    - name: Launch job (using job template defaults)
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/job_templates/{{ template_result.json.results[0].id }}/launch/"
         method: POST
         headers:
           Authorization: "Bearer {{ aap_token }}"
         body_format: json
-        body:
-          extra_vars: "{{ apme_extra_vars | default({}) | to_json }}"
+        body: {}
         validate_certs: "{{ aap_validate_certs }}"
         status_code: 201
         return_content: true
