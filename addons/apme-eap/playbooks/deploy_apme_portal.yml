@@ -11,6 +11,12 @@
     apme_portal_helm_values_path: "{{ playbook_dir | dirname }}/.rendered/portal-apme-values.yaml"
 
   pre_tasks:
+    - name: Debug OpenShift connection parameters
+      ansible.builtin.debug:
+        msg:
+          - "openshift_token defined: {{ openshift_token is defined }}"
+          - "openshift_token length: {{ openshift_token | default('') | length }}"
+          - "openshift_api_url: {{ openshift_api_url | default('NOT SET') }}"
     - name: Ensure directory for rendered kubeconfig
       ansible.builtin.file:
         path: "{{ collection_root }}/.rendered"
