@@ -68,20 +68,6 @@
         msg: "kubernetes.core collection not found. Run: ansible-playbook playbooks/setup.yml"
       when: "'kubernetes.core' not in collections_list.stdout"
 
-    - name: Verify oc CLI is available
-      ansible.builtin.command:
-        cmd: oc version --client
-      register: oc_check
-      changed_when: false
-      failed_when: oc_check.rc != 0
-
-    - name: Verify skopeo CLI is available
-      ansible.builtin.command:
-        cmd: "{{ apme_oci_push_skopeo_binary | default('skopeo') }} --version"
-      register: skopeo_check
-      changed_when: false
-      failed_when: skopeo_check.rc != 0
-
     - name: Create local directory for rendered Helm values
       ansible.builtin.file:
         path: "{{ apme_portal_helm_values_path | dirname }}"
