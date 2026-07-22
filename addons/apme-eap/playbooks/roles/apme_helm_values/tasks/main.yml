@@ -51,18 +51,18 @@
     - regexp: "<oci-registry>"
       replace: "{{ oci_registry_normalized }}"
 
-- name: Override RHDH image configuration  # noqa: var-naming[no-role-prefix]
+- name: Override RHDH hub image configuration  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: "{{ item.regexp }}"
     replace: "{{ item.replace }}"
   loop:
-    - regexp: "registry: registry\\.redhat\\.io"
-      replace: "registry: {{ rhdh_image_registry }}"
+    - regexp: '(repository: rhdh/rhdh-hub-rhel9\n\s+tag: )"1.9"'
+      replace: '\1"{{ rhdh_image_tag }}"'
+    - regexp: '(pullSecrets: \[\]\n\s+registry: )registry\.redhat\.io(\n\s+repository: rhdh/rhdh-hub-rhel9)'
+      replace: '\1{{ rhdh_image_registry }}\2'
     - regexp: 'repository: rhdh/rhdh-hub-rhel9'
       replace: "repository: {{ rhdh_image_repository }}"
-    - regexp: 'tag: "1.9"'
-      replace: 'tag: "{{ rhdh_image_tag }}"'
 
 - name: Normalize optional Dev Spaces base URL  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
