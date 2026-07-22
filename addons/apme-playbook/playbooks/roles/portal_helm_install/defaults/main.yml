@@ -1,6 +1,0 @@
----
-# defaults for portal_helm_install
-
-portal_helm_install_validate_certs: "{{ openshift_validate_certs | default(false) }}"
-portal_helm_install_timeout: 1800
-portal_helm_install_force_upgrade: false

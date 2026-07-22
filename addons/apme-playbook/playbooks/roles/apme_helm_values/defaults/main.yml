@@ -1,4 +1,0 @@
----
-# defaults for apme_helm_values
-
-apme_helm_values_template: "{{ role_path }}/files/portal-apme-values.yaml.template"

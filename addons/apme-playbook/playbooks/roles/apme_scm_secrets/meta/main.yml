@@ -1,8 +1,0 @@
----
-galaxy_info:
-  author: Red Hat
-  description: Optional GitHub OAuth App and GitHub App secrets for SCM integration
-  license: Apache-2.0
-  min_ansible_version: "2.14"
-
-dependencies: []
