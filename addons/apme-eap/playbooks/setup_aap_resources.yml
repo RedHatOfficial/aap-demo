@@ -169,6 +169,44 @@
         status_code: [201, 400]
       when: inventory_check.json.count == 0
 
+    - name: Generate OpenShift service account token
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: apme-deployer-token
+            namespace: kube-system
+            annotations:
+              kubernetes.io/service-account.name: default
+          type: kubernetes.io/service-account-token
+      register: token_secret
+
+    - name: Wait for token to be generated
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: apme-deployer-token
+        namespace: kube-system
+      register: token_secret_info
+      until: token_secret_info.resources[0].data.token is defined
+      retries: 10
+      delay: 2
+
+    - name: Extract token
+      ansible.builtin.set_fact:
+        openshift_token: "{{ token_secret_info.resources[0].data.token | b64decode }}"
+      no_log: true
+
+    - name: Build default extra_vars for job template
+      ansible.builtin.set_fact:
+        job_extra_vars:
+          openshift_api_url: "https://kubernetes.default.svc:443"
+          openshift_token: "{{ openshift_token }}"
+          openshift_project_name: "apme"
+          openshift_validate_certs: false
+
     - name: Check if job template exists
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/job_templates/?name={{ job_template_name | urlencode }}"
@@ -194,6 +232,7 @@
           project: "{{ project_id }}"
           playbook: "{{ playbook_path }}"
           ask_variables_on_launch: true
+          extra_vars: "{{ job_extra_vars | to_json }}"
           verbosity: 1
         validate_certs: "{{ aap_validate_certs }}"
         status_code: [201, 400]
@@ -214,6 +253,7 @@
           project: "{{ project_id }}"
           playbook: "{{ playbook_path }}"
           ask_variables_on_launch: true
+          extra_vars: "{{ job_extra_vars | to_json }}"
         validate_certs: "{{ aap_validate_certs }}"
         return_content: true
       when: template_check.json.count > 0
