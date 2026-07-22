@@ -170,33 +170,17 @@
       when: inventory_check.json.count == 0
 
     - name: Generate OpenShift service account token
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: apme-deployer-token
-            namespace: kube-system
-            annotations:
-              kubernetes.io/service-account.name: default
-          type: kubernetes.io/service-account-token
-      register: token_secret
+      ansible.builtin.command:
+        cmd: kubectl create token -n kube-system default --duration=87600h
+      environment:
+        KUBECONFIG: "{{ lookup('env', 'KUBECONFIG') | default('~/.crc/machines/crc/kubeconfig', true) }}"
+      register: token_result
+      changed_when: false
+      no_log: true
 
-    - name: Wait for token to be generated
-      kubernetes.core.k8s_info:
-        api_version: v1
-        kind: Secret
-        name: apme-deployer-token
-        namespace: kube-system
-      register: token_secret_info
-      until: token_secret_info.resources[0].data.token is defined
-      retries: 10
-      delay: 2
-
-    - name: Extract token
+    - name: Set token fact
       ansible.builtin.set_fact:
-        openshift_token: "{{ token_secret_info.resources[0].data.token | b64decode }}"
+        openshift_token: "{{ token_result.stdout }}"
       no_log: true
 
     - name: Build default extra_vars for job template
