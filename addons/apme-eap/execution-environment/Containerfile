@@ -10,10 +10,13 @@ RUN microdnf install -y openshift-clients skopeo tar && \
     microdnf clean all
 
 # Install Helm manually (not available in RHEL9 minimal repos, curl-minimal already present)
-RUN curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-arm64.tar.gz | tar -xz && \
-    mv linux-arm64/helm /usr/local/bin/helm && \
+# Using v3.16.3 (latest stable) to avoid Go runtime issues with older builds on ARM64
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "aarch64" ]; then HELM_ARCH="arm64"; else HELM_ARCH="amd64"; fi && \
+    curl -fsSL https://get.helm.sh/helm-v3.16.3-linux-${HELM_ARCH}.tar.gz | tar -xz && \
+    mv linux-${HELM_ARCH}/helm /usr/local/bin/helm && \
     chmod +x /usr/local/bin/helm && \
-    rm -rf linux-arm64
+    rm -rf linux-${HELM_ARCH}
 
 # Verify installations
 RUN oc version --client && skopeo --version && helm version
