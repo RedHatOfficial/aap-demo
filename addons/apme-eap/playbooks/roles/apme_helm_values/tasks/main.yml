@@ -90,6 +90,27 @@
     regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
     replace: "- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins\n        - name: SKOPEO_INSECURE_POLICY\n          value: \"true\""
 
+- name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?s)          github:\n          - host: github\.com\n            token: \$\{GITHUB_TOKEN\}\n            apps:\n            - appId: \$\{GITHUB_APP_ID\}\n              clientId: \$\{GITHUB_APP_CLIENT_ID\}\n              clientSecret: \$\{GITHUB_APP_CLIENT_SECRET\}\n              privateKey: \|\n                \$\{GITHUB_APP_PRIVATE_KEY\}\n'
+    replace: '          # GitHub integration disabled (configure_github_secrets: false)\n'
+  when: not (configure_github_secrets | default(false))
+
+- name: Remove GitHub auth provider when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?s)            github:\n              production:\n                clientId: \$\{GITHUB_OAUTH_CLIENT_ID\}\n                clientSecret: \$\{GITHUB_OAUTH_CLIENT_SECRET\}\n'
+    replace: '            # GitHub auth provider disabled (configure_github_secrets: false)\n'
+  when: not (configure_github_secrets | default(false))
+
+- name: Remove GitHub catalog provider when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?s)                      github:\n                      - host: github\.com\n                        name: github-acme-scm\n                        orgs:\n                        - name: acme-scm\n                          branches:\n                          - main\n                          - master\n                          crawlDepth: 5\n                          apme:\n                            enabled: true\n                            scanOnRegister: false\n                          schedule:\n                            frequency:\n                              minutes: 30\n                            timeout:\n                              minutes: 30\n'
+    replace: '                      # GitHub catalog provider disabled (configure_github_secrets: false)\n                      github: []\n'
+  when: not (configure_github_secrets | default(false))
+
 - name: Read rendered Helm values  # noqa: var-naming[no-role-prefix]
   ansible.builtin.slurp:
     src: "{{ apme_portal_helm_values_path }}"

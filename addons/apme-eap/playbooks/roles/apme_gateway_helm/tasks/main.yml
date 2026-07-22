@@ -1,5 +1,7 @@
 ---
 # Install apme gateway Helm release in the same namespace as the portal
+# NOTE: Released versions (2026.7.3) only support x86_64
+# ARM64 support available in SHA builds (sha-d1ac741 and later)
 
 - name: Validate APME gateway values file  # noqa: var-naming[no-role-prefix]
   ansible.builtin.stat:
