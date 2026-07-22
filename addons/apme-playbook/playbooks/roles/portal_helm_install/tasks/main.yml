@@ -4,7 +4,7 @@
 - name: Install or upgrade automation portal Helm release  # noqa: var-naming[no-role-prefix]
   kubernetes.core.helm:
     name: "{{ portal_helm_release_name }}"
-    chart_ref: "{{ portal_helm_chart_repo }}/{{ portal_helm_chart_name }}"
+    chart_ref: "{{ portal_helm_chart_repo_url }}{{ portal_helm_chart_name }}"
     chart_version: "{{ portal_helm_chart_version }}"
     release_namespace: "{{ openshift_project_name }}"
     create_namespace: false

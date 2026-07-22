@@ -68,18 +68,6 @@
         msg: "kubernetes.core collection not found. Run: ansible-playbook playbooks/setup.yml"
       when: "'kubernetes.core' not in collections_list.stdout"
 
-
-    - name: Ensure Helm chart repositories are present
-      kubernetes.core.helm_repository:
-        name: "{{ item.name }}"
-        repo_url: "{{ item.url }}"
-        force: true
-      loop:
-        - name: "{{ portal_helm_chart_repo }}"
-          url: "{{ portal_helm_chart_repo_url }}"
-        - name: "{{ apme_helm_chart_repo }}"
-          url: "{{ apme_helm_chart_repo_url }}"
-
     - name: Create local directory for rendered Helm values
       ansible.builtin.file:
         path: "{{ apme_portal_helm_values_path | dirname }}"
