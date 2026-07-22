@@ -53,7 +53,7 @@
           - login
           - --to={{ openshift_apme_setup_registry_authfile }}
       environment:
-        KUBECONFIG: "{{ apme_oci_kubeconfig | default(lookup('env', 'KUBECONFIG')) }}"
+        KUBECONFIG: "{{ apme_oci_kubeconfig if apme_oci_kubeconfig is defined and apme_oci_kubeconfig | length > 0 else omit }}"
       changed_when: false
 
     - name: Add integrated registries.conf for dynamic-plugins pull  # noqa: var-naming[no-role-prefix]

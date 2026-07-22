@@ -101,7 +101,7 @@
           - login
           - --to={{ apme_oci_registry_authfile_resolved }}
       environment:
-        KUBECONFIG: "{{ apme_oci_kubeconfig | default(lookup('env', 'KUBECONFIG')) }}"
+        KUBECONFIG: "{{ apme_oci_kubeconfig if apme_oci_kubeconfig is defined and apme_oci_kubeconfig | length > 0 else omit }}"
       changed_when: false
 
     - name: Resolve external OpenShift registry hostname for push  # noqa: var-naming[no-role-prefix]
