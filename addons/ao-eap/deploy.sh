@@ -74,8 +74,8 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   # Poll until namespaces are gone (finalizers, CRD cleanup, etc. can delay termination)
   echo "  Waiting for namespaces to terminate..."
   for _i in $(seq 1 60); do
-    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
     printf "\r  $(hat) automation-orchestrator: %s  cloudnative-pg: %s    " \
       "$([ "$_ao_ns" -eq 0 ] && echo "gone" || echo "terminating")" \
       "$([ "$_cnpg_ns" -eq 0 ] && echo "gone" || echo "terminating")"
@@ -106,8 +106,8 @@ fi
 
 # --- Skip if already running (unless --force) ---
 if [ -z "$FORCE" ]; then
-  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ')
-  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep "Running" || true; } | wc -l | tr -d ' ')
+  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ' || echo "0")
+  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep "Running" || true; } | wc -l | tr -d ' ' || echo "0")
   _cs_state=$(kubectl get catalogsource cs-automation-orchestrator \
     -n "$MARKETPLACE_NAMESPACE" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
@@ -213,7 +213,7 @@ get_registry_config
 # Check for pull secret
 if [ -f "$PULL_SECRET_FILE" ]; then
   registry_host=$(echo "$AO_REGISTRY" | cut -d'/' -f1)
-  if jq -e ".auths[\"$registry_host\"]" "$PULL_SECRET_FILE" >/dev/null 2>&1; then
+  if jq -e --arg host "$registry_host" '.auths[$host]' "$PULL_SECRET_FILE" >/dev/null 2>&1; then
     echo "✓ Using pull secret from $PULL_SECRET_FILE for $registry_host"
   else
     echo "WARNING: Pull secret exists but may not have credentials for $registry_host"
@@ -273,7 +273,8 @@ if ! command -v aapctl >/dev/null 2>&1; then
   TMP_FILE="$TMP_DIR/$BINARY"
   TMP_SHA="$TMP_DIR/checksums.txt"
 
-  EXPECTED_SHA=$(grep "$BINARY" "$TMP_SHA" | awk '{print $1}')
+  EXPECTED_SHA=$(grep "$BINARY" "$TMP_SHA" | awk '{print $1}') \
+    || { echo "ERROR: $BINARY not found in checksums.txt"; rm -rf "$TMP_DIR"; exit 1; }
   if [ "$OS" = "Darwin" ]; then
     ACTUAL_SHA=$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')
   else

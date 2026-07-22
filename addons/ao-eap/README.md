@@ -8,6 +8,7 @@ Deploys Automation Orchestrator Early Access to aap-demo clusters.
 2. **Index image reference** for the AO operator (provided by your Red Hat contact)
 3. **Cluster pull secret** with credentials for the registry
 4. **aap-demo cluster** running with OLM installed (`aap-demo deploy`)
+5. **GitHub CLI authenticated** (`gh auth login`) — required to download `aapctl`
 
 ## Registry Configuration
 
@@ -90,15 +91,22 @@ The pull secret contains credentials for multiple Red Hat registries including `
 
 ### Environment Variables
 
-For automation or CI/CD, provide both values via environment variables to skip prompts:
+For automation or CI/CD, provide values via environment variables to skip prompts:
 
 ```bash
 export AO_INDEX_IMAGE="<index-image-provided-by-red-hat>"
-export AO_REGISTRY="<registry-path-provided-by-red-hat>"
+export AO_REGISTRY="<registry-host-provided-by-red-hat>"
 ./deploy.sh
 ```
 
-Both variables are optional - if not set, the addon will prompt interactively.
+All variables are optional — if not set, the addon will prompt interactively.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AO_INDEX_IMAGE` | _(prompted every run)_ | Full index image URL with tag |
+| `AO_REGISTRY` | _(prompted on first run)_ | Registry host (e.g. `registry.redhat.io`) |
+| `PULL_SECRET_FILE` | `~/.aap-demo/pull-secret.txt` | Path to dockerconfigjson pull secret |
+| `AO_REGISTRY_FILE` | `~/.aap-demo/ao-registry` | Path to saved registry host config |
 
 
 ## Usage
