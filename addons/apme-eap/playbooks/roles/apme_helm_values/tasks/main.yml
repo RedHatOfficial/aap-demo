@@ -51,6 +51,13 @@
     - regexp: "<oci-registry>"
       replace: "{{ oci_registry_normalized }}"
 
+- name: Remove incompatible plugins for community RHDH (ARM64)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.lineinfile:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: ".*backstage-community-plugin-scaffolder-backend-module-quay.*"
+    state: absent
+  when: system_arch in ['aarch64', 'arm64']
+
 - name: Override RHDH hub image configuration  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
