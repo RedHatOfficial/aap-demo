@@ -1,0 +1,23 @@
+---
+# Example variables file for APME deployment via AAP
+# Set APME_VARS_FILE=/path/to/apme-vars.yml before running launch_apme_deployment.yml
+
+# Required: OpenShift API token (from `oc whoami -t`)
+openshift_token: "sha256~xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Required: OpenShift API URL (from `oc whoami --show-server`)
+openshift_api_url: "https://api.crc.testing:6443"
+
+# Optional: Target namespace (default: apme-portal)
+openshift_project_name: "apme-portal"
+
+# Optional: OpenShift cluster domain (derived from API URL if not specified)
+# openshift_cluster_domain: "apps.crc.testing"
+
+# Optional: GitHub secrets configuration
+# configure_github_secrets: false
+# github_app_id: "123456"
+# github_app_private_key: |
+#   -----BEGIN RSA PRIVATE KEY-----
+#   ...
+#   -----END RSA PRIVATE KEY-----

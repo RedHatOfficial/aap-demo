@@ -20,11 +20,21 @@
         msg: "AAP_HOST and AAP_TOKEN environment variables must be set"
       when: aap_host == "" or aap_token == ""
 
+    - name: Verify extra vars file is specified
+      ansible.builtin.fail:
+        msg: "APME_VARS_FILE environment variable must be set and point to a valid variables file"
+      when: extra_vars_file == ""
+
+    - name: Verify extra vars file exists
+      ansible.builtin.stat:
+        path: "{{ extra_vars_file }}"
+      register: vars_file_stat
+      failed_when: not vars_file_stat.stat.exists
+
     - name: Load extra vars from file
       ansible.builtin.include_vars:
         file: "{{ extra_vars_file }}"
         name: apme_extra_vars
-      when: extra_vars_file != ""
 
     - name: Get job template
       ansible.builtin.uri:
@@ -41,6 +51,12 @@
         msg: "Job template '{{ job_template_name }}' not found. Run setup_aap_resources.yml first."
       when: template_result.json.count == 0
 
+    - name: Display variables being passed to job
+      ansible.builtin.debug:
+        msg:
+          - "Launching job with the following extra_vars:"
+          - "{{ apme_extra_vars | to_nice_yaml }}"
+
     - name: Launch job
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/job_templates/{{ template_result.json.results[0].id }}/launch/"
@@ -49,7 +65,7 @@
           Authorization: "Bearer {{ aap_token }}"
         body_format: json
         body:
-          extra_vars: "{{ apme_extra_vars | default({}) }}"
+          extra_vars: "{{ apme_extra_vars | default({}) | to_json }}"
         validate_certs: "{{ aap_validate_certs }}"
         status_code: 201
         return_content: true
