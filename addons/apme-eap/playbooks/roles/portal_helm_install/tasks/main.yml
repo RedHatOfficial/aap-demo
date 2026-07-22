@@ -1,6 +1,15 @@
 ---
 # Install redhat-rhaap-portal with rendered APME values file
 
+- name: Verify Helm is available  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command: helm version --short
+  changed_when: false
+  register: helm_version_check
+
+- name: Display Helm version  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: "Helm version: {{ helm_version_check.stdout }}"
+
 - name: Install or upgrade automation portal Helm release  # noqa: var-naming[no-role-prefix]
   kubernetes.core.helm:
     name: "{{ portal_helm_release_name }}"
@@ -18,6 +27,11 @@
     validate_certs: "{{ portal_helm_install_validate_certs }}"
     force: "{{ portal_helm_install_force_upgrade | bool }}"
     atomic: "{{ false if portal_helm_install_force_upgrade | bool else true }}"
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"
+    HELM_CACHE_HOME: "/tmp/.helm/cache"
+    HELM_CONFIG_HOME: "/tmp/.helm/config"
+    HELM_DATA_HOME: "/tmp/.helm/data"
   register: portal_helm_install_result
 
 - name: Get portal route  # noqa: var-naming[no-role-prefix]

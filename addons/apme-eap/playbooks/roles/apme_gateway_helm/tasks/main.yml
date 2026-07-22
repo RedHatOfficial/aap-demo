@@ -26,4 +26,9 @@
     api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ apme_gateway_helm_validate_certs }}"
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"
+    HELM_CACHE_HOME: "/tmp/.helm/cache"
+    HELM_CONFIG_HOME: "/tmp/.helm/config"
+    HELM_DATA_HOME: "/tmp/.helm/data"
   register: apme_gateway_helm_result
