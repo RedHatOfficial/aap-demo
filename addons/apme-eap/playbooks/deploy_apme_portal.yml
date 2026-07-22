@@ -18,15 +18,6 @@
           - "openshift_token length: {{ openshift_token | default('') | length }}"
           - "openshift_api_url: {{ openshift_api_url | default('NOT SET') }}"
 
-    - name: Ensure required variables are set
-      ansible.builtin.fail:
-        msg: "openshift_token and openshift_api_url must be provided as extra variables"
-      when: >
-        openshift_token is not defined or
-        openshift_token | length == 0 or
-        openshift_api_url is not defined or
-        openshift_api_url | length == 0
-
     - name: Ensure directory for rendered kubeconfig
       ansible.builtin.file:
         path: "{{ collection_root }}/.rendered"
