@@ -111,6 +111,27 @@
     replace: '                      # GitHub catalog provider disabled (configure_github_secrets: false)\n                      github: []\n'
   when: not (configure_github_secrets | default(false))
 
+- name: Remove GitHub auth provider plugin when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^        - disabled: false\n          package: ''\{\{- include "plugins\.load\.github-auth-provider" \. \}\}''\n'
+    replace: '        # GitHub auth provider plugin disabled (configure_github_secrets: false)\n'
+  when: not (configure_github_secrets | default(false))
+
+- name: Remove GitHub scaffolder backend plugin when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^        - disabled: false\n          package: \./dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-github-dynamic\n'
+    replace: '        # GitHub scaffolder backend plugin disabled (configure_github_secrets: false)\n'
+  when: not (configure_github_secrets | default(false))
+
+- name: Remove GitHub from backend reading allowlist when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^            - host: (github\.com|raw\.githubusercontent\.com)\n'
+    replace: ''
+  when: not (configure_github_secrets | default(false))
+
 - name: Read rendered Helm values  # noqa: var-naming[no-role-prefix]
   ansible.builtin.slurp:
     src: "{{ apme_portal_helm_values_path }}"

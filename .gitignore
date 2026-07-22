@@ -21,3 +21,6 @@ __pycache__/
 .tox/
 node_modules/
 .npm/
+
+# Generated artifacts (Ansible-rendered config files)
+addons/**/.rendered/
