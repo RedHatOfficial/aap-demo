@@ -30,7 +30,6 @@
   kubernetes.core.k8s:
     state: present
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
     namespace: "{{ openshift_project_name }}"
@@ -55,7 +54,6 @@
     name: "{{ portal_helm_release_name }}"
     namespace: "{{ openshift_project_name }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
   register: portal_deployment_check
@@ -65,7 +63,6 @@
   kubernetes.core.k8s:
     state: patched
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
     kind: Deployment

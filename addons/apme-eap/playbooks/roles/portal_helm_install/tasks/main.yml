@@ -13,7 +13,6 @@
     wait: true
     wait_timeout: "{{ portal_helm_install_timeout }}s"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ portal_helm_install_validate_certs }}"
     force: "{{ portal_helm_install_force_upgrade | bool }}"
@@ -26,7 +25,6 @@
     kind: Route
     namespace: "{{ openshift_project_name }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ portal_helm_install_validate_certs }}"
   register: portal_routes

@@ -61,7 +61,6 @@
     namespace: "{{ openshift_project_name }}"
     name: "{{ apme_oci_image_reference }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: existing_oci_image

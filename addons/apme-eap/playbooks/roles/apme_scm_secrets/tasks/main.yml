@@ -25,7 +25,6 @@
   kubernetes.core.k8s:
     state: present
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
     namespace: "{{ openshift_project_name }}"
