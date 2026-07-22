@@ -12,9 +12,9 @@ dependencies:
 
 additional_build_steps:
   prepend_final: |
-    # Install OpenShift CLI and Skopeo
-    RUN microdnf install -y openshift-clients skopeo && \
+    # Install OpenShift CLI, Skopeo, and Helm
+    RUN microdnf install -y openshift-clients skopeo helm && \
         microdnf clean all
 
     # Verify installations
-    RUN oc version --client && skopeo --version
+    RUN oc version --client && skopeo --version && helm version
