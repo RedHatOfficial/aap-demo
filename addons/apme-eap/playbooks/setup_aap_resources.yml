@@ -237,7 +237,7 @@
           openshift_project_name: "apme"
           openshift_cluster_domain: "{{ cluster_domain }}"
           openshift_validate_certs: false
-          skip_plugin_push: false
+          skip_plugin_push: true
           oci_registry: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
           aap_host: "http://aap.aap-operator.svc.cluster.local"
           aap_username: "admin"
