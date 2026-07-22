@@ -1,0 +1,190 @@
+---
+# OpenShift project, dynamic-plugins registry auth, scaffolder ConfigMap
+
+- name: Check if namespace exists  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ openshift_project_name }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+  register: existing_project
+  failed_when: false
+
+- name: Create namespace  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ openshift_project_name }}"
+        labels:
+          name: "{{ openshift_project_name }}"
+        annotations:
+          openshift.io/display-name: "{{ openshift_apme_setup_project_display_name }}"
+          openshift.io/description: "{{ openshift_apme_setup_project_description }}"
+  when: existing_project.resources | default([]) | length == 0
+
+- name: Build registry secret data map  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    registry_secret_data: {}
+
+- name: Configure dynamic-plugins pull auth for OpenShift integrated registry  # noqa: var-naming[no-role-prefix]
+  when:
+    - apme_openshift_integrated_registry | default(false) | bool
+    - registry_authfile is not defined or registry_authfile | length == 0
+  block:
+    - name: Ensure directory for OpenShift registry login  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.file:
+        path: "{{ openshift_apme_setup_registry_auth_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Log in to OpenShift integrated registry  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - oc
+          - registry
+          - login
+          - --to={{ openshift_apme_setup_registry_authfile }}
+      environment:
+        KUBECONFIG: "{{ apme_oci_kubeconfig if apme_oci_kubeconfig is defined and apme_oci_kubeconfig | length > 0 else omit }}"
+      changed_when: false
+
+    - name: Add integrated registries.conf for dynamic-plugins pull  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        registry_secret_data: >-
+          {{ registry_secret_data | combine({
+            'registries.conf': lookup('template', 'registries-openshift-integrated.conf.j2')
+          }) }}
+
+    - name: Read OpenShift registry auth.json for dynamic-plugins pull  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.slurp:
+        src: "{{ openshift_apme_setup_registry_authfile }}"
+      register: openshift_registry_auth_file
+      no_log: true
+
+    - name: Parse OpenShift registry auth.json  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        openshift_registry_auth_parsed: "{{ openshift_registry_auth_file.content | b64decode | from_json }}"
+      no_log: true
+
+    - name: Resolve primary registry auth entry from oc registry login  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        openshift_registry_primary_auth: >-
+          {{ openshift_registry_auth_parsed.auths[openshift_registry_auth_parsed.auths.keys() | first] }}
+      when: openshift_registry_auth_parsed.auths | length > 0
+      no_log: true
+
+    - name: Build internal registry host aliases for auth.json  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        openshift_registry_internal_auths: >-
+          {{
+            openshift_registry_internal_auths | default({}) | combine({
+              item: openshift_registry_primary_auth
+            })
+          }}
+      loop: "{{ openshift_apme_setup_internal_registry_hosts }}"
+      when: openshift_registry_primary_auth is defined
+      no_log: true
+
+    - name: Merge internal registry aliases into auth.json  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        openshift_registry_auth_parsed: >-
+          {{
+            openshift_registry_auth_parsed | combine({
+              'auths': openshift_registry_auth_parsed.auths | combine(openshift_registry_internal_auths)
+            }, recursive=True)
+          }}
+      when: openshift_registry_internal_auths is defined
+      no_log: true
+
+    - name: Add OpenShift registry auth.json to secret data  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        registry_secret_data: >-
+          {{ registry_secret_data | combine({
+            'auth.json': openshift_registry_auth_parsed | to_json
+          }) }}
+      no_log: true
+
+- name: Add auth.json to registry secret when provided  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    registry_secret_data: "{{ registry_secret_data | combine({'auth.json': lookup('file', registry_authfile)}) }}"
+  when: registry_authfile is defined and registry_authfile | length > 0
+
+- name: Add registries.conf to registry secret when provided  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    registry_secret_data: "{{ registry_secret_data | combine({'registries.conf': lookup('file', registry_registries_conf)}) }}"
+  when: registry_registries_conf is defined and registry_registries_conf | length > 0
+
+- name: Generate registries.conf for custom insecure registry  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    registry_secret_data: "{{ registry_secret_data | combine({'registries.conf': registries_conf_content}) }}"
+  vars:
+    registries_conf_content: |
+      unqualified-search-registries = ["registry.access.redhat.com"]
+
+      [[registry]]
+      location = "registry.aap-demo-registry.svc.cluster.local:5000"
+      insecure = true
+      blocked = false
+  when:
+    - oci_registry_internal is defined
+    - oci_registry_internal is search('registry.aap-demo-registry')
+    - registry_secret_data.get('registries.conf', '') | length == 0
+
+- name: Create dynamic plugins registry auth secret  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    namespace: "{{ openshift_project_name }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ openshift_apme_setup_registry_secret_name }}"
+      type: Opaque
+      stringData: "{{ registry_secret_data }}"
+  when: registry_secret_data | length > 0
+  no_log: true
+
+- name: Validate scaffolder template exists  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ openshift_apme_setup_scaffolder_template }}"
+  register: scaffolder_template_stat
+
+- name: Fail when scaffolder template is missing  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: "Scaffolder template not found: {{ openshift_apme_setup_scaffolder_template }}"
+  when: not scaffolder_template_stat.stat.exists
+
+- name: Load scaffolder template file  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.slurp:
+    src: "{{ openshift_apme_setup_scaffolder_template }}"
+  register: scaffolder_template_file
+
+- name: Create scaffolder templates ConfigMap  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    namespace: "{{ openshift_project_name }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "{{ openshift_apme_setup_scaffolder_configmap_name }}"
+      data:
+        template.yaml: "{{ scaffolder_template_file.content | b64decode }}"
