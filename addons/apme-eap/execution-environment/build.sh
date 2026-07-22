@@ -26,8 +26,14 @@ if ! command -v ansible-builder &> /dev/null; then
         exit 1
     fi
 
-    echo "Building with podman..."
-    podman build -f Containerfile -t "${FULL_IMAGE}" .
+    ARCH=$(uname -m)
+    if [ "${ARCH}" = "x86_64" ]; then
+        CONTAINERFILE="Containerfile.amd64"
+    else
+        CONTAINERFILE="Containerfile"
+    fi
+    echo "Building with podman (${ARCH} → ${CONTAINERFILE})..."
+    podman build -f "${CONTAINERFILE}" -t "${FULL_IMAGE}" .
 else
     echo "Building with ansible-builder..."
     ansible-builder build \
