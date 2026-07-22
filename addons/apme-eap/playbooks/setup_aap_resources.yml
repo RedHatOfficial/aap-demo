@@ -242,6 +242,7 @@
           aap_host: "http://aap.aap-operator.svc.cluster.local"
           aap_username: "admin"
           aap_password: "{{ aap_admin_password }}"
+          aap_organization: "Default"
 
     - name: Check if execution environment exists
       ansible.builtin.uri:
