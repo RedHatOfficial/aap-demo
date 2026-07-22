@@ -15,6 +15,9 @@
     project_name: "aap-demo-apme"
     inventory_name: "localhost"
     job_template_name: "Deploy APME"
+    ee_name: "APME EE"
+    ee_image: "{{ lookup('env', 'APME_EE_IMAGE') | default('quay.io/cferman/apme-ee:latest', true) }}"
+    ee_pull_policy: "always"
 
     # Paths
     playbook_dir_local: "{{ playbook_dir | dirname }}"
@@ -199,7 +202,55 @@
           openshift_token: "{{ openshift_token }}"
           openshift_project_name: "apme"
           openshift_validate_certs: false
-          skip_plugin_push: true
+          skip_plugin_push: false
+          oci_registry: "image-registry.openshift-image-registry.svc:5000/apme"
+
+    - name: Check if execution environment exists
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/execution_environments/?name={{ ee_name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: ee_check
+
+    - name: Create execution environment
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/execution_environments/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          name: "{{ ee_name }}"
+          description: "Custom EE with oc and skopeo for APME deployment"
+          image: "{{ ee_image }}"
+          pull: "{{ ee_pull_policy }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [201, 400]
+        return_content: true
+      register: ee_result
+      when: ee_check.json.count == 0
+
+    - name: Update existing execution environment
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/execution_environments/{{ ee_check.json.results[0].id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          description: "Custom EE with oc and skopeo for APME deployment"
+          image: "{{ ee_image }}"
+          pull: "{{ ee_pull_policy }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      when: ee_check.json.count > 0
+
+    - name: Set EE ID
+      ansible.builtin.set_fact:
+        ee_id: "{{ ee_result.json.id if ee_check.json.count == 0 else ee_check.json.results[0].id }}"
 
     - name: Check if job template exists
       ansible.builtin.uri:
@@ -225,6 +276,7 @@
           inventory: "{{ inventory_id }}"
           project: "{{ project_id }}"
           playbook: "{{ playbook_path }}"
+          execution_environment: "{{ ee_id }}"
           ask_variables_on_launch: true
           extra_vars: "{{ job_extra_vars | to_json }}"
           verbosity: 1
@@ -246,6 +298,7 @@
           inventory: "{{ inventory_id }}"
           project: "{{ project_id }}"
           playbook: "{{ playbook_path }}"
+          execution_environment: "{{ ee_id }}"
           ask_variables_on_launch: true
           extra_vars: "{{ job_extra_vars | to_json }}"
         validate_certs: "{{ aap_validate_certs }}"
