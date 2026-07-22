@@ -847,8 +847,8 @@ redhat-developer-hub:
         digest: ""
         pullPolicy: ""
         pullSecrets: []
-        registry: registry.redhat.io
-        repository: rhdh/rhdh-hub-rhel9
+        registry: quay.io
+        repository: rhdh-community/rhdh
         tag: "1.9"
       initContainers:
       - command:
