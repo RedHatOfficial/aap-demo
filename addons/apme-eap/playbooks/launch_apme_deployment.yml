@@ -32,9 +32,8 @@
       failed_when: not vars_file_stat.stat.exists
 
     - name: Load extra vars from file
-      ansible.builtin.include_vars:
-        file: "{{ extra_vars_file }}"
-        name: apme_extra_vars
+      ansible.builtin.set_fact:
+        apme_extra_vars: "{{ lookup('file', extra_vars_file) | from_yaml }}"
 
     - name: Get job template
       ansible.builtin.uri:
