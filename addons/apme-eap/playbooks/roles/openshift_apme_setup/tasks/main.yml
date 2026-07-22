@@ -6,7 +6,7 @@
     api_version: v1
     kind: Namespace
     name: "{{ openshift_project_name }}"
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
   register: existing_project
@@ -15,7 +15,7 @@
 - name: Create namespace  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     definition:
@@ -125,7 +125,7 @@
 - name: Create dynamic plugins registry auth secret  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     namespace: "{{ openshift_project_name }}"
@@ -157,7 +157,7 @@
 - name: Create scaffolder templates ConfigMap  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     namespace: "{{ openshift_project_name }}"

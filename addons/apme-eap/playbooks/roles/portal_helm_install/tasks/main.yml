@@ -12,7 +12,7 @@
       - "{{ apme_portal_helm_values_path }}"
     wait: true
     wait_timeout: "{{ portal_helm_install_timeout }}s"
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ portal_helm_install_validate_certs }}"
     force: "{{ portal_helm_install_force_upgrade | bool }}"
@@ -24,7 +24,7 @@
     api_version: route.openshift.io/v1
     kind: Route
     namespace: "{{ openshift_project_name }}"
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ portal_helm_install_validate_certs }}"
   register: portal_routes

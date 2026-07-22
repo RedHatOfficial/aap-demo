@@ -22,7 +22,7 @@
       - "{{ apme_gateway_helm_values_file }}"
     wait: true
     wait_timeout: "{{ apme_gateway_helm_timeout }}s"
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ apme_gateway_helm_validate_certs }}"
   register: apme_gateway_helm_result

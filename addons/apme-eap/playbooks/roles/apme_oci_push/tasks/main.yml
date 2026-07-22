@@ -60,7 +60,7 @@
     kind: ImageStreamTag
     namespace: "{{ openshift_project_name }}"
     name: "{{ apme_oci_image_reference }}"
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: existing_oci_image

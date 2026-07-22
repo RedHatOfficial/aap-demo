@@ -24,7 +24,7 @@
 - name: Create or update secrets-scm  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token | default(omit) }}"
+    api_key: "{{ openshift_token }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
     namespace: "{{ openshift_project_name }}"

@@ -9,6 +9,8 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
     collection_root: "{{ playbook_dir | dirname }}"
     apme_portal_helm_values_path: "{{ playbook_dir | dirname }}/.rendered/portal-apme-values.yaml"
+    # Force use of api_key/host auth instead of kubeconfig
+    ansible_kubernetes_context: ~
 
   pre_tasks:
     - name: Debug OpenShift connection parameters
