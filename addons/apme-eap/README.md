@@ -1,21 +1,20 @@
 # APME Playbook Addon
 
-Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) using official APME EAP welcome pack Ansible playbooks **executed via AAP REST API**.
+Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) using **official APME EAP welcome pack Ansible playbooks** executed locally in an isolated Python virtual environment.
 
 > **Preview:** APME is prototype software for the Early Access Program. Confidential — Red Hat associate and NDA partner use only.
 
 ## Overview
 
-This addon uses the **official APME EAP welcome pack playbooks** executed by AAP itself via REST API. This implementation:
+This addon uses the **official APME EAP welcome pack playbooks** executed locally via `ansible-playbook`. This implementation:
 
-- **AAP-native execution**: Playbooks run inside AAP (no local venv needed)
+- **Local execution**: Playbooks run in isolated Python venv (no AAP API dependency)
+- **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access  
 - Uses structured Ansible roles from the official APME welcome pack
 - Auto-discovers aap-demo environment (no manual configuration)
 - Maintains alignment with upstream APME deployment patterns
-- Demonstrates AAP running real automation workloads
-- Provides Web UI visibility into deployment progress
 
-**Architecture:** The addon uses **Ansible playbooks with `ansible.builtin.uri`** to interact with AAP's REST API. This is much cleaner than bash+curl and showcases infrastructure-as-code for AAP resource management.
+**Architecture:** Bash wrapper (`deploy.sh`) handles environment discovery and generates vars file, then invokes official APME playbooks via `ansible-playbook` with KUBECONFIG-based authentication.
 
 ## Quick Start
 
@@ -27,13 +26,13 @@ This addon uses the **official APME EAP welcome pack playbooks** executed by AAP
 - AAP deployed (`aap-demo deploy`)
 
 **Ansible installation** (auto-installed in venv):
-- A venv is created at `~/.aap-demo/apme-eap-venv` with `ansible-core`
-- Used to run helper playbooks that call AAP API via `ansible.builtin.uri`
-- The actual APME playbooks run inside AAP's execution environment (~50 MB venv)
+- A venv is created at `~/.aap-demo/apme-eap-venv` with full Ansible suite + collections
+- Includes kubernetes.core, community.okd, and other required collections
+- The playbooks run locally using KUBECONFIG authentication (~150 MB venv)
 
-### No Manual Setup Required! 🎉
+### No Manual Configuration Required! 🎉
 
-The addon **automatically creates an API token** using basic auth (same pattern as the portal addon). No manual Web UI steps needed!
+The addon **automatically discovers** your aap-demo environment (KUBECONFIG, cluster domain, AAP credentials). No manual setup needed!
 
 ### Deploy
 
@@ -43,24 +42,14 @@ aap-demo enable apme-eap
 
 This will:
 1. Check system prerequisites (kubectl, python3)
-2. Create venv with ansible-core (if not exists)
-3. Auto-discover your aap-demo environment
-4. **Auto-create API token** (if not exists, using basic auth like portal addon)
-5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Run `setup_aap_resources.yml` playbook to create:
-   - AAP Project (copies playbooks to controller pod)
-   - AAP Inventory (localhost)
-   - AAP Job Template ("Deploy APME")
-7. Run `launch_apme_deployment.yml` playbook to:
-   - Launch the job in AAP
-   - Wait for completion
-   - Stream output
+2. Create venv with full Ansible + collections (if not exists)
+3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
+4. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
+5. Run `playbooks/deploy_apme_portal.yml` directly via ansible-playbook
 
-**View deployment progress:** The playbook displays the AAP Web UI link where you can watch the job execution in real-time!
+**Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with the cluster. The `K8S_AUTH_KUBECONFIG` environment variable is set automatically by the wrapper script.
 
-**Why Ansible playbooks?** Using `ansible.builtin.uri` for REST API calls is cleaner and more maintainable than bash+curl, and demonstrates infrastructure-as-code for AAP resource management.
-
-**First run** takes longer (~2-3 minutes) to set up the virtual environment. Subsequent runs reuse the existing venv and are faster.
+**First run** takes longer (~2-3 minutes) to set up the virtual environment and install Ansible collections. Subsequent runs reuse the existing venv and are faster.
 
 ### Check Status
 

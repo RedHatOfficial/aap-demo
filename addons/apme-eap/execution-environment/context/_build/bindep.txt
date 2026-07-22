@@ -1,2 +1,0 @@
-# System-level binary dependencies
-# openshift-clients and skopeo are installed via additional_build_steps

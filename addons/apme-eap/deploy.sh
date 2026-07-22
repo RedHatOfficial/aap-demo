@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # APME Playbook Addon - Deploy Ansible Portal with Ansible Quality (APME)
-# Uses AAP REST API to execute official APME EAP welcome pack playbooks
+# Uses official APME EAP welcome pack playbooks executed locally in isolated venv
 #
 # ADDON_REQUIRES_AAP=true
 
@@ -23,29 +23,37 @@ warn() { echo -e "${YELLOW}WARN:${NC} $*"; }
 error() { echo -e "${RED}ERROR:${NC} $*" >&2; }
 die() { error "$*"; exit 1; }
 
-# No longer need bash API helpers - using Ansible playbooks!
+# Addon contract: deploy.sh [deploy|--delete]
 
 # ---------------------------------------------------------------------------
 # Prerequisites
 # ---------------------------------------------------------------------------
 
-setup_minimal_venv() {
-  # Create minimal venv with Ansible for API interaction via ansible.builtin.uri
-  # Much cleaner than bash+curl for REST API calls!
+setup_venv() {
+  # Create venv with full Ansible suite + collections for local playbook execution
 
   if [ ! -d "$VENV_DIR" ]; then
-    info "Creating Python venv with Ansible..."
+    info "Creating Python venv with Ansible and collections..."
     python3 -m venv "$VENV_DIR"
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
-    pip install --quiet --upgrade pip
-    pip install --quiet ansible-core
-    info "Venv created at $VENV_DIR"
-  fi
 
-  # Activate venv for this session
-  # shellcheck disable=SC1091
-  source "$VENV_DIR/bin/activate"
+    pip install --quiet --upgrade pip
+    pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
+
+    # Install Ansible collections
+    ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml"
+
+    info "Venv created at $VENV_DIR (~150MB)"
+  else
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+
+    # Upgrade dependencies if requirements changed
+    info "Upgrading venv dependencies..."
+    pip install --quiet --upgrade -r "${SCRIPT_DIR}/requirements.txt"
+    ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml" --force
+  fi
 }
 
 check_prerequisites() {
@@ -61,24 +69,9 @@ check_prerequisites() {
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
 
-  # Check jq for JSON parsing
-  if ! command -v jq &>/dev/null; then
-    die "jq not found. Install with: brew install jq (macOS) or your package manager"
-  fi
-
-  # Check python3 for YAML to JSON conversion
+  # Check python3
   if ! command -v python3 &>/dev/null; then
     die "python3 not found. Please install Python 3.8 or later."
-  fi
-
-  # Setup minimal venv with PyYAML (no Ansible - playbooks run in AAP!)
-  setup_minimal_venv
-
-  info "Checking AAP deployment..."
-
-  # Check for AAP controller
-  if ! kubectl get automationcontroller -n aap-operator &>/dev/null; then
-    die "AAP not deployed. Run 'aap-demo deploy' first."
   fi
 
   # Ensure the in-cluster registry addon is deployed — APME uses it to store
@@ -196,11 +189,10 @@ openshift_validate_certs: false
 # Token extracted from kubeconfig (if available)
 $(if [ -n "$openshift_token" ]; then echo "openshift_token: \"${openshift_token}\""; else echo "# openshift_token not available - using KUBECONFIG"; fi)
 
-# AAP (discovered from aap-operator namespace)
+# AAP (for OAuth app creation - external route for redirect)
 aap_host: "${AAP_HOST}"
 aap_username: admin
 aap_password: "${AAP_PASSWORD}"
-aap_organization: Default
 
 # Helm chart configuration (portal)
 portal_helm_chart_repo: openshift-helm-charts
@@ -234,7 +226,13 @@ configure_github_secrets: false
 # github_token: ""
 # 3. Set configure_github_secrets: true above
 
-# OCI push configuration
+# OCI registry configuration (MicroShift doesn't have integrated registry)
+# oci_registry: External URL for local skopeo push (runs outside cluster)
+oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
+# oci_registry_internal: Internal service URL for pods to pull images
+# Note: No http:// prefix - registries.conf handles the insecure flag
+oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
+skip_plugin_push: false
 apme_oci_push_force: false  # Set true to re-push plugins even if registry has them
 
 # Architecture (informational)
@@ -246,168 +244,97 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
-# Deploy via AAP API (using Ansible playbooks)
+# Deployment
 # ---------------------------------------------------------------------------
-
-ensure_aap_token() {
-  # Check if token already exists
-  local api_token
-  api_token=$(kubectl get secret aap-api-token -n aap-operator -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || echo "")
-
-  if [ -n "$api_token" ]; then
-    info "Using existing API token from secret" >&2
-    echo "$api_token"
-    return 0
-  fi
-
-  # Token doesn't exist - create it automatically
-  info "API token not found. Creating new token..." >&2
-
-  # Get AAP gateway admin password (not controller password!)
-  local admin_password
-  admin_password=$(kubectl get secret aap-admin-password -n aap-operator -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
-
-  if [ -z "$admin_password" ]; then
-    error "Could not retrieve AAP admin password"
-    exit 1
-  fi
-
-  # Export credentials for playbook
-  export AAP_USERNAME="admin"
-  export AAP_PASSWORD="$admin_password"
-
-  # Run playbook to create token (redirect output to stderr to keep stdout clean)
-  ansible-playbook "${SCRIPT_DIR}/playbooks/create_aap_token.yml" >&2
-
-  if [ $? -ne 0 ]; then
-    error "Failed to create API token"
-    exit 1
-  fi
-
-  # Retrieve newly created token
-  api_token=$(kubectl get secret aap-api-token -n aap-operator -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || echo "")
-
-  if [ -z "$api_token" ]; then
-    error "Token creation succeeded but could not retrieve token from secret"
-    exit 1
-  fi
-
-  echo "$api_token"
-}
 
 deploy() {
-  info "Deploying APME via AAP REST API (using Ansible)..."
+  info "Deploying APME using official welcome pack playbooks..."
 
-  # Get AAP configuration
-  local aap_route
-  aap_route=$(kubectl get route -n aap-operator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  # Set environment for kubernetes.core modules
+  export K8S_AUTH_KUBECONFIG="${KUBECONFIG:-${HOME}/.crc/machines/crc/kubeconfig}"
+  export ANSIBLE_ROLES_PATH="${SCRIPT_DIR}/playbooks/roles"
 
-  if [ -z "$aap_route" ]; then
-    die "AAP route not found. Is AAP deployed?"
-  fi
-
-  local aap_host="https://$aap_route"
-
-  # Export for token creation playbook
-  export AAP_HOST="$aap_host"
-
-  local aap_token
-  aap_token=$(ensure_aap_token)
-
-  # Export for Ansible playbooks
-  export AAP_HOST="$aap_host"
-  export AAP_TOKEN="$aap_token"
-  export APME_VARS_FILE="$VARS_FILE"
-
-  # Step 1: Setup AAP resources (Project, Inventory, Job Template)
-  info "Setting up AAP resources (Project, Inventory, Job Template)..."
-  ansible-playbook "${SCRIPT_DIR}/playbooks/setup_aap_resources.yml" -v
-
-  if [ $? -ne 0 ]; then
-    error "Failed to setup AAP resources"
-    exit 1
-  fi
-
-  # Step 2: Launch APME deployment job
-  info ""
-  info "Launching APME deployment job in AAP..."
-  ansible-playbook "${SCRIPT_DIR}/playbooks/launch_apme_deployment.yml" -v
+  # Run main deployment playbook directly
+  ansible-playbook "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
+    -e "@${VARS_FILE}" \
+    -e "@${SCRIPT_DIR}/defaults.yml"
 
   if [ $? -eq 0 ]; then
-    # Get APME portal route if it exists
-    local apme_route
-    apme_route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-
-    info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    info "APME deployed successfully via AAP!"
-    info ""
-
-    if [ -n "$apme_route" ]; then
-      info "APME Portal Access:"
-      info "  URL: https://${apme_route}"
-      info "  Uses AAP OAuth - login via AAP credentials"
-      info ""
-    fi
-
-    info "AAP Controller Access:"
-    info "  URL: ${aap_host}"
-    info "  Username: admin"
-    info "  Password: (stored in secret aap-admin-password)"
-    info ""
-    info "Next steps:"
-    info "  1. Verify deployment: kubectl get pods -n $NAMESPACE"
-    info "  2. View job in AAP: ${aap_host}/#/jobs/playbook/"
-    info ""
-    info "To check status: aap-demo status"
-    info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    info "APME deployment completed successfully"
+    show_routes
   else
-    error "Deployment failed. Check AAP UI for job details: ${aap_host}/#/jobs/"
+    error "APME deployment failed. Check playbook output above."
     exit 1
   fi
 }
 
-# ---------------------------------------------------------------------------
-# Delete
-# ---------------------------------------------------------------------------
+show_routes() {
+  local apme_route
+  apme_route=$(kubectl get route -n "$NAMESPACE" redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 
-delete() {
-  info "Uninstalling APME..."
+  info ""
+  info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  info "APME Portal deployed successfully!"
+  info ""
 
-  if kubectl get namespace "$NAMESPACE" &>/dev/null; then
-    info "Deleting namespace: $NAMESPACE"
-    kubectl delete namespace "$NAMESPACE" --ignore-not-found
-    info "Namespace deleted"
+  if [ -n "$apme_route" ]; then
+    info "Portal Access:"
+    info "  URL: https://${apme_route}"
+    info "  Uses AAP OAuth - login via AAP credentials"
   else
-    warn "Namespace $NAMESPACE does not exist (already deleted?)"
+    warn "Portal route not found yet - may still be deploying"
   fi
 
+  info ""
+  info "Verify deployment:"
+  info "  kubectl get pods -n $NAMESPACE"
+  info "  kubectl get route -n $NAMESPACE"
+  info ""
+  info "To check status: aap-demo status"
+  info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
+# ---------------------------------------------------------------------------
+# Cleanup
+# ---------------------------------------------------------------------------
+
+cleanup() {
+  info "Removing APME namespace and resources..."
+
+  # Delete namespace
+  kubectl delete namespace "$NAMESPACE" --ignore-not-found=true
+
+  # Remove generated vars file
   if [ -f "$VARS_FILE" ]; then
-    info "Removing vars file: $VARS_FILE"
     rm -f "$VARS_FILE"
   fi
 
-  # Optionally remove venv
-  if [ -d "$VENV_DIR" ]; then
-    info "Minimal venv still exists at: $VENV_DIR"
-    info "To remove: rm -rf $VENV_DIR"
-  fi
-
-  info "APME uninstalled successfully"
+  info "APME cleanup complete"
+  info "To fully remove the venv: rm -rf $VENV_DIR"
 }
 
 # ---------------------------------------------------------------------------
-# Main
+# Main Execution
 # ---------------------------------------------------------------------------
 
-main() {
-  if [ "$ACTION" = "--delete" ]; then
-    delete
-  else
+case "$ACTION" in
+  deploy|--deploy)
     check_prerequisites
+    detect_architecture
     discover_environment
     generate_vars_file
+    setup_venv
     deploy
-  fi
-}
+    ;;
 
-main
+  --delete|delete|remove)
+    cleanup
+    ;;
+
+  *)
+    echo "Usage: $0 [deploy|--delete]"
+    echo "  deploy   - Deploy APME using official welcome pack playbooks (local execution)"
+    echo "  --delete - Remove APME namespace and resources"
+    exit 1
+    ;;
+esac

@@ -29,7 +29,8 @@
 - name: Create or update secrets-rhaap-portal  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
     namespace: "{{ openshift_project_name }}"
@@ -53,7 +54,8 @@
     kind: Deployment
     name: "{{ portal_helm_release_name }}"
     namespace: "{{ openshift_project_name }}"
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
   register: portal_deployment_check
@@ -62,7 +64,8 @@
 - name: Restart portal deployment when OAuth credentials changed  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: patched
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
     kind: Deployment

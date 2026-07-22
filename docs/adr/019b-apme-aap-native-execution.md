@@ -1,9 +1,9 @@
 # ADR-019b: APME AAP-Native Execution
 
-**Status:** Accepted  
+**Status:** Rejected  
 **Date:** 2026-07-21  
 **Author:** Chad Ferman  
-**Supersedes:** ADR-019 Architecture Decision 2 (venv approach)
+**Reason:** Overcomplex and adds multiple new support needs like
 
 ## Context
 

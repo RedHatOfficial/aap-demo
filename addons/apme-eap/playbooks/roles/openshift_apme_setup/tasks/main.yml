@@ -6,7 +6,8 @@
     api_version: v1
     kind: Namespace
     name: "{{ openshift_project_name }}"
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
   register: existing_project
@@ -15,7 +16,8 @@
 - name: Create namespace  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     definition:
@@ -122,10 +124,27 @@
     registry_secret_data: "{{ registry_secret_data | combine({'registries.conf': lookup('file', registry_registries_conf)}) }}"
   when: registry_registries_conf is defined and registry_registries_conf | length > 0
 
+- name: Generate registries.conf for custom insecure registry  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    registry_secret_data: "{{ registry_secret_data | combine({'registries.conf': registries_conf_content}) }}"
+  vars:
+    registries_conf_content: |
+      unqualified-search-registries = ["registry.access.redhat.com"]
+
+      [[registry]]
+      location = "registry.aap-demo-registry.svc.cluster.local:5000"
+      insecure = true
+      blocked = false
+  when:
+    - oci_registry_internal is defined
+    - oci_registry_internal is search('registry.aap-demo-registry')
+    - registry_secret_data.get('registries.conf', '') | length == 0
+
 - name: Create dynamic plugins registry auth secret  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     namespace: "{{ openshift_project_name }}"
@@ -157,7 +176,8 @@
 - name: Create scaffolder templates ConfigMap  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
-    api_key: "{{ openshift_token }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     namespace: "{{ openshift_project_name }}"
