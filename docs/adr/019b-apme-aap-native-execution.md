@@ -221,6 +221,217 @@ Use the (hypothetical) AAP MCP server instead of direct API calls.
    - Requires ClusterRoleBinding for cluster-wide permissions
    - Internal cluster address (`kubernetes.default.svc:443`) works from pod-to-pod
 
+## Deployment Issues and Resolutions
+
+During initial deployment on MicroShift (OpenShift Local), several interconnected issues were discovered and resolved:
+
+### Issue 1: Registry Hostname Detection Failure
+
+**Problem**: `oc registry login` failed with "The public hostname of the integrated registry could not be determined"
+
+**Root Cause**: Playbook configured to use OpenShift integrated registry (`image-registry.openshift-image-registry.svc:5000`) which doesn't exist in MicroShift
+
+**Resolution**: 
+- Deployed `aap-demo-registry` addon providing HTTP registry at `registry.aap-demo-registry.svc.cluster.local:5000`
+- Configured job template with `oci_registry` pointing to custom registry
+- Set `skip_plugin_push: true` to bypass skopeo TLS verification issues with HTTP-only registry
+
+### Issue 2: Hairpin NAT / Pod-to-External-Route Connectivity
+
+**Problem**: OAuth application check failed - pods couldn't reach AAP Gateway API via external route `https://aap-aap-operator.apps.127.0.0.1.nip.io`
+
+**Root Cause**: Network routing prevents pods from accessing their own external routes (hairpin NAT limitation in MicroShift)
+
+**Resolution**: Use internal service URL for pod-to-pod communication
+```yaml
+aap_host: "http://aap.aap-operator.svc.cluster.local"  # Internal service, not external route
+```
+
+**Key Distinction**:
+- **External URLs** (browser access): `https://aap-aap-operator.apps.127.0.0.1.nip.io`
+- **Internal URLs** (pod-to-pod): `http://aap.aap-operator.svc.cluster.local`
+
+### Issue 3: Malformed Portal URL from API Derivation
+
+**Problem**: Portal URL became `https://redhat-rhaap-portal-apme.https://kubernetes.default.svc` instead of proper nip.io URL
+
+**Root Cause**: Cluster domain derivation logic tried to extract domain from `https://kubernetes.default.svc:443`, which doesn't match the expected `api.*.` pattern
+
+**Resolution**: Explicitly extract cluster domain from existing routes
+```yaml
+- name: Get AAP route hostname
+  ansible.builtin.command:
+    cmd: kubectl get route -n aap-operator -o jsonpath='{.items[0].spec.host}'
+  register: aap_route_result
+
+- name: Extract cluster domain from route
+  ansible.builtin.set_fact:
+    cluster_domain: "{{ aap_route_result.stdout | regex_replace('^[^.]+\\.', '') }}"
+```
+
+### Issue 4: Missing Job Template Variables
+
+**Problem**: Sequential "undefined variable" errors for `aap_organization`, `portal_helm_release_name`, and all Helm configuration variables
+
+**Root Cause**: Job template `extra_vars` didn't include variables expected by APME playbooks (which have defaults in their own defaults.yml files but AAP doesn't load those)
+
+**Resolution**: Build comprehensive `extra_vars` dictionary in setup playbook
+```yaml
+job_extra_vars:
+  # OpenShift connection
+  openshift_api_url: "https://kubernetes.default.svc:443"
+  openshift_token: "{{ openshift_token }}"
+  openshift_project_name: "apme"
+  openshift_cluster_domain: "{{ cluster_domain }}"
+  openshift_validate_certs: false
+  
+  # OCI registry
+  skip_plugin_push: true
+  oci_registry: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
+  
+  # AAP connection (internal service URL)
+  aap_host: "http://aap.aap-operator.svc.cluster.local"
+  aap_username: "admin"
+  aap_password: "{{ aap_admin_password }}"
+  aap_organization: "Default"
+  
+  # Portal configuration
+  portal_helm_release_name: "redhat-rhaap-portal"
+  aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
+  
+  # Helm chart configuration (portal)
+  portal_helm_chart_repo: "openshift-helm-charts"
+  portal_helm_chart_repo_url: "https://charts.openshift.io/"
+  portal_helm_chart_name: "redhat-rhaap-portal"
+  portal_helm_chart_version: "2.2.3"
+  portal_helm_install_timeout: 1800
+  
+  # Helm chart configuration (APME gateway)
+  apme_helm_chart_repo: "apme"
+  apme_helm_chart_repo_url: "https://ansible.github.io/apme"
+  apme_helm_chart_name: "apme"
+  apme_helm_chart_version: "0.1.2"
+  apme_helm_release_name: "apme"
+```
+
+### Issue 5: Missing Helm Binary in Execution Environment
+
+**Problem**: `Failed to find required executable "helm" in paths`
+
+**Root Cause**: APME execution environment image only included `oc` and `skopeo`, not `helm`
+
+**Resolution**: Rebuilt execution environment with helm
+```dockerfile
+# execution-environment/Containerfile
+RUN microdnf install -y openshift-clients skopeo tar && \
+    microdnf clean all
+
+# Install Helm manually (not in RHEL9 minimal repos)
+RUN curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-arm64.tar.gz | tar -xz && \
+    mv linux-arm64/helm /usr/local/bin/helm && \
+    chmod +x /usr/local/bin/helm && \
+    rm -rf linux-arm64
+```
+
+### Issue 6: Incorrect Helm Module Parameter Usage
+
+**Problem**: Helm failed with `404 Not Found` trying to fetch `https://charts.openshift.io/redhat-rhaap-portal`
+
+**Root Cause**: Roles concatenated repo URL and chart name: `chart_ref: "{{ repo_url }}{{ chart_name }}"` instead of using separate parameters
+
+**Resolution**: Use `chart_repo_url` parameter
+```yaml
+# Before (incorrect)
+chart_ref: "{{ portal_helm_chart_repo_url }}{{ portal_helm_chart_name }}"
+
+# After (correct)
+chart_ref: "{{ portal_helm_chart_name }}"
+chart_repo_url: "{{ portal_helm_chart_repo_url }}"
+```
+
+### Issue 7: ARM64 Image Availability
+
+**Problem**: `ImagePullBackOff` - Red Hat registry images don't have ARM64 builds
+```
+no image found in image index for architecture "arm64", variant "v8", OS "linux"
+```
+
+**Root Cause**: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` is x86_64 only
+
+**Resolution**: Architecture-aware image selection
+```yaml
+- name: Detect system architecture
+  ansible.builtin.set_fact:
+    system_arch: "{{ ansible_architecture }}"
+
+- name: Use community RHDH images for ARM64
+  ansible.builtin.set_fact:
+    rhdh_image_registry: "quay.io"
+    rhdh_image_repository: "rhdh-community/rhdh"
+    rhdh_image_tag: "1.10"
+  when: system_arch in ['aarch64', 'arm64']
+
+- name: Use official Red Hat registry for x86_64
+  ansible.builtin.set_fact:
+    rhdh_image_registry: "registry.redhat.io"
+    rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
+    rhdh_image_tag: "1.9"
+  when: system_arch not in ['aarch64', 'arm64']
+```
+
+### Issue 8: Postgres Registry Override
+
+**Problem**: Postgres pod failed with `unauthorized: access to the requested resource is not authorized` on `quay.io/rhel9/postgresql-15`
+
+**Root Cause**: Overly broad regex replacement changed postgres registry from `registry.redhat.io` to `quay.io`, but postgres image on quay.io requires authentication
+
+**Resolution**: Make image replacement specific to RHDH hub only
+```yaml
+# Target only RHDH hub image, not postgres or other images
+- regexp: '(pullSecrets: \[\]\n\s+registry: )registry\.redhat\.io(\n\s+repository: rhdh/rhdh-hub-rhel9)'
+  replace: '\1{{ rhdh_image_registry }}\2'
+```
+
+### Issue 9: Plugin Compatibility Between RHDH Versions
+
+**Problem**: Init container error - `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found in community RHDH 1.10
+
+**Root Cause**: Community RHDH (1.10) and Red Hat RHDH (1.9) have different plugin sets
+
+**Resolution**: Remove incompatible plugins for community version
+```yaml
+- name: Remove incompatible plugins for community RHDH (ARM64)
+  ansible.builtin.lineinfile:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: ".*backstage-community-plugin-scaffolder-backend-module-quay.*"
+    state: absent
+  when: system_arch in ['aarch64', 'arm64']
+```
+
+### Summary of Changes
+
+**Modified Files**:
+- `playbooks/setup_aap_resources.yml` - Added comprehensive extra_vars configuration
+- `playbooks/roles/portal_helm_install/tasks/main.yml` - Fixed helm chart_repo_url usage
+- `playbooks/roles/apme_gateway_helm/tasks/main.yml` - Fixed helm chart_repo_url usage
+- `playbooks/roles/aap_apme_prerequisites/tasks/create_oauth_app.yml` - Temporarily disabled no_log for debugging
+- `playbooks/roles/apme_helm_values/tasks/main.yml` - Added ARM64 image detection and replacement
+- `execution-environment/Containerfile` - Added helm installation
+- `execution-environment/execution-environment.yml` - Added helm to build
+
+**Commit History** (apme-playbook branch):
+1. `fix(apme-eap): use internal service URLs and set cluster domain`
+2. `fix(apme-eap): add missing aap_organization variable`
+3. `fix(apme-eap): add portal_helm_release_name and oauth app name`
+4. `fix(apme-eap): skip plugin push to avoid registry TLS issues`
+5. `fix(apme-eap): add all required Helm chart configuration variables`
+6. `feat(apme-eap): add helm to execution environment`
+7. `fix(apme-eap): use chart_repo_url parameter for helm module`
+8. `feat(apme-eap): use upstream RHDH images for ARM64 systems`
+9. `fix(apme-eap): use rhdh-community/rhdh for ARM64 support`
+10. `fix(apme-eap): make RHDH image replacement more specific`
+11. `fix(apme-eap): remove incompatible quay plugin for community RHDH`
+
 ## Migration Notes
 
 **From venv-based (ADR-019) to AAP-native (ADR-019b):**
