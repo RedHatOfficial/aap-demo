@@ -169,6 +169,15 @@
         status_code: [201, 400]
       when: inventory_check.json.count == 0
 
+    - name: Grant cluster-admin to kube-system default service account
+      ansible.builtin.command:
+        cmd: kubectl create clusterrolebinding apme-deployer-admin --clusterrole=cluster-admin --serviceaccount=kube-system:default
+      environment:
+        KUBECONFIG: "{{ lookup('env', 'KUBECONFIG') | default('~/.crc/machines/crc/kubeconfig', true) }}"
+      register: clusterrolebinding_result
+      changed_when: clusterrolebinding_result.rc == 0
+      failed_when: false
+
     - name: Generate OpenShift service account token
       ansible.builtin.command:
         cmd: kubectl create token -n kube-system default --duration=87600h
