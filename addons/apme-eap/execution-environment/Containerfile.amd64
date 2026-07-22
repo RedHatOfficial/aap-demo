@@ -1,0 +1,24 @@
+# Alternative Containerfile for building without ansible-builder
+# Can be built directly with: podman build -f Containerfile.amd64 -t apme-ee:latest .
+
+FROM registry.redhat.io/ansible-automation-platform-27/ee-supported-rhel9:latest
+
+USER root
+
+# Install OpenShift CLI and Skopeo
+RUN microdnf install -y openshift-clients skopeo tar && \
+    microdnf clean all
+
+# Install Helm manually (not available in RHEL9 minimal repos, curl-minimal already present)
+RUN curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-amd64.tar.gz | tar -xz && \
+    mv linux-amd64/helm /usr/local/bin/helm && \
+    chmod +x /usr/local/bin/helm && \
+    rm -rf linux-amd64
+
+# Verify installations
+RUN oc version --client && skopeo --version && helm version
+
+USER 1000
+
+LABEL description="APME Execution Environment with oc, skopeo, and helm"
+LABEL maintainer="aap-demo"
