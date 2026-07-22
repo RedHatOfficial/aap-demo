@@ -11,7 +11,7 @@ Deploys Automation Orchestrator Early Access to aap-demo clusters.
 
 ## Registry Configuration
 
-The addon prompts for the container registry path on first run. The registry location is provided externally by your Red Hat point of contact.
+The addon prompts for the container registry host on first run and the index image on every run. Both values are provided by your Red Hat point of contact.
 
 ### Interactive Setup
 
@@ -21,15 +21,16 @@ The addon prompts for the container registry path on first run. The registry loc
 
 The addon will prompt for two pieces of information from your Red Hat contact:
 
-1. **Registry path** (base path only)
-   - Example prompt: `Registry path: `
-   - Enter the base path, not a full image reference
+1. **Registry host** (default: `registry.redhat.io`)
+   - Example prompt: `Registry host (default: registry.redhat.io): `
+   - Press Enter to accept the default or enter an alternate registry
 
-2. **Index image** (full image URL with tag)
+2. **Index image** (full image URL with tag, prompted every run)
    - Example prompt: `Index image (full URL with tag): `
    - Enter the complete operator index image reference
+   - Always prompted to prevent accidental reuse of stale image references
 
-The registry path is saved to `~/.aap-demo/ao-registry` and reused on subsequent runs. The index image can also be provided via the `AO_INDEX_IMAGE` environment variable to skip the prompt.
+The registry host is saved to `~/.aap-demo/ao-registry` and reused on subsequent runs. The index image can also be provided via the `AO_INDEX_IMAGE` environment variable to skip the prompt.
 
 ### Authentication
 
