@@ -1,0 +1,4 @@
+---
+# defaults for apme_scm_secrets
+
+apme_scm_secrets_secret_name: "secrets-scm"

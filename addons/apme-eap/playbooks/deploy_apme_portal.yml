@@ -1,0 +1,155 @@
+---
+# Deploy Ansible automation portal with Ansible Quality (APME) on OpenShift
+
+- name: Deploy APME automation portal
+  hosts: localhost
+  gather_facts: true
+  vars:
+    # Use the same Python that runs ansible (avoids brew vs venv module mismatches)
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    collection_root: "{{ playbook_dir | dirname }}"
+    apme_portal_helm_values_path: "{{ playbook_dir | dirname }}/.rendered/portal-apme-values.yaml"
+
+  pre_tasks:
+    - name: Authenticate and generate token from username/password
+      community.okd.openshift_auth:
+        host: "{{ openshift_api_url }}"
+        username: "{{ openshift_username }}"
+        password: "{{ openshift_password }}"
+        validate_certs: "{{ openshift_validate_certs | default(false) }}"
+      register: k8s_auth_result
+      when:
+        - openshift_token is not defined or openshift_token | length == 0
+        - openshift_username is defined
+        - openshift_password is defined
+      no_log: true
+
+    - name: Set OpenShift token from authentication
+      ansible.builtin.set_fact:
+        openshift_token: "{{ k8s_auth_result.k8s_auth.api_key }}"
+      no_log: true
+      when: k8s_auth_result is defined and k8s_auth_result.k8s_auth is defined
+
+    - name: Ensure directory for rendered kubeconfig
+      ansible.builtin.file:
+        path: "{{ collection_root }}/.rendered"
+        state: directory
+        mode: "0700"
+
+    - name: Write kubeconfig for oc registry commands
+      ansible.builtin.template:
+        src: kubeconfig.j2
+        dest: "{{ collection_root }}/.rendered/kubeconfig"
+        mode: "0600"
+      no_log: true
+      when: openshift_token is defined and openshift_token | length > 0
+
+    - name: Set kubeconfig path for OCI registry tasks
+      ansible.builtin.set_fact:
+        apme_oci_kubeconfig: "{{ collection_root }}/.rendered/kubeconfig"
+      when: openshift_token is defined and openshift_token | length > 0
+
+    - name: Derive OpenShift cluster domain from API URL if not specified
+      ansible.builtin.set_fact:
+        openshift_cluster_domain: >-
+          {{ openshift_cluster_domain | default(
+             openshift_api_url |
+             regex_replace('^https?://api\.', 'apps.') |
+             regex_replace(':[0-9]+$', '')
+          ) }}
+
+    - name: Set portal route host
+      ansible.builtin.set_fact:
+        portal_route_host: "redhat-rhaap-portal-{{ openshift_project_name }}.{{ openshift_cluster_domain }}"
+        portal_url: "https://redhat-rhaap-portal-{{ openshift_project_name }}.{{ openshift_cluster_domain }}"
+
+    - name: Resolve bundled plugin pack and registry defaults
+      ansible.builtin.include_tasks: tasks/resolve_plugin_pack.yml
+
+    - name: Display deployment info
+      ansible.builtin.debug:
+        msg:
+          - "==== Ansible Quality (APME) portal deployment ===="
+          - "Target namespace: {{ openshift_project_name }}"
+          - "Cluster domain: {{ openshift_cluster_domain }}"
+          - "Portal URL (expected): {{ portal_url }}"
+          - "Plugin SHA: {{ plugin_sha }}"
+          - "OCI registry: {{ oci_registry }}"
+
+    - name: Verify required Ansible collections
+      ansible.builtin.command:
+        cmd: ansible-galaxy collection list
+      register: collections_list
+      changed_when: false
+
+    - name: Fail when kubernetes.core collection is missing
+      ansible.builtin.fail:
+        msg: "kubernetes.core collection not found. Run: ansible-playbook playbooks/setup.yml"
+      when: "'kubernetes.core' not in collections_list.stdout"
+
+    - name: Fail when community.okd collection is missing
+      ansible.builtin.fail:
+        msg: "community.okd collection not found. Run: ansible-playbook playbooks/setup.yml"
+      when: "'community.okd' not in collections_list.stdout"
+
+    - name: Verify oc CLI is available
+      ansible.builtin.command:
+        cmd: oc version --client
+      register: oc_check
+      changed_when: false
+      failed_when: oc_check.rc != 0
+
+    - name: Verify skopeo CLI is available
+      ansible.builtin.command:
+        cmd: "{{ apme_oci_push_skopeo_binary | default('skopeo') }} --version"
+      register: skopeo_check
+      changed_when: false
+      failed_when: skopeo_check.rc != 0
+
+    - name: Create local directory for rendered Helm values
+      ansible.builtin.file:
+        path: "{{ apme_portal_helm_values_path | dirname }}"
+        state: directory
+        mode: "0755"
+
+  roles:
+    - role: openshift_apme_setup
+    - role: aap_apme_prerequisites
+    - role: apme_oci_push
+    - role: apme_helm_values
+    - role: apme_scm_secrets
+      when: configure_github_secrets | default(false) | bool
+    - role: portal_helm_install
+    - role: apme_gateway_helm
+
+  post_tasks:
+    - name: Save deployment info
+      ansible.builtin.template:
+        src: deployment-info.md.j2
+        # yamllint disable rule:line-length
+        dest: >-
+          {{ collection_root }}/apme-portal-deployment-{{ ansible_date_time.year }}-{{ ansible_date_time.month }}-{{ ansible_date_time.day }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.md
+        # yamllint enable rule:line-length
+        mode: "0644"
+      changed_when: false
+
+    - name: Remove local rendered artifacts
+      ansible.builtin.file:
+        path: "{{ collection_root }}/.rendered"
+        state: absent
+
+    - name: Display deployment complete
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "============================================"
+          - "  APME Portal Deployment Complete"
+          - "============================================"
+          - ""
+          - "Portal URL: {{ portal_url }}"
+          - "Namespace: {{ openshift_project_name }}"
+          - "Plugin image: {{ oci_registry }}/apme-prototype-plugins:{{ plugin_sha }}"
+          - ""
+          - "Verify: oc get pods -n {{ openshift_project_name }}"
+          - "Sign in via AAP OAuth, then open Quality tab after registering a repo."
+          - ""

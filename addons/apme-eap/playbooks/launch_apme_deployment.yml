@@ -1,0 +1,136 @@
+---
+# Launch APME deployment job in AAP
+# Waits for completion and streams output
+
+- name: Launch APME deployment job
+  hosts: localhost
+  gather_facts: false
+  vars:
+    aap_host: "{{ lookup('env', 'AAP_HOST') }}"
+    aap_token: "{{ lookup('env', 'AAP_TOKEN') }}"
+    aap_validate_certs: false
+    job_template_name: "Deploy APME"
+    extra_vars_file: "{{ lookup('env', 'APME_VARS_FILE') }}"
+    poll_interval: 5
+    max_wait: 1800  # 30 minutes
+
+  tasks:
+    - name: Verify AAP credentials
+      ansible.builtin.fail:
+        msg: "AAP_HOST and AAP_TOKEN environment variables must be set"
+      when: aap_host == "" or aap_token == ""
+
+    - name: Load extra vars from file
+      ansible.builtin.include_vars:
+        file: "{{ extra_vars_file }}"
+        name: apme_extra_vars
+      when: extra_vars_file != ""
+
+    - name: Get job template
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/?name={{ job_template_name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: template_result
+
+    - name: Fail if job template not found
+      ansible.builtin.fail:
+        msg: "Job template '{{ job_template_name }}' not found. Run setup_aap_resources.yml first."
+      when: template_result.json.count == 0
+
+    - name: Launch job
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/{{ template_result.json.results[0].id }}/launch/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          extra_vars: "{{ apme_extra_vars | default({}) }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: 201
+        return_content: true
+      register: job_launch
+
+    - name: Set job ID
+      ansible.builtin.set_fact:
+        job_id: "{{ job_launch.json.id }}"
+
+    - name: Display job info
+      ansible.builtin.debug:
+        msg:
+          - "APME deployment job launched!"
+          - "Job ID: {{ job_id }}"
+          - "View in AAP: {{ aap_host }}/#/jobs/playbook/{{ job_id }}/output"
+
+    - name: Wait for job to complete
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/jobs/{{ job_id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: job_status
+      until: job_status.json.status in ['successful', 'failed', 'error', 'canceled']
+      retries: "{{ (max_wait / poll_interval) | int }}"
+      delay: "{{ poll_interval }}"
+
+    - name: Get job output
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/jobs/{{ job_id }}/job_events/?order_by=counter"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: job_events
+
+    - name: Display job output
+      ansible.builtin.debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ job_events.json.results }}"
+      when: item.stdout is defined and item.stdout != ""
+      loop_control:
+        label: "{{ item.event }}"
+
+    - name: Get job stdout if failed
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/jobs/{{ job_id }}/stdout/?format=txt"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: job_stdout
+      when: job_status.json.status != 'successful'
+
+    - name: Extract error from stdout
+      ansible.builtin.set_fact:
+        job_error: "{{ job_stdout.content | regex_search('ERROR!.*', multiline=True) | default('') }}"
+        fatal_error: "{{ job_stdout.content | regex_search('fatal:.*', multiline=True) | default('') }}"
+      when: job_status.json.status != 'successful'
+
+    - name: Display job result
+      ansible.builtin.debug:
+        msg:
+          - ""
+          - "=========================================="
+          - "Job Status: {{ job_status.json.status | upper }}"
+          - "=========================================="
+          - ""
+          - "{% if job_status.json.status != 'successful' %}Error: {{ job_error if job_error else fatal_error }}{% endif %}"
+          - "View full output: {{ aap_host }}/#/jobs/playbook/{{ job_id }}/output"
+
+    - name: Fail if job failed
+      ansible.builtin.fail:
+        msg: |
+          APME deployment job failed.
+
+          Error: {{ job_error if job_error else fatal_error }}
+
+          Full output: {{ aap_host }}/#/jobs/playbook/{{ job_id }}/output
+      when: job_status.json.status != 'successful'

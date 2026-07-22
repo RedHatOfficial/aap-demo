@@ -1,0 +1,44 @@
+# Ansible Quality (APME) automation portal deployment
+
+Deployment date: {{ ansible_date_time.iso8601 }}
+
+## Portal access
+
+- **Portal URL:** {{ portal_url }}
+- **OpenShift namespace:** {{ openshift_project_name }}
+- **Cluster domain:** {{ openshift_cluster_domain }}
+
+## AAP integration
+
+- **AAP host:** {{ aap_host_normalized | default(aap_host) }}
+- **Organization:** {{ aap_organization }}
+- **OAuth application:** {{ aap_apme_prerequisites_oauth_application_name }}
+- **Redirect URI:** {{ portal_url }}/api/auth/rhaap/handler/frame
+- **GitHub OAuth callback:** {{ portal_url }}/api/auth/github/handler/frame (optional: confirm on github.com)
+
+## APME plugins
+
+- **Plugin SHA:** {{ plugin_sha }}
+- **OCI registry:** {{ oci_registry_normalized }}
+- **Image:** `{{ oci_registry_normalized }}/apme-prototype-plugins:{{ plugin_sha }}`
+
+## Helm releases
+
+| Release | Chart | Version |
+| --- | --- | --- |
+| {{ portal_helm_release_name }} | {{ portal_helm_chart_name }} | {{ portal_helm_chart_version }} |
+| {{ apme_helm_release_name }} | {{ apme_helm_chart_name }} | {{ apme_helm_chart_version }} |
+
+## Verification
+
+```bash
+oc get pods -n {{ openshift_project_name }}
+oc get route -n {{ openshift_project_name }}
+oc get secret secrets-rhaap-portal -n {{ openshift_project_name }}
+```
+
+## Next steps
+
+1. Sign in to the automation portal via AAP OAuth.
+2. Register a repository (public repos support direct register).
+3. Open the **Quality** tab and run a scan on the default branch.

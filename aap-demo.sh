@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-playbook)
+    mcp-server | portal | setup-pah | ao-eap | apme-eap)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -2628,7 +2628,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-playbook"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"

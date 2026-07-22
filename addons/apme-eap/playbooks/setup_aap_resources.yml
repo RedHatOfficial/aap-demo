@@ -1,0 +1,234 @@
+---
+# Setup AAP resources for APME deployment via REST API
+# This playbook creates the Project, Inventory, and Job Template in AAP
+
+- name: Setup AAP resources for APME deployment
+  hosts: localhost
+  gather_facts: true
+  vars:
+    aap_host: "{{ lookup('env', 'AAP_HOST') }}"
+    aap_token: "{{ lookup('env', 'AAP_TOKEN') }}"
+    aap_validate_certs: false
+
+    # Resource names
+    organization_name: "Default"
+    project_name: "aap-demo-apme"
+    inventory_name: "localhost"
+    job_template_name: "Deploy APME"
+
+    # Paths
+    playbook_dir_local: "{{ playbook_dir | dirname }}"
+    playbook_path: "addons/apme-playbook/playbooks/deploy_apme_portal.yml"
+
+  tasks:
+    - name: Verify AAP host and token are set
+      ansible.builtin.fail:
+        msg: "AAP_HOST and AAP_TOKEN environment variables must be set"
+      when: aap_host == "" or aap_token == ""
+
+    - name: Get Default organization
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/organizations/?name={{ organization_name }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: org_result
+
+    - name: Fail if Default organization not found
+      ansible.builtin.fail:
+        msg: "Default organization not found in AAP"
+      when: org_result.json.count == 0
+
+    - name: Set organization ID
+      ansible.builtin.set_fact:
+        organization_id: "{{ org_result.json.results[0].id }}"
+
+    - name: Check if project exists
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/projects/?name={{ project_name }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: project_check
+
+    - name: Create project (Git SCM type)
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/projects/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          name: "{{ project_name }}"
+          description: "APME deployment playbooks from aap-demo repository"
+          organization: "{{ organization_id }}"
+          scm_type: "git"
+          scm_url: "https://github.com/RedHatOfficial/aap-demo.git"
+          scm_branch: "{{ lookup('pipe', 'git rev-parse --abbrev-ref HEAD') }}"
+          scm_update_on_launch: true
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [201]
+        return_content: true
+      register: project_result
+      when: project_check.json.count == 0
+
+    - name: Set project ID (existing)
+      ansible.builtin.set_fact:
+        project_id: "{{ project_check.json.results[0].id }}"
+      when: project_check.json.count > 0
+
+    - name: Set project ID (new)
+      ansible.builtin.set_fact:
+        project_id: "{{ project_result.json.id }}"
+      when: project_check.json.count == 0
+
+    - name: Trigger project sync
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/projects/{{ project_id }}/update/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [202]
+        return_content: true
+      register: sync_result
+      when: project_check.json.count == 0
+
+    - name: Wait for project sync to complete
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/projects/{{ project_id }}/"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: project_status
+      until: project_status.json.status in ['successful', 'failed']
+      retries: 30
+      delay: 2
+      when: project_check.json.count == 0
+
+    - name: Fail if project sync failed
+      ansible.builtin.fail:
+        msg: "Project sync failed with status: {{ project_status.json.status }}"
+      when: project_check.json.count == 0 and project_status.json.status == 'failed'
+
+    - name: Check if inventory exists
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/inventories/?name={{ inventory_name }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: inventory_check
+
+    - name: Create inventory
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/inventories/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          name: "{{ inventory_name }}"
+          description: "Localhost inventory for APME deployment"
+          organization: "{{ organization_id }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [201, 400]
+        return_content: true
+      register: inventory_result
+      when: inventory_check.json.count == 0
+
+    - name: Set inventory ID (existing)
+      ansible.builtin.set_fact:
+        inventory_id: "{{ inventory_check.json.results[0].id }}"
+      when: inventory_check.json.count > 0
+
+    - name: Set inventory ID (new)
+      ansible.builtin.set_fact:
+        inventory_id: "{{ inventory_result.json.id }}"
+      when: inventory_check.json.count == 0 and inventory_result.status == 201
+
+    - name: Add localhost to inventory
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/hosts/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          name: "localhost"
+          inventory: "{{ inventory_id }}"
+          variables: "ansible_connection: local"
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [201, 400]
+      when: inventory_check.json.count == 0
+
+    - name: Check if job template exists
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/?name={{ job_template_name | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      register: template_check
+
+    - name: Create job template
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          name: "{{ job_template_name }}"
+          description: "Deploy APME portal using official playbooks"
+          job_type: "run"
+          inventory: "{{ inventory_id }}"
+          project: "{{ project_id }}"
+          playbook: "{{ playbook_path }}"
+          ask_variables_on_launch: true
+          verbosity: 1
+        validate_certs: "{{ aap_validate_certs }}"
+        status_code: [201, 400]
+        return_content: true
+      register: template_result
+      when: template_check.json.count == 0
+
+    - name: Update existing job template
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/{{ template_check.json.results[0].id }}/"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ aap_token }}"
+        body_format: json
+        body:
+          description: "Deploy APME portal using official playbooks"
+          inventory: "{{ inventory_id }}"
+          project: "{{ project_id }}"
+          playbook: "{{ playbook_path }}"
+          ask_variables_on_launch: true
+        validate_certs: "{{ aap_validate_certs }}"
+        return_content: true
+      when: template_check.json.count > 0
+
+    - name: Set template ID
+      ansible.builtin.set_fact:
+        template_id: "{{ template_result.json.id if template_check.json.count == 0 else template_check.json.results[0].id }}"
+
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg:
+          - "AAP resources created successfully:"
+          - "  Organization: {{ organization_name }} (ID: {{ organization_id }})"
+          - "  Project: {{ project_name }} (ID: {{ project_id }})"
+          - "  Inventory: {{ inventory_name }} (ID: {{ inventory_id }})"
+          - "  Job Template: {{ job_template_name }} (ID: {{ template_id }})"
+          - ""
+          - "Ready to launch APME deployment!"
