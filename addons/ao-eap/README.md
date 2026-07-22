@@ -4,15 +4,14 @@ Deploys Automation Orchestrator Early Access to aap-demo clusters.
 
 ## Prerequisites
 
-1. **Registry path** for AO images (provided by your Red Hat contact)
-2. **Index image reference** for the AO operator (provided by your Red Hat contact)
-3. **Cluster pull secret** with credentials for the registry
-4. **aap-demo cluster** running with OLM installed (`aap-demo deploy`)
-5. **GitHub CLI authenticated** (`gh auth login`) — required to download `aapctl`
+1. **Index image reference** for the AO operator (provided by your Red Hat contact)
+2. **Cluster pull secret** with credentials for the registry
+3. **aap-demo cluster** running with OLM installed (`aap-demo deploy`)
+4. **GitHub CLI authenticated** (`gh auth login`) — required to download `aapctl`
 
-## Registry Configuration
+## Configuration
 
-The addon prompts for the container registry host on first run and the index image on every run. Both values are provided by your Red Hat point of contact.
+The addon prompts for the index image on every run. The registry host is derived automatically from the image URL, so only one value is needed.
 
 ### Interactive Setup
 
@@ -20,18 +19,14 @@ The addon prompts for the container registry host on first run and the index ima
 ./deploy.sh
 ```
 
-The addon will prompt for two pieces of information from your Red Hat contact:
+You will be prompted for one value from your Red Hat contact:
 
-1. **Registry host** (default: `registry.redhat.io`)
-   - Example prompt: `Registry host (default: registry.redhat.io): `
-   - Press Enter to accept the default or enter an alternate registry
+- **Index image** (full image URL with tag)
+  - Example prompt: `Index image (full URL with tag): `
+  - Enter the complete operator index image reference
+  - Always prompted to prevent accidental reuse of stale image references
 
-2. **Index image** (full image URL with tag, prompted every run)
-   - Example prompt: `Index image (full URL with tag): `
-   - Enter the complete operator index image reference
-   - Always prompted to prevent accidental reuse of stale image references
-
-The registry host is saved to `~/.aap-demo/ao-registry` and reused on subsequent runs. The index image can also be provided via the `AO_INDEX_IMAGE` environment variable to skip the prompt.
+The index image can also be provided via the `AO_INDEX_IMAGE` environment variable to skip the prompt.
 
 ### Authentication
 
@@ -91,22 +86,17 @@ The pull secret contains credentials for multiple Red Hat registries including `
 
 ### Environment Variables
 
-For automation or CI/CD, provide values via environment variables to skip prompts:
+For automation or CI/CD, provide the index image via environment variable to skip the prompt:
 
 ```bash
 export AO_INDEX_IMAGE="<index-image-provided-by-red-hat>"
-export AO_REGISTRY="<registry-host-provided-by-red-hat>"
 ./deploy.sh
 ```
-
-All variables are optional — if not set, the addon will prompt interactively.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AO_INDEX_IMAGE` | _(prompted every run)_ | Full index image URL with tag |
-| `AO_REGISTRY` | _(prompted on first run)_ | Registry host (e.g. `registry.redhat.io`) |
 | `PULL_SECRET_FILE` | `~/.aap-demo/pull-secret.txt` | Path to dockerconfigjson pull secret |
-| `AO_REGISTRY_FILE` | `~/.aap-demo/ao-registry` | Path to saved registry host config |
 
 
 ## Usage

@@ -27,8 +27,6 @@ else
 fi
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
-# Registry configuration file
-AO_REGISTRY_FILE="${AO_REGISTRY_FILE:-$HOME/.aap-demo/ao-registry}"
 PULL_SECRET_FILE="${PULL_SECRET_FILE:-$HOME/.aap-demo/pull-secret.txt}"
 AAPCTL_BIN="/usr/local/bin/aapctl"
 AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"
@@ -178,41 +176,24 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "✓ jq installed"
 fi
 
-# --- Step 1: Check registry config and pull secret ---
-get_registry_config() {
-  if [ -f "$AO_REGISTRY_FILE" ]; then
-    AO_REGISTRY="$(cat "$AO_REGISTRY_FILE")"
-    echo "✓ Using registry: $AO_REGISTRY"
-    return 0
+# --- Step 1: Index image + pull secret ---
+if [ -z "${AO_INDEX_IMAGE:-}" ]; then
+  echo ""
+  echo "Your Red Hat point of contact will provide the full operator index image reference."
+  echo ""
+  read -r -p "Index image (full URL with tag): " AO_INDEX_IMAGE
+  echo ""
+
+  if [ -z "$AO_INDEX_IMAGE" ]; then
+    echo "ERROR: Index image is required."
+    exit 1
   fi
+fi
+echo "✓ Index image: $AO_INDEX_IMAGE"
 
-  if [ -n "${AO_REGISTRY:-}" ]; then
-    mkdir -p "$(dirname "$AO_REGISTRY_FILE")"
-    echo "$AO_REGISTRY" > "$AO_REGISTRY_FILE"
-    chmod 600 "$AO_REGISTRY_FILE"
-    echo "✓ Using registry from environment: $AO_REGISTRY"
-    return 0
-  fi
-
-  echo ""
-  echo "Container Registry Configuration for Automation Orchestrator"
-  echo ""
-  echo "The Automation Orchestrator Early Access containers are distributed"
-  echo "via registry.redhat.io. Your cluster pull secret must have access."
-  echo ""
-  read -r -p "Registry host (default: registry.redhat.io): " AO_REGISTRY
-  AO_REGISTRY="${AO_REGISTRY:-registry.redhat.io}"
-
-  mkdir -p "$(dirname "$AO_REGISTRY_FILE")"
-  echo "$AO_REGISTRY" > "$AO_REGISTRY_FILE"
-  chmod 600 "$AO_REGISTRY_FILE"
-  echo "✓ Registry configuration saved to $AO_REGISTRY_FILE"
-}
-get_registry_config
-
-# Check for pull secret
+# Check for pull secret using the registry host from the index image
 if [ -f "$PULL_SECRET_FILE" ]; then
-  registry_host=$(echo "$AO_REGISTRY" | cut -d'/' -f1)
+  registry_host=$(echo "$AO_INDEX_IMAGE" | cut -d'/' -f1)
   if jq -e --arg host "$registry_host" '.auths[$host]' "$PULL_SECRET_FILE" >/dev/null 2>&1; then
     echo "✓ Using pull secret from $PULL_SECRET_FILE for $registry_host"
   else
@@ -325,22 +306,6 @@ kubectl label namespace "$MARKETPLACE_NAMESPACE" \
 echo "✓ Namespaces ready"
 
 # --- Step 4: Pull secret + CatalogSource ---
-# Prompt for index image if not provided via environment variable
-if [ -z "${AO_INDEX_IMAGE:-}" ]; then
-  echo ""
-  echo "Index Image Configuration"
-  echo ""
-  echo "Your Red Hat point of contact will provide the full operator index image reference."
-  echo ""
-  read -r -p "Index image (full URL with tag): " AO_INDEX_IMAGE
-  echo ""
-
-  if [ -z "$AO_INDEX_IMAGE" ]; then
-    echo "ERROR: Index image is required."
-    exit 1
-  fi
-fi
-
 echo "Creating pull secret and CatalogSource..."
 # Create pull secret from the local pull-secret file if available
 if [ -f "$PULL_SECRET_FILE" ]; then
