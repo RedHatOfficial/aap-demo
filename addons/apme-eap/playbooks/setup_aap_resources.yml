@@ -243,6 +243,8 @@
           aap_username: "admin"
           aap_password: "{{ aap_admin_password }}"
           aap_organization: "Default"
+          portal_helm_release_name: "redhat-rhaap-portal"
+          aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 
     - name: Check if execution environment exists
       ansible.builtin.uri:
