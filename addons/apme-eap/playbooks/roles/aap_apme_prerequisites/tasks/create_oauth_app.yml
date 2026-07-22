@@ -37,7 +37,7 @@
     timeout: "{{ aap_apme_prerequisites_request_timeout }}"
     status_code: [200]
   register: existing_oauth_app_check
-  no_log: true
+  no_log: false
 
 - name: Set existing OAuth application fact  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
