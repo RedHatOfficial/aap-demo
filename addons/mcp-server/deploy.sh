@@ -61,10 +61,10 @@ echo "Deploying AAP MCP Server..."
 
 # Apply the CR with namespace and hostname substitution
 MCP_ROUTE="aap-mcp-${NAMESPACE}.apps.127.0.0.1.nip.io"
-AAP_ROUTE="aap-${NAMESPACE}.apps.127.0.0.1.nip.io"
+AAP_ROUTE="aap-${NAMESPACE}"
 sed -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
   -e "s|aap-mcp-aap-operator\.apps|aap-mcp-${NAMESPACE}.apps|g" \
-  -e "s|aap-aap-operator\.apps|${AAP_ROUTE}.apps|g" \
+  -e "s|aap-aap-operator|${AAP_ROUTE}|g" \
   "${SCRIPT_DIR}/mcp-server.yaml" | kubectl apply -f -
 
 echo "  Waiting for MCP server deployment..."
@@ -183,14 +183,22 @@ SSL_FIX_NEEDED=false
 if [ -n "$MCP_TOKEN" ]; then
   # Check if claude CLI is available
   if claude --version >/dev/null 2>&1; then
-    echo "  Adding MCP server to Claude Code (user scope)..."
+    # Check if server already exists
+    if claude mcp get aap-demo >/dev/null 2>&1; then
+      echo "  Updating existing MCP server in Claude Code..."
+      # Remove and re-add to update the token
+      claude mcp remove aap-demo --scope user >/dev/null 2>&1 || true
+    else
+      echo "  Adding MCP server to Claude Code (user scope)..."
+    fi
 
-    # Capture output and exit code for better error handling
+    # Add (or re-add) the MCP server with current token
     if MCP_OUTPUT=$(claude mcp add aap-demo "https://${MCP_ROUTE}/mcp" \
       --transport http \
       --scope user \
+      -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
       --header "Authorization: Bearer ${MCP_TOKEN}" 2>&1); then
-      echo "  ✓ MCP server added to Claude Code user settings"
+      echo "  ✓ MCP server configured in Claude Code user settings"
       CLAUDE_CONFIGURED=true
 
       # Verify the MCP connection works
@@ -199,13 +207,13 @@ if [ -n "$MCP_TOKEN" ]; then
         if echo "$MCP_STATUS" | grep -q "✓ Connected"; then
           echo "  ✓ MCP server is connected and ready"
         elif echo "$MCP_STATUS" | grep -q "✗ Failed to connect"; then
-          echo "  ⚠ MCP server added but connection failed"
+          echo "  ⚠ MCP server configured but connection failed"
         else
-          echo "  ⓘ MCP server added (connection status unknown)"
+          echo "  ⓘ MCP server configured (connection status unknown)"
         fi
       fi
     else
-      echo "  ⚠ Warning: Failed to add MCP server to Claude Code"
+      echo "  ⚠ Warning: Failed to configure MCP server in Claude Code"
       echo "  Error: $MCP_OUTPUT"
     fi
   else
