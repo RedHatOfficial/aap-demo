@@ -5,7 +5,7 @@ Deploy AAP to a local MicroShift cluster in minutes.
 ## Install
 
 ```bash
-git clone https://github.com/ansible-automation-platform/aap-demo.git
+git clone https://github.com/RedHatOfficial/aap-demo.git
 cd aap-demo && ./install.sh
 ```
 

@@ -1261,7 +1261,7 @@ ${problem_pod_logs:-None}"
       "You are an AAP Demo troubleshooting assistant. Analyze the diagnostic output below and:
 1. Identify the root cause of any issues
 2. Provide specific fix commands the user can run
-3. If the issue appears to be a bug in aap-demo itself, suggest filing a GitHub issue at https://github.com/ansible-automation-platform/aap-demo/issues
+3. If the issue appears to be a bug in aap-demo itself, suggest filing a GitHub issue at https://github.com/RedHatOfficial/aap-demo/issues
 
 Be concise and actionable. Focus on what the user needs to do next.
 
