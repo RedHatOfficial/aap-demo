@@ -30,10 +30,12 @@ spec:
   controller:
     disabled: false
     ingress_type: none
-    # Fix git "dubious ownership" on project sync (emptyDir /var/lib/awx/projects)
+    # Fix git "dubious ownership" and collection download permissions
+    # Ensure all AWX operations run as awx user (996) to prevent root-owned artifacts
     security_context_settings:
-      fsGroup: 996  # awx GID — group ownership on project volume
-    # fsGroup alone is insufficient: AWX clones as root, awx user runs git later
+      runAsUser: 996   # awx UID — all container processes run as awx user
+      fsGroup: 996     # awx GID — group ownership on project volume
+    # GIT_CONFIG vars allow git to access repos regardless of ownership (safety fallback)
     task_extra_env: |
       - name: GIT_CONFIG_COUNT
         value: "1"
