@@ -93,9 +93,10 @@ kubectl get secret router-certs-default -n openshift-ingress \
   -o jsonpath='{.data.tls\.crt}' | base64 -d > "${TMPDIR}/chain.pem"
 
 # Split the chain — cert-01 is the self-signed ingress-ca root
-csplit -z "${TMPDIR}/chain.pem" '/-----BEGIN CERTIFICATE-----/' '{*}' \
-  -f "${TMPDIR}/cert-" --suffix-format='%02d.pem' -s
-INGRESS_CA="${TMPDIR}/cert-01.pem"
+awk 'BEGIN {n=0}
+     /-----BEGIN CERTIFICATE-----/ {n++; fname=sprintf("'${TMPDIR}'/cert-%02d", n-1)}
+     {print > fname}' "${TMPDIR}/chain.pem"
+INGRESS_CA="${TMPDIR}/cert-01"
 
 # Create/update the ConfigMap with the ingress CA cert
 kubectl create configmap aap-ingress-ca \
@@ -132,42 +133,87 @@ fi
 
 # ── Generate AAP OAuth token ──────────────────────────────────────────────────
 echo "  Generating AAP OAuth token..."
-ADMIN_PASS=$(kubectl get secret aap-admin-password -n "$NAMESPACE" \
-  -o jsonpath='{.data.password}' | base64 -d)
 
-MCP_TOKEN=$(curl -sk -u "admin:${ADMIN_PASS}" \
-  "https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io/api/gateway/v1/tokens/" \
-  -X POST -H "Content-Type: application/json" \
-  -d '{"description":"claude-mcp","scope":"write"}' \
-  | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+# Retrieve admin password from secret
+if ! ADMIN_PASS=$(kubectl get secret aap-admin-password -n "$NAMESPACE" \
+  -o jsonpath='{.data.password}' 2>/dev/null | base64 -d); then
+  echo "  ⚠ Warning: Could not retrieve admin password from secret 'aap-admin-password'"
+  echo "  AAP may not be fully deployed yet. MCP token will not be auto-generated."
+  ADMIN_PASS=""
+fi
+
+# Validate password was retrieved
+if [ -z "$ADMIN_PASS" ]; then
+  echo "  ⚠ Warning: Admin password is empty - skipping token generation"
+  MCP_TOKEN=""
+else
+  # Attempt to generate OAuth token
+  echo "  Requesting OAuth token from AAP API..."
+  CURL_RESPONSE=$(curl -sk -u "admin:${ADMIN_PASS}" \
+    "https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io/api/gateway/v1/tokens/" \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"description":"claude-mcp","scope":"write"}' 2>&1)
+
+  CURL_EXIT=$?
+
+  if [ $CURL_EXIT -ne 0 ]; then
+    echo "  ⚠ Warning: curl failed to connect to AAP API (exit code: $CURL_EXIT)"
+    echo "  AAP gateway may not be ready yet. Token will not be auto-generated."
+    MCP_TOKEN=""
+  else
+    # Parse token from JSON response
+    if ! MCP_TOKEN=$(echo "$CURL_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null); then
+      echo "  ⚠ Warning: Failed to parse token from API response"
+      echo "  Response: ${CURL_RESPONSE:0:200}"
+      MCP_TOKEN=""
+    elif [ -z "$MCP_TOKEN" ]; then
+      echo "  ⚠ Warning: API returned empty token"
+      echo "  Response: ${CURL_RESPONSE:0:200}"
+      echo "  AAP gateway may still be starting. Wait a few minutes and re-run."
+    else
+      echo "  ✓ OAuth token generated successfully"
+    fi
+  fi
+fi
 
 # ── Claude Code configuration ─────────────────────────────────────────────────
-# Find the project root (where .claude/ lives) relative to this addon
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CLAUDE_SETTINGS="${PROJECT_ROOT}/.claude/settings.json"
+CLAUDE_CONFIGURED=false
+SSL_FIX_NEEDED=false
 
-if [ -f "$CLAUDE_SETTINGS" ] && [ -n "$MCP_TOKEN" ]; then
-  # Merge the mcpServers entry into the existing settings file using python
-  python3 - <<PYEOF
-import json, sys
+if [ -n "$MCP_TOKEN" ]; then
+  # Check if claude CLI is available
+  if claude --version >/dev/null 2>&1; then
+    echo "  Adding MCP server to Claude Code (user scope)..."
 
-path = "${CLAUDE_SETTINGS}"
-with open(path) as f:
-    settings = json.load(f)
+    # Capture output and exit code for better error handling
+    if MCP_OUTPUT=$(claude mcp add aap-demo "https://${MCP_ROUTE}/mcp" \
+      --transport http \
+      --scope user \
+      --header "Authorization: Bearer ${MCP_TOKEN}" 2>&1); then
+      echo "  ✓ MCP server added to Claude Code user settings"
+      CLAUDE_CONFIGURED=true
 
-settings.setdefault("mcpServers", {})["aap"] = {
-    "type": "http",
-    "url": "https://${MCP_ROUTE}/mcp",
-    "headers": {"Authorization": "Bearer ${MCP_TOKEN}"}
-}
-
-with open(path, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
-
-print("  ✓ Claude Code settings updated: ${CLAUDE_SETTINGS}")
-PYEOF
+      # Verify the MCP connection works
+      echo "  Verifying MCP connection..."
+      if MCP_STATUS=$(claude mcp get aap-demo 2>&1); then
+        if echo "$MCP_STATUS" | grep -q "✓ Connected"; then
+          echo "  ✓ MCP server is connected and ready"
+        elif echo "$MCP_STATUS" | grep -q "✗ Failed to connect"; then
+          echo "  ⚠ MCP server added but connection failed"
+        else
+          echo "  ⓘ MCP server added (connection status unknown)"
+        fi
+      fi
+    else
+      echo "  ⚠ Warning: Failed to add MCP server to Claude Code"
+      echo "  Error: $MCP_OUTPUT"
+    fi
+  else
+    echo "  ⓘ Claude CLI not found — skipping auto-configuration"
+    echo "  See https://github.com/anthropics/claude-code for installation"
+  fi
 fi
+
 
 echo ""
 echo "✓ AAP MCP Server deployed!"
@@ -175,40 +221,39 @@ echo ""
 echo "  MCP Endpoint: https://${MCP_ROUTE}/mcp"
 echo "  AAP Instance: https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io"
 echo ""
-if [ -n "$MCP_TOKEN" ]; then
-  echo "  Claude Code is configured — restart Claude Code to load the MCP server."
-  echo ""
-  echo "  Or add manually to .claude/settings.json:"
-  echo '  {'
-  echo '    "mcpServers": {'
-  echo '      "aap": {'
-  echo '        "type": "http",'
-  echo "        \"url\": \"https://${MCP_ROUTE}/mcp\","
-  echo "        \"headers\": {\"Authorization\": \"Bearer ${MCP_TOKEN}\"}"
-  echo '      }'
-  echo '    }'
-  echo '  }'
-else
-  echo "  Could not auto-generate token. Get one manually:"
-  echo "    curl -sk -u admin:<password> \\"
-  echo "      https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io/api/gateway/v1/tokens/ \\"
-  echo "      -X POST -H 'Content-Type: application/json' \\"
-  echo "      -d '{\"description\":\"claude-mcp\",\"scope\":\"write\"}'"
-  echo ""
-  echo "  Then add to .claude/settings.json:"
-  echo '  {'
-  echo '    "mcpServers": {'
-  echo '      "aap": {'
-  echo '        "type": "http",'
-  echo "        \"url\": \"https://${MCP_ROUTE}/mcp\","
-  echo '        "headers": {"Authorization": "Bearer <token>"}'
-  echo '      }'
-  echo '    }'
-  echo '  }'
+
+# Only show manual configuration if auto-config didn't work
+if [ "$CLAUDE_CONFIGURED" = "false" ]; then
+  if [ -n "$MCP_TOKEN" ]; then
+    echo "  To add manually to Claude Code:"
+    echo "    claude mcp add aap-demo https://${MCP_ROUTE}/mcp \\"
+    echo "      --transport http \\"
+    echo "      --scope user \\"
+    echo "      --header \"Authorization: Bearer ${MCP_TOKEN}\""
+    echo ""
+    echo "  Note: The cluster uses self-signed certificates. If you get SSL errors,"
+    echo "  you may need to disable certificate verification in ~/.claude.json:"
+    echo "    \"aap-demo\": { ..., \"rejectUnauthorized\": false }"
+  else
+    echo "  Could not auto-generate token. Get one manually:"
+    echo "    curl -sk -u admin:<password> \\"
+    echo "      https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io/api/gateway/v1/tokens/ \\"
+    echo "      -X POST -H 'Content-Type: application/json' \\"
+    echo "      -d '{\"description\":\"claude-mcp\",\"scope\":\"write\"}'"
+    echo ""
+    echo "  Then add with:"
+    echo "    claude mcp add aap-demo https://${MCP_ROUTE}/mcp \\"
+    echo "      --transport http \\"
+    echo "      --scope user \\"
+    echo "      --header \"Authorization: Bearer <token>\""
+  fi
 fi
+
 echo ""
-echo "  Status:  kubectl get ansiblemcpserver -n $NAMESPACE"
-echo "  Logs:    kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=aap-mcp-server"
+echo "  MCP Status:  kubectl get ansiblemcpserver -n $NAMESPACE"
+echo "  MCP Logs:    kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=aap-mcp-server"
 echo ""
-echo "  NOTE: The token written to settings.json will expire. Re-run this script"
-echo "  or generate a new token from the AAP UI to refresh it."
+if [ -n "$MCP_TOKEN" ]; then
+  echo "  NOTE: The OAuth token will expire. Re-run 'aap-demo enable mcp-server'"
+  echo "  or generate a new token from the AAP UI to refresh it."
+fi
