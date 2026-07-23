@@ -1,0 +1,4 @@
+---
+# defaults for portal_microshift_fixes
+
+portal_microshift_fixes_validate_certs: "{{ openshift_validate_certs | default(false) }}"

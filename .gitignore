@@ -24,3 +24,4 @@ node_modules/
 
 # Generated artifacts (Ansible-rendered config files)
 addons/**/.rendered/
+.tokensave

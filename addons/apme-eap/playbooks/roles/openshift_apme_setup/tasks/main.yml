@@ -27,10 +27,145 @@
         name: "{{ openshift_project_name }}"
         labels:
           name: "{{ openshift_project_name }}"
+          pod-security.kubernetes.io/enforce: privileged
+          pod-security.kubernetes.io/audit: privileged
+          pod-security.kubernetes.io/warn: privileged
         annotations:
           openshift.io/display-name: "{{ openshift_apme_setup_project_display_name }}"
           openshift.io/description: "{{ openshift_apme_setup_project_description }}"
   when: existing_project.resources | default([]) | length == 0
+
+- name: Update existing namespace with pod security labels  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ openshift_project_name }}"
+        labels:
+          pod-security.kubernetes.io/enforce: privileged
+          pod-security.kubernetes.io/audit: privileged
+          pod-security.kubernetes.io/warn: privileged
+  when: existing_project.resources | default([]) | length > 0
+
+- name: Grant anyuid SCC to namespace service accounts  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "system:openshift:scc:anyuid:{{ openshift_project_name }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: system:openshift:scc:anyuid
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: "system:serviceaccounts:{{ openshift_project_name }}"
+
+- name: Grant privileged SCC to namespace service accounts  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "system:openshift:scc:privileged:{{ openshift_project_name }}"
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: system:openshift:scc:privileged
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: "system:serviceaccounts:{{ openshift_project_name }}"
+
+- name: Check for AAP pull secret in AAP namespace  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: redhat-operators-pull-secret
+    namespace: "{{ openshift_apme_setup_aap_namespace }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+  register: aap_pull_secret
+  failed_when: false
+
+- name: Copy AAP pull secret to APME namespace  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: redhat-operators-pull-secret
+        namespace: "{{ openshift_project_name }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ aap_pull_secret.resources[0].data['.dockerconfigjson'] }}"
+  when:
+    - aap_pull_secret.resources is defined
+    - aap_pull_secret.resources | length > 0
+  no_log: true
+
+- name: Get default service account in APME namespace  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ServiceAccount
+    name: default
+    namespace: "{{ openshift_project_name }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+  register: default_sa
+  when:
+    - aap_pull_secret.resources is defined
+    - aap_pull_secret.resources | length > 0
+
+- name: Patch default service account to use pull secret  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    definition:
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: default
+        namespace: "{{ openshift_project_name }}"
+      imagePullSecrets: "{{ existing_secrets + [{'name': 'redhat-operators-pull-secret'}] | unique }}"
+  vars:
+    existing_secrets: "{{ default_sa.resources[0].imagePullSecrets | default([]) }}"
+  when:
+    - aap_pull_secret.resources is defined
+    - aap_pull_secret.resources | length > 0
+    - default_sa.resources is defined
+    - default_sa.resources | length > 0
+    - "'redhat-operators-pull-secret' not in (default_sa.resources[0].imagePullSecrets | default([]) | map(attribute='name') | list)"
 
 - name: Build registry secret data map  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:

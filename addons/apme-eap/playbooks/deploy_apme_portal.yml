@@ -92,6 +92,7 @@
     - role: apme_scm_secrets
       when: configure_github_secrets | default(false) | bool
     - role: portal_helm_install
+    - role: portal_microshift_fixes
     - role: apme_gateway_helm
 
   post_tasks:

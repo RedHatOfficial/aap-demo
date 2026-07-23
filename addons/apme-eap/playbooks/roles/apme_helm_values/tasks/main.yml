@@ -50,6 +50,8 @@
       replace: "{{ plugin_sha }}"
     - regexp: "<oci-registry>"
       replace: "{{ oci_registry_internal | default(oci_registry_normalized) }}"
+    - regexp: "checkSSL: true"
+      replace: "checkSSL: {{ apme_helm_values_check_ssl | string | lower }}"
 
 - name: Override RHDH hub image registry  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:

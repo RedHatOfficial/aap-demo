@@ -157,6 +157,107 @@ deploy.sh
        -e @defaults.yml
 ```
 
+### Architecture Decision 4: SSL Verification for Local Development
+
+**Problem:** OAuth login fails with "Failed to send POST request: fetch failed" on local MicroShift/nip.io deployments because the APME portal backend cannot verify AAP's self-signed TLS certificate.
+
+**Context from Portal Addon:**
+The portal addon solves this by **dynamically detecting MicroShift** and injecting `checkSSL: false` at deployment time:
+
+```bash
+# addons/portal/deploy.sh:694-715
+if [ "${IS_MICROSHIFT:-false}" = true ]; then
+  ssl_values="
+    ansible:
+      rhaap:
+        checkSSL: false
+    auth:
+      providers:
+        rhaap:
+          'production':
+            checkSSL: false"
+fi
+```
+
+**Solution for APME Addon:**
+Apply the same pattern via Ansible variable substitution:
+
+1. **Default variable:** `apme_helm_values_check_ssl: false` (in `roles/apme_helm_values/defaults/main.yml`)
+2. **Template placeholder:** Keep `checkSSL: true` in template (production default)
+3. **Runtime substitution:** Ansible replaces all `checkSSL: true` with the variable value
+
+```yaml
+# roles/apme_helm_values/tasks/main.yml
+- name: Substitute portal Helm value placeholders
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "checkSSL: true"
+    replace: "checkSSL: {{ apme_helm_values_check_ssl | string | lower }}"
+```
+
+**Benefits:**
+- **Default-safe:** Development works out-of-box with `checkSSL: false`
+- **Production-ready:** Override with `-e apme_helm_values_check_ssl=true` for real certs
+- **Template parity:** Keep upstream template with production defaults
+- **Single control point:** One variable controls both OAuth auth and RHAAP API SSL
+
+**Affects Two Config Locations:**
+1. `auth.providers.rhaap.production.checkSSL` - OAuth authentication
+2. `ansible.rhaap.checkSSL` - RHAAP API backend integration
+
+### Architecture Decision 5: MicroShift OAuth Network Connectivity
+
+**Problem:** Even with `checkSSL: false`, OAuth login fails with "Failed to send POST request: fetch failed" because the portal pod cannot reach AAP via the nip.io hostname.
+
+**Root Cause:**
+- **nip.io DNS resolves to 127.0.0.1 inside pods** (loopback, not the ingress IP)
+- Portal tries to reach `https://aap-aap-operator.apps.127.0.0.1.nip.io/o/token/`
+- Fetch fails because 127.0.0.1 inside the pod is not AAP
+
+**Portal Addon Solution:**
+The portal addon (`deploy.sh:626-660`) applies two fixes:
+
+1. **Use `http://` not `https://`** for AAP_HOST_URL - in-cluster Service traffic is port 80
+2. **Patch deployment with `hostAliases`** - maps the nip.io route to AAP Service ClusterIP:
+   ```bash
+   kubectl patch deployment redhat-rhaap-portal --type=merge -p '{
+     "spec": {
+       "template": {
+         "spec": {
+           "hostAliases": [{
+             "ip": "<AAP_SERVICE_CLUSTER_IP>",
+             "hostnames": ["aap-aap-operator.apps.127.0.0.1.nip.io"]
+           }]
+         }
+       }
+     }
+   }'
+   ```
+
+**APME Addon Implementation:**
+Created new role `portal_microshift_fixes` (runs after `portal_helm_install`):
+
+```yaml
+roles:
+  - role: portal_helm_install
+  - role: portal_microshift_fixes  # ← MicroShift-only hostAlias + http:// fix
+  - role: apme_gateway_helm
+```
+
+**Role Tasks:**
+1. Detect `IS_MICROSHIFT` environment variable
+2. Get AAP Service ClusterIP from `aap-operator` namespace
+3. Extract AAP route hostname from `secrets-rhaap-portal`
+4. Patch portal Deployment with `hostAliases` mapping
+5. Update `secrets-rhaap-portal.aap-host-url` from `https://` to `http://`
+6. Wait for deployment rollout
+
+**Why This Works:**
+- `hostAliases` overrides DNS resolution **inside the pod only**
+- AAP route hostname now resolves to AAP Service ClusterIP (e.g., `10.43.173.79`)
+- `http://` connects to Service port 80 (no TLS, internal traffic)
+- Browser users still reach AAP via `https://` through ingress (external traffic)
+
 ### Integration with aap-demo.sh
 
 **No special handling required** - addon system auto-discovers:
@@ -381,6 +482,207 @@ kubectl delete -n aap-operator \
 ```
 
 The APME namespace and portal deployment itself remain unchanged between approaches — only the orchestration mechanism differs.
+
+## Security Configuration Parity Fix (2026-07-23)
+
+After initial deployment testing, pod creation failures revealed missing security configuration in the `openshift_apme_setup` role that the `portal` addon implements in its bash wrapper.
+
+### Issue: Missing OpenShift Security Constraints
+
+**Problem**: Pods in the `apme` namespace failed to start with security context constraint (SCC) errors, while the same workload succeeded in the `portal` addon namespace.
+
+**Root Cause Analysis**: Comparison of `addons/apme-eap/` and `addons/portal/` revealed three missing configurations:
+
+1. **Pod Security Admission Labels** - Missing namespace labels for privileged pod security admission
+2. **SCC Grants** - No ClusterRoleBindings granting `anyuid` and `privileged` SCCs to namespace service accounts
+3. **Pull Secret Propagation** - AAP pull secrets not copied from `aap-operator` namespace to `apme` namespace
+
+### Resolution: Enhanced openshift_apme_setup Role
+
+**File Modified**: `addons/apme-eap/playbooks/roles/openshift_apme_setup/tasks/main.yml`
+
+**Changes Applied**:
+
+#### 1. Pod Security Admission Labels
+```yaml
+# Added to namespace creation
+labels:
+  pod-security.kubernetes.io/enforce: privileged
+  pod-security.kubernetes.io/audit: privileged
+  pod-security.kubernetes.io/warn: privileged
+
+# Separate task to update existing namespaces
+- name: Update existing namespace with pod security labels
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      metadata:
+        labels:
+          pod-security.kubernetes.io/enforce: privileged
+          pod-security.kubernetes.io/audit: privileged
+          pod-security.kubernetes.io/warn: privileged
+```
+
+**Why**: Kubernetes Pod Security Admission controller requires explicit labels to allow privileged workloads. RHDH/Backstage pods need elevated permissions for init containers and dynamic plugin loading.
+
+#### 2. Security Context Constraint (SCC) Grants
+```yaml
+- name: Grant anyuid SCC to namespace service accounts
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "system:openshift:scc:anyuid:{{ openshift_project_name }}"
+      roleRef:
+        kind: ClusterRole
+        name: system:openshift:scc:anyuid
+      subjects:
+        - kind: Group
+          name: "system:serviceaccounts:{{ openshift_project_name }}"
+
+- name: Grant privileged SCC to namespace service accounts
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: "system:openshift:scc:privileged:{{ openshift_project_name }}"
+      roleRef:
+        kind: ClusterRole
+        name: system:openshift:scc:privileged
+      subjects:
+        - kind: Group
+          name: "system:serviceaccounts:{{ openshift_project_name }}"
+```
+
+**Why**: OpenShift requires explicit SCC grants for pods to run with non-default security contexts. Portal pods require:
+- `anyuid`: Run as non-root users with specific UIDs
+- `privileged`: Init containers and certain operations need privileged access
+
+#### 3. Pull Secret Propagation
+```yaml
+- name: Check for AAP pull secret in AAP namespace
+  kubernetes.core.k8s_info:
+    kind: Secret
+    name: redhat-operators-pull-secret
+    namespace: "{{ openshift_apme_setup_aap_namespace }}"
+  register: aap_pull_secret
+  failed_when: false
+
+- name: Copy AAP pull secret to APME namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      kind: Secret
+      metadata:
+        name: redhat-operators-pull-secret
+        namespace: "{{ openshift_project_name }}"
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: "{{ aap_pull_secret.resources[0].data['.dockerconfigjson'] }}"
+  when:
+    - aap_pull_secret.resources is defined
+    - aap_pull_secret.resources | length > 0
+  no_log: true
+
+- name: Patch default service account to use pull secret
+  kubernetes.core.k8s:
+    state: patched
+    definition:
+      kind: ServiceAccount
+      metadata:
+        name: default
+        namespace: "{{ openshift_project_name }}"
+      imagePullSecrets: "{{ existing_secrets + [{'name': 'redhat-operators-pull-secret'}] | unique }}"
+  when:
+    - aap_pull_secret.resources is defined
+    - "'redhat-operators-pull-secret' not in (default_sa.resources[0].imagePullSecrets | default([]) | map(attribute='name') | list)"
+```
+
+**Why**: APME namespace needs access to Red Hat registry credentials to pull container images. Without this, image pulls fail with authentication errors.
+
+**File Modified**: `addons/apme-eap/playbooks/roles/openshift_apme_setup/defaults/main.yml`
+
+**Changes Applied**:
+```yaml
+openshift_apme_setup_aap_namespace: "aap-operator"  # Added for pull secret source
+```
+
+### Comparison with Portal Addon
+
+The `portal` addon implements the same security configuration via bash functions:
+
+| Configuration | Portal Addon (Bash) | APME-EAP Addon (Ansible) |
+|--------------|---------------------|--------------------------|
+| Pod Security Labels | `kubectl label namespace` in `setup_portal_namespace()` | `kubernetes.core.k8s` in namespace creation task |
+| SCC Grants (anyuid) | `oc adm policy add-scc-to-group` or ClusterRoleBinding | `kubernetes.core.k8s` ClusterRoleBinding |
+| SCC Grants (privileged) | `oc adm policy add-scc-to-group` or ClusterRoleBinding | `kubernetes.core.k8s` ClusterRoleBinding |
+| Pull Secret Copy | `kubectl create secret` in `copy_pull_secret_to_portal_namespace()` | `kubernetes.core.k8s` Secret creation |
+| Service Account Patch | `jq` + `kubectl patch` | `kubernetes.core.k8s` with Jinja2 unique filter |
+
+### Implementation Notes
+
+**Why ClusterRoleBinding instead of `oc adm policy`?**
+
+The Ansible implementation uses ClusterRoleBinding resources directly for several reasons:
+1. **Declarative**: Kubernetes-native resources managed via API
+2. **API-Based**: Works without requiring `oc` CLI tool
+3. **Portable**: Same approach works on OpenShift and vanilla Kubernetes
+4. **Idempotent**: `kubernetes.core.k8s` handles idempotency automatically
+
+Both approaches achieve the same result — granting SCCs to service accounts.
+
+**Pull Secret Unique Merge**
+
+The pull secret patch uses a Jinja2 filter to merge secrets without duplicates:
+```yaml
+imagePullSecrets: "{{ existing_secrets + [{'name': 'redhat-operators-pull-secret'}] | unique }}"
+```
+
+This ensures:
+- Existing pull secrets are preserved
+- New pull secret added only if not already present
+- No duplicate entries created
+
+### Backward Compatibility
+
+All changes are fully backward compatible:
+
+- **Idempotent**: All tasks use `state: present` or `state: patched` and will not fail if resources already exist
+- **Conditional**: Pull secret copying only occurs if the secret exists in the AAP namespace
+- **Safe**: Unique list merge for service account `imagePullSecrets` prevents duplicates
+
+### Testing Verification
+
+To verify the security configuration:
+
+```bash
+# Check pod security labels
+kubectl get namespace apme -o yaml | grep pod-security
+
+# Check SCC ClusterRoleBindings
+kubectl get clusterrolebinding | grep "apme"
+
+# Check pull secret
+kubectl get secret -n apme redhat-operators-pull-secret
+
+# Check service account
+kubectl get sa default -n apme -o yaml | grep imagePullSecrets -A 2
+
+# Verify pods can start successfully
+kubectl get pods -n apme
+```
+
+### Lessons Learned
+
+**Addon Parity is Critical**: When porting functionality from one addon pattern (bash) to another (Ansible), security configuration must be included even if not immediately obvious. The portal addon's bash wrapper contains essential OpenShift-specific setup that isn't part of the upstream APME welcome pack playbooks.
+
+**Security Defaults Differ**: OpenShift Local (MicroShift) and full OpenShift have different default security postures. Configuration that works implicitly on one platform may require explicit grants on another.
+
+**Test Across Addon Patterns**: Testing deployment success isn't just about workload functionality — it's also about ensuring the cluster security model allows the workload to run at all.
 
 ## References
 

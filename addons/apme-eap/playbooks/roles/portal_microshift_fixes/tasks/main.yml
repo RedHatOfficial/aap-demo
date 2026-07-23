@@ -1,0 +1,104 @@
+---
+# MicroShift-specific fixes for portal OAuth connectivity
+# Based on addons/portal/deploy.sh:patch_aap_route_host_alias()
+#
+# aap-demo always uses MicroShift/nip.io, so these fixes always apply.
+
+- name: Apply MicroShift OAuth connectivity fixes  # noqa: var-naming[no-role-prefix]
+  block:
+    - name: Get AAP service ClusterIP  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: aap
+        namespace: "{{ aap_namespace | default('aap-operator') }}"
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ portal_microshift_fixes_validate_certs }}"
+      register: aap_service
+
+    - name: Fail if AAP service not found  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.fail:
+        msg: "AAP service not found in namespace {{ aap_namespace | default('aap-operator') }}"
+      when: aap_service.resources | length == 0
+
+    - name: Extract AAP route hostname from secret  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        name: secrets-rhaap-portal
+        namespace: "{{ openshift_project_name }}"
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ portal_microshift_fixes_validate_certs }}"
+      register: portal_secret
+
+    - name: Parse AAP host URL from secret  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        aap_host_url: "{{ portal_secret.resources[0].data['aap-host-url'] | b64decode }}"
+        aap_cluster_ip: "{{ aap_service.resources[0].spec.clusterIP }}"
+
+    - name: Extract AAP route hostname  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        aap_route_hostname: "{{ aap_host_url | regex_replace('^https?://', '') }}"
+
+    - name: Patch portal deployment with AAP hostAlias  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s:
+        state: patched
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ portal_microshift_fixes_validate_certs }}"
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ portal_helm_release_name }}"
+            namespace: "{{ openshift_project_name }}"
+          spec:
+            template:
+              spec:
+                hostAliases:
+                  - ip: "{{ aap_cluster_ip }}"
+                    hostnames:
+                      - "{{ aap_route_hostname }}"
+
+    - name: Update AAP host URL to use http:// for in-cluster traffic  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s:
+        state: patched
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ portal_microshift_fixes_validate_certs }}"
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: secrets-rhaap-portal
+            namespace: "{{ openshift_project_name }}"
+          stringData:
+            aap-host-url: "http://{{ aap_route_hostname }}"
+
+    - name: Wait for portal deployment to roll out  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ portal_helm_release_name }}"
+        namespace: "{{ openshift_project_name }}"
+        wait: true
+        wait_timeout: 300
+        wait_condition:
+          type: Available
+          status: "True"
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ portal_microshift_fixes_validate_certs }}"
+
+    - name: Display MicroShift OAuth fix status  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.debug:
+        msg:
+          - "✓ AAP route hostAlias configured: {{ aap_route_hostname }} → {{ aap_cluster_ip }}"
+          - "✓ AAP host URL updated to: http://{{ aap_route_hostname }}"

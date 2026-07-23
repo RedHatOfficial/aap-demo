@@ -4,6 +4,7 @@
 openshift_apme_setup_validate_certs: "{{ openshift_validate_certs | default(false) }}"
 openshift_apme_setup_project_display_name: "APME automation portal"
 openshift_apme_setup_project_description: "Ansible automation portal with Ansible Quality (APME)"
+openshift_apme_setup_aap_namespace: "aap-operator"
 openshift_apme_setup_scaffolder_configmap_name: "apme-scaffolder-templates"
 openshift_apme_setup_registry_secret_name: "redhat-rhaap-portal-dynamic-plugins-registry-auth"
 openshift_apme_setup_scaffolder_template: "{{ role_path }}/files/apme-register-git-repository/template.yaml"
