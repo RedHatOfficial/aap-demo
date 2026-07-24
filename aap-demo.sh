@@ -2045,10 +2045,17 @@ cmd_create() {
 
   # Install OLM by default (OpenShift Local doesn't include it, needed for operator dev and latest deploys)
   setup_kubeconfig
-  bash "${SCRIPT_DIR}/addons/olm/deploy.sh" || {
+  echo ""
+  echo "Installing OLM (Operator Lifecycle Manager)..."
+  if ! bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
     echo ""
-    printf "  \033[1;33mWARNING: OLM install failed — you can retry with: aap-demo enable olm\033[0m\n"
-  }
+    printf "  \033[1;31mERROR: OLM install failed\033[0m\n"
+    printf "  \033[1;33mYou can retry with: aap-demo enable olm\033[0m\n"
+    printf "  \033[1;33mOr destroy and recreate: aap-demo destroy && aap-demo create\033[0m\n"
+    echo ""
+    # Don't fail cluster creation, but warn that latest deploys won't work
+    printf "  \033[1;33mNote: 'aap-demo deploy latest' requires OLM\033[0m\n"
+  fi
 }
 
 # shellcheck source=includes/galaxy-auth.sh
@@ -2079,7 +2086,12 @@ cmd_deploy() {
   install_ingress_ca_trust
 
   # Install OLM if not present (OpenShift Local doesn't include it)
-  KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"
+  if ! KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
+    printf "\n\033[1;31mERROR: OLM installation failed\033[0m\n"
+    printf "OLM is required for AAP deployments. Please fix OLM before continuing.\n"
+    printf "Try: \033[1maap-demo enable olm\033[0m\n\n"
+    exit 1
+  fi
 
   # anyuid and privileged SCCs granted in setup_namespace() for all SAs in the namespace
   echo ""

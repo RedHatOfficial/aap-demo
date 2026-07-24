@@ -126,5 +126,12 @@ else
   if kubectl get crd subscriptions.operators.coreos.com &>/dev/null; then
     kubectl delete catsrc operatorhubio-catalog -n olm 2>/dev/null || true
     echo "OLM CRDs are present — installation likely succeeded despite timeout."
+    exit 0
+  else
+    # Partial installation detected — clean up to avoid broken state
+    echo "ERROR: OLM installation incomplete. Cleaning up..."
+    kubectl delete namespace olm 2>/dev/null || true
+    kubectl delete namespace operators 2>/dev/null || true
+    exit 1
   fi
 fi
