@@ -140,8 +140,8 @@
 - name: Add hostAliases for nip.io DNS resolution  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
-    regexp: '      hostAliases: \[\]'
-    replace: "      hostAliases:\n      - ip: \"{{ router_cluster_ip }}\"\n        hostnames:\n        - \"{{ aap_hostname }}\"\n        - \"registry.{{ openshift_cluster_domain }}\""
+    regexp: '(      - emptyDir: \{\}\n        name: apme-data\n)      hostAliases: \[\]'
+    replace: '\1      hostAliases:\n      - ip: "{{ router_cluster_ip }}"\n        hostnames:\n        - "{{ aap_hostname }}"\n        - "registry.{{ openshift_cluster_domain }}"'
   when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
 
 - name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
