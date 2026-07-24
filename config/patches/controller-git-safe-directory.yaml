@@ -1,10 +1,12 @@
 ---
-# Patch to fix git "dubious ownership" errors in AWX projects
+# Patch to fix git "dubious ownership" and collection download permission errors
 # Apply after AAP deployment creates the AnsibleAutomationPlatform CR
 #
-# AWX project sync clones repos as root but subsequent git commands run as awx.
-# fsGroup fixes volume group ownership; safe.directory bypasses git's ownership check.
-# Wildcard (*) is acceptable for demo/dev; production should scope paths if possible.
+# Root cause: AWX runs certain operations (git clone, collection download) as root
+# but later operations run as awx user (996), creating permission conflicts.
+#
+# Fix: runAsUser forces all operations to run as awx, preventing root-owned artifacts.
+# fsGroup ensures volume ownership. GIT_CONFIG vars provide fallback for git operations.
 #
 # Usage:
 #   kubectl patch ansibleautomationplatform aap -n aap-operator --patch-file config/patches/controller-git-safe-directory.yaml --type=merge
@@ -14,7 +16,8 @@
 spec:
   controller:
     security_context_settings:
-      fsGroup: 996  # awx GID
+      runAsUser: 996  # awx UID — all container processes run as awx user
+      fsGroup: 996    # awx GID — group ownership on project volume
     task_extra_env: |
       - name: GIT_CONFIG_COUNT
         value: "1"
