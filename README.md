@@ -73,6 +73,14 @@ aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao-eap       # Early Access Program only for Automation Orchestrator
 aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
+
+# Ansible Product Demos - Official demo content from ansible/product-demos
+aap-demo enable product-demo-linux      # Linux/RHEL automation demos
+aap-demo enable product-demo-windows    # Windows Server automation demos
+aap-demo enable product-demo-network    # Network automation demos
+aap-demo enable product-demo-cloud      # Cloud provisioning demos (AWS)
+aap-demo enable product-demo-openshift  # OpenShift/Kubernetes demos
+aap-demo enable product-demo-satellite  # Red Hat Satellite integration demos
 aap-demo disable addon_name  # Disables addon
 ```
 
