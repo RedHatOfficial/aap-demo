@@ -22,47 +22,57 @@ USER root
 COPY plugin_packs/apme-prototype-plugins-*.oci.tar.gz /tmp/plugin-pack.tar.gz
 
 # Extract all Docker archive layers in order, copy plugin dirs to dist/, clean up.
-RUN set -e; \
-    mkdir -p /tmp/apme-archive /tmp/apme-extracted; \
-    tar -xzf /tmp/plugin-pack.tar.gz -C /tmp/apme-archive; \
-    echo '=== archive root ===' && ls /tmp/apme-archive/; \
-    python3 - <<'PYEOF'
-import json, os, subprocess, sys
+# Uses only Python stdlib (gzip + tarfile) — no gzip/tar binaries required.
+RUN python3 - <<'PYEOF'
+import gzip, json, os, shutil, tarfile
 
-with open("/tmp/apme-archive/manifest.json") as f:
+ARCHIVE = "/tmp/plugin-pack.tar.gz"
+WORK    = "/tmp/apme-archive"
+OUT     = "/tmp/apme-extracted"
+DIST    = "/opt/app-root/src/dynamic-plugins/dist"
+PLUGINS = [
+    "ansible-plugin-scaffolder-backend-module-backstage-rhaap",
+    "ansible-backstage-plugin-catalog-backend-module-rhaap",
+    "ansible-plugin-backstage-self-service",
+    "ansible-backstage-plugin-auth-backend-module-rhaap-provider",
+    "ansible-plugin-backstage-apme",
+    "ansible-backstage-plugin-catalog-backend-module-apme",
+]
+
+os.makedirs(WORK, exist_ok=True)
+os.makedirs(OUT,  exist_ok=True)
+
+# Step 1: decompress and unpack the outer Docker archive
+print("Unpacking Docker archive...", flush=True)
+with gzip.open(ARCHIVE, "rb") as gz:
+    with tarfile.open(fileobj=gz) as outer:
+        outer.extractall(WORK)
+
+# Step 2: read manifest.json to find layer tarballs, extract in order
+with open(os.path.join(WORK, "manifest.json")) as f:
     manifest = json.load(f)
 
 layers = manifest[0]["Layers"]
 print(f"Extracting {len(layers)} layer(s)...", flush=True)
 for layer in layers:
-    layer_path = os.path.join("/tmp/apme-archive", layer)
     print(f"  {layer}", flush=True)
-    subprocess.run(
-        ["tar", "-xf", layer_path, "-C", "/tmp/apme-extracted", "--overwrite"],
-        check=False,
-    )
+    with tarfile.open(os.path.join(WORK, layer)) as lt:
+        lt.extractall(OUT)
 
-print("=== extracted root ===", flush=True)
-os.system("ls /tmp/apme-extracted/")
+# Step 3: copy each plugin directory into dynamic-plugins/dist/
+for plugin in PLUGINS:
+    src = os.path.join(OUT, plugin)
+    dst = os.path.join(DIST, plugin)
+    if os.path.isdir(src):
+        shutil.copytree(src, dst)
+        print(f"Installed {plugin}", flush=True)
+    else:
+        print(f"WARNING: {plugin} not found in extracted image", flush=True)
+
+# Step 4: clean up build artifacts
+shutil.rmtree(WORK)
+shutil.rmtree(OUT)
+os.remove(ARCHIVE)
 PYEOF
-    \
-    PLUGINS=" \
-      ansible-plugin-scaffolder-backend-module-backstage-rhaap \
-      ansible-backstage-plugin-catalog-backend-module-rhaap \
-      ansible-plugin-backstage-self-service \
-      ansible-backstage-plugin-auth-backend-module-rhaap-provider \
-      ansible-plugin-backstage-apme \
-      ansible-backstage-plugin-catalog-backend-module-apme \
-    "; \
-    DIST=/opt/app-root/src/dynamic-plugins/dist; \
-    for plugin in $PLUGINS; do \
-      if [ -d "/tmp/apme-extracted/$plugin" ]; then \
-        cp -r "/tmp/apme-extracted/$plugin" "$DIST/$plugin"; \
-        echo "Installed $plugin"; \
-      else \
-        echo "WARNING: $plugin not found in extracted image root"; \
-      fi; \
-    done; \
-    rm -rf /tmp/apme-archive /tmp/apme-extracted /tmp/plugin-pack.tar.gz
 
 USER 1001
