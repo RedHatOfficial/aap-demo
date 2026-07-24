@@ -9,6 +9,13 @@ git clone https://github.com/RedHatOfficial/aap-demo.git
 cd aap-demo && ./install.sh
 ```
 
+## System Requirements
+
+- **RAM**: 16GB minimum (32GB recommended)
+- **CPU**: 2 cores minimum (8 vCPU allocated by default)
+- **Storage**: 100GB disk space
+- **OS**: macOS, Linux, or Windows 11 Pro/Enterprise/Server (Hyper-V required for Windows)
+
 ## Prerequisites
 
 - **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
