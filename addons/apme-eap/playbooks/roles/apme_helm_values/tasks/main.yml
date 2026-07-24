@@ -90,6 +90,57 @@
     regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
     replace: "- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins\n        - name: SKOPEO_INSECURE_POLICY\n          value: \"true\""
 
+# MicroShift / nip.io workarounds for self-signed certs and DNS resolution
+- name: Check if using nip.io domain  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    is_nip_io_domain: "{{ 'nip.io' in openshift_cluster_domain }}"
+
+- name: Get router service ClusterIP for hostAliases  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    namespace: openshift-ingress
+    label_selectors:
+      - ingresscontroller.operator.openshift.io/owning-ingresscontroller=default
+  register: router_service
+  when: is_nip_io_domain
+
+- name: Set router ClusterIP fact  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    router_cluster_ip: "{{ router_service.resources[0].spec.clusterIP | default('') }}"
+  when: is_nip_io_domain and router_service.resources | length > 0
+
+- name: Disable SSL verification for nip.io (self-signed certs)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: 'checkSSL: true'
+    replace: 'checkSSL: false'
+  when: is_nip_io_domain
+
+- name: Add NODE_TLS_REJECT_UNAUTHORIZED env var for nip.io  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(- name: LOG_LEVEL\n          value: debug)'
+    replace: "- name: NODE_TLS_REJECT_UNAUTHORIZED\n          value: \"0\"\n        - name: LOG_LEVEL\n          value: debug"
+  when: is_nip_io_domain
+
+- name: Extract AAP hostname from aap_host URL  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_hostname: "{{ aap_host | regex_replace('^https?://', '') | regex_replace('/.*$', '') }}"
+  when: is_nip_io_domain
+
+- name: Add hostAliases for nip.io DNS resolution  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '      hostAliases: \[\]'
+    replace: |
+            hostAliases:
+            - ip: "{{ router_cluster_ip }}"
+              hostnames:
+              - "{{ aap_hostname }}"
+              - "registry.{{ openshift_cluster_domain }}"
+  when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
+
 - name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
