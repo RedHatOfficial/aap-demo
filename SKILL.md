@@ -7,7 +7,8 @@ description: AAP Demo deployment knowledge - ADRs, API patterns, credentials, an
 
 ## Architecture Decision Records (ADRs)
 
-ADRs are located in `docs/adr/` and document key architectural decisions made during the project. Each ADR follows the standard format:
+ADRs are located in `docs/adr/` and document key architectural decisions.
+Each ADR follows the standard format:
 
 - `000-template.md` - Template for new ADRs
 - `001-` through `019+` - Numbered decision records
@@ -25,18 +26,21 @@ To create a new ADR, copy `docs/adr/000-template.md` and follow the numbering co
 ### Always use the Gateway API, not direct controller access
 
 **CORRECT:**
+
 ```bash
 # Use the AAP gateway API endpoint
 curl -k -u admin:password https://{{ aap_host }}/api/v2/ping/
 ```
 
 **INCORRECT:**
+
 ```bash
 # Do NOT access controller API directly
 curl -k https://{{ controller_host }}/api/v2/ping/  # ❌ WRONG
 ```
 
 **Why:** The AAP gateway (introduced in AAP 2.5+) provides:
+
 - Single entry point for all AAP services (controller, hub, EDA)
 - Unified authentication and authorization
 - Service discovery and routing
@@ -49,6 +53,7 @@ The controller API endpoint is an internal implementation detail and may change 
 ### Always use aap-admin-password secret
 
 **CORRECT:**
+
 ```bash
 # Get AAP admin password from the correct secret
 kubectl get secret aap-admin-password -n aap-operator -o jsonpath='{.data.password}' | base64 -d
@@ -58,13 +63,15 @@ aap-demo status | grep "AAP Admin"
 ```
 
 **INCORRECT:**
+
 ```bash
 # Do NOT use controller-specific credentials
 kubectl get secret aap-controller-admin-password  # ❌ WRONG
 kubectl get secret controller-admin-password      # ❌ WRONG
 ```
 
-**Why:** 
+**Why:**
+
 - `aap-admin-password` is the gateway admin credential (AAP 2.5+)
 - AAP gateway uses its own RBAC system that may differ from controller's
 - Controller credentials are service-internal and not guaranteed to work via gateway
@@ -72,7 +79,8 @@ kubectl get secret controller-admin-password      # ❌ WRONG
 
 ### Credential retrieval
 
-**Method 1: Using aap-demo (recommended)**
+#### Method 1: Using aap-demo (recommended)
+
 ```bash
 # Get all credentials (AAP admin, hub admin, etc.)
 aap-demo status
@@ -81,7 +89,8 @@ aap-demo status
 # Password is displayed in status output
 ```
 
-**Method 2: Direct kubectl access**
+#### Method 2: Direct kubectl access
+
 ```bash
 # Get AAP admin password from Kubernetes secret
 AAP_PASSWORD=$(kubectl get secret aap-admin-password -n aap-operator -o jsonpath='{.data.password}' | base64 -d)
@@ -91,7 +100,8 @@ echo $AAP_PASSWORD
 curl -k -u admin:${AAP_PASSWORD} https://{{ aap_host }}/api/v2/ping/
 ```
 
-**Method 3: One-liner for scripts**
+#### Method 3: One-liner for scripts
+
 ```bash
 # Get password inline
 kubectl get secret aap-admin-password -n aap-operator -o jsonpath='{.data.password}' | base64 -d && echo
@@ -116,12 +126,14 @@ AAP_PASSWORD=$(kubectl get secret aap-admin-password -n aap-operator -o jsonpath
 ### NEVER use awx-cli
 
 **❌ DO NOT USE:**
+
 ```bash
 awx-cli login  # WRONG - deprecated tool
 awx ping       # WRONG - deprecated tool
 ```
 
 **✅ USE INSTEAD:**
+
 ```bash
 # Direct API calls via curl
 curl -k -u admin:password https://{{ aap_host }}/api/v2/ping/
@@ -131,6 +143,7 @@ ansible-playbook -i inventory playbook.yml
 ```
 
 **Why:**
+
 - `awx-cli` is deprecated and no longer maintained
 - `awx-cli` was designed for AWX (upstream), not AAP (downstream product)
 - `awx-cli` does not support AAP gateway authentication
@@ -138,6 +151,7 @@ ansible-playbook -i inventory playbook.yml
 - Modern AAP integrations use the `ansible.controller` collection or direct API calls
 
 **Alternatives:**
+
 1. **For automation**: Use `ansible.controller` collection modules
 2. **For testing**: Use `curl` with gateway API endpoints
 3. **For CLI workflows**: Use `aap-demo` commands or write shell scripts around the API
@@ -161,6 +175,7 @@ curl -k -u admin:${AAP_PASS} \
 ### Ansible collection authentication
 
 See `docs/collection-authentication.md` for detailed guidance on:
+
 - Using `ansible.controller` collection with gateway API
 - Token-based authentication
 - Certificate verification options

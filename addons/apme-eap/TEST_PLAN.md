@@ -2,11 +2,13 @@
 
 ## Overview
 
-This test plan validates the AAP-native execution approach for the APME addon, which uses Ansible playbooks with `ansible.builtin.uri` to interact with AAP's REST API.
+This test plan validates the AAP-native execution approach for the APME addon, which uses
+Ansible playbooks with `ansible.builtin.uri` to interact with AAP's REST API.
 
 ## Test Environment
 
 ### Prerequisites
+
 - OpenShift Local (CRC) or MicroShift cluster running
 - AAP 2.7+ deployed (`aap-demo deploy`)
 - `kubectl` CLI available
@@ -14,6 +16,7 @@ This test plan validates the AAP-native execution approach for the APME addon, w
 - No manual token setup required (auto-created)
 
 ### Test Data
+
 - **AAP Route**: Retrieved from `kubectl get route -n aap-operator`
 - **Admin Password**: Retrieved from `kubectl get secret aap-admin-password -n aap-operator`
 - **Test Namespace**: `apme`
@@ -27,16 +30,19 @@ This test plan validates the AAP-native execution approach for the APME addon, w
 **Objective**: Verify full deployment flow with no existing resources
 
 **Prerequisites**:
+
 - Fresh AAP deployment (no prior APME addon runs)
 - No `aap-api-token` secret exists
 - No APME resources in AAP
 
 **Steps**:
+
 1. Run: `./aap-demo.sh enable apme-eap`
 2. Observe console output
 3. Check AAP Web UI for job
 
 **Expected Results**:
+
 - ✅ Venv created at `~/.aap-demo/apme-eap-venv/` with ansible-core
 - ✅ API token auto-created and stored in `aap-api-token` secret
 - ✅ AAP resources created:
@@ -49,6 +55,7 @@ This test plan validates the AAP-native execution approach for the APME addon, w
 - ✅ APME namespace created with pods running
 
 **Validation Commands**:
+
 ```bash
 # Check token secret
 kubectl get secret aap-api-token -n aap-operator
@@ -70,15 +77,18 @@ kubectl get route -n apme
 **Objective**: Verify addon can run multiple times without errors
 
 **Prerequisites**:
+
 - TC-001 completed successfully
 - All AAP resources exist
 - Token secret exists
 
 **Steps**:
+
 1. Run: `./aap-demo.sh enable apme-eap` (second time)
 2. Observe console output
 
 **Expected Results**:
+
 - ✅ Existing token reused (no new token created)
 - ✅ Existing venv reused
 - ✅ Project check finds existing project OR creates new one with unique timestamp path
@@ -87,6 +97,7 @@ kubectl get route -n apme
 - ✅ New job launched successfully
 
 **Validation**:
+
 ```bash
 # Check token ID hasn't changed
 kubectl get secret aap-api-token -n aap-operator -o jsonpath='{.data.token}' | base64 -d
@@ -104,15 +115,18 @@ kubectl get secret aap-api-token -n aap-operator -o jsonpath='{.data.token}' | b
 **Objective**: Verify automatic OAuth2 token creation via basic auth
 
 **Prerequisites**:
+
 - AAP deployed
 - No `aap-api-token` secret exists
 
 **Steps**:
+
 1. Delete token secret: `kubectl delete secret aap-api-token -n aap-operator`
 2. Run: `./aap-demo.sh enable apme-eap`
 3. Check token creation output
 
 **Expected Results**:
+
 - ✅ Console shows: "API token not found. Creating new token..."
 - ✅ `create_aap_token.yml` playbook runs
 - ✅ Token created via `/api/gateway/v1/tokens/` endpoint
@@ -120,6 +134,7 @@ kubectl get secret aap-api-token -n aap-operator -o jsonpath='{.data.token}' | b
 - ✅ Console shows: "✓ API token created successfully"
 
 **Validation**:
+
 ```bash
 # Verify token secret exists
 kubectl get secret aap-api-token -n aap-operator -o yaml
@@ -139,14 +154,17 @@ curl -k -H "Authorization: Bearer $AAP_TOKEN" "$AAP_HOST/api/controller/v2/me/" 
 **Objective**: Verify all AAP resources created correctly via REST API
 
 **Prerequisites**:
+
 - Clean AAP (no APME resources)
 - Token exists
 
 **Steps**:
+
 1. Run: `./aap-demo.sh enable apme-eap`
 2. Check AAP Web UI: Resources → Projects/Inventories/Templates
 
 **Expected Results**:
+
 - ✅ **Project**:
   - Name: `aap-demo-apme`
   - Type: Manual
@@ -165,6 +183,7 @@ curl -k -H "Authorization: Bearer $AAP_TOKEN" "$AAP_HOST/api/controller/v2/me/" 
   - Ask variables on launch: Yes
 
 **Validation**:
+
 ```bash
 # Check files in controller pod
 POD=$(kubectl get pods -n aap-operator -l app.kubernetes.io/name=aap-controller-task -o name | head -1)
@@ -180,14 +199,17 @@ kubectl exec -n aap-operator $POD -- ls -la /var/lib/awx/projects/ | grep aap-de
 **Objective**: Verify job launches correctly and output is streamed
 
 **Prerequisites**:
+
 - AAP resources exist (TC-004)
 
 **Steps**:
+
 1. Run: `./aap-demo.sh enable apme-eap`
 2. Watch console output during job execution
 3. Click AAP Web UI link from console
 
 **Expected Results**:
+
 - ✅ Console shows: "Launching APME deployment job..."
 - ✅ Job ID displayed
 - ✅ AAP Web UI link provided
@@ -197,6 +219,7 @@ kubectl exec -n aap-operator $POD -- ls -la /var/lib/awx/projects/ | grep aap-de
 - ✅ AAP UI shows same job with matching output
 
 **Validation**:
+
 ```bash
 # Check AAP UI manually
 # Resources → Jobs → Recent Jobs → "Deploy APME"
@@ -211,18 +234,22 @@ kubectl exec -n aap-operator $POD -- ls -la /var/lib/awx/projects/ | grep aap-de
 **Objective**: Verify playbooks use Kubernetes Namespace API (not OpenShift Project)
 
 **Prerequisites**:
+
 - MicroShift or OpenShift Local cluster
 
 **Steps**:
+
 1. Run: `./aap-demo.sh enable apme-eap`
 2. Check for API errors related to `project.openshift.io`
 
 **Expected Results**:
+
 - ✅ No errors about `ProjectRequest` not found
 - ✅ Namespace `apme` created successfully
 - ✅ Playbook uses `kind: Namespace` not `kind: Project`
 
 **Validation**:
+
 ```bash
 # Verify namespace exists
 kubectl get namespace apme
@@ -241,19 +268,23 @@ grep -r "ProjectRequest" addons/apme-eap/roles/openshift_apme_setup/tasks/ || ec
 **Objective**: Verify file copy works without `tar` in controller pod
 
 **Prerequisites**:
+
 - AAP controller pod lacks `tar` binary (typical minimal image)
 
 **Steps**:
+
 1. Run: `./aap-demo.sh enable apme-eap`
 2. Check file copy output
 
 **Expected Results**:
+
 - ✅ No errors about "tar not found"
 - ✅ Files copied using `kubectl exec` + `cat` method
 - ✅ All playbook files present in controller pod
 - ✅ Directory structure preserved
 
 **Validation**:
+
 ```bash
 POD=$(kubectl get pods -n aap-operator -l app.kubernetes.io/name=aap-controller-task -o name | head -1)
 
@@ -274,14 +305,17 @@ kubectl exec -n aap-operator $POD -- ls /var/lib/awx/projects/aap-demo-apme-*/pl
 **Objective**: Verify addon can be disabled and re-enabled cleanly
 
 **Prerequisites**:
+
 - APME addon currently deployed
 
 **Steps**:
+
 1. Run: `./aap-demo.sh disable apme-eap` or `./aap-demo.sh enable apme-eap --delete`
 2. Verify cleanup
 3. Run: `./aap-demo.sh enable apme-eap` again
 
 **Expected Results**:
+
 - ✅ Namespace deleted
 - ✅ Vars file removed
 - ✅ Token secret preserved (optional)
@@ -289,6 +323,7 @@ kubectl exec -n aap-operator $POD -- ls /var/lib/awx/projects/aap-demo-apme-*/pl
 - ✅ Re-deploy works without errors
 
 **Validation**:
+
 ```bash
 # After disable
 kubectl get namespace apme  # Should not exist
@@ -307,12 +342,15 @@ kubectl get pods -n apme  # Should exist again
 **Objective**: Verify graceful failure when AAP is not available
 
 **Prerequisites**:
+
 - No AAP deployed in cluster
 
 **Steps**:
+
 1. Run: `./aap-demo.sh enable apme-eap`
 
 **Expected Results**:
+
 - ✅ Error message: "AAP not deployed. Run 'aap-demo deploy' first."
 - ✅ No resources created
 - ✅ Exit code non-zero
@@ -326,16 +364,21 @@ kubectl get pods -n apme  # Should exist again
 **Objective**: Verify error handling when AAP credentials fail
 
 **Prerequisites**:
+
 - AAP deployed
 - Corrupt `aap-admin-password` secret
 
 **Steps**:
+
 1. Backup secret: `kubectl get secret aap-admin-password -n aap-operator -o yaml > /tmp/aap-secret.yaml`
-2. Corrupt it: `kubectl create secret generic aap-admin-password -n aap-operator --from-literal=password=WRONG --dry-run=client -o yaml | kubectl apply -f -`
+2. Corrupt it:
+   `kubectl create secret generic aap-admin-password -n aap-operator \
+   --from-literal=password=WRONG --dry-run=client -o yaml | kubectl apply -f -`
 3. Run: `./aap-demo.sh enable apme-eap`
 4. Restore: `kubectl apply -f /tmp/aap-secret.yaml`
 
 **Expected Results**:
+
 - ✅ Error during token creation: "Invalid username/password"
 - ✅ Clear error message displayed
 - ✅ Deployment stops
@@ -351,9 +394,11 @@ kubectl get pods -n apme  # Should exist again
 **Objective**: Measure end-to-end deployment time
 
 **Steps**:
+
 1. Time full deployment: `time ./aap-demo.sh enable apme-eap`
 
 **Acceptance Criteria**:
+
 - First run (venv creation): < 5 minutes
 - Subsequent runs (venv exists): < 3 minutes
 
@@ -364,9 +409,11 @@ kubectl get pods -n apme  # Should exist again
 **Objective**: Verify minimal venv footprint
 
 **Steps**:
+
 1. After deployment: `du -sh ~/.aap-demo/apme-eap-venv/`
 
 **Acceptance Criteria**:
+
 - Venv size: < 100 MB (target: ~50 MB)
 - Much smaller than full Ansible install (150+ MB)
 
@@ -379,10 +426,12 @@ kubectl get pods -n apme  # Should exist again
 **Objective**: Verify token has minimal required scope
 
 **Steps**:
+
 1. Retrieve token: `kubectl get secret aap-api-token -n aap-operator -o jsonpath='{.data.token}' | base64 -d`
 2. Check token in AAP UI: Settings → Users → admin → Tokens
 
 **Expected Results**:
+
 - ✅ Scope: `write` (not `admin` or broader)
 - ✅ Description: "aap-demo APME addon API access"
 
@@ -393,9 +442,11 @@ kubectl get pods -n apme  # Should exist again
 **Objective**: Verify sensitive data stored securely
 
 **Steps**:
+
 1. Check token secret: `kubectl get secret aap-api-token -n aap-operator -o yaml`
 
 **Expected Results**:
+
 - ✅ Token stored base64-encoded in Kubernetes secret
 - ✅ Not logged to console or files
 - ✅ No plaintext tokens in logs
@@ -409,10 +460,12 @@ kubectl get pods -n apme  # Should exist again
 **Objective**: Verify similar pattern to portal addon (basic auth token creation)
 
 **Steps**:
+
 1. Compare with portal addon: `grep -A 10 "create_api_token" addons/portal/deploy.sh`
 2. Verify APME uses same approach
 
 **Expected Results**:
+
 - ✅ Both use basic auth with `aap-admin-password`
 - ✅ Both POST to `/api/gateway/v1/tokens/`
 - ✅ Both store in Kubernetes secrets

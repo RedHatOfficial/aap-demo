@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 MD024 -->
 # ADR-019b: APME AAP-Native Execution
 
 **Status:** Rejected  
@@ -79,6 +80,7 @@ The implementation uses **Git SCM** for project source and **Ansible playbooks**
 ```
 
 **Git-based project** (auto-syncs from repository):
+
 ```yaml
 - name: Create project (Git SCM type)
   ansible.builtin.uri:
@@ -91,6 +93,7 @@ The implementation uses **Git SCM** for project source and **Ansible playbooks**
 ```
 
 **Token authentication without kubeconfig** (critical for AAP execution):
+
 ```yaml
 # kubernetes.core modules use api_key directly, not kubeconfig
 - name: Check if namespace exists
@@ -103,6 +106,7 @@ The implementation uses **Git SCM** for project source and **Ansible playbooks**
 ```
 
 **Helm without helm CLI** (uses repository URLs directly):
+
 ```yaml
 - name: Install portal Helm release
   kubernetes.core.helm:
@@ -111,6 +115,7 @@ The implementation uses **Git SCM** for project source and **Ansible playbooks**
 ```
 
 **Job execution flow:**
+
 ```
 setup_aap_resources.yml (run once locally)
   ↓
@@ -187,6 +192,7 @@ launch_apme_deployment.yml (from AAP or locally)
 Instead of `kubectl cp`, use a git URL pointing to the repo.
 
 **Rejected:**
+
 - Requires git server or public GitHub (aap-demo is often airgapped)
 - Adds complexity (SSH keys, credentials)
 - `kubectl cp` is simpler for local development
@@ -201,7 +207,7 @@ Use the (hypothetical) AAP MCP server instead of direct API calls.
 
 ### Key Learnings
 
-1. **kubernetes.core auth behavior**: 
+1. **kubernetes.core auth behavior**:
    - `api_key: "{{ var | default(omit) }}"` causes module to fall back to kubeconfig when var is undefined
    - Must use `api_key: "{{ var }}"` (no default) to force token-only auth
    - Environment variables (`K8S_AUTH_KUBECONFIG`) must be unset, not set to empty string
@@ -231,7 +237,8 @@ During initial deployment on MicroShift (OpenShift Local), several interconnecte
 
 **Root Cause**: Playbook configured to use OpenShift integrated registry (`image-registry.openshift-image-registry.svc:5000`) which doesn't exist in MicroShift
 
-**Resolution**: 
+**Resolution**:
+
 - Deployed `aap-demo-registry` addon providing HTTP registry at `registry.aap-demo-registry.svc.cluster.local:5000`
 - Configured job template with `oci_registry` pointing to custom registry
 - Set `skip_plugin_push: true` to bypass skopeo TLS verification issues with HTTP-only registry
@@ -243,11 +250,13 @@ During initial deployment on MicroShift (OpenShift Local), several interconnecte
 **Root Cause**: Network routing prevents pods from accessing their own external routes (hairpin NAT limitation in MicroShift)
 
 **Resolution**: Use internal service URL for pod-to-pod communication
+
 ```yaml
 aap_host: "http://aap.aap-operator.svc.cluster.local"  # Internal service, not external route
 ```
 
 **Key Distinction**:
+
 - **External URLs** (browser access): `https://aap-aap-operator.apps.127.0.0.1.nip.io`
 - **Internal URLs** (pod-to-pod): `http://aap.aap-operator.svc.cluster.local`
 
@@ -258,6 +267,7 @@ aap_host: "http://aap.aap-operator.svc.cluster.local"  # Internal service, not e
 **Root Cause**: Cluster domain derivation logic tried to extract domain from `https://kubernetes.default.svc:443`, which doesn't match the expected `api.*.` pattern
 
 **Resolution**: Explicitly extract cluster domain from existing routes
+
 ```yaml
 - name: Get AAP route hostname
   ansible.builtin.command:
@@ -276,6 +286,7 @@ aap_host: "http://aap.aap-operator.svc.cluster.local"  # Internal service, not e
 **Root Cause**: Job template `extra_vars` didn't include variables expected by APME playbooks (which have defaults in their own defaults.yml files but AAP doesn't load those)
 
 **Resolution**: Build comprehensive `extra_vars` dictionary in setup playbook
+
 ```yaml
 job_extra_vars:
   # OpenShift connection
@@ -321,6 +332,7 @@ job_extra_vars:
 **Root Cause**: APME execution environment image only included `oc` and `skopeo`, not `helm`
 
 **Resolution**: Rebuilt execution environment with helm
+
 ```dockerfile
 # execution-environment/Containerfile
 RUN microdnf install -y openshift-clients skopeo tar && \
@@ -340,6 +352,7 @@ RUN curl -fsSL https://get.helm.sh/helm-v3.14.0-linux-arm64.tar.gz | tar -xz && 
 **Root Cause**: Roles concatenated repo URL and chart name: `chart_ref: "{{ repo_url }}{{ chart_name }}"` instead of using separate parameters
 
 **Resolution**: Use `chart_repo_url` parameter
+
 ```yaml
 # Before (incorrect)
 chart_ref: "{{ portal_helm_chart_repo_url }}{{ portal_helm_chart_name }}"
@@ -352,6 +365,7 @@ chart_repo_url: "{{ portal_helm_chart_repo_url }}"
 ### Issue 7: ARM64 Image Availability
 
 **Problem**: `ImagePullBackOff` - Red Hat registry images don't have ARM64 builds
+
 ```
 no image found in image index for architecture "arm64", variant "v8", OS "linux"
 ```
@@ -359,6 +373,7 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
 **Root Cause**: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` is x86_64 only
 
 **Resolution**: Architecture-aware image selection
+
 ```yaml
 - name: Detect system architecture
   ansible.builtin.set_fact:
@@ -386,6 +401,7 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
 **Root Cause**: Overly broad regex replacement changed postgres registry from `registry.redhat.io` to `quay.io`, but postgres image on quay.io requires authentication
 
 **Resolution**: Make image replacement specific to RHDH hub only
+
 ```yaml
 # Target only RHDH hub image, not postgres or other images
 - regexp: '(pullSecrets: \[\]\n\s+registry: )registry\.redhat\.io(\n\s+repository: rhdh/rhdh-hub-rhel9)'
@@ -399,6 +415,7 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
 **Root Cause**: Community RHDH (1.10) and Red Hat RHDH (1.9) have different plugin sets
 
 **Resolution**: Remove incompatible plugins for community version
+
 ```yaml
 - name: Remove incompatible plugins for community RHDH (ARM64)
   ansible.builtin.lineinfile:
@@ -411,6 +428,7 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
 ### Summary of Changes
 
 **Modified Files**:
+
 - `playbooks/setup_aap_resources.yml` - Added comprehensive extra_vars configuration
 - `playbooks/roles/portal_helm_install/tasks/main.yml` - Fixed helm chart_repo_url usage
 - `playbooks/roles/apme_gateway_helm/tasks/main.yml` - Fixed helm chart_repo_url usage
@@ -420,6 +438,7 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
 - `execution-environment/execution-environment.yml` - Added helm to build
 
 **Commit History** (apme-playbook branch):
+
 1. `fix(apme-eap): use internal service URLs and set cluster domain`
 2. `fix(apme-eap): add missing aap_organization variable`
 3. `fix(apme-eap): add portal_helm_release_name and oauth app name`
@@ -444,6 +463,7 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
 ## Test Plan
 
 See [TEST_PLAN.md](../../addons/apme-eap/TEST_PLAN.md) for comprehensive test cases covering:
+
 - Clean installation and idempotent re-runs
 - Token auto-creation and AAP resource creation
 - MicroShift compatibility and tar-free file copy

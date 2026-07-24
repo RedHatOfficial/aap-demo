@@ -1,8 +1,11 @@
 # APME Playbook Addon
 
-Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) using **official APME EAP welcome pack Ansible playbooks** executed locally in an isolated Python virtual environment.
+Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) using
+**official APME EAP welcome pack Ansible playbooks** executed locally in an isolated Python
+virtual environment.
 
-> **Preview:** APME is prototype software for the Early Access Program. Confidential — Red Hat associate and NDA partner use only.
+> **Preview:** APME is prototype software for the Early Access Program.
+> Confidential — Red Hat associate and NDA partner use only.
 
 ## Overview
 
@@ -14,25 +17,30 @@ This addon uses the **official APME EAP welcome pack playbooks** executed locall
 - Auto-discovers aap-demo environment (no manual configuration)
 - Maintains alignment with upstream APME deployment patterns
 
-**Architecture:** Bash wrapper (`deploy.sh`) handles environment discovery and generates vars file, then invokes official APME playbooks via `ansible-playbook` with KUBECONFIG-based authentication.
+**Architecture:** Bash wrapper (`deploy.sh`) handles environment discovery and generates vars
+file, then invokes official APME playbooks via `ansible-playbook` with KUBECONFIG-based
+authentication.
 
 ## Quick Start
 
 ### Prerequisites
 
-**System requirements**:
+**System requirements:**
+
 - `kubectl` or `oc`
 - `python3` (3.8+)
 - AAP deployed (`aap-demo deploy`)
 
 **Ansible installation** (auto-installed in venv):
+
 - A venv is created at `~/.aap-demo/apme-eap-venv` with full Ansible suite + collections
 - Includes kubernetes.core, community.okd, and other required collections
 - The playbooks run locally using KUBECONFIG authentication (~150 MB venv)
 
 ### No Manual Configuration Required! 🎉
 
-The addon **automatically discovers** your aap-demo environment (KUBECONFIG, cluster domain, AAP credentials). No manual setup needed!
+The addon **automatically discovers** your aap-demo environment (KUBECONFIG, cluster domain,
+AAP credentials). No manual setup needed!
 
 ### Deploy
 
@@ -41,15 +49,19 @@ aap-demo enable apme-eap
 ```
 
 This will:
+
 1. Check system prerequisites (kubectl, python3)
 2. Create venv with full Ansible + collections (if not exists)
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
 5. Run `playbooks/deploy_apme_portal.yml` directly via ansible-playbook
 
-**Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with the cluster. The `K8S_AUTH_KUBECONFIG` environment variable is set automatically by the wrapper script.
+**Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with
+the cluster. The `K8S_AUTH_KUBECONFIG` environment variable is set automatically by the
+wrapper script.
 
-**First run** takes longer (~2-3 minutes) to set up the virtual environment and install Ansible collections. Subsequent runs reuse the existing venv and are faster.
+**First run** takes longer (~2-3 minutes) to set up the virtual environment and install
+Ansible collections. Subsequent runs reuse the existing venv and are faster.
 
 ### Check Status
 
@@ -68,6 +80,7 @@ aap-demo disable apme-eap
 This removes the APME namespace but preserves the virtual environment for future use.
 
 **To completely remove everything** (including venv):
+
 ```bash
 aap-demo disable apme-eap
 rm -rf ~/.aap-demo/apme-eap-venv
@@ -209,6 +222,7 @@ addons/apme-eap/
 **Symptom**: `python3 not found` or venv module errors
 
 **Solution**:
+
 ```bash
 # macOS
 brew install python3
@@ -224,6 +238,7 @@ python3 --version  # Should be 3.8 or later
 **Cause**: Virtual environment was corrupted or collections install failed
 
 **Solution**:
+
 ```bash
 # Remove and recreate venv
 rm -rf ~/.aap-demo/apme-eap-venv
@@ -235,6 +250,7 @@ aap-demo enable apme-eap  # Will recreate venv
 **Symptom**: `AAP route not found. Deploy AAP first`
 
 **Solution**: Deploy AAP before enabling this addon:
+
 ```bash
 aap-demo deploy
 aap-demo status  # Verify AAP is running
@@ -246,6 +262,7 @@ aap-demo enable apme-eap
 **Symptom**: Playbook fails during `aap_apme_prerequisites` role
 
 **Solution**: Check AAP credentials:
+
 ```bash
 kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_password}' | base64 -d
 # Verify password works by logging into AAP web UI
@@ -256,6 +273,7 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 **Symptom**: skopeo copy fails during `apme_oci_push` role
 
 **Solution**:
+
 1. Check port-forward to plugin registry is working
 2. Verify skopeo is installed: `which skopeo`
 3. Check plugin registry pod is running: `kubectl get pods -n apme -l app=plugin-registry`
@@ -265,6 +283,7 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 **Symptom**: Helm install times out waiting for pods
 
 **Solution**:
+
 ```bash
 # Check pod status
 kubectl get pods -n apme
@@ -281,6 +300,7 @@ kubectl describe pod -n apme <pod-name>
 **Symptom**: Repository registration fails or Quality tab missing
 
 **Solution**:
+
 1. Verify secrets-scm exists: `kubectl get secret secrets-scm -n apme`
 2. Check secret keys: `kubectl get secret secrets-scm -n apme -o jsonpath='{.data}' | jq 'keys'`
 3. Re-enable with `configure_github_secrets: true` in vars file
@@ -291,12 +311,14 @@ kubectl describe pod -n apme <pod-name>
 ### 1. Verify Deployment
 
 **ARM (RHDH portal)**:
+
 ```bash
 kubectl get route -n apme
 # Open the route URL in browser
 ```
 
 **x86 (APME gateway)**:
+
 ```bash
 kubectl port-forward -n apme deploy/apme-gateway 8080:8080
 # Open http://localhost:8080
@@ -358,7 +380,8 @@ ansible-playbook playbooks/deploy_apme_portal.yml \
 
 ## References
 
-- [APME EAP Welcome Pack](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr) - Official APME deployment documentation
+- [APME EAP Welcome Pack](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr) -
+  Official APME deployment documentation
 - [aap-demo Documentation](../../docs/FULL-README.md) - Main aap-demo documentation
 - [APME GitHub Repository](https://github.com/ansible/apme) - APME source code
 - [APME Plugins Repository](https://github.com/ansible/ansible-rhdh-plugins) - RHDH plugins for APME

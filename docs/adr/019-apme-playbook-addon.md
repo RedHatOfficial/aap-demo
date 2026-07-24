@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD013 -->
 # ADR-019: APME Playbook Addon
 
 **Status:** Accepted  
@@ -6,7 +7,10 @@
 
 ## Context
 
-The APME (Ansible Portal Managed Engine) Early Access Program provides an official deployment method using Ansible playbooks (the "welcome pack"). While aap-demo could implement APME deployment using pure bash (similar to other addons), using the official playbooks provides better alignment with upstream and easier maintenance as APME evolves.
+The APME (Ansible Portal Managed Engine) Early Access Program provides an official deployment
+method using Ansible playbooks (the "welcome pack"). While aap-demo could implement APME
+deployment using pure bash (similar to other addons), using the official playbooks provides
+better alignment with upstream and easier maintenance as APME evolves.
 
 **Deployment options considered:**
 
@@ -14,15 +18,19 @@ The APME (Ansible Portal Managed Engine) Early Access Program provides an offici
 2. **Ansible playbook wrapper** - Use official welcome pack playbooks via thin bash wrapper
 3. **Hybrid approach** - Mix bash for discovery, Ansible for deployment
 
-**Challenge:** aap-demo addons are bash-based (ADR-008), but APME has official Ansible playbooks. This creates a choice between addon consistency (bash-only) and upstream alignment (use official playbooks).
+**Challenge:** aap-demo addons are bash-based (ADR-008), but APME has official Ansible
+playbooks. This creates a choice between addon consistency (bash-only) and upstream
+alignment (use official playbooks).
 
 ## Decision
 
-Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible playbooks via a bash wrapper. This establishes a new pattern: **Ansible-based addons with bash integration**.
+Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible playbooks via a
+bash wrapper. This establishes a new pattern: **Ansible-based addons with bash integration**.
 
 ### Architecture Decision 1: Wrapper Pattern
 
 **Thin bash wrapper** (`deploy.sh`) that:
+
 - Conforms to aap-demo addon contract (deploy/--delete interface)
 - Handles prerequisite checking
 - Auto-discovers aap-demo environment
@@ -30,6 +38,7 @@ Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible pl
 - Delegates to official welcome pack playbooks
 
 **Benefits:**
+
 - Addon system compatibility (bash entry point)
 - Upstream alignment (use official playbooks as-is)
 - No playbook duplication or maintenance burden
@@ -39,11 +48,13 @@ Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible pl
 **Problem:** System-wide Ansible installation creates conflicts and version dependencies.
 
 **Solution:** Create isolated Python venv at `~/.aap-demo/apme-playbook-venv` with:
+
 - Ansible (2.15+)
 - Required Python libraries (PyYAML, kubernetes, openshift, requests, jmespath)
 - Ansible collections (kubernetes.core, community.okd, community.general)
 
 **Benefits:**
+
 - No system-wide Ansible requirement
 - Reproducible environment
 - No conflicts with other Ansible projects
@@ -51,14 +62,17 @@ Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible pl
 
 ### Architecture Decision 3: KUBECONFIG-Based Authentication
 
-**Problem:** Welcome pack playbooks expect `openshift_token` (bearer token), but CRC/MicroShift uses client certificate authentication.
+**Problem:** Welcome pack playbooks expect `openshift_token` (bearer token), but CRC/MicroShift
+uses client certificate authentication.
 
 **Solution:** Modify copied role tasks to support both authentication methods:
+
 - `api_key: "{{ openshift_token | default(omit) }}"` (optional token)
 - `kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"` (KUBECONFIG fallback)
 - Set `K8S_AUTH_KUBECONFIG` environment variable in deploy wrapper
 
 **Benefits:**
+
 - Works with CRC/MicroShift client certificates
 - Still supports token auth if available
 - No kubeconfig file writing needed
@@ -66,6 +80,7 @@ Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible pl
 ### Architecture Decision 4: Environment Auto-Discovery
 
 **Automated discovery** of aap-demo context instead of manual vars editing:
+
 - KUBECONFIG path from CRC defaults
 - OpenShift API URL from kubeconfig
 - Cluster domain from routes
@@ -76,6 +91,7 @@ Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible pl
 **Generated vars file:** `~/.aap-demo/apme-playbook-vars.yml` (regenerated each deploy)
 
 **Benefits:**
+
 - Zero manual configuration
 - Always uses current cluster state
 - Consistent with other addon UX
@@ -83,6 +99,7 @@ Create `apme-playbook` addon that uses official APME EAP welcome pack Ansible pl
 ### Architecture Decision 5: Welcome Pack Integration
 
 **Copy official playbooks** into addon directory instead of external dependency:
+
 ```
 addons/apme-playbook/
 ├── deploy.sh              # Bash wrapper (NEW)
@@ -95,10 +112,12 @@ addons/apme-playbook/
 ```
 
 **Modifications to copied roles:**
+
 - Add kubeconfig support to all kubernetes.core module calls
 - No other changes to playbook logic
 
 **Benefits:**
+
 - Self-contained addon (no external zip dependency)
 - Can be updated by copying new welcome pack
 - Clear diff of local modifications
@@ -160,6 +179,7 @@ deploy.sh
 ### Integration with aap-demo.sh
 
 **No special handling required** - addon system auto-discovers:
+
 - Added to `AVAILABLE_ADDONS` list
 - Added to argument parser case statement
 - Standard `bash addons/apme-playbook/deploy.sh` invocation
@@ -196,7 +216,8 @@ deploy.sh
 
 Replicate all welcome pack logic in bash (like existing addons).
 
-**Rejected:** 
+**Rejected:**
+
 - High maintenance burden (keep in sync with upstream)
 - Welcome pack already tested and working
 - Bash not ideal for Helm chart management and complex workflows
@@ -206,6 +227,7 @@ Replicate all welcome pack logic in bash (like existing addons).
 Require users to download welcome pack separately, reference it.
 
 **Rejected:**
+
 - Poor UX (extra download step)
 - Version mismatch risk (user has wrong welcome pack version)
 - Harder to modify for aap-demo integration
@@ -215,6 +237,7 @@ Require users to download welcome pack separately, reference it.
 Port playbook logic to bash for consistency.
 
 **Rejected:**
+
 - Defeats purpose of using official deployment method
 - Loses upstream alignment benefit
 - More work than wrapper approach
@@ -224,6 +247,7 @@ Port playbook logic to bash for consistency.
 Don't use venv, require user to install Ansible globally.
 
 **Rejected:**
+
 - System pollution
 - Version conflicts with other projects
 - Harder for users (manual ansible-galaxy collection install)
@@ -253,7 +277,8 @@ During initial deployment on MicroShift (OpenShift Local), several interconnecte
 
 **Root Cause**: Playbook configured to use OpenShift integrated registry (`image-registry.openshift-image-registry.svc:5000`) which doesn't exist in MicroShift
 
-**Resolution**: 
+**Resolution**:
+
 - Deployed `aap-demo-registry` addon providing HTTP registry at `registry.aap-demo-registry.svc.cluster.local:5000`
 - Configured job template with `oci_registry` pointing to custom registry
 - Set `skip_plugin_push: true` to bypass skopeo TLS verification issues with HTTP-only registry
@@ -265,6 +290,7 @@ During initial deployment on MicroShift (OpenShift Local), several interconnecte
 **Root Cause**: Job template `extra_vars` didn't include variables expected by APME playbooks (which have defaults in their own defaults.yml files but AAP doesn't load those)
 
 **Resolution**: Build comprehensive `extra_vars` dictionary in setup playbook
+
 ```yaml
 job_extra_vars:
   # OpenShift connection
@@ -302,6 +328,7 @@ job_extra_vars:
   apme_helm_chart_version: "0.1.2"
   apme_helm_release_name: "apme"
 ```
+
 ### Issue 3: Incorrect Helm Module Parameter Usage
 
 **Problem**: Helm failed with `404 Not Found` trying to fetch `https://charts.openshift.io/redhat-rhaap-portal`
@@ -309,6 +336,7 @@ job_extra_vars:
 **Root Cause**: Roles concatenated repo URL and chart name: `chart_ref: "{{ repo_url }}{{ chart_name }}"` instead of using separate parameters
 
 **Resolution**: Use `chart_repo_url` parameter
+
 ```yaml
 # Before (incorrect)
 chart_ref: "{{ portal_helm_chart_repo_url }}{{ portal_helm_chart_name }}"
@@ -326,19 +354,21 @@ chart_repo_url: "{{ portal_helm_chart_repo_url }}"
 **Root Cause**: Overly broad regex replacement changed postgres registry from `registry.redhat.io` to `quay.io`, but postgres image on quay.io requires authentication
 
 **Resolution**: Make image replacement specific to RHDH hub only
+
 ```yaml
 # Target only RHDH hub image, not postgres or other images
 - regexp: '(pullSecrets: \[\]\n\s+registry: )registry\.redhat\.io(\n\s+repository: rhdh/rhdh-hub-rhel9)'
   replace: '\1{{ rhdh_image_registry }}\2'
 ```
 
-### Issue 5: Plugin Compatibility Between RHDH Versions Community needed for arm 
+### Issue 5: Plugin Compatibility Between RHDH Versions Community needed for arm
 
 **Problem**: Init container error - `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found in community RHDH 1.10
 
 **Root Cause**: Community RHDH (1.10) and Red Hat RHDH (1.9) have different plugin sets
 
 **Resolution**: Remove incompatible plugins for community version
+
 ```yaml
 - name: Remove incompatible plugins for community RHDH (ARM64)
   ansible.builtin.lineinfile:
@@ -366,12 +396,14 @@ The current implementation (ADR-019) follows the simpler local execution model:
 | Visibility | AAP Web UI shows job progress | Terminal shows playbook output |
 
 **If migrating from an ADR-019b prototype**, the refactored addon will:
+
 - No longer create AAP resources (Project, Inventory, Job Template)
 - No longer require API tokens
 - Run playbooks locally instead of inside AAP
 - Use KUBECONFIG instead of service account tokens
 
 **To clean up old AAP resources** (if any were created during ADR-019b testing):
+
 ```bash
 # These resources are no longer created or used
 kubectl delete -n aap-operator \
