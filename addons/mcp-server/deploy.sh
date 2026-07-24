@@ -90,7 +90,7 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 kubectl get secret router-certs-default -n openshift-ingress \
-  -o jsonpath='{.data.tls\.crt}' | base64 -d > "${TMPDIR}/chain.pem"
+  -o jsonpath='{.data.tls\.crt}' | base64 -d >"${TMPDIR}/chain.pem"
 
 # Split the chain — cert-01 is the self-signed ingress-ca root
 awk 'BEGIN {n=0}
@@ -108,7 +108,7 @@ kubectl create configmap aap-ingress-ca \
 # Check whether the patch is already applied before patching to make the script
 # idempotent on re-runs.
 if ! kubectl get deployment aap-mcp-server -n "$NAMESPACE" \
-    -o jsonpath='{.spec.template.spec.volumes}' | grep -q aap-ingress-ca; then
+  -o jsonpath='{.spec.template.spec.volumes}' | grep -q aap-ingress-ca; then
 
   kubectl patch deployment aap-mcp-server -n "$NAMESPACE" --type='json' -p='[
     {
@@ -221,7 +221,6 @@ if [ -n "$MCP_TOKEN" ]; then
     echo "  See https://github.com/anthropics/claude-code for installation"
   fi
 fi
-
 
 echo ""
 echo "✓ AAP MCP Server deployed!"
