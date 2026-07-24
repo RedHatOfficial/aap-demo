@@ -1,0 +1,105 @@
+# Build a custom RHDH image from a specific CI-produced plugin pack tarball.
+#
+# This variant uses the plain .tar.gz CI artifact (individual npm tarballs),
+# verified by its GitHub artifact SHA256 digest at build time.
+#
+# Note: this artifact contains the 4 open-source RHAAP plugins. The 2
+# APME EAP-specific plugins (ansible-plugin-backstage-apme,
+# ansible-backstage-plugin-catalog-backend-module-apme) are only available
+# in the .oci.tar.gz artifact — see Containerfile for that variant.
+#
+# Steps:
+#   1. Download the CI artifact:
+#      gh api repos/ansible/ansible-rhdh-plugins/actions/artifacts/8594890520/zip \
+#        > /tmp/apme-ci.tar.gz
+#
+#   2. Build, passing the expected digest as a build arg:
+#      podman build \
+#        --build-arg PLUGIN_PACK_SHA256=sha256:8aabb81d0259c9e721ad39164c7cc31b5389cf3d0086036e562c430ec30b7a48 \
+#        -t rhdh-apme-preloaded:e5245ac \
+#        -f addons/apme-eap/Containerfile.ci \
+#        --build-context plugins=/tmp/apme-ci.tar.gz .
+#
+# Alternatively, place the downloaded tarball in a directory and use it as context:
+#      podman build \
+#        --build-arg PLUGIN_PACK_SHA256=sha256:8aabb81d0259c9e721ad39164c7cc31b5389cf3d0086036e562c430ec30b7a48 \
+#        -t rhdh-apme-preloaded:e5245ac \
+#        -f addons/apme-eap/Containerfile.ci \
+#        /tmp/apme-ci-dir/    # must contain exactly one *.tar.gz
+
+ARG BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9
+ARG PLUGIN_PACK_SHA256=sha256:8aabb81d0259c9e721ad39164c7cc31b5389cf3d0086036e562c430ec30b7a48
+
+FROM ${BASE_IMAGE}
+
+USER root
+
+# Build context must contain exactly one *.tar.gz (the downloaded CI artifact)
+COPY *.tar.gz /tmp/plugin-pack.tar.gz
+
+# Each plugin in the tarball is an npm package tgz (standard npm format with
+# package/ at root). We extract each .tgz, strip the package/ prefix, and
+# place the result in dynamic-plugins/dist/<plugin-name>.
+RUN PLUGIN_PACK_SHA256="${PLUGIN_PACK_SHA256}" python3 - <<'PYEOF'
+import hashlib, os, shutil, sys, tarfile
+
+ARCHIVE  = "/tmp/plugin-pack.tar.gz"
+WORK     = "/tmp/apme-work"
+DIST     = "/opt/app-root/src/dynamic-plugins/dist"
+EXPECTED = os.environ.get("PLUGIN_PACK_SHA256", "")
+
+# Plugin name → filename stem mapping (strip -dynamic-<version> suffix)
+PLUGINS = {
+    "ansible-plugin-scaffolder-backend-module-backstage-rhaap":
+        "ansible-plugin-scaffolder-backend-module-backstage-rhaap-dynamic",
+    "ansible-backstage-plugin-catalog-backend-module-rhaap":
+        "ansible-backstage-plugin-catalog-backend-module-rhaap-dynamic",
+    "ansible-plugin-backstage-self-service":
+        "ansible-plugin-backstage-self-service-dynamic",
+    "ansible-backstage-plugin-auth-backend-module-rhaap-provider":
+        "ansible-backstage-plugin-auth-backend-module-rhaap-provider-dynamic",
+}
+
+# Verify SHA256 before extracting
+if EXPECTED:
+    print(f"Verifying SHA256: {EXPECTED}", flush=True)
+    digest = "sha256:" + hashlib.sha256(open(ARCHIVE, "rb").read()).hexdigest()
+    if digest != EXPECTED:
+        print(f"SHA256 mismatch!\n  expected: {EXPECTED}\n  actual:   {digest}", flush=True)
+        sys.exit(1)
+    print("SHA256 verified.", flush=True)
+
+os.makedirs(WORK, exist_ok=True)
+
+# Unpack outer tarball to get individual plugin .tgz files
+print("Unpacking CI artifact...", flush=True)
+with tarfile.open(ARCHIVE) as outer:
+    outer.extractall(WORK)
+
+# Find all plugin tgz files and match to plugin names
+for plugin_name, stem in PLUGINS.items():
+    matches = [f for f in os.listdir(WORK) if f.startswith(stem) and f.endswith(".tgz")]
+    if not matches:
+        print(f"WARNING: no tgz found for {plugin_name}", flush=True)
+        continue
+
+    tgz_path = os.path.join(WORK, matches[0])
+    plugin_work = os.path.join(WORK, plugin_name)
+    os.makedirs(plugin_work, exist_ok=True)
+
+    # npm tarballs have package/ at root — extract and strip that prefix
+    with tarfile.open(tgz_path) as pkg:
+        for member in pkg.getmembers():
+            if member.name.startswith("package/"):
+                member.name = member.name[len("package/"):]
+                pkg.extract(member, plugin_work)
+
+    dst = os.path.join(DIST, plugin_name)
+    shutil.copytree(plugin_work, dst)
+    print(f"Installed {plugin_name}", flush=True)
+
+shutil.rmtree(WORK)
+os.remove(ARCHIVE)
+PYEOF
+
+USER 1001
