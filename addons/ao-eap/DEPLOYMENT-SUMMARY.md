@@ -7,14 +7,17 @@ All fixes have been applied to `deploy.sh` and verified with a full end-to-end d
 ### What Was Fixed
 
 #### 1. **OLM Catalog Namespace Detection** (Critical Fix)
+
 **File**: `addons/ao-eap/deploy.sh` line 23
 
-**Problem**: 
+**Problem**:
+
 - Pattern `'"openshift-marketplace"'` didn't match the actual catalog-operator args format
 - Args are in JSON array format: `["--namespace","olm,openshift-marketplace"]`
 - The grep pattern with literal quotes never matched, causing script to default to `olm` namespace
 
 **Root Cause**:
+
 - OLM has two catalog namespace types:
   - **Global**: No OperatorGroup (e.g., `openshift-marketplace`) - visible to all namespaces
   - **Scoped**: Has OperatorGroup (e.g., `olm`) - only visible within that namespace
@@ -26,14 +29,17 @@ All fixes have been applied to `deploy.sh` and verified with a full end-to-end d
 **Impact**: CatalogSource now correctly created in `openshift-marketplace`, enabling subscription resolution
 
 #### 2. **CloudNativePG Installation Check** (Bug Fix)
+
 **File**: `addons/ao-eap/deploy.sh` line 375
 
 **Problem**:
+
 - Script only checked for `clusters.postgresql.cnpg.io` CRD
 - Missing `databases.postgresql.cnpg.io` CRD caused migration jobs to fail
 - `tail -5` hid full kubectl output, masking partial install issues
 
-**Fix**: 
+**Fix**:
+
 - Changed check from `clusters.postgresql.cnpg.io` to `databases.postgresql.cnpg.io` (required CRD)
 - Removed `tail -5` to show full kubectl output for debugging
 
@@ -71,6 +77,7 @@ All fixes have been applied to `deploy.sh` and verified with a full end-to-end d
 **Result**: ✅ Success
 
 **Components Verified**:
+
 - ✅ CatalogSource: READY in `openshift-marketplace`
 - ✅ CSV Phase: Succeeded
 - ✅ PostgreSQL Cluster: Healthy (1/1 instances ready)
@@ -80,6 +87,7 @@ All fixes have been applied to `deploy.sh` and verified with a full end-to-end d
 - ✅ Route: Admitted and accessible
 
 **Access Information**:
+
 - URL: `http://automation-orchestrator-automation-orchestrator.apps.127.0.0.1.nip.io`
 - Username: `admin`
 - Password: Retrieved from secret `automation-orchestrator-initial-admin-password`

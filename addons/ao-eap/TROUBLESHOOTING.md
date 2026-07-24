@@ -5,6 +5,7 @@
 ### 1. OLM Subscription Resolution Failures
 
 **Symptom:**
+
 ```
 ERROR: CSV not found after 5 minutes.
 Subscription status: ResolutionFailed
@@ -13,17 +14,22 @@ Message: "no operators found from catalog cs-automation-orchestrator in namespac
 
 **Root Cause:**
 OLM has two types of catalog namespaces:
+
 - **Global catalog namespaces**: No OperatorGroup present. Catalogs here are visible to all namespaces.
 - **Scoped catalog namespaces**: Have an OperatorGroup. Catalogs here are only visible within that namespace.
 
 On MicroShift with operator-sdk OLM:
+
 - `olm` namespace has an OperatorGroup → scoped catalogs only
 - `openshift-marketplace` namespace has NO OperatorGroup → global catalogs
 
 **Fix:**
-The deploy script auto-detects which namespace catalog-operator watches and creates the CatalogSource there. The fix ensures the detection logic correctly identifies `openshift-marketplace` when catalog-operator watches both `olm,openshift-marketplace`.
+The deploy script auto-detects which namespace catalog-operator watches and creates the
+CatalogSource there. The fix ensures the detection logic correctly identifies
+`openshift-marketplace` when catalog-operator watches both `olm,openshift-marketplace`.
 
 **Verification:**
+
 ```bash
 # Check which namespaces catalog-operator watches
 kubectl get deployment catalog-operator -n olm \
@@ -36,15 +42,18 @@ kubectl get catalogsource -n openshift-marketplace
 ### 2. CloudNativePG Operator Installation
 
 **Symptom:**
+
 ```
 Error: failed calling webhook "mcluster.cnpg.io": service "cnpg-webhook-service" not found
 ```
 
 **Root Cause:**
-The script only installs CloudNativePG operator if the CRDs don't exist. If CRDs were registered from a previous partial run, the operator installation is skipped.
+The script only installs CloudNativePG operator if the CRDs don't exist. If CRDs were
+registered from a previous partial run, the operator installation is skipped.
 
 **Fix:**
 Ensure both CRDs AND operator are installed:
+
 ```bash
 kubectl apply --server-side -f https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.25.1/cnpg-1.25.1.yaml
 kubectl wait --for=condition=available deployment/cnpg-controller-manager -n cnpg-system --timeout=120s
@@ -53,6 +62,7 @@ kubectl wait --for=condition=available deployment/cnpg-controller-manager -n cnp
 ### 3. CatalogSource Pod Creation Failures
 
 **Symptom:**
+
 ```
 pods "cs-automation-orchestrator-xxx" is forbidden: 
 violates PodSecurity "restricted:latest"
@@ -60,11 +70,13 @@ violates PodSecurity "restricted:latest"
 
 **Root Cause:**
 The `openshift-marketplace` namespace needs:
+
 1. SCCs granted to service accounts
 2. Pod Security admission set to at least `baseline`
 
 **Fix:**
 The deploy script handles this in Step 3:
+
 ```bash
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:openshift-marketplace"
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:openshift-marketplace"
