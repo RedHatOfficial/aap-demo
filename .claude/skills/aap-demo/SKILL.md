@@ -22,10 +22,9 @@ CLI commands — do not reimplement their logic.
 
 **aap-demo is a LOCAL DEVELOPMENT tool and must NEVER be used in production.**
 
-This environment includes security trade-offs for dev convenience:
+This environment includes characteristics specific to local development:
 
-- **TLS certificate validation is disabled** in the MCP server addon (`NODE_TLS_REJECT_UNAUTHORIZED=0`)
-- **Self-signed certificates** are trusted without verification
+- **Self-signed certificates are trusted** in the MCP server addon using `NODE_EXTRA_CA_CERTS`
 - **Router ClusterIP addresses** may become stale after cluster rebuild
 - **All routes use localhost** (`127.0.0.1.nip.io`)
 

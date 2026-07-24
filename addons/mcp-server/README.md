@@ -6,10 +6,9 @@ Deploys the AAP MCP (Model Context Protocol) server, enabling AI assistants to i
 
 **This addon is intended for LOCAL DEVELOPMENT ONLY and should NEVER be used in production environments.**
 
-The MCP server deployment includes the following security trade-offs for dev convenience:
+The MCP server deployment includes the following characteristics for dev convenience:
 
-- **TLS certificate validation is disabled** (`NODE_TLS_REJECT_UNAUTHORIZED=0`)
-- **Self-signed certificates** are trusted without verification
+- **Self-signed certificates are trusted** using `NODE_EXTRA_CA_CERTS` pointing to the ingress CA
 - **Router ClusterIP addresses** may change on cluster rebuild, causing stale DNS entries
 
 These configurations **bypass critical security protections** and are acceptable ONLY because:
@@ -48,7 +47,7 @@ The addon automatically:
 The MCP server connects to your AAP deployment using:
 - **Endpoint**: `https://aap-mcp-aap-operator.apps.127.0.0.1.nip.io/mcp`
 - **Authentication**: Bearer token (OAuth from AAP Gateway)
-- **TLS**: Disabled validation (dev environment only)
+- **TLS**: Trusts self-signed ingress CA via `NODE_EXTRA_CA_CERTS`
 
 See [ADR 011: MCP Server Addon](../../docs/adr/011-mcp-server-addon.md) for design details.
 

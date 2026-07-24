@@ -192,11 +192,50 @@ if [ -n "$MCP_TOKEN" ]; then
       echo "  Adding MCP server to Claude Code (user scope)..."
     fi
 
+    # Get the ingress CA certificate path (saved by ingress-ca-trust.sh)
+    CA_PATH="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"
+
+    # Configure NODE_EXTRA_CA_CERTS in shell profile for persistent trust
+    echo "  Configuring NODE_EXTRA_CA_CERTS in shell profile..."
+    SHELL_PROFILE=""
+    if [ -n "$SHELL" ]; then
+      case "$SHELL" in
+        */zsh)
+          SHELL_PROFILE="${HOME}/.zshrc"
+          ;;
+        */bash)
+          # macOS uses .bash_profile, Linux typically uses .bashrc
+          if [ -f "${HOME}/.bash_profile" ]; then
+            SHELL_PROFILE="${HOME}/.bash_profile"
+          else
+            SHELL_PROFILE="${HOME}/.bashrc"
+          fi
+          ;;
+      esac
+    fi
+
+    if [ -n "$SHELL_PROFILE" ]; then
+      CA_EXPORT='export NODE_EXTRA_CA_CERTS="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"'
+      if ! grep -q "NODE_EXTRA_CA_CERTS.*crc-ingress-ca.crt" "$SHELL_PROFILE" 2>/dev/null; then
+        echo "" >> "$SHELL_PROFILE"
+        echo "# AAP Demo - Trust self-signed ingress CA for Node.js (Claude Code MCP)" >> "$SHELL_PROFILE"
+        echo "$CA_EXPORT" >> "$SHELL_PROFILE"
+        echo "  ✓ Added NODE_EXTRA_CA_CERTS to $SHELL_PROFILE"
+        echo "  ⓘ Restart your terminal or run: source $SHELL_PROFILE"
+      else
+        echo "  ✓ NODE_EXTRA_CA_CERTS already configured in $SHELL_PROFILE"
+      fi
+      # Export for current session
+      export NODE_EXTRA_CA_CERTS="${CA_PATH}"
+    else
+      echo "  ⚠ Could not detect shell profile, setting for current session only"
+      export NODE_EXTRA_CA_CERTS="${CA_PATH}"
+    fi
+
     # Add (or re-add) the MCP server with current token
     if MCP_OUTPUT=$(claude mcp add aap-demo "https://${MCP_ROUTE}/mcp" \
       --transport http \
       --scope user \
-      -e NODE_TLS_REJECT_UNAUTHORIZED=0 \
       --header "Authorization: Bearer ${MCP_TOKEN}" 2>&1); then
       echo "  ✓ MCP server configured in Claude Code user settings"
       CLAUDE_CONFIGURED=true
@@ -208,6 +247,8 @@ if [ -n "$MCP_TOKEN" ]; then
           echo "  ✓ MCP server is connected and ready"
         elif echo "$MCP_STATUS" | grep -q "✗ Failed to connect"; then
           echo "  ⚠ MCP server configured but connection failed"
+          # DEBUG
+          echo "CA path: ${CA_PATH}"
         else
           echo "  ⓘ MCP server configured (connection status unknown)"
         fi
