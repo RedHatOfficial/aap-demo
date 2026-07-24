@@ -4,11 +4,12 @@ set -euo pipefail
 # Deploy Automation Orchestrator Early Access to aap-demo
 #
 # Automates the full 10-step AO EAP install using aapctl CLI.
-# Requires Quay credentials from your Red Hat point of contact.
+# Uses cluster pull secret for registry.redhat.io authentication.
 #
 # Prerequisites:
-#   1. Quay.io credentials (prompted on first run, saved to ~/.aap-demo/)
-#   2. aap-demo cluster running with OLM installed (aap-demo deploy)
+#   1. Registry path for AO images (provided by Red Hat contact)
+#   2. Cluster pull secret with credentials for the registry
+#   3. aap-demo cluster running with OLM installed (aap-demo deploy)
 #
 # Usage:
 #   ./deploy.sh          # Install Automation Orchestrator EAP
@@ -26,8 +27,7 @@ else
 fi
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
-QUAY_USERNAME_FILE="${QUAY_USERNAME_FILE:-$HOME/.aap-demo/quay-username}"
-QUAY_TOKEN_FILE="${QUAY_TOKEN_FILE:-$HOME/.aap-demo/quay-token}"
+PULL_SECRET_FILE="${PULL_SECRET_FILE:-$HOME/.aap-demo/pull-secret.txt}"
 AAPCTL_BIN="/usr/local/bin/aapctl"
 AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"
 
@@ -57,7 +57,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
 
   kubectl delete catalogsource cs-automation-orchestrator \
     -n "$MARKETPLACE_NAMESPACE" 2>/dev/null || true
-  kubectl delete secret quay-aap-viewer \
+  kubectl delete secret ao-registry-pull-secret \
     -n "$MARKETPLACE_NAMESPACE" 2>/dev/null || true
   # Strip finalizers so namespace doesn't hang when operator is already gone
   kubectl get automationorchestrators.aap.ansible.com -n "$NAMESPACE" \
@@ -72,8 +72,8 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   # Poll until namespaces are gone (finalizers, CRD cleanup, etc. can delay termination)
   echo "  Waiting for namespaces to terminate..."
   for _i in $(seq 1 60); do
-    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ') || _ao_ns=0
+    _cnpg_ns=$(kubectl get namespace cloudnative-pg --no-headers 2>/dev/null | wc -l | tr -d ' ') || _cnpg_ns=0
     printf "\r  $(hat) automation-orchestrator: %s  cloudnative-pg: %s    " \
       "$([ "$_ao_ns" -eq 0 ] && echo "gone" || echo "terminating")" \
       "$([ "$_cnpg_ns" -eq 0 ] && echo "gone" || echo "terminating")"
@@ -104,8 +104,8 @@ fi
 
 # --- Skip if already running (unless --force) ---
 if [ -z "$FORCE" ]; then
-  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ')
-  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep "Running" || true; } | wc -l | tr -d ' ')
+  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep -v "Completed" || true; } | wc -l | tr -d ' ' || echo "0")
+  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | { grep "Running" || true; } | wc -l | tr -d ' ' || echo "0")
   _cs_state=$(kubectl get catalogsource cs-automation-orchestrator \
     -n "$MARKETPLACE_NAMESPACE" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
@@ -176,37 +176,35 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "✓ jq installed"
 fi
 
-# --- Step 1: Check credentials ---
-if [ -f "$QUAY_USERNAME_FILE" ] && [ -f "$QUAY_TOKEN_FILE" ]; then
-  QUAY_USERNAME="$(cat "$QUAY_USERNAME_FILE")"
-  QUAY_TOKEN="$(cat "$QUAY_TOKEN_FILE")"
-  echo "✓ Quay credentials found"
-else
-  echo "Quay credentials required for Automation Orchestrator Early Access."
+# --- Step 1: Index image + pull secret ---
+if [ -z "${AO_INDEX_IMAGE:-}" ]; then
   echo ""
-  echo "  1. Your Red Hat point of contact will grant your Quay.io account"
-  echo "     read access to the quay.io/aap organization."
-  echo "  2. Log in at https://quay.io"
-  echo "  3. Go to Account Settings > Generate Encrypted Password"
-  echo "     (https://quay.io/user/<you>?tab=settings)"
-  echo "  4. Re-enter your password when prompted"
-  echo "  5. Use your Quay username below, and the encrypted password as the token"
+  echo "Your Red Hat point of contact will provide the full operator index image reference."
   echo ""
-  read -r -p "Quay.io username: " QUAY_USERNAME
-  read -r -s -p "Quay.io encrypted password: " QUAY_TOKEN
+  read -r -p "Index image (registry/repo:tag, no http://): " AO_INDEX_IMAGE
   echo ""
 
-  if [ -z "$QUAY_USERNAME" ] || [ -z "$QUAY_TOKEN" ]; then
-    echo "ERROR: Both username and token are required."
+  if [ -z "$AO_INDEX_IMAGE" ]; then
+    echo "ERROR: Index image is required."
     exit 1
   fi
+fi
+# Strip accidental http:// or https:// prefix
+AO_INDEX_IMAGE="${AO_INDEX_IMAGE#https://}"
+AO_INDEX_IMAGE="${AO_INDEX_IMAGE#http://}"
+echo "✓ Index image: $AO_INDEX_IMAGE"
 
-  mkdir -p "$(dirname "$QUAY_USERNAME_FILE")"
-  echo "$QUAY_USERNAME" >"$QUAY_USERNAME_FILE"
-  chmod 600 "$QUAY_USERNAME_FILE"
-  echo "$QUAY_TOKEN" >"$QUAY_TOKEN_FILE"
-  chmod 600 "$QUAY_TOKEN_FILE"
-  echo "✓ Quay credentials saved"
+# Check for pull secret using the registry host from the index image
+if [ -f "$PULL_SECRET_FILE" ]; then
+  registry_host=$(echo "$AO_INDEX_IMAGE" | cut -d'/' -f1)
+  if jq -e --arg host "$registry_host" '.auths[$host]' "$PULL_SECRET_FILE" >/dev/null 2>&1; then
+    echo "✓ Using pull secret from $PULL_SECRET_FILE for $registry_host"
+  else
+    echo "WARNING: Pull secret exists but may not have credentials for $registry_host"
+  fi
+else
+  echo "WARNING: No pull secret found at $PULL_SECRET_FILE"
+  echo "  Cluster pull secret will be used if available."
 fi
 
 # --- Step 2: Install aapctl ---
@@ -259,7 +257,12 @@ if ! command -v aapctl >/dev/null 2>&1; then
   TMP_FILE="$TMP_DIR/$BINARY"
   TMP_SHA="$TMP_DIR/checksums.txt"
 
-  EXPECTED_SHA=$(grep "$BINARY" "$TMP_SHA" | awk '{print $1}')
+  EXPECTED_SHA=$(grep "$BINARY" "$TMP_SHA" | awk '{print $1}') \
+    || {
+      echo "ERROR: $BINARY not found in checksums.txt"
+      rm -rf "$TMP_DIR"
+      exit 1
+    }
   if [ "$OS" = "Darwin" ]; then
     ACTUAL_SHA=$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')
   else
@@ -287,7 +290,7 @@ fi
 for _ns in olm openshift-marketplace; do
   [ "$_ns" = "$MARKETPLACE_NAMESPACE" ] && continue
   kubectl delete catalogsource cs-automation-orchestrator -n "$_ns" 2>/dev/null || true
-  kubectl delete secret quay-aap-viewer -n "$_ns" 2>/dev/null || true
+  kubectl delete secret ao-registry-pull-secret -n "$_ns" 2>/dev/null || true
 done
 
 # --- Step 3: Namespace + SCCs ---
@@ -310,15 +313,17 @@ kubectl label namespace "$MARKETPLACE_NAMESPACE" \
 echo "✓ Namespaces ready"
 
 # --- Step 4: Pull secret + CatalogSource ---
-AO_INDEX_IMAGE="${AO_INDEX_IMAGE:-quay.io/aap/ansible-automation-platform/automation-orchestrator-operator-index@sha256:99fdac7b8712e66ece76f9d48342489b214133037582d7ac81717a4b60c6fd1a}"
-
 echo "Creating pull secret and CatalogSource..."
-kubectl create secret docker-registry quay-aap-viewer \
-  --docker-server=quay.io \
-  --docker-username="$QUAY_USERNAME" \
-  --docker-password="$QUAY_TOKEN" \
-  -n "$MARKETPLACE_NAMESPACE" \
-  --dry-run=client -o yaml | kubectl apply -f -
+# Create pull secret from the local pull-secret file if available
+if [ -f "$PULL_SECRET_FILE" ]; then
+  kubectl create secret generic ao-registry-pull-secret \
+    --from-file=.dockerconfigjson="$PULL_SECRET_FILE" \
+    --type=kubernetes.io/dockerconfigjson \
+    -n "$MARKETPLACE_NAMESPACE" \
+    --dry-run=client -o yaml | kubectl apply -f -
+else
+  echo "WARNING: No pull secret file found, using cluster default"
+fi
 
 kubectl apply -f - <<EOF
 ---
@@ -332,7 +337,7 @@ spec:
   image: ${AO_INDEX_IMAGE}
   displayName: Automation Orchestrator
   secrets:
-  - quay-aap-viewer
+  - ao-registry-pull-secret
 EOF
 
 echo "Waiting for CatalogSource pod..."
@@ -566,7 +571,7 @@ metadata:
   name: automation-orchestrator-operator
   namespace: ${NAMESPACE}
 spec:
-  channel: candidate
+  channel: early-access
   installPlanApproval: Automatic
   name: automation-orchestrator-operator
   source: cs-automation-orchestrator
@@ -617,22 +622,8 @@ for item in items:
 done
 echo ""
 
-echo "Patching CSV image references..."
-# Use replace with retry — apply conflicts when OLM modifies the CSV between GET and apply
-for _attempt in $(seq 1 5); do
-  CSV_JSON=$(kubectl get "$CSV_NAME" -n "$NAMESPACE" -o json)
-  _result=$(echo "$CSV_JSON" \
-    | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
-    | kubectl replace -f - 2>&1) && break
-  if echo "$_result" | grep -q "conflict\|modified"; then
-    echo "  [${_attempt}/5] conflict — retrying..."
-    sleep 3
-    continue
-  fi
-  echo "$_result" | grep -v "^Warning:"
-  break
-done
-echo "✓ CSV patched"
+# Images are already on registry.redhat.io — no CSV patching needed
+echo "✓ CSV ready (images on registry.redhat.io)"
 
 # --- Step 7: Copy secret to namespace, link to operator SA, restart ---
 # Wait for operator deployment to be created by OLM (CSV appears before deployment exists)
@@ -654,7 +645,7 @@ done
 echo ""
 
 echo "Linking pull secret to operator..."
-kubectl get secret quay-aap-viewer -n "$MARKETPLACE_NAMESPACE" -o json \
+kubectl get secret ao-registry-pull-secret -n "$MARKETPLACE_NAMESPACE" -o json \
   | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid,
              .metadata.creationTimestamp, .metadata.annotations,
              .metadata.managedFields)' \
@@ -662,28 +653,11 @@ kubectl get secret quay-aap-viewer -n "$MARKETPLACE_NAMESPACE" -o json \
 
 kubectl patch serviceaccount automation-orchestrator-operator-controller-manager \
   -n "$NAMESPACE" --type=merge \
-  -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
+  -p '{"imagePullSecrets":[{"name":"ao-registry-pull-secret"}]}' 2>/dev/null || true
 
 kubectl patch serviceaccount default \
   -n "$NAMESPACE" --type=merge \
-  -p '{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}' 2>/dev/null || true
-
-# Patch deployment images to quay.io before restart — OLM may not have reconciled CSV yet
-echo "Patching operator deployment images to quay.io..."
-for _attempt in $(seq 1 5); do
-  _dep_json=$(kubectl get deployment automation-orchestrator-operator-controller-manager \
-    -n "$NAMESPACE" -o json)
-  _result=$(echo "$_dep_json" \
-    | sed 's|registry.redhat.io/ansible-automation-platform|quay.io/aap/ansible-automation-platform|g' \
-    | kubectl replace -f - 2>&1) && break
-  echo "$_result" | grep -q "conflict\|modified" && {
-    echo "  [${_attempt}/5] conflict — retrying..."
-    sleep 3
-    continue
-  }
-  echo "$_result" | grep -v "^Warning:" || true
-  break
-done || true
+  -p '{"imagePullSecrets":[{"name":"ao-registry-pull-secret"}]}' 2>/dev/null || true
 
 kubectl -n "$NAMESPACE" rollout restart \
   deployment/automation-orchestrator-operator-controller-manager
@@ -711,7 +685,7 @@ echo "Patching AutomationOrchestrator CR..."
 AO_CR=$(kubectl get automationorchestrator -n "$NAMESPACE" -o name 2>/dev/null | head -1 || echo "")
 if [ -n "$AO_CR" ]; then
   kubectl patch "$AO_CR" -n "$NAMESPACE" --type=merge \
-    -p '{"spec":{"imagePullSecrets":[{"name":"quay-aap-viewer"}]}}'
+    -p '{"spec":{"imagePullSecrets":[{"name":"ao-registry-pull-secret"}]}}'
 fi
 
 kubectl -n "$NAMESPACE" rollout restart \
