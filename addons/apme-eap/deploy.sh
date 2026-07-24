@@ -77,6 +77,11 @@ check_prerequisites() {
     die "python3 not found. Please install Python 3.8 or later."
   fi
 
+  # Check podman (required to build the pre-loaded RHDH image)
+  if ! command -v podman &>/dev/null; then
+    die "podman not found. Required to build the pre-loaded RHDH container image."
+  fi
+
   # Ensure the in-cluster registry addon is deployed — APME uses it to store
   # plugin OCI images that the portal init container pulls at runtime.
   if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then

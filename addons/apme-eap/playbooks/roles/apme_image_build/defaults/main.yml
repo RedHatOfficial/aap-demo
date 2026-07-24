@@ -1,0 +1,22 @@
+---
+# defaults for apme_image_build
+
+# Name for the pre-loaded RHDH image (stored alongside the plugin pack in the registry)
+apme_preloaded_image_name: "rhdh-apme-preloaded"
+
+# Tag matches the plugin SHA so a new plugin pack triggers a new image
+# (set by the role from plugin_sha at runtime)
+# apme_preloaded_image_tag: "{{ plugin_sha }}"
+
+# Set true to rebuild even if the image already exists in the registry
+apme_image_build_force: false
+
+# podman binary path
+apme_image_build_podman_binary: "podman"
+
+# skopeo binary path (reuses apme_oci_push_skopeo_binary if set)
+apme_image_build_skopeo_binary: "{{ apme_oci_push_skopeo_binary | default('skopeo') }}"
+
+# Base RHDH images per architecture
+apme_image_build_base_x86: "registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9"
+apme_image_build_base_arm: "quay.io/rhdh-community/rhdh:1.9"

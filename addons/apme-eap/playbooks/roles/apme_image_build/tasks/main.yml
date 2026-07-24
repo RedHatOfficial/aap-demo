@@ -1,0 +1,130 @@
+---
+# Build a custom RHDH image with APME plugins pre-extracted and push it to
+# the in-cluster registry so pods don't need to pull plugins at startup.
+
+- name: Require plugin_sha and oci_registry  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - plugin_sha is defined and plugin_sha | length > 0
+      - oci_registry is defined and oci_registry | length > 0
+      - apme_oci_tar_resolved is defined and apme_oci_tar_resolved | length > 0
+    fail_msg: "plugin_sha, oci_registry, and apme_oci_tar_resolved must be set before apme_image_build."
+
+- name: Set pre-loaded image tag from plugin SHA  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_preloaded_image_tag: "{{ plugin_sha }}"
+
+- name: Normalize OCI registry (strip trailing slash)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_image_build_registry: "{{ oci_registry | regex_replace('/$', '') }}"
+
+- name: Set full pre-loaded image reference  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_preloaded_image_ref: >-
+      {{ apme_image_build_registry }}/{{ apme_preloaded_image_name }}:{{ apme_preloaded_image_tag }}
+
+- name: Select base image for cluster architecture  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_image_build_base_image: >-
+      {{ apme_image_build_base_arm
+         if ansible_architecture in ['aarch64', 'arm64']
+         else apme_image_build_base_x86 }}
+
+- name: Check whether pre-loaded image already exists in registry  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_image_build_skopeo_binary }}"
+      - inspect
+      - "--tls-verify=false"
+      - "docker://{{ apme_preloaded_image_ref }}"
+  register: apme_image_inspect
+  changed_when: false
+  failed_when: false
+
+- name: Skip build when image exists and force is false  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      Pre-loaded image {{ apme_preloaded_image_ref }} already exists.
+      Set apme_image_build_force=true to rebuild.
+  when:
+    - apme_image_inspect.rc == 0
+    - not (apme_image_build_force | default(false) | bool)
+
+- name: Build and push pre-loaded RHDH image  # noqa: var-naming[no-role-prefix]
+  when: apme_image_inspect.rc != 0 or (apme_image_build_force | default(false) | bool)
+  block:
+    - name: Resolve Containerfile path  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        apme_containerfile_path: "{{ playbook_dir | dirname }}/Containerfile"
+        apme_build_context: "{{ playbook_dir | dirname }}"
+
+    - name: Verify Containerfile exists  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.stat:
+        path: "{{ apme_containerfile_path }}"
+      register: containerfile_stat
+
+    - name: Fail when Containerfile is missing  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.fail:
+        msg: "Containerfile not found at {{ apme_containerfile_path }}"
+      when: not containerfile_stat.stat.exists
+
+    - name: Verify plugin tarball is accessible from build context  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.stat:
+        path: "{{ apme_oci_tar_resolved }}"
+      register: tar_stat
+
+    - name: Fail when plugin tarball is not found  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.fail:
+        msg: "Plugin tarball not found at {{ apme_oci_tar_resolved }}"
+      when: not tar_stat.stat.exists
+
+    - name: Set local image tag for podman build  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        apme_local_image_tag: "localhost/{{ apme_preloaded_image_name }}:{{ apme_preloaded_image_tag }}"
+
+    - name: Display build info  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.debug:
+        msg:
+          - "Building pre-loaded RHDH image"
+          - "  Base:    {{ apme_image_build_base_image }}"
+          - "  Context: {{ apme_build_context }}"
+          - "  Target:  {{ apme_preloaded_image_ref }}"
+
+    - name: Build pre-loaded RHDH image with podman  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - "{{ apme_image_build_podman_binary }}"
+          - build
+          - "--build-arg=BASE_IMAGE={{ apme_image_build_base_image }}"
+          - "--tag={{ apme_local_image_tag }}"
+          - "--file={{ apme_containerfile_path }}"
+          - "{{ apme_build_context }}"
+      register: apme_podman_build
+      changed_when: apme_podman_build.rc == 0
+
+    - name: Push pre-loaded image to in-cluster registry  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - "{{ apme_image_build_skopeo_binary }}"
+          - copy
+          - "--dest-tls-verify=false"
+          - "containers-storage:{{ apme_local_image_tag }}"
+          - "docker://{{ apme_preloaded_image_ref }}"
+      register: apme_skopeo_push
+      changed_when: apme_skopeo_push.rc == 0
+
+    - name: Remove local podman image after push  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - "{{ apme_image_build_podman_binary }}"
+          - rmi
+          - "{{ apme_local_image_tag }}"
+      register: apme_podman_rmi
+      changed_when: apme_podman_rmi.rc == 0
+      failed_when: false
+
+- name: Set preloaded image facts for downstream roles  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_preloaded_registry: "{{ apme_image_build_registry }}"
+    apme_preloaded_repository: "{{ apme_preloaded_image_name }}"
+    apme_preloaded_tag: "{{ apme_preloaded_image_tag }}"

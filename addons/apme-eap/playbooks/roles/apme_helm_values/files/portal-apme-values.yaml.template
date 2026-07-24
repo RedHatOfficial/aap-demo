@@ -4,13 +4,11 @@
 # Helm applies the full dynamic.plugins list from the rendered file.
 #
 # Rendered by apme-portal-installer role apme_helm_values (placeholders below).
-# Placeholders: <namespace> <cluster-router-base> <plugin-sha> <oci-registry>
+# Placeholders: <namespace> <cluster-router-base>
+#   <preloaded-image-registry> <preloaded-image-repository> <preloaded-image-tag>
 #
-# --oci-registry examples: quay.example.com/myorg
-#   or image-registry.openshift-image-registry.svc:5000/<namespace>
-#
-# OCI: apme-prototype-plugins-<plugin-sha>*.oci.tar.gz
-# https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr
+# APME plugins are pre-baked into the custom RHDH image built by apme_image_build.
+# Plugin pack: addons/apme-eap/plugin_packs/apme-prototype-plugins-*.oci.tar.gz
 
 redhat-developer-hub:
   common:
@@ -179,15 +177,15 @@ redhat-developer-hub:
       - disabled: false
         package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-plugin-scaffolder-backend-module-backstage-rhaap
+        package: ./dynamic-plugins/dist/ansible-plugin-scaffolder-backend-module-backstage-rhaap
         pluginConfig:
           dynamicPlugins:
             backend:
               ansible.plugin-scaffolder-backend-module-backstage-rhaap: null
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-backstage-plugin-catalog-backend-module-rhaap
+        package: ./dynamic-plugins/dist/ansible-backstage-plugin-catalog-backend-module-rhaap
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-plugin-backstage-self-service
+        package: ./dynamic-plugins/dist/ansible-plugin-backstage-self-service
         pluginConfig:
           dynamicPlugins:
             frontend:
@@ -250,10 +248,10 @@ redhat-developer-hub:
                 signInPage:
                   importName: SignInPage
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-backstage-plugin-auth-backend-module-rhaap-provider
+        package: ./dynamic-plugins/dist/ansible-backstage-plugin-auth-backend-module-rhaap-provider
         pluginConfig: {}
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-plugin-backstage-apme
+        package: ./dynamic-plugins/dist/ansible-plugin-backstage-apme
         pluginConfig:
           dynamicPlugins:
             frontend:
@@ -265,7 +263,7 @@ redhat-developer-hub:
                   module: '@material-ui/icons'
                   name: apmeIcon
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-backstage-plugin-catalog-backend-module-apme
+        package: ./dynamic-plugins/dist/ansible-backstage-plugin-catalog-backend-module-apme
         pluginConfig:
           dynamicPlugins:
             backend:
@@ -847,11 +845,11 @@ redhat-developer-hub:
       hostAliases: []
       image:
         digest: ""
-        pullPolicy: ""
+        pullPolicy: IfNotPresent
         pullSecrets: []
-        registry: registry.redhat.io
-        repository: rhdh/rhdh-hub-rhel9
-        tag: "1.9"
+        registry: <preloaded-image-registry>
+        repository: <preloaded-image-repository>
+        tag: "<preloaded-image-tag>"
       initContainers:
       - command:
         - ./install-dynamic-plugins.sh

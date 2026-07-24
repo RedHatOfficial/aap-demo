@@ -18,23 +18,10 @@
     mode: "0644"
     remote_src: true
 
-- name: Detect system architecture  # noqa: var-naming[no-role-prefix]
+- name: Resolve preloaded image registry (internal URL for pod pulls)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    system_arch: "{{ ansible_architecture }}"
-
-- name: Use community RHDH images for ARM64  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.set_fact:
-    rhdh_image_registry: "quay.io"
-    rhdh_image_repository: "rhdh-community/rhdh"
-    rhdh_image_tag: "1.9"
-  when: system_arch in ['aarch64', 'arm64']
-
-- name: Use official Red Hat registry for x86_64  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.set_fact:
-    rhdh_image_registry: "registry.redhat.io"
-    rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
-    rhdh_image_tag: "1.9"
-  when: system_arch not in ['aarch64', 'arm64']
+    apme_preloaded_image_registry_internal: >-
+      {{ oci_registry_internal | default(oci_registry_normalized) | regex_replace('/apme$', '') }}
 
 - name: Substitute portal Helm value placeholders  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
@@ -50,18 +37,12 @@
       replace: "{{ plugin_sha }}"
     - regexp: "<oci-registry>"
       replace: "{{ oci_registry_internal | default(oci_registry_normalized) }}"
-
-- name: Override RHDH hub image registry  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.replace:
-    path: "{{ apme_portal_helm_values_path }}"
-    regexp: "registry: registry\\.redhat\\.io\n        repository: rhdh/rhdh-hub-rhel9"
-    replace: "registry: {{ rhdh_image_registry }}\n        repository: {{ rhdh_image_repository }}"
-
-- name: Override RHDH hub image tag  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.replace:
-    path: "{{ apme_portal_helm_values_path }}"
-    regexp: "repository: {{ rhdh_image_repository }}\n        tag: \"1\\.9\""
-    replace: "repository: {{ rhdh_image_repository }}\n        tag: \"{{ rhdh_image_tag }}\""
+    - regexp: "<preloaded-image-registry>"
+      replace: "{{ apme_preloaded_image_registry_internal }}"
+    - regexp: "<preloaded-image-repository>"
+      replace: "apme/{{ apme_preloaded_image_name | default('rhdh-apme-preloaded') }}"
+    - regexp: "<preloaded-image-tag>"
+      replace: "{{ apme_preloaded_tag | default(plugin_sha) }}"
 
 - name: Normalize optional Dev Spaces base URL  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
@@ -140,13 +121,8 @@
 - name: Add hostAliases for nip.io DNS resolution  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
-    regexp: '(      hostAliases: \[\])'
-    replace: |-
-      hostAliases:
-      - ip: "{{ router_cluster_ip }}"
-        hostnames:
-        - "{{ aap_hostname }}"
-        - "registry.{{ openshift_cluster_domain }}"
+    regexp: '^      hostAliases: \[\]'
+    replace: "      hostAliases:\n      - ip: \"{{ router_cluster_ip }}\"\n        hostnames:\n        - \"{{ aap_hostname }}\"\n        - \"registry.{{ openshift_cluster_domain }}\""
   when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
 
 - name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
@@ -183,6 +159,9 @@
       - rendered_helm_values.content | b64decode is not search('<plugin-sha>')
       - rendered_helm_values.content | b64decode is not search('<oci-registry>')
       - rendered_helm_values.content | b64decode is not search('<devspaces-config>')
+      - rendered_helm_values.content | b64decode is not search('<preloaded-image-registry>')
+      - rendered_helm_values.content | b64decode is not search('<preloaded-image-repository>')
+      - rendered_helm_values.content | b64decode is not search('<preloaded-image-tag>')
     fail_msg: "Unresolved placeholders remain in {{ apme_portal_helm_values_path }}"
 
 - name: Display rendered values path  # noqa: var-naming[no-role-prefix]

@@ -88,6 +88,8 @@
     - role: aap_apme_prerequisites
     - role: apme_oci_push
       when: not (skip_plugin_push | default(false) | bool)
+    - role: apme_image_build
+      when: not (skip_plugin_push | default(false) | bool)
     - role: apme_helm_values
     - role: apme_scm_secrets
       when: configure_github_secrets | default(false) | bool

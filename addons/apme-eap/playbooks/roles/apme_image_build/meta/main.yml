@@ -1,0 +1,9 @@
+---
+galaxy_info:
+  role_name: apme_image_build
+  description: >-
+    Build a custom RHDH image with APME plugins pre-extracted and push to
+    the in-cluster registry. Requires apme_oci_push to run first so that
+    apme_oci_tar_resolved and plugin_sha are set.
+  min_ansible_version: "2.14"
+dependencies: []
