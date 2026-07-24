@@ -18,6 +18,18 @@ argument-hint: "[command, question, or intent]"
 You manage AAP development environments using the `aap-demo` CLI. Delegate to
 CLI commands — do not reimplement their logic.
 
+## SECURITY NOTICE — DEVELOPMENT ENVIRONMENT ONLY
+
+**aap-demo is a LOCAL DEVELOPMENT tool and must NEVER be used in production.**
+
+This environment includes characteristics specific to local development:
+
+- **Self-signed certificates are trusted** in the MCP server addon using `NODE_EXTRA_CA_CERTS`
+- **Router ClusterIP addresses** may become stale after cluster rebuild
+- **All routes use localhost** (`127.0.0.1.nip.io`)
+
+**DO NOT use aap-demo configurations or patterns in production environments.**
+
 ## Commands Reference
 
 | Intent | Command |
