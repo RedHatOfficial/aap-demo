@@ -217,9 +217,9 @@ if [ -n "$MCP_TOKEN" ]; then
     if [ -n "$SHELL_PROFILE" ]; then
       CA_EXPORT='export NODE_EXTRA_CA_CERTS="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"'
       if ! grep -q "NODE_EXTRA_CA_CERTS.*crc-ingress-ca.crt" "$SHELL_PROFILE" 2>/dev/null; then
-        echo "" >> "$SHELL_PROFILE"
-        echo "# AAP Demo - Trust self-signed ingress CA for Node.js (Claude Code MCP)" >> "$SHELL_PROFILE"
-        echo "$CA_EXPORT" >> "$SHELL_PROFILE"
+        echo "" >>"$SHELL_PROFILE"
+        echo "# AAP Demo - Trust self-signed ingress CA for Node.js (Claude Code MCP)" >>"$SHELL_PROFILE"
+        echo "$CA_EXPORT" >>"$SHELL_PROFILE"
         echo "  ✓ Added NODE_EXTRA_CA_CERTS to $SHELL_PROFILE"
         echo "  ⓘ Restart your terminal or run: source $SHELL_PROFILE"
       else
