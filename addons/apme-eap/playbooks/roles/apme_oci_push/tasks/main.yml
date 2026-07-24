@@ -162,6 +162,7 @@
               'docker-archive:' + apme_oci_tar_resolved,
               apme_oci_push_destination
             ]
+            + (['--dest-tls-verify=false'] if is_nip_io_domain | default(false) else [])
             + (['--dest-authfile=' + registry_authfile] if registry_authfile is defined and registry_authfile | length > 0 else [])
           }}
 
