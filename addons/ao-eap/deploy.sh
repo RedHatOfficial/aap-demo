@@ -20,7 +20,7 @@ NAMESPACE="automation-orchestrator"
 # operator-sdk OLM (MicroShift/Linux) watches olm; OpenShift OLM watches openshift-marketplace.
 _CATALOG_OP_ARGS=$(kubectl get deployment catalog-operator -n olm \
   -o jsonpath='{.spec.template.spec.containers[0].args}' 2>/dev/null || echo "")
-if echo "$_CATALOG_OP_ARGS" | grep -q '"openshift-marketplace"'; then
+if echo "$_CATALOG_OP_ARGS" | grep -q 'openshift-marketplace'; then
   MARKETPLACE_NAMESPACE="openshift-marketplace"
 else
   MARKETPLACE_NAMESPACE="olm"
@@ -372,14 +372,14 @@ echo ""
 # Install directly from upstream release manifest instead.
 CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
 
-if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null; then
-  echo "✓ CloudNativePG CRDs already registered"
+if kubectl get crd databases.postgresql.cnpg.io &>/dev/null; then
+  echo "✓ CloudNativePG operator already installed"
   mkdir -p "$(dirname "$AO_STATE_FILE")"
   grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null || echo "CNPG_VERSION=${CNPG_VERSION}" >>"$AO_STATE_FILE"
 else
   echo "Installing CloudNativePG operator v${CNPG_VERSION}..."
   CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
-  if ! kubectl apply --server-side -f "$CNPG_MANIFEST" 2>&1 | tail -5; then
+  if ! kubectl apply --server-side -f "$CNPG_MANIFEST"; then
     echo "ERROR: Failed to install CloudNativePG from ${CNPG_MANIFEST}"
     exit 1
   fi
