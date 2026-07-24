@@ -11,7 +11,8 @@ Deploys Automation Orchestrator Early Access to aap-demo clusters.
 
 ## Configuration
 
-The addon prompts for the index image on every run. The registry host is derived automatically from the image URL, so only one value is needed.
+The addon prompts for the index image on every run. The registry host is derived
+automatically from the image URL, so only one value is needed.
 
 ### Interactive Setup
 
@@ -22,7 +23,7 @@ The addon prompts for the index image on every run. The registry host is derived
 You will be prompted for one value from your Red Hat contact:
 
 - **Index image** (full image URL with tag)
-  - Example prompt: `Index image (full URL with tag): `
+  - Example prompt: `Index image (full URL with tag):`
   - Enter the complete operator index image reference
   - Always prompted to prevent accidental reuse of stale image references
 
@@ -98,7 +99,6 @@ export AO_INDEX_IMAGE="<index-image-provided-by-red-hat>"
 | `AO_INDEX_IMAGE` | _(prompted every run)_ | Full index image URL with tag |
 | `PULL_SECRET_FILE` | `~/.aap-demo/pull-secret.txt` | Path to dockerconfigjson pull secret |
 
-
 ## Usage
 
 ### Deploy
@@ -135,7 +135,8 @@ The addon stores configuration in `~/.aap-demo/`:
 
 ### Migration from Legacy Format
 
-Legacy `quay-username` and `quay-token` files are automatically removed when the addon runs, as authentication now uses the cluster pull secret.
+Legacy `quay-username` and `quay-token` files are automatically removed when the addon runs,
+as authentication now uses the cluster pull secret.
 
 ## Troubleshooting
 
@@ -188,5 +189,6 @@ The deployment automates the full 10-step Automation Orchestrator EAP installati
 ## Documentation
 
 For more details, see:
+
 - ADR: `docs/adr/017-ao-eap-addon.md`
 - Upstream: https://github.com/automation-nexus/aapctl

@@ -258,7 +258,11 @@ if ! command -v aapctl >/dev/null 2>&1; then
   TMP_SHA="$TMP_DIR/checksums.txt"
 
   EXPECTED_SHA=$(grep "$BINARY" "$TMP_SHA" | awk '{print $1}') \
-    || { echo "ERROR: $BINARY not found in checksums.txt"; rm -rf "$TMP_DIR"; exit 1; }
+    || {
+      echo "ERROR: $BINARY not found in checksums.txt"
+      rm -rf "$TMP_DIR"
+      exit 1
+    }
   if [ "$OS" = "Darwin" ]; then
     ACTUAL_SHA=$(shasum -a 256 "$TMP_FILE" | awk '{print $1}')
   else
