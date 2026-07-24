@@ -110,6 +110,14 @@
     router_cluster_ip: "{{ router_service.resources[0].spec.clusterIP | default('') }}"
   when: is_nip_io_domain and router_service.resources | length > 0
 
+- name: Warn if router service not found for nip.io  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: Router service not found in openshift-ingress namespace.
+      hostAliases cannot be configured - nip.io domains will resolve to 127.0.0.1 inside pods.
+      OAuth authentication will fail. Check router deployment.
+  when: is_nip_io_domain and (router_service.resources | length == 0 or router_cluster_ip is not defined)
+
 - name: Disable SSL verification for nip.io (self-signed certs)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
@@ -120,8 +128,8 @@
 - name: Add NODE_TLS_REJECT_UNAUTHORIZED env var for nip.io  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
-    regexp: '(- name: LOG_LEVEL\n          value: debug)'
-    replace: "- name: NODE_TLS_REJECT_UNAUTHORIZED\n          value: \"0\"\n        - name: LOG_LEVEL\n          value: debug"
+    regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
+    replace: "- name: NODE_TLS_REJECT_UNAUTHORIZED\n          value: \"0\"\n        - name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins"
   when: is_nip_io_domain
 
 - name: Extract AAP hostname from aap_host URL  # noqa: var-naming[no-role-prefix]
@@ -132,13 +140,13 @@
 - name: Add hostAliases for nip.io DNS resolution  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
-    regexp: '      hostAliases: \[\]'
-    replace: |
-            hostAliases:
-            - ip: "{{ router_cluster_ip }}"
-              hostnames:
-              - "{{ aap_hostname }}"
-              - "registry.{{ openshift_cluster_domain }}"
+    regexp: '(      hostAliases: \[\])'
+    replace: |-
+      hostAliases:
+      - ip: "{{ router_cluster_ip }}"
+        hostnames:
+        - "{{ aap_hostname }}"
+        - "registry.{{ openshift_cluster_domain }}"
   when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
 
 - name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
