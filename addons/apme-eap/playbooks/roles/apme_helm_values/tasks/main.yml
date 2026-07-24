@@ -141,12 +141,7 @@
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '      hostAliases: \[\]'
-    replace: |-
-      hostAliases:
-            - ip: "{{ router_cluster_ip }}"
-              hostnames:
-              - "{{ aap_hostname }}"
-              - "registry.{{ openshift_cluster_domain }}"
+    replace: "      hostAliases:\n      - ip: \"{{ router_cluster_ip }}\"\n        hostnames:\n        - \"{{ aap_hostname }}\"\n        - \"registry.{{ openshift_cluster_domain }}\""
   when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
 
 - name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
