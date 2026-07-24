@@ -55,6 +55,9 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [013](013-in-cluster-registry.md) | In-Cluster Container Registry | Accepted |
 | [014](014-testing-strategy.md) | CLI Testing Strategy | Accepted |
 | [015](015-ingress-ca-user-store-trust.md) | Ingress CA Trust via User Certificate Stores | Accepted |
+| [016](016-console-pah-authentication.md) | Console and PAH Authentication | Accepted |
+| [017](017-ao-eap-addon.md) | Automation Orchestrator EAP Addon | Accepted |
+| [018](018-product-demos-addon.md) | Ansible Product Demos Addon Integration | Accepted |
 
 ## Creating a New ADR
 
