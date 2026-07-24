@@ -1,0 +1,71 @@
+---
+# One-time workstation setup after extracting the welcome pack (collection root).
+
+- name: Prepare ansible.apme_portal workstation
+  hosts: localhost
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    collection_root: "{{ playbook_dir | dirname }}"
+
+  tasks:
+    - name: Display collection path
+      ansible.builtin.debug:
+        msg:
+          - "Collection: ansible.apme_portal"
+          - "Root: {{ collection_root }}"
+
+    - name: Install Python dependencies
+      ansible.builtin.pip:
+        requirements: "{{ collection_root }}/requirements.txt"
+
+    - name: Install required Ansible collections
+      ansible.builtin.command:
+        argv:
+          - ansible-galaxy
+          - collection
+          - install
+          - -r
+          - "{{ collection_root }}/requirements.yml"
+      changed_when: true
+
+    - name: Check for vars/apme_portal.yml
+      ansible.builtin.stat:
+        path: "{{ collection_root }}/vars/apme_portal.yml"
+      register: apme_portal_vars
+
+    - name: Create vars/apme_portal.yml from example
+      ansible.builtin.copy:
+        src: "{{ collection_root }}/vars/apme_portal.yml.example"
+        dest: "{{ collection_root }}/vars/apme_portal.yml"
+        mode: "0644"
+        remote_src: true
+      when: not apme_portal_vars.stat.exists
+
+    - name: Resolve bundled plugin pack
+      ansible.builtin.include_tasks: tasks/resolve_plugin_pack.yml
+      vars:
+        apme_resolve_plugin_pack_required: false
+        apme_resolve_oci_registry: false
+
+    - name: Warn when bundled OCI pack is missing
+      ansible.builtin.debug:
+        msg: >-
+          No OCI pack found in {{ collection_root }}/plugin_packs/.
+          Re-extract the welcome pack zip.
+      when: (plugin_sha is not defined) or (plugin_sha | length == 0)
+
+    - name: Display bundled plugin pack
+      ansible.builtin.debug:
+        msg:
+          - "Bundled plugin SHA: {{ plugin_sha }}"
+          - "OCI pack: {{ apme_oci_tar_resolved | default('not found') }}"
+          - "Deploy pushes this pack to your cluster registry (no manual unzip)."
+      when: plugin_sha is defined and plugin_sha | length > 0
+
+    - name: Display next steps
+      ansible.builtin.debug:
+        msg:
+          - "1. Edit vars/apme_portal.yml (OpenShift, AAP, GitHub, registry paths)"
+          - "2. Run: ansible-playbook playbooks/deploy_apme_portal.yml -e @vars/apme_portal.yml"
+          - "Full guide: docs/apme-portal-install-guide.md"

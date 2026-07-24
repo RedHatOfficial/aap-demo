@@ -1,0 +1,76 @@
+# APME gateway — EAP install (same namespace as portal)
+# Use latest SHA build for ARM64 support (released versions only support x86_64)
+image:
+  tag: "sha-d1ac741"
+
+# Reduce resource requests for OpenShift Local / smaller clusters
+engine:
+  resources:
+    primary:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    native:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    opa:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    ansible:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    gitleaks:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+    collectionHealth:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    depAudit:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    galaxyProxy:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
+# Reduce PVC sizes for OpenShift Local / smaller clusters
+persistence:
+  sessions:
+    size: 2Gi
+  gateway:
+    size: 2Gi
+  proxyCache:
+    size: 2Gi
+
+ui:
+  enabled: false

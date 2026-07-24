@@ -1,0 +1,185 @@
+---
+# Render portal Helm values (replaces render-portal-apme-values.sh)
+
+- name: Validate Helm values template exists  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_helm_values_template }}"
+  register: values_template_stat
+
+- name: Fail when template is missing  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: "Template not found: {{ apme_helm_values_template }}"
+  when: not values_template_stat.stat.exists
+
+- name: Copy portal Helm values template  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.copy:
+    src: "{{ apme_helm_values_template }}"
+    dest: "{{ apme_portal_helm_values_path }}"
+    mode: "0644"
+    remote_src: true
+
+- name: Detect system architecture  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    system_arch: "{{ ansible_architecture }}"
+
+- name: Use community RHDH images for ARM64  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    rhdh_image_registry: "quay.io"
+    rhdh_image_repository: "rhdh-community/rhdh"
+    rhdh_image_tag: "1.9"
+  when: system_arch in ['aarch64', 'arm64']
+
+- name: Use official Red Hat registry for x86_64  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    rhdh_image_registry: "registry.redhat.io"
+    rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
+    rhdh_image_tag: "1.9"
+  when: system_arch not in ['aarch64', 'arm64']
+
+- name: Substitute portal Helm value placeholders  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "{{ item.regexp }}"
+    replace: "{{ item.replace }}"
+  loop:
+    - regexp: "<namespace>"
+      replace: "{{ openshift_project_name }}"
+    - regexp: "<cluster-router-base>"
+      replace: "{{ openshift_cluster_domain }}"
+    - regexp: "<plugin-sha>"
+      replace: "{{ plugin_sha }}"
+    - regexp: "<oci-registry>"
+      replace: "{{ oci_registry_internal | default(oci_registry_normalized) }}"
+
+- name: Override RHDH hub image registry  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "registry: registry\\.redhat\\.io\n        repository: rhdh/rhdh-hub-rhel9"
+    replace: "registry: {{ rhdh_image_registry }}\n        repository: {{ rhdh_image_repository }}"
+
+- name: Override RHDH hub image tag  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "repository: {{ rhdh_image_repository }}\n        tag: \"1\\.9\""
+    replace: "repository: {{ rhdh_image_repository }}\n        tag: \"{{ rhdh_image_tag }}\""
+
+- name: Normalize optional Dev Spaces base URL  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_helm_values_devspaces_base_url: >-
+      {{ (devspaces_base_url | trim | regex_replace('/$', '') ~ '/')
+         if (devspaces_base_url is defined and (devspaces_base_url | default('', true) | length) > 0)
+         else '' }}
+
+- name: Insert Dev Spaces config when base URL is set  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '          # <devspaces-config>'
+    replace: "          devSpaces:\n            baseUrl: {{ apme_helm_values_devspaces_base_url }}"
+  when: apme_helm_values_devspaces_base_url | length > 0
+
+- name: Remove Dev Spaces placeholder when unset  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^          # OpenShift Dev Spaces — optional; set devspaces_base_url in vars to enable\.\n          # <devspaces-config>\n'
+    replace: ''
+  when: apme_helm_values_devspaces_base_url | length == 0
+
+- name: Add insecure registry support for init container  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
+    replace: "- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins\n        - name: SKOPEO_INSECURE_POLICY\n          value: \"true\""
+
+# MicroShift / nip.io workarounds for self-signed certs and DNS resolution
+- name: Check if using nip.io domain  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    is_nip_io_domain: "{{ 'nip.io' in openshift_cluster_domain }}"
+
+- name: Get router service ClusterIP for hostAliases  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    namespace: openshift-ingress
+    label_selectors:
+      - ingresscontroller.operator.openshift.io/owning-ingresscontroller=default
+  register: router_service
+  when: is_nip_io_domain
+
+- name: Set router ClusterIP fact  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    router_cluster_ip: "{{ router_service.resources[0].spec.clusterIP | default('') }}"
+  when: is_nip_io_domain and router_service.resources | length > 0
+
+- name: Warn if router service not found for nip.io  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: Router service not found in openshift-ingress namespace.
+      hostAliases cannot be configured - nip.io domains will resolve to 127.0.0.1 inside pods.
+      OAuth authentication will fail. Check router deployment.
+  when: is_nip_io_domain and (router_service.resources | length == 0 or router_cluster_ip is not defined)
+
+- name: Disable SSL verification for nip.io (self-signed certs)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: 'checkSSL: true'
+    replace: 'checkSSL: false'
+  when: is_nip_io_domain
+
+- name: Add NODE_TLS_REJECT_UNAUTHORIZED env var for nip.io  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
+    replace: "- name: NODE_TLS_REJECT_UNAUTHORIZED\n          value: \"0\"\n        - name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins"
+  when: is_nip_io_domain
+
+- name: Extract AAP hostname from aap_host URL  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_hostname: "{{ aap_host | regex_replace('^https?://', '') | regex_replace('/.*$', '') }}"
+  when: is_nip_io_domain
+
+- name: Add hostAliases for nip.io DNS resolution  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(      - emptyDir: \{\}\n        name: apme-data\n)      hostAliases: \[\]'
+    replace: '\1      hostAliases:\n      - ip: "{{ router_cluster_ip }}"\n        hostnames:\n        - "{{ aap_hostname }}"\n        - "registry.{{ openshift_cluster_domain }}"'
+  when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
+
+- name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?s)          github:\n          - host: github\.com\n            token: \$\{GITHUB_TOKEN\}\n            apps:\n            - appId: \$\{GITHUB_APP_ID\}\n              clientId: \$\{GITHUB_APP_CLIENT_ID\}\n              clientSecret: \$\{GITHUB_APP_CLIENT_SECRET\}\n              privateKey: \|\n                \$\{GITHUB_APP_PRIVATE_KEY\}\n'
+    replace: '          # GitHub integration disabled (configure_github_secrets: false)\n'
+  when: not (configure_github_secrets | default(false))
+
+- name: Remove GitHub auth provider when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?s)            github:\n              production:\n                clientId: \$\{GITHUB_OAUTH_CLIENT_ID\}\n                clientSecret: \$\{GITHUB_OAUTH_CLIENT_SECRET\}\n'
+    replace: '            # GitHub auth provider disabled (configure_github_secrets: false)\n'
+  when: not (configure_github_secrets | default(false))
+
+- name: Remove GitHub catalog provider when not configured  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?s)                      github:\n                      - host: github\.com\n                        name: github-acme-scm\n                        orgs:\n                        - name: acme-scm\n                          branches:\n                          - main\n                          - master\n                          crawlDepth: 5\n                          apme:\n                            enabled: true\n                            scanOnRegister: false\n                          schedule:\n                            frequency:\n                              minutes: 30\n                            timeout:\n                              minutes: 30\n'
+    replace: '                      # GitHub catalog provider disabled (configure_github_secrets: false)\n                      github: []\n'
+  when: not (configure_github_secrets | default(false))
+
+- name: Read rendered Helm values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.slurp:
+    src: "{{ apme_portal_helm_values_path }}"
+  register: rendered_helm_values
+
+- name: Verify no unresolved placeholders remain  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - rendered_helm_values.content | b64decode is not search('<namespace>')
+      - rendered_helm_values.content | b64decode is not search('<cluster-router-base>')
+      - rendered_helm_values.content | b64decode is not search('<plugin-sha>')
+      - rendered_helm_values.content | b64decode is not search('<oci-registry>')
+      - rendered_helm_values.content | b64decode is not search('<devspaces-config>')
+    fail_msg: "Unresolved placeholders remain in {{ apme_portal_helm_values_path }}"
+
+- name: Display rendered values path  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: "Rendered portal Helm values: {{ apme_portal_helm_values_path }}"

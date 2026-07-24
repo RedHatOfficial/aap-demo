@@ -1,0 +1,13 @@
+# Auto-generated for OpenShift integrated registry (dynamic-plugins OCI pull).
+unqualified-search-registries = ["registry.access.redhat.com"]
+
+[[registry]]
+location = "{{ openshift_apme_setup_openshift_registry_host }}"
+insecure = true
+blocked = false
+
+# aap-demo local registry
+[[registry]]
+location = "registry.aap-demo-registry.svc.cluster.local:5000"
+insecure = true
+blocked = false
