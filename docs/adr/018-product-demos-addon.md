@@ -203,6 +203,88 @@ PRODUCT_DEMOS_BRANCH=custom \
 - Customization would be harder
 - Upstream updates would not propagate
 
+## Testing Strategy
+
+A comprehensive test plan has been developed to validate the implementation across 10 test phases covering 37 distinct test cases.
+
+### Test Coverage
+
+**Phase 1: Fresh Environment Setup**
+- Cluster creation and AAP deployment verification
+- Ensures clean baseline for testing
+
+**Phase 2: Base Addon Tests**
+- First-time installation with ansible-navigator auto-install
+- Idempotency verification (re-running succeeds without errors)
+- Custom repository and branch support
+- Deletion protection when domain addons are enabled
+
+**Phase 3: Domain Addon Tests**
+- Installation of all 6 domain addons (linux, windows, network, cloud, openshift, satellite)
+- Automatic base addon dependency installation
+- Verification of domain-specific job templates
+- Idempotency for domain addons
+
+**Phase 4: Multi-Domain Coexistence**
+- All domains enabled simultaneously
+- No conflicts between domain templates
+- Status command integration
+
+**Phase 5: Cleanup and Removal**
+- Single domain removal (preserves base and other domains)
+- All domains removal (base remains)
+- Base removal with dependency checking
+- Prevention of base removal when domains are active
+
+**Phase 6: Error Handling**
+- No cluster running
+- AAP not deployed
+- Invalid repository URL
+- Network failures during clone
+
+**Phase 7: Advanced Scenarios**
+- Custom fork with custom branch
+- Pre-installed ansible-navigator detection
+- Multiple enable/disable cycles
+- Parallel domain installation
+
+**Phase 8: End-to-End Demo Execution**
+- Running actual demo job templates in AAP
+- Execution environment verification
+- Project synchronization
+- Validates demos work end-to-end, not just install
+
+**Phase 9: Documentation Verification**
+- README accuracy
+- Addon-specific README completeness
+- ADR documentation
+- Ensures documentation matches implementation
+
+**Phase 10: Regression Testing**
+- Existing addons still function
+- Core aap-demo commands unaffected
+- Clean teardown with new addons enabled
+
+### Test Artifacts
+
+**Test Plan Document**: Detailed test procedures with exact commands, expected outcomes, and validation steps for all 37 test cases.
+
+**Success Criteria**:
+- All addon deploy scripts are executable
+- Addons registered in `AVAILABLE_ADDONS`
+- Documentation complete and accurate
+- No regressions in existing functionality
+- Idempotent operations throughout
+- Graceful error handling with actionable messages
+
+### Validation Methods
+
+1. **Functional Testing**: Manual execution of test procedures
+2. **Integration Testing**: AAP UI verification of created resources
+3. **State Testing**: Config file and addon tracking validation
+4. **Error Testing**: Intentional failure scenarios
+5. **Regression Testing**: Existing features and addons verification
+
 ## References
 
 - [Issue #71: Feature: Integrate `ansible/product-demos` as an Add-on](https://github.com/RedHatOfficial/aap-demo/issues/71)
@@ -211,3 +293,5 @@ PRODUCT_DEMOS_BRANCH=custom \
 - [ADR-008: Addon System](008-addon-system.md)
 - [ansible-navigator Documentation](https://ansible.readthedocs.io/projects/navigator/)
 - Commit: `823863f` - Implementation on `feature/platform-demos-addon` branch
+- Commit: `ddd58b8` - ADR-018 documentation
+- Test Plan: `test-product-demos-addon.md` - 37 test cases across 10 phases
