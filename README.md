@@ -2,6 +2,12 @@
 
 Deploy AAP to a local MicroShift cluster in minutes.
 
+## SECURITY NOTICE — DEVELOPMENT ENVIRONMENT ONLY
+
+**aap-demo is a LOCAL DEVELOPMENT tool and must NEVER be used in production.**
+
+**DO NOT use aap-demo configurations or patterns in production environments.**
+
 ## Install
 
 ```bash
