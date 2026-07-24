@@ -1,0 +1,68 @@
+# Build a custom RHDH image with APME plugins pre-extracted at build time.
+#
+# The .oci.tar.gz plugin pack is a Docker archive: a tar containing manifest.json
+# and per-layer tar files. We extract all layers to reconstruct the plugin
+# filesystem, copy each plugin directory to dynamic-plugins/dist/, then clean up.
+# At runtime the init container reads ./dynamic-plugins/dist/<plugin> as a fast
+# local copy instead of pulling from an OCI registry.
+#
+# Usage (driven by the apme_image_build Ansible role):
+#   podman build \
+#     --build-arg BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9 \
+#     -t rhdh-apme-preloaded:<plugin-sha> \
+#     -f Containerfile .
+#
+# Build context must be addons/apme-eap/ so plugin_packs/ is accessible.
+
+ARG BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9
+FROM ${BASE_IMAGE}
+
+USER root
+
+COPY plugin_packs/apme-prototype-plugins-*.oci.tar.gz /tmp/plugin-pack.tar.gz
+
+# Extract all Docker archive layers in order, copy plugin dirs to dist/, clean up.
+RUN set -e; \
+    mkdir -p /tmp/apme-archive /tmp/apme-extracted; \
+    tar -xzf /tmp/plugin-pack.tar.gz -C /tmp/apme-archive; \
+    echo '=== archive root ===' && ls /tmp/apme-archive/; \
+    python3 - <<'PYEOF'
+import json, os, subprocess, sys
+
+with open("/tmp/apme-archive/manifest.json") as f:
+    manifest = json.load(f)
+
+layers = manifest[0]["Layers"]
+print(f"Extracting {len(layers)} layer(s)...", flush=True)
+for layer in layers:
+    layer_path = os.path.join("/tmp/apme-archive", layer)
+    print(f"  {layer}", flush=True)
+    subprocess.run(
+        ["tar", "-xf", layer_path, "-C", "/tmp/apme-extracted", "--overwrite"],
+        check=False,
+    )
+
+print("=== extracted root ===", flush=True)
+os.system("ls /tmp/apme-extracted/")
+PYEOF
+    \
+    PLUGINS=" \
+      ansible-plugin-scaffolder-backend-module-backstage-rhaap \
+      ansible-backstage-plugin-catalog-backend-module-rhaap \
+      ansible-plugin-backstage-self-service \
+      ansible-backstage-plugin-auth-backend-module-rhaap-provider \
+      ansible-plugin-backstage-apme \
+      ansible-backstage-plugin-catalog-backend-module-apme \
+    "; \
+    DIST=/opt/app-root/src/dynamic-plugins/dist; \
+    for plugin in $PLUGINS; do \
+      if [ -d "/tmp/apme-extracted/$plugin" ]; then \
+        cp -r "/tmp/apme-extracted/$plugin" "$DIST/$plugin"; \
+        echo "Installed $plugin"; \
+      else \
+        echo "WARNING: $plugin not found in extracted image root"; \
+      fi; \
+    done; \
+    rm -rf /tmp/apme-archive /tmp/apme-extracted /tmp/plugin-pack.tar.gz
+
+USER 1001
