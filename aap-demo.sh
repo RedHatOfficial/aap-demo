@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap)
+    mcp-server | portal | setup-pah | ao-eap | eda-playground)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -388,6 +388,7 @@ Addons:
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao-eap   Install Automation Orchestrator Early Access
+  enable eda-playground Deploy EDA Playground for testing event-driven integrations
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -2640,7 +2641,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap eda-playground"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"

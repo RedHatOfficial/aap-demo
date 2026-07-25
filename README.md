@@ -82,6 +82,7 @@ aap-demo must-gather   # Collect full diagnostics for support
 aap-demo enable console      # OpenShift Console (web UI)
 aap-demo enable registry     # In-cluster container registry
 aap-demo enable mcp-server   # MCP server for AI assistants
+aap-demo enable eda-playground # EDA Playground for testing event-driven integrations
 aap-demo enable              # List all addons
 ```
 
