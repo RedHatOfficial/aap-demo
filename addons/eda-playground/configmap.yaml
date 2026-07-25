@@ -1,0 +1,15 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eda-playground-integrations
+  namespace: eda-playground
+  labels:
+    app: eda-playground
+    app.kubernetes.io/name: eda-playground
+    app.kubernetes.io/component: integrations
+data:
+  .keep: |
+    # Integration files are baked into the container image
+    # This ConfigMap can be used to override or add custom integrations
+    # by mounting specific files at /app/integrations/custom/
