@@ -4,7 +4,8 @@ Deploys [EDA Playground](https://github.com/BBGrimmett2/EDA-Playground) to your 
 
 ## What is EDA Playground?
 
-EDA Playground is an interactive web-based tool for testing and experimenting with Event-Driven Ansible integrations and webhook payloads. It provides:
+EDA Playground is an interactive web-based tool for testing and experimenting with Event-Driven Ansible
+integrations and webhook payloads. It provides:
 
 - **Interactive webhook testing** - Send test webhooks to EDA Controller
 - **Integration explorer** - Browse and test various event source integrations
@@ -49,6 +50,7 @@ https://eda-playground.apps.127.0.0.1.nip.io
 ## Configuration
 
 The deployment uses:
+
 - **Image**: `ghcr.io/bbgrimmett2/eda-playground:latest`
 - **Namespace**: `eda-playground`
 - **Resources**: 100m CPU / 128Mi RAM (requests), 500m CPU / 512Mi RAM (limits)
@@ -67,23 +69,27 @@ Custom integration files will be mounted at `/app/integrations/custom/` in the c
 ## Troubleshooting
 
 ### Check deployment status
+
 ```bash
 kubectl get pods -n eda-playground
 kubectl describe deployment eda-playground -n eda-playground
 ```
 
 ### View logs
+
 ```bash
 kubectl logs -n eda-playground -l app=eda-playground
 ```
 
 ### Common issues
 
-**Pod fails to start with SCC errors**
+#### Pod fails to start with SCC errors
+
 - The deployment requires `anyuid` SCC which is automatically granted during deployment
 - Verify: `oc get scc anyuid -o jsonpath='{.groups}' | grep eda-playground`
 
-**Image pull failures**
+#### Image pull failures
+
 - The image is public on GHCR, no authentication needed
 - Check image availability: `https://github.com/BBGrimmett2/EDA-Playground/pkgs/container/eda-playground`
 
