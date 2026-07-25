@@ -61,7 +61,7 @@ if ! kubectl cluster-info &> /dev/null; then
 fi
 
 # Check if AAP is deployed
-if ! kubectl get aap-gateway -n "$NAMESPACE" &> /dev/null; then
+if ! kubectl get aap -n "$NAMESPACE" &> /dev/null; then
   echo "❌ ERROR: AAP not found in namespace $NAMESPACE"
   echo "Please deploy AAP first: aap-demo deploy"
   exit 1
@@ -96,24 +96,21 @@ fi
 
 echo "Retrieving AAP connection details..."
 
-AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -l app.kubernetes.io/component=gateway -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+# Try to get route by AAP CR name first, fall back to first route in namespace
+AAP_ROUTE=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+if [ -z "$AAP_ROUTE" ]; then
+  AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+fi
 
 if [ -z "$AAP_ROUTE" ]; then
-  echo "❌ ERROR: Cannot find AAP gateway route"
+  echo "❌ ERROR: Cannot find AAP route"
   exit 1
 fi
 
 AAP_HOSTNAME="https://$AAP_ROUTE"
 
-ADMIN_SECRET=$(kubectl get secret -n "$NAMESPACE" -l app.kubernetes.io/component=gateway-admin-password -o name 2>/dev/null | head -n1)
-
-if [ -z "$ADMIN_SECRET" ]; then
-  echo "❌ ERROR: Cannot find AAP admin secret"
-  exit 1
-fi
-
 AAP_USERNAME="admin"
-AAP_PASSWORD=$(kubectl get "$ADMIN_SECRET" -n "$NAMESPACE" -o jsonpath='{.data.password}' | base64 -d)
+AAP_PASSWORD=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
 
 if [ -z "$AAP_PASSWORD" ]; then
   echo "❌ ERROR: Cannot retrieve AAP admin password"
@@ -124,11 +121,14 @@ echo "✓ AAP credentials retrieved"
 echo ""
 
 # ==============================================================================
-# VERIFY ANSIBLE-NAVIGATOR
+# VERIFY ANSIBLE
 # ==============================================================================
 
-if ! command -v ansible-navigator &> /dev/null; then
-  echo "❌ ERROR: ansible-navigator not found"
+ANSIBLE_VENV="$HOME/.ansible-venv"
+ANSIBLE_PLAYBOOK="$ANSIBLE_VENV/bin/ansible-playbook"
+
+if [ ! -f "$ANSIBLE_PLAYBOOK" ]; then
+  echo "❌ ERROR: ansible-playbook not found in $ANSIBLE_VENV"
   echo "This should have been installed by product-demos-base."
   echo "Please try: aap-demo enable product-demos-base"
   exit 1
@@ -168,7 +168,7 @@ export AAP_PASSWORD
 export AAP_VALIDATE_CERTS=false
 
 # Run the domain-specific setup playbook
-if ansible-navigator run -m stdout setup_demo.yml -e "demo=$DEMO_CATEGORY"; then
+if "$ANSIBLE_PLAYBOOK" setup_demo.yml -e "demo=$DEMO_CATEGORY"; then
   echo ""
   echo "✓ Linux demos installed successfully!"
   echo ""

@@ -96,18 +96,22 @@ if ! kubectl cluster-info &> /dev/null; then
 fi
 
 # Check if AAP is deployed
-if ! kubectl get aap-gateway -n "$NAMESPACE" &> /dev/null; then
+if ! kubectl get aap -n "$NAMESPACE" &> /dev/null; then
   echo "❌ ERROR: AAP not found in namespace $NAMESPACE"
   echo "Please deploy AAP first: aap-demo deploy"
   exit 1
 fi
 
-# Get AAP gateway route
+# Get AAP route
 echo "Retrieving AAP connection details..."
-AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -l app.kubernetes.io/component=gateway -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+# Try to get route by AAP CR name first, fall back to first route in namespace
+AAP_ROUTE=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+if [ -z "$AAP_ROUTE" ]; then
+  AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+fi
 
 if [ -z "$AAP_ROUTE" ]; then
-  echo "❌ ERROR: Cannot find AAP gateway route"
+  echo "❌ ERROR: Cannot find AAP route"
   exit 1
 fi
 
@@ -116,15 +120,8 @@ echo "AAP URL: $AAP_HOSTNAME"
 
 # Get AAP admin credentials
 echo "Retrieving AAP admin credentials..."
-ADMIN_SECRET=$(kubectl get secret -n "$NAMESPACE" -l app.kubernetes.io/component=gateway-admin-password -o name 2>/dev/null | head -n1)
-
-if [ -z "$ADMIN_SECRET" ]; then
-  echo "❌ ERROR: Cannot find AAP admin secret"
-  exit 1
-fi
-
 AAP_USERNAME="admin"
-AAP_PASSWORD=$(kubectl get "$ADMIN_SECRET" -n "$NAMESPACE" -o jsonpath='{.data.password}' | base64 -d)
+AAP_PASSWORD=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
 
 if [ -z "$AAP_PASSWORD" ]; then
   echo "❌ ERROR: Cannot retrieve AAP admin password"
@@ -135,51 +132,39 @@ echo "✓ AAP credentials retrieved"
 echo ""
 
 # ==============================================================================
-# ANSIBLE-NAVIGATOR INSTALLATION
+# ANSIBLE SETUP
 # ==============================================================================
 
-echo "Checking for ansible-navigator..."
+echo "Checking for ansible..."
 
-if ! command -v ansible-navigator &> /dev/null; then
-  echo "ansible-navigator not found. Installing..."
+# Use shared ansible virtual environment
+ANSIBLE_VENV="$HOME/.ansible-venv"
+ANSIBLE_PLAYBOOK="$ANSIBLE_VENV/bin/ansible-playbook"
+ANSIBLE_GALAXY="$ANSIBLE_VENV/bin/ansible-galaxy"
 
-  # Try pipx first (isolated, recommended)
-  if command -v pipx &> /dev/null; then
-    echo "Installing via pipx (isolated environment)..."
-    if pipx install ansible-navigator; then
-      echo "✓ ansible-navigator installed via pipx"
-    else
-      echo "❌ ERROR: pipx installation failed"
-      exit 1
-    fi
-  # Fall back to pip3
-  elif command -v pip3 &> /dev/null; then
-    echo "Installing via pip3 (user install)..."
-    if pip3 install --user ansible-navigator; then
-      echo "✓ ansible-navigator installed via pip3"
-      echo "⚠ You may need to add ~/.local/bin to your PATH"
-    else
-      echo "❌ ERROR: pip3 installation failed"
-      exit 1
-    fi
+# Verify venv exists
+if [ ! -d "$ANSIBLE_VENV" ]; then
+  echo "Creating shared ansible virtual environment..."
+  if ! command -v python3 &> /dev/null; then
+    echo "❌ ERROR: python3 not found"
+    exit 1
+  fi
+  python3 -m venv "$ANSIBLE_VENV"
+  echo "✓ Created virtual environment at $ANSIBLE_VENV"
+fi
+
+# Install ansible if not present
+if [ ! -f "$ANSIBLE_PLAYBOOK" ]; then
+  echo "Installing ansible in virtual environment..."
+  if "$ANSIBLE_VENV/bin/pip" install ansible; then
+    echo "✓ ansible installed successfully"
   else
-    echo "❌ ERROR: Cannot install ansible-navigator"
-    echo "Please install pip3 or pipx first:"
-    echo "  macOS: brew install pipx"
-    echo "  Linux: sudo apt install pipx  # or sudo dnf install pipx"
+    echo "❌ ERROR: Failed to install ansible"
     exit 1
   fi
-
-  # Verify installation
-  if ! command -v ansible-navigator &> /dev/null; then
-    echo "❌ ERROR: ansible-navigator installation failed"
-    echo "Please install manually: pip3 install ansible-navigator"
-    exit 1
-  fi
-
   echo ""
 else
-  echo "✓ ansible-navigator found: $(command -v ansible-navigator)"
+  echo "✓ ansible found in shared venv"
   echo ""
 fi
 
@@ -208,18 +193,44 @@ echo ""
 # RUN ANSIBLE-NAVIGATOR
 # ==============================================================================
 
+echo "Installing required Ansible collections..."
+
+# Get PAH URL and token if available
+PAH_URL="https://aap-aap-operator.apps.127.0.0.1.nip.io/api/galaxy/"
+PAH_TOKEN=""
+if [ -f "$HOME/.aap-demo/galaxy-token" ]; then
+  PAH_TOKEN=$(cat "$HOME/.aap-demo/galaxy-token")
+fi
+
+# Configure ansible-galaxy to use local PAH
+if [ -n "$PAH_TOKEN" ]; then
+  echo "Configuring ansible-galaxy to use Private Automation Hub..."
+  export ANSIBLE_GALAXY_SERVER_LIST="pah,galaxy"
+  export ANSIBLE_GALAXY_SERVER_PAH_URL="$PAH_URL"
+  export ANSIBLE_GALAXY_SERVER_PAH_TOKEN="$PAH_TOKEN"
+  export ANSIBLE_GALAXY_SERVER_GALAXY_URL="https://galaxy.ansible.com/"
+  echo "✓ Using PAH at $PAH_URL"
+else
+  echo "⚠ No PAH token found, using galaxy.ansible.com only"
+fi
+
+# Install required collections
+"$ANSIBLE_GALAXY" collection install infra.aap_configuration --force
+"$ANSIBLE_GALAXY" collection install ansible.platform --force 2>/dev/null || echo "⚠ Could not install ansible.platform (may require PAH sync to complete)"
+echo ""
+
 echo "Installing APD base resources in AAP..."
 echo "This may take a few minutes..."
 echo ""
 
-# Export environment variables for ansible-navigator
+# Export environment variables for ansible playbook
 export AAP_HOSTNAME
 export AAP_USERNAME
 export AAP_PASSWORD
 export AAP_VALIDATE_CERTS=false
 
 # Run the installation playbook
-if ansible-navigator run -m stdout install-apd.yml; then
+if "$ANSIBLE_PLAYBOOK" install-apd.yml; then
   echo ""
   echo "✓ APD base resources installed successfully!"
   echo ""
@@ -238,7 +249,7 @@ if ansible-navigator run -m stdout install-apd.yml; then
   echo ""
 else
   echo ""
-  echo "❌ ERROR: ansible-navigator installation failed"
+  echo "❌ ERROR: APD installation failed"
   echo "Please check the output above for details."
   exit 1
 fi

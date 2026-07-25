@@ -61,7 +61,7 @@ if ! kubectl cluster-info &> /dev/null; then
 fi
 
 # Check if AAP is deployed
-if ! kubectl get aap-gateway -n "$NAMESPACE" &> /dev/null; then
+if ! kubectl get aap -n "$NAMESPACE" &> /dev/null; then
   echo "❌ ERROR: AAP not found in namespace $NAMESPACE"
   echo "Please deploy AAP first: aap-demo deploy"
   exit 1
@@ -96,7 +96,7 @@ fi
 
 echo "Retrieving AAP connection details..."
 
-AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -l app.kubernetes.io/component=gateway -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+AAP_ROUTE=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
 
 if [ -z "$AAP_ROUTE" ]; then
   echo "❌ ERROR: Cannot find AAP gateway route"
@@ -105,15 +105,14 @@ fi
 
 AAP_HOSTNAME="https://$AAP_ROUTE"
 
-ADMIN_SECRET=$(kubectl get secret -n "$NAMESPACE" -l app.kubernetes.io/component=gateway-admin-password -o name 2>/dev/null | head -n1)
+AAP_USERNAME="admin"
+AAP_PASSWORD=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
 
 if [ -z "$ADMIN_SECRET" ]; then
   echo "❌ ERROR: Cannot find AAP admin secret"
   exit 1
 fi
 
-AAP_USERNAME="admin"
-AAP_PASSWORD=$(kubectl get "$ADMIN_SECRET" -n "$NAMESPACE" -o jsonpath='{.data.password}' | base64 -d)
 
 if [ -z "$AAP_PASSWORD" ]; then
   echo "❌ ERROR: Cannot retrieve AAP admin password"
