@@ -253,7 +253,7 @@ create_oauth_app() {
     echo ""
     echo "  export EDA_OAUTH_APP_ID=\"$OAUTH_APP_ID\""
     echo "  export EDA_CLIENT_ID=\"$CLIENT_ID\""
-    echo "  export EDA_CLIENT_SECRET=\"$CLIENT_SECRET\""  # pragma: allowlist secret
+    echo "  export EDA_CLIENT_SECRET=\"$CLIENT_SECRET\"" # pragma: allowlist secret
     echo ""
   fi
 }

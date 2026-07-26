@@ -416,7 +416,7 @@ create_oauth_app() {
 
     OAUTH_APP_ID=$(echo "$oauth_response" | jq -r '.id')
     CLIENT_ID=$(echo "$oauth_response" | jq -r '.client_id')
-    CLIENT_SECRET=$(echo "$oauth_response" | jq -r '.client_secret')  # pragma: allowlist secret
+    CLIENT_SECRET=$(echo "$oauth_response" | jq -r '.client_secret') # pragma: allowlist secret
   fi
 
   if [ -z "$CLIENT_ID" ] || [ "$CLIENT_ID" = "null" ]; then
