@@ -1,0 +1,24 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.entityName }}
+  title: ${{ values.repoName }}
+  description: Ansible automation repository registered for Ansible content modernization
+  annotations:
+    backstage.io/source-location: url:${{ values.repoUrl }}
+    github.com/project-slug: ${{ values.org }}/${{ values.repoName }}
+    ansible.io/scm-provider: github
+    ansible.io/scm-host: github.com
+    ansible.io/scm-organization: ${{ values.org }}
+    ansible.io/scm-repository: ${{ values.repoName }}
+  tags:
+    - git-repository
+    - github
+spec:
+  type: git-repository
+  lifecycle: production
+  owner: ${{ values.owner }}
+  repository_name: ${{ values.repoName }}
+  repository_default_branch: ${{ values.defaultBranch }}
+  repository_collection_count: 0
+  repository_ee_count: 0

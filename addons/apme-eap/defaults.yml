@@ -1,0 +1,36 @@
+---
+# APME Playbook Addon - Default Configuration
+# These values are used as defaults and can be overridden in the generated vars file
+
+# Namespace (fixed for aap-demo)
+openshift_project_name: apme
+
+# Helm chart configuration (Red Hat Developer Hub / Portal)
+portal_helm_chart_repo: openshift-helm-charts
+portal_helm_chart_repo_url: https://charts.openshift.io/
+portal_helm_chart_name: redhat-rhaap-portal
+portal_helm_chart_version: 2.2.3
+portal_helm_release_name: redhat-rhaap-portal
+portal_helm_install_timeout: 1800
+
+# Helm chart configuration (APME gateway - x86 only)
+apme_helm_chart_repo: apme
+apme_helm_chart_repo_url: https://ansible.github.io/apme
+apme_helm_chart_name: apme
+apme_helm_chart_version: 0.1.2
+apme_helm_release_name: apme
+
+# AAP organization (create or reuse)
+aap_organization: Default
+aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
+
+# GitHub secrets configuration
+configure_github_secrets: false
+
+# OCI push configuration
+apme_oci_push_force: false  # Set true to re-push plugins even if already in registry
+apme_oci_push_skopeo_binary: skopeo  # Path to skopeo binary (default: skopeo)
+
+# OpenShift DevSpaces (optional)
+# Set to enable "Open in DevSpaces" actions after remediation
+# devspaces_base_url: "https://devspaces.apps.cluster.example.com/"

@@ -1,0 +1,11 @@
+---
+# defaults for aap_apme_prerequisites
+
+aap_apme_prerequisites_validate_certs: false
+aap_apme_prerequisites_request_timeout: 30
+aap_apme_prerequisites_openshift_secret_name: "secrets-rhaap-portal"
+aap_apme_prerequisites_openshift_validate_certs: "{{ openshift_validate_certs | default(false) }}"
+aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
+aap_apme_prerequisites_force_oauth_recreation: false
+aap_apme_prerequisites_api_token_description: "APME Portal API Access"
+aap_apme_prerequisites_force_token_recreation: false

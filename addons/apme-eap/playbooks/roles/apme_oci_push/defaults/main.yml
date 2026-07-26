@@ -1,0 +1,9 @@
+---
+# defaults for apme_oci_push
+
+apme_oci_push_image_name: "apme-prototype-plugins"
+apme_oci_push_skopeo_binary: "skopeo"
+apme_oci_push_force: false
+apme_oci_push_search_dirs:
+  - "{{ playbook_dir }}/../plugin_packs"
+  - "{{ playbook_dir }}/../"

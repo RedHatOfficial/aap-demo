@@ -1,0 +1,105 @@
+---
+# Resolve bundled prototype OCI pack and registry defaults (no customer unzip step).
+
+- name: Load plugin pack manifest when present
+  ansible.builtin.slurp:
+    src: "{{ collection_root }}/plugin_packs/plugin-pack.manifest.yml"
+  register: plugin_pack_manifest_file
+  failed_when: false
+
+- name: Apply plugin_sha from manifest
+  ansible.builtin.set_fact:
+    plugin_sha: "{{ (plugin_pack_manifest_file.content | b64decode | from_yaml).plugin_sha }}"
+  when:
+    - plugin_pack_manifest_file is succeeded
+    - plugin_pack_manifest_file.content is defined
+    - (plugin_sha is not defined) or (plugin_sha | length == 0)
+
+- name: Find bundled OCI pack in plugin_packs
+  ansible.builtin.find:
+    paths: "{{ collection_root }}/plugin_packs"
+    patterns:
+      - "apme-prototype-plugins-*.oci*.tar.gz"
+      - "early-access-plugins-prototype-apme-*.oci*.tar.gz"
+    recurse: false
+  register: bundled_oci_pack
+
+- name: Derive plugin_sha from bundled OCI filename
+  ansible.builtin.set_fact:
+    plugin_sha: >-
+      {{ (bundled_oci_pack.files | map(attribute='path') | map('basename') | first)
+         | regex_replace('^(?:apme-prototype-plugins-|early-access-plugins-prototype-apme-)([0-9a-f]+).*', '\\1') }}
+  when:
+    - (plugin_sha is not defined) or (plugin_sha | length == 0)
+    - bundled_oci_pack.matched | default(0) > 0
+
+- name: Fail when plugin_sha could not be parsed from bundled pack
+  ansible.builtin.fail:
+    msg: >-
+      Could not parse plugin_sha from bundled OCI pack in {{ collection_root }}/plugin_packs/.
+      Set plugin_sha in vars/apme_portal.yml.
+  when:
+    - apme_resolve_plugin_pack_required | default(true) | bool
+    - plugin_sha is defined
+    - plugin_sha | length > 0
+    - not (plugin_sha is match('^[0-9a-f]+$'))
+
+- name: Set resolved OCI pack path from manifest
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ collection_root }}/plugin_packs/{{ (plugin_pack_manifest_file.content | b64decode | from_yaml).oci_pack_filename }}"
+  when:
+    - plugin_pack_manifest_file is succeeded
+    - apme_oci_tar_resolved is not defined
+    - (plugin_pack_manifest_file.content | b64decode | from_yaml).oci_pack_filename is defined
+
+- name: Set resolved OCI pack path from search
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ bundled_oci_pack.files | map(attribute='path') | first }}"
+  when:
+    - apme_oci_tar_resolved is not defined
+    - bundled_oci_pack.matched | default(0) > 0
+
+- name: Fail when plugin pack is missing
+  ansible.builtin.fail:
+    msg: >-
+      No prototype OCI pack found in {{ collection_root }}/plugin_packs/.
+      Re-extract the welcome pack zip or set plugin_sha and apme_oci_tar in vars.
+  when:
+    - apme_resolve_plugin_pack_required | default(true) | bool
+    - (plugin_sha is not defined) or (plugin_sha | length == 0)
+    - bundled_oci_pack.matched | default(0) == 0
+
+- name: Default OCI registry to OpenShift integrated registry
+  ansible.builtin.set_fact:
+    oci_registry: "image-registry.openshift-image-registry.svc:5000/{{ openshift_project_name }}"
+  when:
+    - apme_resolve_oci_registry | default(true) | bool
+    - openshift_project_name is defined
+    - openshift_project_name | length > 0
+    - oci_registry | default('', true) | length == 0
+
+- name: Fail when OCI registry could not be determined
+  ansible.builtin.fail:
+    msg: >-
+      Set openshift_project_name in vars/apme_portal.yml for the OpenShift integrated registry,
+      or set oci_registry for an external registry.
+  when:
+    - apme_resolve_oci_registry | default(true) | bool
+    - apme_resolve_plugin_pack_required | default(true) | bool
+    - oci_registry | default('', true) | length == 0
+
+- name: Normalize OCI registry host
+  ansible.builtin.set_fact:
+    oci_registry_normalized: "{{ oci_registry | regex_replace('/$', '') }}"
+  when:
+    - apme_resolve_oci_registry | default(true) | bool
+    - oci_registry | default('', true) | length > 0
+
+- name: Detect OpenShift integrated registry target
+  ansible.builtin.set_fact:
+    apme_openshift_integrated_registry: >-
+      {{ 'openshift-image-registry' in oci_registry_normalized
+         or 'image-registry.openshift-image-registry.svc' in oci_registry_normalized }}
+  when:
+    - apme_resolve_oci_registry | default(true) | bool
+    - oci_registry_normalized is defined

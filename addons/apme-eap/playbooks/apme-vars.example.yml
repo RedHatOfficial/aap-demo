@@ -1,0 +1,27 @@
+---
+# Example variables file for APME deployment via AAP
+# Set APME_VARS_FILE=/path/to/apme-vars.yml before running launch_apme_deployment.yml
+
+# Required: OpenShift API token
+# Generate with: kubectl create token -n kube-system default --duration=87600h
+openshift_token: "eyJhbGciOiJSUzI1NiIsImtpZCI6Inh4eHh4..."
+
+# Required: OpenShift API URL
+# When running from AAP on the same cluster, use internal service address:
+openshift_api_url: "https://kubernetes.default.svc:443"
+# When running externally, use the external API URL:
+# openshift_api_url: "https://api.crc.testing:6443"
+
+# Optional: Target namespace (default: apme-portal)
+openshift_project_name: "apme-portal"
+
+# Optional: OpenShift cluster domain (derived from API URL if not specified)
+# openshift_cluster_domain: "apps.crc.testing"
+
+# Optional: GitHub secrets configuration
+# configure_github_secrets: false
+# github_app_id: "123456"
+# github_app_private_key: |
+#   -----BEGIN RSA PRIVATE KEY-----
+#   ...
+#   -----END RSA PRIVATE KEY-----

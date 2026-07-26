@@ -1,0 +1,6 @@
+---
+# defaults for apme_gateway_helm
+
+apme_gateway_helm_values_file: "{{ role_path }}/files/apme-values.yaml"
+apme_gateway_helm_validate_certs: "{{ openshift_validate_certs | default(false) }}"
+apme_gateway_helm_timeout: 600
