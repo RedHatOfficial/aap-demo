@@ -87,6 +87,9 @@ echo "Deploying Ansible Product Demos base resources..."
 echo "Repository: $PRODUCT_DEMOS_REPO"
 echo "Branch: $PRODUCT_DEMOS_BRANCH"
 echo ""
+echo "Strategy: Create AAP project and run install-apd.yml as a job template"
+echo "          (uses AAP's execution environment which has ansible.platform pre-installed)"
+echo ""
 
 # Check cluster connectivity
 if ! kubectl cluster-info &> /dev/null; then
@@ -104,7 +107,6 @@ fi
 
 # Get AAP route
 echo "Retrieving AAP connection details..."
-# Try to get route by AAP CR name first, fall back to first route in namespace
 AAP_ROUTE=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
 if [ -z "$AAP_ROUTE" ]; then
   AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
@@ -116,6 +118,7 @@ if [ -z "$AAP_ROUTE" ]; then
 fi
 
 AAP_HOSTNAME="https://$AAP_ROUTE"
+AAP_API="${AAP_HOSTNAME}/api/controller/v2"
 echo "AAP URL: $AAP_HOSTNAME"
 
 # Get AAP admin credentials
@@ -131,127 +134,316 @@ fi
 echo "✓ AAP credentials retrieved"
 echo ""
 
-# ==============================================================================
-# ANSIBLE SETUP
-# ==============================================================================
-
-echo "Checking for ansible..."
-
-# Use shared ansible virtual environment
-ANSIBLE_VENV="$HOME/.ansible-venv"
-ANSIBLE_PLAYBOOK="$ANSIBLE_VENV/bin/ansible-playbook"
-ANSIBLE_GALAXY="$ANSIBLE_VENV/bin/ansible-galaxy"
-
-# Verify venv exists
-if [ ! -d "$ANSIBLE_VENV" ]; then
-  echo "Creating shared ansible virtual environment..."
-  if ! command -v python3 &> /dev/null; then
-    echo "❌ ERROR: python3 not found"
-    exit 1
-  fi
-  python3 -m venv "$ANSIBLE_VENV"
-  echo "✓ Created virtual environment at $ANSIBLE_VENV"
+# Check for required tools
+if ! command -v curl &> /dev/null; then
+  echo "❌ ERROR: curl is required"
+  exit 1
 fi
 
-# Install ansible if not present
-if [ ! -f "$ANSIBLE_PLAYBOOK" ]; then
-  echo "Installing ansible in virtual environment..."
-  if "$ANSIBLE_VENV/bin/pip" install ansible; then
-    echo "✓ ansible installed successfully"
+if ! command -v jq &> /dev/null; then
+  echo "❌ ERROR: jq is required for JSON parsing"
+  echo "Install: brew install jq (macOS) or sudo dnf install jq (RHEL/Fedora)"
+  exit 1
+fi
+
+# ==============================================================================
+# CREATE CREDENTIAL TYPE AND CREDENTIAL
+# ==============================================================================
+
+echo "Creating custom credential type for APD installer..."
+
+# Check if credential type exists
+EXISTING_CRED_TYPE=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  "${AAP_API}/credential_types/?name=APD+Installer+Credentials" 2>&1)
+
+CRED_TYPE_ID=$(echo "$EXISTING_CRED_TYPE" | jq -r '.results[0].id // empty' 2>/dev/null)
+
+if [ -z "$CRED_TYPE_ID" ]; then
+  # Create credential type
+  CRED_TYPE_PAYLOAD=$(cat <<EOF
+{
+  "name": "APD Installer Credentials",
+  "description": "Injects AAP credentials as environment variables for product-demos installer",
+  "kind": "cloud",
+  "inputs": {
+    "fields": [
+      {"id": "aap_hostname", "label": "AAP Hostname", "type": "string"},
+      {"id": "aap_username", "label": "AAP Username", "type": "string"},
+      {"id": "aap_password", "label": "AAP Password", "type": "string", "secret": true}
+    ]
+  },
+  "injectors": {
+    "env": {
+      "AAP_HOSTNAME": "{{ aap_hostname }}",
+      "AAP_USERNAME": "{{ aap_username }}",
+      "AAP_PASSWORD": "{{ aap_password }}",
+      "AAP_VALIDATE_CERTS": "false"
+    }
+  }
+}
+EOF
+)
+
+  CRED_TYPE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "$CRED_TYPE_PAYLOAD" \
+    "${AAP_API}/credential_types/" 2>&1)
+
+  CRED_TYPE_ID=$(echo "$CRED_TYPE_RESULT" | jq -r '.id // empty' 2>/dev/null)
+
+  if [ -z "$CRED_TYPE_ID" ]; then
+    echo "❌ ERROR: Failed to create credential type"
+    echo "$CRED_TYPE_RESULT" | jq '.' 2>/dev/null || echo "$CRED_TYPE_RESULT"
+    exit 1
+  fi
+
+  echo "✓ Credential type created (ID: $CRED_TYPE_ID)"
+else
+  echo "✓ Credential type already exists (ID: $CRED_TYPE_ID)"
+fi
+
+# Create credential instance
+echo "Creating APD installer credential..."
+
+EXISTING_CRED=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  "${AAP_API}/credentials/?name=APD+Installer+-+AAP+Admin" 2>&1)
+
+CRED_ID=$(echo "$EXISTING_CRED" | jq -r '.results[0].id // empty' 2>/dev/null)
+
+if [ -z "$CRED_ID" ]; then
+  CRED_PAYLOAD=$(cat <<EOF
+{
+  "name": "APD Installer - AAP Admin",
+  "description": "AAP admin credentials for installing product-demos",
+  "organization": 1,
+  "credential_type": $CRED_TYPE_ID,
+  "inputs": {
+    "aap_hostname": "${AAP_HOSTNAME}",
+    "aap_username": "${AAP_USERNAME}",
+    "aap_password": "${AAP_PASSWORD}"
+  }
+}
+EOF
+)
+
+  CRED_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "$CRED_PAYLOAD" \
+    "${AAP_API}/credentials/" 2>&1)
+
+  CRED_ID=$(echo "$CRED_RESULT" | jq -r '.id // empty' 2>/dev/null)
+
+  if [ -z "$CRED_ID" ]; then
+    echo "❌ ERROR: Failed to create credential"
+    echo "$CRED_RESULT" | jq '.' 2>/dev/null || echo "$CRED_RESULT"
+    exit 1
+  fi
+
+  echo "✓ Credential created (ID: $CRED_ID)"
+else
+  echo "✓ Credential already exists (ID: $CRED_ID)"
+fi
+
+echo ""
+
+# ==============================================================================
+# CREATE AAP PROJECT
+# ==============================================================================
+
+echo "Creating AAP project for product-demos..."
+
+# Create project via API
+PROJECT_PAYLOAD=$(cat <<EOF
+{
+  "name": "Ansible Product Demos",
+  "description": "Official Ansible Product Demos from github.com/ansible/product-demos",
+  "scm_type": "git",
+  "scm_url": "$PRODUCT_DEMOS_REPO",
+  "scm_branch": "$PRODUCT_DEMOS_BRANCH",
+  "scm_update_on_launch": true,
+  "organization": 1
+}
+EOF
+)
+
+PROJECT_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d "$PROJECT_PAYLOAD" \
+  "${AAP_API}/projects/" 2>&1)
+
+PROJECT_ID=$(echo "$PROJECT_RESULT" | jq -r '.id // empty' 2>/dev/null)
+
+if [ -z "$PROJECT_ID" ]; then
+  # Check if project already exists
+  EXISTING_PROJECT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1)
+
+  PROJECT_ID=$(echo "$EXISTING_PROJECT" | jq -r '.results[0].id // empty' 2>/dev/null)
+
+  if [ -n "$PROJECT_ID" ]; then
+    echo "✓ Project already exists (ID: $PROJECT_ID)"
   else
-    echo "❌ ERROR: Failed to install ansible"
+    echo "❌ ERROR: Failed to create project"
+    echo "$PROJECT_RESULT" | jq '.' 2>/dev/null || echo "$PROJECT_RESULT"
     exit 1
   fi
-  echo ""
 else
-  echo "✓ ansible found in shared venv"
-  echo ""
+  echo "✓ Project created (ID: $PROJECT_ID)"
 fi
 
+# Wait for project sync
+echo "Waiting for project to sync..."
+sleep 5
+
+for i in {1..30}; do
+  PROJECT_STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/projects/${PROJECT_ID}/" 2>&1)
+
+  STATUS=$(echo "$PROJECT_STATUS" | jq -r '.status // "unknown"' 2>/dev/null)
+
+  if [ "$STATUS" = "successful" ]; then
+    echo "✓ Project synced successfully"
+    break
+  elif [ "$STATUS" = "failed" ]; then
+    echo "❌ ERROR: Project sync failed"
+    echo "$PROJECT_STATUS" | jq '.job_explanation // empty' 2>/dev/null
+    exit 1
+  fi
+
+  echo "  Status: $STATUS (waiting... $i/30)"
+  sleep 2
+done
+
 # ==============================================================================
-# CLONE PRODUCT DEMOS REPOSITORY
+# CREATE JOB TEMPLATE
 # ==============================================================================
 
-echo "Cloning product-demos repository..."
+echo ""
+echo "Creating job template to run install-apd.yml..."
 
-# Create temporary directory with cleanup trap
-TEMP_DIR=$(mktemp -d /tmp/product-demos.XXXXXX)
-trap 'rm -rf "$TEMP_DIR"' EXIT
+TEMPLATE_PAYLOAD=$(cat <<EOF
+{
+  "name": "APD | Install Base Resources",
+  "description": "Install Ansible Product Demos foundation (organization, project, EE, credentials)",
+  "job_type": "run",
+  "inventory": 1,
+  "project": $PROJECT_ID,
+  "playbook": "install-apd.yml",
+  "ask_variables_on_launch": false,
+  "organization": 1
+}
+EOF
+)
 
-cd "$TEMP_DIR"
+TEMPLATE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d "$TEMPLATE_PAYLOAD" \
+  "${AAP_API}/job_templates/" 2>&1)
 
-if ! git clone --depth 1 --branch "$PRODUCT_DEMOS_BRANCH" "$PRODUCT_DEMOS_REPO" . 2>&1; then
-  echo "❌ ERROR: Failed to clone $PRODUCT_DEMOS_REPO (branch: $PRODUCT_DEMOS_BRANCH)"
-  echo "Please check the repository URL and branch name."
+TEMPLATE_ID=$(echo "$TEMPLATE_RESULT" | jq -r '.id // empty' 2>/dev/null)
+
+if [ -z "$TEMPLATE_ID" ]; then
+  # Check if template already exists
+  EXISTING_TEMPLATE=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/job_templates/?name=APD+%7C+Install+Base+Resources" 2>&1)
+
+  TEMPLATE_ID=$(echo "$EXISTING_TEMPLATE" | jq -r '.results[0].id // empty' 2>/dev/null)
+
+  if [ -n "$TEMPLATE_ID" ]; then
+    echo "✓ Job template already exists (ID: $TEMPLATE_ID)"
+  else
+    echo "❌ ERROR: Failed to create job template"
+    echo "$TEMPLATE_RESULT" | jq '.' 2>/dev/null || echo "$TEMPLATE_RESULT"
+    exit 1
+  fi
+else
+  echo "✓ Job template created (ID: $TEMPLATE_ID)"
+fi
+
+# Attach credential to job template
+echo "Attaching APD installer credential to template..."
+curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"id\": $CRED_ID}" \
+  "${AAP_API}/job_templates/${TEMPLATE_ID}/credentials/" >/dev/null 2>&1
+echo "✓ Credential attached"
+
+# ==============================================================================
+# LAUNCH JOB
+# ==============================================================================
+
+echo ""
+echo "Launching APD installation job..."
+
+LAUNCH_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  -X POST \
+  -H "Content-Type: application/json" \
+  "${AAP_API}/job_templates/${TEMPLATE_ID}/launch/" 2>&1)
+
+JOB_ID=$(echo "$LAUNCH_RESULT" | jq -r '.id // empty' 2>/dev/null)
+
+if [ -z "$JOB_ID" ]; then
+  echo "❌ ERROR: Failed to launch job"
+  echo "$LAUNCH_RESULT" | jq '.' 2>/dev/null || echo "$LAUNCH_RESULT"
   exit 1
 fi
 
-echo "✓ Repository cloned to temporary directory"
+echo "✓ Job launched (ID: $JOB_ID)"
+echo ""
+echo "Monitoring job progress..."
+echo "View in UI: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
 echo ""
 
-# ==============================================================================
-# RUN ANSIBLE-NAVIGATOR
-# ==============================================================================
+# Monitor job status
+for i in {1..60}; do
+  JOB_STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/jobs/${JOB_ID}/" 2>&1)
 
-echo "Installing required Ansible collections..."
+  STATUS=$(echo "$JOB_STATUS" | jq -r '.status // "unknown"' 2>/dev/null)
+  ELAPSED=$(echo "$JOB_STATUS" | jq -r '.elapsed // 0' 2>/dev/null)
 
-# Get PAH URL and token if available
-PAH_URL="https://aap-aap-operator.apps.127.0.0.1.nip.io/api/galaxy/"
-PAH_TOKEN=""
-if [ -f "$HOME/.aap-demo/galaxy-token" ]; then
-  PAH_TOKEN=$(cat "$HOME/.aap-demo/galaxy-token")
-fi
+  if [ "$STATUS" = "successful" ]; then
+    echo ""
+    echo "✓ APD base resources installed successfully!"
+    echo ""
+    echo "Resources created:"
+    echo "  - Organization: Ansible Product Demos (APD)"
+    echo "  - Project: Ansible Product Demos"
+    echo "  - Execution Environment: Product Demos EE"
+    echo "  - Inventory: Ansible Product Demos Inventory"
+    echo "  - Job Templates: APD | Single demo setup, APD | Multi-demo setup"
+    echo ""
+    echo "Next steps:"
+    echo "  - Enable a domain-specific addon: aap-demo enable product-demo-linux"
+    echo "  - Log into AAP UI at: $AAP_HOSTNAME"
+    echo "  - Navigate to the 'Ansible Product Demos (APD)' organization"
+    echo "  - Configure credentials as needed (Galaxy tokens, AWS, etc.)"
+    echo ""
+    exit 0
+  elif [ "$STATUS" = "failed" ]; then
+    echo ""
+    echo "❌ ERROR: APD installation job failed"
+    echo "View job output: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
+    exit 1
+  elif [ "$STATUS" = "error" ]; then
+    echo ""
+    echo "❌ ERROR: Job encountered an error"
+    echo "View job output: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
+    exit 1
+  fi
 
-# Configure ansible-galaxy to use local PAH
-if [ -n "$PAH_TOKEN" ]; then
-  echo "Configuring ansible-galaxy to use Private Automation Hub..."
-  export ANSIBLE_GALAXY_SERVER_LIST="pah,galaxy"
-  export ANSIBLE_GALAXY_SERVER_PAH_URL="$PAH_URL"
-  export ANSIBLE_GALAXY_SERVER_PAH_TOKEN="$PAH_TOKEN"
-  export ANSIBLE_GALAXY_SERVER_GALAXY_URL="https://galaxy.ansible.com/"
-  echo "✓ Using PAH at $PAH_URL"
-else
-  echo "⚠ No PAH token found, using galaxy.ansible.com only"
-fi
+  printf "\r  Status: %-12s | Elapsed: %3ss | Waiting... %2d/60" "$STATUS" "$ELAPSED" "$i"
+  sleep 3
+done
 
-# Install required collections
-"$ANSIBLE_GALAXY" collection install infra.aap_configuration --force
-"$ANSIBLE_GALAXY" collection install ansible.platform --force 2>/dev/null || echo "⚠ Could not install ansible.platform (may require PAH sync to complete)"
 echo ""
-
-echo "Installing APD base resources in AAP..."
-echo "This may take a few minutes..."
+echo "⚠ Job is still running after 3 minutes"
+echo "View progress: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
 echo ""
-
-# Export environment variables for ansible playbook
-export AAP_HOSTNAME
-export AAP_USERNAME
-export AAP_PASSWORD
-export AAP_VALIDATE_CERTS=false
-
-# Run the installation playbook
-if "$ANSIBLE_PLAYBOOK" install-apd.yml; then
-  echo ""
-  echo "✓ APD base resources installed successfully!"
-  echo ""
-  echo "Resources created:"
-  echo "  - Organization: Ansible Product Demos (APD)"
-  echo "  - Project: Ansible Product Demos"
-  echo "  - Execution Environment: Product Demos EE"
-  echo "  - Inventory: Ansible Product Demos Inventory"
-  echo "  - Job Templates: APD | Single demo setup, APD | Multi-demo setup"
-  echo ""
-  echo "Next steps:"
-  echo "  - Enable a domain-specific addon: aap-demo enable product-demo-linux"
-  echo "  - Log into AAP UI at: $AAP_HOSTNAME"
-  echo "  - Navigate to the 'Ansible Product Demos (APD)' organization"
-  echo "  - Configure credentials as needed (Galaxy tokens, AWS, etc.)"
-  echo ""
-else
-  echo ""
-  echo "❌ ERROR: APD installation failed"
-  echo "Please check the output above for details."
-  exit 1
-fi
-
-# Cleanup happens automatically via trap
+echo "The addon will continue running in the background."
+echo "Check AAP UI to see when it completes."
