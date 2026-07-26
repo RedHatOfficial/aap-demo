@@ -40,6 +40,9 @@ spec:
               value: "8080"
             - name: ALLOW_SELF_SIGNED_CERTS
               value: "true"
+          envFrom:
+            - secretRef:
+                name: eda-playground-oauth
           resources:
             requests:
               cpu: 100m
