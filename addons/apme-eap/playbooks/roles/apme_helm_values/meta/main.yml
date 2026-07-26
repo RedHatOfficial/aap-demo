@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: Red Hat
+  description: Render portal-apme-values.yaml from EAP welcome package template
+  license: Apache-2.0
+  min_ansible_version: "2.14"
+
+dependencies: []

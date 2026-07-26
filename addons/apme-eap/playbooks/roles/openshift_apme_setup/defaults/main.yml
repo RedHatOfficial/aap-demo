@@ -1,0 +1,17 @@
+---
+# defaults for openshift_apme_setup
+
+openshift_apme_setup_validate_certs: "{{ openshift_validate_certs | default(false) }}"
+openshift_apme_setup_project_display_name: "APME automation portal"
+openshift_apme_setup_project_description: "Ansible automation portal with Ansible Quality (APME)"
+openshift_apme_setup_scaffolder_configmap_name: "apme-scaffolder-templates"
+openshift_apme_setup_registry_secret_name: "redhat-rhaap-portal-dynamic-plugins-registry-auth"
+openshift_apme_setup_scaffolder_template: "{{ role_path }}/files/apme-register-git-repository/template.yaml"
+openshift_apme_setup_openshift_registry_host: "image-registry.openshift-image-registry.svc:5000"
+# oc registry login stores credentials under the external route hostname only;
+# portal init containers pull OCI plugins via the in-cluster registry hostname.
+openshift_apme_setup_internal_registry_hosts:
+  - "image-registry.openshift-image-registry.svc:5000"
+  - "image-registry.openshift-image-registry.svc.cluster.local:5000"
+openshift_apme_setup_registry_auth_dir: "{{ playbook_dir | dirname }}/.rendered"
+openshift_apme_setup_registry_authfile: "{{ openshift_apme_setup_registry_auth_dir }}/oc-registry-auth.json"
