@@ -367,8 +367,11 @@ show_routes() {
 
   if [ -n "$apme_route" ]; then
     info "Portal Access:"
-    info "  URL: https://${apme_route}"
-    info "  Uses AAP OAuth - login via AAP credentials"
+    info "  URL:      https://${apme_route}"
+    info "  Username: admin"
+    info "  Password: ${AAP_PASSWORD}"
+    info ""
+    info "  (Uses AAP OAuth - login with AAP admin credentials shown above)"
   else
     warn "Portal route not found yet - may still be deploying"
   fi
