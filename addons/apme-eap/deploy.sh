@@ -169,35 +169,46 @@ discover_environment() {
 # ---------------------------------------------------------------------------
 
 prompt_github_token() {
-  # Allow users to optionally provide GitHub token for APME integration
+  # Allow users to optionally provide GitHub App credentials for APME integration
   # Follows the pattern from setup-pah and portal addons
 
-  # Check environment variable first
-  if [ -n "${GITHUB_TOKEN:-}" ]; then
-    info "Using GitHub token from GITHUB_TOKEN environment variable"
+  # Check environment variables first
+  if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_APP_ID:-}" ]; then
+    info "Using GitHub credentials from environment variables"
     return 0
   fi
 
   # Skip prompt if QUIET mode or non-interactive
   if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
-    info "Skipping GitHub token configuration (use GITHUB_TOKEN=... to provide)"
+    info "Skipping GitHub configuration (use GITHUB_TOKEN=... GITHUB_APP_ID=... to provide)"
     return 0
   fi
 
   echo ""
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  info "GitHub Token Configuration (Optional)"
+  info "GitHub App Configuration (Optional)"
   info ""
-  info "APME can integrate with GitHub for repository scanning and quality analysis."
-  info "This requires a GitHub Personal Access Token with repo scope."
+  info "APME integrates with GitHub for repository scanning, quality analysis,"
+  info "and code push operations directly from the portal."
   info ""
-  info "To create a token:"
-  info "  1. Visit: https://github.com/settings/tokens/new"
-  info "  2. Select scope: 'repo' (full control of private repositories)"
-  info "  3. Generate token and copy it"
+  info "This requires a GitHub App with the following permissions:"
+  info "  • Contents: Read and write"
+  info "  • Pull requests: Read and write"
   info ""
-  info "You can skip this step and configure GitHub integration later by editing:"
-  info "  $VARS_FILE"
+  info "Setup Instructions:"
+  info "  1. Create GitHub App: https://github.com/settings/apps/new"
+  info "     - Name: apme-portal-local"
+  info "     - Homepage: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io"
+  info "     - Callback: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io/api/auth/github/handler/frame"
+  info "     - Webhook: Inactive"
+  info "     - Permissions: Contents (RW), Pull requests (RW)"
+  info "  2. Generate client secret"
+  info "  3. Generate and download private key (.pem file)"
+  info "  4. Install the app on your account/org"
+  info "  5. Create Personal Access Token: https://github.com/settings/tokens/new"
+  info "     - Scopes: repo (all)"
+  info ""
+  info "You can skip this and configure later by editing: $VARS_FILE"
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
@@ -209,17 +220,71 @@ prompt_github_token() {
   fi
 
   echo ""
-  read -r -s -p "GitHub Token (input hidden): " github_token_input
+  info "Enter GitHub App credentials (from https://github.com/settings/apps):"
   echo ""
 
+  # GitHub App ID
+  read -r -p "GitHub App ID: " github_app_id_input
+  if [ -z "$github_app_id_input" ]; then
+    warn "App ID required for GitHub integration. Skipping."
+    return 0
+  fi
+
+  # GitHub App Client ID
+  read -r -p "GitHub App Client ID (starts with Iv1.): " github_app_client_id_input
+  if [ -z "$github_app_client_id_input" ]; then
+    warn "App Client ID required. Skipping."
+    return 0
+  fi
+
+  # GitHub App Client Secret
+  read -r -s -p "GitHub App Client Secret (hidden): " github_app_client_secret_input
+  echo ""
+  if [ -z "$github_app_client_secret_input" ]; then
+    warn "App Client Secret required. Skipping."
+    return 0
+  fi
+
+  # GitHub App Private Key Path
+  echo ""
+  info "Private key file location:"
+  info "  Default: $HOME/.aap-demo/apme-github-app.pem"
+  info "  (Move your downloaded .pem file here, or provide custom path)"
+  read -r -p "Private key path [~/.aap-demo/apme-github-app.pem]: " github_app_private_key_input
+  github_app_private_key_input="${github_app_private_key_input:-$HOME/.aap-demo/apme-github-app.pem}"
+
+  # Expand ~ to full path
+  github_app_private_key_input="${github_app_private_key_input/#\~/$HOME}"
+
+  if [ ! -f "$github_app_private_key_input" ]; then
+    warn "Private key file not found: $github_app_private_key_input"
+    warn "Move your .pem file to this location and re-run, or edit: $VARS_FILE"
+    return 0
+  fi
+
+  # GitHub Personal Access Token
+  echo ""
+  read -r -s -p "GitHub Personal Access Token (hidden, starts with ghp_): " github_token_input
+  echo ""
   if [ -z "$github_token_input" ]; then
-    warn "No token provided. Skipping GitHub integration."
+    warn "Personal Access Token required. Skipping."
     return 0
   fi
 
   # Export for use in generate_vars_file
+  export GITHUB_APP_ID="$github_app_id_input"
+  export GITHUB_APP_CLIENT_ID="$github_app_client_id_input"
+  export GITHUB_APP_CLIENT_SECRET="$github_app_client_secret_input"
+  export GITHUB_APP_PRIVATE_KEY_PATH="$github_app_private_key_input"
   export GITHUB_TOKEN="$github_token_input"
-  info "✓ GitHub token configured"
+
+  # Use same client ID/secret for OAuth (GitHub App can do both)
+  export GITHUB_OAUTH_CLIENT_ID="$github_app_client_id_input"
+  export GITHUB_OAUTH_CLIENT_SECRET="$github_app_client_secret_input"
+
+  info "✓ GitHub App configured"
+  info "  App ID: $GITHUB_APP_ID"
+  info "  Private Key: $GITHUB_APP_PRIVATE_KEY_PATH"
 
   return 0
 }
@@ -277,38 +342,66 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 EOF
 
   # GitHub secrets configuration
-  if [ -n "${GITHUB_TOKEN:-}" ]; then
+  if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_APP_ID:-}" ]; then
+    # Full GitHub App configuration
     cat >>"$VARS_FILE" <<EOF
 
-# GitHub secrets configuration
+# GitHub secrets configuration (full GitHub App integration)
+configure_github_secrets: true
+
+# GitHub Personal Access Token
+github_token: "${GITHUB_TOKEN}"
+
+# GitHub OAuth configuration (for user authentication)
+github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID}"
+github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET}"
+
+# GitHub App configuration (for repository operations)
+github_app_id: "${GITHUB_APP_ID}"
+github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
+github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
+github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
+EOF
+  elif [ -n "${GITHUB_TOKEN:-}" ]; then
+    # Token-only configuration (limited functionality)
+    cat >>"$VARS_FILE" <<EOF
+
+# GitHub secrets configuration (token-only mode)
 configure_github_secrets: true
 github_token: "${GITHUB_TOKEN}"
 
-# Additional GitHub OAuth/App configuration (optional, for full integration):
+# Note: Token-only mode provides limited functionality.
+# For full integration (repository push from portal), configure GitHub App:
 # github_oauth_client_id: ""
 # github_oauth_client_secret: ""
 # github_app_id: ""
 # github_app_client_id: ""
 # github_app_client_secret: ""
-# github_app_private_key_path: "/path/to/private-key.pem"
-# To configure full GitHub integration, edit: $VARS_FILE
+# github_app_private_key_path: "$HOME/.aap-demo/apme-github-app.pem"
 EOF
   else
+    # No GitHub integration
     cat >>"$VARS_FILE" <<EOF
 
 # GitHub secrets configuration
 configure_github_secrets: false
-# To enable GitHub integration, set GITHUB_TOKEN environment variable or edit this file:
-# github_token: ""
+# To enable GitHub integration, provide credentials during deployment or edit this file.
+#
+# Option 1: Token-only (basic scanning, no portal push)
+# github_token: "ghp_..."
 # configure_github_secrets: true
 #
-# Additional GitHub OAuth/App configuration (optional):
-# github_oauth_client_id: ""
-# github_oauth_client_secret: ""
-# github_app_id: ""
-# github_app_client_id: ""
-# github_app_client_secret: ""
-# github_app_private_key_path: "/path/to/private-key.pem"
+# Option 2: Full GitHub App (includes portal push, PR creation)
+# github_token: "ghp_..."
+# github_oauth_client_id: "Iv1...."
+# github_oauth_client_secret: "..."
+# github_app_id: "123456"
+# github_app_client_id: "Iv1...."
+# github_app_client_secret: "..."
+# github_app_private_key_path: "$HOME/.aap-demo/apme-github-app.pem"
+# configure_github_secrets: true
+#
+# Setup guide: https://github.com/settings/apps/new
 EOF
   fi
 
