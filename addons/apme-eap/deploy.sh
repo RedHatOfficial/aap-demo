@@ -165,6 +165,66 @@ discover_environment() {
 }
 
 # ---------------------------------------------------------------------------
+# GitHub Token Prompt
+# ---------------------------------------------------------------------------
+
+prompt_github_token() {
+  # Allow users to optionally provide GitHub token for APME integration
+  # Follows the pattern from setup-pah and portal addons
+
+  # Check environment variable first
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    info "Using GitHub token from GITHUB_TOKEN environment variable"
+    return 0
+  fi
+
+  # Skip prompt if QUIET mode or non-interactive
+  if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
+    info "Skipping GitHub token configuration (use GITHUB_TOKEN=... to provide)"
+    return 0
+  fi
+
+  echo ""
+  info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  info "GitHub Token Configuration (Optional)"
+  info ""
+  info "APME can integrate with GitHub for repository scanning and quality analysis."
+  info "This requires a GitHub Personal Access Token with repo scope."
+  info ""
+  info "To create a token:"
+  info "  1. Visit: https://github.com/settings/tokens/new"
+  info "  2. Select scope: 'repo' (full control of private repositories)"
+  info "  3. Generate token and copy it"
+  info ""
+  info "You can skip this step and configure GitHub integration later by editing:"
+  info "  $VARS_FILE"
+  info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+
+  read -r -p "Do you want to configure GitHub integration now? [y/N]: " configure_choice
+
+  if [[ ! "$configure_choice" =~ ^[Yy]$ ]]; then
+    info "Skipping GitHub integration. You can configure it later."
+    return 0
+  fi
+
+  echo ""
+  read -r -s -p "GitHub Token (input hidden): " github_token_input
+  echo ""
+
+  if [ -z "$github_token_input" ]; then
+    warn "No token provided. Skipping GitHub integration."
+    return 0
+  fi
+
+  # Export for use in generate_vars_file
+  export GITHUB_TOKEN="$github_token_input"
+  info "✓ GitHub token configured"
+
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Vars File Generation
 # ---------------------------------------------------------------------------
 
@@ -214,20 +274,45 @@ apme_helm_release_name: apme
 
 # AAP organization
 aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
+EOF
 
-# GitHub secrets (manual configuration required for repository integration)
-configure_github_secrets: false
-# To enable GitHub integration:
-# 1. Create GitHub OAuth App and GitHub App (see README.md)
-# 2. Edit this file and uncomment the following lines:
+  # GitHub secrets configuration
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    cat >>"$VARS_FILE" <<EOF
+
+# GitHub secrets configuration
+configure_github_secrets: true
+github_token: "${GITHUB_TOKEN}"
+
+# Additional GitHub OAuth/App configuration (optional, for full integration):
 # github_oauth_client_id: ""
 # github_oauth_client_secret: ""
 # github_app_id: ""
 # github_app_client_id: ""
 # github_app_client_secret: ""
 # github_app_private_key_path: "/path/to/private-key.pem"
+# To configure full GitHub integration, edit: $VARS_FILE
+EOF
+  else
+    cat >>"$VARS_FILE" <<EOF
+
+# GitHub secrets configuration
+configure_github_secrets: false
+# To enable GitHub integration, set GITHUB_TOKEN environment variable or edit this file:
 # github_token: ""
-# 3. Set configure_github_secrets: true above
+# configure_github_secrets: true
+#
+# Additional GitHub OAuth/App configuration (optional):
+# github_oauth_client_id: ""
+# github_oauth_client_secret: ""
+# github_app_id: ""
+# github_app_client_id: ""
+# github_app_client_secret: ""
+# github_app_private_key_path: "/path/to/private-key.pem"
+EOF
+  fi
+
+  cat >>"$VARS_FILE" <<EOF
 
 # OCI registry configuration (MicroShift doesn't have integrated registry)
 # oci_registry: External URL for local skopeo push (runs outside cluster)
@@ -325,6 +410,7 @@ case "$ACTION" in
     check_prerequisites
     detect_architecture
     discover_environment
+    prompt_github_token
     generate_vars_file
     setup_venv
     deploy
