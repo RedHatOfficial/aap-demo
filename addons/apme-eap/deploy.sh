@@ -220,25 +220,35 @@ prompt_github_token() {
   fi
 
   echo ""
-  info "Enter GitHub App credentials (from https://github.com/settings/apps):"
+  info "Enter GitHub App credentials:"
+  info "  (Visit your GitHub App settings: https://github.com/settings/apps/<your-app-name>)"
   echo ""
 
   # GitHub App ID
-  read -r -p "GitHub App ID: " github_app_id_input
+  info "1. GitHub App ID"
+  info "   Location: General → About → App ID (numeric, e.g., 123456)"
+  read -r -p "   Enter App ID: " github_app_id_input
   if [ -z "$github_app_id_input" ]; then
     warn "App ID required for GitHub integration. Skipping."
     return 0
   fi
 
   # GitHub App Client ID
-  read -r -p "GitHub App Client ID (starts with Iv1.): " github_app_client_id_input
+  echo ""
+  info "2. GitHub App Client ID"
+  info "   Location: General → About → Client ID (starts with Iv1. or Iv23.)"
+  read -r -p "   Enter Client ID: " github_app_client_id_input
   if [ -z "$github_app_client_id_input" ]; then
     warn "App Client ID required. Skipping."
     return 0
   fi
 
   # GitHub App Client Secret
-  read -r -s -p "GitHub App Client Secret (hidden): " github_app_client_secret_input
+  echo ""
+  info "3. GitHub App Client Secret"
+  info "   Location: General → Client secrets → Generate/copy the secret"
+  info "   (If you don't have one, click 'Generate a new client secret')"
+  read -r -s -p "   Enter Client Secret (hidden): " github_app_client_secret_input
   echo ""
   if [ -z "$github_app_client_secret_input" ]; then
     warn "App Client Secret required. Skipping."
@@ -247,10 +257,11 @@ prompt_github_token() {
 
   # GitHub App Private Key Path
   echo ""
-  info "Private key file location:"
-  info "  Default: $HOME/.aap-demo/apme-github-app.pem"
-  info "  (Move your downloaded .pem file here, or provide custom path)"
-  read -r -p "Private key path [~/.aap-demo/apme-github-app.pem]: " github_app_private_key_input
+  info "4. GitHub App Private Key"
+  info "   Location: General → Private keys → Generate/download .pem file"
+  info "   (If you don't have one, click 'Generate a private key' - file will download)"
+  info "   Move the downloaded .pem file to: $HOME/.aap-demo/apme-github-app.pem"
+  read -r -p "   Private key path [~/.aap-demo/apme-github-app.pem]: " github_app_private_key_input
   github_app_private_key_input="${github_app_private_key_input:-$HOME/.aap-demo/apme-github-app.pem}"
 
   # Expand ~ to full path
@@ -258,13 +269,20 @@ prompt_github_token() {
 
   if [ ! -f "$github_app_private_key_input" ]; then
     warn "Private key file not found: $github_app_private_key_input"
-    warn "Move your .pem file to this location and re-run, or edit: $VARS_FILE"
+    warn "Download the .pem file from GitHub App settings and move it to the path above."
+    warn "Then re-run deployment or edit: $VARS_FILE"
     return 0
   fi
 
   # GitHub Personal Access Token
   echo ""
-  read -r -s -p "GitHub Personal Access Token (hidden, starts with ghp_): " github_token_input
+  info "5. GitHub Personal Access Token (PAT)"
+  info "   Location: https://github.com/settings/tokens/new"
+  info "   - Note: 'APME Portal API Access'"
+  info "   - Expiration: 90 days (or your preference)"
+  info "   - Scopes: Check 'repo' (full control of private repositories)"
+  info "   - Generate token and copy it (starts with ghp_)"
+  read -r -s -p "   Enter Personal Access Token (hidden): " github_token_input
   echo ""
   if [ -z "$github_token_input" ]; then
     warn "Personal Access Token required. Skipping."
