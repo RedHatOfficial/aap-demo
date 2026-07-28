@@ -172,7 +172,28 @@ prompt_github_token() {
   # Allow users to optionally provide GitHub App credentials for APME integration
   # Follows the pattern from setup-pah and portal addons
 
-  # Check environment variables first - any token skips the prompt
+  # Check existing vars file for previously configured credentials
+  if [ -f "$VARS_FILE" ]; then
+    local existing_token
+    existing_token=$(grep -E '^github_token:' "$VARS_FILE" 2>/dev/null | sed 's/^github_token:[[:space:]]*//' | tr -d '"' || echo "")
+    if [ -n "$existing_token" ]; then
+      info "GitHub credentials found in $VARS_FILE — reusing existing configuration"
+      export GITHUB_TOKEN="$existing_token"
+      # Load remaining credentials if present
+      local val
+      for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret; do
+        val=$(grep -E "^${var}:" "$VARS_FILE" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
+        if [ -n "$val" ]; then
+          local env_name
+          env_name=$(echo "$var" | tr '[:lower:]' '[:upper:]')
+          export "$env_name=$val"
+        fi
+      done
+      return 0
+    fi
+  fi
+
+  # Check environment variables - any token skips the prompt
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     info "Using GitHub credentials from environment variables"
     # Default OAuth vars to App client credentials if not explicitly set
