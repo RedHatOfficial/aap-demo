@@ -58,7 +58,8 @@ The deployment uses:
 
 ### Image Source and Maintenance
 
-⚠️ **Important**: The EDA Playground image (`ghcr.io/bbgrimmett2/eda-playground:latest`) is hosted on the addon author's personal GitHub Container Registry. This is not an official Red Hat image.
+⚠️ **Important**: The EDA Playground image (`ghcr.io/bbgrimmett2/eda-playground:latest`) is hosted
+on the addon author's personal GitHub Container Registry. This is not an official Red Hat image.
 
 - **Source Repository**: https://github.com/BBGrimmett2/EDA-Playground
 - **Container Registry**: https://github.com/BBGrimmett2/EDA-Playground/pkgs/container/eda-playground
@@ -66,11 +67,13 @@ The deployment uses:
 - **Maintenance**: Maintained by @BBGrimmett2
 
 **Production Considerations**:
+
 - For production use, consider pinning to a specific image digest rather than `latest`
 - Monitor the source repository for updates and security patches
 - The image can be mirrored to an internal registry for air-gapped environments
 
 **Example - Pin to digest**:
+
 ```yaml
 # In deployment.yaml, replace:
 image: ghcr.io/bbgrimmett2/eda-playground:latest
