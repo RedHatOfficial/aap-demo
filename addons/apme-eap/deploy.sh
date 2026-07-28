@@ -436,9 +436,10 @@ deploy() {
   export ANSIBLE_ROLES_PATH="${SCRIPT_DIR}/playbooks/roles"
 
   # Run main deployment playbook directly
+  # Note: Load defaults first, then vars file so user config takes precedence
   ansible-playbook "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
-    -e "@${VARS_FILE}" \
-    -e "@${SCRIPT_DIR}/defaults.yml"
+    -e "@${SCRIPT_DIR}/defaults.yml" \
+    -e "@${VARS_FILE}"
 
   if [ $? -eq 0 ]; then
     info "APME deployment completed successfully"
