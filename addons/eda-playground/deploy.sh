@@ -31,7 +31,7 @@ ACTION="${1:-deploy}"
 
 # Validate argument
 case "$ACTION" in
-  deploy|--delete|delete)
+  deploy | --delete | delete)
     # Valid argument
     ;;
   *)
