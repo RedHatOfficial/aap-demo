@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ACTION="${1:-deploy}"
 NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
+GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
 VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
 
 # Color output
@@ -172,17 +173,16 @@ prompt_github_token() {
   # Allow users to optionally provide GitHub App credentials for APME integration
   # Follows the pattern from setup-pah and portal addons
 
-  # Check existing vars file for previously configured credentials
-  if [ -f "$VARS_FILE" ]; then
+  # Check saved credentials file from a previous deploy
+  if [ -f "$GITHUB_CREDS_FILE" ]; then
     local existing_token
-    existing_token=$(grep -E '^github_token:' "$VARS_FILE" 2>/dev/null | sed 's/^github_token:[[:space:]]*//' | tr -d '"' || echo "")
+    existing_token=$(grep -E '^github_token:' "$GITHUB_CREDS_FILE" 2>/dev/null | sed 's/^github_token:[[:space:]]*//' | tr -d '"' || echo "")
     if [ -n "$existing_token" ]; then
-      info "GitHub credentials found in $VARS_FILE — reusing existing configuration"
+      info "GitHub credentials found in $GITHUB_CREDS_FILE — reusing"
       export GITHUB_TOKEN="$existing_token"
-      # Load remaining credentials if present
       local val
       for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret; do
-        val=$(grep -E "^${var}:" "$VARS_FILE" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
+        val=$(grep -E "^${var}:" "$GITHUB_CREDS_FILE" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
         if [ -n "$val" ]; then
           local env_name
           env_name=$(echo "$var" | tr '[:lower:]' '[:upper:]')
@@ -351,7 +351,22 @@ prompt_github_token() {
   export GITHUB_OAUTH_CLIENT_ID="$github_app_client_id_input"
   export GITHUB_OAUTH_CLIENT_SECRET="$github_app_client_secret_input"
 
-  info "✓ GitHub App configured"
+  # Save credentials so future deploys skip the prompt
+  mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
+  cat >"$GITHUB_CREDS_FILE" <<CREDS
+---
+# GitHub credentials for APME portal (persisted across deploys)
+github_token: "${GITHUB_TOKEN}"
+github_app_id: "${GITHUB_APP_ID}"
+github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
+github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
+github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
+github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID}"
+github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET}"
+CREDS
+  chmod 600 "$GITHUB_CREDS_FILE"
+
+  info "✓ GitHub App configured (saved to $GITHUB_CREDS_FILE)"
   info "  App ID: $GITHUB_APP_ID"
   info "  Private Key: $GITHUB_APP_PRIVATE_KEY_PATH"
 
