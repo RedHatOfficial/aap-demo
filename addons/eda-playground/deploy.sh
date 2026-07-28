@@ -5,17 +5,14 @@
 # experimenting with Event-Driven Ansible integrations and webhooks.
 #
 # This script automatically creates an AAP OAuth application and configures
-# EDA Playground to use AAP for authentication.
+# EDA Playground to use AAP for authentication. OAuth credentials are
+# automatically persisted to ~/.aap-demo/eda-playground/oauth_credentials.json
+# and reused on subsequent deployments.
 #
 # Prerequisites:
 #   - kubectl connected to cluster
 #   - AAP deployed (aap-demo deploy)
 #   - jq installed for JSON parsing
-#
-# Environment Variables (optional - reuse existing OAuth app):
-#   EDA_OAUTH_APP_ID     OAuth application ID from AAP
-#   EDA_CLIENT_ID        OAuth client ID
-#   EDA_CLIENT_SECRET    OAuth client secret
 #
 # Usage:
 #   ./deploy.sh          # Deploy EDA Playground
@@ -27,8 +24,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-eda-playground}"
 AAP_NAMESPACE="${AAP_NAMESPACE:-aap-operator}"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-eda-playground}"
+OAUTH_DIR="${HOME}/.aap-demo/eda-playground"
+OAUTH_CREDENTIALS_FILE="${OAUTH_DIR}/oauth_credentials.json"
 
 ACTION="${1:-deploy}"
+
+# Validate argument
+case "$ACTION" in
+  deploy|--delete|delete)
+    # Valid argument
+    ;;
+  *)
+    echo "Error: Unknown argument '$ACTION'"
+    echo ""
+    echo "Usage: $0 [deploy|--delete]"
+    echo ""
+    echo "  deploy    Deploy EDA Playground (default)"
+    echo "  --delete  Remove EDA Playground"
+    exit 1
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Cleanup Function
@@ -44,12 +59,16 @@ cleanup() {
     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
 
   if [ -n "$aap_route" ] && [ -n "$admin_pass" ]; then
-    # Use environment variable if set, otherwise search by name
-    if [ -n "$EDA_OAUTH_APP_ID" ]; then
-      oauth_app_id="$EDA_OAUTH_APP_ID"
-      echo "  Deleting OAuth application (ID: $oauth_app_id) from AAP..."
-    else
-      # Search for OAuth app by name
+    # Try to load OAuth app ID from saved credentials file
+    if [ -f "$OAUTH_CREDENTIALS_FILE" ]; then
+      oauth_app_id=$(jq -r '.oauth_app_id // empty' "$OAUTH_CREDENTIALS_FILE" 2>/dev/null)
+      if [ -n "$oauth_app_id" ] && [ "$oauth_app_id" != "null" ]; then
+        echo "  Deleting OAuth application (ID: $oauth_app_id) from AAP..."
+      fi
+    fi
+
+    # If no saved credentials, search by name
+    if [ -z "$oauth_app_id" ] || [ "$oauth_app_id" = "null" ]; then
       echo "  Searching for OAuth application in AAP..."
       local encoded_app_name existing_app
       encoded_app_name=$(jq -rn --arg n "$OAUTH_APP_NAME" '$n|@uri')
@@ -76,6 +95,9 @@ cleanup() {
   else
     echo "  ⚠️  Cannot connect to AAP - skipping OAuth app deletion"
   fi
+
+  # Remove credential directory
+  rm -rf "$OAUTH_DIR" 2>/dev/null || true
 
   kubectl delete namespace "$NAMESPACE" 2>/dev/null || true
 
@@ -190,29 +212,47 @@ select_organization() {
 create_oauth_app() {
   echo "Configuring OAuth application..."
 
-  # Check environment variables first
-  if [ -n "$EDA_OAUTH_APP_ID" ] && [ -n "$EDA_CLIENT_ID" ] && [ -n "$EDA_CLIENT_SECRET" ]; then
-    OAUTH_APP_ID="$EDA_OAUTH_APP_ID"
-    CLIENT_ID="$EDA_CLIENT_ID"
-    CLIENT_SECRET="$EDA_CLIENT_SECRET"
-    echo "  Using OAuth credentials from environment variables..."
+  # Ensure credential directory exists
+  mkdir -p "$OAUTH_DIR"
+  chmod 700 "$OAUTH_DIR"
 
-    # Verify the OAuth app still exists in AAP
-    local existing_app
-    existing_app=$(curl -k -u "admin:$ADMIN_PASS" \
-      "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
-      -H "Content-Type: application/json" 2>/dev/null)
+  # Check if OAuth app already exists in AAP by name
+  local encoded_app_name existing_app existing_count
+  encoded_app_name=$(jq -rn --arg n "$OAUTH_APP_NAME" '$n|@uri')
+  existing_app=$(curl -k -u "admin:$ADMIN_PASS" \
+    "https://$AAP_ROUTE/api/gateway/v1/applications/?name=${encoded_app_name}" \
+    -H "Content-Type: application/json" 2>/dev/null)
 
-    if ! echo "$existing_app" | jq -e '.id' &>/dev/null; then
-      echo "  OAuth app ID from environment no longer exists - creating new app..."
-      OAUTH_APP_ID=""
-    else
-      echo "  ✓ OAuth app verified in AAP"
+  existing_count=$(echo "$existing_app" | jq -r '.count' 2>/dev/null || echo "0")
+
+  if [ "$existing_count" -gt 0 ]; then
+    OAUTH_APP_ID=$(echo "$existing_app" | jq -r '.results[0].id')
+    CLIENT_ID=$(echo "$existing_app" | jq -r '.results[0].client_id')
+    CLIENT_SECRET=""
+
+    # Load saved client secret (AAP never returns it after creation)
+    if [ -f "$OAUTH_CREDENTIALS_FILE" ]; then
+      local saved_id saved_secret
+      saved_id=$(jq -r '.oauth_app_id // empty' "$OAUTH_CREDENTIALS_FILE")
+      saved_secret=$(jq -r '.client_secret // empty' "$OAUTH_CREDENTIALS_FILE")
+      if [ "$saved_id" = "$OAUTH_APP_ID" ] && [ -n "$saved_secret" ]; then
+        CLIENT_SECRET="$saved_secret"
+        echo "  ✓ Using saved OAuth credentials for existing app"
+      fi
+    fi
+
+    # If no saved secret, recreate the app
+    if [ -z "$CLIENT_SECRET" ]; then
+      echo "  OAuth app exists but client secret unavailable — recreating..."
+      curl -k -u "admin:$ADMIN_PASS" \
+        -X DELETE "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
+        -H "Content-Type: application/json" &>/dev/null || true
+      existing_count=0
     fi
   fi
 
-  # Create new OAuth app if not provided via environment
-  if [ -z "$OAUTH_APP_ID" ]; then
+  # Create new OAuth app if needed
+  if [ "$existing_count" -eq 0 ]; then
     echo "  Creating new OAuth application in AAP..."
 
     local oauth_response
@@ -244,18 +284,17 @@ create_oauth_app() {
       exit 1
     fi
 
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "✓ OAuth application created!"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo ""
-    echo "To reuse these credentials on next deployment, export them:"
-    echo ""
-    echo "  export EDA_OAUTH_APP_ID=\"$OAUTH_APP_ID\""
-    echo "  export EDA_CLIENT_ID=\"$CLIENT_ID\""
-    echo "  export EDA_CLIENT_SECRET=\"$CLIENT_SECRET\"" # pragma: allowlist secret
-    echo ""
+    echo "  ✓ OAuth application created successfully"
   fi
+
+  # Save credentials to file (always, in case secret was just created)
+  jq -n \
+    --arg oauth_app_id "$OAUTH_APP_ID" \
+    --arg client_id "$CLIENT_ID" \
+    --arg client_secret "$CLIENT_SECRET" \
+    '{oauth_app_id: $oauth_app_id, client_id: $client_id, client_secret: $client_secret}' \
+    >"$OAUTH_CREDENTIALS_FILE"
+  chmod 600 "$OAUTH_CREDENTIALS_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -516,13 +555,6 @@ display_success() {
   echo "  Logs:     kubectl logs -n ${NAMESPACE} -l app=eda-playground"
   echo "  Disable:  aap-demo disable eda-playground"
   echo ""
-  if [ -z "$EDA_OAUTH_APP_ID" ]; then
-    echo "TIP: To reuse OAuth credentials on next deployment:"
-    echo "   export EDA_OAUTH_APP_ID=\"$OAUTH_APP_ID\""
-    echo "   export EDA_CLIENT_ID=\"$CLIENT_ID\""
-    echo "   export EDA_CLIENT_SECRET=\"$CLIENT_SECRET\""
-    echo ""
-  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -544,7 +576,25 @@ main() {
   deploy_manifests
   wait_for_deployment || echo "  ⚠️  Continuing despite deployment timeout..."
   patch_aap_route_host_alias || echo "  ⚠️  Host alias patch failed (may still work)"
-  update_oauth_redirect || echo "  ⚠️  OAuth redirect update failed (may still work)"
+
+  # Update OAuth redirect URI - hard fail if this doesn't work
+  if ! update_oauth_redirect; then
+    echo ""
+    echo "❌ Failed to update OAuth redirect URI"
+    echo ""
+    echo "The OAuth app was created but the redirect URI could not be updated."
+    echo "OAuth authentication will NOT work until this is fixed."
+    echo ""
+    echo "To fix this manually, run:"
+    echo ""
+    echo "  curl -k -u \"admin:\$(kubectl get secret aap-admin-password -n $AAP_NAMESPACE -o jsonpath='{.data.password}' | base64 -d)\" \\"
+    echo "    -X PATCH \"https://\$(kubectl get route aap -n $AAP_NAMESPACE -o jsonpath='{.spec.host}')/api/gateway/v1/applications/$OAUTH_APP_ID/\" \\"
+    echo "    -H \"Content-Type: application/json\" \\"
+    echo "    -d '{\"redirect_uris\": \"https://\$(kubectl get route eda-playground -n $NAMESPACE -o jsonpath='{.spec.host}')/auth/callback\"}'"
+    echo ""
+    exit 1
+  fi
+
   display_success
 }
 

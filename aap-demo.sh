@@ -1920,6 +1920,17 @@ cmd_status() {
           _ao_running=0
         fi
         ;;
+      eda-playground)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get route eda-playground -n eda-playground -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
     esac
     if [ -n "$url" ] && [ -z "$label" ]; then
       if [ "$a" = "ao-eap" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
