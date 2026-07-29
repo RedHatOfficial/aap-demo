@@ -58,7 +58,7 @@ The deployment uses:
 
 ### Image Source and Maintenance
 
-⚠️ **Important**: The EDA Playground image (`ghcr.io/bbgrimmett2/eda-playground:latest`) is hosted
+! **Important**: The EDA Playground image (`ghcr.io/bbgrimmett2/eda-playground:latest`) is hosted
 on the addon author's personal GitHub Container Registry. This is not an official Red Hat image.
 
 - **Source Repository**: https://github.com/BBGrimmett2/EDA-Playground
