@@ -18,7 +18,7 @@
 #   ./deploy.sh          # Deploy EDA Playground
 #   ./deploy.sh --delete # Remove EDA Playground
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${NAMESPACE:-eda-playground}"
@@ -26,6 +26,15 @@ AAP_NAMESPACE="${AAP_NAMESPACE:-aap-operator}"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-eda-playground}"
 OAUTH_DIR="${HOME}/.aap-demo/eda-playground"
 OAUTH_CREDENTIALS_FILE="${OAUTH_DIR}/oauth_credentials.json"
+
+# Global Variables (set by functions during execution):
+#   AAP_ROUTE, ADMIN_PASS      - Set by get_aap_credentials()
+#   ORG_ID, ORG_NAME           - Set by select_organization()
+#   OAUTH_APP_ID, CLIENT_ID, CLIENT_SECRET - Set by create_oauth_app()
+#   SESSION_SECRET             - Set by generate_session_secret()
+#   CLUSTER_DOMAIN, IS_MICROSHIFT, COOKIE_DOMAIN - Set by get_cluster_info()
+#   AAP_BASE_URL               - Set by main() from get_aap_host_url()
+#   EDA_ROUTE                  - Set by update_oauth_redirect()
 
 ACTION="${1:-deploy}"
 
@@ -90,14 +99,20 @@ cleanup() {
         -H "Content-Type: application/json" &>/dev/null || true
       echo "  ✓ OAuth app deleted from AAP"
     else
-      echo "  ⚠️  OAuth app not found in AAP (may have been deleted manually)"
+      echo "  !  OAuth app not found in AAP (may have been deleted manually)"
     fi
   else
-    echo "  ⚠️  Cannot connect to AAP - skipping OAuth app deletion"
+    echo "  !  Cannot connect to AAP - skipping OAuth app deletion"
   fi
 
   # Remove credential directory
   rm -rf "$OAUTH_DIR" 2>/dev/null || true
+
+  # Remove SCC binding before deleting namespace
+  if command -v oc &>/dev/null; then
+    oc adm policy remove-scc-from-user anyuid -z eda-playground-sa -n "${NAMESPACE}" \
+      2>/dev/null || true
+  fi
 
   kubectl delete namespace "$NAMESPACE" 2>/dev/null || true
 
@@ -117,20 +132,20 @@ check_prerequisites() {
 
   # Check kubectl connectivity
   if ! kubectl cluster-info &>/dev/null; then
-    echo "❌ Cannot connect to Kubernetes cluster"
+    echo "✗ Cannot connect to Kubernetes cluster"
     exit 1
   fi
 
   # Check AAP deployment
   if ! kubectl get route aap -n "$AAP_NAMESPACE" &>/dev/null; then
-    echo "❌ AAP not deployed in namespace: $AAP_NAMESPACE"
+    echo "✗ AAP not deployed in namespace: $AAP_NAMESPACE"
     echo "   Run 'aap-demo deploy' first"
     exit 1
   fi
 
   # Check jq installed
   if ! command -v jq &>/dev/null; then
-    echo "❌ jq not found - required for JSON parsing"
+    echo "✗ jq not found - required for JSON parsing"
     echo "   Install: brew install jq (macOS) or apt install jq (Linux)"
     exit 1
   fi
@@ -147,21 +162,21 @@ get_aap_credentials() {
   AAP_ROUTE=$(kubectl get route aap -n "$AAP_NAMESPACE" \
     -o jsonpath='{.spec.host}' 2>/dev/null)
   if [ -z "$AAP_ROUTE" ]; then
-    echo "❌ Failed to get AAP route"
+    echo "✗ Failed to get AAP route"
     exit 1
   fi
 
   ADMIN_PASS=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
   if [ -z "$ADMIN_PASS" ]; then
-    echo "❌ Failed to get AAP admin password"
+    echo "✗ Failed to get AAP admin password"
     exit 1
   fi
 
   # Test AAP connectivity
   if ! curl -k -u "admin:$ADMIN_PASS" "https://$AAP_ROUTE/api/gateway/v1/ping/" \
     --max-time 10 &>/dev/null; then
-    echo "❌ Cannot reach AAP at https://$AAP_ROUTE"
+    echo "✗ Cannot reach AAP at https://$AAP_ROUTE"
     exit 1
   fi
 
@@ -199,7 +214,7 @@ select_organization() {
   fi
 
   if [ -z "$ORG_ID" ] || [ "$ORG_ID" = "null" ]; then
-    echo "❌ Failed to get/create organization"
+    echo "✗ Failed to get/create organization"
     exit 1
   fi
 
@@ -217,7 +232,8 @@ create_oauth_app() {
   chmod 700 "$OAUTH_DIR"
 
   # Check if OAuth app already exists in AAP by name
-  local encoded_app_name existing_app existing_count
+  local encoded_app_name existing_app existing_count need_create
+  need_create=false
   encoded_app_name=$(jq -rn --arg n "$OAUTH_APP_NAME" '$n|@uri')
   existing_app=$(curl -k -u "admin:$ADMIN_PASS" \
     "https://$AAP_ROUTE/api/gateway/v1/applications/?name=${encoded_app_name}" \
@@ -247,12 +263,12 @@ create_oauth_app() {
       curl -k -u "admin:$ADMIN_PASS" \
         -X DELETE "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
         -H "Content-Type: application/json" &>/dev/null || true
-      existing_count=0
+      need_create=true
     fi
   fi
 
   # Create new OAuth app if needed
-  if [ "$existing_count" -eq 0 ]; then
+  if [ "$need_create" = true ] || [ "$existing_count" -eq 0 ]; then
     echo "  Creating new OAuth application in AAP..."
 
     local oauth_response
@@ -273,13 +289,13 @@ create_oauth_app() {
     CLIENT_SECRET=$(echo "$oauth_response" | jq -r '.client_secret')
 
     if [ -z "$CLIENT_ID" ] || [ "$CLIENT_ID" = "null" ]; then
-      echo "❌ Failed to create OAuth application"
+      echo "✗ Failed to create OAuth application"
       echo "   Response: $oauth_response"
       exit 1
     fi
 
     if [ -z "$CLIENT_SECRET" ] || [ "$CLIENT_SECRET" = "null" ]; then
-      echo "❌ Failed to obtain OAuth client secret"
+      echo "✗ Failed to obtain OAuth client secret"
       echo "   Response: $oauth_response"
       exit 1
     fi
@@ -303,11 +319,11 @@ create_oauth_app() {
 generate_session_secret() {
   echo "Generating session secret..."
 
-  # Generate 32-character random string (matching ao-eap pattern)
-  SESSION_SECRET=$(head -c 48 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
+  # Generate 32-character random hex string (always produces exactly 32 chars)
+  SESSION_SECRET=$(openssl rand -hex 16)
 
   if [ -z "$SESSION_SECRET" ] || [ ${#SESSION_SECRET} -lt 32 ]; then
-    echo "❌ Failed to generate session secret"
+    echo "✗ Failed to generate session secret"
     exit 1
   fi
 
@@ -333,7 +349,13 @@ get_cluster_info() {
   fi
 
   if [ -z "$CLUSTER_DOMAIN" ]; then
-    echo "❌ Failed to determine cluster domain"
+    echo "✗ Failed to determine cluster domain"
+    exit 1
+  fi
+
+  # Validate cluster domain doesn't contain pipe character (would break sed)
+  if [[ "$CLUSTER_DOMAIN" == *"|"* ]]; then
+    echo "✗ Invalid cluster domain (contains pipe character)"
     exit 1
   fi
 
@@ -375,7 +397,7 @@ patch_aap_route_host_alias() {
   aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
 
   if [ -z "$aap_ip" ]; then
-    echo "  ⚠️  Could not resolve AAP service ClusterIP; skipping host alias"
+    echo "  !  Could not resolve AAP service ClusterIP; skipping host alias"
     return 1
   fi
 
@@ -389,26 +411,22 @@ patch_aap_route_host_alias() {
     return 0
   fi
 
-  # Patch deployment with hostAliases
+  # Patch deployment with hostAliases (using jq for safe JSON construction)
   echo "  Patching deployment with hostAliases ($AAP_ROUTE → $aap_ip)..."
-  kubectl patch deployment eda-playground -n "$NAMESPACE" --type=merge -p "{
-    \"spec\": {
-      \"template\": {
-        \"spec\": {
-          \"hostAliases\": [
-            {\"ip\": \"$aap_ip\", \"hostnames\": [\"$AAP_ROUTE\"]}
-          ]
-        }
-      }
-    }
-  }"
+  local patch_json
+  patch_json=$(jq -n \
+    --arg ip "$aap_ip" \
+    --arg host "$AAP_ROUTE" \
+    '{spec: {template: {spec: {hostAliases: [{ip: $ip, hostnames: [$host]}]}}}}')
+
+  kubectl patch deployment eda-playground -n "$NAMESPACE" --type=merge -p "$patch_json"
 
   # Wait for rollout
   echo "  Waiting for deployment rollout after host alias patch..."
   if ! kubectl rollout status deployment/eda-playground \
     -n "$NAMESPACE" \
     --timeout=180s 2>/dev/null; then
-    echo "  ⚠️  Rollout after host alias patch is still in progress"
+    echo "  !  Rollout after host alias patch is still in progress"
     return 1
   fi
 
@@ -464,9 +482,9 @@ deploy_manifests() {
   # Create namespace
   kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
 
-  # Grant anyuid SCC (needed for OpenShift/MicroShift)
+  # Grant anyuid SCC to dedicated ServiceAccount (least-privilege)
   if command -v oc &>/dev/null; then
-    oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" \
+    oc adm policy add-scc-to-user anyuid -z eda-playground-sa -n "${NAMESPACE}" \
       2>/dev/null || true
   fi
 
@@ -490,7 +508,7 @@ wait_for_deployment() {
 
   if ! kubectl wait --for=condition=available deployment/eda-playground \
     -n "$NAMESPACE" --timeout=180s 2>/dev/null; then
-    echo "  ⚠️  Deployment taking longer than expected"
+    echo "  !  Deployment taking longer than expected"
     echo "     Check: kubectl get pods -n $NAMESPACE"
     return 1
   else
@@ -509,7 +527,7 @@ update_oauth_redirect() {
     -o jsonpath='{.spec.host}' 2>/dev/null)
 
   if [ -z "$EDA_ROUTE" ]; then
-    echo "  ⚠️  Failed to get EDA Playground route"
+    echo "  !  Failed to get EDA Playground route"
     echo "     OAuth redirect URI not updated - may need manual configuration"
     return 1
   fi
@@ -541,6 +559,8 @@ display_success() {
   echo ""
   echo "OAuth Configuration:"
   echo "  App ID:        $OAUTH_APP_ID"
+  # Note: client_id is intentionally public per OAuth2 RFC 6749 Section 2.2
+  # Only client_secret must be protected (which we correctly omit from output)
   echo "  Client ID:     $CLIENT_ID"
   echo "  Redirect URI:  https://${EDA_ROUTE}/auth/callback"
   echo ""
@@ -572,15 +592,21 @@ main() {
   AAP_BASE_URL=$(get_aap_host_url)
   echo "  ✓ Using AAP base URL for pod: $AAP_BASE_URL"
 
+  # Validate AAP_BASE_URL is not empty
+  if [ -z "$AAP_BASE_URL" ]; then
+    echo "✗ Failed to determine AAP base URL"
+    exit 1
+  fi
+
   create_oauth_secret
   deploy_manifests
-  wait_for_deployment || echo "  ⚠️  Continuing despite deployment timeout..."
-  patch_aap_route_host_alias || echo "  ⚠️  Host alias patch failed (may still work)"
+  wait_for_deployment || echo "  !  Continuing despite deployment timeout..."
+  patch_aap_route_host_alias || echo "  !  Host alias patch failed (may still work)"
 
   # Update OAuth redirect URI - hard fail if this doesn't work
   if ! update_oauth_redirect; then
     echo ""
-    echo "❌ Failed to update OAuth redirect URI"
+    echo "✗ Failed to update OAuth redirect URI"
     echo ""
     echo "The OAuth app was created but the redirect URI could not be updated."
     echo "OAuth authentication will NOT work until this is fixed."
