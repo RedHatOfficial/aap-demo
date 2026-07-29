@@ -206,7 +206,7 @@ printf "${_GREEN}▸${_NC} CRC preset: ${CURRENT_PRESET}\n"
 # Configure CRC resources
 # ---------------------------------------------------------------------------
 CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-8}}"
-CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-16384}}"
+CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-24576}}"
 CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-100}}"
 CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-50}}"
 
