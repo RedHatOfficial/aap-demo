@@ -1924,8 +1924,13 @@ cmd_status() {
         if [ "$enabled" = true ]; then
           url="https://$(kubectl get route eda-playground -n eda-playground -o jsonpath='{.spec.host}' 2>/dev/null || true)"
           if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            # Check if namespace exists to distinguish between disabled and deploying
+            if kubectl get namespace eda-playground &>/dev/null; then
+              label="deploying"
+            else
+              label="not-deployed"
+            fi
             url=""
-            label="not-deployed"
           fi
         else
           label="disabled"
