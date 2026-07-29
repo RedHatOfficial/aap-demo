@@ -18,6 +18,7 @@ cd aap-demo && ./install.sh
 ## Prerequisites
 
 - **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
+- **24GB RAM** — Default VM allocation (override with `CRC_MEMORY=16384 aap-demo create` for 16GB)
 - **Pull secret** (required for all deploys):
 
 ```bash
