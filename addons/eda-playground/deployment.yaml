@@ -20,7 +20,7 @@ spec:
         app.kubernetes.io/name: eda-playground
         app.kubernetes.io/component: web
     spec:
-      serviceAccountName: default
+      serviceAccountName: eda-playground-sa
       securityContext:
         runAsNonRoot: true
         seccompProfile:

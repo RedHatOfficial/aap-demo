@@ -6,3 +6,11 @@ metadata:
   labels:
     app.kubernetes.io/name: eda-playground
     app.kubernetes.io/managed-by: aap-demo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eda-playground-sa
+  namespace: eda-playground
+  labels:
+    app.kubernetes.io/name: eda-playground
