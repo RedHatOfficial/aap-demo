@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap)
+    mcp-server | portal | setup-pah | ao-eap | apme-eap | scale-down)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -388,6 +388,7 @@ Addons:
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao-eap   Install Automation Orchestrator Early Access
+  enable scale-down Scale down non-AAP OpenShift components (frees RAM/CPU)
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -435,8 +436,12 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (mcp-server, portal, setup-pah)
+    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, scale-down)
     disable [addon] Disable an addon
+                    scale-down: Scale non-AAP OpenShift platform components to 0
+                    replicas (monitoring, console, insights, registry, addons).
+                    Frees CPU/RAM for AAP. Only applies to full OpenShift.
+                    Restore with: aap-demo disable scale-down
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
     update          Pull latest code and reinstall
@@ -1121,54 +1126,6 @@ cmd_diagnose() {
     fi
   fi
   echo ""
-
-  # =========================================================================
-  # Collection Sources
-  # =========================================================================
-  echo ""
-  echo "Collection Sources:"
-
-  # Check ansible.cfg existence
-  if [ -f "ansible.cfg" ]; then
-    _check_pass "ansible.cfg exists"
-
-    # Check for galaxy server configuration
-    if grep -q "\[galaxy\]" ansible.cfg; then
-      _check_pass "Galaxy server configuration present"
-    else
-      _check_warn "No galaxy server configuration in ansible.cfg"
-      _check_info "Run: aap-demo deploy to regenerate config"
-    fi
-  else
-    _check_warn "ansible.cfg not found"
-  fi
-
-  # Check credential files
-  if [ -f "$HOME/.aap-demo/galaxy-token" ]; then
-    _check_pass "console.redhat.com token present"
-  else
-    _check_info "console.redhat.com token not configured"
-    _check_info "Get token from: https://console.redhat.com/ansible/automation-hub/token"
-  fi
-
-  if [ -f "$HOME/.aap-demo/pah-config.yml" ]; then
-    _check_pass "Private Automation Hub config present"
-  else
-    _check_info "Private Automation Hub not configured (optional)"
-  fi
-
-  # Check collection installation
-  if command -v ansible-galaxy >/dev/null 2>&1; then
-    required_collections=("ansible.controller" "infra.aap_configuration")
-    for collection in "${required_collections[@]}"; do
-      if ansible-galaxy collection list 2>/dev/null | grep -q "^$collection"; then
-        _check_pass "Collection $collection installed"
-      else
-        _check_warn "Collection $collection not found"
-        _check_info "Run: aap-demo deploy to install collections"
-      fi
-    done
-  fi
 
   # =========================================================================
   # DNS
@@ -1986,6 +1943,7 @@ cmd_destroy() {
   fi
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
+    rm -f "${HOME}/.aap-demo/scale-down-state"
     echo "✓ CRC cluster deleted"
     if [ "${_DESTROY_RESET:-false}" = "true" ]; then
       rm -f "$AAP_DEMO_CONFIG"
@@ -2159,17 +2117,44 @@ deploy_latest() {
   echo ""
 
   AAP_CHANNEL="stable-2.7"
-  AAP_OCP_VERSION="${AAP_OCP_VERSION:-4.20}"
+  # Auto-detect OCP version from CRC status (e.g. 4.22.0 → 4.22)
+  if [ -z "${AAP_OCP_VERSION:-}" ]; then
+    _crc_ocp_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('openshiftVersion',''))" 2>/dev/null || true)
+    if [[ "$_crc_ocp_version" =~ ^([0-9]+\.[0-9]+) ]]; then
+      AAP_OCP_VERSION="${BASH_REMATCH[1]}"
+    else
+      AAP_OCP_VERSION="4.20"
+    fi
+  fi
 
   # Validate OCP version format
   if ! [[ "$AAP_OCP_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
-    echo "ERROR: Invalid AAP_OCP_VERSION: '$AAP_OCP_VERSION' (expected format: X.Y, e.g. 4.20)"
+    echo "ERROR: Invalid AAP_OCP_VERSION: '$AAP_OCP_VERSION' (expected format: X.Y, e.g. 4.22)"
     exit 1
   fi
 
   # Setup namespace (creates aap-operator namespace + pull secret)
   setup_namespace
   verify_coredns
+
+  # Relax container signature policy for operator index images (MicroShift 4.22+
+  # enforces GPG signatures but the index images may fail verification)
+  _deploy_ssh_key="$(_detect_crc_ssh_key 2>/dev/null || true)"
+  if [ -n "$_deploy_ssh_key" ]; then
+    _deploy_ssh_opts="-i $_deploy_ssh_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+    ssh -p 2222 $_deploy_ssh_opts core@127.0.0.1 'sudo python3 -c "
+import json, sys
+p = \"/etc/containers/policy.json\"
+with open(p) as f: d = json.load(f)
+reg = d.get(\"transports\",{}).get(\"docker\",{}).get(\"registry.redhat.io\",[])
+if reg and reg[0].get(\"type\") != \"insecureAcceptAnything\":
+    d[\"transports\"][\"docker\"][\"registry.redhat.io\"] = [{\"type\": \"insecureAcceptAnything\"}]
+    with open(p, \"w\") as f: json.dump(d, f, indent=4)
+    print(\"  ✓ Signature policy relaxed for registry.redhat.io\")
+else:
+    print(\"  Signature policy already relaxed\")
+"' 2>/dev/null || true
+  fi
 
   # Create CatalogSource in aap-operator namespace
   # (not openshift-marketplace — upstream OLM doesn't create pods there on OpenShift Local)
@@ -2286,17 +2271,26 @@ verify_coredns() {
     return 0 # No CoreDNS configmap — skip check
   fi
 
+  local _needs_fix=false
   if [[ "$corefile" == *"rewrite"*"router-internal-default"* ]]; then
-    # Verify the rewrite matches a real domain, not a garbled value
     if [[ "$corefile" == *"baseDomain:"* ]]; then
-      printf "  \033[1;33mWARNING: CoreDNS rewrite rule is malformed (contains literal 'baseDomain:')\033[0m\n"
-      echo "  Run 'aap-demo create' to fix, or manually patch the dns-default configmap."
-      echo "  Without this fix, hub deployment will fail its route health check."
+      printf "  \033[1;33mCoreDNS rewrite rule is malformed — fixing...\033[0m\n"
+      _needs_fix=true
     fi
   else
-    printf "  \033[1;33mWARNING: CoreDNS has no rewrite rule for in-cluster route resolution\033[0m\n"
-    echo "  Pods may not be able to reach routes via nip.io."
-    echo "  Run 'aap-demo create' to configure CoreDNS."
+    printf "  CoreDNS missing rewrite rule — configuring...\n"
+    _needs_fix=true
+  fi
+
+  if [ "$_needs_fix" = true ] && [ -f "${SCRIPT_DIR}/includes/crc-create.sh" ]; then
+    bash -c "
+      AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
+      source '${SCRIPT_DIR}/includes/crc-create.sh'
+      configure_coredns
+    " || {
+      printf "  \033[1;33mWARNING: CoreDNS auto-fix failed\033[0m\n"
+      echo "  Run 'aap-demo create' to configure CoreDNS manually."
+    }
   fi
 }
 
@@ -2466,11 +2460,13 @@ create_aap_instance() {
     sed "s|__PUBLIC_BASE_URL__|${PUBLIC_URL}|g" "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
   else
     echo "Using CR: $cr_name"
-    # Adjust hub storage based on available StorageClasses
+    # Adjust CR based on cluster type
     if kubectl get sc nfs-local-rwx &>/dev/null; then
-      kubectl apply -f "$cr_file" -n "$NAMESPACE"
+      # MicroShift — add hub route_host for nip.io domain
+      sed "s|storage_type: file|storage_type: file\n    route_host: aap-hub-${NAMESPACE}.apps.127.0.0.1.nip.io|" \
+        "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
     else
-      # No RWX storage — fall back to default SC with ReadWriteOnce
+      # Full OpenShift — no RWX storage, fall back to ReadWriteOnce; no route_host needed
       sed -e 's/file_storage_storage_class: nfs-local-rwx/# file_storage_storage_class: (using default)/' \
         -e 's/file_storage_access_mode: ReadWriteMany/file_storage_access_mode: ReadWriteOnce/' \
         "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
@@ -2478,12 +2474,87 @@ create_aap_instance() {
     fi
   fi
 
+  # Fix CSI hostpath volume permissions for postgres on full OpenShift CRC.
+  # The CSI hostpath provisioner creates root-owned volumes but postgres
+  # runs as UID 26 under the anyuid SCC which doesn't support fsGroup.
+  _fix_csi_hostpath_permissions
+
   # Patch gateway deployment for OpenShift Local compatibility
   # The gateway pod needs NET_BIND_SERVICE capability but the operator
   # doesn't add it. On full OpenShift the privileged SCC grants all
   # capabilities automatically, but on OpenShift Local the SCC admission
   # controller picks restricted-v2 which doesn't include it.
   _patch_gateway_capability
+}
+
+_fix_csi_hostpath_permissions() {
+  # Only needed on full OpenShift CRC where the CSI hostpath provisioner
+  # creates root-owned volumes. MicroShift uses topolvm/NFS which handles
+  # permissions correctly.
+  local preset
+  preset=$(crc config get preset 2>/dev/null | awk '{print $NF}' || echo "")
+  if [ "$preset" = "microshift" ]; then
+    return 0
+  fi
+
+  if ! kubectl get sc crc-csi-hostpath-provisioner &>/dev/null; then
+    return 0
+  fi
+
+  if [ -z "$CRC_SSH_OPTS" ]; then
+    source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
+  fi
+  if [ -z "$CRC_SSH_OPTS" ]; then
+    echo "  ⚠ SSH not available — skipping CSI permission fix"
+    return 0
+  fi
+
+  echo ""
+  echo "Fixing CSI hostpath volume permissions..."
+
+  # Wait for at least one PVC to be bound
+  local attempts=0
+  while ! kubectl get pvc -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q Bound; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -gt 60 ]; then
+      echo "  ⚠ No PVCs bound after 5 minutes — skipping permission fix"
+      return 0
+    fi
+    sleep 5
+  done
+
+  # Fix each bound PVC — map PVC name pattern to the UID its pod runs as
+  local pvc_name pv_name vol_path uid label
+  while IFS=' ' read -r pvc_name pv_name; do
+    [ -z "$pvc_name" ] && continue
+    [ -z "$pv_name" ] && continue
+
+    # Determine UID from PVC name
+    case "$pvc_name" in
+      *postgres*)  uid=26;   label="postgres" ;;
+      *hub-file*)  uid=1000; label="hub"      ;;
+      *hub-redis*) uid=1001; label="hub-redis" ;;
+      *)           continue ;;
+    esac
+
+    vol_path="/var/lib/csi-hostpath-data/${pv_name}"
+    if ssh -p "${CRC_SSH_PORT:-2222}" $CRC_SSH_OPTS core@127.0.0.1 \
+      "sudo test -d '${vol_path}'" 2>/dev/null; then
+      ssh -p "${CRC_SSH_PORT:-2222}" $CRC_SSH_OPTS core@127.0.0.1 \
+        "sudo chown -R ${uid}:0 '${vol_path}'" 2>/dev/null
+      echo "  ✓ ${label} volume (UID ${uid})"
+    fi
+  done <<< "$(kubectl get pvc -n "$NAMESPACE" --no-headers 2>/dev/null | awk '$2=="Bound" {print $1, $3}')"
+
+  # Restart any crash-looping pods so they pick up the fixed permissions
+  local pod_name pod_status
+  while read -r pod_name pod_status; do
+    [ -z "$pod_name" ] && continue
+    if [ "$pod_status" = "CrashLoopBackOff" ] || [ "$pod_status" = "Error" ] || [ "$pod_status" = "Init:Error" ] || [ "$pod_status" = "Init:CrashLoopBackOff" ]; then
+      kubectl delete pod "$pod_name" -n "$NAMESPACE" --wait=false 2>/dev/null || true
+      echo "  ✓ Restarted $pod_name"
+    fi
+  done <<< "$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1, $3}')"
 }
 
 _patch_gateway_capability() {
@@ -2640,7 +2711,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap scale-down"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
@@ -2754,6 +2825,66 @@ cmd_disable() {
     return 1
   fi
 }
+
+# ---------------------------------------------------------------------------
+# Auto-update check (skip for help, update, and empty commands)
+# ---------------------------------------------------------------------------
+_check_for_updates() {
+  local repo_root="$SCRIPT_DIR"
+
+  # Must be a git repo
+  git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null || return 0
+
+  # Fetch latest (quick, no merge)
+  git -C "$repo_root" fetch --quiet 2>/dev/null || return 0
+
+  local local_head remote_head
+  local_head=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)
+  remote_head=$(git -C "$repo_root" rev-parse '@{u}' 2>/dev/null) || return 0
+
+  if [ "$local_head" = "$remote_head" ]; then
+    return 0
+  fi
+
+  local behind
+  behind=$(git -C "$repo_root" rev-list --count HEAD..'@{u}' 2>/dev/null || echo "0")
+  if [ "$behind" -eq 0 ]; then
+    return 0
+  fi
+
+  echo ""
+  printf "\033[0;33m▸ Update available:\033[0m %s commit(s) behind remote\n" "$behind"
+  printf "  Pull latest now? [Y/n] (auto-continuing in 10s): "
+  if [ -t 0 ]; then
+    read -t 10 -r _update_choice </dev/tty || _update_choice=""
+  else
+    _update_choice=""
+  fi
+  _update_choice="${_update_choice:-Y}"
+
+  case "$_update_choice" in
+    [nN]*)
+      echo "  Skipped — run 'aap-demo update' later"
+      ;;
+    *)
+      echo "  Pulling latest..."
+      if git -C "$repo_root" pull --quiet 2>/dev/null; then
+        echo "  ✓ Updated to latest"
+      else
+        printf "  \033[0;33mWarning: git pull failed — continuing with current version\033[0m\n"
+      fi
+      ;;
+  esac
+  echo ""
+}
+
+case "$COMMAND" in
+  help | --help | -h | update | "")
+    ;;
+  *)
+    _check_for_updates
+    ;;
+esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in

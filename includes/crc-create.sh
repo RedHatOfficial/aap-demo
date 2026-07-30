@@ -23,13 +23,41 @@ _YELLOW='\033[0;33m'
 _BOLD='\033[1m'
 _NC='\033[0m'
 
+_save_config_key() {
+  local key="$1" value="$2"
+  local config="${HOME}/.aap-demo/config"
+  mkdir -p "$(dirname "$config")"
+  if [ -f "$config" ] && grep -q "^${key}=" "$config"; then
+    sed -i.bak "s/^${key}=.*/${key}=${value}/" "$config" && rm -f "${config}.bak"
+  else
+    echo "${key}=${value}" >> "$config"
+  fi
+}
+
+_detect_host_resources() {
+  case "$(uname -s)" in
+    Darwin)
+      HOST_CPUS=$(sysctl -n hw.ncpu 2>/dev/null || echo "0")
+      HOST_MEMORY_MB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo "0") / 1024 / 1024 ))
+      ;;
+    Linux)
+      HOST_CPUS=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo "0")
+      HOST_MEMORY_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo "0")
+      ;;
+    *)
+      HOST_CPUS=0
+      HOST_MEMORY_MB=0
+      ;;
+  esac
+}
+
 configure_coredns() {
   local current_preset route_domain current_domain escaped_domain current_corefile corefile
   local crc_ssh_key crc_ssh_opts
 
   # Re-detect SSH key now that cluster is running
   if crc_ssh_key="$(_detect_crc_ssh_key 2>/dev/null)"; then
-    crc_ssh_opts="-i ${crc_ssh_key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+    crc_ssh_opts="-i ${crc_ssh_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
   else
     echo "ERROR: No CRC SSH key found. Cannot configure CoreDNS." >&2
     return 1
@@ -40,7 +68,7 @@ configure_coredns() {
     current_preset=$(crc config get preset 2>/dev/null || echo "")
     [ -n "$current_preset" ] && current_preset=$(echo "$current_preset" | awk '{print $NF}')
   fi
-  current_preset="${current_preset:-${CRC_PRESET:-microshift}}"
+  current_preset="${current_preset:-${CRC_PRESET:-openshift}}"
 
   printf "${_GREEN}▸${_NC} Configuring CoreDNS for in-cluster route resolution...\n"
 
@@ -166,36 +194,49 @@ if [ "$CRC_STATUS" = "Running" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Preset selection (if not already configured)
+# Preset selection
 # ---------------------------------------------------------------------------
 CURRENT_PRESET=$(crc config get preset 2>/dev/null || echo "")
 [ -n "$CURRENT_PRESET" ] && CURRENT_PRESET=$(echo "$CURRENT_PRESET" | awk '{print $NF}')
 
-if [ "$CRC_STATUS" = "Unknown" ] || [ -z "$CURRENT_PRESET" ] || [ "$CURRENT_PRESET" = "openshift" ]; then
-  # Check if preset was saved in aap-demo config
-  SAVED_PRESET=""
+if [ "$CRC_STATUS" = "Unknown" ] || [ -z "$CURRENT_PRESET" ]; then
+  # Determine default for the prompt: saved config > openshift
+  _PRESET_DEFAULT=""
   if [ -f "${HOME}/.aap-demo/config" ]; then
-    SAVED_PRESET=$(grep '^CRC_PRESET=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
+    _PRESET_DEFAULT=$(grep '^CRC_PRESET=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
+  fi
+  _PRESET_DEFAULT="${_PRESET_DEFAULT:-openshift}"
+
+  if [ "$_PRESET_DEFAULT" = "microshift" ]; then
+    _DEFAULT_NUM=2
+  else
+    _DEFAULT_NUM=1
   fi
 
-  if [ -z "$SAVED_PRESET" ]; then
-    # Default to microshift
-    SAVED_PRESET="microshift"
+  if [ -t 0 ]; then
+    echo ""
+    printf "${_BOLD}Select cluster type:${_NC}\n"
+    echo ""
+    echo "  1) OpenShift  (full — includes console, monitoring, OAuth)"
+    echo "  2) MicroShift (lightweight — lower resources, faster startup)"
+    echo ""
+    printf "  Choice [${_DEFAULT_NUM}]: "
+    read -r _preset_choice </dev/tty
+    _preset_choice="${_preset_choice:-${_DEFAULT_NUM}}"
 
-    # Save to config
-    mkdir -p "$(dirname "${HOME}/.aap-demo/config")"
-    if [ -f "${HOME}/.aap-demo/config" ]; then
-      if grep -q '^CRC_PRESET=' "${HOME}/.aap-demo/config"; then
-        /usr/local/bin/sed -i "s/^CRC_PRESET=.*/CRC_PRESET=${SAVED_PRESET}/" "${HOME}/.aap-demo/config"
-      else
-        echo "CRC_PRESET=${SAVED_PRESET}" >>"${HOME}/.aap-demo/config"
-      fi
-    else
-      echo "CRC_PRESET=${SAVED_PRESET}" >>"${HOME}/.aap-demo/config"
-    fi
-    printf "Saved preset: ${SAVED_PRESET}\n"
+    case "$_preset_choice" in
+      1|openshift|OpenShift)  SAVED_PRESET="openshift" ;;
+      2|microshift|MicroShift) SAVED_PRESET="microshift" ;;
+      *)
+        printf "${_YELLOW}  Invalid choice, defaulting to ${_PRESET_DEFAULT}${_NC}\n"
+        SAVED_PRESET="$_PRESET_DEFAULT"
+        ;;
+    esac
+  else
+    SAVED_PRESET="${CRC_PRESET:-openshift}"
   fi
 
+  _save_config_key "CRC_PRESET" "$SAVED_PRESET"
   crc config set preset "$SAVED_PRESET" 2>/dev/null
   CURRENT_PRESET="$SAVED_PRESET"
 fi
@@ -203,12 +244,86 @@ fi
 printf "${_GREEN}▸${_NC} CRC preset: ${CURRENT_PRESET}\n"
 
 # ---------------------------------------------------------------------------
+# Detect host resources
+# ---------------------------------------------------------------------------
+_detect_host_resources
+HOST_CPUS="${HOST_CPUS:-0}"
+HOST_MEMORY_MB="${HOST_MEMORY_MB:-0}"
+
+if [ "$HOST_CPUS" -gt 0 ] && [ "$HOST_MEMORY_MB" -gt 0 ]; then
+  printf "${_GREEN}▸${_NC} Host resources: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM\n"
+
+  if [ "$CURRENT_PRESET" = "openshift" ]; then
+    if [ "$HOST_CPUS" -lt 6 ] || [ "$HOST_MEMORY_MB" -lt 14336 ]; then
+      echo ""
+      printf "  ${_RED}Warning:${_NC} OpenShift requires at least 6 CPUs and 14GB RAM.\n"
+      printf "  Your host has ${HOST_CPUS} CPUs and $((HOST_MEMORY_MB / 1024))GB RAM.\n"
+      printf "  ${_YELLOW}Consider using MicroShift instead (CRC_PRESET=microshift).${_NC}\n"
+      echo ""
+    elif [ "$HOST_CPUS" -le 8 ] && [ "$HOST_MEMORY_MB" -le 16384 ]; then
+      echo ""
+      printf "  ${_YELLOW}Note:${_NC} OpenShift will use most of your available resources.\n"
+      printf "  Recommended: 8+ CPUs, 20GB+ RAM\n"
+      printf "  ${_YELLOW}Tip: 'aap-demo enable scale-down' can free resources after creation.${_NC}\n"
+      echo ""
+    fi
+  else
+    if [ "$HOST_CPUS" -lt 4 ] || [ "$HOST_MEMORY_MB" -lt 10240 ]; then
+      echo ""
+      printf "  ${_RED}Warning:${_NC} MicroShift requires at least 4 CPUs and 10GB RAM.\n"
+      printf "  Your host has ${HOST_CPUS} CPUs and $((HOST_MEMORY_MB / 1024))GB RAM.\n"
+      echo ""
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Configure CRC resources
 # ---------------------------------------------------------------------------
-CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-8}}"
-CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-16384}}"
-CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-100}}"
-CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-50}}"
+# Set defaults based on preset (GB for prompts, MB for CRC config)
+if [ "$CURRENT_PRESET" = "openshift" ]; then
+  _DEFAULT_CPUS=8
+  _DEFAULT_MEMORY_GB=20
+else
+  _DEFAULT_CPUS=8
+  _DEFAULT_MEMORY_GB=16
+fi
+
+# Use saved values as defaults when available
+if [ -f "${HOME}/.aap-demo/config" ]; then
+  _saved_cpus=$(grep '^CRC_CPUS=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
+  _saved_memory=$(grep '^CRC_MEMORY=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
+  [ -n "$_saved_cpus" ] && _DEFAULT_CPUS="$_saved_cpus"
+  [ -n "$_saved_memory" ] && _DEFAULT_MEMORY_GB=$(( _saved_memory / 1024 ))
+fi
+
+if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
+  echo ""
+  printf "${_BOLD}Resource allocation for CRC VM:${_NC}\n"
+  if [ "$HOST_CPUS" -gt 0 ]; then
+    printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM\n"
+  fi
+  echo ""
+  printf "  CPUs [${_DEFAULT_CPUS}]: "
+  read -r _input_cpus </dev/tty
+  CRC_CPUS="${_input_cpus:-${_DEFAULT_CPUS}}"
+
+  printf "  Memory in GB [${_DEFAULT_MEMORY_GB}]: "
+  read -r _input_memory_gb </dev/tty
+  _input_memory_gb="${_input_memory_gb:-${_DEFAULT_MEMORY_GB}}"
+  CRC_MEMORY=$(( _input_memory_gb * 1024 ))
+
+  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-100}}"
+  CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
+
+  _save_config_key "CRC_CPUS" "$CRC_CPUS"
+  _save_config_key "CRC_MEMORY" "$CRC_MEMORY"
+else
+  CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-${_DEFAULT_CPUS}}}"
+  CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$(( _DEFAULT_MEMORY_GB * 1024 ))}}"
+  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-100}}"
+  CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
+fi
 
 # Validate resource values are positive integers
 for _var_name in CRC_CPUS CRC_MEMORY CRC_DISK CRC_PV_SIZE; do
@@ -287,47 +402,83 @@ if [ "$CURRENT_PRESET" = "microshift" ] && [ -f /etc/resolver/testing ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Configure nip.io baseDomain (MicroShift only)
+# Re-detect SSH key now that cluster is running
 # ---------------------------------------------------------------------------
-# Re-detect SSH key now that cluster is running (sourcing infra-crc.sh happened before crc start)
 if CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)"; then
-  CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+  CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 else
-  echo "ERROR: No CRC SSH key found. Cannot configure nip.io baseDomain." >&2
-  exit 1
+  if [ "$CURRENT_PRESET" = "microshift" ]; then
+    echo "ERROR: No CRC SSH key found. Cannot configure nip.io baseDomain." >&2
+    exit 1
+  fi
+  CRC_SSH_KEY=""
+  CRC_SSH_OPTS=""
 fi
 
+# ---------------------------------------------------------------------------
+# Configure nip.io baseDomain (MicroShift only)
+# ---------------------------------------------------------------------------
 if [ "$CURRENT_PRESET" = "microshift" ]; then
+  # Wait for SSH to become available (CRC VM may still be booting)
+  printf "${_GREEN}▸${_NC} Waiting for CRC SSH..."
+  _ssh_ready=false
+  for _ssh_try in $(seq 1 60); do
+    if ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'true' &>/dev/null; then
+      echo " ready"
+      _ssh_ready=true
+      break
+    fi
+    printf "."
+    sleep 3
+  done
+
+  if [ "$_ssh_ready" = false ]; then
+    echo " timeout"
+    printf "${_RED}▸${_NC} CRC SSH not available after 3 minutes\n"
+    echo "  Check CRC status: crc status"
+    echo "  Check CRC logs:   cat /tmp/crc-start.log"
+    exit 1
+  fi
+
   printf "${_GREEN}▸${_NC} Configuring nip.io baseDomain...\n"
 
   # Write config drop-in (overrides CRC's 00-microshift-dns.yaml)
-  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 "sudo mkdir -p /etc/microshift/config.d && sudo tee /etc/microshift/config.d/99-aap-demo-dns.yaml > /dev/null <<EOF
+  if ! ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 "sudo mkdir -p /etc/microshift/config.d && sudo tee /etc/microshift/config.d/99-aap-demo-dns.yaml > /dev/null <<EOF
 dns:
   baseDomain: 127.0.0.1.nip.io
-EOF" 2>/dev/null
+EOF" 2>/dev/null; then
+    printf "${_RED}▸${_NC} Failed to write nip.io config via SSH\n"
+    echo "  Try manually: aap-demo ssh"
+    exit 1
+  fi
 
   # Always wipe and restart on create — ensures nip.io is applied cleanly.
   # CRC starts MicroShift with crc.testing before we can write the dropin,
   # so we must wipe the data generated with the wrong domain.
-  {
-    printf "${_GREEN}▸${_NC} Restarting MicroShift with nip.io domain (clean start)...\n"
-    ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl start microshift' 2>/dev/null
+  printf "${_GREEN}▸${_NC} Restarting MicroShift with nip.io domain (clean start)...\n"
+  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl start microshift' 2>/dev/null || true
 
-    # Wait for API
-    printf "${_GREEN}▸${_NC} Waiting for MicroShift API..."
-    for i in $(seq 1 60); do
-      if ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig cluster-info' &>/dev/null; then
-        echo " ready"
-        break
-      fi
-      printf "."
-      sleep 5
-    done
+  # Wait for API
+  printf "${_GREEN}▸${_NC} Waiting for MicroShift API..."
+  _api_ready=false
+  for i in $(seq 1 60); do
+    if ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig cluster-info' &>/dev/null; then
+      echo " ready"
+      _api_ready=true
+      break
+    fi
+    printf "."
+    sleep 5
+  done
 
-    # Refresh kubeconfig
-    ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >~/.crc/machines/crc/kubeconfig 2>/dev/null
-    echo "  ✓ nip.io baseDomain configured (data wiped)"
-  }
+  if [ "$_api_ready" = false ]; then
+    echo " timeout"
+    printf "${_YELLOW}▸${_NC} MicroShift API not ready after 5 minutes — continuing anyway\n"
+  fi
+
+  # Refresh kubeconfig
+  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >~/.crc/machines/crc/kubeconfig 2>/dev/null || true
+  echo "  ✓ nip.io baseDomain configured (data wiped)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -424,33 +575,8 @@ if [ "$CURRENT_PRESET" = "microshift" ]; then
   fi
 fi
 
-# ---------------------------------------------------------------------------
-# Deploy saved addons (from ~/.aap-demo/config ADDONS=)
-# ---------------------------------------------------------------------------
-SAVED_ADDONS=""
-if [ -f "${HOME}/.aap-demo/config" ]; then
-  SAVED_ADDONS=$(grep '^ADDONS=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 | tr ',' ' ' || true)
-fi
-
-if [ -n "$SAVED_ADDONS" ]; then
-  printf "${_GREEN}▸${_NC} Deploying saved addons: ${SAVED_ADDONS}...\n"
-  for addon in $SAVED_ADDONS; do
-    addon_dir="${SCRIPT_DIR}/addons/${addon}"
-    if [ ! -f "$addon_dir/deploy.sh" ]; then
-      echo "  Skipping $addon (deploy.sh not found)"
-      continue
-    fi
-    # Skip addons that require AAP (marked with ADDON_REQUIRES_AAP=true)
-    if grep -q "^# ADDON_REQUIRES_AAP=true" "$addon_dir/deploy.sh"; then
-      echo "  Skipping $addon (requires AAP — will deploy after 'aap-demo deploy')"
-      continue
-    fi
-    echo "  Enabling: $addon"
-    if ! bash "$addon_dir/deploy.sh" 2>&1 | sed 's/^/    /'; then
-      printf "    ${_YELLOW}WARNING: addon '$addon' failed to deploy (continuing)${_NC}\n"
-    fi
-  done
-fi
+# Addons are not auto-deployed during create.
+# Use 'aap-demo enable <addon>' to deploy addons after cluster creation.
 
 # ---------------------------------------------------------------------------
 # Configure CoreDNS for route resolution inside pods
@@ -465,10 +591,11 @@ configure_coredns
 # (128 instances) cause "too many open files" errors under heavy load.
 # Matches infra-ci deployment settings.
 # ---------------------------------------------------------------------------
-printf "${_GREEN}▸${_NC} Setting sysctl for performance...
-"
-ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo sysctl -w fs.inotify.max_user_watches=2099999999 fs.inotify.max_user_instances=2099999999 fs.inotify.max_queued_events=2099999999' 2>/dev/null
-echo "  ✓ inotify limits configured"
+if [ -n "$CRC_SSH_OPTS" ]; then
+  printf "${_GREEN}▸${_NC} Setting sysctl for performance...\n"
+  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo sysctl -w fs.inotify.max_user_watches=2099999999 fs.inotify.max_user_instances=2099999999 fs.inotify.max_queued_events=2099999999' 2>/dev/null
+  echo "  ✓ inotify limits configured"
+fi
 
 # ---------------------------------------------------------------------------
 # Done
