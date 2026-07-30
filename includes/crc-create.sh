@@ -543,36 +543,40 @@ if [ "$CURRENT_PRESET" = "microshift" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Create nfs-local-rwx StorageClass (RWX via topolvm on single-node)
+# Create nfs-local-rwx StorageClass (in-cluster NFS server for RWX volumes)
+# On MicroShift the backing PVC uses topolvm; on full OpenShift it uses
+# crc-csi-hostpath-provisioner. NFS eliminates UID ownership issues that
+# the CSI hostpath provisioner causes for non-root pods (postgres, hub, redis).
 # ---------------------------------------------------------------------------
-if [ "$CURRENT_PRESET" = "microshift" ]; then
-  if kubectl get sc nfs-local-rwx &>/dev/null; then
-    echo "  nfs-local-rwx StorageClass already exists"
-  else
-    printf "${_GREEN}▸${_NC} Setting up NFS storage for RWX support...\n"
-    # Deploy in-cluster NFS server backed by topolvm, then
-    # nfs-subdir-external-provisioner creates nfs-local-rwx StorageClass.
-    # This provides real RWX volumes for hub file storage and CI compat.
+if kubectl get sc nfs-local-rwx &>/dev/null; then
+  echo "  nfs-local-rwx StorageClass already exists"
+else
+  printf "${_GREEN}▸${_NC} Setting up NFS storage for RWX support...\n"
 
-    # Grant SCCs for NFS server (needs privileged)
-    oc adm policy add-scc-to-group privileged system:serviceaccounts:nfs-storage 2>/dev/null || true
+  # Grant SCCs for NFS server (needs privileged)
+  oc adm policy add-scc-to-group privileged system:serviceaccounts:nfs-storage 2>/dev/null || true
 
-    # Resolve default StorageClass for NFS backing PVC
-    DEFAULT_SC=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null | awk '{print $1}')
-    [ -z "$DEFAULT_SC" ] && DEFAULT_SC="topolvm-provisioner"
-    sed "s/__DEFAULT_SC__/${DEFAULT_SC}/g" "${SCRIPT_DIR}/config/manifests/nfs-server.yaml" | kubectl apply -f -
-    echo "  Waiting for NFS server..."
-    kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s 2>/dev/null || {
-      echo "  Waiting for NFS backing PVC to bind..."
-      sleep 10
-      kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s
-    }
-    # Kubelet resolves NFS server by IP (can't use cluster DNS for mount)
-    NFS_IP=$(kubectl get svc nfs-server -n nfs-storage -o jsonpath='{.spec.clusterIP}')
-    sed "s/__NFS_SERVER_IP__/${NFS_IP}/g" "${SCRIPT_DIR}/config/manifests/nfs-provisioner.yaml" | kubectl apply -f -
-    kubectl wait --for=condition=Available deployment/nfs-provisioner -n nfs-storage --timeout=120s
-    echo "  ✓ nfs-local-rwx StorageClass created (in-cluster NFS server)"
+  # Resolve default StorageClass for NFS backing PVC
+  DEFAULT_SC=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null | awk '{print $1}')
+  if [ -z "$DEFAULT_SC" ]; then
+    if [ "$CURRENT_PRESET" = "microshift" ]; then
+      DEFAULT_SC="topolvm-provisioner"
+    else
+      DEFAULT_SC="crc-csi-hostpath-provisioner"
+    fi
   fi
+  sed "s/__DEFAULT_SC__/${DEFAULT_SC}/g" "${SCRIPT_DIR}/config/manifests/nfs-server.yaml" | kubectl apply -f -
+  echo "  Waiting for NFS server..."
+  kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s 2>/dev/null || {
+    echo "  Waiting for NFS backing PVC to bind..."
+    sleep 10
+    kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s
+  }
+  # Kubelet resolves NFS server by IP (can't use cluster DNS for mount)
+  NFS_IP=$(kubectl get svc nfs-server -n nfs-storage -o jsonpath='{.spec.clusterIP}')
+  sed "s/__NFS_SERVER_IP__/${NFS_IP}/g" "${SCRIPT_DIR}/config/manifests/nfs-provisioner.yaml" | kubectl apply -f -
+  kubectl wait --for=condition=Available deployment/nfs-provisioner -n nfs-storage --timeout=120s
+  echo "  ✓ nfs-local-rwx StorageClass created (in-cluster NFS server)"
 fi
 
 # Addons are not auto-deployed during create.

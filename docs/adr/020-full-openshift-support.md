@@ -151,32 +151,31 @@ reads the state file and scales each resource back to its original count.
 
 The addon exits cleanly on MicroShift (those namespaces don't exist).
 
-### 5. CSI hostpath volume permission fix
+### 5. NFS storage on both presets
 
 On full OpenShift CRC, the CSI hostpath provisioner (`kubevirt.io.hostpath-provisioner`)
 creates volumes at `/var/lib/csi-hostpath-data/` owned by `root:root`. AAP pods run as
 non-root UIDs under the `anyuid` SCC, which doesn't support `fsGroup`. This causes
-`mkdir: cannot create directory: Permission denied` and CrashLoopBackOff for multiple
-components.
+`mkdir: cannot create directory: Permission denied` and CrashLoopBackOff for postgres
+(UID 26), hub (UID 1000), and hub-redis (UID 1001).
 
-A new `_fix_csi_hostpath_permissions` function runs after the AAP CR is applied:
+Rather than patching volume permissions over SSH after every PVC bind (fragile — the
+operator can recreate PVCs at any time), we deploy the same in-cluster NFS server on
+full OpenShift that MicroShift already uses. NFS doesn't enforce UID ownership on
+exported directories, so all AAP pods can write to their volumes regardless of UID.
 
-1. Detects full OpenShift preset and `crc-csi-hostpath-provisioner` StorageClass
-2. Waits for PVCs to bind (up to 5 minutes)
-3. Iterates all bound PVCs and sets ownership based on the component:
-   - `*postgres*` → UID 26:0 (postgres user)
-   - `*hub-file*` → UID 1000:0 (pulp/galaxy user)
-   - `*hub-redis*` → UID 1001:0 (redis user)
-4. SSHs into the CRC VM and `chown -R` each volume at `/var/lib/csi-hostpath-data/<pv>/`
-5. Restarts any crash-looping or init-errored pods so they pick up the fixed permissions
+The NFS deployment in `includes/crc-create.sh` now runs on **both presets**:
+- MicroShift: NFS backing PVC uses `topolvm-provisioner` (default SC)
+- Full OpenShift: NFS backing PVC uses `crc-csi-hostpath-provisioner` (default SC)
 
-This is not needed on MicroShift (topolvm/NFS handle permissions correctly).
+The NFS server itself runs privileged (SCC granted to `nfs-storage` namespace), and
+the `nfs-local-rwx` StorageClass provides RWX volumes for hub file storage. Since only
+the NFS server pod touches the CSI hostpath volume directly (as root), the UID ownership
+problem is eliminated for all AAP workloads.
 
-**Why `fsGroup` doesn't work**: The `anyuid` SCC allows running as any UID but strips
-`fsGroup` from the pod security context. The `privileged` SCC supports `fsGroup` but SCC
-admission selects the most restrictive SCC that satisfies the pod's requirements, so
-`anyuid` wins. The AAP operator doesn't set `fsGroup` in the StatefulSet spec and
-reconciles away any manual patches.
+The `aap-minimal.yaml` CR template uses `nfs-local-rwx` for hub file storage on both
+presets, so no conditional CR patching is needed. The only preset-specific CR adjustment
+is injecting `route_host` on MicroShift for the nip.io domain.
 
 ### 6. Auto-detect OCP version for CatalogSource
 
@@ -291,8 +290,8 @@ separately via `aap-demo enable <addon>`.
 - The scale-down addon can free ~2-3 GB RAM on constrained machines
 - All changes are non-interactive-safe: env vars and config file override every prompt
 - PV size increase (70 GB) prevents storage pressure on full OpenShift
-- CSI volume permission fix eliminates CrashLoopBackOff for postgres, hub, and redis
-  on full OpenShift CRC — previously a manual SSH+chown operation
+- NFS storage on both presets eliminates CrashLoopBackOff for postgres, hub, and redis
+  on full OpenShift CRC — no UID ownership issues since NFS doesn't enforce them
 - CatalogSource version auto-detection eliminates breakage when CRC updates to a new
   OCP version
 - CoreDNS auto-fix eliminates a manual step that users often missed
@@ -342,12 +341,19 @@ Rejected: disk and PV size are rarely changed and add decision fatigue. Advanced
 can still set them via env vars. Only CPU and memory — the values users actually need to
 tune — are prompted.
 
+### SSH chown for CSI hostpath volumes
+
+Rejected: an earlier iteration used `_fix_csi_hostpath_permissions` to SSH into the CRC
+VM and `chown -R` each CSI hostpath volume to the correct UID (26 for postgres, 1000 for
+hub, 1001 for redis). This was fragile — the AAP operator can recreate PVCs at any time
+during reconciliation, each time creating a new root-owned PV that required re-fixing.
+Deploying NFS on both presets eliminates the root cause.
+
 ### fsGroup via custom SCC or privileged SCC
 
 Rejected: the AAP operator doesn't set `fsGroup` in the pod spec and reconciles away
 manual StatefulSet patches. Even if the `privileged` SCC were forced (by removing the
 `anyuid` binding), `fsGroup` would still need to be in the pod spec to take effect.
-The SSH chown approach is simpler and works regardless of SCC configuration.
 
 ### Set AAP operator replica counts via top-level CR fields
 
@@ -365,5 +371,4 @@ works but is reverted on operator reconciliation.
 - [addons/scale-down/deploy.sh](../../addons/scale-down/deploy.sh)
 - [config/crs/aap-minimal.yaml](../../config/crs/aap-minimal.yaml) — Default AAP CR template
   (single-replica settings)
-- [aap-demo.sh](../../aap-demo.sh) — `_fix_csi_hostpath_permissions`, `_check_for_updates`,
-  `verify_coredns` auto-fix
+- [aap-demo.sh](../../aap-demo.sh) — `_check_for_updates`, `verify_coredns` auto-fix

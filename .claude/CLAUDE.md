@@ -54,11 +54,6 @@ oc adm policy add-scc-to-group privileged system:serviceaccounts:aap-operator
 **Cause**: Startup ordering — gateway starts before dependencies are ready
 **Fix**: Usually resolves after operator reconciliation. If persistent, delete the pod: `kubectl delete pod -l app.kubernetes.io/name=gateway -n aap-operator`
 
-### Postgres CrashLoopBackOff (full OpenShift CRC)
-**Symptom**: `aap-postgres-15-0` crashes with `mkdir: cannot create directory '/var/lib/pgsql/data/userdata': Permission denied`
-**Cause**: CSI hostpath provisioner creates root-owned volumes; postgres runs as UID 26 under `anyuid` SCC which doesn't support `fsGroup`
-**Fix**: Automated by `_fix_csi_hostpath_permissions` during deploy. Manual fix: SSH to CRC VM and `sudo chown -R 26:26 /var/lib/csi-hostpath-data/<pv-name>/`, then delete the postgres pod
-
 ### DNS resolution failures
 **Symptom**: Pods can't resolve nip.io routes or cluster services
 **Cause**: CoreDNS config not persisted after CRC restart

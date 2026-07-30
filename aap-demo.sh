@@ -502,7 +502,6 @@ cmd_repair() {
   export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 
   echo "Running repair..."
-  _fix_csi_hostpath_permissions
   echo ""
   echo "✓ Repair complete"
 }
@@ -1108,11 +1107,6 @@ cmd_diagnose() {
         done <<<"$problem_list"
       fi
 
-      # Auto-fix CSI hostpath volume permissions if applicable
-      if echo "$problem_list" | grep -qE 'postgres|hub'; then
-        _check_info "  Attempting CSI volume permission fix..."
-        _fix_csi_hostpath_permissions
-      fi
     elif [ "${total_pods:-0}" -gt 0 ]; then
       _check_pass "All pods healthy ($running_pods/$total_pods running)"
     fi
@@ -1819,29 +1813,6 @@ cmd_status() {
     fi
   fi
 
-  # Show addons with URLs or enable instructions
-  detect_galaxy_credentials
-  echo ""
-  echo "Collection Sources:"
-  echo "-------------------"
-
-  if [ -n "$PAH_URL" ]; then
-    printf "  %-20s %s\n" "Private Hub:" "$PAH_URL"
-  fi
-
-  if [ -n "$GALAXY_TOKEN" ]; then
-    printf "  %-20s %s\n" "Red Hat Certified:" "console.redhat.com (authenticated)"
-  else
-    printf "  %-20s %s\n" "Red Hat Certified:" "Not configured"
-  fi
-
-  printf "  %-20s %s\n" "Community:" "galaxy.ansible.com"
-
-  if command -v ansible-galaxy >/dev/null 2>&1; then
-    collection_count=$(ansible-galaxy collection list 2>/dev/null | grep -c "^ansible\|^infra" || echo "0")
-    printf "  %-20s %s\n" "Installed:" "$collection_count certified collections"
-  fi
-
   local saved_addons
   saved_addons=$(_addons_list)
   echo ""
@@ -2473,24 +2444,17 @@ create_aap_instance() {
     sed "s|__PUBLIC_BASE_URL__|${PUBLIC_URL}|g" "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
   else
     echo "Using CR: $cr_name"
-    # Adjust CR based on cluster type
-    if kubectl get sc nfs-local-rwx &>/dev/null; then
-      # MicroShift — add hub route_host for nip.io domain
+    # On MicroShift, inject route_host for nip.io domain; full OpenShift uses
+    # the cluster ingress domain (apps-crc.testing) automatically.
+    local preset
+    preset=$(crc config get preset 2>/dev/null | awk '{print $NF}' || echo "")
+    if [ "$preset" = "microshift" ]; then
       sed "s|storage_type: file|storage_type: file\n    route_host: aap-hub-${NAMESPACE}.apps.127.0.0.1.nip.io|" \
         "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
     else
-      # Full OpenShift — no RWX storage, fall back to ReadWriteOnce; no route_host needed
-      sed -e 's/file_storage_storage_class: nfs-local-rwx/# file_storage_storage_class: (using default)/' \
-        -e 's/file_storage_access_mode: ReadWriteMany/file_storage_access_mode: ReadWriteOnce/' \
-        "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
-      echo "  (Using ReadWriteOnce — nfs-local-rwx not available)"
+      kubectl apply -f "$cr_file" -n "$NAMESPACE"
     fi
   fi
-
-  # Fix CSI hostpath volume permissions for postgres on full OpenShift CRC.
-  # The CSI hostpath provisioner creates root-owned volumes but postgres
-  # runs as UID 26 under the anyuid SCC which doesn't support fsGroup.
-  _fix_csi_hostpath_permissions
 
   # Patch gateway deployment for OpenShift Local compatibility
   # The gateway pod needs NET_BIND_SERVICE capability but the operator
@@ -2498,76 +2462,6 @@ create_aap_instance() {
   # capabilities automatically, but on OpenShift Local the SCC admission
   # controller picks restricted-v2 which doesn't include it.
   _patch_gateway_capability
-}
-
-_fix_csi_hostpath_permissions() {
-  # Only needed on full OpenShift CRC where the CSI hostpath provisioner
-  # creates root-owned volumes. MicroShift uses topolvm/NFS which handles
-  # permissions correctly.
-  local preset
-  preset=$(crc config get preset 2>/dev/null | awk '{print $NF}' || echo "")
-  if [ "$preset" = "microshift" ]; then
-    return 0
-  fi
-
-  if ! kubectl get sc crc-csi-hostpath-provisioner &>/dev/null; then
-    return 0
-  fi
-
-  if [ -z "$CRC_SSH_OPTS" ]; then
-    source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
-  fi
-  if [ -z "$CRC_SSH_OPTS" ]; then
-    echo "  ⚠ SSH not available — skipping CSI permission fix"
-    return 0
-  fi
-
-  echo ""
-  echo "Fixing CSI hostpath volume permissions..."
-
-  # Wait for at least one PVC to be bound
-  local attempts=0
-  while ! kubectl get pvc -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q Bound; do
-    attempts=$((attempts + 1))
-    if [ "$attempts" -gt 60 ]; then
-      echo "  ⚠ No PVCs bound after 5 minutes — skipping permission fix"
-      return 0
-    fi
-    sleep 5
-  done
-
-  # Fix each bound PVC — map PVC name pattern to the UID its pod runs as
-  local pvc_name pv_name vol_path uid label
-  while IFS=' ' read -r pvc_name pv_name; do
-    [ -z "$pvc_name" ] && continue
-    [ -z "$pv_name" ] && continue
-
-    # Determine UID from PVC name
-    case "$pvc_name" in
-      *postgres*)  uid=26;   label="postgres" ;;
-      *hub-file*)  uid=1000; label="hub"      ;;
-      *hub-redis*) uid=1001; label="hub-redis" ;;
-      *)           continue ;;
-    esac
-
-    vol_path="/var/lib/csi-hostpath-data/${pv_name}"
-    if ssh -p "${CRC_SSH_PORT:-2222}" $CRC_SSH_OPTS core@127.0.0.1 \
-      "sudo test -d '${vol_path}'" 2>/dev/null; then
-      ssh -p "${CRC_SSH_PORT:-2222}" $CRC_SSH_OPTS core@127.0.0.1 \
-        "sudo chown -R ${uid}:0 '${vol_path}'" 2>/dev/null
-      echo "  ✓ ${label} volume (UID ${uid})"
-    fi
-  done <<< "$(kubectl get pvc -n "$NAMESPACE" --no-headers 2>/dev/null | awk '$2=="Bound" {print $1, $3}')"
-
-  # Restart any crash-looping pods so they pick up the fixed permissions
-  local pod_name pod_status
-  while read -r pod_name pod_status; do
-    [ -z "$pod_name" ] && continue
-    if [ "$pod_status" = "CrashLoopBackOff" ] || [ "$pod_status" = "Error" ] || [ "$pod_status" = "Init:Error" ] || [ "$pod_status" = "Init:CrashLoopBackOff" ]; then
-      kubectl delete pod "$pod_name" -n "$NAMESPACE" --wait=false 2>/dev/null || true
-      echo "  ✓ Restarted $pod_name"
-    fi
-  done <<< "$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1, $3}')"
 }
 
 _patch_gateway_capability() {
