@@ -2226,6 +2226,9 @@ else:
   echo "Waiting for CSV to reach Succeeded phase..."
   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded csv/"$CSV_NAME" -n "$NAMESPACE" --timeout=600s || true
 
+  # Load cached container images if available (saves 10-15min of registry pulls)
+  _load_image_cache
+
   # Create AAP instance (unless CREATE_AAP=false for deploy-operator)
   if [ "${CREATE_AAP:-true}" != "false" ]; then
     create_aap_instance
@@ -2408,6 +2411,68 @@ deploy_operator_sdk() {
     --security-context-config restricted \
     --timeout 10m \
     --pull-secret-name redhat-operators-pull-secret
+}
+
+_load_image_cache() {
+  local preset_raw preset cache_dir
+  preset_raw=$(crc config get preset 2>&1)
+  if echo "$preset_raw" | grep -q "not set"; then
+    preset=$(echo "$preset_raw" | grep -oE "openshift|microshift" | tail -1)
+    [ -z "$preset" ] && preset="openshift"
+  else
+    preset=$(echo "$preset_raw" | awk '{print $NF}')
+  fi
+  cache_dir="${HOME}/.aap-demo/image-cache/${preset}"
+
+  # Skip if no cache exists
+  [ -d "$cache_dir" ] || return 0
+  ls "$cache_dir"/*.tar &>/dev/null || return 0
+
+  local image_count
+  image_count=$(ls "$cache_dir"/*.tar 2>/dev/null | wc -l | tr -d ' ')
+  [ "$image_count" -eq 0 ] && return 0
+
+  echo ""
+  printf "\033[1mLoading ${image_count} cached container images...\033[0m\n"
+
+  source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
+  if [ -z "$CRC_SSH_KEY" ]; then
+    echo "  ⚠ SSH not available — skipping image cache load"
+    return 0
+  fi
+
+  local loaded=0 skipped=0
+  for tarball in "$cache_dir"/*.tar; do
+    [ -f "$tarball" ] || continue
+    local img_ref
+    img_ref=$(cat "${tarball%.tar}.ref" 2>/dev/null || continue)
+    local file_size
+    file_size=$(du -h "$tarball" | awk '{print $1}')
+
+    # Check if already present in CRI-O
+    if _crc_exec sudo crictl inspecti "$img_ref" &>/dev/null; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    local display_name="$img_ref"
+    if [ ${#display_name} -gt 65 ]; then
+      display_name="...${display_name: -62}"
+    fi
+    printf "  %-67s %6s " "$display_name" "$file_size"
+
+    if ssh -p "$CRC_SSH_PORT" $CRC_SSH_OPTS core@127.0.0.1 \
+      "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" < "$tarball" &>/dev/null; then
+      printf "\033[0;32m✓\033[0m\n"
+      loaded=$((loaded + 1))
+    else
+      printf "\033[0;33m✗\033[0m\n"
+    fi
+  done
+
+  if [ "$loaded" -gt 0 ] || [ "$skipped" -gt 0 ]; then
+    echo "  ✓ ${loaded} loaded, ${skipped} already present"
+  fi
 }
 
 create_aap_instance() {
