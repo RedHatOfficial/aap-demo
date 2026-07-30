@@ -498,7 +498,13 @@ determine_pull_secret() {
 # -----------------------------------------------------------------------------
 
 cmd_repair() {
-  echo "CRC repair: run 'crc stop && crc start'"
+  NAMESPACE="${NAMESPACE:-aap-operator}"
+  export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
+
+  echo "Running repair..."
+  _fix_csi_hostpath_permissions
+  echo ""
+  echo "✓ Repair complete"
 }
 
 # Shared function: display cluster info for warnings
@@ -1100,6 +1106,12 @@ cmd_diagnose() {
         while IFS= read -r line; do
           _check_info "  $line"
         done <<<"$problem_list"
+      fi
+
+      # Auto-fix CSI hostpath volume permissions if applicable
+      if echo "$problem_list" | grep -qE 'postgres|hub'; then
+        _check_info "  Attempting CSI volume permission fix..."
+        _fix_csi_hostpath_permissions
       fi
     elif [ "${total_pods:-0}" -gt 0 ]; then
       _check_pass "All pods healthy ($running_pods/$total_pods running)"
