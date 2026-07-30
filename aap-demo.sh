@@ -125,8 +125,12 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap | scale-down)
+    mcp-server | portal | setup-pah | ao-eap | apme-eap | scale-down | image-cache)
       # Addon names for enable/disable commands
+      EXTRA_ARGS+=("$arg")
+      ;;
+    save | load | clear)
+      # Subcommands for addons that accept them
       EXTRA_ARGS+=("$arg")
       ;;
     true | false)
@@ -2669,6 +2673,7 @@ _addons_remove() {
 
 cmd_enable() {
   local addon="${1:-}"
+  shift 2>/dev/null || true
   if [ -z "$addon" ]; then
     echo "Usage: aap-demo enable <addon>"
     echo ""
@@ -2702,7 +2707,7 @@ cmd_enable() {
   echo "Enabling addon: $addon"
   _verify_cluster || return 1
   _addons_add "$addon"
-  bash "$addon_dir/deploy.sh"
+  bash "$addon_dir/deploy.sh" "$@"
   echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
 }
 
@@ -2883,7 +2888,7 @@ case "$COMMAND" in
     cmd_test "${EXTRA_ARGS[@]}"
     ;;
   enable)
-    cmd_enable "${EXTRA_ARGS[0]:-}"
+    cmd_enable "${EXTRA_ARGS[@]}"
     ;;
   disable)
     cmd_disable "${EXTRA_ARGS[0]:-}"
