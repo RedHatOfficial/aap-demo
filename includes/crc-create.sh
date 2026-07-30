@@ -313,7 +313,7 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
   _input_memory_gb="${_input_memory_gb:-${_DEFAULT_MEMORY_GB}}"
   CRC_MEMORY=$(( _input_memory_gb * 1024 ))
 
-  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-100}}"
+  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
   CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
 
   _save_config_key "CRC_CPUS" "$CRC_CPUS"
@@ -321,7 +321,7 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
 else
   CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-${_DEFAULT_CPUS}}}"
   CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$(( _DEFAULT_MEMORY_GB * 1024 ))}}"
-  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-100}}"
+  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
   CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
 fi
 
