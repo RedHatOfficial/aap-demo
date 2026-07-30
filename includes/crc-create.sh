@@ -576,7 +576,16 @@ else
   NFS_IP=$(kubectl get svc nfs-server -n nfs-storage -o jsonpath='{.spec.clusterIP}')
   sed "s/__NFS_SERVER_IP__/${NFS_IP}/g" "${SCRIPT_DIR}/config/manifests/nfs-provisioner.yaml" | kubectl apply -f -
   kubectl wait --for=condition=Available deployment/nfs-provisioner -n nfs-storage --timeout=120s
-  echo "  ✓ nfs-local-rwx StorageClass created (in-cluster NFS server)"
+  # Make nfs-local-rwx the default SC so all PVCs (postgres, hub-redis, etc.)
+  # use NFS instead of the CSI hostpath provisioner which creates root-owned volumes
+  kubectl annotate sc nfs-local-rwx storageclass.kubernetes.io/is-default-class=true --overwrite 2>/dev/null || true
+  # Remove default from the previous SC to avoid two defaults
+  if [ "$CURRENT_PRESET" != "microshift" ]; then
+    kubectl annotate sc crc-csi-hostpath-provisioner storageclass.kubernetes.io/is-default-class- --overwrite 2>/dev/null || true
+  else
+    kubectl annotate sc topolvm-provisioner storageclass.kubernetes.io/is-default-class- --overwrite 2>/dev/null || true
+  fi
+  echo "  ✓ nfs-local-rwx StorageClass created and set as default"
 fi
 
 # Addons are not auto-deployed during create.
