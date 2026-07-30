@@ -1715,10 +1715,11 @@ cmd_status() {
   echo "$vm_info"
   echo ""
 
-  # List all namespaces with pod counts (exclude system namespaces)
+  # List application namespaces with pod counts (skip openshift-* and kube-* system namespaces)
   echo "Namespaces:"
   echo "-----------"
-  NAMESPACES=$(kubectl get ns --no-headers -o custom-columns=':metadata.name' 2>/dev/null | sort)
+  NAMESPACES=$(kubectl get ns --no-headers -o custom-columns=':metadata.name' 2>/dev/null \
+    | grep -vE '^(openshift|kube-|default$)' | sort)
 
   if [ -z "$NAMESPACES" ]; then
     echo "  (no application namespaces found)"
