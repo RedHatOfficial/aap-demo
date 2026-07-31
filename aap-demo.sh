@@ -525,7 +525,10 @@ cmd_repair() {
   _crash_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep "CrashLoopBackOff" | awk '{print $1}' || true)
   if [ -n "$_crash_pods" ]; then
     echo "  Restarting crashed pods..."
-    echo "$_crash_pods" | xargs -I{} kubectl delete pod {} -n "$NAMESPACE" 2>/dev/null || true
+    while IFS= read -r pod; do
+      [ -z "$pod" ] && continue
+      kubectl delete pod "$pod" -n "$NAMESPACE" 2>/dev/null || true
+    done <<<"$_crash_pods"
   fi
 
   echo ""
@@ -2511,7 +2514,7 @@ _load_local_cache() {
     printf "  %-67s %6s " "$display_name" "$file_size"
 
     if ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 \
-      "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" < "$tarball" &>/dev/null; then
+      "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" <"$tarball" &>/dev/null; then
       printf "\033[0;32m✓\033[0m\n"
       loaded=$((loaded + 1))
     else
@@ -2890,7 +2893,7 @@ _check_for_updates() {
   git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null || return 0
 
   mkdir -p "$(dirname "$stamp_file")"
-  date +%s > "$stamp_file"
+  date +%s >"$stamp_file"
 
   # Fetch latest (quick, no merge)
   git -C "$repo_root" fetch --quiet 2>/dev/null || return 0

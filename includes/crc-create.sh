@@ -30,7 +30,7 @@ _save_config_key() {
   if [ -f "$config" ] && grep -q "^${key}=" "$config"; then
     sed -i.bak "s/^${key}=.*/${key}=${value}/" "$config" && rm -f "${config}.bak"
   else
-    echo "${key}=${value}" >> "$config"
+    echo "${key}=${value}" >>"$config"
   fi
 }
 
@@ -38,7 +38,7 @@ _detect_host_resources() {
   case "$(uname -s)" in
     Darwin)
       HOST_CPUS=$(sysctl -n hw.ncpu 2>/dev/null || echo "0")
-      HOST_MEMORY_MB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo "0") / 1024 / 1024 ))
+      HOST_MEMORY_MB=$(($(sysctl -n hw.memsize 2>/dev/null || echo "0") / 1024 / 1024))
       ;;
     Linux)
       HOST_CPUS=$(nproc 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo "0")
@@ -232,8 +232,8 @@ if [ "$CRC_STATUS" = "Unknown" ] || [ -z "$CURRENT_PRESET" ]; then
     _preset_choice="${_preset_choice:-${_DEFAULT_NUM}}"
 
     case "$_preset_choice" in
-      1|openshift|OpenShift)  SAVED_PRESET="openshift" ;;
-      2|microshift|MicroShift) SAVED_PRESET="microshift" ;;
+      1 | openshift | OpenShift) SAVED_PRESET="openshift" ;;
+      2 | microshift | MicroShift) SAVED_PRESET="microshift" ;;
       *)
         printf "${_YELLOW}  Invalid choice, defaulting to ${_PRESET_DEFAULT}${_NC}\n"
         SAVED_PRESET="$_PRESET_DEFAULT"
@@ -303,7 +303,7 @@ if [ -f "${HOME}/.aap-demo/config" ]; then
   [[ "${_saved_cpus:-}" =~ ^[0-9]+$ ]] || _saved_cpus=""
   [[ "${_saved_memory:-}" =~ ^[0-9]+$ ]] || _saved_memory=""
   [ -n "$_saved_cpus" ] && _DEFAULT_CPUS="$_saved_cpus"
-  [ -n "$_saved_memory" ] && _DEFAULT_MEMORY_GB=$(( (_saved_memory + 512) / 1024 ))
+  [ -n "$_saved_memory" ] && _DEFAULT_MEMORY_GB=$(((_saved_memory + 512) / 1024))
 fi
 
 if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
@@ -329,7 +329,7 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
     printf "${_RED}▸${_NC} Invalid memory value: '${_input_memory_gb}' (must be a positive integer in GB)\n"
     exit 1
   fi
-  CRC_MEMORY=$(( _input_memory_gb * 1024 ))
+  CRC_MEMORY=$((_input_memory_gb * 1024))
 
   CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
   CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
@@ -338,7 +338,7 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
   _save_config_key "CRC_MEMORY" "$CRC_MEMORY"
 else
   CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-${_DEFAULT_CPUS}}}"
-  CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$(( _DEFAULT_MEMORY_GB * 1024 ))}}"
+  CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$((_DEFAULT_MEMORY_GB * 1024))}}"
   CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
   CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
 fi

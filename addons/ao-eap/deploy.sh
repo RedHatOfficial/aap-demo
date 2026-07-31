@@ -158,16 +158,34 @@ if [ "$_PRESET" != "microshift" ]; then
     echo "Installing aapctl..."
     ARCH="$(uname -m)"
     case "${OS}-${ARCH}" in
-      Darwin-arm64|Darwin-aarch64) OS_NAME="darwin"; ARCH_NAME="arm64" ;;
-      Darwin-x86_64)               OS_NAME="darwin"; ARCH_NAME="amd64" ;;
-      Linux-x86_64)                OS_NAME="linux";  ARCH_NAME="amd64" ;;
-      Linux-aarch64|Linux-arm64)   OS_NAME="linux";  ARCH_NAME="arm64" ;;
-      *) echo "ERROR: Unsupported platform: ${OS}-${ARCH}"; exit 1 ;;
+      Darwin-arm64 | Darwin-aarch64)
+        OS_NAME="darwin"
+        ARCH_NAME="arm64"
+        ;;
+      Darwin-x86_64)
+        OS_NAME="darwin"
+        ARCH_NAME="amd64"
+        ;;
+      Linux-x86_64)
+        OS_NAME="linux"
+        ARCH_NAME="amd64"
+        ;;
+      Linux-aarch64 | Linux-arm64)
+        OS_NAME="linux"
+        ARCH_NAME="arm64"
+        ;;
+      *)
+        echo "ERROR: Unsupported platform: ${OS}-${ARCH}"
+        exit 1
+        ;;
     esac
     AAPCTL_VERSION="${AAPCTL_VERSION:-}"
     if [ -z "$AAPCTL_VERSION" ]; then
       AAPCTL_VERSION=$(gh api repos/automation-nexus/aapctl/releases/latest --jq '.tag_name' 2>/dev/null || true)
-      [ -z "$AAPCTL_VERSION" ] && { echo "ERROR: Could not resolve aapctl version."; exit 1; }
+      [ -z "$AAPCTL_VERSION" ] && {
+        echo "ERROR: Could not resolve aapctl version."
+        exit 1
+      }
     fi
     VERSION_NUM="${AAPCTL_VERSION#v}"
     BINARY="aapctl_${VERSION_NUM}_${OS_NAME}_${ARCH_NAME}"
@@ -201,7 +219,7 @@ if [ "$_PRESET" != "microshift" ]; then
     --set cluster-cr.storageClass="$STORAGE_CLASS"
 
   mkdir -p "$(dirname "$AO_STATE_FILE")"
-  echo "INSTALL_METHOD=aapctl" > "$AO_STATE_FILE"
+  echo "INSTALL_METHOD=aapctl" >"$AO_STATE_FILE"
 
   # Wait for route (created by operator after CR reconciliation)
   echo ""

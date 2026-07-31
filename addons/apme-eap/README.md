@@ -12,7 +12,7 @@ virtual environment.
 This addon uses the **official APME EAP welcome pack playbooks** executed locally via `ansible-playbook`. This implementation:
 
 - **Local execution**: Playbooks run in isolated Python venv (no AAP API dependency)
-- **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access  
+- **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access
 - Uses structured Ansible roles from the official APME welcome pack
 - Auto-discovers aap-demo environment (no manual configuration)
 - Maintains alignment with upstream APME deployment patterns

@@ -24,8 +24,10 @@ _NC='\033[0m'
 CRC_SSH_PORT=2222
 _detect_crc_ssh_key() {
   local base="${HOME}/.crc/machines/crc"
-  if [ -f "${base}/id_ed25519" ]; then echo "${base}/id_ed25519"
-  elif [ -f "${base}/id_ecdsa" ]; then echo "${base}/id_ecdsa"
+  if [ -f "${base}/id_ed25519" ]; then
+    echo "${base}/id_ed25519"
+  elif [ -f "${base}/id_ecdsa" ]; then
+    echo "${base}/id_ecdsa"
   else return 1; fi
 }
 
@@ -95,7 +97,7 @@ if [ "$ACTION" = "load" ]; then
     printf "  %-72s %6s " "$display_name" "$file_size"
 
     # Stream tarball into CRI-O via skopeo on the VM
-    if _ssh "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" < "$tarball" &>/dev/null; then
+    if _ssh "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" <"$tarball" &>/dev/null; then
       printf "${_GREEN}✓${_NC}\n"
       loaded=$((loaded + 1))
     else
@@ -172,8 +174,8 @@ for img in data.get('images', []):
 
     # Export from CRI-O via skopeo, stream to local file
     # Use -n to prevent SSH from consuming the while-read stdin
-    if _ssh -n "sudo skopeo copy --remove-signatures containers-storage:'${img_ref}' docker-archive:/dev/stdout" > "$tarball" 2>/dev/null; then
-      echo "$img_ref" > "$ref_file"
+    if _ssh -n "sudo skopeo copy --remove-signatures containers-storage:'${img_ref}' docker-archive:/dev/stdout" >"$tarball" 2>/dev/null; then
+      echo "$img_ref" >"$ref_file"
       file_size=$(du -h "$tarball" | awk '{print $1}')
       printf "${_GREEN}%6s${_NC}\n" "$file_size"
       saved=$((saved + 1))
@@ -182,7 +184,7 @@ for img in data.get('images', []):
       printf "${_YELLOW}%6s${_NC}\n" "skip"
       failed=$((failed + 1))
     fi
-  done <<< "$all_images"
+  done <<<"$all_images"
 
   echo ""
   total_size=$(du -sh "$CACHE_DIR" 2>/dev/null | awk '{print $1}')

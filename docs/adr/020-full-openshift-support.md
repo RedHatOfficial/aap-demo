@@ -121,6 +121,7 @@ Select namespaces to scale down:
 ```
 
 **Platform namespaces** (discovered on full OpenShift):
+
 - `openshift-monitoring`
 - `openshift-console`
 - `openshift-insights`
@@ -139,6 +140,7 @@ Note: most platform namespaces already run single-replica Deployments and Daemon
 is no intermediate "reduce to 1" option since they are already at 1.
 
 **Addon namespaces** (included when their addon is enabled):
+
 - `automation-orchestrator` (ao-eap)
 - `apme` (apme-eap)
 - `redhat-rhaap-portal` (portal)
@@ -165,6 +167,7 @@ full OpenShift that MicroShift already uses. NFS doesn't enforce UID ownership o
 exported directories, so all AAP pods can write to their volumes regardless of UID.
 
 The NFS deployment in `includes/crc-create.sh` now runs on **both presets**:
+
 - MicroShift: NFS backing PVC uses `topolvm-provisioner` (default SC)
 - Full OpenShift: NFS backing PVC uses `crc-csi-hostpath-provisioner` (default SC)
 

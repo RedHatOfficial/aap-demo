@@ -586,7 +586,8 @@ deploy() {
     -e "@${SCRIPT_DIR}/defaults.yml" \
     -e "@${VARS_FILE}"
 
-  kill $watcher_pid 2>/dev/null; wait $watcher_pid 2>/dev/null
+  kill $watcher_pid 2>/dev/null
+  wait $watcher_pid 2>/dev/null
   trap - EXIT
 
   info "APME deployment completed successfully"

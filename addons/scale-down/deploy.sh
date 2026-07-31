@@ -38,10 +38,10 @@ PLATFORM_NAMESPACES=(
 
 _addon_namespace() {
   case "$1" in
-    ao-eap)   echo "automation-orchestrator" ;;
+    ao-eap) echo "automation-orchestrator" ;;
     apme-eap) echo "apme" ;;
-    portal)   echo "redhat-rhaap-portal" ;;
-    *)        echo "" ;;
+    portal) echo "redhat-rhaap-portal" ;;
+    *) echo "" ;;
   esac
 }
 
@@ -56,7 +56,7 @@ _count_running() {
   local deploys stats total=0
   deploys=$(kubectl get deployments -n "$ns" --no-headers -o custom-columns='REPLICAS:.spec.replicas' 2>/dev/null | awk '$1>0' | wc -l | tr -d ' ')
   stats=$(kubectl get statefulsets -n "$ns" --no-headers -o custom-columns='REPLICAS:.spec.replicas' 2>/dev/null | awk '$1>0' | wc -l | tr -d ' ')
-  total=$(( deploys + stats ))
+  total=$((deploys + stats))
   echo "$total"
 }
 
@@ -79,10 +79,10 @@ _scale_namespace() {
     [ -z "$name" ] && continue
     [ "$replicas" = "0" ] && continue
 
-    echo "${ns}|deployment|${name}|${replicas}" >> "$STATE_FILE"
+    echo "${ns}|deployment|${name}|${replicas}" >>"$STATE_FILE"
     echo "  ${ns}: deployment/${name} ${replicas} → 0"
     kubectl scale deployment "${name}" -n "${ns}" --replicas=0 2>/dev/null || true
-  done <<< "$(kubectl get deployments -n "$ns" --no-headers -o custom-columns='NAME:.metadata.name,REPLICAS:.spec.replicas' 2>/dev/null)"
+  done <<<"$(kubectl get deployments -n "$ns" --no-headers -o custom-columns='NAME:.metadata.name,REPLICAS:.spec.replicas' 2>/dev/null)"
 
   # Scale statefulsets
   while IFS= read -r line; do
@@ -91,10 +91,10 @@ _scale_namespace() {
     [ -z "$name" ] && continue
     [ "$replicas" = "0" ] && continue
 
-    echo "${ns}|statefulset|${name}|${replicas}" >> "$STATE_FILE"
+    echo "${ns}|statefulset|${name}|${replicas}" >>"$STATE_FILE"
     echo "  ${ns}: statefulset/${name} ${replicas} → 0"
     kubectl scale statefulset "${name}" -n "${ns}" --replicas=0 2>/dev/null || true
-  done <<< "$(kubectl get statefulsets -n "$ns" --no-headers -o custom-columns='NAME:.metadata.name,REPLICAS:.spec.replicas' 2>/dev/null)"
+  done <<<"$(kubectl get statefulsets -n "$ns" --no-headers -o custom-columns='NAME:.metadata.name,REPLICAS:.spec.replicas' 2>/dev/null)"
 }
 
 # --- Restore ---
@@ -110,7 +110,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     [ -z "$ns" ] && continue
     echo "  ${ns}: ${kind}/${name} → ${replicas}"
     kubectl scale "${kind}" "${name}" -n "${ns}" --replicas="${replicas}" 2>/dev/null || true
-  done < "$STATE_FILE"
+  done <"$STATE_FILE"
 
   rm -f "$STATE_FILE"
   echo "✓ Components restored"
@@ -190,15 +190,15 @@ if [ -t 0 ]; then
 
   if [ -n "$_selection" ]; then
     case "$_selection" in
-      a|A|all)
+      a | A | all)
         ;;
-      n|N|none)
+      n | N | none)
         for i in "${!SELECTED[@]}"; do
           SELECTED[$i]="false"
         done
         ;;
       *)
-        IFS=' ' read -ra _sel_nums <<< "$_selection"
+        IFS=' ' read -ra _sel_nums <<<"$_selection"
         for num in "${_sel_nums[@]}"; do
           if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le "${#AVAILABLE_NS[@]}" ]; then
             idx=$((num - 1))
@@ -235,7 +235,7 @@ echo "Scaling down ${#TARGET_NS[@]} namespace(s)..."
 echo ""
 
 mkdir -p "$(dirname "$STATE_FILE")"
-: > "$STATE_FILE"
+: >"$STATE_FILE"
 
 for ns in "${TARGET_NS[@]}"; do
   _scale_namespace "$ns"

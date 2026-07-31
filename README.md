@@ -9,7 +9,9 @@ Deploy AAP to a local OpenShift Local VM in minutes.
 ## Prerequisites
 
 - **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
-- **Pull secret** (download from https://console.redhat.com/openshift/install/pull-secret). Once downloaded run the following command:
+- **Pull secret** — download from the
+  [Red Hat console](https://console.redhat.com/openshift/install/pull-secret),
+  then run:
 
 ```bash
 mkdir -p ~/.aap-demo
@@ -22,7 +24,9 @@ cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
 git clone https://github.com/RedHatOfficial/aap-demo.git && cd aap-demo && ./install.sh && aap-demo deploy
 ```
 
-**NOTE:** You will be prompted for OpenShift or MicroShift on initial install. OpenShift requires substantially more resources than MicroShift so please take that into consideration.
+**NOTE:** You will be prompted for OpenShift or MicroShift on initial install.
+OpenShift requires substantially more resources than MicroShift so please take
+that into consideration.
 
 ## Status
 
@@ -49,6 +53,7 @@ Credentials:
 ------------
   aap-operator: admin / <password>
 ```
+
 ## Addons to add additional functionality
 
 ```bash
