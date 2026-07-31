@@ -9,8 +9,9 @@ Deploy AAP in minutes on macOS, Linux, or Windows.
 
 #### System Requirements
 
-A typical Microshift and AAP 2.7 environment requires 16GB of RAM, 2 cores, and
+A typical MicroShift and AAP 2.7 environment requires 24GB of RAM, 2 cores, and
 100 GB of storage. We recommend having a total of 32GB RAM available on your system.
+The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384` for 16GB if running AAP alone.
 
 #### MacOS
 
@@ -234,7 +235,7 @@ design, storage, OLM, addons, and cross-platform support).
 
 ```bash
 CRC_CPUS=8                   # VM CPU count (default: 8)
-CRC_MEMORY=16384             # VM memory in MiB (default: 16384)
+CRC_MEMORY=24576             # VM memory in MiB (default: 24576, use 16384 for AAP-only)
 CRC_DISK=100                 # VM disk size in GiB (default: 100)
 CRC_PV_SIZE=70               # Storage reserved for LVMS PVCs in GiB (default: 70, must be < CRC_DISK)
 NAMESPACE=aap-operator       # Target namespace
