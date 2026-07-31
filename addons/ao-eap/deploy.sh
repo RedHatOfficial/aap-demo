@@ -26,7 +26,15 @@ else
   MARKETPLACE_NAMESPACE="olm"
 fi
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
-STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
+# Detect preset for storage class and install path
+_PRESET_RAW=$(crc config get preset 2>&1 || true)
+if echo "$_PRESET_RAW" | grep -q "not set"; then
+  _PRESET=$(echo "$_PRESET_RAW" | grep -oE "openshift|microshift" | tail -1)
+  [ -z "$_PRESET" ] && _PRESET="openshift"
+else
+  _PRESET=$(echo "$_PRESET_RAW" | awk '{print $NF}')
+fi
+STORAGE_CLASS="${AO_STORAGE_CLASS:-nfs-local-rwx}"
 PULL_SECRET_FILE="${PULL_SECRET_FILE:-$HOME/.aap-demo/pull-secret.txt}"
 AAPCTL_BIN="/usr/local/bin/aapctl"
 AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"
@@ -285,6 +293,101 @@ if ! command -v aapctl >/dev/null 2>&1; then
 else
   echo "✓ aapctl: $(aapctl version 2>/dev/null | head -1 || echo "installed")"
 fi
+
+# ---------------------------------------------------------------------------
+# Full OpenShift: use aapctl install directly (certified-operators exists,
+# OLM handles CNPG subscription). Skip the manual MicroShift flow.
+# ---------------------------------------------------------------------------
+if [ "$_PRESET" != "microshift" ]; then
+  echo ""
+  echo "Installing Automation Orchestrator via aapctl (full OpenShift)..."
+
+  kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+  oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
+  oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
+
+  # Link pull secret to namespace if available
+  if [ -f "$PULL_SECRET_FILE" ]; then
+    kubectl create secret generic ao-registry-pull-secret \
+      --from-file=.dockerconfigjson="$PULL_SECRET_FILE" \
+      --type=kubernetes.io/dockerconfigjson \
+      -n "$NAMESPACE" \
+      --dry-run=client -o yaml | kubectl apply -f -
+    kubectl patch serviceaccount default -n "$NAMESPACE" --type=merge \
+      -p '{"imagePullSecrets":[{"name":"ao-registry-pull-secret"}]}' 2>/dev/null || true
+  fi
+
+  # CatalogSource for EAP index image (not in default catalogs)
+  kubectl apply -f - <<EOF
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: cs-automation-orchestrator
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  image: ${AO_INDEX_IMAGE}
+  displayName: Automation Orchestrator
+  secrets:
+  - ao-registry-pull-secret
+EOF
+
+  echo "Waiting for CatalogSource..."
+  for i in $(seq 1 30); do
+    CS_STATE=$(kubectl get catalogsource cs-automation-orchestrator \
+      -n openshift-marketplace \
+      -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
+    [ "$CS_STATE" = "READY" ] && { echo "✓ CatalogSource ready"; break; }
+    [ "$i" -eq 30 ] && { echo "WARNING: CatalogSource not ready after 5 min"; break; }
+    printf "\r  $(hat) CatalogSource: %-10s    " "$CS_STATE"
+    sleep 10
+  done
+  echo ""
+
+  # Delete stale admin password so operator generates a fresh one
+  kubectl delete secret automation-orchestrator-initial-admin-password \
+    -n "$NAMESPACE" 2>/dev/null || true
+
+  aapctl install automation-orchestrator \
+    --kubeconfig "$KUBECONFIG_PATH" \
+    --set automation-orchestrator-operator.namespace="$NAMESPACE" \
+    --set automation-orchestrator-operator.channel=early-access \
+    --set cloudnative-pg-operator.enabled=true \
+    --set cluster-cr.storageClass="$STORAGE_CLASS"
+
+  # Save state for delete
+  mkdir -p "$(dirname "$AO_STATE_FILE")"
+  echo "INSTALL_METHOD=aapctl" > "$AO_STATE_FILE"
+
+  echo ""
+  AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
+    -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  PASS_SECRET=$(kubectl get secret -n "$NAMESPACE" \
+    -o name 2>/dev/null | grep -i "admin-password" | head -1 || echo "")
+
+  echo "✓ Automation Orchestrator deployed!"
+  echo ""
+  if [ -n "$AO_ROUTE" ]; then
+    echo "  URL:      https://${AO_ROUTE}"
+  else
+    echo "  URL:      kubectl get routes -n ${NAMESPACE} -o jsonpath='{.items[0].spec.host}'"
+  fi
+  echo "  Username: admin"
+  if [ -n "$PASS_SECRET" ] && [ "${CI:-}" != "true" ]; then
+    AO_PASSWORD=$(kubectl get "$PASS_SECRET" -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+    [ -n "$AO_PASSWORD" ] \
+      && echo "  Password: ${AO_PASSWORD}" \
+      || echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
+  else
+    echo "  Password: kubectl get secret -n $NAMESPACE | grep admin-password"
+  fi
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# MicroShift: manual flow (no certified-operators catalog, no OLM for CNPG)
+# ---------------------------------------------------------------------------
 
 # Clean up any leftover CatalogSource from the other namespace (whichever we're not using)
 for _ns in olm openshift-marketplace; do
