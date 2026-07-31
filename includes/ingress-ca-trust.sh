@@ -53,10 +53,18 @@ _ingress_ca_installed_fingerprint_linux() {
 }
 
 _ingress_ca_installed_fingerprint_macos() {
-  security find-certificate -a -p -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null \
-    | awk '/BEGIN CERTIFICATE/{p=1} p{print} /END CERTIFICATE/{exit}' \
-    | openssl x509 -noout -fingerprint -sha256 2>/dev/null \
-    | sed -E 's/sha256 [Ff]ingerprint=//' | tr -d ':' | tr '[:lower:]' '[:upper:]'
+  local cn
+  for cn in "ingress-operator" "ingress-ca"; do
+    local fp
+    fp=$(security find-certificate -a -p -c "$cn" /Library/Keychains/System.keychain 2>/dev/null \
+      | awk '/BEGIN CERTIFICATE/{p=1} p{print} /END CERTIFICATE/{exit}' \
+      | openssl x509 -noout -fingerprint -sha256 2>/dev/null \
+      | sed -E 's/sha256 [Ff]ingerprint=//' | tr -d ':' | tr '[:lower:]' '[:upper:]')
+    if [ -n "$fp" ]; then
+      echo "$fp"
+      return 0
+    fi
+  done
 }
 
 _ingress_ca_in_trust_store() {
@@ -130,7 +138,16 @@ _ingress_ca_export_env() {
 _fetch_ingress_ca_from_cluster() {
   local dest="$1"
 
-  # CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
+  # Full OpenShift: extract from router-ca secret via kubectl
+  if kubectl get secret router-ca -n openshift-ingress-operator &>/dev/null; then
+    kubectl get secret router-ca -n openshift-ingress-operator \
+      -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d >"$dest" 2>/dev/null
+    if [ -s "$dest" ] && grep -q 'BEGIN CERTIFICATE' "$dest"; then
+      return 0
+    fi
+  fi
+
+  # MicroShift: fetch via SSH from the filesystem
   if [ -z "$CRC_SSH_KEY" ]; then
     return 1
   fi
@@ -200,9 +217,11 @@ _import_ingress_ca_nss() {
 }
 
 _import_ingress_ca_macos() {
-  local path="$1"
+  local path="$1" cn
 
-  while sudo security delete-certificate -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null; do :; done
+  for cn in "ingress-operator" "ingress-ca"; do
+    while sudo security delete-certificate -c "$cn" /Library/Keychains/System.keychain 2>/dev/null; do :; done
+  done
   if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$path" 2>/dev/null; then
     echo "  ✓ Ingress CA trusted (macOS keychain)"
     return 0

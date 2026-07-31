@@ -1,41 +1,34 @@
 # AAP Demo Quick Start
 
-Deploy AAP to a local MicroShift cluster in minutes.
+Deploy AAP to a local OpenShift Local VM in minutes.
 
 ## SECURITY NOTICE — DEVELOPMENT ENVIRONMENT ONLY
 
 **aap-demo is a LOCAL DEVELOPMENT tool and must NEVER be used in production.**
 
-**DO NOT use aap-demo configurations or patterns in production environments.**
+## Prerequisites
+
+- **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
+- **Pull secret** (download from https://console.redhat.com/openshift/install/pull-secret). Once downloaded run the following command:
+
+```bash
+mkdir -p ~/.aap-demo
+cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
+```
 
 ## Install
 
 ```bash
-git clone https://github.com/RedHatOfficial/aap-demo.git
-cd aap-demo && ./install.sh
+git clone https://github.com/RedHatOfficial/aap-demo.git && cd aap-demo && ./install.sh && aap-demo deploy
 ```
 
-## Prerequisites
+**NOTE:** You will be prompted for OpenShift or MicroShift on initial install. OpenShift requires substantially more resources than MicroShift so please take that into consideration.
 
-- **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
-- **24GB RAM** — Default VM allocation (override with `CRC_MEMORY=16384 aap-demo create` for 16GB)
-- **Pull secret** (required for all deploys):
+## Status
 
 ```bash
-mkdir -p ~/.aap-demo
-# Download from: https://console.redhat.com/openshift/install/pull-secret
-cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
-```
-
-## Deploy
-
-```bash
-aap-demo create        # Create cluster (~3 min)
-aap-demo deploy        # Deploy AAP 2.7 (~10 min)
 aap-demo status        # Show routes and credentials
 ```
-
-## What You Get
 
 ```text
 AAP Demo Status
@@ -56,6 +49,18 @@ Credentials:
 ------------
   aap-operator: admin / <password>
 ```
+## Addons to add additional fuctionality
+
+```bash
+aap-demo enable              # List all addons
+aap-demo enable portal       # Installs Automation Portal
+aap-demo enable pah          # Configures Private Automation Hub Credentials
+aap-demo enable mcp-server   # MCP server for AI assistants
+aap-demo enable scale-down   # Scales down pods to save resources
+aap-demo enable ao-eap       # Early Access Program only for Automation Orchestrator
+aap-demo enable apme-eap     # Early Access Program only for APME
+aap-demo disable addon_name  # Disables addon
+```
 
 ## Daily Use
 
@@ -75,15 +80,6 @@ aap-demo repair        # Fix after sleep/wake issues
 aap-demo diagnose      # Quick health check — finds common issues
 aap-demo diagnose --ai # AI-powered analysis (requires claude CLI)
 aap-demo must-gather   # Collect full diagnostics for support
-```
-
-## Addons
-
-```bash
-aap-demo enable console      # OpenShift Console (web UI)
-aap-demo enable registry     # In-cluster container registry
-aap-demo enable mcp-server   # MCP server for AI assistants
-aap-demo enable              # List all addons
 ```
 
 ## Clean Up

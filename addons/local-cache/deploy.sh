@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Image cache — save/load AAP container images to skip registry pulls
+# Local cache — save/load AAP container images to skip registry pulls
 #
-# Hidden addon (not in AVAILABLE_ADDONS). Use directly:
-#   aap-demo enable image-cache          # save images from running cluster
-#   aap-demo enable image-cache load     # load cached images into cluster
-#   aap-demo enable image-cache clear    # delete cache
-#   aap-demo disable image-cache         # alias for clear
+# Usage:
+#   aap-demo enable local-cache          # save images from running cluster
+#   aap-demo enable local-cache load     # load cached images into cluster
+#   aap-demo enable local-cache clear    # delete cache
+#   aap-demo disable local-cache         # alias for clear
 #
 # Images are saved per-preset (openshift vs microshift) since the image
-# sets differ. Cache lives at ~/.aap-demo/image-cache/<preset>/
+# sets differ. Cache lives at ~/.aap-demo/local-cache/<preset>/
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="${1:-save}"
-CACHE_BASE="${HOME}/.aap-demo/image-cache"
+CACHE_BASE="${HOME}/.aap-demo/local-cache"
 
 _BOLD='\033[1m'
 _GREEN='\033[0;32m'
@@ -71,7 +71,7 @@ fi
 if [ "$ACTION" = "load" ]; then
   if [ ! -d "$CACHE_DIR" ] || [ -z "$(ls "$CACHE_DIR"/*.tar 2>/dev/null)" ]; then
     echo "No cached images found for ${PRESET}"
-    echo "  Run 'aap-demo enable image-cache' first to save images"
+    echo "  Run 'aap-demo enable local-cache' first to save images"
     exit 1
   fi
 
@@ -189,9 +189,9 @@ for img in data.get('images', []):
   echo "✓ Saved ${saved} images, ${skipped} already cached, ${failed} skipped (${total_size} total)"
   echo ""
   echo "To load after a fresh create:"
-  echo "  aap-demo enable image-cache load"
+  echo "  aap-demo enable local-cache load"
   exit 0
 fi
 
-echo "Usage: aap-demo enable image-cache [save|load|clear]"
+echo "Usage: aap-demo enable local-cache [save|load|clear]"
 exit 1

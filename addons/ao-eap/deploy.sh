@@ -193,9 +193,20 @@ if [ "$_PRESET" != "microshift" ]; then
   mkdir -p "$(dirname "$AO_STATE_FILE")"
   echo "INSTALL_METHOD=aapctl" > "$AO_STATE_FILE"
 
+  # Wait for route (created by operator after CR reconciliation)
   echo ""
-  AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
-    -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  echo "Waiting for route..."
+  AO_ROUTE=""
+  for _w in $(seq 1 90); do
+    AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+    if [ -n "$AO_ROUTE" ]; then
+      echo "  ✓ Route ready"
+      break
+    fi
+    sleep 10
+  done
+  echo ""
+
   PASS_SECRET=$(kubectl get secret -n "$NAMESPACE" \
     -o name 2>/dev/null | grep -i "admin-password" | head -1 || echo "")
 

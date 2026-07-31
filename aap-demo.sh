@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap | scale-down | image-cache)
+    mcp-server | portal | setup-pah | ao-eap | apme-eap | scale-down | local-cache)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -393,6 +393,7 @@ Addons:
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao-eap   Install Automation Orchestrator Early Access
   enable scale-down Scale down non-AAP OpenShift components (frees RAM/CPU)
+  enable local-cache Cache container images locally (~30GB) to speed up deploys
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -440,12 +441,15 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, scale-down)
+    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, scale-down, local-cache)
     disable [addon] Disable an addon
                     scale-down: Scale non-AAP OpenShift platform components to 0
                     replicas (monitoring, console, insights, registry, addons).
                     Frees CPU/RAM for AAP. Only applies to full OpenShift.
                     Restore with: aap-demo disable scale-down
+                    local-cache: Cache container images locally (~30GB).
+                    Saves images from a running cluster for fast reloads.
+                    Usage: enable local-cache [save|load|clear]
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
     update          Pull latest code and reinstall
@@ -1758,7 +1762,7 @@ cmd_status() {
   echo "AAP Deployments:"
   echo "----------------"
   ROUTES=$(kubectl get route -A --no-headers 2>/dev/null \
-    | grep -v -E '^(openshift-|kube-|aap-demo-)' \
+    | grep -v -E '^(openshift-|kube-|aap-demo-|automation-orchestrator )' \
     | awk '{printf "  https://%s\n", $3}')
   if [ -n "$ROUTES" ]; then
     echo "$ROUTES"
@@ -1850,6 +1854,9 @@ cmd_status() {
         fi
         ;;
       ao-eap)
+        if [ "$enabled" != true ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+          enabled=true
+        fi
         if [ "$enabled" = true ]; then
           url="https://$(kubectl get routes -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)"
           if [ -z "$url" ] || [ "$url" = "https://" ]; then
@@ -2229,7 +2236,7 @@ else:
   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded csv/"$CSV_NAME" -n "$NAMESPACE" --timeout=600s || true
 
   # Load cached container images if available (saves 10-15min of registry pulls)
-  _load_image_cache
+  _load_local_cache
 
   # Create AAP instance (unless CREATE_AAP=false for deploy-operator)
   if [ "${CREATE_AAP:-true}" != "false" ]; then
@@ -2415,7 +2422,7 @@ deploy_operator_sdk() {
     --pull-secret-name redhat-operators-pull-secret
 }
 
-_load_image_cache() {
+_load_local_cache() {
   local preset_raw preset cache_dir
   preset_raw=$(crc config get preset 2>&1)
   if echo "$preset_raw" | grep -q "not set"; then
@@ -2424,7 +2431,7 @@ _load_image_cache() {
   else
     preset=$(echo "$preset_raw" | awk '{print $NF}')
   fi
-  cache_dir="${HOME}/.aap-demo/image-cache/${preset}"
+  cache_dir="${HOME}/.aap-demo/local-cache/${preset}"
 
   # Skip if no cache exists
   [ -d "$cache_dir" ] || return 0
@@ -2699,7 +2706,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap scale-down"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap scale-down local-cache"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
