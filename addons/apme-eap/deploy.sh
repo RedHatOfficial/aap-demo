@@ -136,6 +136,18 @@ discover_environment() {
   fi
   info "OpenShift API: $OPENSHIFT_API_URL"
 
+  # CRC kubeconfig uses client certificate auth — oc registry login requires a
+  # token-based session. Log in with kubeadmin if no token is available.
+  if ! oc whoami -t &>/dev/null; then
+    local kubeadmin_pass_file="$HOME/.crc/machines/crc/kubeadmin-password"
+    if [ -f "$kubeadmin_pass_file" ]; then
+      info "Acquiring token via kubeadmin login..."
+      oc login -u kubeadmin -p "$(cat "$kubeadmin_pass_file")" \
+        "$OPENSHIFT_API_URL" --insecure-skip-tls-verify &>/dev/null \
+        || warn "kubeadmin login failed — oc registry login may fail later"
+    fi
+  fi
+
   # 3. Cluster domain (from console route or any route)
   CLUSTER_DOMAIN=$(kubectl get route -n openshift-console console -o jsonpath='{.spec.host}' 2>/dev/null | sed 's/^console-openshift-console\.//' || echo "")
   if [ -z "$CLUSTER_DOMAIN" ]; then
