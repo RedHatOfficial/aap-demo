@@ -78,13 +78,18 @@ check_prerequisites() {
     die "python3 not found. Please install Python 3.8 or later."
   fi
 
-  # Ensure the in-cluster registry addon is deployed — APME uses it to store
-  # plugin OCI images that the portal init container pulls at runtime.
-  if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
-    info "In-cluster registry not found — deploying registry addon..."
-    bash "${SCRIPT_DIR}/../registry/deploy.sh"
+  # MicroShift lacks an integrated registry — deploy the in-cluster registry
+  # addon so APME can store plugin OCI images for the portal init container.
+  # Full OpenShift (CRC or remote) has its own image registry, so skip this.
+  if ! kubectl get ingresses.config/cluster --request-timeout=5s &>/dev/null; then
+    if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
+      info "MicroShift detected — deploying in-cluster registry addon..."
+      bash "${SCRIPT_DIR}/../registry/deploy.sh"
+    else
+      info "In-cluster registry already running"
+    fi
   else
-    info "In-cluster registry already running"
+    info "Full OpenShift detected — skipping in-cluster registry"
   fi
 
   info "Prerequisites check complete"
@@ -382,10 +387,14 @@ generate_vars_file() {
 
   mkdir -p "$(dirname "$VARS_FILE")"
 
-  # Extract token from kubeconfig for API authentication (optional)
-  # The playbooks will use KUBECONFIG env var if token not available
+  # Extract token for API and registry authentication.
+  # CRC kubeconfig uses client certificate auth (no token field), so fall back
+  # to the active oc session token.
   local openshift_token
   openshift_token=$(kubectl config view --minify --raw -o jsonpath='{.users[0].user.token}' 2>/dev/null || echo "")
+  if [ -z "$openshift_token" ]; then
+    openshift_token=$(oc whoami -t 2>/dev/null || echo "")
+  fi
 
   cat >"$VARS_FILE" <<EOF
 ---
@@ -492,9 +501,21 @@ configure_github_secrets: false
 EOF
   fi
 
-  cat >>"$VARS_FILE" <<EOF
+  # OCI registry configuration — full OpenShift uses the integrated registry;
+  # MicroShift uses the aap-demo in-cluster registry addon.
+  if kubectl get ingresses.config/cluster --request-timeout=5s &>/dev/null; then
+    cat >>"$VARS_FILE" <<EOF
 
-# OCI registry configuration (MicroShift doesn't have integrated registry)
+# OCI registry configuration (OpenShift integrated registry)
+oci_registry: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}"
+oci_registry_internal: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}"
+skip_plugin_push: false
+apme_oci_push_force: false  # Set true to re-push plugins even if registry has them
+EOF
+  else
+    cat >>"$VARS_FILE" <<EOF
+
+# OCI registry configuration (MicroShift in-cluster registry addon)
 # oci_registry: External URL for local skopeo push (runs outside cluster)
 oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
 # oci_registry_internal: Internal service URL for pods to pull images
@@ -502,6 +523,10 @@ oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
 oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
 skip_plugin_push: false
 apme_oci_push_force: false  # Set true to re-push plugins even if registry has them
+EOF
+  fi
+
+  cat >>"$VARS_FILE" <<EOF
 
 # Architecture (informational)
 # cluster_arch: ${ARCH}
@@ -528,13 +553,8 @@ deploy() {
     -e "@${SCRIPT_DIR}/defaults.yml" \
     -e "@${VARS_FILE}"
 
-  if [ $? -eq 0 ]; then
-    info "APME deployment completed successfully"
-    show_routes
-  else
-    error "APME deployment failed. Check playbook output above."
-    exit 1
-  fi
+  info "APME deployment completed successfully"
+  show_routes
 }
 
 show_routes() {

@@ -8,7 +8,7 @@
 #   ./deploy.sh          # Interactive scale down
 #   ./deploy.sh --delete # Restore original replica counts
 
-set -e
+set -euo pipefail
 
 ACTION="${1:-deploy}"
 AAP_NAMESPACE="${NAMESPACE:-aap-operator}"
@@ -60,6 +60,7 @@ _count_running() {
 
 _scale_namespace() {
   local ns="$1"
+  local name replicas
 
   if [ "$ns" = "$AAP_NAMESPACE" ]; then
     return
@@ -71,7 +72,6 @@ _scale_namespace() {
 
   # Scale deployments
   while IFS= read -r line; do
-    local name replicas
     name=$(echo "$line" | awk '{print $1}')
     replicas=$(echo "$line" | awk '{print $2}')
     [ -z "$name" ] && continue
@@ -84,7 +84,6 @@ _scale_namespace() {
 
   # Scale statefulsets
   while IFS= read -r line; do
-    local name replicas
     name=$(echo "$line" | awk '{print $1}')
     replicas=$(echo "$line" | awk '{print $2}')
     [ -z "$name" ] && continue
@@ -197,13 +196,15 @@ if [ -t 0 ]; then
         done
         ;;
       *)
-        # Toggle specified numbers (start with all selected, toggle off)
-        for i in "${!SELECTED[@]}"; do
-          SELECTED[$i]="false"
-        done
-        for num in $_selection; do
+        IFS=' ' read -ra _sel_nums <<< "$_selection"
+        for num in "${_sel_nums[@]}"; do
           if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le "${#AVAILABLE_NS[@]}" ]; then
-            SELECTED[$((num - 1))]="true"
+            idx=$((num - 1))
+            if [ "${SELECTED[$idx]}" = "true" ]; then
+              SELECTED[$idx]="false"
+            else
+              SELECTED[$idx]="true"
+            fi
           fi
         done
         ;;

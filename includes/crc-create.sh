@@ -300,8 +300,10 @@ fi
 if [ -f "${HOME}/.aap-demo/config" ]; then
   _saved_cpus=$(grep '^CRC_CPUS=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
   _saved_memory=$(grep '^CRC_MEMORY=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
+  [[ "${_saved_cpus:-}" =~ ^[0-9]+$ ]] || _saved_cpus=""
+  [[ "${_saved_memory:-}" =~ ^[0-9]+$ ]] || _saved_memory=""
   [ -n "$_saved_cpus" ] && _DEFAULT_CPUS="$_saved_cpus"
-  [ -n "$_saved_memory" ] && _DEFAULT_MEMORY_GB=$(( _saved_memory / 1024 ))
+  [ -n "$_saved_memory" ] && _DEFAULT_MEMORY_GB=$(( (_saved_memory + 512) / 1024 ))
 fi
 
 if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
@@ -313,11 +315,20 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
   echo ""
   printf "  CPUs [${_DEFAULT_CPUS}]: "
   read -r _input_cpus </dev/tty
-  CRC_CPUS="${_input_cpus:-${_DEFAULT_CPUS}}"
+  _input_cpus="${_input_cpus:-${_DEFAULT_CPUS}}"
+  if ! [[ "$_input_cpus" =~ ^[0-9]+$ ]] || [ "$_input_cpus" -le 0 ]; then
+    printf "${_RED}▸${_NC} Invalid CPU count: '${_input_cpus}' (must be a positive integer)\n"
+    exit 1
+  fi
+  CRC_CPUS="$_input_cpus"
 
   printf "  Memory in GB [${_DEFAULT_MEMORY_GB}]: "
   read -r _input_memory_gb </dev/tty
   _input_memory_gb="${_input_memory_gb:-${_DEFAULT_MEMORY_GB}}"
+  if ! [[ "$_input_memory_gb" =~ ^[0-9]+$ ]] || [ "$_input_memory_gb" -le 0 ]; then
+    printf "${_RED}▸${_NC} Invalid memory value: '${_input_memory_gb}' (must be a positive integer in GB)\n"
+    exit 1
+  fi
   CRC_MEMORY=$(( _input_memory_gb * 1024 ))
 
   CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"

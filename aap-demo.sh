@@ -2138,8 +2138,12 @@ deploy_latest() {
   _deploy_preset=$(crc config get preset 2>&1 | awk '{print $NF}')
   _deploy_ssh_key="$(_detect_crc_ssh_key 2>/dev/null || true)"
   if [ "$_deploy_preset" = "microshift" ] && [ -n "$_deploy_ssh_key" ]; then
-    _deploy_ssh_opts="-i $_deploy_ssh_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
-    ssh -p 2222 $_deploy_ssh_opts core@127.0.0.1 'sudo python3 -c "
+    # Only needed for MicroShift 4.22+ which enforces GPG signatures on index images
+    _ocp_major="${AAP_OCP_VERSION%%.*}"
+    _ocp_minor="${AAP_OCP_VERSION#*.}"
+    if [ "$_ocp_major" -gt 4 ] || { [ "$_ocp_major" -eq 4 ] && [ "$_ocp_minor" -ge 22 ]; }; then
+      _deploy_ssh_opts=(-i "$_deploy_ssh_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+      ssh -p 2222 "${_deploy_ssh_opts[@]}" core@127.0.0.1 'sudo python3 -c "
 import json, sys
 p = \"/etc/containers/policy.json\"
 with open(p) as f: d = json.load(f)
@@ -2151,6 +2155,7 @@ if reg and reg[0].get(\"type\") != \"insecureAcceptAnything\":
 else:
     print(\"  Signature policy already relaxed\")
 "' 2>/dev/null || true
+    fi
   fi
 
   # Create CatalogSource in aap-operator namespace
@@ -2527,7 +2532,8 @@ create_aap_instance() {
     local preset
     preset=$(crc config get preset 2>/dev/null | awk '{print $NF}' || echo "")
     if [ "$preset" = "microshift" ]; then
-      sed "s|storage_type: file|storage_type: file\n    route_host: aap-hub-${NAMESPACE}.apps.127.0.0.1.nip.io|" \
+      awk -v host="aap-hub-${NAMESPACE}.apps.127.0.0.1.nip.io" \
+        '/storage_type: file/{print; print "    route_host: " host; next} {print}' \
         "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
     else
       kubectl apply -f "$cr_file" -n "$NAMESPACE"

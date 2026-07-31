@@ -95,6 +95,10 @@
   ansible.builtin.set_fact:
     is_nip_io_domain: "{{ 'nip.io' in openshift_cluster_domain }}"
 
+- name: Check if SSL bypass is needed (CRC and MicroShift use self-signed certs)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    needs_ssl_bypass: "{{ 'nip.io' in openshift_cluster_domain or 'crc.testing' in openshift_cluster_domain }}"
+
 - name: Get router service ClusterIP for hostAliases  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s_info:
     api_version: v1
@@ -118,19 +122,19 @@
       OAuth authentication will fail. Check router deployment.
   when: is_nip_io_domain and (router_service.resources | length == 0 or router_cluster_ip is not defined)
 
-- name: Disable SSL verification for nip.io (self-signed certs)  # noqa: var-naming[no-role-prefix]
+- name: Disable SSL verification for self-signed certs (CRC / MicroShift)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: 'checkSSL: true'
     replace: 'checkSSL: false'
-  when: is_nip_io_domain
+  when: needs_ssl_bypass
 
-- name: Add NODE_TLS_REJECT_UNAUTHORIZED env var for nip.io  # noqa: var-naming[no-role-prefix]
+- name: Add NODE_TLS_REJECT_UNAUTHORIZED env var for self-signed certs  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
     replace: "- name: NODE_TLS_REJECT_UNAUTHORIZED\n          value: \"0\"\n        - name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins"
-  when: is_nip_io_domain
+  when: needs_ssl_bypass
 
 - name: Extract AAP hostname from aap_host URL  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
