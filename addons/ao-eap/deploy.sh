@@ -34,7 +34,17 @@ if echo "$_PRESET_RAW" | grep -q "not set"; then
 else
   _PRESET=$(echo "$_PRESET_RAW" | awk '{print $NF}')
 fi
-STORAGE_CLASS="${AO_STORAGE_CLASS:-nfs-local-rwx}"
+if [ -z "${AO_STORAGE_CLASS:-}" ]; then
+  if kubectl get sc nfs-local-rwx &>/dev/null 2>&1; then
+    STORAGE_CLASS="nfs-local-rwx"
+  elif kubectl get sc topolvm-provisioner &>/dev/null 2>&1; then
+    STORAGE_CLASS="topolvm-provisioner"
+  else
+    STORAGE_CLASS="nfs-local-rwx"
+  fi
+else
+  STORAGE_CLASS="$AO_STORAGE_CLASS"
+fi
 PULL_SECRET_FILE="${PULL_SECRET_FILE:-$HOME/.aap-demo/pull-secret.txt}"
 AAPCTL_BIN="/usr/local/bin/aapctl"
 AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"

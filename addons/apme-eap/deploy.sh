@@ -27,6 +27,25 @@ die() {
   exit 1
 }
 
+_pod_watcher() {
+  local ns="$1" interval="${2:-30}"
+  sleep 15
+  while true; do
+    local pods
+    pods=$(kubectl get pods -n "$ns" --no-headers 2>/dev/null || true)
+    if [ -n "$pods" ]; then
+      local total ready
+      total=$(echo "$pods" | wc -l | tr -d ' ')
+      ready=$(echo "$pods" | grep -c 'Running\|Completed' || true)
+      echo -e "\n${GREEN}[pod-status $(date +%H:%M:%S)]${NC} ${ns}: ${ready}/${total} pods running"
+      echo "$pods" | grep -v 'Running\|Completed' | while IFS= read -r line; do
+        [ -n "$line" ] && echo -e "  ${YELLOW}${line}${NC}"
+      done
+    fi
+    sleep "$interval"
+  done
+}
+
 # Addon contract: deploy.sh [deploy|--delete]
 
 # ---------------------------------------------------------------------------
@@ -196,14 +215,14 @@ prompt_github_token() {
     existing_token=$(grep -E '^github_token:' "$GITHUB_CREDS_FILE" 2>/dev/null | sed 's/^github_token:[[:space:]]*//' | tr -d '"' || echo "")
     if [ -n "$existing_token" ]; then
       info "GitHub credentials found in $GITHUB_CREDS_FILE — reusing"
-      export GITHUB_TOKEN="$existing_token"
+      GITHUB_TOKEN="$existing_token"
       local val
       for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret; do
         val=$(grep -E "^${var}:" "$GITHUB_CREDS_FILE" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
         if [ -n "$val" ]; then
           local env_name
           env_name=$(echo "$var" | tr '[:lower:]' '[:upper:]')
-          export "$env_name=$val"
+          printf -v "$env_name" '%s' "$val"
         fi
       done
       return 0
@@ -216,7 +235,6 @@ prompt_github_token() {
     # Default OAuth vars to App client credentials if not explicitly set
     GITHUB_OAUTH_CLIENT_ID="${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID:-}}"
     GITHUB_OAUTH_CLIENT_SECRET="${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET:-}}"
-    export GITHUB_OAUTH_CLIENT_ID GITHUB_OAUTH_CLIENT_SECRET
     return 0
   fi
 
@@ -357,16 +375,14 @@ prompt_github_token() {
     return 0
   fi
 
-  # Export for use in generate_vars_file
-  export GITHUB_APP_ID="$github_app_id_input"
-  export GITHUB_APP_CLIENT_ID="$github_app_client_id_input"
-  export GITHUB_APP_CLIENT_SECRET="$github_app_client_secret_input"
-  export GITHUB_APP_PRIVATE_KEY_PATH="$github_app_private_key_input"
-  export GITHUB_TOKEN="$github_token_input"
+  GITHUB_APP_ID="$github_app_id_input"
+  GITHUB_APP_CLIENT_ID="$github_app_client_id_input"
+  GITHUB_APP_CLIENT_SECRET="$github_app_client_secret_input"
+  GITHUB_APP_PRIVATE_KEY_PATH="$github_app_private_key_input"
+  GITHUB_TOKEN="$github_token_input"
 
-  # Use same client ID/secret for OAuth (GitHub App can do both)
-  export GITHUB_OAUTH_CLIENT_ID="$github_app_client_id_input"
-  export GITHUB_OAUTH_CLIENT_SECRET="$github_app_client_secret_input"
+  GITHUB_OAUTH_CLIENT_ID="$github_app_client_id_input"
+  GITHUB_OAUTH_CLIENT_SECRET="$github_app_client_secret_input"
 
   # Save credentials so future deploys skip the prompt
   mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
@@ -554,16 +570,24 @@ EOF
 
 deploy() {
   info "Deploying APME using official welcome pack playbooks..."
+  info "(pod status updates every 30s during helm installs)"
 
   # Set environment for kubernetes.core modules
   export K8S_AUTH_KUBECONFIG="${KUBECONFIG:-${HOME}/.crc/machines/crc/kubeconfig}"
   export ANSIBLE_ROLES_PATH="${SCRIPT_DIR}/playbooks/roles"
+
+  _pod_watcher "$NAMESPACE" 30 &
+  local watcher_pid=$!
+  trap 'kill $watcher_pid 2>/dev/null; wait $watcher_pid 2>/dev/null' EXIT
 
   # Run main deployment playbook directly
   # Note: Load defaults first, then vars file so user config takes precedence
   ansible-playbook "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
     -e "@${SCRIPT_DIR}/defaults.yml" \
     -e "@${VARS_FILE}"
+
+  kill $watcher_pid 2>/dev/null; wait $watcher_pid 2>/dev/null
+  trap - EXIT
 
   info "APME deployment completed successfully"
   show_routes

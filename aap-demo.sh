@@ -130,8 +130,13 @@ for arg in "$@"; do
       EXTRA_ARGS+=("$arg")
       ;;
     save | load | clear)
-      # Subcommands for addons that accept them
-      EXTRA_ARGS+=("$arg")
+      if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
+        EXTRA_ARGS+=("$arg")
+      else
+        echo "Unknown argument: $arg" >&2
+        echo "Run 'aap-demo help' for usage" >&2
+        exit 1
+      fi
       ;;
     true | false)
       # Boolean args for idle command
@@ -510,6 +515,19 @@ cmd_repair() {
   export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 
   echo "Running repair..."
+  echo ""
+
+  _grant_sccs "$NAMESPACE"
+
+  verify_coredns
+
+  local _crash_pods
+  _crash_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep "CrashLoopBackOff" | awk '{print $1}' || true)
+  if [ -n "$_crash_pods" ]; then
+    echo "  Restarting crashed pods..."
+    echo "$_crash_pods" | xargs -I{} kubectl delete pod {} -n "$NAMESPACE" 2>/dev/null || true
+  fi
+
   echo ""
   echo "✓ Repair complete"
 }
@@ -2135,7 +2153,13 @@ deploy_latest() {
   # Relax container signature policy for operator index images (MicroShift 4.22+
   # enforces GPG signatures but the index images may fail verification).
   # Full OpenShift doesn't enforce this — skip.
-  _deploy_preset=$(crc config get preset 2>&1 | awk '{print $NF}')
+  _deploy_preset_raw=$(crc config get preset 2>&1 || true)
+  if echo "$_deploy_preset_raw" | grep -q "not set"; then
+    _deploy_preset=$(echo "$_deploy_preset_raw" | grep -oE "openshift|microshift" | tail -1)
+    [ -z "$_deploy_preset" ] && _deploy_preset="openshift"
+  else
+    _deploy_preset=$(echo "$_deploy_preset_raw" | awk '{print $NF}')
+  fi
   _deploy_ssh_key="$(_detect_crc_ssh_key 2>/dev/null || true)"
   if [ "$_deploy_preset" = "microshift" ] && [ -n "$_deploy_ssh_key" ]; then
     # Only needed for MicroShift 4.22+ which enforces GPG signatures on index images
@@ -2267,13 +2291,24 @@ else:
 }
 
 verify_coredns() {
-  # Verify CoreDNS has a working rewrite rule for nip.io routes.
-  # Without this, pods can't resolve *.apps.127.0.0.1.nip.io and
-  # hub's galaxy-status health check will fail with Connection refused.
+  # CoreDNS rewrite is only needed on MicroShift — full OpenShift resolves
+  # apps-crc.testing via /etc/resolver/testing and built-in DNS.
+  local _vcd_preset_raw _vcd_preset
+  _vcd_preset_raw=$(crc config get preset 2>&1 || true)
+  if echo "$_vcd_preset_raw" | grep -q "not set"; then
+    _vcd_preset=$(echo "$_vcd_preset_raw" | grep -oE "openshift|microshift" | tail -1)
+    [ -z "$_vcd_preset" ] && _vcd_preset="openshift"
+  else
+    _vcd_preset=$(echo "$_vcd_preset_raw" | awk '{print $NF}')
+  fi
+  if [ "$_vcd_preset" != "microshift" ]; then
+    return 0
+  fi
+
   local corefile
   corefile=$(kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
   if [ -z "$corefile" ]; then
-    return 0 # No CoreDNS configmap — skip check
+    return 0
   fi
 
   local _needs_fix=false
@@ -2459,7 +2494,7 @@ _load_local_cache() {
   for tarball in "$cache_dir"/*.tar; do
     [ -f "$tarball" ] || continue
     local img_ref
-    img_ref=$(cat "${tarball%.tar}.ref" 2>/dev/null || continue)
+    img_ref=$(cat "${tarball%.tar}.ref" 2>/dev/null) || continue
     local file_size
     file_size=$(du -h "$tarball" | awk '{print $1}')
 
@@ -2475,7 +2510,7 @@ _load_local_cache() {
     fi
     printf "  %-67s %6s " "$display_name" "$file_size"
 
-    if ssh -p "$CRC_SSH_PORT" $CRC_SSH_OPTS core@127.0.0.1 \
+    if ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 \
       "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" < "$tarball" &>/dev/null; then
       printf "\033[0;32m✓\033[0m\n"
       loaded=$((loaded + 1))
@@ -2529,8 +2564,14 @@ create_aap_instance() {
     echo "Using CR: $cr_name"
     # On MicroShift, inject route_host for nip.io domain; full OpenShift uses
     # the cluster ingress domain (apps-crc.testing) automatically.
-    local preset
-    preset=$(crc config get preset 2>/dev/null | awk '{print $NF}' || echo "")
+    local preset preset_raw
+    preset_raw=$(crc config get preset 2>&1 || true)
+    if echo "$preset_raw" | grep -q "not set"; then
+      preset=$(echo "$preset_raw" | grep -oE "openshift|microshift" | tail -1)
+      [ -z "$preset" ] && preset="openshift"
+    else
+      preset=$(echo "$preset_raw" | awk '{print $NF}')
+    fi
     if [ "$preset" = "microshift" ]; then
       awk -v host="aap-hub-${NAMESPACE}.apps.127.0.0.1.nip.io" \
         '/storage_type: file/{print; print "    route_host: " host; next} {print}' \
@@ -2651,10 +2692,10 @@ watch_aap() {
     # Also consider done if gateway route exists and all non-job pods are running
     if [ "$SUCCESSFUL" != "True" ] && [ "$ELAPSED" -gt 60 ]; then
       local _total _running _route
-      _total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -cv "Completed" || echo "0")
+      _total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -v "Completed" | wc -l | tr -d ' ')
       _running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -c "Running" || echo "0")
       _route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-      if [ "${_total:-0}" -ge 15 ] && [ "$_running" -eq "$_total" ] && [ -n "$_route" ]; then
+      if [ "${_total:-0}" -gt 0 ] && [ "$_running" -eq "$_total" ] && [ -n "$_route" ]; then
         SUCCESSFUL="True"
       fi
     fi
@@ -2833,9 +2874,23 @@ cmd_disable() {
 # ---------------------------------------------------------------------------
 _check_for_updates() {
   local repo_root="$SCRIPT_DIR"
+  local stamp_file="${HOME}/.aap-demo/.last_update_check"
+
+  # Throttle: check at most once per 4 hours
+  if [ -f "$stamp_file" ]; then
+    local last_check now
+    last_check=$(cat "$stamp_file" 2>/dev/null || echo "0")
+    now=$(date +%s)
+    if [ $((now - last_check)) -lt 14400 ]; then
+      return 0
+    fi
+  fi
 
   # Must be a git repo
   git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null || return 0
+
+  mkdir -p "$(dirname "$stamp_file")"
+  date +%s > "$stamp_file"
 
   # Fetch latest (quick, no merge)
   git -C "$repo_root" fetch --quiet 2>/dev/null || return 0

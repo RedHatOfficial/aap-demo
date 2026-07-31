@@ -29,10 +29,10 @@ _detect_crc_ssh_key() {
 
 # Initialize SSH key — callers should check CRC_SSH_KEY before use
 if CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)"; then
-  CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+  CRC_SSH_OPTS=(-i "${CRC_SSH_KEY}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 else
   CRC_SSH_KEY=""
-  CRC_SSH_OPTS=""
+  CRC_SSH_OPTS=()
 fi
 
 # ---------------------------------------------------------------------------
@@ -44,21 +44,21 @@ _crc_exec() {
     echo "ERROR: No CRC SSH key found" >&2
     return 1
   fi
-  ssh -p "$CRC_SSH_PORT" $CRC_SSH_OPTS core@127.0.0.1 "$@"
+  ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "$@"
 }
 
 _crc_copy_to() {
   local src="$1" dest="$2"
   local tmp_dest
   tmp_dest="/tmp/infra-copy-$(basename "$dest")"
-  scp -P "$CRC_SSH_PORT" $CRC_SSH_OPTS "$src" "core@127.0.0.1:${tmp_dest}"
+  scp -P "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" "$src" "core@127.0.0.1:${tmp_dest}"
   _crc_exec sudo cp "$tmp_dest" "$dest"
   _crc_exec sudo rm -f "$tmp_dest"
 }
 
 _crc_copy_from() {
   local src="$1" dest="$2"
-  scp -P "$CRC_SSH_PORT" $CRC_SSH_OPTS "core@127.0.0.1:${src}" "$dest"
+  scp -P "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" "core@127.0.0.1:${src}" "$dest"
 }
 
 # ---------------------------------------------------------------------------

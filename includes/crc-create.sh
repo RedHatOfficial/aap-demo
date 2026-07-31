@@ -423,14 +423,14 @@ fi
 # Re-detect SSH key now that cluster is running
 # ---------------------------------------------------------------------------
 if CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)"; then
-  CRC_SSH_OPTS="-i ${CRC_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+  CRC_SSH_OPTS=(-i "${CRC_SSH_KEY}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
 else
   if [ "$CURRENT_PRESET" = "microshift" ]; then
     echo "ERROR: No CRC SSH key found. Cannot configure nip.io baseDomain." >&2
     exit 1
   fi
   CRC_SSH_KEY=""
-  CRC_SSH_OPTS=""
+  CRC_SSH_OPTS=()
 fi
 
 # ---------------------------------------------------------------------------
@@ -441,7 +441,7 @@ if [ "$CURRENT_PRESET" = "microshift" ]; then
   printf "${_GREEN}▸${_NC} Waiting for CRC SSH..."
   _ssh_ready=false
   for _ssh_try in $(seq 1 60); do
-    if ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'true' &>/dev/null; then
+    if ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'true' &>/dev/null; then
       echo " ready"
       _ssh_ready=true
       break
@@ -461,7 +461,7 @@ if [ "$CURRENT_PRESET" = "microshift" ]; then
   printf "${_GREEN}▸${_NC} Configuring nip.io baseDomain...\n"
 
   # Write config drop-in (overrides CRC's 00-microshift-dns.yaml)
-  if ! ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 "sudo mkdir -p /etc/microshift/config.d && sudo tee /etc/microshift/config.d/99-aap-demo-dns.yaml > /dev/null <<EOF
+  if ! ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "sudo mkdir -p /etc/microshift/config.d && sudo tee /etc/microshift/config.d/99-aap-demo-dns.yaml > /dev/null <<EOF
 dns:
   baseDomain: 127.0.0.1.nip.io
 EOF" 2>/dev/null; then
@@ -474,13 +474,13 @@ EOF" 2>/dev/null; then
   # CRC starts MicroShift with crc.testing before we can write the dropin,
   # so we must wipe the data generated with the wrong domain.
   printf "${_GREEN}▸${_NC} Restarting MicroShift with nip.io domain (clean start)...\n"
-  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl start microshift' 2>/dev/null || true
+  ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl start microshift' 2>/dev/null || true
 
   # Wait for API
   printf "${_GREEN}▸${_NC} Waiting for MicroShift API..."
   _api_ready=false
   for i in $(seq 1 60); do
-    if ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig cluster-info' &>/dev/null; then
+    if ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig cluster-info' &>/dev/null; then
       echo " ready"
       _api_ready=true
       break
@@ -495,7 +495,7 @@ EOF" 2>/dev/null; then
   fi
 
   # Refresh kubeconfig
-  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >~/.crc/machines/crc/kubeconfig 2>/dev/null || true
+  ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >~/.crc/machines/crc/kubeconfig 2>/dev/null || true
   echo "  ✓ nip.io baseDomain configured (data wiped)"
 fi
 
@@ -622,9 +622,9 @@ configure_coredns
 # (128 instances) cause "too many open files" errors under heavy load.
 # Matches infra-ci deployment settings.
 # ---------------------------------------------------------------------------
-if [ -n "$CRC_SSH_OPTS" ]; then
+if [ ${#CRC_SSH_OPTS[@]} -gt 0 ]; then
   printf "${_GREEN}▸${_NC} Setting sysctl for performance...\n"
-  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo sysctl -w fs.inotify.max_user_watches=2099999999 fs.inotify.max_user_instances=2099999999 fs.inotify.max_queued_events=2099999999' 2>/dev/null
+  ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo sysctl -w fs.inotify.max_user_watches=2099999999 fs.inotify.max_user_instances=2099999999 fs.inotify.max_queued_events=2099999999' 2>/dev/null
   echo "  ✓ inotify limits configured"
 fi
 
