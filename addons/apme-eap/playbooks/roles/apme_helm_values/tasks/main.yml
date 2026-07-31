@@ -51,6 +51,36 @@
     - regexp: "<oci-registry>"
       replace: "{{ oci_registry_internal | default(oci_registry_normalized) }}"
 
+- name: Use pre-baked plugins image for fast init container  # noqa: var-naming[no-role-prefix]
+  when: apme_prebaked_plugins_image | default('') | length > 0
+  block:
+    - name: Set pre-baked init container command  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: "<init-install-command>"
+        replace: "- /bin/sh\n        - -c\n        - cp -r /pre-installed/dynamic-plugins-root/. /dynamic-plugins-root && cp -r /pre-installed/extensions/. /extensions"
+
+    - name: Set pre-baked init container image  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: "'<init-container-image>'"
+        replace: "'{{ apme_prebaked_plugins_image }}'"
+
+- name: Use standard RHDH init container (install-dynamic-plugins)  # noqa: var-naming[no-role-prefix]
+  when: apme_prebaked_plugins_image | default('') | length == 0
+  block:
+    - name: Set standard init container command  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: "<init-install-command>"
+        replace: "- ./install-dynamic-plugins.sh\n        - /dynamic-plugins-root"
+
+    - name: Set standard init container image  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: "'<init-container-image>'"
+        replace: "{% raw %}'{{ include \"backstage.image\" . }}'{% endraw %}"
+
 - name: Override RHDH hub image registry  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
@@ -182,6 +212,8 @@
       - rendered_helm_values.content | b64decode is not search('<plugin-sha>')
       - rendered_helm_values.content | b64decode is not search('<oci-registry>')
       - rendered_helm_values.content | b64decode is not search('<devspaces-config>')
+      - rendered_helm_values.content | b64decode is not search('<init-install-command>')
+      - rendered_helm_values.content | b64decode is not search('<init-container-image>')
     fail_msg: "Unresolved placeholders remain in {{ apme_portal_helm_values_path }}"
 
 - name: Display rendered values path  # noqa: var-naming[no-role-prefix]

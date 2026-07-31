@@ -54,6 +54,8 @@ _pod_watcher() {
 
 setup_venv() {
   # Create venv with full Ansible suite + collections for local playbook execution
+  local req_checksum_file="${VENV_DIR}/.requirements_checksum"
+  local pip_checksum_file="${VENV_DIR}/.pip_requirements_checksum"
 
   if [ ! -d "$VENV_DIR" ]; then
     info "Creating Python venv with Ansible and collections..."
@@ -63,19 +65,33 @@ setup_venv() {
 
     pip install --quiet --upgrade pip
     pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
+    sha256sum "${SCRIPT_DIR}/requirements.txt" > "$pip_checksum_file"
 
-    # Install Ansible collections
     ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml"
+    sha256sum "${SCRIPT_DIR}/requirements.yml" > "$req_checksum_file"
 
     info "Venv created at $VENV_DIR (~150MB)"
   else
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
 
-    # Upgrade dependencies if requirements changed
-    info "Upgrading venv dependencies..."
-    pip install --quiet --upgrade -r "${SCRIPT_DIR}/requirements.txt"
-    ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml" --force
+    # Reinstall pip packages only when requirements.txt changed
+    if ! sha256sum --check "$pip_checksum_file" --status 2>/dev/null; then
+      info "requirements.txt changed — upgrading pip packages..."
+      pip install --quiet --upgrade -r "${SCRIPT_DIR}/requirements.txt"
+      sha256sum "${SCRIPT_DIR}/requirements.txt" > "$pip_checksum_file"
+    else
+      info "pip packages up to date (requirements.txt unchanged)"
+    fi
+
+    # Reinstall collections only when requirements.yml changed
+    if ! sha256sum --check "$req_checksum_file" --status 2>/dev/null; then
+      info "requirements.yml changed — reinstalling Ansible collections..."
+      ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml" --force
+      sha256sum "${SCRIPT_DIR}/requirements.yml" > "$req_checksum_file"
+    else
+      info "Ansible collections up to date (requirements.yml unchanged)"
+    fi
   fi
 }
 
