@@ -64,7 +64,7 @@ aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable scale-down   # Scales down pods to save resources
 aap-demo enable ao-eap       # Early Access Program only for Automation Orchestrator
 aap-demo enable apme-eap     # Early Access Program only for APME
-aap-demo enable local-cache  # Caches the AAP containers locally so you dont have to download them if you destroy your install
+aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 aap-demo disable addon_name  # Disables addon
 ```
 

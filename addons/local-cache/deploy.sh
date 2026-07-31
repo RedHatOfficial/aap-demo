@@ -142,7 +142,20 @@ for img in data.get('images', []):
   fi
 
   total=$(echo "$all_images" | wc -l | tr -d ' ')
-  echo "Found ${total} images to cache"
+  total_bytes=$(echo "$all_images" | awk '{sum+=$1} END {print sum+0}')
+  total_gb=$(((total_bytes + 1073741823) / 1073741824))
+  echo "Found ${total} images to cache (~${total_gb}GB uncompressed on disk)"
+  if [ "$total_gb" -gt 40 ] && [ -t 0 ]; then
+    printf "  ${_YELLOW}Warning:${_NC} cache may exceed README estimate (~30GB). Continue? [y/N]: "
+    read -r _cache_confirm </dev/tty || _cache_confirm=""
+    case "${_cache_confirm:-n}" in
+      [yY]*) ;;
+      *)
+        echo "Aborted."
+        exit 0
+        ;;
+    esac
+  fi
   echo ""
 
   saved=0

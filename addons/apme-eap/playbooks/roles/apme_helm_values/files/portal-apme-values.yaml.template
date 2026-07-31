@@ -810,6 +810,7 @@ redhat-developer-hub:
       - mountPath: /opt/app-root/src/.data
         name: apme-data
       extraVolumes:
+      # emptyDir avoids slow NFS plugin rebuilds on CRC; set apme_prebaked_plugins_image for persistence
       - emptyDir: {}
         name: dynamic-plugins-root
       - configMap:

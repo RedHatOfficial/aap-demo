@@ -172,9 +172,11 @@ The NFS deployment in `includes/crc-create.sh` now runs on **both presets**:
 - Full OpenShift: NFS backing PVC uses `crc-csi-hostpath-provisioner` (default SC)
 
 The NFS server itself runs privileged (SCC granted to `nfs-storage` namespace), and
-the `nfs-local-rwx` StorageClass provides RWX volumes for hub file storage. Since only
-the NFS server pod touches the CSI hostpath volume directly (as root), the UID ownership
-problem is eliminated for all AAP workloads.
+the `nfs-local-rwx` StorageClass provides RWX volumes for hub file storage (set on the CR).
+Postgres and hub-redis PVCs are pre-created before the CR is applied so they use NFS without
+changing the cluster default StorageClass. Since only the NFS server pod touches the CSI
+hostpath backing volume directly (as root), the UID ownership problem is eliminated for
+all AAP workloads.
 
 The `aap-minimal.yaml` CR template uses `nfs-local-rwx` for hub file storage on both
 presets, so no conditional CR patching is needed. The only preset-specific CR adjustment
@@ -202,15 +204,14 @@ now auto-applies the fix using the existing `configure_coredns` function via the
 
 ### 9. Auto-update check
 
-A `_check_for_updates()` function runs on every `aap-demo` invocation (except `help`,
-`update`, and empty commands). It:
+A `_check_for_updates()` function runs on `aap-demo status` only. It:
 
 1. Resolves the real path of the `aap-demo` alias to find the git repository
-2. Runs `git fetch --quiet` to check for upstream changes
-3. If HEAD is behind upstream, prompts "Pull latest now? [Y/n]" with 10s auto-continue
-4. Pulls if confirmed
+2. Runs `git fetch --quiet` to check for upstream changes (throttled to once per 4 hours)
+3. If HEAD is behind upstream, prompts "Pull latest now? [y/N]" with 10s auto-continue
+4. Pulls only if confirmed with `y`
 
-Skipped when stdin is not a TTY (non-interactive/CI).
+Skipped when stdin is not a TTY or `CI=true`. Use `aap-demo update` for explicit updates.
 
 ### 10. SSH hardening
 

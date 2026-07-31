@@ -594,20 +594,33 @@ else
   NFS_IP=$(kubectl get svc nfs-server -n nfs-storage -o jsonpath='{.spec.clusterIP}')
   sed "s/__NFS_SERVER_IP__/${NFS_IP}/g" "${SCRIPT_DIR}/config/manifests/nfs-provisioner.yaml" | kubectl apply -f -
   kubectl wait --for=condition=Available deployment/nfs-provisioner -n nfs-storage --timeout=120s
-  # Make nfs-local-rwx the default SC so all PVCs (postgres, hub-redis, etc.)
-  # use NFS instead of the CSI hostpath provisioner which creates root-owned volumes
-  kubectl annotate sc nfs-local-rwx storageclass.kubernetes.io/is-default-class=true --overwrite 2>/dev/null || true
-  # Remove default from the previous SC to avoid two defaults
-  if [ "$CURRENT_PRESET" != "microshift" ]; then
-    kubectl annotate sc crc-csi-hostpath-provisioner storageclass.kubernetes.io/is-default-class- --overwrite 2>/dev/null || true
-  else
-    kubectl annotate sc topolvm-provisioner storageclass.kubernetes.io/is-default-class- --overwrite 2>/dev/null || true
-  fi
-  echo "  ✓ nfs-local-rwx StorageClass created and set as default"
+  echo "  ✓ nfs-local-rwx StorageClass created (hub/postgres/redis PVCs use it explicitly)"
 fi
 
-# Addons are not auto-deployed during create.
-# Use 'aap-demo enable <addon>' to deploy addons after cluster creation.
+# Deploy saved addons from config (skip addons that require AAP to be deployed first)
+SAVED_ADDONS=""
+if [ -f "${HOME}/.aap-demo/config" ]; then
+  SAVED_ADDONS=$(grep '^ADDONS=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 | tr ',' ' ' || true)
+fi
+
+if [ -n "$SAVED_ADDONS" ]; then
+  printf "${_GREEN}▸${_NC} Deploying saved addons: ${SAVED_ADDONS}...\n"
+  for addon in $SAVED_ADDONS; do
+    addon_dir="${SCRIPT_DIR}/addons/${addon}"
+    if [ ! -f "$addon_dir/deploy.sh" ]; then
+      echo "  Skipping $addon (deploy.sh not found)"
+      continue
+    fi
+    if grep -q "^# ADDON_REQUIRES_AAP=true" "$addon_dir/deploy.sh"; then
+      echo "  Skipping $addon (requires AAP — deploy after 'aap-demo deploy')"
+      continue
+    fi
+    echo "  Enabling: $addon"
+    if ! bash "$addon_dir/deploy.sh" 2>&1 | sed 's/^/    /'; then
+      printf "    ${_YELLOW}WARNING: addon '$addon' failed to deploy (continuing)${_NC}\n"
+    fi
+  done
+fi
 
 # ---------------------------------------------------------------------------
 # Configure CoreDNS for route resolution inside pods

@@ -40,7 +40,9 @@ if [ -z "${AO_STORAGE_CLASS:-}" ]; then
   elif kubectl get sc topolvm-provisioner &>/dev/null 2>&1; then
     STORAGE_CLASS="topolvm-provisioner"
   else
-    STORAGE_CLASS="nfs-local-rwx"
+    echo "ERROR: No suitable StorageClass found (expected nfs-local-rwx or topolvm-provisioner)"
+    echo "Run 'aap-demo create' to provision storage, or set AO_STORAGE_CLASS."
+    exit 1
   fi
 else
   STORAGE_CLASS="$AO_STORAGE_CLASS"

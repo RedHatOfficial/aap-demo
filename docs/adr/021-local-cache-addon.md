@@ -53,11 +53,12 @@ aap-demo disable local-cache         # alias for clear
 
 ### Auto-load during deploy
 
-The `_load_local_cache()` function in `aap-demo.sh` is called automatically during
-`aap-demo deploy` after the operator CSV reaches `Succeeded` phase and before the AAP
-CR is created. It checks for a cache directory matching the current preset, and if found,
-loads all cached images that are not already present in CRI-O (checked via
-`crictl inspecti`). This is silent when no cache exists.
+The `_load_local_cache()` function in `aap-demo.sh` is called during `aap-demo deploy`
+after the operator CSV reaches `Succeeded` phase and before the AAP CR is created.
+It runs only when the `local-cache` addon is listed in `~/.aap-demo/config` (`ADDONS=...`)
+or when `AAP_DEMO_LOAD_CACHE=1` is set. When triggered, it loads cached images that are
+not already present in CRI-O (checked via `crictl inspecti`). This is silent when no
+cache exists or the addon is not enabled.
 
 ### Preset isolation
 

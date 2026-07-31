@@ -521,18 +521,21 @@ cmd_repair() {
 
   verify_coredns
 
-  local _crash_pods
-  _crash_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep "CrashLoopBackOff" | awk '{print $1}' || true)
-  if [ -n "$_crash_pods" ]; then
-    echo "  Restarting crashed pods..."
+  local _problem_pods
+  _problem_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "CrashLoopBackOff|Error|ImagePullBackOff" | awk '{print $1}' || true)
+  if [ -n "$_problem_pods" ]; then
+    echo "  Restarting problem pods..."
     while IFS= read -r pod; do
       [ -z "$pod" ] && continue
       kubectl delete pod "$pod" -n "$NAMESPACE" 2>/dev/null || true
-    done <<<"$_crash_pods"
+    done <<<"$_problem_pods"
   fi
 
   echo ""
-  echo "✓ Repair complete"
+  echo "✓ In-cluster repair complete"
+  echo ""
+  echo "If issues persist (ImagePullBackOff, NFS/storage, wedged VM):"
+  echo "  crc stop && crc start"
 }
 
 # Shared function: display cluster info for warnings
@@ -1783,8 +1786,8 @@ cmd_status() {
   echo "AAP Deployments:"
   echo "----------------"
   ROUTES=$(kubectl get route -A --no-headers 2>/dev/null \
-    | grep -v -E '^(openshift-|kube-|aap-demo-|automation-orchestrator )' \
-    | awk '{printf "  https://%s\n", $3}')
+    | grep -v -E '^(openshift-|kube-|aap-demo-)' \
+    | awk '$1 != "automation-orchestrator" {printf "  https://%s\n", $3}')
   if [ -n "$ROUTES" ]; then
     echo "$ROUTES"
   else
@@ -2466,6 +2469,13 @@ deploy_operator_sdk() {
 }
 
 _load_local_cache() {
+  # Only auto-load when local-cache addon is enabled or explicitly requested
+  if [ "${AAP_DEMO_LOAD_CACHE:-}" != "1" ]; then
+    if ! echo "$(_addons_list)" | grep -qw "local-cache"; then
+      return 0
+    fi
+  fi
+
   local preset_raw preset cache_dir
   preset_raw=$(crc config get preset 2>&1)
   if echo "$preset_raw" | grep -q "not set"; then
@@ -2527,6 +2537,28 @@ _load_local_cache() {
   fi
 }
 
+_ensure_aap_storage_pvcs() {
+  local cr_file="$1"
+  local aap_name ns manifest
+
+  aap_name=$(grep '^  name:' "$cr_file" 2>/dev/null | head -1 | awk '{print $2}')
+  [ -n "$aap_name" ] || aap_name="aap"
+  ns="${NAMESPACE:-aap-operator}"
+
+  if ! kubectl get sc nfs-local-rwx &>/dev/null; then
+    return 0
+  fi
+
+  manifest="${SCRIPT_DIR}/config/manifests/aap-storage-pvcs.yaml"
+  if [ ! -f "$manifest" ]; then
+    echo "  ⚠ Storage PVC manifest not found — postgres may use cluster default StorageClass"
+    return 0
+  fi
+
+  echo "  Ensuring postgres and hub-redis PVCs use nfs-local-rwx..."
+  sed -e "s/__NAMESPACE__/${ns}/g" -e "s/__AAP_NAME__/${aap_name}/g" "$manifest" | kubectl apply -f -
+}
+
 create_aap_instance() {
   echo ""
   echo "Creating AAP instance..."
@@ -2541,6 +2573,8 @@ create_aap_instance() {
     ls -1 "${SCRIPT_DIR}/config/crs/" | sed 's/aap-//; s/.yaml//'
     exit 1
   fi
+
+  _ensure_aap_storage_pvcs "$cr_file"
 
   # For noingress CRs, substitute PUBLIC_URL placeholder
   if [[ "$cr_name" == *"noingress"* ]]; then
@@ -2690,18 +2724,8 @@ watch_aap() {
       fi
     fi
 
-    # Check if deployment is complete — CR status or all pods running
+    # Check if deployment is complete — operator CR Successful condition only
     SUCCESSFUL=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
-    # Also consider done if gateway route exists and all non-job pods are running
-    if [ "$SUCCESSFUL" != "True" ] && [ "$ELAPSED" -gt 60 ]; then
-      local _total _running _route
-      _total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -v "Completed" | wc -l | tr -d ' ')
-      _running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -c "Running" || echo "0")
-      _route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-      if [ "${_total:-0}" -gt 0 ] && [ "$_running" -eq "$_total" ] && [ -n "$_route" ]; then
-        SUCCESSFUL="True"
-      fi
-    fi
     if [ "$SUCCESSFUL" = "True" ]; then
       # Get admin password from secret
       ADMIN_PASSWORD=""
@@ -2879,6 +2903,10 @@ _check_for_updates() {
   local repo_root="$SCRIPT_DIR"
   local stamp_file="${HOME}/.aap-demo/.last_update_check"
 
+  # Skip in CI and non-interactive sessions
+  [ "${CI:-}" = "true" ] && return 0
+  [ -t 0 ] || return 0
+
   # Throttle: check at most once per 4 hours
   if [ -f "$stamp_file" ]; then
     local last_check now
@@ -2892,11 +2920,11 @@ _check_for_updates() {
   # Must be a git repo
   git -C "$repo_root" rev-parse --is-inside-work-tree &>/dev/null || return 0
 
-  mkdir -p "$(dirname "$stamp_file")"
-  date +%s >"$stamp_file"
-
   # Fetch latest (quick, no merge)
   git -C "$repo_root" fetch --quiet 2>/dev/null || return 0
+
+  mkdir -p "$(dirname "$stamp_file")"
+  date +%s >"$stamp_file"
 
   local local_head remote_head
   local_head=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)
@@ -2914,19 +2942,12 @@ _check_for_updates() {
 
   echo ""
   printf "\033[0;33m▸ Update available:\033[0m %s commit(s) behind remote\n" "$behind"
-  printf "  Pull latest now? [Y/n] (auto-continuing in 10s): "
-  if [ -t 0 ]; then
-    read -t 10 -r _update_choice </dev/tty || _update_choice=""
-  else
-    _update_choice=""
-  fi
-  _update_choice="${_update_choice:-Y}"
+  printf "  Pull latest now? [y/N] (auto-continuing in 10s): "
+  read -t 10 -r _update_choice </dev/tty || _update_choice=""
+  _update_choice="${_update_choice:-n}"
 
   case "$_update_choice" in
-    [nN]*)
-      echo "  Skipped — run 'aap-demo update' later"
-      ;;
-    *)
+    [yY]*)
       echo "  Pulling latest..."
       if git -C "$repo_root" pull --quiet 2>/dev/null; then
         echo "  ✓ Updated to latest"
@@ -2934,14 +2955,15 @@ _check_for_updates() {
         printf "  \033[0;33mWarning: git pull failed — continuing with current version\033[0m\n"
       fi
       ;;
+    *)
+      echo "  Skipped — run 'aap-demo update' later"
+      ;;
   esac
   echo ""
 }
 
 case "$COMMAND" in
-  help | --help | -h | update | "")
-    ;;
-  *)
+  status)
     _check_for_updates
     ;;
 esac

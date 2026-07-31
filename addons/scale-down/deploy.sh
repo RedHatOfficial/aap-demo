@@ -60,6 +60,11 @@ _count_running() {
   echo "$total"
 }
 
+_state_has_entry() {
+  local ns="$1" kind="$2" name="$3"
+  [ -f "$STATE_FILE" ] && grep -qF "${ns}|${kind}|${name}|" "$STATE_FILE"
+}
+
 _scale_namespace() {
   local ns="$1"
   local name replicas
@@ -78,6 +83,7 @@ _scale_namespace() {
     replicas=$(echo "$line" | awk '{print $2}')
     [ -z "$name" ] && continue
     [ "$replicas" = "0" ] && continue
+    _state_has_entry "$ns" "deployment" "$name" && continue
 
     echo "${ns}|deployment|${name}|${replicas}" >>"$STATE_FILE"
     echo "  ${ns}: deployment/${name} ${replicas} → 0"
@@ -90,6 +96,7 @@ _scale_namespace() {
     replicas=$(echo "$line" | awk '{print $2}')
     [ -z "$name" ] && continue
     [ "$replicas" = "0" ] && continue
+    _state_has_entry "$ns" "statefulset" "$name" && continue
 
     echo "${ns}|statefulset|${name}|${replicas}" >>"$STATE_FILE"
     echo "  ${ns}: statefulset/${name} ${replicas} → 0"
@@ -212,6 +219,19 @@ if [ -t 0 ]; then
         ;;
     esac
   fi
+else
+  # Non-interactive: require explicit opt-in to avoid scaling everything silently
+  for i in "${!SELECTED[@]}"; do
+    SELECTED[$i]="false"
+  done
+  if [ "${SCALE_DOWN_CONFIRM:-}" != "yes" ]; then
+    echo "Non-interactive mode: no namespaces selected."
+    echo "Run interactively, or set SCALE_DOWN_CONFIRM=yes to scale all discovered namespaces."
+    exit 0
+  fi
+  for i in "${!SELECTED[@]}"; do
+    SELECTED[$i]="true"
+  done
 fi
 
 # Collect selected namespaces
@@ -235,7 +255,7 @@ echo "Scaling down ${#TARGET_NS[@]} namespace(s)..."
 echo ""
 
 mkdir -p "$(dirname "$STATE_FILE")"
-: >"$STATE_FILE"
+touch "$STATE_FILE"
 
 for ns in "${TARGET_NS[@]}"; do
   _scale_namespace "$ns"

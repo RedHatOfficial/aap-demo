@@ -27,6 +27,87 @@ die() {
   exit 1
 }
 
+_crc_preset() {
+  local preset_raw preset
+  if ! command -v crc &>/dev/null; then
+    echo "openshift"
+    return
+  fi
+  preset_raw=$(crc config get preset 2>&1 || true)
+  if echo "$preset_raw" | grep -q "not set"; then
+    preset=$(echo "$preset_raw" | grep -oE "openshift|microshift" | tail -1)
+    [ -z "$preset" ] && preset="openshift"
+  else
+    preset=$(echo "$preset_raw" | awk '{print $NF}')
+  fi
+  echo "$preset"
+}
+
+_load_github_creds_from_file() {
+  local creds_file="$1"
+  [ -f "$creds_file" ] || return 1
+
+  if ! python3 -c "import yaml" 2>/dev/null; then
+    return 2
+  fi
+
+  while IFS='=' read -r key value; do
+    [ -z "$key" ] && continue
+    case "$key" in
+      GITHUB_TOKEN) GITHUB_TOKEN="$value" ;;
+      GITHUB_APP_ID) GITHUB_APP_ID="$value" ;;
+      GITHUB_APP_CLIENT_ID) GITHUB_APP_CLIENT_ID="$value" ;;
+      GITHUB_APP_CLIENT_SECRET) GITHUB_APP_CLIENT_SECRET="$value" ;;
+      GITHUB_APP_PRIVATE_KEY_PATH) GITHUB_APP_PRIVATE_KEY_PATH="$value" ;;
+      GITHUB_OAUTH_CLIENT_ID) GITHUB_OAUTH_CLIENT_ID="$value" ;;
+      GITHUB_OAUTH_CLIENT_SECRET) GITHUB_OAUTH_CLIENT_SECRET="$value" ;;
+    esac
+  done < <(
+    python3 - "$creds_file" <<'PY'
+import sys
+import yaml
+
+with open(sys.argv[1]) as handle:
+    data = yaml.safe_load(handle) or {}
+
+# Field names only — values loaded at runtime from user creds file
+mapping = {
+    "github_token": "GITHUB_TOKEN",  # pragma: allowlist secret
+    "github_app_id": "GITHUB_APP_ID",
+    "github_app_client_id": "GITHUB_APP_CLIENT_ID",
+    "github_app_client_secret": "GITHUB_APP_CLIENT_SECRET",  # pragma: allowlist secret
+    "github_app_private_key_path": "GITHUB_APP_PRIVATE_KEY_PATH",  # pragma: allowlist secret
+    "github_oauth_client_id": "GITHUB_OAUTH_CLIENT_ID",
+    "github_oauth_client_secret": "GITHUB_OAUTH_CLIENT_SECRET",  # pragma: allowlist secret
+}
+
+for yaml_key, env_key in mapping.items():
+    value = data.get(yaml_key)
+    if value is not None and str(value).strip():
+        print(f"{env_key}={value}")
+PY
+  )
+
+  [ -n "${GITHUB_TOKEN:-}" ] && return 0
+  return 1
+}
+
+_load_github_creds_from_file_legacy() {
+  local creds_file="$1"
+  local existing_token val var env_name
+  existing_token=$(grep -E '^github_token:' "$creds_file" 2>/dev/null | sed 's/^github_token:[[:space:]]*//' | tr -d '"' || echo "")
+  [ -n "$existing_token" ] || return 1
+  GITHUB_TOKEN="$existing_token"
+  for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret; do
+    val=$(grep -E "^${var}:" "$creds_file" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
+    if [ -n "$val" ]; then
+      env_name=$(echo "$var" | tr '[:lower:]' '[:upper:]')
+      printf -v "$env_name" '%s' "$val"
+    fi
+  done
+  return 0
+}
+
 _pod_watcher() {
   local ns="$1" interval="${2:-30}"
   sleep 15
@@ -65,10 +146,10 @@ setup_venv() {
 
     pip install --quiet --upgrade pip
     pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
-    sha256sum "${SCRIPT_DIR}/requirements.txt" > "$pip_checksum_file"
+    sha256sum "${SCRIPT_DIR}/requirements.txt" >"$pip_checksum_file"
 
     ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml"
-    sha256sum "${SCRIPT_DIR}/requirements.yml" > "$req_checksum_file"
+    sha256sum "${SCRIPT_DIR}/requirements.yml" >"$req_checksum_file"
 
     info "Venv created at $VENV_DIR (~150MB)"
   else
@@ -79,7 +160,7 @@ setup_venv() {
     if ! sha256sum --check "$pip_checksum_file" --status 2>/dev/null; then
       info "requirements.txt changed — upgrading pip packages..."
       pip install --quiet --upgrade -r "${SCRIPT_DIR}/requirements.txt"
-      sha256sum "${SCRIPT_DIR}/requirements.txt" > "$pip_checksum_file"
+      sha256sum "${SCRIPT_DIR}/requirements.txt" >"$pip_checksum_file"
     else
       info "pip packages up to date (requirements.txt unchanged)"
     fi
@@ -88,7 +169,7 @@ setup_venv() {
     if ! sha256sum --check "$req_checksum_file" --status 2>/dev/null; then
       info "requirements.yml changed — reinstalling Ansible collections..."
       ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml" --force
-      sha256sum "${SCRIPT_DIR}/requirements.yml" > "$req_checksum_file"
+      sha256sum "${SCRIPT_DIR}/requirements.yml" >"$req_checksum_file"
     else
       info "Ansible collections up to date (requirements.yml unchanged)"
     fi
@@ -115,8 +196,8 @@ check_prerequisites() {
 
   # MicroShift lacks an integrated registry — deploy the in-cluster registry
   # addon so APME can store plugin OCI images for the portal init container.
-  # Full OpenShift (CRC or remote) has its own image registry, so skip this.
-  if ! kubectl get ingresses.config/cluster --request-timeout=5s &>/dev/null; then
+  # Full OpenShift (CRC preset) has its own image registry, so skip this.
+  if [ "$(_crc_preset)" = "microshift" ]; then
     if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
       info "MicroShift detected — deploying in-cluster registry addon..."
       bash "${SCRIPT_DIR}/../registry/deploy.sh"
@@ -227,21 +308,11 @@ prompt_github_token() {
 
   # Check saved credentials file from a previous deploy
   if [ -f "$GITHUB_CREDS_FILE" ]; then
-    local existing_token
-    existing_token=$(grep -E '^github_token:' "$GITHUB_CREDS_FILE" 2>/dev/null | sed 's/^github_token:[[:space:]]*//' | tr -d '"' || echo "")
-    if [ -n "$existing_token" ]; then
-      info "GitHub credentials found in $GITHUB_CREDS_FILE — reusing"
-      GITHUB_TOKEN="$existing_token"
-      local val
-      for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret; do
-        val=$(grep -E "^${var}:" "$GITHUB_CREDS_FILE" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
-        if [ -n "$val" ]; then
-          local env_name
-          env_name=$(echo "$var" | tr '[:lower:]' '[:upper:]')
-          printf -v "$env_name" '%s' "$val"
-        fi
-      done
-      return 0
+    if _load_github_creds_from_file "$GITHUB_CREDS_FILE" || _load_github_creds_from_file_legacy "$GITHUB_CREDS_FILE"; then
+      if [ -n "${GITHUB_TOKEN:-}" ]; then
+        info "GitHub credentials found in $GITHUB_CREDS_FILE — reusing"
+        return 0
+      fi
     fi
   fi
 
