@@ -2633,8 +2633,18 @@ watch_aap() {
       fi
     fi
 
-    # Check if deployment is complete
+    # Check if deployment is complete — CR status or all pods running
     SUCCESSFUL=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
+    # Also consider done if gateway route exists and all non-job pods are running
+    if [ "$SUCCESSFUL" != "True" ] && [ "$ELAPSED" -gt 60 ]; then
+      local _total _running _route
+      _total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -cv "Completed" || echo "0")
+      _running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -c "Running" || echo "0")
+      _route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+      if [ "${_total:-0}" -ge 15 ] && [ "$_running" -eq "$_total" ] && [ -n "$_route" ]; then
+        SUCCESSFUL="True"
+      fi
+    fi
     if [ "$SUCCESSFUL" = "True" ]; then
       # Get admin password from secret
       ADMIN_PASSWORD=""
