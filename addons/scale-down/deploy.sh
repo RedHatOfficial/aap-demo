@@ -36,12 +36,14 @@ PLATFORM_NAMESPACES=(
   openshift-kube-storage-version-migrator
 )
 
-# Addon namespace mapping (addon-name → namespace)
-declare -A ADDON_NAMESPACES=(
-  [ao-eap]=automation-orchestrator
-  [apme-eap]=apme
-  [portal]=redhat-rhaap-portal
-)
+_addon_namespace() {
+  case "$1" in
+    ao-eap)   echo "automation-orchestrator" ;;
+    apme-eap) echo "apme" ;;
+    portal)   echo "redhat-rhaap-portal" ;;
+    *)        echo "" ;;
+  esac
+}
 
 _get_enabled_addons() {
   if [ -f "$AAP_DEMO_CONFIG" ]; then
@@ -148,7 +150,7 @@ done
 
 ENABLED_ADDONS=$(_get_enabled_addons)
 for addon in $ENABLED_ADDONS; do
-  addon_ns="${ADDON_NAMESPACES[$addon]:-}"
+  addon_ns="$(_addon_namespace "$addon")"
   if [ -n "$addon_ns" ] && [ "$addon_ns" != "$AAP_NAMESPACE" ]; then
     if kubectl get namespace "$addon_ns" &>/dev/null; then
       running=$(_count_running "$addon_ns")
