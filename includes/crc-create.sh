@@ -55,6 +55,24 @@ configure_coredns() {
   local current_preset route_domain current_domain escaped_domain current_corefile corefile
   local crc_ssh_key crc_ssh_opts
 
+  current_preset="${CURRENT_PRESET:-}"
+  if [ -z "$current_preset" ]; then
+    local _p_raw
+    _p_raw=$(crc config get preset 2>&1 || true)
+    if echo "$_p_raw" | grep -q "not set"; then
+      current_preset=$(echo "$_p_raw" | grep -oE "openshift|microshift" | tail -1)
+    else
+      current_preset=$(echo "$_p_raw" | awk '{print $NF}')
+    fi
+  fi
+  current_preset="${current_preset:-${CRC_PRESET:-openshift}}"
+
+  # Full OpenShift uses apps-crc.testing which resolves via /etc/resolver/testing
+  # on the host and via the cluster's built-in DNS — no rewrite needed.
+  if [ "$current_preset" != "microshift" ]; then
+    return 0
+  fi
+
   # Re-detect SSH key now that cluster is running
   if crc_ssh_key="$(_detect_crc_ssh_key 2>/dev/null)"; then
     crc_ssh_opts="-i ${crc_ssh_key} -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
@@ -63,25 +81,14 @@ configure_coredns() {
     return 1
   fi
 
-  current_preset="${CURRENT_PRESET:-}"
-  if [ -z "$current_preset" ]; then
-    current_preset=$(crc config get preset 2>/dev/null || echo "")
-    [ -n "$current_preset" ] && current_preset=$(echo "$current_preset" | awk '{print $NF}')
-  fi
-  current_preset="${current_preset:-${CRC_PRESET:-openshift}}"
-
   printf "${_GREEN}▸${_NC} Configuring CoreDNS for in-cluster route resolution...\n"
 
   export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 
-  if [ "$current_preset" = "microshift" ]; then
-    route_domain="apps.crc.testing"
-    current_domain=$(ssh -p 2222 $crc_ssh_opts core@127.0.0.1 'grep -h baseDomain /etc/microshift/config.d/99-aap-demo-dns.yaml /etc/microshift/config.yaml 2>/dev/null | head -1' 2>/dev/null | awk '{print $2}' || true)
-    if [ -n "$current_domain" ]; then
-      route_domain="apps.${current_domain}"
-    fi
-  else
-    route_domain="apps-crc.testing"
+  route_domain="apps.crc.testing"
+  current_domain=$(ssh -p 2222 $crc_ssh_opts core@127.0.0.1 'grep -h baseDomain /etc/microshift/config.d/99-aap-demo-dns.yaml /etc/microshift/config.yaml 2>/dev/null | head -1' 2>/dev/null | awk '{print $2}' || true)
+  if [ -n "$current_domain" ]; then
+    route_domain="apps.${current_domain}"
   fi
 
   escaped_domain=$(echo "$route_domain" | sed 's/\./\\./g')

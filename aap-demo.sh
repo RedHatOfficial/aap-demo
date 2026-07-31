@@ -2126,9 +2126,11 @@ deploy_latest() {
   verify_coredns
 
   # Relax container signature policy for operator index images (MicroShift 4.22+
-  # enforces GPG signatures but the index images may fail verification)
+  # enforces GPG signatures but the index images may fail verification).
+  # Full OpenShift doesn't enforce this — skip.
+  _deploy_preset=$(crc config get preset 2>&1 | awk '{print $NF}')
   _deploy_ssh_key="$(_detect_crc_ssh_key 2>/dev/null || true)"
-  if [ -n "$_deploy_ssh_key" ]; then
+  if [ "$_deploy_preset" = "microshift" ] && [ -n "$_deploy_ssh_key" ]; then
     _deploy_ssh_opts="-i $_deploy_ssh_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
     ssh -p 2222 $_deploy_ssh_opts core@127.0.0.1 'sudo python3 -c "
 import json, sys
