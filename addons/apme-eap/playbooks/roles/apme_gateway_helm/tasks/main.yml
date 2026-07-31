@@ -13,6 +13,32 @@
     msg: "APME gateway values file not found: {{ apme_gateway_helm_values_file }}"
   when: not apme_values_stat.stat.exists
 
+- name: List storage classes for block SC detection  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ apme_gateway_helm_validate_certs }}"
+  register: all_storage_classes
+  when: apme_gateway_storage_class is not defined
+
+- name: Select non-NFS block storage class for gateway SQLite PVC  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_gateway_storage_class: >-
+      {{ all_storage_classes.resources
+         | rejectattr('provisioner', 'search', 'nfs')
+         | map(attribute='metadata.name')
+         | first }}
+  when:
+    - apme_gateway_storage_class is not defined
+    - all_storage_classes.resources | rejectattr('provisioner', 'search', 'nfs') | list | length > 0
+
+- name: Display gateway storage class  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: "Gateway PVC storageClass: {{ apme_gateway_storage_class | default('(cluster default)') }}"
+
 - name: Install or upgrade APME gateway Helm release  # noqa: var-naming[no-role-prefix]
   kubernetes.core.helm:
     name: "{{ apme_helm_release_name }}"
@@ -23,6 +49,12 @@
     create_namespace: false
     values_files:
       - "{{ apme_gateway_helm_values_file }}"
+    values: >-
+      {{
+        {'persistence': {'gateway': {'storageClass': apme_gateway_storage_class}}}
+        if apme_gateway_storage_class is defined and apme_gateway_storage_class | length > 0
+        else {}
+      }}
     wait: true
     wait_timeout: "{{ apme_gateway_helm_timeout }}s"
     api_key: "{{ openshift_token | default(omit) }}"
