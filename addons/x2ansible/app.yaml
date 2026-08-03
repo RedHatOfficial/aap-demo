@@ -1,0 +1,276 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: x2a-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: x2a-role
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: x2a-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: x2a-sa
+roleRef:
+  kind: Role
+  name: x2a-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRole/ClusterRoleBinding for x2a-sa to pass the plugin's connection test
+# which hardcodes a pod list call against the 'default' namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: x2a-cluster-role
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: x2a-cluster-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: x2a-sa
+    namespace: __NAMESPACE__
+roleRef:
+  kind: ClusterRole
+  name: x2a-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# X2A Backstage Plugin Application Resources
+# Apply to any namespace using: oc apply -n <your-namespace> -f app.yaml
+#
+# ConfigMap: Dynamic Plugins Configuration
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: dynamic-plugins
+  # namespace field intentionally omitted - use -n flag when applying
+data:
+  dynamic-plugins.yaml: |
+    includes:
+      - dynamic-plugins.default.yaml
+    plugins:
+      # The plugin-x2a-dcr is for RHDH 1.9 only. To be replaced by backstage-plugin-auth in 1.10:
+      - package: "oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/red-hat-developer-hub-backstage-plugin-x2a-dcr:bs_1.49.4__0.2.0"
+
+      # We need https://github.com/backstage/backstage/blob/master/plugins/mcp-actions-backend/CHANGELOG.md#0112-next2 or later
+      # which contains required fix: https://github.com/backstage/backstage/issues/33062
+      # To match RHDH 1.10 (will be based on Backstage 1.49.4 compatible with mcp-actions-backend:0.1.11), following build is based on mcp-actions-backend:0.1.11 patched for the issues/33062 fix.
+      # This image works well in both RHDH 1.9 (Backstage 1.45.3) and the upcoming RHDH 1.10.
+      # We should not need this custom build in a RHDH 1.10 releases (will be with mcp-actions-backend:0.1.12 or later).
+      - package: "oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/backstage-plugin-mcp-actions-backend:pr_2236__0.1.11"
+
+      # All X2A plugins
+      - package: "oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/red-hat-developer-hub-backstage-plugin-x2a:bs_1.49.4__1.2.1"
+      - package: "oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/red-hat-developer-hub-backstage-plugin-x2a-backend:bs_1.49.4__1.4.0"
+      - package: "oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/red-hat-developer-hub-backstage-plugin-x2a-mcp-extras:bs_1.49.4__0.2.0"
+      - package: "oci://ghcr.io/redhat-developer/rhdh-plugin-export-overlays/red-hat-developer-hub-backstage-plugin-scaffolder-backend-module-x2a:bs_1.49.4__0.3.1"
+      
+      # Enable backstage-plugin-scaffolder-backend-module-github-dynamic plugin which is disabled by default for better github integration
+      - package: './dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-github-dynamic'
+        disabled: false
+
+      # In addition, the backstage-plugin-auth-backend 0.25.6 or later is required, should be met since RHDH 1.9. Keeping this note here for a reference in case of issues.
+
+---
+# ConfigMap: Application Configuration
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: app-config-rhdh
+data:
+  app-config-rhdh.yaml: |
+
+    backend:
+      cors:
+        origin:
+          # for @modelcontextprotocol/inspector, remove if not needed
+          - http://localhost:6274
+        credentials: true
+      actions:
+        pluginSources:
+          - 'x2a-mcp-extras'
+      reading:
+        allow:
+          - host: raw.githubusercontent.com
+
+    # Disable namespaced tool names for MCP actions
+    # Workaround for recent MCP server returning `undefined` for tool namespaces
+    # Will be solved by later @backstage/backend-defaults.
+    mcpActions:
+      namespacedToolNames: false
+
+    integrations:
+      github:
+      - host: github.com
+      # CUSTOMIZE:
+      # gitlab:
+      # - host: gitlab.com
+      # - host: gitlab.internal.io # Self-hosted GitLab
+      #   apiBaseUrl: https://gitlab.internal.io/api/v4
+      # bitbucketCloud:
+      # - host: bitbucket.org
+
+    auth:
+      experimentalDynamicClientRegistration:
+        # enable the feature
+        enabled: true
+        allowedRedirectUriPatterns:
+          - cursor://*
+          # CUSTOMIZE:
+          - https://*
+          - http://*
+
+      # see https://backstage.io/docs/auth/ to learn about auth providers
+      environment: development
+      # aap-demo: guest sign-in for lab use (no GitHub OAuth required)
+      providers:
+        guest: {}
+
+        # Optional GitHub OAuth — set AUTH_GITHUB_CLIENT_ID/SECRET in x2a-credentials
+        # github:
+        #   development:
+        #     clientId: ${AUTH_GITHUB_CLIENT_ID}
+        #     clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+        #     signIn:
+        #       resolvers:
+        #         - resolver: usernameMatchingUserEntityName
+        #           dangerouslyAllowSignInWithoutUserInCatalog: true
+    signInPage:
+      - guest
+    dynamicPlugins:
+      frontend:
+        red-hat-developer-hub.backstage-plugin-x2a-dcr:
+          dynamicRoutes:
+            - path: /oauth2/*
+              importName: DcrConsentPage
+
+        red-hat-developer-hub.backstage-plugin-x2a:
+          scaffolderFieldExtensions:
+            - importName: RepoAuthenticationExtension
+            - importName: RulesAcceptanceExtension
+          appIcons:
+            - name: x2aIcon
+              importName: X2AIcon
+          dynamicRoutes:
+            - path: /x2a/
+              importName: X2APage
+              menuItem:
+                text: Conversion Hub
+                icon: x2aIcon
+
+    catalog:
+      locations:
+        # x2a Create Project template
+        - type: file
+          target: /opt/app-root/src/dynamic-plugins-root/red-hat-developer-hub-backstage-plugin-scaffolder-backend-module-x2a/templates/conversion-project-template.yaml
+          rules:
+            - allow: [Template]
+    x2a:
+      callbackBaseUrl: http://${SERVICE_NAME}.${NAMESPACE}.svc.cluster.local/api/x2a
+      kubernetes:
+        image: ${X2A_KUBERNETES_IMAGE:-quay.io/x2ansible/x2a-convertor}
+        imageTag: ${X2A_KUBERNETES_IMAGE_TAG:-latest}
+        ttlSecondsAfterFinished: 86400
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+      credentials:
+        llm:
+          LLM_MODEL: ${LLM_MODEL:-anthropic.claude-3-7-sonnet-20250219-v1:0}
+          AWS_REGION: ${AWS_REGION}
+          AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK}
+          AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+          AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+          OPENAI_API_BASE: ${OPENAI_API_BASE}
+          OPENAI_API_KEY: ${OPENAI_API_KEY}
+        aap:
+          url: ${AAP_URL:-https://aap.example.com}
+          orgName: ${AAP_ORG_NAME:-MyOrganization}
+          oauthToken: ${AAP_OAUTH_TOKEN:-your-oauth-token}
+          skipSSLVerification: ${AAP_SKIP_SSL_VERIFICATION:-false}
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: dynamic-plugins-root
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # CUSTOMIZATION: Change storage class for your environment
+  # Common values:
+  #   - OpenShift CRC: crc-csi-hostpath-provisioner
+  #   - AWS EBS: gp2 or gp3
+  #   - Azure: managed-premium
+  #   - GCP: standard or standard-rwo
+  # List available storage classes: oc get storageclass
+  # storageClassName: kubevirt-csi-infra-default
+  storageClassName: __STORAGE_CLASS__
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: rhdh.redhat.com/v1alpha4
+kind: Backstage
+metadata:
+  name: developer-hub
+spec:
+  deployment:
+    patch:
+      spec:
+        template:
+          spec:
+            serviceAccountName: x2a-sa
+            automountServiceAccountToken: true
+            containers:
+              - name: backstage-backend
+                env:
+                  - name: NODE_EXTRA_CA_CERTS
+                    value: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+                  - name: NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                  - name: SERVICE_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.labels['rhdh.redhat.com/app']
+  application:
+    dynamicPluginsConfigMapName: dynamic-plugins
+    appConfig:
+      mountPath: /opt/app-root/src
+      configMaps:
+        - name: app-config-rhdh
+    extraFiles:
+      mountPath: /opt/app-root/src
+    extraEnvs:
+      secrets:
+        - name: x2a-credentials
+    route:
+      enabled: true
