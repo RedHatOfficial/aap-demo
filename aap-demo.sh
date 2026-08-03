@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
+    mcp-server | portal | setup-pah | ao-eap | apme-eap | local-cache | x2ansible | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -397,11 +397,14 @@ Addons:
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao-eap   Install Automation Orchestrator Early Access
   enable local-cache Cache container images locally (~30GB) to speed up deploys
+  enable x2ansible Install X2Ansible (RHDH + Conversion Hub)
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
   aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
   aap-demo enable setup-pah       # Configure Private Automation Hub
+  aap-demo enable x2ansible       # Deploy X2Ansible Conversion Hub (RHDH)
+  aap-demo config x2ansible       # Update X2Ansible LLM credentials
 
 Run 'aap-demo help' for full documentation.
 EOF
@@ -441,13 +444,13 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, local-cache)
+    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, ao-eap, apme-eap, local-cache, x2ansible)
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
                     Usage: enable local-cache [save|load|clear]
     redhat-status   Check Red Hat registry status (alias: rh-status)
-    config          Configure aap-demo settings
+    config          Configure aap-demo settings (e.g. config x2ansible)
     update          Pull latest code and reinstall
     help            Show this help
 
@@ -473,6 +476,7 @@ EXAMPLES:
     aap-demo start                   # Start stopped cluster
     aap-demo ssh                     # SSH into cluster node
     aap-demo enable setup-pah        # Configure Private Automation Hub remotes
+    aap-demo config x2ansible        # Update X2Ansible LLM credentials
 
 REQUIREMENTS:
     - OpenShift Local — https://console.redhat.com/openshift/create/local
@@ -714,11 +718,34 @@ _clean_operator() {
 }
 
 cmd_config() {
-  local key="${1:-}"
-  local value="${2:-}"
+  local target="${1:-}"
 
-  # Ensure config directory exists
   mkdir -p "$(dirname "$AAP_DEMO_CONFIG")"
+
+  case "$target" in
+    "" | help | --help | -h)
+      cat <<'EOF'
+Usage: aap-demo config <target>
+
+Targets:
+  x2ansible    Re-prompt for LLM credentials and update the X2Ansible secret
+
+Examples:
+  aap-demo config x2ansible
+EOF
+      ;;
+    x2ansible)
+      setup_kubeconfig
+      _verify_cluster || return 1
+      echo "Reconfiguring X2Ansible LLM credentials..."
+      bash "${SCRIPT_DIR}/addons/x2ansible/deploy.sh" --reconfigure
+      ;;
+    *)
+      echo "Unknown config target: $target"
+      echo "Run 'aap-demo config' for available targets."
+      return 1
+      ;;
+  esac
 }
 
 cmd_update() {
@@ -2618,7 +2645,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap local-cache product-demos product-demo-satellite"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap local-cache x2ansible product-demos product-demo-satellite"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
