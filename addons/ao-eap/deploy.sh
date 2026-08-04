@@ -144,9 +144,15 @@ fi
 
 # ---------------------------------------------------------------------------
 # Full OpenShift: aapctl install handles everything (OLM, CNPG, cluster pull
-# secret). No index image, pull secret, gh, or jq needed.
+# secret). Only viable when redhat-operators and certified-operators catalogs
+# are present (full OpenShift cluster). CRC/OpenShift Local lacks these, so
+# fall through to the manual path below (same as MicroShift).
 # ---------------------------------------------------------------------------
-if [ "$_PRESET" != "microshift" ]; then
+_HAS_RH_CATALOG=false
+kubectl get catalogsource redhat-operators \
+  -n "$MARKETPLACE_NAMESPACE" &>/dev/null && _HAS_RH_CATALOG=true
+
+if [ "$_PRESET" != "microshift" ] && [ "$_HAS_RH_CATALOG" = "true" ]; then
   # Only need aapctl
   if ! command -v aapctl >/dev/null 2>&1; then
     if ! command -v gh >/dev/null 2>&1; then
@@ -260,7 +266,8 @@ if [ "$_PRESET" != "microshift" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# MicroShift: manual flow below (needs gh, jq, index image, pull secret)
+# MicroShift / CRC OpenShift (no default catalogs): manual flow below.
+# Needs gh, jq, index image, pull secret.
 # ---------------------------------------------------------------------------
 
 # --- Prerequisites ---
