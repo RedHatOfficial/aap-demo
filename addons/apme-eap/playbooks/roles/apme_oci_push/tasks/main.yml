@@ -102,7 +102,9 @@
           - login
           - --to={{ apme_oci_registry_authfile_resolved }}
       environment:
-        KUBECONFIG: "{{ apme_oci_kubeconfig if apme_oci_kubeconfig is defined and apme_oci_kubeconfig | length > 0 else omit }}"
+        KUBECONFIG: >-
+          {{ apme_oci_kubeconfig if apme_oci_kubeconfig is defined and
+          apme_oci_kubeconfig | length > 0 else omit }}
       changed_when: false
 
     - name: Resolve external OpenShift registry hostname for push  # noqa: var-naming[no-role-prefix]
@@ -117,7 +119,8 @@
     - name: Set registry push destination  # noqa: var-naming[no-role-prefix]
       ansible.builtin.set_fact:
         apme_oci_push_destination: >-
-          docker://{{ openshift_registry_info.stdout | trim }}/{{ openshift_project_name }}/{{ apme_oci_image_reference }}
+          docker://{{ openshift_registry_info.stdout | trim
+          }}/{{ openshift_project_name }}/{{ apme_oci_image_reference }}
 
     - name: Display OCI source and target  # noqa: var-naming[no-role-prefix]
       ansible.builtin.debug:
@@ -162,8 +165,11 @@
               'docker-archive:' + apme_oci_tar_resolved,
               apme_oci_push_destination
             ]
-            + (['--dest-tls-verify=false'] if is_nip_io_domain | default(false) else [])
-            + (['--dest-authfile=' + registry_authfile] if registry_authfile is defined and registry_authfile | length > 0 else [])
+            + (['--dest-tls-verify=false']
+               if (is_nip_io_domain | default(false)) or
+               ('crc.testing' in apme_oci_push_destination) else [])
+            + (['--dest-authfile=' + registry_authfile]
+               if registry_authfile is defined and registry_authfile | length > 0 else [])
           }}
 
     - name: Copy OCI archive to external registry with skopeo  # noqa: var-naming[no-role-prefix]
