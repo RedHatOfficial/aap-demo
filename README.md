@@ -25,6 +25,9 @@ cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
 git clone https://github.com/RedHatOfficial/aap-demo.git && cd aap-demo && ./install.sh && aap-demo deploy
 ```
 
+`aap-demo create` provisions the MicroShift VM only. `aap-demo deploy` installs OLM and AAP
+(use `deploy` for the typical path; `create` alone is for cluster-only setup).
+
 ## Status
 
 ```bash
@@ -49,6 +52,15 @@ AAP Deployments:
 Credentials:
 ------------
   aap-operator: admin / <password>
+
+Addons:
+-------
+  mcp-server      disabled
+  portal          disabled
+  setup-pah       disabled
+  ao-eap          disabled
+  apme-eap        disabled
+  local-cache     disabled
 ```
 
 ## Addons to add additional functionality

@@ -75,9 +75,7 @@ function Invoke-AapDemoStatus {
       $idleLabel = if ($idleResult.ExitCode -eq 0 -and $idleResult.Output.Trim() -eq 'true') {
         ' (idle)'
       } else { '' }
-      $routeResult = Invoke-AapOcCapture @('get', 'route', $crName, '-n', $ns, '-o', 'jsonpath=https://{.spec.host}')
-      $route = if ($routeResult.ExitCode -eq 0) { $routeResult.Output.Trim() } else { '' }
-      Write-Host ("  {0,-30} {1}/{2} pods{3}  {4}  {5}" -f $ns, $running, $total, $idleLabel, $crName, $route)
+      Write-Host ("  {0,-30} {1}/{2} pods{3}  {4}" -f $ns, $running, $total, $idleLabel, $crName)
     } else {
       Write-Host ("  {0,-30} {1}/{2} pods" -f $ns, $running, $total)
     }
@@ -90,10 +88,11 @@ function Invoke-AapDemoStatus {
   $routes = if ($routesResult.ExitCode -eq 0) {
     $routesResult.Lines |
       Where-Object { $_ -notmatch '^(openshift-|kube-|aap-demo-)' } |
-      ForEach-Object { $cols = $_ -split '\s+'; "  https://$($cols[2])" }
+      ForEach-Object { $cols = $_ -split '\s+'; "  https://$($cols[2])" } |
+      Sort-Object -Unique
   } else { @() }
   if ($routes) { $routes | ForEach-Object { Write-Host $_ } }
-  else { Write-Host '  (no AAP routes found)' }
+  else { Write-Host '  (no routes found)' }
 
   Write-Host ''
   Write-Host 'Credentials:'
@@ -125,15 +124,8 @@ function Invoke-AapDemoStatus {
   Write-Host '-------'
   foreach ($a in $Script:AapAvailableAddons) {
     $enabled = $savedAddons -contains $a
-    $label = Get-AapAddonStatusLabel -Addon $a -Namespace $Namespace -Enabled $enabled
-    $enableCmd = Get-AapAddonEnableCommand -Addon $a
-    if ($label -in @('disabled', 'not-deployed')) {
-      Write-Host ("  {0,-15} {1}  ({2})" -f $a, $label, $enableCmd)
-    } elseif ($label) {
-      Write-Host ("  {0,-15} {1}" -f $a, $label)
-    } else {
-      Write-Host ("  {0,-15} ({1})" -f $a, $enableCmd)
-    }
+    $state = if ($enabled) { 'enabled' } else { 'disabled' }
+    Write-Host ("  {0,-15} {1}" -f $a, $state)
   }
   Write-Host ''
 }

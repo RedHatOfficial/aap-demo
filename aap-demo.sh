@@ -1756,20 +1756,16 @@ cmd_status() {
 
       if [ -n "$AAP_CR" ]; then
         AAP_STATUS=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
-        local _aap_url
-        _aap_url=$(kubectl get route "$AAP_CR" -n "$ns" -o jsonpath='https://{.spec.host}' 2>/dev/null || echo "")
         if [ "$AAP_STATUS" = "True" ]; then
-          printf "  %-30s %s/%s pods   \033[1;32m%s\033[0m" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
+          printf "  %-30s %s/%s pods   \033[1;32m%s\033[0m\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
         else
           AAP_RUNNING=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
           if [ "$AAP_RUNNING" = "True" ]; then
-            printf "  %-30s %s/%s pods   \033[1;33m%s (Deploying)\033[0m" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
+            printf "  %-30s %s/%s pods   \033[1;33m%s (Deploying)\033[0m\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
           else
-            printf "  %-30s %s/%s pods   %s" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
+            printf "  %-30s %s/%s pods   %s\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
           fi
         fi
-        [ -n "$_aap_url" ] && printf "  %s" "$_aap_url"
-        echo ""
       else
         printf "  %-30s %s/%s pods\n" "$ns" "$POD_RUNNING" "$POD_TOTAL"
       fi
@@ -1777,16 +1773,16 @@ cmd_status() {
   fi
   echo ""
 
-  # Show AAP deployment routes (exclude addon and system namespaces)
+  # Show deployment routes (exclude OpenShift/system namespaces)
   echo "AAP Deployments:"
   echo "----------------"
   ROUTES=$(kubectl get route -A --no-headers 2>/dev/null \
     | grep -v -E '^(openshift-|kube-|aap-demo-)' \
-    | awk '$1 != "automation-orchestrator" {printf "  https://%s\n", $3}')
+    | awk '{printf "  https://%s\n", $3}' | sort -u)
   if [ -n "$ROUTES" ]; then
     echo "$ROUTES"
   else
-    echo "  (no AAP routes found)"
+    echo "  (no routes found)"
   fi
   echo ""
 
@@ -1846,82 +1842,16 @@ cmd_status() {
   echo "Addons:"
   echo "-------"
   for a in $AVAILABLE_ADDONS; do
-    local url="" label="" enabled=false
+    local enabled=false
     if echo "$saved_addons" | grep -qw "$a"; then
       enabled=true
+    elif [ "$a" = "ao-eap" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+      enabled=true
     fi
-    case "$a" in
-      mcp-server)
-        if [ "$enabled" = true ]; then
-          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
-          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
-            label="not-deployed"
-          fi
-        else
-          label="disabled"
-        fi
-        ;;
-      portal)
-        if [ "$enabled" = true ]; then
-          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-          if [ -z "$url" ] || [ "$url" = "https://" ]; then
-            url=""
-            label="not-deployed"
-          fi
-        else
-          label="disabled"
-        fi
-        ;;
-      ao-eap)
-        if [ "$enabled" != true ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
-          enabled=true
-        fi
-        if [ "$enabled" = true ]; then
-          url="https://$(kubectl get routes -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)"
-          if [ -z "$url" ] || [ "$url" = "https://" ]; then
-            url=""
-            label="not-deployed"
-          fi
-          _ao_total=$(kubectl get pods -n automation-orchestrator --no-headers 2>/dev/null | grep -cv Completed 2>/dev/null || echo 0)
-          _ao_running=$(kubectl get pods -n automation-orchestrator --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null || echo 0)
-        else
-          label="disabled"
-          _ao_total=0
-          _ao_running=0
-        fi
-        ;;
-      local-cache)
-        if [ "$enabled" = true ]; then
-          local _lc_preset _lc_dir _lc_size
-          # shellcheck source=includes/infra-crc.sh
-          source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
-          _lc_preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
-          _lc_dir="${HOME}/.aap-demo/local-cache/${_lc_preset}"
-          if [ -d "$_lc_dir" ] && ls "$_lc_dir"/*.tar &>/dev/null 2>&1; then
-            _lc_size=$(du -sh "$_lc_dir" 2>/dev/null | awk '{print $1}')
-            url="${_lc_size} cached (${_lc_preset})"
-          else
-            label="no cache saved yet"
-          fi
-        else
-          label="disabled"
-        fi
-        ;;
-    esac
-    if [ -n "$url" ] && [ -z "$label" ]; then
-      if [ "$a" = "ao-eap" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
-        printf "  %-15s %s/%s pods   %s\n" "$a" "$_ao_running" "$_ao_total" "$url"
-      else
-        printf "  %-15s %s\n" "$a" "$url"
-      fi
-    elif [ -n "$label" ]; then
-      if [ "$a" = "ao-eap" ] && [ "$label" = "not-deployed" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
-        printf "  %-15s %s/%s pods  (deploying)\n" "$a" "$_ao_running" "$_ao_total"
-      else
-        printf "  %-15s %s  (aap-demo enable %s)\n" "$a" "$label" "$a"
-      fi
+    if [ "$enabled" = true ]; then
+      printf "  %-15s enabled\n" "$a"
     else
-      printf "  %-15s (aap-demo enable %s)\n" "$a" "$a"
+      printf "  %-15s disabled\n" "$a"
     fi
   done
   echo ""

@@ -67,7 +67,7 @@ Additional addons invoked via `enable` but not in `AVAILABLE_ADDONS` list:
 
 | Addon | Mechanism |
 |-------|-----------|
-| `olm` | operator-sdk (called from create, not user-facing enable) |
+| `olm` | operator-sdk (called from `aap-demo deploy`, not user-facing enable) |
 | `registry` | Namespace + Deployment |
 | `console` | OpenShift console (OpenShift preset or manifest) |
 | `devspaces` | CheCluster CR |

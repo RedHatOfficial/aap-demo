@@ -30,6 +30,7 @@ CACHE_DIR="${CACHE_BASE}/${PRESET}"
 _require_crc_ssh() {
   if [ -z "$CRC_SSH_KEY" ]; then
     if [ "${AAP_DEMO_LOCAL_CACHE_QUIET:-}" = "1" ]; then
+      echo "  ⚠ SSH not available — skipping image cache load" >&2
       exit 0
     fi
     echo "ERROR: CRC SSH key not found — is the cluster running?"
