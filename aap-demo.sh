@@ -1993,14 +1993,6 @@ cmd_deploy() {
 
   install_ingress_ca_trust
 
-  # Install OLM if not present (OpenShift Local doesn't include it)
-  if ! KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
-    printf "\n\033[1;31mERROR: OLM installation failed\033[0m\n"
-    printf "OLM is required for AAP deployments. Please fix OLM before continuing.\n"
-    printf "Try: \033[1maap-demo enable olm\033[0m\n\n"
-    exit 1
-  fi
-
   # anyuid and privileged SCCs granted in setup_namespace() for all SAs in the namespace
   echo ""
   printf "\033[1maap-demo deploy\033[0m - Deploying AAP to OpenShift Local...\n"
@@ -2015,7 +2007,7 @@ cmd_deploy() {
   echo "Connected to: $(kubectl config current-context 2>/dev/null)"
   echo ""
 
-  # Check if AAP already exists
+  # Check if AAP already exists — skip OLM and the full deploy if so
   if [ "$FORCE" != "true" ]; then
     AAP_EXISTS=$(kubectl get aap -n "$NAMESPACE" 2>/dev/null | grep -v NAME | head -1 | awk '{print $1}' || true)
     if [ -n "$AAP_EXISTS" ]; then
@@ -2027,6 +2019,14 @@ cmd_deploy() {
       watch_aap
       exit 0
     fi
+  fi
+
+  # Install OLM if not present (OpenShift Local doesn't include it)
+  if ! KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
+    printf "\n\033[1;31mERROR: OLM installation failed\033[0m\n"
+    printf "OLM is required for AAP deployments. Please fix OLM before continuing.\n"
+    printf "Try: \033[1maap-demo enable olm\033[0m\n\n"
+    exit 1
   fi
 
   # Refresh kubeconfig before deploy (certs may have changed during OLM install)
@@ -2118,38 +2118,45 @@ else:
     -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
     "${SCRIPT_DIR}/config/olm/catalogsource.yaml" | kubectl apply -f -
 
-  # Wait for CatalogSource
-  echo ""
-  echo "Waiting for CatalogSource to be ready..."
-  echo "  (This may take a few minutes while the catalog image is pulled)"
-  CATSRC_READY=false
-  for i in $(seq 1 60); do
-    STATUS=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
-      -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "Pending")
-    if [ "$STATUS" = "READY" ]; then
-      echo ""
-      echo "  ✓ CatalogSource is ready"
-      CATSRC_READY=true
-      break
-    fi
-    POD_STATUS=$(kubectl get pods -n "$NAMESPACE" -l olm.catalogSource=redhat-operators \
-      -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
-    if [ "$STATUS" = "TRANSIENT_FAILURE" ]; then
-      if [ "$POD_STATUS" = "Pending" ] || [ "$POD_STATUS" = "ContainerCreating" ]; then
-        printf "\r  Pulling catalog image... ($i/60)    "
-      else
-        printf "\r  Catalog initializing... ($i/60)    "
-      fi
-    elif [ "$STATUS" = "CONNECTING" ]; then
-      printf "\r  Connecting to catalog... ($i/60)    "
-    else
-      printf "\r  Waiting ($STATUS)... ($i/60)    "
-    fi
-    sleep 5
-  done
-  if [ "$CATSRC_READY" != "true" ]; then
+  # Wait for CatalogSource — skip if already READY
+  _catsrc_status=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
+    -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
+  if [ "$_catsrc_status" = "READY" ]; then
+    echo "  ✓ CatalogSource already ready"
+    CATSRC_READY=true
+  else
     echo ""
-    echo "  ⚠ CatalogSource not ready after 5 minutes, continuing anyway..."
+    echo "Waiting for CatalogSource to be ready..."
+    echo "  (This may take a few minutes while the catalog image is pulled)"
+    CATSRC_READY=false
+    for i in $(seq 1 60); do
+      STATUS=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
+        -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "Pending")
+      if [ "$STATUS" = "READY" ]; then
+        echo ""
+        echo "  ✓ CatalogSource is ready"
+        CATSRC_READY=true
+        break
+      fi
+      POD_STATUS=$(kubectl get pods -n "$NAMESPACE" -l olm.catalogSource=redhat-operators \
+        -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+      if [ "$STATUS" = "TRANSIENT_FAILURE" ]; then
+        if [ "$POD_STATUS" = "Pending" ] || [ "$POD_STATUS" = "ContainerCreating" ]; then
+          printf "\r  Pulling catalog image... ($i/60)    "
+        else
+          printf "\r  Catalog initializing... ($i/60)    "
+        fi
+      elif [ "$STATUS" = "CONNECTING" ]; then
+        printf "\r  Connecting to catalog... ($i/60)    "
+      else
+        printf "\r  Waiting ($STATUS)... ($i/60)    "
+      fi
+      sleep 5
+    done
+    if [ "$CATSRC_READY" != "true" ]; then
+      echo ""
+      echo "  ⚠ CatalogSource not ready after 5 minutes, continuing anyway..."
+    fi
   fi
 
   # Create OperatorGroup
