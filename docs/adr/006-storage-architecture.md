@@ -23,8 +23,10 @@ requires **ReadWriteMany**, which LVMS does not provide.
 ## Decision
 
 Deploy an **in-cluster NFS server** with the NFS Subdir External Provisioner to expose
-`nfs-local-rwx` StorageClass on CRC/MicroShift. Use **local-path provisioner** as the default
-RWO class where LVMS is unavailable (documented MINC path).
+`nfs-local-rwx` StorageClass on CRC/MicroShift. Hub file storage references this class on
+the AAP CR; postgres and hub-redis use pre-created PVCs (`config/manifests/aap-storage-pvcs.yaml`)
+so they bind to NFS without changing the cluster default StorageClass. Use **topolvm** or
+**crc-csi-hostpath-provisioner** as the default RWO class.
 
 ### CRC/MicroShift stack
 

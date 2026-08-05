@@ -31,6 +31,10 @@ spec:
 
   eda:
     disabled: false
+    activation_worker:
+      replicas: 1
+    default_worker:
+      replicas: 1
 
   hub:
     disabled: false
@@ -38,4 +42,7 @@ spec:
     file_storage_storage_class: nfs-local-rwx
     file_storage_access_mode: ReadWriteMany
     file_storage_size: 5Gi
-    route_host: aap-hub-aap-operator.apps.127.0.0.1.nip.io
+    content:
+      replicas: 1
+    worker:
+      replicas: 1

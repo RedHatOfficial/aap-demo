@@ -53,10 +53,15 @@ _ingress_ca_installed_fingerprint_linux() {
 }
 
 _ingress_ca_installed_fingerprint_macos() {
-  security find-certificate -a -p -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null \
+  local fp
+  fp=$(security find-certificate -a -p -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null \
     | awk '/BEGIN CERTIFICATE/{p=1} p{print} /END CERTIFICATE/{exit}' \
     | openssl x509 -noout -fingerprint -sha256 2>/dev/null \
-    | sed -E 's/sha256 [Ff]ingerprint=//' | tr -d ':' | tr '[:lower:]' '[:upper:]'
+    | sed -E 's/sha256 [Ff]ingerprint=//' | tr -d ':' | tr '[:lower:]' '[:upper:]')
+  if [ -n "$fp" ]; then
+    echo "$fp"
+    return 0
+  fi
 }
 
 _ingress_ca_in_trust_store() {
@@ -130,7 +135,7 @@ _ingress_ca_export_env() {
 _fetch_ingress_ca_from_cluster() {
   local dest="$1"
 
-  # CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
+  # MicroShift: fetch via SSH from the filesystem
   if [ -z "$CRC_SSH_KEY" ]; then
     return 1
   fi
