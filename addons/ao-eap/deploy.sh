@@ -26,10 +26,6 @@ else
   MARKETPLACE_NAMESPACE="olm"
 fi
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
-SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-# shellcheck source=includes/infra-crc.sh
-source "${SCRIPT_DIR}/includes/infra-crc.sh"
-_PRESET="$(_detect_crc_preset)"
 if [ -z "${AO_STORAGE_CLASS:-}" ]; then
   if kubectl get sc nfs-local-rwx &>/dev/null 2>&1; then
     STORAGE_CLASS="nfs-local-rwx"

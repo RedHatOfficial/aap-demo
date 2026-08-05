@@ -82,9 +82,10 @@ operator versions). The cache is stored per-preset at:
 - **md5 filenames**: Image references contain `/`, `@`, and `:` characters that are
   problematic in filenames. The md5sum of the reference is used as the filename, with the
   original reference stored in the `.ref` sidecar file.
-- **Preset detection**: `crc config get preset` outputs "Configuration property 'preset'
-  is not set. Default value 'openshift' is used" when unset. The addon parses this with
-  `grep -oE "openshift|microshift"` rather than `awk '{print $NF}'` (which returns "used").
+- **Preset detection**: Shared helper `_detect_crc_preset()` in `includes/infra-crc.sh`
+  resolves preset in order: `CRC_PRESET` env var → `CRC_PRESET` in `~/.aap-demo/config` →
+  `crc config get preset` → default `microshift`. Avoids mis-parsing CRC's "not set"
+  message (which mentions openshift as CRC's default, not aap-demo's).
 
 ## Consequences
 

@@ -2804,15 +2804,20 @@ cmd_enable() {
   local _skip_cluster_verify=false
   if [ "$addon" = "local-cache" ]; then
     case "$subcmd" in
-      load) _skip_addon_save=true ;;
+      load)
+        _skip_addon_save=true
+        echo "Loading cached container images..."
+        ;;
       clear)
         _skip_addon_save=true
         _skip_cluster_verify=true
+        echo "Clearing local image cache..."
         ;;
+      *) echo "Enabling addon: $addon" ;;
     esac
+  else
+    echo "Enabling addon: $addon"
   fi
-
-  echo "Enabling addon: $addon"
   if [ "$_skip_cluster_verify" != true ]; then
     _verify_cluster || return 1
   fi

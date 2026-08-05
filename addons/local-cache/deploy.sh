@@ -7,8 +7,8 @@
 #   aap-demo enable local-cache clear    # delete cache
 #   aap-demo disable local-cache         # alias for clear
 #
-# Images are saved per-preset (openshift vs microshift) since the image
-# sets differ. Cache lives at ~/.aap-demo/local-cache/<preset>/
+# Images are saved per CRC preset (aap-demo uses microshift). Cache lives at
+# ~/.aap-demo/local-cache/<preset>/
 
 set -e
 
@@ -64,6 +64,7 @@ if [ "$ACTION" = "load" ]; then
   echo ""
 
   loaded=0
+  skipped=0
   failed=0
   for tarball in "$CACHE_DIR"/*.tar; do
     [ -f "$tarball" ] || continue
@@ -74,6 +75,13 @@ if [ "$ACTION" = "load" ]; then
     display_name="$img_ref"
     if [ ${#display_name} -gt 70 ]; then
       display_name="...${display_name: -67}"
+    fi
+
+    # Skip images already present in CRI-O
+    if _crc_exec sudo crictl inspecti "$img_ref" &>/dev/null; then
+      printf "  %-72s %6s (present)\n" "$display_name" "$file_size"
+      skipped=$((skipped + 1))
+      continue
     fi
 
     printf "  %-72s %6s " "$display_name" "$file_size"
@@ -89,7 +97,7 @@ if [ "$ACTION" = "load" ]; then
   done
 
   echo ""
-  echo "✓ Loaded ${loaded} images (${failed} failed)"
+  echo "✓ Loaded ${loaded} images, ${skipped} already present (${failed} failed)"
   exit 0
 fi
 
