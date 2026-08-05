@@ -186,6 +186,7 @@ fi
 # ---------------------------------------------------------------------------
 crc config set preset "microshift" 2>/dev/null || true
 CURRENT_PRESET="microshift"
+_save_config_key "CRC_PRESET" "microshift"
 
 printf "${_GREEN}▸${_NC} CRC preset: ${CURRENT_PRESET}\n"
 

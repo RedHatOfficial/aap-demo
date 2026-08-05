@@ -2153,12 +2153,12 @@ deploy_latest() {
   # Relax container signature policy for operator index images (MicroShift 4.22+
   # enforces GPG signatures but the index images may fail verification).
   # Full OpenShift doesn't enforce this — skip.
-  _deploy_preset_raw=$(crc config get preset 2>&1 || true)
-  if echo "$_deploy_preset_raw" | grep -q "not set"; then
-    _deploy_preset=$(echo "$_deploy_preset_raw" | grep -oE "openshift|microshift" | tail -1)
-    [ -z "$_deploy_preset" ] && _deploy_preset="openshift"
+  if [ -n "${CRC_PRESET:-}" ]; then
+    _deploy_preset="$CRC_PRESET"
   else
-    _deploy_preset=$(echo "$_deploy_preset_raw" | awk '{print $NF}')
+    _deploy_preset_raw=$(crc config get preset 2>&1 || true)
+    _deploy_preset=$(echo "$_deploy_preset_raw" | grep -oE "openshift|microshift" | tail -1)
+    _deploy_preset="${_deploy_preset:-microshift}"
   fi
   _deploy_ssh_key="$(_detect_crc_ssh_key 2>/dev/null || true)"
   if [ "$_deploy_preset" = "microshift" ] && [ -n "$_deploy_ssh_key" ]; then
@@ -2456,13 +2456,12 @@ _load_local_cache() {
     fi
   fi
 
-  local preset_raw preset cache_dir
-  preset_raw=$(crc config get preset 2>&1)
-  if echo "$preset_raw" | grep -q "not set"; then
-    preset=$(echo "$preset_raw" | grep -oE "openshift|microshift" | tail -1)
-    [ -z "$preset" ] && preset="openshift"
+  local preset cache_dir
+  if [ -n "${CRC_PRESET:-}" ]; then
+    preset="$CRC_PRESET"
   else
-    preset=$(echo "$preset_raw" | awk '{print $NF}')
+    preset=$(crc config get preset 2>&1 | grep -oE "openshift|microshift" | tail -1)
+    preset="${preset:-microshift}"
   fi
   cache_dir="${HOME}/.aap-demo/local-cache/${preset}"
 
