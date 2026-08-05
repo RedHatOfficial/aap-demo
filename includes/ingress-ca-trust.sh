@@ -173,8 +173,18 @@ _import_ingress_ca_nss() {
   local db imported=false
 
   if ! command -v certutil &>/dev/null; then
-    echo "  Chrome/Firefox: install nss-tools for browser trust (sudo dnf install nss-tools)" >&2
-    return 1
+    if command -v dnf &>/dev/null; then
+      echo "  Installing nss-tools for Chrome/Firefox browser trust..."
+      sudo dnf install -y nss-tools &>/dev/null \
+        && echo "  ✓ nss-tools installed" \
+        || {
+          echo "  Could not install nss-tools (sudo dnf install nss-tools)" >&2
+          return 1
+        }
+    else
+      echo "  certutil not found — install nss-tools manually for browser trust" >&2
+      return 1
+    fi
   fi
 
   local dbs=()
