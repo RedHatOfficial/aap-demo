@@ -2033,20 +2033,7 @@ cmd_create() {
   fi
 
   install_ingress_ca_trust
-
-  # Install OLM by default (OpenShift Local doesn't include it, needed for operator dev and latest deploys)
   setup_kubeconfig
-  echo ""
-  echo "Installing OLM (Operator Lifecycle Manager)..."
-  if ! bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
-    echo ""
-    printf "  \033[1;31mERROR: OLM install failed\033[0m\n"
-    printf "  \033[1;33mYou can retry with: aap-demo enable olm\033[0m\n"
-    printf "  \033[1;33mOr destroy and recreate: aap-demo destroy && aap-demo create\033[0m\n"
-    echo ""
-    # Don't fail cluster creation, but warn that latest deploys won't work
-    printf "  \033[1;33mNote: 'aap-demo deploy latest' requires OLM\033[0m\n"
-  fi
 }
 
 # shellcheck source=includes/galaxy-auth.sh
