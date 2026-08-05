@@ -318,13 +318,12 @@ printf "${_GREEN}▸${_NC} Pull secret: ${PULL_SECRET_PATH}\n"
 # ---------------------------------------------------------------------------
 # Start CRC
 # ---------------------------------------------------------------------------
-printf "${_GREEN}▸${_NC} Starting CRC...\n"
-if ! crc start -p "$PULL_SECRET_PATH" >/tmp/crc-start.log 2>&1; then
+printf "${_GREEN}▸${_NC} Starting CRC (this takes 3-5 minutes)...\n"
+if ! crc start -p "$PULL_SECRET_PATH" 2>&1 | tee /tmp/crc-start.log; then
   # Retry: pipe pull secret via --pull-secret-file - (non-TTY workaround)
   echo "  Retrying with stdin pull secret..."
-  if ! cat "$PULL_SECRET_PATH" | crc start --pull-secret-file - >/tmp/crc-start.log 2>&1; then
-    cat /tmp/crc-start.log
-    echo "ERROR: crc start failed"
+  if ! cat "$PULL_SECRET_PATH" | crc start --pull-secret-file - 2>&1 | tee /tmp/crc-start.log; then
+    echo "ERROR: crc start failed — see /tmp/crc-start.log"
     exit 1
   fi
 fi
@@ -387,7 +386,7 @@ fi
 # Always wipe and restart on create — ensures nip.io is applied cleanly.
 # CRC starts MicroShift with crc.testing before we can write the dropin,
 # so we must wipe the data generated with the wrong domain.
-printf "${_GREEN}▸${_NC} Restarting MicroShift with nip.io domain (clean start)...\n"
+printf "${_GREEN}▸${_NC} Restarting MicroShift with nip.io domain (clean start, ~2 min)...\n"
 ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl start microshift' 2>/dev/null || true
 
 # Wait for API
