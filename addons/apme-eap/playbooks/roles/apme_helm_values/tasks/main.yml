@@ -185,12 +185,11 @@
     replace: '          # GitHub integration disabled (configure_github_secrets: false)\n'
   when: not (configure_github_secrets | default(false))
 
-- name: Remove GitHub auth provider when not configured  # noqa: var-naming[no-role-prefix]
+- name: Remove GitHub auth provider (catalog integration only, not sign-in)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(?s)            github:\n              production:\n                clientId: \$\{GITHUB_OAUTH_CLIENT_ID\}\n                clientSecret: \$\{GITHUB_OAUTH_CLIENT_SECRET\}\n'  # yamllint disable-line rule:line-length
-    replace: '            # GitHub auth provider disabled (configure_github_secrets: false)\n'
-  when: not (configure_github_secrets | default(false))
+    replace: '            # GitHub auth provider disabled — catalog integration only, sign-in via rhaap\n'
 
 - name: Remove GitHub catalog provider when not configured  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
