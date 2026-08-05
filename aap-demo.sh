@@ -2014,6 +2014,8 @@ cmd_create() {
     exit 1
   fi
 
+  install_ingress_ca_trust
+
   # Install OLM by default (OpenShift Local doesn't include it, needed for operator dev and latest deploys)
   setup_kubeconfig
   echo ""

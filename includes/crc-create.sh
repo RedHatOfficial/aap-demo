@@ -419,13 +419,6 @@ echo "  ✓ nip.io baseDomain configured (data wiped)"
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Trust ingress CA
-# ---------------------------------------------------------------------------
-# shellcheck source=includes/ingress-ca-trust.sh
-source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
-install_ingress_ca_trust
-
-# ---------------------------------------------------------------------------
 # Set up kubeconfig
 # ---------------------------------------------------------------------------
 printf "${_GREEN}▸${_NC} Configuring kubeconfig...\n"
