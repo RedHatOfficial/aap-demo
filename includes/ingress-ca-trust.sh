@@ -135,15 +135,31 @@ _ingress_ca_export_env() {
 _fetch_ingress_ca_from_cluster() {
   local dest="$1"
 
-  # MicroShift: fetch via SSH from the filesystem
-  if [ -z "$CRC_SSH_KEY" ]; then
-    return 1
+  # Primary: extract the CA from the router-certs-default secret chain (works without SSH)
+  if command -v kubectl &>/dev/null; then
+    local chain
+    chain=$(kubectl get secret router-certs-default -n openshift-ingress \
+      -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null)
+    if [ -n "$chain" ]; then
+      # The chain is leaf + CA; extract the last cert (the self-signed ingress-ca)
+      echo "$chain" | awk '
+        /BEGIN CERTIFICATE/ { p=1; buf="" }
+        p { buf = buf $0 "\n" }
+        /END CERTIFICATE/ { last = buf; p=0 }
+        END { printf "%s", last }
+      ' >"$dest"
+      [ -s "$dest" ] && grep -q 'BEGIN CERTIFICATE' "$dest" && return 0
+    fi
   fi
 
-  ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 \
-    'sudo cat /var/lib/microshift/certs/ingress-ca/ca.crt' >"$dest" 2>/dev/null
+  # Fallback: fetch via SSH from the MicroShift filesystem
+  if [ -n "$CRC_SSH_KEY" ]; then
+    ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 \
+      'sudo cat /var/lib/microshift/certs/ingress-ca/ca.crt' >"$dest" 2>/dev/null
+    [ -s "$dest" ] && grep -q 'BEGIN CERTIFICATE' "$dest" && return 0
+  fi
 
-  [ -s "$dest" ] && grep -q 'BEGIN CERTIFICATE' "$dest"
+  return 1
 }
 
 _import_ingress_ca_linux() {

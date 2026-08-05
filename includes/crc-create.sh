@@ -14,6 +14,8 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # Source CRC infra backend (sets CRC_SSH_KEY, CRC_SSH_OPTS)
 # shellcheck source=includes/infra-crc.sh
 source "${SCRIPT_DIR}/includes/infra-crc.sh"
+# shellcheck source=includes/ingress-ca-trust.sh
+source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 
 # Colors
 _RED='\033[0;31m'
@@ -535,6 +537,12 @@ if [ ${#CRC_SSH_OPTS[@]} -gt 0 ]; then
   ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo sysctl -w fs.inotify.max_user_watches=2099999999 fs.inotify.max_user_instances=2099999999 fs.inotify.max_queued_events=2099999999' 2>/dev/null
   echo "  ✓ inotify limits configured"
 fi
+
+# ---------------------------------------------------------------------------
+# Trust ingress CA so browsers accept *.apps.127.0.0.1.nip.io routes
+# ---------------------------------------------------------------------------
+printf "${_GREEN}▸${_NC} Trusting ingress CA...\n"
+install_ingress_ca_trust
 
 # ---------------------------------------------------------------------------
 # Done
