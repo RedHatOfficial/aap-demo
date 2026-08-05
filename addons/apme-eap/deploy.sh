@@ -583,19 +583,7 @@ configure_github_secrets: false
 EOF
   fi
 
-  # OCI registry configuration — full OpenShift uses the integrated registry;
-  # MicroShift uses the aap-demo in-cluster registry addon.
-  if kubectl get ingresses.config/cluster --request-timeout=5s &>/dev/null; then
-    cat >>"$VARS_FILE" <<EOF
-
-# OCI registry configuration (OpenShift integrated registry)
-oci_registry: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}"
-oci_registry_internal: "image-registry.openshift-image-registry.svc:5000/${NAMESPACE}"
-skip_plugin_push: false
-apme_oci_push_force: false  # Set true to re-push plugins even if registry has them
-EOF
-  else
-    cat >>"$VARS_FILE" <<EOF
+  cat >>"$VARS_FILE" <<EOF
 
 # OCI registry configuration (MicroShift in-cluster registry addon)
 # oci_registry: External URL for local skopeo push (runs outside cluster)
@@ -606,7 +594,6 @@ oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
 skip_plugin_push: false
 apme_oci_push_force: false  # Set true to re-push plugins even if registry has them
 EOF
-  fi
 
   cat >>"$VARS_FILE" <<EOF
 
