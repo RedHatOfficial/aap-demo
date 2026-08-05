@@ -2140,9 +2140,6 @@ deploy_latest() {
   # Check disk space before deploying (latest catalog images are large)
   _check_disk_space || exit 1
 
-  # Ensure OLM is installed (OpenShift Local doesn't include it)
-  KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"
-
   echo ""
   echo "Deploying AAP from latest catalog..."
   echo "  Version: 2.7"
