@@ -9,6 +9,7 @@ Deploy AAP to a local MicroShift cluster in minutes.
 ## Prerequisites
 
 - **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
+- **16 GB RAM minimum** — default VM allocation is 16 GB (override with `CRC_MEMORY=24576 aap-demo create` for 24 GB)
 - **Pull secret** — download from the
   [Red Hat console](https://console.redhat.com/openshift/install/pull-secret),
   then run:
@@ -82,6 +83,10 @@ aap-demo diagnose      # Quick health check — finds common issues
 aap-demo diagnose --ai # AI-powered analysis (requires claude CLI)
 aap-demo must-gather   # Collect full diagnostics for support
 ```
+
+On MicroShift 4.22+, `aap-demo deploy` relaxes container signature verification for
+`registry.redhat.io` inside the CRC VM so operator index images can pull. This is a
+**demo-only** workaround and must not be used as a production pattern.
 
 ## Clean Up
 

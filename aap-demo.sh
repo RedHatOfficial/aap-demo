@@ -1890,6 +1890,23 @@ cmd_status() {
           _ao_running=0
         fi
         ;;
+      local-cache)
+        if [ "$enabled" = true ]; then
+          local _lc_preset _lc_dir _lc_size
+          # shellcheck source=includes/infra-crc.sh
+          source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
+          _lc_preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
+          _lc_dir="${HOME}/.aap-demo/local-cache/${_lc_preset}"
+          if [ -d "$_lc_dir" ] && ls "$_lc_dir"/*.tar &>/dev/null 2>&1; then
+            _lc_size=$(du -sh "$_lc_dir" 2>/dev/null | awk '{print $1}')
+            url="${_lc_size} cached (${_lc_preset})"
+          else
+            label="no cache saved yet"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
     esac
     if [ -n "$url" ] && [ -z "$label" ]; then
       if [ "$a" = "ao-eap" ] && [ "${_ao_total:-0}" -gt 0 ] 2>/dev/null; then
@@ -2154,22 +2171,16 @@ deploy_latest() {
 
   # Relax container signature policy for operator index images (MicroShift 4.22+
   # enforces GPG signatures but the index images may fail verification).
-  # Full OpenShift doesn't enforce this — skip.
-  if [ -n "${CRC_PRESET:-}" ]; then
-    _deploy_preset="$CRC_PRESET"
-  else
-    _deploy_preset_raw=$(crc config get preset 2>&1 || true)
-    _deploy_preset=$(echo "$_deploy_preset_raw" | grep -oE "openshift|microshift" | tail -1)
-    _deploy_preset="${_deploy_preset:-microshift}"
-  fi
-  _deploy_ssh_key="$(_detect_crc_ssh_key 2>/dev/null || true)"
-  if [ "$_deploy_preset" = "microshift" ] && [ -n "$_deploy_ssh_key" ]; then
+  # Demo-only: disables signature verification for registry.redhat.io on the VM.
+  # shellcheck source=includes/infra-crc.sh
+  source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
+  _deploy_preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
+  if [ "$_deploy_preset" = "microshift" ] && [ -n "${CRC_SSH_KEY:-}" ]; then
     # Only needed for MicroShift 4.22+ which enforces GPG signatures on index images
     _ocp_major="${AAP_OCP_VERSION%%.*}"
     _ocp_minor="${AAP_OCP_VERSION#*.}"
     if [ "$_ocp_major" -gt 4 ] || { [ "$_ocp_major" -eq 4 ] && [ "$_ocp_minor" -ge 22 ]; }; then
-      _deploy_ssh_opts=(-i "$_deploy_ssh_key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
-      ssh -p 2222 "${_deploy_ssh_opts[@]}" core@127.0.0.1 'sudo python3 -c "
+      ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo python3 -c "
 import json, sys
 p = \"/etc/containers/policy.json\"
 with open(p) as f: d = json.load(f)
@@ -2459,63 +2470,21 @@ _load_local_cache() {
   fi
 
   local preset cache_dir
-  if [ -n "${CRC_PRESET:-}" ]; then
-    preset="$CRC_PRESET"
-  else
-    preset=$(crc config get preset 2>&1 | grep -oE "openshift|microshift" | tail -1)
-    preset="${preset:-microshift}"
-  fi
+  # shellcheck source=includes/infra-crc.sh
+  source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
+  preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
   cache_dir="${HOME}/.aap-demo/local-cache/${preset}"
 
   # Skip if no cache exists
   [ -d "$cache_dir" ] || return 0
   ls "$cache_dir"/*.tar &>/dev/null || return 0
 
-  local image_count
-  image_count=$(ls "$cache_dir"/*.tar 2>/dev/null | wc -l | tr -d ' ')
-  [ "$image_count" -eq 0 ] && return 0
-
-  echo ""
-  printf "\033[1mLoading ${image_count} cached container images...\033[0m\n"
-
-  source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
-  if [ -z "$CRC_SSH_KEY" ]; then
+  if [ -z "${CRC_SSH_KEY:-}" ]; then
     echo "  ⚠ SSH not available — skipping image cache load"
     return 0
   fi
 
-  local loaded=0 skipped=0
-  for tarball in "$cache_dir"/*.tar; do
-    [ -f "$tarball" ] || continue
-    local img_ref
-    img_ref=$(cat "${tarball%.tar}.ref" 2>/dev/null) || continue
-    local file_size
-    file_size=$(du -h "$tarball" | awk '{print $1}')
-
-    # Check if already present in CRI-O
-    if _crc_exec sudo crictl inspecti "$img_ref" &>/dev/null; then
-      skipped=$((skipped + 1))
-      continue
-    fi
-
-    local display_name="$img_ref"
-    if [ ${#display_name} -gt 65 ]; then
-      display_name="...${display_name: -62}"
-    fi
-    printf "  %-67s %6s " "$display_name" "$file_size"
-
-    if ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 \
-      "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" <"$tarball" &>/dev/null; then
-      printf "\033[0;32m✓\033[0m\n"
-      loaded=$((loaded + 1))
-    else
-      printf "\033[0;33m✗\033[0m\n"
-    fi
-  done
-
-  if [ "$loaded" -gt 0 ] || [ "$skipped" -gt 0 ]; then
-    echo "  ✓ ${loaded} loaded, ${skipped} already present"
-  fi
+  bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
 }
 
 _ensure_aap_storage_pvcs() {
@@ -2830,11 +2799,30 @@ cmd_enable() {
     return 1
   fi
 
+  local subcmd="${1:-}"
+  local _skip_addon_save=false
+  local _skip_cluster_verify=false
+  if [ "$addon" = "local-cache" ]; then
+    case "$subcmd" in
+      load) _skip_addon_save=true ;;
+      clear)
+        _skip_addon_save=true
+        _skip_cluster_verify=true
+        ;;
+    esac
+  fi
+
   echo "Enabling addon: $addon"
-  _verify_cluster || return 1
-  _addons_add "$addon"
+  if [ "$_skip_cluster_verify" != true ]; then
+    _verify_cluster || return 1
+  fi
+  if [ "$_skip_addon_save" != true ]; then
+    _addons_add "$addon"
+  fi
   bash "$addon_dir/deploy.sh" "$@"
-  echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
+  if [ "$_skip_addon_save" != true ]; then
+    echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
+  fi
 }
 
 cmd_disable() {

@@ -21,41 +21,22 @@ _GREEN='\033[0;32m'
 _YELLOW='\033[0;33m'
 _NC='\033[0m'
 
-CRC_SSH_PORT=2222
-_detect_crc_ssh_key() {
-  local base="${HOME}/.crc/machines/crc"
-  if [ -f "${base}/id_ed25519" ]; then
-    echo "${base}/id_ed25519"
-  elif [ -f "${base}/id_ecdsa" ]; then
-    echo "${base}/id_ecdsa"
-  else return 1; fi
-}
+# shellcheck source=includes/infra-crc.sh
+source "${SCRIPT_DIR}/includes/infra-crc.sh"
 
-CRC_SSH_KEY="$(_detect_crc_ssh_key 2>/dev/null)" || true
-if [ -z "$CRC_SSH_KEY" ]; then
-  echo "ERROR: CRC SSH key not found — is the cluster running?"
-  exit 1
-fi
+PRESET="$(_detect_crc_preset)"
+CACHE_DIR="${CACHE_BASE}/${PRESET}"
+
+_require_crc_ssh() {
+  if [ -z "$CRC_SSH_KEY" ]; then
+    echo "ERROR: CRC SSH key not found — is the cluster running?"
+    exit 1
+  fi
+}
 
 _ssh() {
-  ssh -p "$CRC_SSH_PORT" \
-    -i "$CRC_SSH_KEY" \
-    -o IdentitiesOnly=yes \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o LogLevel=ERROR \
-    core@127.0.0.1 "$@"
+  ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "$@"
 }
-
-# Detect preset
-PRESET_RAW=$(crc config get preset 2>&1)
-if echo "$PRESET_RAW" | grep -q "not set"; then
-  PRESET=$(echo "$PRESET_RAW" | grep -oE "openshift|microshift" | tail -1)
-  [ -z "$PRESET" ] && PRESET="openshift"
-else
-  PRESET=$(echo "$PRESET_RAW" | awk '{print $NF}')
-fi
-CACHE_DIR="${CACHE_BASE}/${PRESET}"
 
 # --- Clear ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ] || [ "$ACTION" = "clear" ]; then
@@ -71,6 +52,7 @@ fi
 
 # --- Load ---
 if [ "$ACTION" = "load" ]; then
+  _require_crc_ssh
   if [ ! -d "$CACHE_DIR" ] || [ -z "$(ls "$CACHE_DIR"/*.tar 2>/dev/null)" ]; then
     echo "No cached images found for ${PRESET}"
     echo "  Run 'aap-demo enable local-cache' first to save images"
@@ -113,6 +95,7 @@ fi
 
 # --- Save (default) ---
 if [ "$ACTION" = "save" ] || [ "$ACTION" = "deploy" ]; then
+  _require_crc_ssh
   printf "${_BOLD}Saving AAP container images from CRC VM...${_NC}\n"
   echo "  Preset: ${PRESET}"
   echo "  Cache:  ${CACHE_DIR}"
