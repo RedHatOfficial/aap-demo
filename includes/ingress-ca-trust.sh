@@ -257,8 +257,9 @@ install_ingress_ca_trust() {
   ca_path=$(get_ingress_ca_cert_path)
   mkdir -p "$(dirname "$ca_path")"
 
-  if [ -f "$ca_path" ] && _ingress_ca_fully_trusted "$ca_path"; then
+  if [ -f "$ca_path" ] && _ingress_ca_in_trust_store "$ca_path"; then
     _ingress_ca_export_env "$ca_path"
+    _ingress_ca_in_nss_store "$ca_path" || _import_ingress_ca_nss "$ca_path" || true
     return 0
   fi
 
