@@ -182,7 +182,9 @@ check_prerequisites() {
   # addon so APME can store plugin OCI images for the portal init container.
   if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
     info "Deploying in-cluster registry addon..."
-    bash "${SCRIPT_DIR}/../registry/deploy.sh"
+    if ! bash "${SCRIPT_DIR}/../registry/deploy.sh"; then
+      warn "Registry deploy reported an error — continuing anyway (SSH/CRI-O config is non-fatal)"
+    fi
   else
     info "In-cluster registry already running"
   fi

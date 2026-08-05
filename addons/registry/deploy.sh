@@ -46,21 +46,39 @@ if [ -n "$REGISTRY_SVC_IP" ]; then
   # CRC_SSH_KEY and CRC_SSH_OPTS are set when infra-crc.sh is sourced
   if [ -n "$CRC_SSH_KEY" ]; then
     # Add registry mirror: route hostname -> ClusterIP (for CRI-O pulls)
-    ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 "sudo tee /etc/containers/registries.conf.d/999-aap-demo-registry.conf > /dev/null <<REGEOF
+    if ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "sudo tee /etc/containers/registries.conf.d/999-aap-demo-registry.conf > /dev/null <<REGEOF
 [[registry]]
 location = \"registry.apps.127.0.0.1.nip.io\"
 insecure = true
 [[registry.mirror]]
 location = \"${REGISTRY_SVC_IP}:5000\"
 insecure = true
-REGEOF" 2>/dev/null
-
-    ssh -p 2222 $CRC_SSH_OPTS core@127.0.0.1 'sudo systemctl reload crio' 2>/dev/null
-    echo "  ✓ CRI-O mirror configured: registry.apps.127.0.0.1.nip.io -> ${REGISTRY_SVC_IP}:5000"
+REGEOF" 2>/dev/null && ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo systemctl reload crio' 2>/dev/null; then
+      echo "  ✓ CRI-O mirror configured: registry.apps.127.0.0.1.nip.io -> ${REGISTRY_SVC_IP}:5000"
+    else
+      echo "  ⚠ CRI-O mirror config skipped (SSH unavailable — pods may need imagePullPolicy: Always)"
+    fi
   fi
 fi
 
+# Wait for the registry route to be reachable — the ingress controller takes
+# 10-30s after the pod is ready to configure TLS and start routing traffic.
+REGISTRY_ROUTE=$(kubectl get route registry -n aap-demo-registry \
+  -o jsonpath='{.spec.host}' 2>/dev/null || echo "registry.apps.127.0.0.1.nip.io")
+echo "Waiting for registry route to be reachable..."
+for _i in $(seq 1 30); do
+  if curl -sk --max-time 3 "https://${REGISTRY_ROUTE}/v2/" &>/dev/null; then
+    echo "  ✓ Registry route ready"
+    break
+  fi
+  if [ "$_i" -eq 30 ]; then
+    echo "  ⚠ Registry route not reachable after 60s — continuing anyway"
+  fi
+  printf "."
+  sleep 2
+done
 echo ""
+
 echo "✓ In-cluster registry deployed!"
 echo ""
 echo "  Route:      https://registry.apps.127.0.0.1.nip.io"
