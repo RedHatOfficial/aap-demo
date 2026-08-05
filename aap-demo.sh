@@ -1974,6 +1974,7 @@ cmd_destroy() {
   fi
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
+    _addons_save ""
     echo "✓ CRC cluster deleted"
     if [ "${_DESTROY_RESET:-false}" = "true" ]; then
       rm -f "$AAP_DEMO_CONFIG"
