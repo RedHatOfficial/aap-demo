@@ -62,13 +62,14 @@ cache exists or the addon is not enabled.
 
 ### Preset isolation
 
-Images differ between full OpenShift and MicroShift (platform components, base images,
-operator versions). The cache is stored per-preset at:
+aap-demo creates MicroShift clusters only (`CRC_PRESET=microshift`). The cache is stored at:
 
 ```
-~/.aap-demo/local-cache/openshift/
 ~/.aap-demo/local-cache/microshift/
 ```
+
+The directory layout retains a preset segment for compatibility if additional presets are
+reintroduced later.
 
 ### Technical details
 
@@ -91,15 +92,14 @@ operator versions). The cache is stored per-preset at:
 
 ### Positive
 
-- Subsequent deploys after `crc delete` skip ~10-15 minutes of image pulls
+- Subsequent deploys after `aap-demo destroy` skip ~10-15 minutes of image pulls when
+  the on-disk cache is reloaded
 - Cache persists across VM lifecycles — only needs to be rebuilt when AAP version changes
 - Auto-load during deploy is transparent — no extra step required after initial save
-- Per-preset isolation prevents loading wrong images after switching between OpenShift
-  and MicroShift
 
 ### Negative
 
-- Cache is ~30 GB on disk for a full OpenShift deployment (~50 images)
+- Cache is ~30 GB on disk for a full AAP deployment (~50 images)
 - Save operation takes 10–15 minutes (same as pulling — images must be exported from CRI-O)
 - Images are stored uncompressed in docker-archive format; no deduplication of shared layers
   across images
@@ -107,9 +107,10 @@ operator versions). The cache is stored per-preset at:
 ### Neutral
 
 - The addon is listed in `AVAILABLE_ADDONS` and visible in `aap-demo enable` output
-- `aap-demo destroy` does not clear the cache — it persists intentionally for the next
-  create-deploy cycle. Use `aap-demo enable local-cache clear` or
-  `aap-demo disable local-cache` to reclaim disk space
+- `aap-demo destroy` clears `ADDONS=` from config but does not delete on-disk cache files.
+  After recreate, run `aap-demo enable local-cache load` then `aap-demo enable local-cache`
+  to reload images and restore auto-load on deploy. Use `aap-demo enable local-cache clear`
+  or `aap-demo disable local-cache` to reclaim disk space
 
 ## Alternatives Considered
 

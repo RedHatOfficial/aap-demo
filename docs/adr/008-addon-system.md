@@ -58,6 +58,10 @@ Current first-class addons in `AVAILABLE_ADDONS`:
 |-------|--------------|-----------|
 | `mcp-server` | Yes | AnsibleMCPServer CR |
 | `portal` | Yes | Helm chart |
+| `setup-pah` | Yes | Private Automation Hub credentials |
+| `ao-eap` | Yes | Automation Orchestrator EAP (aapctl + OLM) |
+| `apme-eap` | Yes | APME playbook addon (Ansible + Helm) |
+| `local-cache` | No | Host-side image save/load via CRC SSH (see ADR-021) |
 
 Additional addons invoked via `enable` but not in `AVAILABLE_ADDONS` list:
 
@@ -117,3 +121,4 @@ Rejected: overkill for optional dev components.
 - [ADR-004](004-portal-helm-addon.md)
 - [ADR-011](011-mcp-server-addon.md)
 - [ADR-013](013-in-cluster-registry.md)
+- [ADR-021](021-local-cache-addon.md)

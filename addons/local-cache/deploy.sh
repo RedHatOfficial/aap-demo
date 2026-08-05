@@ -29,6 +29,9 @@ CACHE_DIR="${CACHE_BASE}/${PRESET}"
 
 _require_crc_ssh() {
   if [ -z "$CRC_SSH_KEY" ]; then
+    if [ "${AAP_DEMO_LOCAL_CACHE_QUIET:-}" = "1" ]; then
+      exit 0
+    fi
     echo "ERROR: CRC SSH key not found — is the cluster running?"
     exit 1
   fi
@@ -52,12 +55,16 @@ fi
 
 # --- Load ---
 if [ "$ACTION" = "load" ]; then
-  _require_crc_ssh
   if [ ! -d "$CACHE_DIR" ] || [ -z "$(ls "$CACHE_DIR"/*.tar 2>/dev/null)" ]; then
+    if [ "${AAP_DEMO_LOCAL_CACHE_QUIET:-}" = "1" ]; then
+      exit 0
+    fi
     echo "No cached images found for ${PRESET}"
     echo "  Run 'aap-demo enable local-cache' first to save images"
     exit 1
   fi
+
+  _require_crc_ssh
 
   image_count=$(ls "$CACHE_DIR"/*.tar 2>/dev/null | wc -l | tr -d ' ')
   printf "${_BOLD}Loading ${image_count} cached images into CRC VM...${_NC}\n"

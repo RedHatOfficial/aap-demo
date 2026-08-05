@@ -2470,22 +2470,7 @@ _load_local_cache() {
     fi
   fi
 
-  local preset cache_dir
-  # shellcheck source=includes/infra-crc.sh
-  source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
-  preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
-  cache_dir="${HOME}/.aap-demo/local-cache/${preset}"
-
-  # Skip if no cache exists
-  [ -d "$cache_dir" ] || return 0
-  ls "$cache_dir"/*.tar &>/dev/null || return 0
-
-  if [ -z "${CRC_SSH_KEY:-}" ]; then
-    echo "  ⚠ SSH not available — skipping image cache load"
-    return 0
-  fi
-
-  bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
+  AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
 }
 
 _ensure_aap_storage_pvcs() {
