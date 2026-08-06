@@ -526,6 +526,17 @@ function Invoke-AapDemoDeployAap {
 
   Initialize-AapKubeEnvironment
   Set-AapIngressCaEnvFromSaved
+
+  $ns = $Namespace
+  $csvResult = Invoke-AapOcCapture @('get', 'csv', '-n', $ns, '--no-headers')
+  $hasOperator = $false
+  if (Test-AapOcHasListOutput $csvResult) {
+    $hasOperator = @($csvResult.Lines | Where-Object { $_ -match '^aap-operator\.' }).Count -gt 0
+  }
+  if (-not $hasOperator) {
+    throw "AAP operator not installed in namespace $ns. Run 'aap-demo deploy' first."
+  }
+
   Invoke-AapApplyAapCr -Namespace $Namespace -CrName $CrName -PublicUrl $PublicUrl
   Invoke-AapDemoWatch -Namespace $Namespace
 }

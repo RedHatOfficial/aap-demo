@@ -87,7 +87,7 @@ function Invoke-AapDemoStatus {
   $routesResult = Invoke-AapOcCapture @('get', 'route', '-A', '--no-headers')
   $routes = if ($routesResult.ExitCode -eq 0) {
     $routesResult.Lines |
-      Where-Object { $_ -notmatch '^(openshift-|kube-|aap-demo-)' } |
+      Where-Object { $_ -notmatch '^(openshift-|kube-|aap-demo-|olm |operators )' } |
       ForEach-Object { $cols = $_ -split '\s+'; "  https://$($cols[2])" } |
       Sort-Object -Unique
   } else { @() }
@@ -124,6 +124,12 @@ function Invoke-AapDemoStatus {
   Write-Host '-------'
   foreach ($a in $Script:AapAvailableAddons) {
     $enabled = $savedAddons -contains $a
+    if (-not $enabled -and $a -eq 'ao-eap') {
+      $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'automation-orchestrator')) -eq 0
+    }
+    if (-not $enabled -and $a -eq 'apme-eap') {
+      $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'apme')) -eq 0
+    }
     $state = if ($enabled) { 'enabled' } else { 'disabled' }
     Write-Host ("  {0,-15} {1}" -f $a, $state)
   }

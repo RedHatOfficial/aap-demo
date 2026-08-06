@@ -2416,6 +2416,17 @@ _ensure_aap_storage_pvcs() {
   sed -e "s/__NAMESPACE__/${ns}/g" -e "s/__AAP_NAME__/${aap_name}/g" "$manifest" | kubectl apply -f -
 }
 
+_require_aap_operator() {
+  local ns="${NAMESPACE:-aap-operator}"
+
+  _verify_cluster || exit 1
+  if ! kubectl get csv -n "$ns" --no-headers 2>/dev/null | grep -q '^aap-operator\.'; then
+    echo "ERROR: AAP operator not installed in namespace $ns"
+    echo "  Run 'aap-demo deploy' to install OLM, the operator, and AAP"
+    exit 1
+  fi
+}
+
 create_aap_instance() {
   echo ""
   echo "Creating AAP instance..."

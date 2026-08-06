@@ -38,12 +38,12 @@ aap-demo status        # Show routes and credentials
 AAP Demo Status
 ===============
 
-Infra:       crc (MicroShift 4.21.0)
-Cluster:     running
+Infra:       OpenShift Local (CRC)
+Cluster:     running (crc-microshift)
 
 Namespaces:
 -----------
-  aap-operator         27/29 pods   AAP: aap (Successful)
+  aap-operator         27/29 pods   aap
 
 AAP Deployments:
 ----------------
