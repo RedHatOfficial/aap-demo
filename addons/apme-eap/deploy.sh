@@ -111,6 +111,14 @@ _pod_watcher() {
   done
 }
 
+_watcher_pid=""
+_stop_pod_watcher() {
+  [ -n "$_watcher_pid" ] || return 0
+  kill "$_watcher_pid" 2>/dev/null || true
+  wait "$_watcher_pid" 2>/dev/null || true
+  _watcher_pid=""
+}
+
 # Addon contract: deploy.sh [deploy|--delete]
 
 # ---------------------------------------------------------------------------
@@ -620,8 +628,8 @@ deploy() {
   export ANSIBLE_ROLES_PATH="${SCRIPT_DIR}/playbooks/roles"
 
   _pod_watcher "$NAMESPACE" 30 &
-  local watcher_pid=$!
-  trap 'kill $watcher_pid 2>/dev/null; wait $watcher_pid 2>/dev/null' EXIT
+  _watcher_pid=$!
+  trap '_stop_pod_watcher' EXIT
 
   # Run main deployment playbook directly
   # Note: Load defaults first, then vars file so user config takes precedence
@@ -629,8 +637,7 @@ deploy() {
     -e "@${SCRIPT_DIR}/defaults.yml" \
     -e "@${VARS_FILE}"
 
-  kill $watcher_pid 2>/dev/null
-  wait $watcher_pid 2>/dev/null
+  _stop_pod_watcher
   trap - EXIT
 
   info "APME deployment completed successfully"
