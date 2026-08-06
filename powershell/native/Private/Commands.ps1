@@ -515,28 +515,3 @@ function Invoke-AapDemoRedeployAll {
   Invoke-AapDemoCreate
   Invoke-AapDemoDeploy -Namespace $Namespace -Channel $Channel -OcpVersion $OcpVersion -CrName $CrName -Force:$Force
 }
-
-function Invoke-AapDemoDeployAap {
-  [CmdletBinding()]
-  param(
-    [string]$Namespace = $Script:AapDemoDefaultNamespace,
-    [string]$CrName = 'minimal',
-    [string]$PublicUrl = $null
-  )
-
-  Initialize-AapKubeEnvironment
-  Set-AapIngressCaEnvFromSaved
-
-  $ns = $Namespace
-  $csvResult = Invoke-AapOcCapture @('get', 'csv', '-n', $ns, '--no-headers')
-  $hasOperator = $false
-  if (Test-AapOcHasListOutput $csvResult) {
-    $hasOperator = @($csvResult.Lines | Where-Object { $_ -match '^aap-operator\.' }).Count -gt 0
-  }
-  if (-not $hasOperator) {
-    throw "AAP operator not installed in namespace $ns. Run 'aap-demo deploy' first."
-  }
-
-  Invoke-AapApplyAapCr -Namespace $Namespace -CrName $CrName -PublicUrl $PublicUrl
-  Invoke-AapDemoWatch -Namespace $Namespace
-}

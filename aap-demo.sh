@@ -118,7 +118,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | deploy-operator | deploy-aap | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
     --ai | --reset)
@@ -378,7 +378,6 @@ Usage: aap-demo [options] <command>
 
 Commands:
   deploy          Deploy AAP 2.7
-  deploy-operator Deploy operator only
   status          Show cluster and AAP status
   idle [true|false] Scale down/up AAP to save resources
   diagnose [--ai] Check environment health (--ai for Claude analysis)
@@ -424,9 +423,6 @@ OPTIONS:
 
 COMMANDS (all infrastructure types):
     deploy          Deploy AAP 2.7 (operator + CR)
-    deploy-operator Deploy operator only, skip AAP CR
-    deploy-aap      Apply AAP CR only (assumes operator installed)
-                    Options: CR=name PUBLIC_URL=https://...
     status          Show cluster and AAP status
     clean           Remove AAP deployment
     watch           Watch AAP deployment status
@@ -2202,27 +2198,15 @@ else:
   # Load cached container images if available (saves 10-15min of registry pulls)
   _load_local_cache
 
-  # Create AAP instance (unless CREATE_AAP=false for deploy-operator)
-  if [ "${CREATE_AAP:-true}" != "false" ]; then
-    create_aap_instance
+  create_aap_instance
 
-    # Watch deployment
-    watch_aap
+  # Watch deployment
+  watch_aap
 
-    # Remind to configure PAH
-    echo ""
-    echo "To configure Private Automation Hub remotes:"
-    echo "  aap-demo enable setup-pah"
-  else
-    echo ""
-    echo "✓ AAP operator deployed!"
-    echo ""
-    echo "Install Method: AAP 2.7 (CatalogSource)"
-    echo "CSV: $CSV_NAME"
-    echo "Namespace: $NAMESPACE"
-    echo ""
-    echo "To deploy AAP instance: aap-demo deploy-aap"
-  fi
+  # Remind to configure PAH
+  echo ""
+  echo "To configure Private Automation Hub remotes:"
+  echo "  aap-demo enable setup-pah"
 }
 
 verify_coredns() {
@@ -2416,17 +2400,6 @@ _ensure_aap_storage_pvcs() {
   sed -e "s/__NAMESPACE__/${ns}/g" -e "s/__AAP_NAME__/${aap_name}/g" "$manifest" | kubectl apply -f -
 }
 
-_require_aap_operator() {
-  local ns="${NAMESPACE:-aap-operator}"
-
-  _verify_cluster || exit 1
-  if ! kubectl get csv -n "$ns" --no-headers 2>/dev/null | grep -q '^aap-operator\.'; then
-    echo "ERROR: AAP operator not installed in namespace $ns"
-    echo "  Run 'aap-demo deploy' to install OLM, the operator, and AAP"
-    exit 1
-  fi
-}
-
 create_aap_instance() {
   echo ""
   echo "Creating AAP instance..."
@@ -2455,10 +2428,10 @@ create_aap_instance() {
         echo "ERROR: PUBLIC_URL required for noingress CR"
         echo ""
         echo "Option 1 - Full URL:"
-        echo "  aap-demo deploy-aap CR=minimal-noingress PUBLIC_URL=https://aap.apps.example.com"
+        echo "  aap-demo deploy CR=minimal-noingress PUBLIC_URL=https://aap.apps.example.com"
         echo ""
         echo "Option 2 - Auto-construct from components:"
-        echo "  aap-demo deploy-aap CR=minimal-noingress POD_NAME=engkube-runner POD_NAMESPACE=engkube BASE_DOMAIN=apps.ocp.rdu.eng.ansible.com"
+        echo "  aap-demo deploy CR=minimal-noingress POD_NAME=engkube-runner POD_NAMESPACE=engkube BASE_DOMAIN=apps.ocp.rdu.eng.ansible.com"
         echo "  -> https://aap-engkube-runner-engkube.apps.ocp.rdu.eng.ansible.com"
         exit 1
       fi
@@ -2944,14 +2917,6 @@ case "$COMMAND" in
     ;;
   deploy | deploy-all)
     cmd_deploy
-    ;;
-  deploy-operator)
-    CREATE_AAP=false cmd_deploy
-    ;;
-  deploy-aap)
-    # Deploy just the AAP CR (assumes operator is already installed)
-    create_aap_instance
-    watch_aap
     ;;
   *)
     # Default: show welcome if no command specified, or error for unknown commands

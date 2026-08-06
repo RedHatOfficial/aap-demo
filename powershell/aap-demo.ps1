@@ -62,8 +62,6 @@ function Get-AapParsedCliArgs {
 
     Ai           = $false
 
-    OperatorOnly = $false
-
     Positional   = [System.Collections.Generic.List[string]]::new()
 
   }
@@ -124,8 +122,6 @@ function Invoke-AapDeployParams {
 
   if ($Parsed.Force) { $params.Force = $true }
 
-  if ($Parsed.OperatorOnly) { $params.OperatorOnly = $true }
-
   return $params
 
 }
@@ -170,28 +166,6 @@ try {
     'deploy-all' {
       $deployParams = Invoke-AapDeployParams $cli
       Invoke-AapDemoDeploy @deployParams
-    }
-
-    'deploy-operator' {
-
-      $cli.OperatorOnly = $true
-
-      $deployParams = Invoke-AapDeployParams $cli
-
-      Invoke-AapDemoDeploy @deployParams
-
-    }
-
-    'deploy-aap' {
-
-      $params = @{ CrName = $cli.CrName }
-
-      if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
-
-      if ($cli.PublicUrl) { $params.PublicUrl = $cli.PublicUrl }
-
-      Invoke-AapDemoDeployAap @params
-
     }
 
     'status' { Invoke-AapDemoStatus }

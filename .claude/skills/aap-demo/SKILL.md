@@ -36,7 +36,6 @@ This environment includes characteristics specific to local development:
 |--------|---------|
 | Create cluster | `aap-demo create` |
 | Deploy AAP 2.7 | `aap-demo deploy` |
-| Deploy operator only | `aap-demo deploy-operator` |
 | Check status & creds | `aap-demo status` |
 | Health check | `aap-demo diagnose` |
 | AI-powered diagnostics | `aap-demo diagnose --ai` |

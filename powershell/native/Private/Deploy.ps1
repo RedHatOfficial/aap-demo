@@ -27,7 +27,7 @@ function Invoke-AapApplyAapCr {
       throw @"
 PUBLIC_URL required for noingress CR.
 
-  aap-demo deploy-aap CR=minimal-noingress PUBLIC_URL=https://aap.apps.example.com
+  aap-demo deploy CR=minimal-noingress PUBLIC_URL=https://aap.apps.example.com
 "@
     }
     Write-AapStep "Applying CR $CrName with PUBLIC_URL=$PublicUrl"
@@ -68,8 +68,7 @@ function Invoke-AapDemoDeploy {
     [string]$Channel = $Script:AapDemoDefaultChannel,
     [string]$OcpVersion = $Script:AapDemoDefaultOcpVersion,
     [string]$CrName = 'minimal',
-    [switch]$Force,
-    [switch]$OperatorOnly
+    [switch]$Force
   )
 
   Write-AapHeader 'aap-demo deploy'
@@ -80,7 +79,7 @@ function Invoke-AapDemoDeploy {
 
   Install-AapOlm
 
-  if (-not $Force -and -not $OperatorOnly) {
+  if (-not $Force) {
     $existingName = Get-AapExistingCrName -Namespace $Namespace
     if ($existingName) {
       Write-AapStep ('AAP instance ''{0}'' already exists in {1} - watching progress' -f $existingName, $Namespace)
@@ -124,14 +123,6 @@ function Invoke-AapDemoDeploy {
 
   $csv = Wait-AapCsv -Namespace $Namespace
   Write-AapStep "Operator CSV: $csv"
-
-  if ($OperatorOnly) {
-    Write-AapStep 'Operator deployed (no AAP CR)'
-    Write-Host ''
-    Write-Host '  Deploy AAP instance: aap-demo deploy-aap'
-    Write-Host ''
-    return
-  }
 
   Invoke-AapApplyAapCr -Namespace $Namespace -CrName $CrName -Force:$Force
 
