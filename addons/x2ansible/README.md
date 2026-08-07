@@ -120,7 +120,9 @@ When AAP is running in `aap-operator`, the addon automatically:
 The upstream docs assume full OpenShift (`openshift-operators`, `openshift-marketplace`).
 This addon adapts for aap-demo's MicroShift OLM layout:
 
-- **CatalogSource**: Uses `redhat-operators` from `aap-operator` (not `openshift-marketplace`). When the operator installs into `operators` (operator-sdk OLM), the catalog is mirrored there because bare OLM only resolves subscriptions against catalogs in the subscription namespace.
+- **CatalogSource**: Uses `redhat-operators` from `aap-operator` (not `openshift-marketplace`).
+  When the operator installs into `operators` (operator-sdk OLM), the catalog is mirrored there
+  because bare OLM only resolves subscriptions against catalogs in the subscription namespace.
 - **OperatorGroup**: Created only when the operator namespace has none (avoids breaking full OpenShift)
 - **Operator namespace**: Uses `openshift-operators` when present, otherwise `operators` (operator-sdk OLM)
 - **Storage**: Auto-detects default StorageClass (`topolvm-provisioner` on aap-demo)
@@ -129,7 +131,8 @@ This addon adapts for aap-demo's MicroShift OLM layout:
 - **Sign-in**: GitHub OAuth (matches upstream `deploy/app.yaml`; guest auth is not used)
 - **RHDH only**: Does not install DevSpaces (upstream `operator.yaml` includes it; omitted here for MicroShift)
 
-Re-running `aap-demo enable x2ansible` refreshes AAP URL/OAuth token while preserving LLM credentials.
+Re-running `aap-demo enable x2ansible` refreshes AAP URL/OAuth token while preserving LLM and GitHub credentials.
+Each re-enable may create an additional AAP OAuth token on the gateway (description: `x2ansible`).
 
 **Platform note:** `enable x2ansible` and `config x2ansible` are bash-only today (PowerShell addon support not yet implemented).
 

@@ -213,7 +213,7 @@ data:
           OPENAI_API_KEY: ${OPENAI_API_KEY}
         aap:
           url: ${AAP_URL:-https://aap.example.com}
-          orgName: ${AAP_ORG_NAME:-MyOrganization}
+          orgName: ${AAP_ORG_NAME:-Default}
           oauthToken: ${AAP_OAUTH_TOKEN:-your-oauth-token}
           skipSSLVerification: ${AAP_SKIP_SSL_VERIFICATION:-false}
 ---
