@@ -103,11 +103,16 @@ metadata:
 data:
   app-config-rhdh.yaml: |
 
+    app:
+      baseUrl: __BACKSTAGE_BASE_URL__
+
     backend:
+      baseUrl: __BACKSTAGE_BASE_URL__
       cors:
         origin:
           # for @modelcontextprotocol/inspector, remove if not needed
           - http://localhost:6274
+          - __BACKSTAGE_BASE_URL__
         credentials: true
       actions:
         pluginSources:
@@ -145,21 +150,17 @@ data:
 
       # see https://backstage.io/docs/auth/ to learn about auth providers
       environment: development
-      # aap-demo: guest sign-in for lab use (no GitHub OAuth required)
       providers:
-        guest: {}
-
-        # Optional GitHub OAuth — set AUTH_GITHUB_CLIENT_ID/SECRET in x2a-credentials
-        # github:
-        #   development:
-        #     clientId: ${AUTH_GITHUB_CLIENT_ID}
-        #     clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
-        #     signIn:
-        #       resolvers:
-        #         - resolver: usernameMatchingUserEntityName
-        #           dangerouslyAllowSignInWithoutUserInCatalog: true
+        github:
+          development:
+            clientId: ${AUTH_GITHUB_CLIENT_ID}
+            clientSecret: ${AUTH_GITHUB_CLIENT_SECRET}
+            signIn:
+              resolvers:
+                - resolver: usernameMatchingUserEntityName
+                  dangerouslyAllowSignInWithoutUserInCatalog: true
     signInPage:
-      - guest
+      - github
     dynamicPlugins:
       frontend:
         red-hat-developer-hub.backstage-plugin-x2a-dcr:
