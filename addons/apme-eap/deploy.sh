@@ -173,20 +173,36 @@ setup_venv() {
   fi
 }
 
-_skopeo_install_hint() {
+_ensure_skopeo() {
+  if command -v skopeo &>/dev/null; then
+    return 0
+  fi
+
+  info "skopeo not found — installing (required for APME plugin OCI push)..."
   case "$(uname -s)" in
-    Darwin) echo "brew install skopeo" ;;
-    Linux)
-      if command -v dnf &>/dev/null; then
-        echo "sudo dnf install skopeo"
-      elif command -v apt-get &>/dev/null; then
-        echo "sudo apt-get install skopeo"
+    Darwin)
+      if command -v brew &>/dev/null; then
+        brew install skopeo
       else
-        echo "install skopeo from your package manager"
+        die "skopeo not found. Install Homebrew, then: brew install skopeo"
       fi
       ;;
-    *) echo "install skopeo for your platform" ;;
+    Linux)
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y skopeo
+      else
+        die "skopeo not found and cannot auto-install. Install skopeo from your package manager (e.g. sudo dnf install skopeo)."
+      fi
+      ;;
+    *)
+      die "skopeo not found. Install skopeo for your platform before enabling apme-eap."
+      ;;
   esac
+
+  if ! command -v skopeo &>/dev/null; then
+    die "skopeo install completed but skopeo is still not on PATH"
+  fi
+  info "skopeo installed: $(command -v skopeo)"
 }
 
 check_prerequisites() {
@@ -208,9 +224,7 @@ check_prerequisites() {
   fi
 
   # Plugin OCI push runs skopeo on the host (outside the cluster)
-  if ! command -v skopeo &>/dev/null; then
-    die "skopeo not found (required for APME plugin push). Install: $(_skopeo_install_hint)"
-  fi
+  _ensure_skopeo
 
   # MicroShift lacks an integrated registry — deploy the in-cluster registry
   # addon so APME can store plugin OCI images for the portal init container.
