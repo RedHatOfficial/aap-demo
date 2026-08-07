@@ -97,24 +97,33 @@ _ingress_ca_nss_db_paths() {
   fi
 }
 
+_ingress_ca_nss_cert_fingerprint() {
+  local db="$1"
+  certutil -d "$db" -L -n "$_INGRESS_CA_NSS_NICKNAME" -a 2>/dev/null \
+    | awk '/BEGIN CERTIFICATE/{p=1} p{print} /END CERTIFICATE/{exit}' \
+    | openssl x509 -noout -fingerprint -sha256 2>/dev/null \
+    | sed -E 's/sha256 [Ff]ingerprint=//' | tr -d ':' | tr '[:lower:]' '[:upper:]'
+}
+
 _ingress_ca_in_nss_store() {
   local path="$1"
-  local db fingerprint
+  local db expected_fp installed_fp
 
   command -v certutil &>/dev/null || return 1
 
-  fingerprint=$(_ingress_ca_fingerprint "$path")
-  [ -n "$fingerprint" ] || return 1
-
-  while IFS= read -r db; do
-    [ -n "$db" ] || continue
-    certutil -d "$db" -L 2>/dev/null | grep -Fq "$_INGRESS_CA_NSS_NICKNAME" || return 1
-  done < <(_ingress_ca_nss_db_paths)
+  expected_fp=$(_ingress_ca_fingerprint "$path")
+  [ -n "$expected_fp" ] || return 1
 
   # No NSS DB yet — browser has not created one; import will initialize trust.
   if [ -z "$(_ingress_ca_nss_db_paths)" ]; then
     return 1
   fi
+
+  while IFS= read -r db; do
+    [ -n "$db" ] || continue
+    installed_fp=$(_ingress_ca_nss_cert_fingerprint "$db")
+    [ "$installed_fp" = "$expected_fp" ] || return 1
+  done < <(_ingress_ca_nss_db_paths)
 
   return 0
 }
@@ -169,14 +178,14 @@ _import_ingress_ca_linux() {
   local path="$1"
 
   if [ -d /etc/pki/ca-trust/source/anchors ]; then
-    if sudo cp "$path" "$_INGRESS_CA_RHEL_ANCHOR" 2>/dev/null \
-      && sudo update-ca-trust 2>/dev/null; then
+    if sudo cp "$path" "$_INGRESS_CA_RHEL_ANCHOR" \
+      && sudo update-ca-trust; then
       echo "  ✓ Ingress CA trusted (system ca-trust)"
       return 0
     fi
   elif [ -d /usr/local/share/ca-certificates ]; then
-    if sudo cp "$path" "$_INGRESS_CA_DEBIAN_ANCHOR" 2>/dev/null \
-      && sudo update-ca-certificates 2>/dev/null; then
+    if sudo cp "$path" "$_INGRESS_CA_DEBIAN_ANCHOR" \
+      && sudo update-ca-certificates; then
       echo "  ✓ Ingress CA trusted (system ca-certificates)"
       return 0
     fi
@@ -250,15 +259,45 @@ _import_ingress_ca_macos() {
   return 1
 }
 
+_purge_ingress_ca_trust() {
+  local db
+
+  if [[ "$(uname)" == "Darwin" ]]; then
+    while sudo security delete-certificate -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null; do :; done
+    return 0
+  fi
+
+  if [ -f "$_INGRESS_CA_RHEL_ANCHOR" ]; then
+    sudo rm -f "$_INGRESS_CA_RHEL_ANCHOR"
+    sudo update-ca-trust 2>/dev/null || true
+  fi
+  if [ -f "$_INGRESS_CA_DEBIAN_ANCHOR" ]; then
+    sudo rm -f "$_INGRESS_CA_DEBIAN_ANCHOR"
+    sudo update-ca-certificates 2>/dev/null || true
+  fi
+
+  if command -v certutil &>/dev/null; then
+    while IFS= read -r db; do
+      [ -n "$db" ] || continue
+      certutil -d "$db" -D -n "$_INGRESS_CA_NSS_NICKNAME" 2>/dev/null || true
+    done < <(_ingress_ca_nss_db_paths)
+  fi
+}
+
 import_ingress_ca_certificate() {
   local path="$1"
+  local force="${2:-false}"
 
   [ -f "$path" ] || return 1
   grep -q 'BEGIN CERTIFICATE' "$path" || return 1
 
-  if _ingress_ca_fully_trusted "$path"; then
+  if [ "$force" != "true" ] && _ingress_ca_fully_trusted "$path"; then
     echo "  ✓ Ingress CA already trusted"
     return 0
+  fi
+
+  if [ "$force" = "true" ]; then
+    _purge_ingress_ca_trust
   fi
 
   local ok=true
@@ -305,9 +344,39 @@ ingress_ca_trust_status() {
 
   if [ "$system_status" = "not trusted" ] || [[ "$browser_status" == not\ trusted* ]]; then
     echo "  Run: aap-demo deploy   # re-import ingress CA"
+    if [[ "$(uname)" != "Darwin" ]]; then
+      echo "  Linux browsers (Chrome/Firefox) need NSS trust — ensure nss-tools is installed"
+      echo "  Manual: certutil -d sql:\$HOME/.pki/nssdb -A -t \"C,,\" -n crc-ingress-ca -i $ca_path"
+    fi
     echo "  Then fully quit and reopen your browser"
     return 1
   fi
+  return 0
+}
+
+_ingress_ca_cluster_fingerprint() {
+  local tmp fingerprint
+  tmp=$(mktemp)
+  if ! _fetch_ingress_ca_from_cluster "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  fingerprint=$(_ingress_ca_fingerprint "$tmp")
+  rm -f "$tmp"
+  [ -n "$fingerprint" ] || return 1
+  echo "$fingerprint"
+}
+
+_ingress_ca_refresh_from_cluster() {
+  local ca_path="$1"
+  local tmp
+  tmp=$(mktemp)
+  if ! _fetch_ingress_ca_from_cluster "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$ca_path"
+  chmod 644 "$ca_path"
   return 0
 }
 
@@ -316,20 +385,32 @@ install_ingress_ca_trust() {
     return 0
   fi
 
-  local ca_path
+  local ca_path cluster_fp saved_fp=""
   ca_path=$(get_ingress_ca_cert_path)
   mkdir -p "$(dirname "$ca_path")"
 
-  if [ -f "$ca_path" ] && _ingress_ca_fully_trusted "$ca_path"; then
+  cluster_fp=$(_ingress_ca_cluster_fingerprint 2>/dev/null || true)
+  if [ -f "$ca_path" ]; then
+    saved_fp=$(_ingress_ca_fingerprint "$ca_path")
+  fi
+
+  # Cluster recreate issues a new ingress CA — re-trust when fingerprints differ.
+  if [ -n "$cluster_fp" ] && [ "$cluster_fp" != "$saved_fp" ]; then
+    echo "Trusting ingress CA..."
+    if ! _ingress_ca_refresh_from_cluster "$ca_path"; then
+      echo "  Could not fetch ingress CA from cluster" >&2
+      return 0
+    fi
+    import_ingress_ca_certificate "$ca_path" true || {
+      echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
+      echo "  CLI tools can use CURL_CA_BUNDLE=$ca_path; browsers may still warn until imported" >&2
+    }
     _ingress_ca_export_env "$ca_path"
     return 0
   fi
 
-  if [ -f "$ca_path" ] && _ingress_ca_in_trust_store "$ca_path"; then
+  if [ -f "$ca_path" ] && _ingress_ca_fully_trusted "$ca_path"; then
     _ingress_ca_export_env "$ca_path"
-    if [[ "$(uname)" != "Darwin" ]]; then
-      _ingress_ca_in_nss_store "$ca_path" || _import_ingress_ca_nss "$ca_path" || true
-    fi
     return 0
   fi
 

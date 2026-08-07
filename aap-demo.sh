@@ -512,6 +512,8 @@ cmd_repair() {
 
   verify_coredns
 
+  install_ingress_ca_trust
+
   local _problem_pods
   _problem_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "CrashLoopBackOff|Error|ImagePullBackOff" | awk '{print $1}' || true)
   if [ -n "$_problem_pods" ]; then
