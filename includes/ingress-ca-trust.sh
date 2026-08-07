@@ -123,6 +123,9 @@ _ingress_ca_fully_trusted() {
   local path="$1"
 
   _ingress_ca_in_trust_store "$path" || return 1
+  if [[ "$(uname)" == "Darwin" ]]; then
+    return 0
+  fi
   _ingress_ca_in_nss_store "$path" || return 1
 }
 
@@ -234,12 +237,16 @@ _import_ingress_ca_macos() {
   local path="$1"
 
   while sudo security delete-certificate -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null; do :; done
-  if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$path" 2>/dev/null; then
-    echo "  ✓ Ingress CA trusted (macOS keychain)"
-    return 0
+  if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$path"; then
+    if security find-certificate -a -c "ingress-ca" /Library/Keychains/System.keychain &>/dev/null; then
+      echo "  ✓ Ingress CA trusted (macOS keychain)"
+      echo "  Fully quit Safari/Chrome and reopen the AAP URL if it still shows untrusted"
+      return 0
+    fi
   fi
 
-  echo "  Could not add CA to macOS keychain (may need admin password)" >&2
+  echo "  Could not add CA to macOS keychain (admin password required)" >&2
+  echo "  Manual import: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ${path}" >&2
   return 1
 }
 
@@ -264,6 +271,46 @@ import_ingress_ca_certificate() {
   [ "$ok" = true ]
 }
 
+ingress_ca_trust_status() {
+  local ca_path="$1"
+  local system_status="missing"
+  local browser_status="n/a"
+
+  if [ ! -f "$ca_path" ] || ! grep -q 'BEGIN CERTIFICATE' "$ca_path"; then
+    printf "  %-18s %s\n" "Ingress CA file:" "not saved"
+    printf "  %-18s %s\n" "Browser trust:" "unknown (run aap-demo deploy or create)"
+    return 1
+  fi
+
+  printf "  %-18s %s\n" "Ingress CA file:" "$ca_path"
+
+  if _ingress_ca_in_trust_store "$ca_path"; then
+    system_status="trusted"
+  else
+    system_status="not trusted"
+  fi
+
+  if [[ "$(uname)" == "Darwin" ]]; then
+    browser_status="$system_status (macOS keychain)"
+  elif _ingress_ca_in_nss_store "$ca_path"; then
+    browser_status="trusted (Chrome/Firefox NSS)"
+  elif command -v certutil &>/dev/null; then
+    browser_status="not trusted"
+  else
+    browser_status="unknown (install nss-tools for Chrome/Firefox)"
+  fi
+
+  printf "  %-18s %s\n" "System trust:" "$system_status"
+  printf "  %-18s %s\n" "Browser trust:" "$browser_status"
+
+  if [ "$system_status" = "not trusted" ] || [[ "$browser_status" == not\ trusted* ]]; then
+    echo "  Run: aap-demo deploy   # re-import ingress CA"
+    echo "  Then fully quit and reopen your browser"
+    return 1
+  fi
+  return 0
+}
+
 install_ingress_ca_trust() {
   if [ "${AAP_DEMO_TRUST_CA:-true}" = "false" ]; then
     return 0
@@ -273,9 +320,16 @@ install_ingress_ca_trust() {
   ca_path=$(get_ingress_ca_cert_path)
   mkdir -p "$(dirname "$ca_path")"
 
+  if [ -f "$ca_path" ] && _ingress_ca_fully_trusted "$ca_path"; then
+    _ingress_ca_export_env "$ca_path"
+    return 0
+  fi
+
   if [ -f "$ca_path" ] && _ingress_ca_in_trust_store "$ca_path"; then
     _ingress_ca_export_env "$ca_path"
-    _ingress_ca_in_nss_store "$ca_path" || _import_ingress_ca_nss "$ca_path" || true
+    if [[ "$(uname)" != "Darwin" ]]; then
+      _ingress_ca_in_nss_store "$ca_path" || _import_ingress_ca_nss "$ca_path" || true
+    fi
     return 0
   fi
 
@@ -294,7 +348,10 @@ install_ingress_ca_trust() {
     fi
   fi
 
-  import_ingress_ca_certificate "$ca_path" || true
+  import_ingress_ca_certificate "$ca_path" || {
+    echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
+    echo "  CLI tools can use CURL_CA_BUNDLE=$ca_path; browsers may still warn until imported" >&2
+  }
   _ingress_ca_export_env "$ca_path"
   return 0
 }

@@ -76,6 +76,13 @@ aap-demo enable local-cache  # Caches AAP containers locally so you don't re-dow
 aap-demo disable addon_name  # Disables addon
 ```
 
+After `aap-demo destroy`, reload cached images with:
+
+```bash
+aap-demo enable local-cache load   # one-shot reload into fresh VM
+aap-demo enable local-cache        # restore auto-load on future deploys
+```
+
 ## Daily Use
 
 ```bash

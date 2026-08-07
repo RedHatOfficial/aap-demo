@@ -130,6 +130,11 @@ setup_venv() {
   local req_checksum_file="${VENV_DIR}/.requirements_checksum"
   local pip_checksum_file="${VENV_DIR}/.pip_requirements_checksum"
 
+  if [ -d "$VENV_DIR" ] && { [ ! -x "$VENV_DIR/bin/python3" ] || [ ! -x "$VENV_DIR/bin/pip" ]; }; then
+    warn "APME venv at $VENV_DIR is incomplete — recreating..."
+    rm -rf "$VENV_DIR"
+  fi
+
   if [ ! -d "$VENV_DIR" ]; then
     info "Creating Python venv with Ansible and collections..."
     python3 -m venv "$VENV_DIR"
@@ -168,6 +173,22 @@ setup_venv() {
   fi
 }
 
+_skopeo_install_hint() {
+  case "$(uname -s)" in
+    Darwin) echo "brew install skopeo" ;;
+    Linux)
+      if command -v dnf &>/dev/null; then
+        echo "sudo dnf install skopeo"
+      elif command -v apt-get &>/dev/null; then
+        echo "sudo apt-get install skopeo"
+      else
+        echo "install skopeo from your package manager"
+      fi
+      ;;
+    *) echo "install skopeo for your platform" ;;
+  esac
+}
+
 check_prerequisites() {
   info "Checking system prerequisites..."
 
@@ -184,6 +205,11 @@ check_prerequisites() {
   # Check python3
   if ! command -v python3 &>/dev/null; then
     die "python3 not found. Please install Python 3.8 or later."
+  fi
+
+  # Plugin OCI push runs skopeo on the host (outside the cluster)
+  if ! command -v skopeo &>/dev/null; then
+    die "skopeo not found (required for APME plugin push). Install: $(_skopeo_install_hint)"
   fi
 
   # MicroShift lacks an integrated registry — deploy the in-cluster registry
@@ -677,6 +703,35 @@ show_routes() {
 # Cleanup
 # ---------------------------------------------------------------------------
 
+_purge_apme_local_credentials() {
+  local key_path="${GITHUB_APP_PRIVATE_KEY_PATH:-$HOME/.aap-demo/apme-github-app.pem}"
+
+  if [ -f "$GITHUB_CREDS_FILE" ]; then
+    rm -f "$GITHUB_CREDS_FILE"
+    info "Removed $GITHUB_CREDS_FILE"
+  fi
+  if [ -n "${key_path:-}" ] && [ -f "$key_path" ]; then
+    rm -f "$key_path"
+    info "Removed $key_path"
+  fi
+}
+
+_should_purge_apme_credentials() {
+  if [ "${APME_PURGE_CREDS:-}" = "true" ] || [ "${APME_PURGE_CREDS:-}" = "1" ]; then
+    return 0
+  fi
+  for _arg in "$@"; do
+    [ "$_arg" = "--purge-creds" ] && return 0
+  done
+  if [ -t 0 ] && [ "${CI:-}" != "true" ]; then
+    local reply=""
+    read -r -p "Remove saved GitHub credentials and private key? [y/N]: " reply
+    [[ "$reply" =~ ^[Yy]$ ]]
+    return $?
+  fi
+  return 1
+}
+
 cleanup() {
   info "Removing APME namespace and resources..."
 
@@ -686,6 +741,12 @@ cleanup() {
   # Remove generated vars file
   if [ -f "$VARS_FILE" ]; then
     rm -f "$VARS_FILE"
+  fi
+
+  if _should_purge_apme_credentials "$@"; then
+    _purge_apme_local_credentials
+  else
+    info "Preserved GitHub credentials (set APME_PURGE_CREDS=true or use --purge-creds to remove)"
   fi
 
   info "APME cleanup complete"
@@ -708,13 +769,14 @@ case "$ACTION" in
     ;;
 
   --delete | delete | remove)
-    cleanup
+    cleanup "$@"
     ;;
 
   *)
-    echo "Usage: $0 [deploy|--delete]"
-    echo "  deploy   - Deploy APME using official welcome pack playbooks (local execution)"
-    echo "  --delete - Remove APME namespace and resources"
+    echo "Usage: $0 [deploy|--delete [--purge-creds]]"
+    echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
+    echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
+    echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
     exit 1
     ;;
 esac

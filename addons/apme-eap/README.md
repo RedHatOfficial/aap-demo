@@ -12,7 +12,7 @@ virtual environment.
 This addon uses the **official APME EAP welcome pack playbooks** executed locally via `ansible-playbook`. This implementation:
 
 - **Local execution**: Playbooks run in isolated Python venv (no AAP API dependency)
-- **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access  
+- **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access
 - Uses structured Ansible roles from the official APME welcome pack
 - Auto-discovers aap-demo environment (no manual configuration)
 - Maintains alignment with upstream APME deployment patterns
@@ -29,6 +29,7 @@ authentication.
 
 - `kubectl` or `oc`
 - `python3` (3.8+)
+- `skopeo` (host-side plugin OCI push — `brew install skopeo` on macOS)
 - AAP deployed (`aap-demo deploy`)
 
 **Ansible installation** (auto-installed in venv):
@@ -50,7 +51,7 @@ aap-demo enable apme-eap
 
 This will:
 
-1. Check system prerequisites (kubectl, python3)
+1. Check system prerequisites (kubectl, python3, skopeo)
 2. Create venv with full Ansible + collections (if not exists)
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
@@ -77,12 +78,23 @@ kubectl get route -n apme
 aap-demo disable apme-eap
 ```
 
-This removes the APME namespace but preserves the virtual environment for future use.
+This removes the APME namespace and generated vars file but preserves GitHub credentials
+and the virtual environment for future use.
+
+**Clean re-test cycle** (remove saved GitHub creds and private key):
+
+```bash
+aap-demo disable apme-eap --purge-creds
+# or non-interactive:
+APME_PURGE_CREDS=true aap-demo disable apme-eap
+```
+
+When run interactively, disable also prompts to remove saved credentials.
 
 **To completely remove everything** (including venv):
 
 ```bash
-aap-demo disable apme-eap
+aap-demo disable apme-eap --purge-creds
 rm -rf ~/.aap-demo/apme-eap-venv
 ```
 

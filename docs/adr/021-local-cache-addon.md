@@ -68,8 +68,8 @@ aap-demo creates MicroShift clusters only (`CRC_PRESET=microshift`). The cache i
 ~/.aap-demo/local-cache/microshift/
 ```
 
-The directory layout retains a preset segment for compatibility if additional presets are
-reintroduced later.
+The directory layout retains a preset segment (`microshift/`) for compatibility if
+additional presets are reintroduced later.
 
 ### Technical details
 
@@ -140,6 +140,6 @@ the bottleneck on development machines. Can be added later if needed.
 ## References
 
 - [ADR-008](008-addon-system.md) — Addon system architecture
-- [ADR-020](020-full-openshift-support.md) — Full OpenShift support (preset detection)
+- [ADR-020](020-full-openshift-support.md) — Full OpenShift support evaluation (declined; MicroShift-only)
 - [addons/local-cache/deploy.sh](../../addons/local-cache/deploy.sh)
 - [aap-demo.sh](../../aap-demo.sh) — `_load_local_cache()` auto-load function

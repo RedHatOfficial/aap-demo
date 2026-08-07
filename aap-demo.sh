@@ -1693,6 +1693,12 @@ cmd_status() {
     _ingress_ca_export_env "$ca_path"
   fi
 
+  echo ""
+  echo "TLS:"
+  echo "----"
+  ingress_ca_trust_status "$ca_path" || true
+  echo ""
+
   # Show kubeconfig
   echo "Kubeconfig:  $KUBECONFIG"
   local _script_dir _script_branch _script_remote
@@ -2723,10 +2729,14 @@ cmd_enable() {
 
 cmd_disable() {
   local addon="${1:-}"
+  shift 2>/dev/null || true
   if [ -z "$addon" ]; then
-    echo "Usage: aap-demo disable <addon>"
+    echo "Usage: aap-demo disable <addon> [options]"
     echo ""
     echo "Available addons: $AVAILABLE_ADDONS"
+    echo ""
+    echo "Addon options:"
+    echo "  apme-eap: --purge-creds   Remove saved GitHub credentials and private key"
     return 0
   fi
 
@@ -2739,7 +2749,7 @@ cmd_disable() {
   if [ -f "$addon_dir/deploy.sh" ]; then
     echo "Disabling addon: $addon"
     setup_kubeconfig
-    bash "$addon_dir/deploy.sh" --delete || true
+    bash "$addon_dir/deploy.sh" --delete "$@" || true
     _addons_remove "$addon"
     echo "  Removed from config"
   else
@@ -2913,7 +2923,7 @@ case "$COMMAND" in
     cmd_enable "${EXTRA_ARGS[@]}"
     ;;
   disable)
-    cmd_disable "${EXTRA_ARGS[0]:-}"
+    cmd_disable "${EXTRA_ARGS[@]}"
     ;;
   deploy | deploy-all)
     cmd_deploy
