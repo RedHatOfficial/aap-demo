@@ -42,6 +42,13 @@ die() {
   exit 1
 }
 
+ensure_jq() {
+  if command -v jq &>/dev/null; then
+    return 0
+  fi
+  die "jq is required for pull-secret linking. Install jq (e.g. sudo dnf install -y jq or brew install jq)."
+}
+
 # ---------------------------------------------------------------------------
 # Environment detection (aligned with other aap-demo addons)
 # ---------------------------------------------------------------------------
@@ -190,7 +197,10 @@ discover_aap_config() {
   AAP_PASSWORD=""
   AAP_OAUTH_TOKEN=""
 
-  AAP_ROUTE=$(kubectl get route -n "$AAP_NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+  AAP_ROUTE=$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+  if [ -z "$AAP_ROUTE" ]; then
+    AAP_ROUTE=$(kubectl get route -n "$AAP_NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+  fi
   if [ -z "$AAP_ROUTE" ]; then
     warn "AAP route not found in $AAP_NAMESPACE — AAP integration will use placeholders"
     return 0
@@ -894,6 +904,8 @@ show_access_info() {
 # ---------------------------------------------------------------------------
 
 deploy() {
+  ensure_jq
+
   if ! kubectl cluster-info &>/dev/null; then
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
@@ -953,6 +965,7 @@ case "$ACTION" in
     deploy
     ;;
   --reconfigure)
+    ensure_jq
     FORCE_RECONFIGURE=true
     configure_secrets_file
     if kubectl get namespace "$NAMESPACE" &>/dev/null; then
