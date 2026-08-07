@@ -57,6 +57,103 @@ detect_catalog_namespace() {
   die "redhat-operators CatalogSource not found. Run 'aap-demo deploy' first."
 }
 
+# operator-sdk OLM resolves subscriptions only against CatalogSources in the
+# subscription namespace (or sourceNamespace when it matches). aap-demo keeps
+# redhat-operators in aap-operator; mirror it into the operator namespace when
+# they differ (e.g. operators on MicroShift).
+ensure_catalog_for_operator_namespace() {
+  local catalog_ns="$1"
+  local operator_ns="$2"
+
+  if [ "$catalog_ns" = "$operator_ns" ]; then
+    echo "$catalog_ns"
+    return 0
+  fi
+
+  if kubectl get catalogsource redhat-operators -n "$operator_ns" &>/dev/null; then
+    info "CatalogSource redhat-operators already present in $operator_ns"
+    echo "$operator_ns"
+    return 0
+  fi
+
+  info "Mirroring redhat-operators CatalogSource from $catalog_ns to $operator_ns..."
+  copy_pull_secret "$catalog_ns" "$operator_ns" || true
+
+  local catalog_image
+  catalog_image=$(kubectl get catalogsource redhat-operators -n "$catalog_ns" \
+    -o jsonpath='{.spec.image}' 2>/dev/null || true)
+  if [ -z "$catalog_image" ]; then
+    die "Could not read redhat-operators image from namespace $catalog_ns"
+  fi
+
+  kubectl apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: redhat-operators
+  namespace: ${operator_ns}
+spec:
+  sourceType: grpc
+  image: ${catalog_image}
+  secrets:
+    - redhat-operators-pull-secret
+  grpcPodConfig:
+    securityContextConfig: restricted
+  displayName: Red Hat Operators
+  publisher: Red Hat
+  updateStrategy:
+    registryPoll:
+      interval: 10m
+EOF
+
+  info "Waiting for mirrored catalog to become ready in $operator_ns..."
+  local i state
+  for i in $(seq 1 60); do
+    state=$(kubectl get catalogsource redhat-operators -n "$operator_ns" \
+      -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || true)
+    if [ "$state" = "READY" ]; then
+      info "CatalogSource ready in $operator_ns"
+      echo "$operator_ns"
+      return 0
+    fi
+    printf "\r  Waiting for catalog... (%s/60) state=%s" "$i" "${state:-unknown}"
+    sleep 10
+  done
+  echo ""
+  die "Mirrored CatalogSource in $operator_ns did not become READY. Check: kubectl get catalogsource,pods -n $operator_ns"
+}
+
+wait_for_rhdh_csv() {
+  local operator_ns="$1"
+  local csv_name="" i
+
+  info "Waiting for RHDH operator CSV..."
+  for i in $(seq 1 60); do
+    csv_name=$(kubectl get csv -n "$operator_ns" 2>/dev/null | awk '/^rhdh-operator\./ {print $1; exit}')
+    if [ -n "$csv_name" ]; then
+      break
+    fi
+    local sub_state sub_reason
+    sub_state=$(kubectl get subscription developer-hub-operator-subscription -n "$operator_ns" \
+      -o jsonpath='{.status.state}' 2>/dev/null || true)
+    sub_reason=$(kubectl get subscription developer-hub-operator-subscription -n "$operator_ns" \
+      -o jsonpath='{.status.conditions[?(@.type=="ResolutionFailed")].reason}' 2>/dev/null || true)
+    printf "\r  Waiting for CSV... (%s/60) sub=%s %s" "$i" "${sub_state:-pending}" "${sub_reason:-}"
+    sleep 10
+  done
+  echo ""
+
+  if [ -z "$csv_name" ]; then
+    die "RHDH operator CSV not found after 10 minutes. Check: kubectl get subscription -n $operator_ns"
+  fi
+
+  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded "csv/${csv_name}" \
+    -n "$operator_ns" --timeout=600s 2>/dev/null || {
+    warn "CSV $csv_name not yet Succeeded — continuing (may still reconcile)"
+  }
+  info "RHDH operator ready: $csv_name"
+}
+
 resolve_operator_namespace() {
   # Full OpenShift uses openshift-operators; operator-sdk OLM on MicroShift uses operators.
   if kubectl get namespace openshift-operators &>/dev/null; then
@@ -134,11 +231,12 @@ discover_aap_config() {
 # ---------------------------------------------------------------------------
 
 install_rhdh_operator() {
-  local catalog_ns operator_ns
+  local catalog_ns operator_ns effective_catalog_ns
   catalog_ns=$(detect_catalog_namespace)
   operator_ns=$(resolve_operator_namespace)
+  effective_catalog_ns=$(ensure_catalog_for_operator_namespace "$catalog_ns" "$operator_ns")
 
-  info "Installing RHDH operator (catalog: $catalog_ns, operator ns: $operator_ns)..."
+  info "Installing RHDH operator (catalog: $effective_catalog_ns, operator ns: $operator_ns)..."
 
   kubectl create namespace "$operator_ns" 2>/dev/null || true
 
@@ -159,31 +257,11 @@ install_rhdh_operator() {
   fi
 
   sed -e "s|__OPERATOR_NAMESPACE__|${operator_ns}|g" \
-    -e "s|__CATALOG_NAMESPACE__|${catalog_ns}|g" \
+    -e "s|__CATALOG_NAMESPACE__|${effective_catalog_ns}|g" \
     -e "s|channel: \"fast-1.9\"|channel: \"${RHDH_CHANNEL}\"|" \
     "${SCRIPT_DIR}/operator-subscription.yaml" | kubectl apply -f -
 
-  info "Waiting for RHDH operator CSV..."
-  local csv_name="" i
-  for i in $(seq 1 60); do
-    csv_name=$(kubectl get csv -n "$operator_ns" 2>/dev/null | awk '/^rhdh-operator\./ {print $1; exit}')
-    if [ -n "$csv_name" ]; then
-      break
-    fi
-    printf "\r  Waiting for CSV... (%s/60)" "$i"
-    sleep 10
-  done
-  echo ""
-
-  if [ -z "$csv_name" ]; then
-    die "RHDH operator CSV not found after 10 minutes. Check: kubectl get subscription -n $operator_ns"
-  fi
-
-  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded "csv/${csv_name}" \
-    -n "$operator_ns" --timeout=600s 2>/dev/null || {
-    warn "CSV $csv_name not yet Succeeded — continuing (may still reconcile)"
-  }
-  info "RHDH operator ready: $csv_name"
+  wait_for_rhdh_csv "$operator_ns"
 }
 
 operator_is_installed() {
@@ -247,13 +325,93 @@ setup_namespace() {
   link_pull_secret_to_serviceaccount "$NAMESPACE" "x2a-sa"
 }
 
+detect_cluster_ingress_domain() {
+  local domain
+  domain=$(kubectl get ingresscontroller default -n openshift-ingress-operator \
+    -o jsonpath='{.status.domain}' 2>/dev/null || true)
+  if [ -n "$domain" ]; then
+    echo "$domain"
+    return 0
+  fi
+  echo "apps.127.0.0.1.nip.io"
+}
+
+predict_backstage_route_host() {
+  local domain
+  domain=$(detect_cluster_ingress_domain)
+  echo "backstage-developer-hub-${NAMESPACE}.${domain}"
+}
+
+discover_backstage_route_host() {
+  local route_host
+  route_host=$(kubectl get route -n "$NAMESPACE" \
+    -l app.kubernetes.io/name=backstage \
+    -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+  if [ -n "$route_host" ]; then
+    echo "$route_host"
+    return 0
+  fi
+  route_host=$(kubectl get route developer-hub -n "$NAMESPACE" \
+    -o jsonpath='{.spec.host}' 2>/dev/null || true)
+  if [ -n "$route_host" ]; then
+    echo "$route_host"
+    return 0
+  fi
+  predict_backstage_route_host
+}
+
+discover_backstage_base_url() {
+  local host
+  host=$(discover_backstage_route_host)
+  echo "https://${host}"
+}
+
+ensure_backstage_base_urls() {
+  local base_url host i
+  base_url=$(discover_backstage_base_url)
+  host="${base_url#https://}"
+
+  info "Configuring Backstage base URL: $base_url"
+
+  for i in $(seq 1 30); do
+    if kubectl get configmap backstage-appconfig-developer-hub -n "$NAMESPACE" &>/dev/null; then
+      kubectl get configmap backstage-appconfig-developer-hub -n "$NAMESPACE" -o json \
+        | python3 -c 'import json,sys,textwrap
+base_url=sys.argv[1]
+data=json.load(sys.stdin)
+content=textwrap.dedent(f"""
+app:
+  baseUrl: "{base_url}"
+auth:
+  providers: {{}}
+backend:
+  auth:
+    externalAccess:
+    - options:
+        secret: pl4s3Ch4ng3M3
+        subject: legacy-default-config
+      type: legacy
+  baseUrl: "{base_url}"
+  cors:
+    origin: "{base_url}"
+""")
+data["data"]["default.app-config.yaml"]=content
+print(json.dumps(data))' "$base_url" \
+        | kubectl apply -f - 2>/dev/null && break
+    fi
+    sleep 5
+  done
+}
+
 apply_app_manifests() {
-  local storage_class
+  local storage_class base_url
   storage_class=$(detect_default_storage_class)
-  info "Applying app manifests (storageClass: $storage_class)..."
+  base_url=$(discover_backstage_base_url)
+  info "Applying app manifests (storageClass: $storage_class, baseUrl: $base_url)..."
 
   sed -e "s|__STORAGE_CLASS__|${storage_class}|g" \
     -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+    -e "s|__BACKSTAGE_BASE_URL__|${base_url}|g" \
     "${SCRIPT_DIR}/app.yaml" \
     | kubectl apply -n "$NAMESPACE" -f -
 }
@@ -310,6 +468,60 @@ secrets_llm_is_configured() {
     [ -n "$secret_key" ] && [ "$secret_key" != "REPLACE-WITH-YOUR-AWS-SECRET-KEY" ] && return 0
   fi
   return 1
+}
+
+secrets_github_is_configured() {
+  local client_id client_secret
+  client_id=$(secret_field_value "AUTH_GITHUB_CLIENT_ID" 2>/dev/null || true)
+  client_secret=$(secret_field_value "AUTH_GITHUB_CLIENT_SECRET" 2>/dev/null || true)
+  if [ -z "$client_id" ] || [ -z "$client_secret" ]; then
+    return 1
+  fi
+  if [ "$client_id" = "REPLACE-WITH-YOUR-GITHUB-CLIENT-ID" ]; then
+    return 1
+  fi
+  if [ "$client_secret" = "REPLACE-WITH-YOUR-GITHUB-CLIENT-SECRET" ]; then
+    return 1
+  fi
+  return 0
+}
+
+load_github_from_secrets_file() {
+  AUTH_GITHUB_CLIENT_ID=$(secret_field_value "AUTH_GITHUB_CLIENT_ID")
+  AUTH_GITHUB_CLIENT_SECRET=$(secret_field_value "AUTH_GITHUB_CLIENT_SECRET")
+  [ -n "$AUTH_GITHUB_CLIENT_ID" ] && [ -n "$AUTH_GITHUB_CLIENT_SECRET" ]
+}
+
+github_from_environment() {
+  AUTH_GITHUB_CLIENT_ID="${X2ANSIBLE_AUTH_GITHUB_CLIENT_ID:-${AUTH_GITHUB_CLIENT_ID:-}}"
+  AUTH_GITHUB_CLIENT_SECRET="${X2ANSIBLE_AUTH_GITHUB_CLIENT_SECRET:-${AUTH_GITHUB_CLIENT_SECRET:-}}"
+  [ -n "$AUTH_GITHUB_CLIENT_ID" ] && [ -n "$AUTH_GITHUB_CLIENT_SECRET" ]
+}
+
+github_oauth_callback_url() {
+  echo "$(discover_backstage_base_url)/api/auth/github/handler/frame"
+}
+
+prompt_github_credentials() {
+  local callback_url
+  callback_url=$(github_oauth_callback_url)
+
+  echo ""
+  echo "GitHub OAuth is required for X2Ansible sign-in and repository access."
+  echo "See: https://x2ansible.github.io/platform/authentication.html"
+  echo ""
+  echo "Create a GitHub OAuth App at: https://github.com/settings/developers"
+  echo "Set the Authorization callback URL to:"
+  echo "  ${callback_url}"
+  echo ""
+  AUTH_GITHUB_CLIENT_ID=$(prompt_with_default "GitHub OAuth Client ID" "")
+  if [ -z "$AUTH_GITHUB_CLIENT_ID" ]; then
+    die "GitHub OAuth Client ID is required."
+  fi
+  AUTH_GITHUB_CLIENT_SECRET=$(prompt_secret "GitHub OAuth Client Secret")
+  if [ -z "$AUTH_GITHUB_CLIENT_SECRET" ]; then
+    die "GitHub OAuth Client Secret is required."
+  fi
 }
 
 prompt_with_default() {
@@ -460,6 +672,8 @@ build_secret_fields() {
     "AAP_ORG_NAME=${X2ANSIBLE_AAP_ORG_NAME:-Default}"
     "AAP_OAUTH_TOKEN=${aap_token}"
     "AAP_SKIP_SSL_VERIFICATION=${X2ANSIBLE_AAP_SKIP_SSL_VERIFICATION:-true}"
+    "AUTH_GITHUB_CLIENT_ID=${AUTH_GITHUB_CLIENT_ID:-}"
+    "AUTH_GITHUB_CLIENT_SECRET=${AUTH_GITHUB_CLIENT_SECRET:-}"
   )
 
   case "${LLM_PROVIDER}" in
@@ -520,46 +734,76 @@ PY
 }
 
 configure_secrets_file() {
+  local need_llm=false need_github=false
+
   if [ "$FORCE_RECONFIGURE" = true ]; then
     rm -f "$SECRETS_FILE"
-  elif [ -f "$SECRETS_FILE" ] && secrets_llm_is_configured; then
-    load_llm_from_secrets_file || die "Could not read LLM credentials from $SECRETS_FILE"
+  fi
+
+  if secrets_llm_is_configured; then
+    load_llm_from_secrets_file || need_llm=true
+  else
+    need_llm=true
+  fi
+
+  if secrets_github_is_configured; then
+    load_github_from_secrets_file || need_github=true
+  else
+    need_github=true
+  fi
+
+  if [ "$need_llm" = false ] && [ "$need_github" = false ]; then
     write_secrets_file
-    info "Using existing LLM credentials; refreshed AAP integration from cluster"
+    info "Using existing credentials; refreshed AAP integration from cluster"
     return 0
   fi
 
-  if llm_from_environment; then
-    info "Using LLM credentials from environment variables"
+  if [ "$need_llm" = true ] && llm_from_environment; then
+    need_llm=false
+  fi
+  if [ "$need_github" = true ] && github_from_environment; then
+    need_github=false
+  fi
+
+  if [ "$need_llm" = false ] && [ "$need_github" = false ]; then
+    info "Using credentials from environment variables"
     write_secrets_file
     return 0
   fi
 
   if is_interactive; then
-    prompt_llm_credentials
+    if [ "$need_llm" = true ]; then
+      prompt_llm_credentials
+    fi
+    if [ "$need_github" = true ]; then
+      prompt_github_credentials
+    fi
     write_secrets_file
     return 0
   fi
 
   cat <<EOF >&2
 
-ERROR: LLM credentials are not configured.
+ERROR: X2Ansible credentials are not fully configured.
 
 Interactive mode (recommended):
   aap-demo enable x2ansible
 
 Non-interactive — set environment variables, then re-run:
-  # AWS Bedrock (matches x2ansible docs)
+
+  # LLM (AWS Bedrock bearer token)
   export AWS_REGION=us-east-1
   export AWS_BEARER_TOKEN_BEDROCK=your-bearer-token
   export LLM_MODEL=anthropic.claude-3-7-sonnet-20250219-v1:0
 
-  # Or OpenAI-compatible endpoint + API key
-  export OPENAI_API_BASE=https://api.openai.com/v1
-  export OPENAI_API_KEY=your-api-key
-  export LLM_MODEL=gpt-4o
+  # GitHub OAuth (sign-in + Git access)
+  export AUTH_GITHUB_CLIENT_ID=your-github-client-id
+  export AUTH_GITHUB_CLIENT_SECRET=your-github-client-secret
 
   aap-demo enable x2ansible
+
+GitHub callback URL for your OAuth app:
+  $(github_oauth_callback_url)
 
 Or edit $SECRETS_FILE manually (see addons/x2ansible/README.md).
 
@@ -571,9 +815,15 @@ apply_secrets() {
   if ! secrets_llm_is_configured; then
     die "LLM credentials are not configured in $SECRETS_FILE"
   fi
+  if ! secrets_github_is_configured; then
+    die "GitHub OAuth credentials are not configured in $SECRETS_FILE"
+  fi
 
   if [ -z "${LLM_PROVIDER:-}" ]; then
     load_llm_from_secrets_file || die "Could not read LLM credentials from $SECRETS_FILE"
+  fi
+  if [ -z "${AUTH_GITHUB_CLIENT_ID:-}" ]; then
+    load_github_from_secrets_file || die "Could not read GitHub OAuth credentials from $SECRETS_FILE"
   fi
 
   build_secret_fields
@@ -591,19 +841,19 @@ restart_backstage() {
   if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
     return 0
   fi
-  kubectl delete pod -n "$NAMESPACE" -l app.kubernetes.io/name=developer-hub --ignore-not-found=true 2>/dev/null || true
+  kubectl delete pod -n "$NAMESPACE" -l rhdh.redhat.com/app=backstage-developer-hub --ignore-not-found=true 2>/dev/null || true
   info "Restarted Backstage pod to load new configuration"
 }
 
 wait_for_backstage() {
   info "Waiting for Developer Hub / Backstage to become ready..."
-  local i phase route_host
+  local i phase
   for i in $(seq 1 60); do
     phase=$(kubectl get backstage developer-hub -n "$NAMESPACE" \
       -o jsonpath='{.status.conditions[?(@.type=="Deployed")].status}' 2>/dev/null || true)
-    route_host=$(kubectl get route developer-hub -n "$NAMESPACE" \
-      -o jsonpath='{.spec.host}' 2>/dev/null || true)
-    if [ "$phase" = "True" ] && [ -n "$route_host" ]; then
+    route_host=$(discover_backstage_route_host)
+    if [ "$phase" = "True" ] && kubectl get pods -n "$NAMESPACE" \
+      -l app.kubernetes.io/name=backstage -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null | grep -q true; then
       echo ""
       return 0
     fi
@@ -615,19 +865,19 @@ wait_for_backstage() {
 }
 
 show_access_info() {
-  local route_host
-  route_host=$(kubectl get route developer-hub -n "$NAMESPACE" \
-    -o jsonpath='{.spec.host}' 2>/dev/null || true)
+  local route_host base_url
+  route_host=$(discover_backstage_route_host)
+  base_url=$(discover_backstage_base_url)
 
   info ""
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   info "X2Ansible deployed!"
   info ""
   if [ -n "$route_host" ]; then
-    info "Developer Hub URL: https://${route_host}"
-    info "Conversion Hub:    https://${route_host}/x2a"
+    info "Developer Hub URL: $base_url"
+    info "Conversion Hub:    ${base_url}/x2a"
   else
-    info "Route not ready yet. Check: kubectl get route developer-hub -n $NAMESPACE"
+    info "Route not ready yet. Check: kubectl get route -n $NAMESPACE -l app.kubernetes.io/name=backstage"
   fi
   info ""
   info "Secrets file: $SECRETS_FILE"
@@ -675,6 +925,7 @@ deploy() {
   apply_app_manifests
   link_pull_secret_to_serviceaccount "$NAMESPACE" "x2a-sa"
   apply_secrets
+  ensure_backstage_base_urls
   restart_backstage
   wait_for_backstage
   show_access_info

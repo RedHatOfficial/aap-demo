@@ -31,11 +31,16 @@ aap-demo deploy
 aap-demo enable x2ansible
 ```
 
-You will be asked to choose an LLM provider and enter credentials:
+You will be asked to choose an LLM provider and enter credentials, then configure
+GitHub OAuth for sign-in and repository access:
 
 1. **AWS Bedrock** (recommended) — AWS region, model name, and bearer token API key
 2. **OpenAI-compatible** — API endpoint (`OPENAI_API_BASE`) and API key
 3. **AWS Bedrock IAM** — access key + secret key (alternative to bearer token)
+4. **GitHub OAuth** — Client ID and Client Secret from a GitHub OAuth App
+
+The enable flow prints the exact **Authorization callback URL** to register at
+[github.com/settings/developers](https://github.com/settings/developers).
 
 Credentials are saved to `~/.aap-demo/x2ansible-secrets.yaml` (mode `600`) and applied
 as the `x2a-credentials` secret. AAP gateway URL and OAuth token are auto-discovered when
@@ -76,8 +81,16 @@ export OPENAI_API_BASE=https://api.openai.com/v1
 export OPENAI_API_KEY=your-api-key
 export LLM_MODEL=gpt-4o
 
+# GitHub OAuth (required — matches upstream x2ansible deploy)
+export AUTH_GITHUB_CLIENT_ID=your-github-client-id
+export AUTH_GITHUB_CLIENT_SECRET=your-github-client-secret
+
 aap-demo enable x2ansible
 ```
+
+Register the GitHub OAuth app callback URL shown during `enable`, or predict it as:
+`https://backstage-developer-hub-<namespace>.<cluster-apps-domain>/api/auth/github/handler/frame`
+(e.g. `https://backstage-developer-hub-x2ansible.apps.127.0.0.1.nip.io/api/auth/github/handler/frame` on aap-demo).
 
 Prefixed `X2ANSIBLE_*` variants are also supported (e.g. `X2ANSIBLE_OPENAI_API_KEY`).
 
@@ -97,19 +110,23 @@ When AAP is running in `aap-operator`, the addon automatically:
 | `AAP_NAMESPACE` | `aap-operator` | Namespace for AAP route/credential discovery |
 | `X2ANSIBLE_RHDH_CHANNEL` | `fast-1.9` | RHDH operator OLM channel |
 | `X2ANSIBLE_FORCE_ARM` | unset | Set to `true` to attempt deploy on ARM64 (unsupported) |
+| `AUTH_GITHUB_CLIENT_ID` | — | GitHub OAuth Client ID (or set in secrets file) |
+| `AUTH_GITHUB_CLIENT_SECRET` | — | GitHub OAuth Client Secret (or set in secrets file) |
+| `X2ANSIBLE_AUTH_GITHUB_CLIENT_ID` | — | Prefixed alias for `AUTH_GITHUB_CLIENT_ID` |
+| `X2ANSIBLE_AUTH_GITHUB_CLIENT_SECRET` | — | Prefixed alias for `AUTH_GITHUB_CLIENT_SECRET` |
 
 ## MicroShift adaptations
 
 The upstream docs assume full OpenShift (`openshift-operators`, `openshift-marketplace`).
 This addon adapts for aap-demo's MicroShift OLM layout:
 
-- **CatalogSource**: Uses `redhat-operators` from `aap-operator` (not `openshift-marketplace`)
+- **CatalogSource**: Uses `redhat-operators` from `aap-operator` (not `openshift-marketplace`). When the operator installs into `operators` (operator-sdk OLM), the catalog is mirrored there because bare OLM only resolves subscriptions against catalogs in the subscription namespace.
 - **OperatorGroup**: Created only when the operator namespace has none (avoids breaking full OpenShift)
 - **Operator namespace**: Uses `openshift-operators` when present, otherwise `operators` (operator-sdk OLM)
 - **Storage**: Auto-detects default StorageClass (`topolvm-provisioner` on aap-demo)
 - **SCCs**: Grants `anyuid` + `privileged` to the `x2ansible` namespace
 - **Pull secret**: Copies `redhat-operators-pull-secret` and links it to `default` and `x2a-sa` ServiceAccounts
-- **Sign-in**: Guest auth enabled for lab use (no GitHub OAuth required)
+- **Sign-in**: GitHub OAuth (matches upstream `deploy/app.yaml`; guest auth is not used)
 - **RHDH only**: Does not install DevSpaces (upstream `operator.yaml` includes it; omitted here for MicroShift)
 
 Re-running `aap-demo enable x2ansible` refreshes AAP URL/OAuth token while preserving LLM credentials.
@@ -144,15 +161,26 @@ installed (cluster-scoped, shared resource).
 ```bash
 kubectl get secret x2a-credentials -n x2ansible
 kubectl logs -n x2ansible deployment/backstage-developer-hub
+kubectl get configmap backstage-appconfig-developer-hub -n x2ansible -o yaml | grep baseUrl
 ```
+
+On MicroShift, the RHDH operator may leave `backend.baseUrl` empty in
+`backstage-appconfig-developer-hub`. Re-run `aap-demo enable x2ansible` (with the
+updated addon) to patch it automatically, or check that `app-config-rhdh` contains
+`app.baseUrl` and `backend.baseUrl`.
 
 ### Operator not installing
 
 ```bash
-kubectl get subscription -n openshift-operators
-kubectl get csv -n openshift-operators | grep rhdh
+kubectl get subscription -n operators
+kubectl get csv -n operators | grep rhdh
+kubectl get catalogsource redhat-operators -n operators
 kubectl get catalogsource redhat-operators -n aap-operator
 ```
+
+If the subscription shows `NoCatalogSourcesFound` or `ResolutionFailed`, confirm the
+`operators` namespace has a healthy `redhat-operators` CatalogSource (re-run
+`aap-demo enable x2ansible` after updating the addon).
 
 ### After editing secrets
 
