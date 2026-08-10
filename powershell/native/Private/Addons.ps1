@@ -1,4 +1,28 @@
-$Script:AapAvailableAddons = @('mcp-server', 'portal')
+$Script:AapAvailableAddons = @(
+  'mcp-server', 'portal', 'setup-pah', 'ao-eap', 'apme-eap', 'local-cache'
+)
+
+function Invoke-AapAddonDeployScript {
+  param(
+    [Parameter(Mandatory)][string]$Addon,
+    [string[]]$ScriptArgs = @()
+  )
+
+  $deploySh = Join-Path $Script:AapDemoRepoRoot "addons/$Addon/deploy.sh"
+  if (-not (Test-Path -LiteralPath $deploySh)) {
+    throw "Addon '$Addon' has no deploy.sh"
+  }
+
+  $bash = Get-Command bash -ErrorAction SilentlyContinue
+  if (-not $bash) {
+    throw "Addon '$Addon' requires bash (Git Bash or WSL). Install Git for Windows or use Linux/macOS."
+  }
+
+  & $bash.Source $deploySh @ScriptArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "Addon '$Addon' deploy failed (exit code: $LASTEXITCODE)"
+  }
+}
 
 function Invoke-AapEnsureClusterReady {
   Invoke-AapEnsureCluster
@@ -78,7 +102,7 @@ function Invoke-AapAddonEnable {
   switch ($Addon) {
     'mcp-server' { Invoke-AapDeployMcpServerAddon -Namespace $Namespace }
     'portal' { Invoke-AapDeployPortalAddon -Namespace $Namespace }
-    default { throw "Unknown addon: $Addon`nAvailable: $($Script:AapAvailableAddons -join ', ')" }
+    default { Invoke-AapAddonDeployScript -Addon $Addon }
   }
 }
 
@@ -135,6 +159,6 @@ function Invoke-AapAddonDisable {
   switch ($Addon) {
     'mcp-server' { Invoke-AapRemoveMcpServerAddon -Namespace $Namespace }
     'portal' { Invoke-AapRemovePortalAddon -Namespace $Namespace }
-    default { throw "Unknown addon: $Addon" }
+    default { Invoke-AapAddonDeployScript -Addon $Addon -ScriptArgs @('--delete') }
   }
 }

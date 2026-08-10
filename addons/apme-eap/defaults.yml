@@ -34,3 +34,8 @@ apme_oci_push_skopeo_binary: skopeo  # Path to skopeo binary (default: skopeo)
 # OpenShift DevSpaces (optional)
 # Set to enable "Open in DevSpaces" actions after remediation
 # devspaces_base_url: "https://devspaces.apps.cluster.example.com/"
+
+# Pre-baked plugins image (optional, speeds up portal pod start dramatically)
+# Build with: cd addons/apme-eap && ./build-plugins-image.sh
+# Then set to the image reference printed by the script:
+# apme_prebaked_plugins_image: "image-registry.openshift-image-registry.svc:5000/apme/rhaap-portal-plugins-baked:<sha>"

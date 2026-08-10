@@ -55,7 +55,9 @@
           - login
           - --to={{ openshift_apme_setup_registry_authfile }}
       environment:
-        KUBECONFIG: "{{ apme_oci_kubeconfig if apme_oci_kubeconfig is defined and apme_oci_kubeconfig | length > 0 else omit }}"
+        KUBECONFIG: >-
+          {{ apme_oci_kubeconfig if apme_oci_kubeconfig is defined and
+          apme_oci_kubeconfig | length > 0 else omit }}
       changed_when: false
 
     - name: Add integrated registries.conf for dynamic-plugins pull  # noqa: var-naming[no-role-prefix]
@@ -121,7 +123,8 @@
 
 - name: Add registries.conf to registry secret when provided  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    registry_secret_data: "{{ registry_secret_data | combine({'registries.conf': lookup('file', registry_registries_conf)}) }}"
+    registry_secret_data: >-
+      {{ registry_secret_data | combine({'registries.conf': lookup('file', registry_registries_conf)}) }}
   when: registry_registries_conf is defined and registry_registries_conf | length > 0
 
 - name: Generate registries.conf for custom insecure registry  # noqa: var-naming[no-role-prefix]

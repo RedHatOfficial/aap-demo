@@ -515,17 +515,3 @@ function Invoke-AapDemoRedeployAll {
   Invoke-AapDemoCreate
   Invoke-AapDemoDeploy -Namespace $Namespace -Channel $Channel -OcpVersion $OcpVersion -CrName $CrName -Force:$Force
 }
-
-function Invoke-AapDemoDeployAap {
-  [CmdletBinding()]
-  param(
-    [string]$Namespace = $Script:AapDemoDefaultNamespace,
-    [string]$CrName = 'minimal',
-    [string]$PublicUrl = $null
-  )
-
-  Initialize-AapKubeEnvironment
-  Set-AapIngressCaEnvFromSaved
-  Invoke-AapApplyAapCr -Namespace $Namespace -CrName $CrName -PublicUrl $PublicUrl
-  Invoke-AapDemoWatch -Namespace $Namespace
-}

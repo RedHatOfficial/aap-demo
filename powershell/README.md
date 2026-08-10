@@ -74,8 +74,6 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | ------------------------------ | ------------------------------------------------------------------ |
 | `aap-demo create`              | Create OpenShift Local cluster (NFS, CoreDNS, OLM, metrics-server) |
 | `aap-demo deploy`              | Deploy AAP 2.7 operator and instance via OLM                       |
-| `aap-demo deploy-operator`     | Deploy operator only (no AAP CR)                                   |
-| `aap-demo deploy-aap`          | Apply AAP CR only (operator must exist)                            |
 | `aap-demo deploy -Force`       | Deploy even if an AAP CR already exists                            |
 | `aap-demo redeploy`            | Clean namespace and redeploy AAP                                   |
 | `aap-demo redeploy-all`        | Destroy cluster and full redeploy                                  |

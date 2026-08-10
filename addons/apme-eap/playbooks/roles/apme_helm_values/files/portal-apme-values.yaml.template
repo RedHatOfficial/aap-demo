@@ -494,6 +494,8 @@ redhat-developer-hub:
                           minutes: 60
                         timeout:
                           minutes: 30
+                        initialDelay:
+                          minutes: 3
                     providers:
                       github:
                       - host: github.com
@@ -808,14 +810,8 @@ redhat-developer-hub:
       - mountPath: /opt/app-root/src/.data
         name: apme-data
       extraVolumes:
-      - ephemeral:
-          volumeClaimTemplate:
-            spec:
-              accessModes:
-              - ReadWriteOnce
-              resources:
-                requests:
-                  storage: 5Gi
+      # emptyDir avoids slow NFS plugin rebuilds on CRC; set apme_prebaked_plugins_image for persistence
+      - emptyDir: {}
         name: dynamic-plugins-root
       - configMap:
           defaultMode: 420
@@ -854,8 +850,7 @@ redhat-developer-hub:
         tag: "1.9"
       initContainers:
       - command:
-        - ./install-dynamic-plugins.sh
-        - /dynamic-plugins-root
+        <init-install-command>
         env:
         - name: NPM_CONFIG_USERCONFIG
           value: /opt/app-root/src/.npmrc.dynamic-plugins
@@ -868,7 +863,7 @@ redhat-developer-hub:
             }}{{ end }}'
         - name: CATALOG_ENTITIES_EXTRACT_DIR
           value: /extensions
-        image: '{{ include "backstage.image" . }}'
+        image: '<init-container-image>'
         imagePullPolicy: ""
         name: install-dynamic-plugins
         resources:

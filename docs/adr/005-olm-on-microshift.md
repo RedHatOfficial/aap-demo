@@ -21,19 +21,20 @@ MicroShift also lacks `openshift-marketplace` — CatalogSources must live in th
 
 ## Decision
 
-Install OLM during cluster creation using **`operator-sdk olm install`**, wrapped by `addons/olm/deploy.sh`.
+Install OLM during **`aap-demo deploy`** using **`operator-sdk olm install`**, wrapped by
+`addons/olm/deploy.sh`. Cluster creation (`aap-demo create`) provisions MicroShift only.
 
 ### Installation flow
 
 ```text
-aap-demo create
+aap-demo deploy
       │
-      ├─▶ crc start (MicroShift VM)
+      ├─▶ cmd_create (if no cluster) — CRC VM only, no OLM
       ├─▶ addons/olm/deploy.sh
       │         ├─ ensure operator-sdk (auto-download v1.38.0 if missing)
       │         ├─ operator-sdk olm install
       │         └─ delete operatorhubio-catalog (MicroShift incompatible)
-      └─▶ continue NFS, CoreDNS, metrics-server setup
+      └─▶ deploy_latest (CatalogSource, AAP CR, ...)
 ```
 
 ### operator-sdk bootstrap
@@ -84,7 +85,7 @@ Version is overridable via `AAP_OCP_VERSION` to match the cluster's OpenShift ve
 
 ### Negative
 
-- Adds ~1 minute to cluster create time
+- Adds ~1 minute to first deploy time
 - OLM pods consume cluster resources (~4 pods in `olm` namespace)
 - operator-sdk version pinned in deploy script — must be updated deliberately
 - Full CRC OpenShift preset includes OLM but aap-demo still documents the addon for consistency

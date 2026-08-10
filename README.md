@@ -6,47 +6,44 @@ Deploy AAP to a local MicroShift cluster in minutes.
 
 **aap-demo is a LOCAL DEVELOPMENT tool and must NEVER be used in production.**
 
-**DO NOT use aap-demo configurations or patterns in production environments.**
+## Prerequisites
+
+- **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
+- **16 GB RAM minimum** — default VM allocation is 16 GB (override with `CRC_MEMORY=24576 aap-demo create` for 24 GB)
+- **Pull secret** — download from the
+  [Red Hat console](https://console.redhat.com/openshift/install/pull-secret),
+  then run:
+
+```bash
+mkdir -p ~/.aap-demo
+cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
+```
 
 ## Install
 
 ```bash
-git clone https://github.com/RedHatOfficial/aap-demo.git
-cd aap-demo && ./install.sh
+git clone https://github.com/RedHatOfficial/aap-demo.git && cd aap-demo && ./install.sh && aap-demo deploy
 ```
 
-## Prerequisites
+`aap-demo create` provisions the MicroShift VM only. `aap-demo deploy` installs OLM and AAP
+(use `deploy` for the typical path; `create` alone is for cluster-only setup).
 
-- **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
-- **24GB RAM** — Default VM allocation (override with `CRC_MEMORY=16384 aap-demo create` for 16GB)
-- **Pull secret** (required for all deploys):
-
-```bash
-mkdir -p ~/.aap-demo
-# Download from: https://console.redhat.com/openshift/install/pull-secret
-cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
-```
-
-## Deploy
+## Status
 
 ```bash
-aap-demo create        # Create cluster (~3 min)
-aap-demo deploy        # Deploy AAP 2.7 (~10 min)
 aap-demo status        # Show routes and credentials
 ```
-
-## What You Get
 
 ```text
 AAP Demo Status
 ===============
 
-Infra:       crc (MicroShift 4.21.0)
-Cluster:     running
+Infra:       OpenShift Local (CRC)
+Cluster:     running (crc-microshift)
 
 Namespaces:
 -----------
-  aap-operator         27/29 pods   AAP: aap (Successful)
+  aap-operator         27/29 pods   aap
 
 AAP Deployments:
 ----------------
@@ -55,6 +52,35 @@ AAP Deployments:
 Credentials:
 ------------
   aap-operator: admin / <password>
+
+Addons:
+-------
+  mcp-server      disabled
+  portal          disabled
+  setup-pah       disabled
+  ao-eap          disabled
+  apme-eap        disabled
+  local-cache     disabled
+```
+
+## Addons to add additional functionality
+
+```bash
+aap-demo enable              # List all addons
+aap-demo enable portal       # Installs Automation Portal
+aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
+aap-demo enable mcp-server   # MCP server for AI assistants
+aap-demo enable ao-eap       # Early Access Program only for Automation Orchestrator
+aap-demo enable apme-eap     # Early Access Program only for APME
+aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
+aap-demo disable addon_name  # Disables addon
+```
+
+After `aap-demo destroy`, reload cached images with:
+
+```bash
+aap-demo enable local-cache load   # one-shot reload into fresh VM
+aap-demo enable local-cache        # restore auto-load on future deploys
 ```
 
 ## Daily Use
@@ -77,14 +103,9 @@ aap-demo diagnose --ai # AI-powered analysis (requires claude CLI)
 aap-demo must-gather   # Collect full diagnostics for support
 ```
 
-## Addons
-
-```bash
-aap-demo enable console      # OpenShift Console (web UI)
-aap-demo enable registry     # In-cluster container registry
-aap-demo enable mcp-server   # MCP server for AI assistants
-aap-demo enable              # List all addons
-```
+On MicroShift 4.22+, `aap-demo deploy` relaxes container signature verification for
+`registry.redhat.io` inside the CRC VM so operator index images can pull. This is a
+**demo-only** workaround and must not be used as a production pattern.
 
 ## Clean Up
 
