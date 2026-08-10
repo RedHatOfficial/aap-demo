@@ -23,6 +23,8 @@ ACTION="${1:-deploy}"
 # Product demos configuration
 PRODUCT_DEMOS_REPO="${PRODUCT_DEMOS_REPO:-https://github.com/ansible/product-demos}"
 PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
+PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-26:latest}"
+PRODUCT_DEMOS_EE_NAME="${PRODUCT_DEMOS_EE_NAME:-Product Demos EE}"
 
 # ==============================================================================
 # DELETE HANDLER
@@ -92,14 +94,14 @@ echo "          (uses AAP's execution environment which has ansible.platform pre
 echo ""
 
 # Check cluster connectivity
-if ! kubectl cluster-info &> /dev/null; then
+if ! kubectl cluster-info &>/dev/null; then
   echo "❌ ERROR: Cannot connect to cluster"
   echo "Please ensure your cluster is running: aap-demo status"
   exit 1
 fi
 
 # Check if AAP is deployed
-if ! kubectl get aap -n "$NAMESPACE" &> /dev/null; then
+if ! kubectl get aap -n "$NAMESPACE" &>/dev/null; then
   echo "❌ ERROR: AAP not found in namespace $NAMESPACE"
   echo "Please deploy AAP first: aap-demo deploy"
   exit 1
@@ -117,9 +119,112 @@ if [ -z "$AAP_ROUTE" ]; then
   exit 1
 fi
 
-AAP_HOSTNAME="https://$AAP_ROUTE"
-AAP_API="${AAP_HOSTNAME}/api/controller/v2"
-echo "AAP URL: $AAP_HOSTNAME"
+AAP_UI_URL="https://${AAP_ROUTE}"
+AAP_API="${AAP_UI_URL}/api/controller/v2"
+
+# Jobs run inside controller EEs cannot reach external nip.io routes on MicroShift.
+# Map the route hostname to the AAP service ClusterIP (see configure_microshift_job_networking).
+if ! kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s &>/dev/null; then
+  IS_MICROSHIFT=true
+  AAP_JOB_HOSTNAME="http://${AAP_ROUTE}"
+else
+  IS_MICROSHIFT=false
+  AAP_JOB_HOSTNAME="${AAP_UI_URL}"
+fi
+
+echo "AAP URL: $AAP_UI_URL"
+if [ "$IS_MICROSHIFT" = true ]; then
+  echo "AAP in-cluster URL (for job credentials): $AAP_JOB_HOSTNAME"
+fi
+
+configure_microshift_job_networking() {
+  if [ "${IS_MICROSHIFT:-false}" != true ]; then
+    return 0
+  fi
+
+  echo "Configuring MicroShift job pod networking..."
+
+  local aap_ip ig_id pod_spec_override
+  aap_ip=$(kubectl get svc aap -n "$NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  if [ -z "$aap_ip" ]; then
+    echo "  ⚠ Could not resolve AAP service ClusterIP; skipping host alias"
+    return 1
+  fi
+
+  ig_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/instance_groups/?name=default" 2>&1 | jq -r '.results[0].id // empty' 2>/dev/null)
+
+  if [ -z "$ig_id" ]; then
+    echo "  ⚠ Could not find default instance group; skipping host alias"
+    return 1
+  fi
+
+  pod_spec_override=$(printf 'spec:\n  hostAliases:\n  - ip: "%s"\n    hostnames:\n    - "%s"\n' "$aap_ip" "$AAP_ROUTE")
+
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg spec "$pod_spec_override" '{pod_spec_override: $spec}')" \
+    "${AAP_API}/instance_groups/${ig_id}/" >/dev/null 2>&1
+
+  echo "  ✓ Job pod hostAlias configured: ${AAP_ROUTE} → ${aap_ip}"
+}
+
+apd_credential_type_injectors_json() {
+  # Only inject env vars; AAP 2.7 often drops extra_vars on credential type PATCH.
+  # Job template extra_vars carry async + aap_validate_certs settings instead.
+  jq -n '{
+    env: {
+      AAP_HOSTNAME: "{{ aap_hostname }}",
+      AAP_USERNAME: "{{ aap_username }}",
+      AAP_PASSWORD: "{{ aap_password }}",
+      AAP_TOKEN: "{{ aap_token | default(\"\", true) }}"
+    }
+  }'
+}
+
+create_aap_install_token() {
+  echo "Creating AAP OAuth token for installer job..."
+
+  local token_response
+  token_response=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"description":"APD installer (aap-demo)","scope":"write"}' \
+    "${AAP_UI_URL}/api/gateway/v1/tokens/" 2>&1)
+
+  AAP_INSTALL_TOKEN=$(echo "$token_response" | jq -r '.token // empty' 2>/dev/null)
+
+  if [ -z "$AAP_INSTALL_TOKEN" ]; then
+    echo "❌ ERROR: Failed to create AAP OAuth token for installer"
+    echo "$token_response" | jq '.' 2>/dev/null || echo "$token_response"
+    exit 1
+  fi
+
+  echo "✓ AAP OAuth token created for installer"
+}
+
+apd_template_extra_vars() {
+  jq -n \
+    --arg hostname "$AAP_JOB_HOSTNAME" \
+    --arg username "$AAP_USERNAME" \
+    --arg password "$AAP_PASSWORD" \
+    --arg token "${AAP_INSTALL_TOKEN:-}" \
+    '{
+      aap_hostname: $hostname,
+      aap_username: $username,
+      aap_password: $password,
+      aap_token: $token,
+      aap_validate_certs: false,
+      aap_configuration_async_retries: 0,
+      gateway_configuration_async_retries: 0,
+      controller_configuration_async_retries: 0
+    }'
+}
+
+apd_template_extra_vars_yaml() {
+  apd_template_extra_vars | jq -r 'to_entries | map("\(.key): \(.value)") | join("\n")'
+}
 
 # Get AAP admin credentials
 echo "Retrieving AAP admin credentials..."
@@ -135,16 +240,18 @@ echo "✓ AAP credentials retrieved"
 echo ""
 
 # Check for required tools
-if ! command -v curl &> /dev/null; then
+if ! command -v curl &>/dev/null; then
   echo "❌ ERROR: curl is required"
   exit 1
 fi
 
-if ! command -v jq &> /dev/null; then
+if ! command -v jq &>/dev/null; then
   echo "❌ ERROR: jq is required for JSON parsing"
   echo "Install: brew install jq (macOS) or sudo dnf install jq (RHEL/Fedora)"
   exit 1
 fi
+
+configure_microshift_job_networking
 
 # ==============================================================================
 # CREATE CREDENTIAL TYPE AND CREDENTIAL
@@ -160,29 +267,24 @@ CRED_TYPE_ID=$(echo "$EXISTING_CRED_TYPE" | jq -r '.results[0].id // empty' 2>/d
 
 if [ -z "$CRED_TYPE_ID" ]; then
   # Create credential type
-  CRED_TYPE_PAYLOAD=$(cat <<EOF
-{
-  "name": "APD Installer Credentials",
-  "description": "Injects AAP credentials as environment variables for product-demos installer",
-  "kind": "cloud",
-  "inputs": {
-    "fields": [
-      {"id": "aap_hostname", "label": "AAP Hostname", "type": "string"},
-      {"id": "aap_username", "label": "AAP Username", "type": "string"},
-      {"id": "aap_password", "label": "AAP Password", "type": "string", "secret": true}
-    ]
-  },
-  "injectors": {
-    "env": {
-      "AAP_HOSTNAME": "{{ aap_hostname }}",
-      "AAP_USERNAME": "{{ aap_username }}",
-      "AAP_PASSWORD": "{{ aap_password }}",
-      "AAP_VALIDATE_CERTS": "false"
-    }
-  }
-}
-EOF
-)
+  CRED_TYPE_PAYLOAD=$(jq -n \
+    --arg name "APD Installer Credentials" \
+    --arg desc "Injects AAP credentials for product-demos installer" \
+    --argjson injectors "$(apd_credential_type_injectors_json)" \
+    '{
+      name: $name,
+      description: $desc,
+      kind: "cloud",
+      inputs: {
+        fields: [
+          {id: "aap_hostname", label: "AAP Hostname", type: "string"},
+          {id: "aap_username", label: "AAP Username", type: "string"},
+          {id: "aap_password", label: "AAP Password", type: "string", secret: true},
+          {id: "aap_token", label: "AAP OAuth Token", type: "string", secret: true}
+        ]
+      },
+      injectors: $injectors
+    }')
 
   CRED_TYPE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     -X POST \
@@ -201,7 +303,16 @@ EOF
   echo "✓ Credential type created (ID: $CRED_TYPE_ID)"
 else
   echo "✓ Credential type already exists (ID: $CRED_TYPE_ID)"
+  echo "Updating credential type injectors..."
+  CRED_TYPE_UPDATE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --argjson injectors "$(apd_credential_type_injectors_json)" '{injectors: $injectors}')" \
+    "${AAP_API}/credential_types/${CRED_TYPE_ID}/" 2>&1)
+  echo "✓ Credential type injectors updated"
 fi
+
+create_aap_install_token
 
 # Create credential instance
 echo "Creating APD installer credential..."
@@ -212,20 +323,22 @@ EXISTING_CRED=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
 CRED_ID=$(echo "$EXISTING_CRED" | jq -r '.results[0].id // empty' 2>/dev/null)
 
 if [ -z "$CRED_ID" ]; then
-  CRED_PAYLOAD=$(cat <<EOF
+  CRED_PAYLOAD=$(
+    cat <<EOF
 {
   "name": "APD Installer - AAP Admin",
   "description": "AAP admin credentials for installing product-demos",
   "organization": 1,
   "credential_type": $CRED_TYPE_ID,
   "inputs": {
-    "aap_hostname": "${AAP_HOSTNAME}",
+    "aap_hostname": "${AAP_JOB_HOSTNAME}",
     "aap_username": "${AAP_USERNAME}",
-    "aap_password": "${AAP_PASSWORD}"
+    "aap_password": "${AAP_PASSWORD}",
+    "aap_token": "${AAP_INSTALL_TOKEN}"
   }
 }
 EOF
-)
+  )
 
   CRED_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     -X POST \
@@ -244,6 +357,26 @@ EOF
   echo "✓ Credential created (ID: $CRED_ID)"
 else
   echo "✓ Credential already exists (ID: $CRED_ID)"
+  echo "Updating APD installer credential hostname for in-cluster access..."
+  CRED_UPDATE_PAYLOAD=$(
+    cat <<EOF
+{
+  "credential_type": $CRED_TYPE_ID,
+  "inputs": {
+    "aap_hostname": "${AAP_JOB_HOSTNAME}",
+    "aap_username": "${AAP_USERNAME}",
+    "aap_password": "${AAP_PASSWORD}",
+    "aap_token": "${AAP_INSTALL_TOKEN}"
+  }
+}
+EOF
+  )
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "$CRED_UPDATE_PAYLOAD" \
+    "${AAP_API}/credentials/${CRED_ID}/" >/dev/null 2>&1
+  echo "✓ Credential updated"
 fi
 
 echo ""
@@ -255,7 +388,8 @@ echo ""
 echo "Creating AAP project for product-demos..."
 
 # Create project via API
-PROJECT_PAYLOAD=$(cat <<EOF
+PROJECT_PAYLOAD=$(
+  cat <<EOF
 {
   "name": "Ansible Product Demos",
   "description": "Official Ansible Product Demos from github.com/ansible/product-demos",
@@ -318,25 +452,82 @@ for i in {1..30}; do
 done
 
 # ==============================================================================
+# REGISTER EXECUTION ENVIRONMENT
+# ==============================================================================
+
+echo ""
+echo "Registering Product Demos execution environment..."
+
+EXISTING_EE=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  "${AAP_API}/execution_environments/?name=$(jq -rn --arg n "$PRODUCT_DEMOS_EE_NAME" '$n|@uri')" 2>&1)
+
+EE_ID=$(echo "$EXISTING_EE" | jq -r '.results[0].id // empty' 2>/dev/null)
+
+if [ -z "$EE_ID" ]; then
+  EE_PAYLOAD=$(
+    cat <<EOF
+{
+  "name": "${PRODUCT_DEMOS_EE_NAME}",
+  "description": "Official Ansible Product Demos execution environment",
+  "image": "${PRODUCT_DEMOS_EE}",
+  "pull": "missing",
+  "organization": 1
+}
+EOF
+  )
+
+  EE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "$EE_PAYLOAD" \
+    "${AAP_API}/execution_environments/" 2>&1)
+
+  EE_ID=$(echo "$EE_RESULT" | jq -r '.id // empty' 2>/dev/null)
+
+  if [ -z "$EE_ID" ]; then
+    echo "❌ ERROR: Failed to register execution environment"
+    echo "$EE_RESULT" | jq '.' 2>/dev/null || echo "$EE_RESULT"
+    exit 1
+  fi
+
+  echo "✓ Execution environment registered (ID: $EE_ID)"
+else
+  echo "✓ Execution environment already exists (ID: $EE_ID)"
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "{\"image\": \"${PRODUCT_DEMOS_EE}\", \"pull\": \"missing\"}" \
+    "${AAP_API}/execution_environments/${EE_ID}/" >/dev/null 2>&1
+  echo "✓ Execution environment image verified"
+fi
+
+# ==============================================================================
 # CREATE JOB TEMPLATE
 # ==============================================================================
 
 echo ""
 echo "Creating job template to run install-apd.yml..."
 
-TEMPLATE_PAYLOAD=$(cat <<EOF
-{
-  "name": "APD | Install Base Resources",
-  "description": "Install Ansible Product Demos foundation (organization, project, EE, credentials)",
-  "job_type": "run",
-  "inventory": 1,
-  "project": $PROJECT_ID,
-  "playbook": "install-apd.yml",
-  "ask_variables_on_launch": false,
-  "organization": 1
-}
-EOF
-)
+APD_TEMPLATE_EXTRA_VARS=$(apd_template_extra_vars_yaml)
+
+TEMPLATE_PAYLOAD=$(jq -n \
+  --arg name "APD | Install Base Resources" \
+  --arg desc "Install Ansible Product Demos foundation (organization, project, EE, credentials)" \
+  --arg extra_vars "$APD_TEMPLATE_EXTRA_VARS" \
+  --argjson project_id "$PROJECT_ID" \
+  --argjson ee_id "$EE_ID" \
+  '{
+    name: $name,
+    description: $desc,
+    job_type: "run",
+    inventory: 1,
+    project: $project_id,
+    playbook: "install-apd.yml",
+    ask_variables_on_launch: false,
+    organization: 1,
+    execution_environment: $ee_id,
+    extra_vars: $extra_vars
+  }')
 
 TEMPLATE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
   -X POST \
@@ -355,6 +546,15 @@ if [ -z "$TEMPLATE_ID" ]; then
 
   if [ -n "$TEMPLATE_ID" ]; then
     echo "✓ Job template already exists (ID: $TEMPLATE_ID)"
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X PATCH \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n \
+        --argjson ee_id "$EE_ID" \
+        --arg extra_vars "$APD_TEMPLATE_EXTRA_VARS" \
+        '{execution_environment: $ee_id, extra_vars: $extra_vars}')" \
+      "${AAP_API}/job_templates/${TEMPLATE_ID}/" >/dev/null 2>&1
+    echo "✓ Job template execution environment and extra_vars updated"
   else
     echo "❌ ERROR: Failed to create job template"
     echo "$TEMPLATE_RESULT" | jq '.' 2>/dev/null || echo "$TEMPLATE_RESULT"
@@ -396,7 +596,7 @@ fi
 echo "✓ Job launched (ID: $JOB_ID)"
 echo ""
 echo "Monitoring job progress..."
-echo "View in UI: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
+echo "View in UI: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
 echo ""
 
 # Monitor job status
@@ -420,7 +620,7 @@ for i in {1..60}; do
     echo ""
     echo "Next steps:"
     echo "  - Enable a domain-specific addon: aap-demo enable product-demo-linux"
-    echo "  - Log into AAP UI at: $AAP_HOSTNAME"
+    echo "  - Log into AAP UI at: $AAP_UI_URL"
     echo "  - Navigate to the 'Ansible Product Demos (APD)' organization"
     echo "  - Configure credentials as needed (Galaxy tokens, AWS, etc.)"
     echo ""
@@ -428,12 +628,26 @@ for i in {1..60}; do
   elif [ "$STATUS" = "failed" ]; then
     echo ""
     echo "❌ ERROR: APD installation job failed"
-    echo "View job output: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
+    echo "View job output: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
+    if kubectl get deployment aap-controller-web -n "$NAMESPACE" &>/dev/null; then
+      echo ""
+      echo "Last failed task(s):"
+      kubectl exec -n "$NAMESPACE" deploy/aap-controller-web -- bash -c "awx-manage shell -c \"
+from awx.main.models import Job
+j = Job.objects.get(id=${JOB_ID})
+for ev in j.job_events.filter(event='runner_on_failed').order_by('-id')[:3]:
+    out = (ev.stdout or ev.msg or '').strip()
+    if out:
+        print(ev.task)
+        for line in out.splitlines()[-6:]:
+            print('  ', line)
+\"" 2>/dev/null || true
+    fi
     exit 1
   elif [ "$STATUS" = "error" ]; then
     echo ""
     echo "❌ ERROR: Job encountered an error"
-    echo "View job output: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
+    echo "View job output: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
     exit 1
   fi
 
@@ -443,7 +657,7 @@ done
 
 echo ""
 echo "⚠ Job is still running after 3 minutes"
-echo "View progress: ${AAP_HOSTNAME}/#/jobs/playbook/${JOB_ID}/output"
+echo "View progress: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
 echo ""
 echo "The addon will continue running in the background."
 echo "Check AAP UI to see when it completes."
