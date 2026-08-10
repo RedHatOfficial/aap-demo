@@ -60,6 +60,7 @@ Addons:
   setup-pah       disabled
   ao-eap          disabled
   apme-eap        disabled
+  eda-playground  disabled
   local-cache     disabled
 ```
 
@@ -72,6 +73,7 @@ aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao-eap       # Early Access Program only for Automation Orchestrator
 aap-demo enable apme-eap     # Early Access Program only for APME
+aap-demo enable eda-playground # EDA Playground for testing event-driven integrations
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 aap-demo disable addon_name  # Disables addon
 ```

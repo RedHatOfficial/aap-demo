@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap | local-cache)
+    mcp-server | portal | setup-pah | ao-eap | apme-eap | eda-playground | local-cache)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -396,6 +396,7 @@ Addons:
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao-eap   Install Automation Orchestrator Early Access
+  enable eda-playground Deploy EDA Playground for testing event-driven integrations
   enable local-cache Cache container images locally (~30GB) to speed up deploys
 
 Examples:
@@ -2616,7 +2617,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap local-cache"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap eda-playground local-cache"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
