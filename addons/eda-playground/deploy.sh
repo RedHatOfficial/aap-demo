@@ -541,7 +541,7 @@ update_oauth_redirect() {
     -d "{\"redirect_uris\": \"$redirect_uri\"}" \
     &>/dev/null
 
-  echo "  ✓ OAuth redirect URI updated: $redirect_uri"
+  echo "  ✓ OAuth redirect URI updated"
 }
 
 # ---------------------------------------------------------------------------
@@ -556,13 +556,6 @@ display_success() {
   echo "  URL:       https://${EDA_ROUTE}"
   echo "  Namespace: ${NAMESPACE}"
   echo "  AAP:       https://${AAP_ROUTE}"
-  echo ""
-  echo "OAuth Configuration:"
-  echo "  App ID:        $OAUTH_APP_ID"
-  # Note: client_id is intentionally public per OAuth2 RFC 6749 Section 2.2
-  # Only client_secret must be protected (which we correctly omit from output)
-  echo "  Client ID:     $CLIENT_ID"
-  echo "  Redirect URI:  https://${EDA_ROUTE}/auth/callback"
   echo ""
   echo "Next steps:"
   echo "  1. Open https://${EDA_ROUTE} in your browser"
