@@ -26,7 +26,19 @@ else
   MARKETPLACE_NAMESPACE="olm"
 fi
 KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
-STORAGE_CLASS="${AO_STORAGE_CLASS:-topolvm-provisioner}"
+if [ -z "${AO_STORAGE_CLASS:-}" ]; then
+  if kubectl get sc nfs-local-rwx &>/dev/null 2>&1; then
+    STORAGE_CLASS="nfs-local-rwx"
+  elif kubectl get sc topolvm-provisioner &>/dev/null 2>&1; then
+    STORAGE_CLASS="topolvm-provisioner"
+  else
+    echo "ERROR: No suitable StorageClass found (expected nfs-local-rwx or topolvm-provisioner)"
+    echo "Run 'aap-demo create' to provision storage, or set AO_STORAGE_CLASS."
+    exit 1
+  fi
+else
+  STORAGE_CLASS="$AO_STORAGE_CLASS"
+fi
 PULL_SECRET_FILE="${PULL_SECRET_FILE:-$HOME/.aap-demo/pull-secret.txt}"
 AAPCTL_BIN="/usr/local/bin/aapctl"
 AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-eap-state}"
@@ -121,6 +133,10 @@ if [ -z "$FORCE" ]; then
     exit 0
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# MicroShift: manual flow below (needs gh, jq, index image, pull secret).
+# ---------------------------------------------------------------------------
 
 # --- Prerequisites ---
 if ! command -v gh >/dev/null 2>&1; then

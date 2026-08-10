@@ -607,6 +607,13 @@ get_cluster_info() {
     exit 1
   fi
 
+  # MicroShift uses self-signed certs
+  if [ "${IS_MICROSHIFT:-false}" = true ]; then
+    NEEDS_SSL_BYPASS=true
+  else
+    NEEDS_SSL_BYPASS=false
+  fi
+
   echo "✓ Cluster base URL: $CLUSTER_BASE_URL"
 }
 
@@ -691,7 +698,7 @@ create_helm_values() {
   echo "Creating Helm values file..."
 
   local ssl_values=""
-  if [ "${IS_MICROSHIFT:-false}" = true ]; then
+  if [ "${NEEDS_SSL_BYPASS:-false}" = true ]; then
     if [ "${IS_ARM_CLUSTER}" = true ]; then
       ssl_values="
         ansible:

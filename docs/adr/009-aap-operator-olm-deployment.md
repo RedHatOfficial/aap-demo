@@ -60,8 +60,6 @@ Pull secret copied/created as `redhat-operators-pull-secret`.
 | Command | Behavior |
 |---------|----------|
 | `aap-demo deploy` | Operator + AAP CR (full stack) |
-| `aap-demo deploy-operator` | Subscription only |
-| `aap-demo deploy-aap` | AAP CR only (operator must exist) |
 | `CR=controller` | Select alternate CR manifest |
 
 ### Controller git safe-directory

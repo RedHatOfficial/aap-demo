@@ -32,8 +32,6 @@ Export-ModuleMember -Function @(
 
   'Invoke-AapDemoDeploy'
 
-  'Invoke-AapDemoDeployAap'
-
   'Invoke-AapDemoStatus'
 
   'Invoke-AapDemoDiagnose'
@@ -77,4 +75,3 @@ Export-ModuleMember -Function @(
   'Invoke-AapDemoSetupPah'
 
 )
-

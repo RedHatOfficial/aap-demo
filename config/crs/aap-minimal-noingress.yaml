@@ -1,6 +1,6 @@
 ---
 # AAP CR for external clusters (k3s, containerd, etc.) where ingress is managed separately
-# Use with: aap-demo --infra lab deploy-aap CR=minimal-noingress PUBLIC_URL=https://...
+# Use with: aap-demo deploy CR=minimal-noingress PUBLIC_URL=https://...
 #
 # Required substitutions:
 #   __PUBLIC_BASE_URL__ - External URL where AAP will be accessed (e.g., https://aap.apps.ocp.example.com)

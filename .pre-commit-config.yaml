@@ -12,9 +12,10 @@ repos:
     hooks:
       - id: shfmt
         name: shfmt
-        entry: bash -c 'command -v shfmt >/dev/null 2>&1 || { echo "shfmt not found (brew install shfmt)" >&2; exit 1; }; shfmt -d -i 2 -ci -bn "$@"' --
+        entry: scripts/require-tool.sh shfmt "brew install shfmt"
         language: system
         types: [shell]
+        args: ['-d', '-i', '2', '-ci', '-bn']
         exclude: ^(\.venv-lint/|\.git/)
 
   # Bash/Shell script linting (uses system shellcheck, no docker)
@@ -22,7 +23,7 @@ repos:
     hooks:
       - id: shellcheck
         name: shellcheck
-        entry: bash -c 'command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck not found (brew install shellcheck)" >&2; exit 1; }; shellcheck "$@"' --
+        entry: scripts/require-tool.sh shellcheck "brew install shellcheck"
         language: system
         types: [shell]
         args: ['--severity=warning', '--shell=bash']
@@ -33,7 +34,7 @@ repos:
     hooks:
       - id: yamllint
         name: yamllint
-        entry: bash -c 'command -v yamllint >/dev/null 2>&1 && yamllint "$@" || true' --
+        entry: scripts/require-tool.sh yamllint "pip install yamllint"
         language: system
         types: [yaml]
         args: ['-d', '{extends: default, rules: {line-length: {max: 120}}}']
@@ -44,7 +45,9 @@ repos:
     hooks:
       - id: markdownlint
         name: markdownlint
-        entry: bash -c 'command -v markdownlint >/dev/null 2>&1 && markdownlint "$@" || true' --
+        entry: >-
+          scripts/require-tool.sh markdownlint
+          "npm install -g markdownlint-cli"
         language: system
         types: [markdown]
         args: ['--fix']
@@ -55,7 +58,9 @@ repos:
     hooks:
       - id: ansible-lint
         name: ansible-lint
-        entry: bash -c 'command -v ansible-lint >/dev/null 2>&1 && ansible-lint "$@" || true' --
+        entry: >-
+          scripts/require-tool.sh ansible-lint
+          "pip install ansible-lint"
         language: system
         files: \.(yaml|yml)$
         exclude: ^(config/|\.serena/)
@@ -87,10 +92,12 @@ repos:
     hooks:
       - id: commitizen
         name: commitizen
-        entry: bash -c 'command -v cz >/dev/null 2>&1 && cz check --commit-msg-file "$1" || true' --
+        entry: >-
+          scripts/require-tool.sh cz
+          "pip install commitizen"
+          check --commit-msg-file
         language: system
         stages: [commit-msg]
-        pass_filenames: false
         always_run: true
 
   # Secret detection (uses venv detect-secrets)
@@ -98,7 +105,9 @@ repos:
     hooks:
       - id: detect-secrets
         name: detect-secrets
-        entry: bash -c 'command -v detect-secrets-hook >/dev/null 2>&1 && detect-secrets-hook "$@" || true' --
+        entry: >-
+          scripts/require-tool.sh detect-secrets-hook
+          "pip install detect-secrets"
         language: system
         args: ['--baseline', '.secrets.baseline']
         exclude: ^(\.git/|\.github/|test/)

@@ -1,8 +1,8 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-019: APME Playbook Addon
 
-**Status:** Accepted  
-**Date:** 2026-07-21  
+**Status:** Accepted
+**Date:** 2026-07-21
 **Author:** Chad Ferman
 
 ## Context
@@ -299,28 +299,28 @@ job_extra_vars:
   openshift_project_name: "apme"
   openshift_cluster_domain: "{{ cluster_domain }}"
   openshift_validate_certs: false
-  
+
   # OCI registry
   skip_plugin_push: true
   oci_registry: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
-  
+
   # AAP connection (internal service URL)
   aap_host: "https://aap-aap-operator.apps.127.0.0.1.nip.io"
   aap_username: "admin"
   aap_password: "{{ aap_admin_password }}"
   aap_organization: "Default"
-  
+
   # Portal configuration
   portal_helm_release_name: "redhat-rhaap-portal"
   aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
-  
+
   # Helm chart configuration (portal)
   portal_helm_chart_repo: "openshift-helm-charts"
   portal_helm_chart_repo_url: "https://charts.openshift.io/"
   portal_helm_chart_name: "redhat-rhaap-portal"
   portal_helm_chart_version: "2.2.3"
   portal_helm_install_timeout: 1800
-  
+
   # Helm chart configuration (APME gateway)
   apme_helm_chart_repo: "apme"
   apme_helm_chart_repo_url: "https://ansible.github.io/apme"
