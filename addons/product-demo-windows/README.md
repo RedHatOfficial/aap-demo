@@ -5,6 +5,7 @@ Windows Server automation demonstrations from the Ansible Product Demos collecti
 ## What it Creates
 
 Job templates for Windows automation scenarios:
+
 - **WINDOWS | Patching** - Windows Update management
 - **WINDOWS | Compliance** - Security compliance checking
 - **WINDOWS | Install IIS** - IIS web server deployment

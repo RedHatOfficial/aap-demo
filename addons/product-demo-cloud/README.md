@@ -5,6 +5,7 @@ Cloud infrastructure and provisioning demonstrations from the Ansible Product De
 ## What it Creates
 
 Job templates for cloud automation scenarios:
+
 - **CLOUD | Create VPC** - AWS VPC provisioning
 - **CLOUD | Create VM** - EC2 instance creation
 - **CLOUD | AWS EC2 Management** - Instance lifecycle management

@@ -5,6 +5,7 @@ Linux and RHEL automation demonstrations from the Ansible Product Demos collecti
 ## What it Creates
 
 Job templates for Linux automation scenarios:
+
 - **LINUX | Register with Insights** - Register systems with Red Hat Insights
 - **LINUX | Fact Scan** - Gather system facts
 - **LINUX | Patching** - Automated patch management
@@ -53,15 +54,19 @@ After installation, configure these credentials in AAP UI:
 ## Demo Scenarios
 
 ### Patching Workflow
+
 Demonstrates a complete patch management cycle with pre-checks, patching, and rollback capabilities.
 
 ### Security Compliance
+
 Shows DISA STIG hardening and compliance scanning with Insights.
 
 ### System Roles
+
 Uses Red Hat Enterprise Linux system roles for consistent configuration management.
 
 ### Container Management
+
 Podman-based container deployment and management on RHEL.
 
 ## Resources

@@ -5,6 +5,7 @@ Network automation demonstrations from the Ansible Product Demos collection.
 ## What it Creates
 
 Job templates for network automation scenarios:
+
 - **NETWORK | Backup Running Configs** - Backup device configurations
 - **NETWORK | Compliance Check** - Network compliance validation
 - **NETWORK | Generate Report** - Network documentation and reporting

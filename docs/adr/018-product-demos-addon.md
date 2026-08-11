@@ -8,11 +8,15 @@
 
 ## Context
 
-The [Ansible Product Demos (APD)](https://github.com/ansible/product-demos) repository provides officially supported demo content across multiple technology domains (Linux, Windows, Network, Cloud, OpenShift, Satellite). These demos are valuable for field sellers, technical marketers, and anyone needing to demonstrate AAP capabilities in specific scenarios.
+The [Ansible Product Demos (APD)](https://github.com/ansible/product-demos) repository provides
+officially supported demo content across multiple technology domains (Linux, Windows, Network,
+Cloud, OpenShift, Satellite). These demos are valuable for field sellers, technical marketers,
+and anyone needing to demonstrate AAP capabilities in specific scenarios.
 
 ### Problem Statement
 
 Prior to this integration, users who wanted APD content in their aap-demo environment had to:
+
 1. Manually install `ansible-navigator`
 2. Manually clone the product-demos repository
 3. Manually set up AAP credentials as environment variables
@@ -41,15 +45,19 @@ This manual process created friction and reduced adoption of official demo conte
 
 ## Decision
 
-We integrated ansible/product-demos as **seven separate addons**: one base addon plus six domain-specific addons. After initial implementation and testing, we pivoted to an **AAP job template approach** instead of local ansible-playbook execution.
+We integrated ansible/product-demos as **seven separate addons**: one base addon plus six
+domain-specific addons. After initial implementation and testing, we pivoted to an **AAP job
+template approach** instead of local ansible-playbook execution.
 
 ### Architecture
 
 **Base Addon (`product-demos-base`)**
 
-**Approach**: Creates an AAP project and job template that runs `install-apd.yml` inside AAP's execution environment.
+**Approach**: Creates an AAP project and job template that runs `install-apd.yml` inside AAP's
+execution environment.
 
 **How it works**:
+
 1. Creates custom credential type "APD Installer Credentials" that injects AAP admin credentials as environment variables
 2. Creates AAP project pointing to github.com/ansible/product-demos (auto-syncs on launch)
 3. Registers Product Demos EE (`quay.io/ansible-product-demos/apd-ee-26:latest`)
@@ -62,6 +70,7 @@ We integrated ansible/product-demos as **seven separate addons**: one base addon
 6. Job runs inside Product Demos EE which has all required collections pre-installed
 
 **Benefits over local execution**:
+
 - No local dependencies (no Python venv, no ansible-playbook, no collection downloads)
 - Uses official Product Demos EE which has `ansible.platform` and all collections pre-installed
 - Jobs are visible in AAP UI for monitoring and troubleshooting
@@ -69,7 +78,8 @@ We integrated ansible/product-demos as **seven separate addons**: one base addon
 - No macOS/podman compatibility issues
 - Supports custom repo/branch via `PRODUCT_DEMOS_REPO` and `PRODUCT_DEMOS_BRANCH` env vars
 
-**Domain Addons (6 total)**
+#### Domain Addons (6 total)
+
 - `product-demo-linux` - RHEL and Linux automation
 - `product-demo-windows` - Windows Server automation
 - `product-demo-network` - Network device automation
@@ -78,6 +88,7 @@ We integrated ansible/product-demos as **seven separate addons**: one base addon
 - `product-demo-satellite` - Red Hat Satellite integration
 
 Each domain addon:
+
 1. Auto-enables `product-demos-base` if not already installed
 2. Retrieves AAP admin credentials from cluster secrets
 3. Clones product-demos repo to temporary directory
@@ -87,7 +98,8 @@ Each domain addon:
 
 ### Key Implementation Details
 
-**Custom Credential Type**
+#### Custom Credential Type
+
 ```bash
 # Credential type that injects environment variables AND extra_vars
 {
@@ -111,10 +123,12 @@ Each domain addon:
 ```
 
 The credential injector provides variables in two ways:
+
 - `env`: For `lookup('env')` calls in product-demos playbooks
 - `extra_vars`: For `infra.aap_configuration` collection roles
 
-**AAP API Integration**
+#### AAP API Integration
+
 ```bash
 # Uses /api/controller/v2/ endpoints (AAP 2.7)
 AAP_API="${AAP_HOSTNAME}/api/controller/v2"
@@ -132,6 +146,7 @@ STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
 
 **Dependency Management**
 Domain addons check for base installation:
+
 ```bash
 if ! grep -q "product-demos-base" ~/.aap-demo/config; then
     bash "$SCRIPT_DIR/../product-demos-base/deploy.sh"
@@ -139,6 +154,7 @@ fi
 ```
 
 Base addon prevents removal while domains are enabled:
+
 ```bash
 if [ ${#ENABLED_DOMAINS[@]} -gt 0 ]; then
     echo "Cannot remove base while domains are enabled: ${ENABLED_DOMAINS[@]}"
@@ -148,6 +164,7 @@ fi
 
 **Fork Support**
 Users can point to custom repositories (updates AAP project configuration):
+
 ```bash
 PRODUCT_DEMOS_REPO=https://github.com/myorg/product-demos \
 PRODUCT_DEMOS_BRANCH=custom \
@@ -176,7 +193,8 @@ PRODUCT_DEMOS_BRANCH=custom \
 3. **Deletion Complexity** - Removing APD resources requires manual AAP UI steps (no API-based deletion implemented)
 4. **Multiple Addons** - Seven addons instead of one (more to maintain)
 5. **API Complexity** - More complex than shell scripts; requires AAP API knowledge for troubleshooting
-6. **Network Routing Issue** - Execution environment pods cannot reach external nip.io routes; must use internal service URLs
+6. **Network Routing Issue** - Execution environment pods cannot reach external nip.io routes;
+   must use internal service URLs
 
 ### Neutral
 
@@ -186,17 +204,24 @@ PRODUCT_DEMOS_BRANCH=custom \
 
 ### Known Issues
 
-**Credential Creation Failure**: The `install-apd.yml` playbook fails when creating the "AAP Credential" object. This credential is used by demo job templates to call back into AAP APIs.
+**Credential Creation Failure**: The `install-apd.yml` playbook fails when creating the
+"AAP Credential" object. This credential is used by demo job templates to call back into AAP
+APIs.
 
-**Root Cause**: Network routing - execution environment pods run inside Kubernetes and cannot reach the external `*.apps.127.0.0.1.nip.io` route. Using internal service URL (`http://aap.aap-operator.svc.cluster.local`) allows organization/user creation but credential creation fails with a censored error (`no_log: true` in `infra.aap_configuration` collection).
+**Root Cause**: Network routing - execution environment pods run inside Kubernetes and cannot
+reach the external `*.apps.127.0.0.1.nip.io` route. Using internal service URL
+(`http://aap.aap-operator.svc.cluster.local`) allows organization/user creation but credential
+creation fails with a censored error (`no_log: true` in `infra.aap_configuration` collection).
 
-**Impact**: 
+**Impact**:
+
 - ✅ APD organization created successfully
-- ✅ `apd-admin` user created successfully  
+- ✅ `apd-admin` user created successfully
 - ⏸️ Demo job templates not created (depends on credential)
 - ⏸️ APD project not created in organization (depends on credential)
 
 **Workarounds**:
+
 1. Manually create the "AAP Credential" via AAP UI after running the addon
 2. Fork `ansible/product-demos` and modify credential creation task
 3. Investigate `infra.aap_configuration` version compatibility with AAP 2.7
@@ -208,12 +233,15 @@ Comprehensive testing revealed 5 critical bugs in the initial local ansible-play
 1. **AAP Resource Type** - Scripts checked for `aap-gateway` CRD but AAP 2.7 uses `aap`
 2. **Route Retrieval** - Label-based filtering didn't match AAP 2.7 routes; changed to direct name lookup
 3. **Secret Retrieval** - Label-based secret lookup failed; changed to direct secret name
-4. **ansible Installation** - System-wide pip install blocked by macOS externally-managed-environment; switched to shared venv
+4. **ansible Installation** - System-wide pip install blocked by macOS
+   externally-managed-environment; switched to shared venv
 5. **macOS Compatibility** - ansible-navigator requires podman which has known macOS issues
 
-These bugs led to the architectural pivot to the AAP job template approach, which eliminated all 5 issues by removing local execution entirely.
+These bugs led to the architectural pivot to the AAP job template approach, which eliminated
+all 5 issues by removing local execution entirely.
 
 **Current State** (AAP Job Template Approach):
+
 - ✅ Project creation and sync
 - ✅ Execution environment registration
 - ✅ Custom credential type and credential creation
@@ -231,12 +259,14 @@ See commit `2b86160` for bug fixes and commit `bb8f375` for AAP job template imp
 **Description**: One `product-demos` addon that prompts for which domains to install or accepts an environment variable.
 
 **Why Not Chosen**:
+
 - Issue #71 acceptance criteria specifically requested separate enable calls per domain
 - Less aligned with existing addon pattern (each addon = one enable command)
 - More complex state management (tracking which domains are installed within one addon)
 - Harder to discover available domains (`aap-demo enable` shows all addons clearly)
 
 **What Would Be Different**:
+
 - Fewer files to maintain (2 files instead of 14)
 - More complex deploy.sh logic with domain selection
 - Less granular control for users
@@ -246,12 +276,14 @@ See commit `2b86160` for bug fixes and commit `bb8f375` for AAP job template imp
 **Description**: Clone product-demos to `~/.aap-demo/product-demos/` and reuse it.
 
 **Why Not Chosen**:
+
 - User explicitly requested temporary directory approach
 - Adds ~50MB persistent disk usage per user
 - Requires handling repo updates (git pull) and branch switching
 - More complex state management
 
 **What Would Be Different**:
+
 - Faster re-runs (no clone needed)
 - Could support local modifications more easily
 - More complex update/cleanup logic
@@ -261,6 +293,7 @@ See commit `2b86160` for bug fixes and commit `bb8f375` for AAP job template imp
 **Description**: Run `ansible-playbook install-apd.yml` locally using a shared Python venv and install collections via ansible-galaxy.
 
 **Why Not Chosen**:
+
 - Requires complex local dependency management (Python venv, ansible installation, collection downloads)
 - `ansible.platform` collection not available without Red Hat Automation Hub or fully synced PAH
 - ansible-navigator approach failed on macOS due to podman compatibility issues
@@ -269,12 +302,14 @@ See commit `2b86160` for bug fixes and commit `bb8f375` for AAP job template imp
 - Creates maintenance burden for keeping collection versions in sync
 
 **What Would Be Different**:
+
 - Simpler scripts (no AAP API calls)
 - Faster initial development
 - More fragile (depends on local environment, collection availability, PAH sync status)
 - Not visible in AAP UI
 
 **Why AAP Job Template Approach is Superior**:
+
 - Eliminates all local dependencies
 - Uses official Product Demos EE with guaranteed collection availability
 - Provides visibility and monitoring via AAP UI
@@ -285,12 +320,14 @@ See commit `2b86160` for bug fixes and commit `bb8f375` for AAP job template imp
 **Description**: Fork product-demos and include playbooks/roles directly in aap-demo repo.
 
 **Why Not Chosen**:
+
 - Violates DRY principle (duplicate official content)
 - Creates maintenance burden (tracking upstream changes)
 - Loses easy fork support (users would need to fork aap-demo, not product-demos)
 - No clear licensing for redistributing APD content
 
 **What Would Be Different**:
+
 - No network dependency
 - Faster deployment
 - Customization would be harder
@@ -298,71 +335,84 @@ See commit `2b86160` for bug fixes and commit `bb8f375` for AAP job template imp
 
 ## Testing Strategy
 
-A comprehensive test plan has been developed to validate the implementation across 10 test phases covering 37 distinct test cases.
+A comprehensive test plan has been developed to validate the implementation across 10 test
+phases covering 37 distinct test cases.
 
 ### Test Coverage
 
-**Phase 1: Fresh Environment Setup**
+#### Phase 1: Fresh Environment Setup
+
 - Cluster creation and AAP deployment verification
 - Ensures clean baseline for testing
 
-**Phase 2: Base Addon Tests**
+#### Phase 2: Base Addon Tests
+
 - First-time installation with ansible-navigator auto-install
 - Idempotency verification (re-running succeeds without errors)
 - Custom repository and branch support
 - Deletion protection when domain addons are enabled
 
-**Phase 3: Domain Addon Tests**
+#### Phase 3: Domain Addon Tests
+
 - Installation of all 6 domain addons (linux, windows, network, cloud, openshift, satellite)
 - Automatic base addon dependency installation
 - Verification of domain-specific job templates
 - Idempotency for domain addons
 
-**Phase 4: Multi-Domain Coexistence**
+#### Phase 4: Multi-Domain Coexistence
+
 - All domains enabled simultaneously
 - No conflicts between domain templates
 - Status command integration
 
-**Phase 5: Cleanup and Removal**
+#### Phase 5: Cleanup and Removal
+
 - Single domain removal (preserves base and other domains)
 - All domains removal (base remains)
 - Base removal with dependency checking
 - Prevention of base removal when domains are active
 
-**Phase 6: Error Handling**
+#### Phase 6: Error Handling
+
 - No cluster running
 - AAP not deployed
 - Invalid repository URL
 - Network failures during clone
 
-**Phase 7: Advanced Scenarios**
+#### Phase 7: Advanced Scenarios
+
 - Custom fork with custom branch
 - Pre-installed ansible-navigator detection
 - Multiple enable/disable cycles
 - Parallel domain installation
 
-**Phase 8: End-to-End Demo Execution**
+#### Phase 8: End-to-End Demo Execution
+
 - Running actual demo job templates in AAP
 - Execution environment verification
 - Project synchronization
 - Validates demos work end-to-end, not just install
 
-**Phase 9: Documentation Verification**
+#### Phase 9: Documentation Verification
+
 - README accuracy
 - Addon-specific README completeness
 - ADR documentation
 - Ensures documentation matches implementation
 
-**Phase 10: Regression Testing**
+#### Phase 10: Regression Testing
+
 - Existing addons still function
 - Core aap-demo commands unaffected
 - Clean teardown with new addons enabled
 
 ### Test Artifacts
 
-**Test Plan Document**: Detailed test procedures with exact commands, expected outcomes, and validation steps for all 37 test cases.
+**Test Plan Document**: Detailed test procedures with exact commands, expected outcomes, and
+validation steps for all 37 test cases.
 
 **Success Criteria**:
+
 - All addon deploy scripts are executable
 - Addons registered in `AVAILABLE_ADDONS`
 - Documentation complete and accurate
