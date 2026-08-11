@@ -5,6 +5,7 @@ OpenShift and Kubernetes automation demonstrations from the Ansible Product Demo
 ## What it Creates
 
 Job templates for OpenShift automation scenarios:
+
 - **OPENSHIFT | Deploy Application** - Application deployment
 - **OPENSHIFT | CNV Management** - KubeVirt virtualization management
 - **OPENSHIFT | GitLab Setup** - GitLab instance deployment
@@ -29,14 +30,23 @@ aap-demo disable product-demo-openshift
 
 ## Configuration
 
-After installation, configure in AAP UI:
+On aap-demo MicroShift clusters, the **OpenShift Credential** is configured
+automatically after installation:
 
-1. **OpenShift Credential**:
-   - Navigate to Credentials in APD organization
-   - Update "OpenShift Credential" with your cluster API URL and bearer token
+- **API host**: `https://kubernetes.default.svc:443` (in-cluster endpoint for job pods)
+- **Bearer token**: from your active `oc` session or kubeconfig
+- **verify_ssl**: `false`
 
-2. **Run OpenShift Demos**:
-   - Job templates will deploy resources to your OpenShift cluster
+Override discovery with environment variables when needed:
+
+```bash
+OPENSHIFT_API_HOST=https://api.example.com:6443 \
+OPENSHIFT_BEARER_TOKEN=sha256~... \
+  aap-demo enable product-demo-openshift
+```
+
+To manage a different cluster, update **OpenShift Credential** in the APD
+organization via the AAP UI after installation.
 
 ## Resources
 

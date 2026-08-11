@@ -36,9 +36,9 @@ PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
 # ==============================================================================
 
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
-  echo "Removing Linux demo resources from AAP..."
+  echo "Removing OpenShift demo resources from AAP..."
   echo ""
-  echo "To remove Linux demo job templates, log into AAP UI and:"
+  echo "To remove OpenShift demo job templates, log into AAP UI and:"
   echo "  1. Navigate to the 'Ansible Product Demos (APD)' organization"
   echo "  2. Go to Templates"
   echo "  3. Delete templates starting with 'OPENSHIFT |'"
@@ -125,7 +125,8 @@ if apd_install_domain_demo "$DEMO_CATEGORY"; then
   echo "Next steps:"
   echo "  - Log into AAP UI at: ${AAP_UI_URL}"
   echo "  - Navigate to 'Ansible Product Demos (APD)' organization"
-  echo "  - Configure the 'OpenShift Credential' with your cluster API token"
+  echo "  - OpenShift Credential is auto-configured for local MicroShift"
+  echo "    (in-cluster API: https://kubernetes.default.svc:443)"
   echo "  - Run OpenShift demo templates"
   echo ""
 else

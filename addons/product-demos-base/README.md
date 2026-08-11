@@ -70,7 +70,8 @@ After installation, you'll need to configure some credentials in the AAP UI:
 
 3. **Cloud Credentials** (optional, for cloud demos):
    - Update "AWS" credential with your AWS access keys
-   - Update "OpenShift Credential" for OpenShift/Kubernetes demos
+   - **OpenShift Credential** is auto-configured for local MicroShift when you
+     enable `product-demo-openshift` (uses in-cluster API + your `oc` token)
 
 ### Custom Repository
 

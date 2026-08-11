@@ -197,6 +197,99 @@ apd_ensure_domain_job_template() {
   printf '%s\n' "$template_id"
 }
 
+apd_apd_org_id() {
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/organizations/?name=$(jq -rn --arg n 'Ansible Product Demos (APD)' '$n|@uri')" 2>&1 \
+    | jq -r '.results[0].id // empty'
+}
+
+apd_discover_openshift_connection() {
+  # Job pods run inside the same cluster; use the in-cluster API endpoint by default.
+  OPENSHIFT_API_HOST="${OPENSHIFT_API_HOST:-https://kubernetes.default.svc:443}"
+
+  OPENSHIFT_BEARER_TOKEN="${OPENSHIFT_BEARER_TOKEN:-}"
+  if [ -z "$OPENSHIFT_BEARER_TOKEN" ]; then
+    OPENSHIFT_BEARER_TOKEN=$(kubectl config view --minify --raw -o jsonpath='{.users[0].user.token}' 2>/dev/null || true)
+  fi
+  if [ -z "$OPENSHIFT_BEARER_TOKEN" ]; then
+    OPENSHIFT_BEARER_TOKEN=$(oc whoami -t 2>/dev/null || true)
+  fi
+  if [ -z "$OPENSHIFT_BEARER_TOKEN" ]; then
+    OPENSHIFT_BEARER_TOKEN=$(apd_create_openshift_demo_token 2>/dev/null || true)
+  fi
+  if [ -z "$OPENSHIFT_BEARER_TOKEN" ]; then
+    echo "❌ ERROR: Cannot obtain OpenShift bearer token" >&2
+    echo "  Set OPENSHIFT_BEARER_TOKEN or run: oc login" >&2
+    return 1
+  fi
+
+  export OPENSHIFT_API_HOST OPENSHIFT_BEARER_TOKEN
+}
+
+apd_create_openshift_demo_token() {
+  local ns="${NAMESPACE:-aap-operator}"
+  local sa="apd-openshift-demo"
+  local binding="apd-openshift-demo-admin"
+
+  kubectl get serviceaccount "$sa" -n "$ns" &>/dev/null \
+    || kubectl create serviceaccount "$sa" -n "$ns" &>/dev/null
+
+  kubectl get clusterrolebinding "$binding" &>/dev/null \
+    || kubectl create clusterrolebinding "$binding" \
+      --clusterrole=cluster-admin \
+      --serviceaccount="${ns}:${sa}" &>/dev/null
+
+  kubectl create token "$sa" -n "$ns" --duration=8760h
+}
+
+apd_configure_openshift_credential() {
+  local apd_org_id cred_id patch_result
+
+  if [ -z "${AAP_API:-}" ] || [ -z "${AAP_USERNAME:-}" ] || [ -z "${AAP_PASSWORD:-}" ]; then
+    apd_init_aap_connection || return 1
+  fi
+
+  echo "Configuring OpenShift Credential for local MicroShift cluster..."
+
+  apd_discover_openshift_connection || return 1
+
+  apd_org_id=$(apd_apd_org_id)
+  if [ -z "$apd_org_id" ]; then
+    echo "  ⚠ APD organization not found; skipping OpenShift credential configuration" >&2
+    return 1
+  fi
+
+  cred_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/credentials/?name=$(jq -rn --arg n 'OpenShift Credential' '$n|@uri')" 2>&1 \
+    | jq -r --argjson org "$apd_org_id" \
+      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty')
+
+  if [ -z "$cred_id" ]; then
+    echo "  ⚠ OpenShift Credential not found in APD organization; skipping" >&2
+    return 1
+  fi
+
+  patch_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n \
+      --arg host "$OPENSHIFT_API_HOST" \
+      --arg token "$OPENSHIFT_BEARER_TOKEN" \
+      '{inputs: {host: $host, bearer_token: $token, verify_ssl: false}}')" \
+    "${AAP_API}/credentials/${cred_id}/" 2>&1)
+
+  if echo "$patch_result" | jq -e '.id' >/dev/null 2>&1; then
+    echo "  ✓ OpenShift Credential configured"
+    echo "    API host: ${OPENSHIFT_API_HOST}"
+    echo "    verify_ssl: false"
+    return 0
+  fi
+
+  echo "  ⚠ Failed to update OpenShift Credential" >&2
+  echo "$patch_result" | jq '.' 2>/dev/null || echo "$patch_result" >&2
+  return 1
+}
+
 apd_init_aap_connection() {
   NAMESPACE="${NAMESPACE:-aap-operator}"
   local aap_route
@@ -286,6 +379,16 @@ apd_install_domain_demo() {
   apd_monitor_job "$job_id" "${demo} demo install" 80
   monitor_rc=$?
   apd_cleanup_default_org_apd_projects
+
+  if [ "$monitor_rc" -eq 0 ] && [ "$demo" = "openshift" ]; then
+    echo ""
+    apd_configure_openshift_credential || {
+      echo ""
+      echo "  Configure manually in AAP UI: Credentials → OpenShift Credential"
+      echo "  Use API host ${OPENSHIFT_API_HOST:-https://kubernetes.default.svc:443} and a cluster bearer token"
+    }
+  fi
+
   return "$monitor_rc"
 }
 
