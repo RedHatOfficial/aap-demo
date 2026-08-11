@@ -32,7 +32,15 @@ read -r -a DEMO_DOMAINS <<<"$PRODUCT_DEMOS_DOMAINS"
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing product demos from AAP..."
   echo ""
-  echo "To remove demo job templates, log into AAP UI and delete templates with prefixes:"
+  echo "To remove demo job templates, log into AAP UI and delete templates named:"
+  echo "  APD | Install Linux Demos"
+  echo "  APD | Install Windows Demos"
+  echo "  APD | Install Network Demos"
+  echo "  APD | Install Cloud Demos"
+  echo "  APD | Install OpenShift Demos"
+  echo "  APD | Install Satellite Demos"
+  echo ""
+  echo "Also remove demo content templates with prefixes:"
   echo "  LINUX |, WINDOWS |, NETWORK |, CLOUD |, OPENSHIFT |, SATELLITE |"
   echo ""
   echo "✓ product-demos addon disabled"
@@ -90,79 +98,22 @@ if [ -z "$PROJECT_ID" ] || [ -z "$EE_ID" ] || [ -z "$CRED_ID" ]; then
   exit 1
 fi
 
-DOMAIN_TEMPLATE_NAME="APD | Install Domain Demo"
-DOMAIN_TEMPLATE_EXTRA_VARS=$(apd_common_extra_vars_yaml)
-
-TEMPLATE_PAYLOAD=$(jq -n \
-  --arg name "$DOMAIN_TEMPLATE_NAME" \
-  --arg desc "Install one Ansible Product Demos domain via setup_demo.yml" \
-  --arg extra_vars "$DOMAIN_TEMPLATE_EXTRA_VARS" \
-  --argjson project_id "$PROJECT_ID" \
-  --argjson ee_id "$EE_ID" \
-  '{
-    name: $name,
-    description: $desc,
-    job_type: "run",
-    inventory: 1,
-    project: $project_id,
-    playbook: "setup_demo.yml",
-    ask_variables_on_launch: true,
-    organization: 1,
-    execution_environment: $ee_id,
-    extra_vars: $extra_vars
-  }')
-
-echo "Creating domain install job template..."
-TEMPLATE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d "$TEMPLATE_PAYLOAD" \
-  "${AAP_API}/job_templates/" 2>&1)
-
-DOMAIN_TEMPLATE_ID=$(echo "$TEMPLATE_RESULT" | jq -r '.id // empty' 2>/dev/null)
-
-if [ -z "$DOMAIN_TEMPLATE_ID" ]; then
-  EXISTING_TEMPLATE=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/job_templates/?name=APD+%7C+Install+Domain+Demo" 2>&1)
-  DOMAIN_TEMPLATE_ID=$(echo "$EXISTING_TEMPLATE" | jq -r '.results[0].id // empty' 2>/dev/null)
-
-  if [ -z "$DOMAIN_TEMPLATE_ID" ]; then
-    echo "❌ ERROR: Failed to create domain install job template"
-    echo "$TEMPLATE_RESULT" | jq '.' 2>/dev/null || echo "$TEMPLATE_RESULT"
-    exit 1
-  fi
-
-  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    -X PATCH \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n \
-      --argjson ee_id "$EE_ID" \
-      --argjson project_id "$PROJECT_ID" \
-      --arg extra_vars "$DOMAIN_TEMPLATE_EXTRA_VARS" \
-      '{execution_environment: $ee_id, project: $project_id, extra_vars: $extra_vars, ask_variables_on_launch: true}')" \
-    "${AAP_API}/job_templates/${DOMAIN_TEMPLATE_ID}/" >/dev/null 2>&1
-  echo "✓ Domain install job template already exists (ID: $DOMAIN_TEMPLATE_ID)"
-else
-  echo "✓ Domain install job template created (ID: $DOMAIN_TEMPLATE_ID)"
-fi
-
-curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d "{\"id\": $CRED_ID}" \
-  "${AAP_API}/job_templates/${DOMAIN_TEMPLATE_ID}/credentials/" >/dev/null 2>&1 || true
-
+echo "Creating per-domain install job templates..."
 FAILED_DOMAINS=()
 for demo in "${DEMO_DOMAINS[@]}"; do
   echo ""
-  echo "Installing ${demo} demos..."
-  LAUNCH_PAYLOAD=$(apd_launch_extra_vars_json "$demo")
+  template_name=$(apd_domain_template_name "$demo")
+  echo "Installing ${demo} demos (${template_name})..."
+
+  TEMPLATE_ID=$(apd_ensure_domain_job_template "$demo" "$PROJECT_ID" "$EE_ID" "$CRED_ID") || {
+    FAILED_DOMAINS+=("$demo")
+    continue
+  }
 
   LAUNCH_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     -X POST \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --argjson extra_vars "$LAUNCH_PAYLOAD" '{extra_vars: $extra_vars}')" \
-    "${AAP_API}/job_templates/${DOMAIN_TEMPLATE_ID}/launch/" 2>&1)
+    "${AAP_API}/job_templates/${TEMPLATE_ID}/launch/" 2>&1)
 
   JOB_ID=$(echo "$LAUNCH_RESULT" | jq -r '.id // empty' 2>/dev/null)
   if [ -z "$JOB_ID" ]; then
@@ -182,11 +133,21 @@ done
 echo ""
 if [ ${#FAILED_DOMAINS[@]} -gt 0 ]; then
   echo "❌ ERROR: Some domains failed to install: ${FAILED_DOMAINS[*]}"
+  echo ""
+  echo "Re-run a failed domain from Templates in the Default organization:"
+  for demo in "${FAILED_DOMAINS[@]}"; do
+    echo "  $(apd_domain_template_name "$demo")"
+  done
   exit 1
 fi
 
 echo "✓ All Ansible Product Demos domains installed!"
 echo ""
 echo "Domains installed: ${DEMO_DOMAINS[*]}"
+echo "Per-domain install templates (Default org):"
+for demo in "${DEMO_DOMAINS[@]}"; do
+  echo "  $(apd_domain_template_name "$demo")"
+done
+echo ""
 echo "Log into AAP UI at: ${AAP_UI_URL}"
 echo "Navigate to the 'Ansible Product Demos (APD)' organization to run demo job templates."

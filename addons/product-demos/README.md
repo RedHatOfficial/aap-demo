@@ -8,14 +8,16 @@ Installs **all** [Ansible Product Demos](https://github.com/ansible/product-demo
 aap-demo enable product-demos
 ```
 
-This runs `product-demos-base` and then installs every domain via AAP job templates:
+This runs `product-demos-base` and then installs every domain via dedicated AAP job templates:
 
-- linux
-- windows
-- network
-- cloud
-- openshift
-- satellite
+- `APD | Install Linux Demos`
+- `APD | Install Windows Demos`
+- `APD | Install Network Demos`
+- `APD | Install Cloud Demos`
+- `APD | Install OpenShift Demos`
+- `APD | Install Satellite Demos`
+
+Each template runs `setup_demo.yml` for one domain so you can see per-domain job history and failures in the UI.
 
 ## Customization
 

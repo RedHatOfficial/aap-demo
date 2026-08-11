@@ -114,20 +114,10 @@ Then run demo templates such as **SATELLITE | Publish Content View Version** or
 
 ### Re-run only the Satellite domain install
 
-If you used `aap-demo enable product-demos` and the Satellite domain job failed at setup, you can
-relaunch it after fixing credentials:
+If Satellite failed during bulk install, re-launch **APD | Install Satellite Demos** from
+**Templates** in the **Default** organization (after updating credentials).
 
-```bash
-# Launch from UI: APD | Install Domain Demo with extra var demo=satellite
-# Or via API after enabling "Prompt on launch" for Variables on that template:
-curl -sk -u "admin:${AAP_PASSWORD}" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"extra_vars": {"demo": "satellite"}}' \
-  "${AAP_API}/job_templates/<domain-template-id>/launch/"
-```
-
-Prefer launching **SETUP | Satellite** directly if templates already exist.
+Prefer launching **SETUP | Satellite** directly if demo templates already exist.
 
 ## Troubleshooting
 
