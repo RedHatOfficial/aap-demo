@@ -1,0 +1,40 @@
+---
+# aap-demo overlay playbook: skips AAP version ping and uses pinned _aap_version.
+# Equivalent to patches/install-apd.yml with _aap_version supplied via extra_vars.
+- name: Install Ansible Product Demos (aap-demo)
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aap_hostname: '{{ lookup("env", "AAP_HOSTNAME") | default(omit, true) }}'
+    aap_username: '{{ lookup("env", "AAP_USERNAME") | default(omit, true) }}'
+    aap_password: '{{ lookup("env", "AAP_PASSWORD") | default(omit, true) }}'
+    aap_token: '{{ lookup("env", "AAP_TOKEN") | default("", true) }}'
+    aap_validate_certs: '{{ lookup("env", "AAP_VALIDATE_CERTS") | default(false, true) }}'
+
+  tasks:
+    - name: Make sure AAP credential environment variables are set
+      ansible.builtin.assert:
+        that:
+          - aap_hostname is defined
+          - aap_token != "" or (aap_username is defined and aap_password is defined)
+        fail_msg: |
+          Please ensure the following environment variables are set:
+            export AAP_HOSTNAME=https://your-aap-server.example.com
+            export AAP_TOKEN=<admin-token>
+            export AAP_USERNAME=admin
+            export AAP_PASSWORD=<admin-user-password>
+
+    - name: Set AAP version fact (pinned for aap-demo AAP 2.7)
+      ansible.builtin.set_fact:
+        _aap_version: "{{ _aap_version | default('2.7') }}"
+
+    - name: Include APD bootstrap variables
+      ansible.builtin.include_vars:
+        file: common/bootstrap-vars.yml
+
+    - name: Run dispatcher to create APD resources
+      ansible.builtin.include_role:
+        name: infra.aap_configuration.dispatch
+      vars:
+        aap_configuration_collect_logs: true

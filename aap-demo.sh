@@ -125,7 +125,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai and destroy --reset
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap | local-cache)
+    mcp-server | portal | setup-pah | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -2616,7 +2616,9 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap local-cache"
+# product-demos installs all APD domains (runs product-demos-base automatically).
+# product-demos-base and individual domain addons are hidden from status; enable directly if needed.
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap local-cache product-demos product-demo-satellite"
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"

@@ -61,11 +61,28 @@ echo "Deploying AAP MCP Server..."
 
 # Apply the CR with namespace and hostname substitution
 MCP_ROUTE="aap-mcp-${NAMESPACE}.apps.127.0.0.1.nip.io"
-AAP_ROUTE="aap-${NAMESPACE}"
+AAP_ROUTE="aap-${NAMESPACE}.apps.127.0.0.1.nip.io"
+
+# MCP server validates bearer tokens by calling back to AAP. On MicroShift, pods
+# cannot reach external nip.io routes (they resolve to 127.0.0.1). Use the
+# in-cluster AAP service URL instead.
+if ! kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s &>/dev/null; then
+  IS_MICROSHIFT=true
+  AAP_PUBLIC_BASE_URL="http://aap.${NAMESPACE}.svc.cluster.local"
+else
+  IS_MICROSHIFT=false
+  AAP_PUBLIC_BASE_URL="https://${AAP_ROUTE}"
+fi
+
 sed -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
   -e "s|aap-mcp-aap-operator\.apps|aap-mcp-${NAMESPACE}.apps|g" \
-  -e "s|aap-aap-operator|${AAP_ROUTE}|g" \
+  -e "s|aap-aap-operator\.apps|aap-${NAMESPACE}.apps|g" \
+  -e "s|public_base_url: .*|public_base_url: '${AAP_PUBLIC_BASE_URL}'|" \
   "${SCRIPT_DIR}/mcp-server.yaml" | kubectl apply -f -
+
+if [ "$IS_MICROSHIFT" = true ]; then
+  echo "  Using in-cluster AAP URL for token validation: ${AAP_PUBLIC_BASE_URL}"
+fi
 
 echo "  Waiting for MCP server deployment..."
 # Wait up to 3 minutes for the deployment to appear (operator may take a moment)
@@ -150,7 +167,7 @@ else
   # Attempt to generate OAuth token
   echo "  Requesting OAuth token from AAP API..."
   CURL_RESPONSE=$(curl -sk -u "admin:${ADMIN_PASS}" \
-    "https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io/api/gateway/v1/tokens/" \
+    "https://${AAP_ROUTE}/api/gateway/v1/tokens/" \
     -X POST -H "Content-Type: application/json" \
     -d '{"description":"claude-mcp","scope":"write"}' 2>&1)
 
@@ -267,7 +284,7 @@ echo ""
 echo "✓ AAP MCP Server deployed!"
 echo ""
 echo "  MCP Endpoint: https://${MCP_ROUTE}/mcp"
-echo "  AAP Instance: https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io"
+echo "  AAP Instance: https://${AAP_ROUTE}"
 echo ""
 
 # Only show manual configuration if auto-config didn't work
@@ -285,7 +302,7 @@ if [ "$CLAUDE_CONFIGURED" = "false" ]; then
   else
     echo "  Could not auto-generate token. Get one manually:"
     echo "    curl -sk -u admin:<password> \\"
-    echo "      https://aap-${NAMESPACE}.apps.127.0.0.1.nip.io/api/gateway/v1/tokens/ \\"
+    echo "      https://${AAP_ROUTE}/api/gateway/v1/tokens/ \\"
     echo "      -X POST -H 'Content-Type: application/json' \\"
     echo "      -d '{\"description\":\"claude-mcp\",\"scope\":\"write\"}'"
     echo ""
