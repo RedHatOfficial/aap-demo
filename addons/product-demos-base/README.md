@@ -163,6 +163,14 @@ The APD execution environment (`quay.io/ansible-product-demos/apd-ee-26:latest`)
 - Verify AAP is fully deployed and accessible
 - Check AAP admin credentials are correct
 
+### Satellite domain fails after bulk install
+
+The Satellite domain creates demo templates but **SETUP | Satellite** calls your Satellite API
+using placeholder credentials until you update them. That failure is expected without a real
+Satellite server.
+
+Update credentials and re-run setup — see [`../product-demo-satellite/README.md`](../product-demo-satellite/README.md).
+
 ## Related Addons
 
 Domain-specific addons that depend on this base:

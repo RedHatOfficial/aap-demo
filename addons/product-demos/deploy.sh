@@ -106,7 +106,7 @@ TEMPLATE_PAYLOAD=$(jq -n \
     inventory: 1,
     project: $project_id,
     playbook: "setup_demo.yml",
-    ask_variables_on_launch: false,
+    ask_variables_on_launch: true,
     organization: 1,
     execution_environment: $ee_id,
     extra_vars: $extra_vars
@@ -139,7 +139,7 @@ if [ -z "$DOMAIN_TEMPLATE_ID" ]; then
       --argjson ee_id "$EE_ID" \
       --argjson project_id "$PROJECT_ID" \
       --arg extra_vars "$DOMAIN_TEMPLATE_EXTRA_VARS" \
-      '{execution_environment: $ee_id, project: $project_id, extra_vars: $extra_vars}')" \
+      '{execution_environment: $ee_id, project: $project_id, extra_vars: $extra_vars, ask_variables_on_launch: true}')" \
     "${AAP_API}/job_templates/${DOMAIN_TEMPLATE_ID}/" >/dev/null 2>&1
   echo "✓ Domain install job template already exists (ID: $DOMAIN_TEMPLATE_ID)"
 else
