@@ -54,3 +54,5 @@
     - name: Run dispatcher to create APD resources
       ansible.builtin.include_role:
         name: infra.aap_configuration.dispatch
+      vars:
+        aap_configuration_collect_logs: true
