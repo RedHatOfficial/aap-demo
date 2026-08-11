@@ -18,6 +18,12 @@ apd_common_extra_vars_yaml() {
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
+apd_default_bootstrap_project_id() {
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/projects/?name=$(jq -rn --arg n "${APD_BOOTSTRAP_PROJECT_NAME:-APD Bootstrap Project}" '$n|@uri')" 2>&1 \
+    | jq -r '.results[0].id // empty'
+}
+
 apd_domain_template_name() {
   local demo="$1"
   case "$demo" in
@@ -92,8 +98,8 @@ apd_ensure_domain_job_template() {
       "${AAP_API}/job_templates/?name=${encoded_name}" 2>&1 | jq -r '.results[0].id // empty' 2>/dev/null)
 
     if [ -z "$template_id" ]; then
-      echo "❌ ERROR: Failed to create job template for ${demo}"
-      echo "$template_result" | jq '.' 2>/dev/null || echo "$template_result"
+      echo "❌ ERROR: Failed to create job template for ${demo}" >&2
+      echo "$template_result" | jq '.' 2>/dev/null || echo "$template_result" >&2
       return 1
     fi
 
@@ -106,9 +112,9 @@ apd_ensure_domain_job_template() {
         --arg extra_vars "$extra_vars" \
         '{execution_environment: $ee_id, project: $project_id, extra_vars: $extra_vars, ask_variables_on_launch: false}')" \
       "${AAP_API}/job_templates/${template_id}/" >/dev/null 2>&1
-    echo "✓ Job template already exists: ${template_name} (ID: ${template_id})"
+    echo "✓ Job template already exists: ${template_name} (ID: ${template_id})" >&2
   else
-    echo "✓ Job template created: ${template_name} (ID: ${template_id})"
+    echo "✓ Job template created: ${template_name} (ID: ${template_id})" >&2
   fi
 
   curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
@@ -202,11 +208,12 @@ apd_overlay_install_playbook() {
   echo "Patching synced project install-apd.yml (skip version ping when _aap_version is set)..."
 
   local project_dir task_pod
-  project_dir=$(kubectl exec -n "$NAMESPACE" deploy/aap-controller-web -- awx-manage shell -c "
+  # Project paths exist on the task pod (not web); get_project_path() replaces removed project_base_dir.
+  project_dir=$(kubectl exec -n "$NAMESPACE" deploy/aap-controller-task -- awx-manage shell -c "
 from awx.main.models import Project
 p = Project.objects.get(pk=${project_id})
-print(p.project_base_dir)
-" 2>/dev/null | tail -1 | tr -d '\r')
+print(p.get_project_path() or '')
+" 2>/dev/null | grep '^/' | tail -1 | tr -d '\r')
 
   if [ -z "$project_dir" ]; then
     echo "  ⚠ Could not resolve project directory; skipping playbook overlay"
@@ -222,8 +229,8 @@ print(p.project_base_dir)
     return 1
   fi
 
-  if ! kubectl cp "$patched_install_src" \
-    "${NAMESPACE}/${task_pod}:${project_dir}/install-apd.yml" >/dev/null 2>&1; then
+  if ! kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
+    tee "${project_dir}/install-apd.yml" <"$patched_install_src" >/dev/null 2>&1; then
     echo "  ⚠ Failed to copy patched install-apd.yml into project directory"
     return 1
   fi

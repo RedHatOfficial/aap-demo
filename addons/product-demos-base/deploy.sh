@@ -28,6 +28,7 @@ ACTION="${1:-deploy}"
 PRODUCT_DEMOS_REPO="${PRODUCT_DEMOS_REPO:-https://github.com/ansible/product-demos}"
 PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
 PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-26:latest}"
+APD_BOOTSTRAP_PROJECT_NAME="${APD_BOOTSTRAP_PROJECT_NAME:-APD Bootstrap Project}"
 PRODUCT_DEMOS_EE_NAME="${PRODUCT_DEMOS_EE_NAME:-Product Demos EE}"
 APD_INSTALL_PLAYBOOK="${APD_INSTALL_PLAYBOOK:-install-apd.yml}"
 
@@ -378,8 +379,8 @@ echo "Creating AAP project for product-demos..."
 PROJECT_PAYLOAD=$(
   cat <<EOF
 {
-  "name": "Ansible Product Demos",
-  "description": "Official Ansible Product Demos from github.com/ansible/product-demos",
+  "name": "${APD_BOOTSTRAP_PROJECT_NAME}",
+  "description": "Bootstrap SCM project for APD install-apd.yml (Default org)",
   "scm_type": "git",
   "scm_url": "$PRODUCT_DEMOS_REPO",
   "scm_branch": "$PRODUCT_DEMOS_BRANCH",
@@ -400,9 +401,16 @@ PROJECT_ID=$(echo "$PROJECT_RESULT" | jq -r '.id // empty' 2>/dev/null)
 if [ -z "$PROJECT_ID" ]; then
   # Check if project already exists
   EXISTING_PROJECT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1)
+    "${AAP_API}/projects/?name=$(jq -rn --arg n "$APD_BOOTSTRAP_PROJECT_NAME" '$n|@uri')" 2>&1)
 
   PROJECT_ID=$(echo "$EXISTING_PROJECT" | jq -r '.results[0].id // empty' 2>/dev/null)
+
+  if [ -z "$PROJECT_ID" ]; then
+    LEGACY_PROJECT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1)
+    PROJECT_ID=$(echo "$LEGACY_PROJECT" | jq -r \
+      '[.results[] | select(.summary_fields.organization.id == 1)] | .[0].id // empty' 2>/dev/null)
+  fi
 
   if [ -n "$PROJECT_ID" ]; then
     echo "✓ Project already exists (ID: $PROJECT_ID)"
@@ -410,9 +418,10 @@ if [ -z "$PROJECT_ID" ]; then
       -X PATCH \
       -H "Content-Type: application/json" \
       -d "$(jq -n \
+        --arg name "$APD_BOOTSTRAP_PROJECT_NAME" \
         --arg repo "$PRODUCT_DEMOS_REPO" \
         --arg branch "$PRODUCT_DEMOS_BRANCH" \
-        '{scm_url: $repo, scm_branch: $branch, scm_update_on_launch: false}')" \
+        '{name: $name, scm_url: $repo, scm_branch: $branch, scm_update_on_launch: false}')" \
       "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1
   else
     echo "❌ ERROR: Failed to create project"
@@ -610,10 +619,17 @@ echo "Monitoring job progress..."
 echo "View in UI: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
 
 if apd_monitor_job "$JOB_ID" "APD base install" 60; then
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg name "$APD_BOOTSTRAP_PROJECT_NAME" '{name: $name}')" \
+    "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1 || true
+
   echo ""
   echo "Resources created:"
   echo "  - Organization: Ansible Product Demos (APD)"
-  echo "  - Project: Ansible Product Demos"
+  echo "  - Project: Ansible Product Demos (APD org)"
+  echo "  - Bootstrap project: ${APD_BOOTSTRAP_PROJECT_NAME} (Default org)"
   echo "  - Execution Environment: Product Demos EE"
   echo "  - Inventory: Ansible Product Demos Inventory"
   echo "  - Job Templates: APD | Single demo setup, APD | Multi-demo setup"

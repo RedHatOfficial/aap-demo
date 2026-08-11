@@ -85,8 +85,12 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-PROJECT_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-  "${AAP_API}/projects/?name=$(jq -rn --arg n "Ansible Product Demos" '$n|@uri')" 2>&1 | jq -r '.results[0].id // empty')
+PROJECT_ID=$(apd_default_bootstrap_project_id)
+if [ -z "$PROJECT_ID" ]; then
+  PROJECT_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1 \
+    | jq -r '[.results[] | select(.summary_fields.organization.id == 1)] | .[0].id // empty')
+fi
 EE_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
   "${AAP_API}/execution_environments/?name=$(jq -rn --arg n "$PRODUCT_DEMOS_EE_NAME" '$n|@uri')" 2>&1 | jq -r '.results[0].id // empty')
 CRED_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
