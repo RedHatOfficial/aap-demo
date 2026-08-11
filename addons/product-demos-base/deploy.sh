@@ -17,6 +17,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 ACTION="${1:-deploy}"
 
@@ -34,7 +36,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Checking if base APD resources can be removed..."
 
   # Check if any domain addons are still enabled
-  DOMAIN_ADDONS=("product-demo-linux" "product-demo-windows" "product-demo-network" "product-demo-cloud" "product-demo-openshift" "product-demo-satellite")
+  DOMAIN_ADDONS=("product-demos" "product-demo-linux" "product-demo-windows" "product-demo-network" "product-demo-cloud" "product-demo-openshift" "product-demo-satellite")
   ENABLED_DOMAINS=()
 
   if [ -f ~/.aap-demo/config ]; then
@@ -204,26 +206,8 @@ create_aap_install_token() {
   echo "✓ AAP OAuth token created for installer"
 }
 
-apd_template_extra_vars() {
-  jq -n \
-    --arg hostname "$AAP_JOB_HOSTNAME" \
-    --arg username "$AAP_USERNAME" \
-    --arg password "$AAP_PASSWORD" \
-    --arg token "${AAP_INSTALL_TOKEN:-}" \
-    '{
-      aap_hostname: $hostname,
-      aap_username: $username,
-      aap_password: $password,
-      aap_token: $token,
-      aap_validate_certs: false,
-      aap_configuration_async_retries: 0,
-      gateway_configuration_async_retries: 0,
-      controller_configuration_async_retries: 0
-    }'
-}
-
 apd_template_extra_vars_yaml() {
-  apd_template_extra_vars | jq -r 'to_entries | map("\(.key): \(.value)") | join("\n")'
+  apd_common_extra_vars_yaml
 }
 
 # Get AAP admin credentials
@@ -597,67 +581,22 @@ echo "✓ Job launched (ID: $JOB_ID)"
 echo ""
 echo "Monitoring job progress..."
 echo "View in UI: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
-echo ""
 
-# Monitor job status
-for i in {1..60}; do
-  JOB_STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/jobs/${JOB_ID}/" 2>&1)
+if apd_monitor_job "$JOB_ID" "APD base install" 60; then
+  echo ""
+  echo "Resources created:"
+  echo "  - Organization: Ansible Product Demos (APD)"
+  echo "  - Project: Ansible Product Demos"
+  echo "  - Execution Environment: Product Demos EE"
+  echo "  - Inventory: Ansible Product Demos Inventory"
+  echo "  - Job Templates: APD | Single demo setup, APD | Multi-demo setup"
+  echo ""
+  echo "Next steps:"
+  echo "  - Install all domains: aap-demo enable product-demos"
+  echo "  - Or one domain: aap-demo enable product-demo-linux"
+  echo "  - Log into AAP UI at: $AAP_UI_URL"
+  echo ""
+  exit 0
+fi
 
-  STATUS=$(echo "$JOB_STATUS" | jq -r '.status // "unknown"' 2>/dev/null)
-  ELAPSED=$(echo "$JOB_STATUS" | jq -r '.elapsed // 0' 2>/dev/null)
-
-  if [ "$STATUS" = "successful" ]; then
-    echo ""
-    echo "✓ APD base resources installed successfully!"
-    echo ""
-    echo "Resources created:"
-    echo "  - Organization: Ansible Product Demos (APD)"
-    echo "  - Project: Ansible Product Demos"
-    echo "  - Execution Environment: Product Demos EE"
-    echo "  - Inventory: Ansible Product Demos Inventory"
-    echo "  - Job Templates: APD | Single demo setup, APD | Multi-demo setup"
-    echo ""
-    echo "Next steps:"
-    echo "  - Enable a domain-specific addon: aap-demo enable product-demo-linux"
-    echo "  - Log into AAP UI at: $AAP_UI_URL"
-    echo "  - Navigate to the 'Ansible Product Demos (APD)' organization"
-    echo "  - Configure credentials as needed (Galaxy tokens, AWS, etc.)"
-    echo ""
-    exit 0
-  elif [ "$STATUS" = "failed" ]; then
-    echo ""
-    echo "❌ ERROR: APD installation job failed"
-    echo "View job output: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
-    if kubectl get deployment aap-controller-web -n "$NAMESPACE" &>/dev/null; then
-      echo ""
-      echo "Last failed task(s):"
-      kubectl exec -n "$NAMESPACE" deploy/aap-controller-web -- bash -c "awx-manage shell -c \"
-from awx.main.models import Job
-j = Job.objects.get(id=${JOB_ID})
-for ev in j.job_events.filter(event='runner_on_failed').order_by('-id')[:3]:
-    out = (ev.stdout or ev.msg or '').strip()
-    if out:
-        print(ev.task)
-        for line in out.splitlines()[-6:]:
-            print('  ', line)
-\"" 2>/dev/null || true
-    fi
-    exit 1
-  elif [ "$STATUS" = "error" ]; then
-    echo ""
-    echo "❌ ERROR: Job encountered an error"
-    echo "View job output: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
-    exit 1
-  fi
-
-  printf "\r  Status: %-12s | Elapsed: %3ss | Waiting... %2d/60" "$STATUS" "$ELAPSED" "$i"
-  sleep 3
-done
-
-echo ""
-echo "⚠ Job is still running after 3 minutes"
-echo "View progress: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
-echo ""
-echo "The addon will continue running in the background."
-echo "Check AAP UI to see when it completes."
+exit 1

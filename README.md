@@ -75,7 +75,8 @@ aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 
 # Ansible Product Demos - Official demo content from ansible/product-demos
-aap-demo enable product-demo-linux      # Linux/RHEL automation demos
+aap-demo enable product-demos              # All Ansible Product Demos domains at once
+aap-demo enable product-demo-linux      # Linux/RHEL automation demos only
 aap-demo enable product-demo-windows    # Windows Server automation demos
 aap-demo enable product-demo-network    # Network automation demos
 aap-demo enable product-demo-cloud      # Cloud provisioning demos (AWS)

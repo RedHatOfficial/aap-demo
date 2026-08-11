@@ -22,25 +22,33 @@ This addon installs the foundation for Ansible Product Demos (APD) in your AAP e
 
 ### Installation
 
-This addon is automatically installed as a dependency when you enable any domain-specific product-demo addon:
+Install all demo domains at once:
 
 ```bash
-aap-demo enable product-demo-linux  # Installs base + Linux demos
+aap-demo enable product-demos   # base + linux, windows, network, cloud, openshift, satellite
 ```
 
-You can also install the base addon explicitly:
+Or install the foundation only (required automatically by domain addons):
 
 ```bash
 aap-demo enable product-demos-base
 ```
 
+Or install a single domain:
+
+```bash
+aap-demo enable product-demo-linux
+```
+
 ### Requirements
 
 The addon will automatically install `ansible-navigator` if it's not already present. It requires either:
+
 - `pipx` (recommended for isolated installation), or
 - `pip3` (for user-level installation)
 
 Network access is required to:
+
 - Clone the product-demos repository
 - Pull the APD execution environment image from quay.io
 
@@ -95,7 +103,8 @@ This addon uses the official `install-apd.yml` playbook from the ansible/product
 4. Runs the installation playbook using the APD execution environment
 5. Cleans up the temporary directory
 
-Domain-specific addons (linux, windows, network, etc.) build on top of this foundation by running their respective `setup.yml` playbooks.
+Domain-specific addons (linux, windows, network, etc.) build on this foundation by
+running their respective `setup.yml` playbooks.
 
 ## Troubleshooting
 
@@ -123,6 +132,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ### Image pull failures
 
 The APD execution environment (`quay.io/ansible-product-demos/apd-ee-26:latest`) is public, but ensure:
+
 - Podman or Docker is running
 - Network access to quay.io is available
 
@@ -135,6 +145,7 @@ The APD execution environment (`quay.io/ansible-product-demos/apd-ee-26:latest`)
 ## Related Addons
 
 Domain-specific addons that depend on this base:
+
 - `product-demo-linux` - RHEL and Linux automation demos
 - `product-demo-windows` - Windows Server automation demos
 - `product-demo-network` - Network automation demos
