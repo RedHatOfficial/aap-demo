@@ -95,18 +95,39 @@ Note: The addon tracks enabled domains and will prevent removal if any are still
 
 ## Architecture
 
-This addon uses the official `install-apd.yml` playbook from the ansible/product-demos repository. It:
+aap-demo targets **AAP 2.7 only**. The installer does not discover the AAP version at runtime.
 
-1. Auto-installs `ansible-navigator` if needed
-2. Clones the product-demos repository to a temporary directory
-3. Extracts AAP admin credentials from the cluster
-4. Runs the installation playbook using the APD execution environment
-5. Cleans up the temporary directory
+1. Creates an AAP project synced from ansible/product-demos
+2. Overlays `install-apd-aap-demo.yml` (skips the upstream version ping)
+3. Pins `_aap_version: "2.7"` and the Product Demos EE image in job template extra_vars
+4. Runs the install job inside the Product Demos EE via AAP job template
 
-Domain-specific addons (linux, windows, network, etc.) build on this foundation by
-running their respective `setup.yml` playbooks.
+Upstream `install-apd.yml` queries `/api/gateway/v1/ping/` to set `_aap_version` for generic
+installs. aap-demo replaces that with a pinned version because the deployed platform is always
+2.7 and the EE is registered explicitly (`PRODUCT_DEMOS_EE`).
+
+See [`patches/install-apd.yml`](patches/install-apd.yml) for the upstream PR candidate that adds
+`when: _aap_version is not defined` to the ping task.
+
+Domain-specific addons build on this foundation via `setup_demo.yml` job templates.
 
 ## Troubleshooting
+
+### Version ping timeout (`Query AAP version from the API`)
+
+If a job fails pinging `https://…nip.io/api/gateway/v1/ping/` from inside a job pod, the
+playbook overlay did not apply or an old job template is still using unpatched `install-apd.yml`.
+
+Re-run:
+
+```bash
+aap-demo enable product-demos-base
+```
+
+This re-syncs the project, overlays `install-apd-aap-demo.yml`, and pins `_aap_version: "2.7"`.
+
+On MicroShift, dispatch tasks still require in-cluster `AAP_HOSTNAME` (`http://` route +
+instance-group hostAlias). The version ping skip does not remove that requirement.
 
 ### ansible-navigator installation fails
 

@@ -9,6 +9,8 @@
 # Environment variables:
 #   PRODUCT_DEMOS_REPO   - Git repository URL (default: https://github.com/ansible/product-demos)
 #   PRODUCT_DEMOS_BRANCH - Git branch to use (default: main)
+#   PRODUCT_DEMOS_EE     - Product Demos EE image (default: quay.io/.../apd-ee-26:latest)
+#   APD_AAP_VERSION      - Pinned AAP version for installer (default: 2.7, skips version ping)
 #
 # Usage:
 #   ./deploy.sh          # Deploy base APD resources
@@ -27,6 +29,7 @@ PRODUCT_DEMOS_REPO="${PRODUCT_DEMOS_REPO:-https://github.com/ansible/product-dem
 PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
 PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-26:latest}"
 PRODUCT_DEMOS_EE_NAME="${PRODUCT_DEMOS_EE_NAME:-Product Demos EE}"
+APD_INSTALL_PLAYBOOK="${APD_INSTALL_PLAYBOOK:-install-apd-aap-demo.yml}"
 
 # ==============================================================================
 # DELETE HANDLER
@@ -91,7 +94,7 @@ echo "Deploying Ansible Product Demos base resources..."
 echo "Repository: $PRODUCT_DEMOS_REPO"
 echo "Branch: $PRODUCT_DEMOS_BRANCH"
 echo ""
-echo "Strategy: Create AAP project and run install-apd.yml as a job template"
+echo "Strategy: Create AAP project and run ${APD_INSTALL_PLAYBOOK} (AAP 2.7 pinned, no version ping)"
 echo "          (uses AAP's execution environment which has ansible.platform pre-installed)"
 echo ""
 
@@ -207,7 +210,7 @@ create_aap_install_token() {
 }
 
 apd_template_extra_vars_yaml() {
-  apd_common_extra_vars_yaml
+  apd_common_extra_vars_yaml "$PRODUCT_DEMOS_EE"
 }
 
 # Get AAP admin credentials
@@ -380,7 +383,7 @@ PROJECT_PAYLOAD=$(
   "scm_type": "git",
   "scm_url": "$PRODUCT_DEMOS_REPO",
   "scm_branch": "$PRODUCT_DEMOS_BRANCH",
-  "scm_update_on_launch": true,
+  "scm_update_on_launch": false,
   "organization": 1
 }
 EOF
@@ -403,6 +406,14 @@ if [ -z "$PROJECT_ID" ]; then
 
   if [ -n "$PROJECT_ID" ]; then
     echo "✓ Project already exists (ID: $PROJECT_ID)"
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X PATCH \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n \
+        --arg repo "$PRODUCT_DEMOS_REPO" \
+        --arg branch "$PRODUCT_DEMOS_BRANCH" \
+        '{scm_url: $repo, scm_branch: $branch, scm_update_on_launch: false}')" \
+      "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1
   else
     echo "❌ ERROR: Failed to create project"
     echo "$PROJECT_RESULT" | jq '.' 2>/dev/null || echo "$PROJECT_RESULT"
@@ -434,6 +445,16 @@ for i in {1..30}; do
   echo "  Status: $STATUS (waiting... $i/30)"
   sleep 2
 done
+
+apd_overlay_install_playbook "$PROJECT_ID" \
+  "${SCRIPT_DIR}/playbooks/${APD_INSTALL_PLAYBOOK}" \
+  "${SCRIPT_DIR}/patches/install-apd.yml" || true
+
+curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  -X PATCH \
+  -H "Content-Type: application/json" \
+  -d '{"scm_update_on_launch": false}' \
+  "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1
 
 # ==============================================================================
 # REGISTER EXECUTION ENVIRONMENT
@@ -490,7 +511,7 @@ fi
 # ==============================================================================
 
 echo ""
-echo "Creating job template to run install-apd.yml..."
+echo "Creating job template to run ${APD_INSTALL_PLAYBOOK}..."
 
 APD_TEMPLATE_EXTRA_VARS=$(apd_template_extra_vars_yaml)
 
@@ -498,6 +519,7 @@ TEMPLATE_PAYLOAD=$(jq -n \
   --arg name "APD | Install Base Resources" \
   --arg desc "Install Ansible Product Demos foundation (organization, project, EE, credentials)" \
   --arg extra_vars "$APD_TEMPLATE_EXTRA_VARS" \
+  --arg playbook "$APD_INSTALL_PLAYBOOK" \
   --argjson project_id "$PROJECT_ID" \
   --argjson ee_id "$EE_ID" \
   '{
@@ -506,7 +528,7 @@ TEMPLATE_PAYLOAD=$(jq -n \
     job_type: "run",
     inventory: 1,
     project: $project_id,
-    playbook: "install-apd.yml",
+    playbook: $playbook,
     ask_variables_on_launch: false,
     organization: 1,
     execution_environment: $ee_id,
@@ -535,10 +557,11 @@ if [ -z "$TEMPLATE_ID" ]; then
       -H "Content-Type: application/json" \
       -d "$(jq -n \
         --argjson ee_id "$EE_ID" \
+        --arg playbook "$APD_INSTALL_PLAYBOOK" \
         --arg extra_vars "$APD_TEMPLATE_EXTRA_VARS" \
-        '{execution_environment: $ee_id, extra_vars: $extra_vars}')" \
+        '{execution_environment: $ee_id, playbook: $playbook, extra_vars: $extra_vars}')" \
       "${AAP_API}/job_templates/${TEMPLATE_ID}/" >/dev/null 2>&1
-    echo "✓ Job template execution environment and extra_vars updated"
+    echo "✓ Job template execution environment, playbook, and extra_vars updated"
   else
     echo "❌ ERROR: Failed to create job template"
     echo "$TEMPLATE_RESULT" | jq '.' 2>/dev/null || echo "$TEMPLATE_RESULT"

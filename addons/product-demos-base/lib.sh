@@ -1,13 +1,21 @@
 #!/usr/bin/env bash
 # Shared helpers for product-demos addons.
 
+APD_AAP_VERSION="${APD_AAP_VERSION:-2.7}"
+
 apd_common_extra_vars_yaml() {
-  jq -r -n '{
-    aap_validate_certs: false,
-    aap_configuration_async_retries: 0,
-    gateway_configuration_async_retries: 0,
-    controller_configuration_async_retries: 0
-  } | to_entries | map("\(.key): \(.value)") | join("\n")'
+  local ee_image="${1:-quay.io/ansible-product-demos/apd-ee-26:latest}"
+  jq -r -n \
+    --arg version "$APD_AAP_VERSION" \
+    --arg ee_image "$ee_image" \
+    '{
+      _aap_version: $version,
+      apd_ee_image: $ee_image,
+      aap_validate_certs: false,
+      aap_configuration_async_retries: 0,
+      gateway_configuration_async_retries: 0,
+      controller_configuration_async_retries: 0
+    } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
 apd_launch_extra_vars_json() {
@@ -78,4 +86,44 @@ for ev in j.job_events.filter(event='runner_on_failed').order_by('-id')[:3]:
   echo "⚠ ${label} is still running after $((max_wait * 3)) seconds"
   echo "View progress: ${AAP_UI_URL}/#/jobs/playbook/${job_id}/output"
   return 2
+}
+
+apd_overlay_install_playbook() {
+  local project_id="$1"
+  local playbook_src="$2"
+  local playbook_name
+  playbook_name=$(basename "$playbook_src")
+  local patched_install_src="${3:-}"
+
+  echo "Overlaying aap-demo playbook into synced project (${playbook_name})..."
+
+  local project_dir task_pod
+  project_dir=$(kubectl exec -n "$NAMESPACE" deploy/aap-controller-web -- awx-manage shell -c "
+from awx.main.models import Project
+p = Project.objects.get(pk=${project_id})
+print(p.project_base_dir)
+" 2>/dev/null | tail -1 | tr -d '\r')
+
+  if [ -z "$project_dir" ]; then
+    echo "  ⚠ Could not resolve project directory; skipping playbook overlay"
+    return 1
+  fi
+
+  task_pod=$(kubectl get pods -n "$NAMESPACE" \
+    -l app.kubernetes.io/name=aap-controller-task \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+  if [ -z "$task_pod" ]; then
+    echo "  ⚠ Could not find controller task pod; skipping playbook overlay"
+    return 1
+  fi
+
+  kubectl cp "$playbook_src" "${NAMESPACE}/${task_pod}:${project_dir}/${playbook_name}" >/dev/null 2>&1
+
+  if [ -n "$patched_install_src" ] && [ -f "$patched_install_src" ]; then
+    kubectl cp "$patched_install_src" \
+      "${NAMESPACE}/${task_pod}:${project_dir}/install-apd.yml" >/dev/null 2>&1 || true
+  fi
+
+  echo "  ✓ Playbook overlay applied: ${project_dir}/${playbook_name}"
 }
