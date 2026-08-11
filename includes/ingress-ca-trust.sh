@@ -95,6 +95,12 @@ _ingress_ca_nss_db_paths() {
   if [ -d "${HOME}/.local/share/pki/nssdb" ]; then
     echo "sql:${HOME}/.local/share/pki/nssdb"
   fi
+  # Firefox keeps a cert9.db per profile — enumerate all profiles.
+  if [ -d "${HOME}/.mozilla/firefox" ]; then
+    while IFS= read -r -d '' profile_dir; do
+      [ -f "${profile_dir}/cert9.db" ] && echo "sql:${profile_dir}"
+    done < <(find "${HOME}/.mozilla/firefox" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null)
+  fi
 }
 
 _ingress_ca_nss_cert_fingerprint() {
