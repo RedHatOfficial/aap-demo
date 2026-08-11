@@ -294,21 +294,142 @@ apd_launch_extra_vars_json() {
   if [ -n "$demo" ]; then
     jq -n \
       --arg demo "$demo" \
+      --arg version "$APD_AAP_VERSION" \
       '{
         demo: $demo,
+        _aap_version: $version,
         aap_validate_certs: false,
         aap_configuration_async_retries: 0,
         gateway_configuration_async_retries: 0,
         controller_configuration_async_retries: 0
       }'
   else
-    jq -n '{
-      aap_validate_certs: false,
-      aap_configuration_async_retries: 0,
-      gateway_configuration_async_retries: 0,
-      controller_configuration_async_retries: 0
-    }'
+    jq -n \
+      --arg version "$APD_AAP_VERSION" \
+      '{
+        _aap_version: $version,
+        aap_validate_certs: false,
+        aap_configuration_async_retries: 0,
+        gateway_configuration_async_retries: 0,
+        controller_configuration_async_retries: 0
+      }'
   fi
+}
+
+apd_find_controller_task_pod() {
+  local pod selector
+  for selector in \
+    'app.kubernetes.io/name=aap-controller-task' \
+    'app.kubernetes.io/component=task' \
+    'app.kubernetes.io/name=controller-task'; do
+    pod=$(kubectl get pods -n "$NAMESPACE" -l "$selector" \
+      --field-selector=status.phase=Running \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [ -n "$pod" ]; then
+      printf '%s\n' "$pod"
+      return 0
+    fi
+  done
+
+  pod=$(kubectl get pods -n "$NAMESPACE" --field-selector=status.phase=Running \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+    | grep -E 'controller.*task|aap-controller-task' | head -1 || true)
+  if [ -n "$pod" ]; then
+    printf '%s\n' "$pod"
+    return 0
+  fi
+
+  return 1
+}
+
+apd_overlay_project_playbook() {
+  local project_id="$1"
+  local src="$2"
+  local dest_name="$3"
+  local verify_pattern="${4:-}"
+
+  if [ ! -f "$src" ]; then
+    echo "  ⚠ Playbook overlay source not found: ${src}" >&2
+    return 1
+  fi
+
+  echo "Overlaying ${dest_name} into bootstrap project (skip version ping)..."
+
+  local project_dir task_pod
+  task_pod=$(apd_find_controller_task_pod || true)
+
+  if [ -z "$task_pod" ]; then
+    echo "  ⚠ Could not find controller task pod; skipping playbook overlay" >&2
+    return 1
+  fi
+
+  project_dir=$(kubectl exec -n "$NAMESPACE" "$task_pod" -- awx-manage shell -c "
+from awx.main.models import Project
+p = Project.objects.get(pk=${project_id})
+print(p.get_project_path() or '')
+" 2>/dev/null | grep '^/' | tail -1 | tr -d '\r')
+
+  if [ -z "$project_dir" ]; then
+    echo "  ⚠ Could not resolve project directory on task pod ${task_pod}" >&2
+    return 1
+  fi
+
+  if ! kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
+    tee "${project_dir}/${dest_name}" <"$src" >/dev/null 2>&1; then
+    echo "  ⚠ Failed to copy ${dest_name} into ${project_dir}" >&2
+    return 1
+  fi
+
+  if [ -n "$verify_pattern" ] && ! kubectl exec -n "$NAMESPACE" "$task_pod" -- \
+    grep -q "$verify_pattern" "${project_dir}/${dest_name}" 2>/dev/null; then
+    echo "  ⚠ Overlay verification failed for ${dest_name} (missing: ${verify_pattern})" >&2
+    return 1
+  fi
+
+  echo "  ✓ Applied ${dest_name} on task pod: ${project_dir}/${dest_name}"
+}
+
+apd_apply_bootstrap_playbook_overlays() {
+  local project_id="$1"
+  local addons_base_dir="$2"
+  local install_playbook="${3:-install-apd-aap-demo.yml}"
+  local rc=0
+
+  if [ "$install_playbook" = "install-apd-aap-demo.yml" ]; then
+    if ! apd_overlay_project_playbook "$project_id" \
+      "${addons_base_dir}/playbooks/install-apd-aap-demo.yml" \
+      "install-apd-aap-demo.yml" \
+      'pinned for aap-demo'; then
+      rc=1
+    fi
+  elif [ "$install_playbook" = "install-apd.yml" ]; then
+    if ! apd_overlay_project_playbook "$project_id" \
+      "${addons_base_dir}/patches/install-apd.yml" \
+      "install-apd.yml" \
+      'when: _aap_version is not defined'; then
+      rc=1
+    fi
+  else
+    if ! apd_overlay_project_playbook "$project_id" \
+      "${addons_base_dir}/playbooks/${install_playbook}" \
+      "$install_playbook"; then
+      rc=1
+    fi
+  fi
+
+  # Keep patched install-apd.yml for manual runs even when the job template uses install-apd-aap-demo.yml.
+  if [ "$install_playbook" != "install-apd.yml" ]; then
+    apd_overlay_project_playbook "$project_id" \
+      "${addons_base_dir}/patches/install-apd.yml" \
+      "install-apd.yml" \
+      'when: _aap_version is not defined' >/dev/null 2>&1 || true
+  fi
+
+  return "$rc"
+}
+
+apd_overlay_install_playbook() {
+  apd_overlay_project_playbook "$1" "$2" "install-apd.yml" 'when: _aap_version is not defined'
 }
 
 apd_monitor_job() {
@@ -357,52 +478,4 @@ for ev in j.job_events.filter(event='runner_on_failed').order_by('-id')[:3]:
   echo "⚠ ${label} is still running after $((max_wait * 3)) seconds"
   echo "View progress: ${AAP_UI_URL}/#/jobs/playbook/${job_id}/output"
   return 2
-}
-
-apd_overlay_install_playbook() {
-  local project_id="$1"
-  local patched_install_src="$2"
-
-  if [ ! -f "$patched_install_src" ]; then
-    echo "  ⚠ Patched install playbook not found: ${patched_install_src}"
-    return 1
-  fi
-
-  echo "Patching synced project install-apd.yml (skip version ping when _aap_version is set)..."
-
-  local project_dir task_pod
-  task_pod=$(kubectl get pods -n "$NAMESPACE" \
-    -l app.kubernetes.io/name=aap-controller-task \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-
-  if [ -z "$task_pod" ]; then
-    echo "  ⚠ Could not find controller task pod; skipping playbook overlay"
-    return 1
-  fi
-
-  # Project paths exist on the task pod (not web); get_project_path() replaces removed project_base_dir.
-  project_dir=$(kubectl exec -n "$NAMESPACE" "$task_pod" -- awx-manage shell -c "
-from awx.main.models import Project
-p = Project.objects.get(pk=${project_id})
-print(p.get_project_path() or '')
-" 2>/dev/null | grep '^/' | tail -1 | tr -d '\r')
-
-  if [ -z "$project_dir" ]; then
-    echo "  ⚠ Could not resolve project directory; skipping playbook overlay"
-    return 1
-  fi
-
-  if ! kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
-    tee "${project_dir}/install-apd.yml" <"$patched_install_src" >/dev/null 2>&1; then
-    echo "  ⚠ Failed to copy patched install-apd.yml into project directory"
-    return 1
-  fi
-
-  if ! kubectl exec -n "$NAMESPACE" "$task_pod" -- \
-    grep -q 'when: _aap_version is not defined' "${project_dir}/install-apd.yml" 2>/dev/null; then
-    echo "  ⚠ Patched install-apd.yml verification failed (version ping skip missing)"
-    return 1
-  fi
-
-  echo "  ✓ Patched install-apd.yml applied: ${project_dir}/install-apd.yml"
 }

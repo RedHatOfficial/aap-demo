@@ -30,7 +30,7 @@ PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
 PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-26:latest}"
 APD_BOOTSTRAP_PROJECT_NAME="${APD_BOOTSTRAP_PROJECT_NAME:-APD Bootstrap Project}"
 PRODUCT_DEMOS_EE_NAME="${PRODUCT_DEMOS_EE_NAME:-Product Demos EE}"
-APD_INSTALL_PLAYBOOK="${APD_INSTALL_PLAYBOOK:-install-apd.yml}"
+APD_INSTALL_PLAYBOOK="${APD_INSTALL_PLAYBOOK:-install-apd-aap-demo.yml}"
 
 # ==============================================================================
 # DELETE HANDLER
@@ -130,7 +130,8 @@ AAP_API="${AAP_UI_URL}/api/controller/v2"
 
 # Jobs run inside controller EEs cannot reach external nip.io routes on MicroShift.
 # Map the route hostname to the AAP service ClusterIP (see configure_microshift_job_networking).
-if ! kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s &>/dev/null; then
+_cluster_domain=$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>/dev/null || true)
+if [ -z "$_cluster_domain" ] || [[ "$AAP_ROUTE" == *".nip.io"* ]] || [[ "$AAP_ROUTE" == *"127.0.0.1"* ]]; then
   IS_MICROSHIFT=true
   AAP_JOB_HOSTNAME="http://${AAP_ROUTE}"
 else
@@ -470,8 +471,8 @@ if [ "$PROJECT_SYNCED" != true ]; then
   exit 1
 fi
 
-if ! apd_overlay_install_playbook "$PROJECT_ID" "${SCRIPT_DIR}/patches/install-apd.yml"; then
-  echo "❌ ERROR: Could not apply install-apd.yml patch (required to skip version ping)"
+if ! apd_apply_bootstrap_playbook_overlays "$PROJECT_ID" "$SCRIPT_DIR" "$APD_INSTALL_PLAYBOOK"; then
+  echo "❌ ERROR: Could not apply bootstrap playbook overlays (required to skip version ping)"
   exit 1
 fi
 
@@ -616,14 +617,29 @@ echo "✓ Credential attached"
 echo ""
 echo "Launching APD installation job..."
 
-if ! apd_overlay_install_playbook "$PROJECT_ID" "${SCRIPT_DIR}/patches/install-apd.yml"; then
-  echo "❌ ERROR: Could not apply install-apd.yml patch (required to skip version ping)"
+if ! apd_apply_bootstrap_playbook_overlays "$PROJECT_ID" "$SCRIPT_DIR" "$APD_INSTALL_PLAYBOOK"; then
+  echo "❌ ERROR: Could not apply bootstrap playbook overlays (required to skip version ping)"
   exit 1
 fi
+
+LAUNCH_PAYLOAD=$(jq -n \
+  --arg version "$APD_AAP_VERSION" \
+  --arg ee_image "$PRODUCT_DEMOS_EE" \
+  '{
+    extra_vars: {
+      _aap_version: $version,
+      apd_ee_image: $ee_image,
+      aap_validate_certs: false,
+      aap_configuration_async_retries: 0,
+      gateway_configuration_async_retries: 0,
+      controller_configuration_async_retries: 0
+    }
+  }')
 
 LAUNCH_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
   -X POST \
   -H "Content-Type: application/json" \
+  -d "$LAUNCH_PAYLOAD" \
   "${AAP_API}/job_templates/${TEMPLATE_ID}/launch/" 2>&1)
 
 JOB_ID=$(echo "$LAUNCH_RESULT" | jq -r '.id // empty' 2>/dev/null)

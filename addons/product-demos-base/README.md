@@ -100,7 +100,8 @@ Note: The addon tracks enabled domains and will prevent removal if any are still
 aap-demo targets **AAP 2.7 only**. The installer does not discover the AAP version at runtime.
 
 1. Creates a **bootstrap project** in the Default organization, synced from ansible/product-demos
-2. Patches `install-apd.yml` in-place on the controller task pod after sync (skips version ping when `_aap_version` is set)
+2. Overlays `install-apd-aap-demo.yml` on the controller task pod (no gateway version ping) and
+   patches `install-apd.yml` for manual runs
 3. Pins `_aap_version: "2.7"` and the Product Demos EE image in job template extra_vars
 4. Runs the install job inside the Product Demos EE via AAP job template
 5. The install job creates the **APD organization**, its own "Ansible Product Demos" project,
@@ -132,22 +133,21 @@ templates — they do **not** run `setup_demo.yml` locally. The Product Demos EE
 ### Version ping timeout (`Query AAP version from the API`)
 
 If a job fails pinging `https://…nip.io/api/gateway/v1/ping/` from inside a job pod, the
-playbook overlay did not apply. The deploy script now aborts before launching the install job
-if the patch cannot be applied or verified — you should see an error instead of a silent timeout.
+bootstrap project is still using upstream `install-apd.yml` (no skip) or the job template
+playbook is not `install-apd-aap-demo.yml`.
 
-If an install job still hits this task, the patch was lost (for example after a manual project
-sync) or an old job template is still using unpatched `install-apd.yml`.
+The deploy script overlays `install-apd-aap-demo.yml` on the **controller task pod** and
+launches with `_aap_version: "2.7"` in extra vars. It aborts before launching if the overlay
+cannot be applied.
 
-Re-run:
+If an install job still hits this task:
 
-```bash
-aap-demo enable product-demos-base
-```
-
-This re-syncs the project, patches `install-apd.yml`, and pins `_aap_version: "2.7"`.
-
-On MicroShift, dispatch tasks still require in-cluster `AAP_HOSTNAME` (`http://` route +
-instance-group hostAlias). The version ping skip does not remove that requirement.
+1. Confirm **APD | Install Base Resources** uses playbook `install-apd-aap-demo.yml` (not
+   `install-apd.yml`).
+2. Re-run `aap-demo enable product-demos-base` on the latest branch (do not manually sync the
+   bootstrap project in the UI first).
+3. Confirm installer credential **APD Installer - AAP Admin** uses `http://` route hostname on
+   CRC/MicroShift (`…nip.io`), not `https://`.
 
 ### ansible-navigator installation fails
 
