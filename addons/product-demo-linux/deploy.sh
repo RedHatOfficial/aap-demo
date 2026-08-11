@@ -22,6 +22,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../product-demos-base/lib.sh
+source "${SCRIPT_DIR}/../product-demos-base/lib.sh"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 ACTION="${1:-deploy}"
 DEMO_CATEGORY="linux"
@@ -54,14 +56,14 @@ echo "Deploying Ansible Product Demos - Linux..."
 echo ""
 
 # Check cluster connectivity
-if ! kubectl cluster-info &> /dev/null; then
+if ! kubectl cluster-info &>/dev/null; then
   echo "❌ ERROR: Cannot connect to cluster"
   echo "Please ensure your cluster is running: aap-demo status"
   exit 1
 fi
 
 # Check if AAP is deployed
-if ! kubectl get aap -n "$NAMESPACE" &> /dev/null; then
+if ! kubectl get aap -n "$NAMESPACE" &>/dev/null; then
   echo "❌ ERROR: AAP not found in namespace $NAMESPACE"
   echo "Please deploy AAP first: aap-demo deploy"
   exit 1
@@ -91,84 +93,27 @@ else
 fi
 
 # ==============================================================================
-# GET AAP CREDENTIALS
+# INSTALL VIA AAP JOB TEMPLATE
 # ==============================================================================
 
 echo "Retrieving AAP connection details..."
 
-# Try to get route by AAP CR name first, fall back to first route in namespace
-AAP_ROUTE=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
-if [ -z "$AAP_ROUTE" ]; then
-  AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-fi
-
-if [ -z "$AAP_ROUTE" ]; then
-  echo "❌ ERROR: Cannot find AAP route"
+if ! command -v jq &>/dev/null; then
+  echo "❌ ERROR: jq is required"
   exit 1
 fi
 
-AAP_HOSTNAME="https://$AAP_ROUTE"
-
-AAP_USERNAME="admin"
-AAP_PASSWORD=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
-
-if [ -z "$AAP_PASSWORD" ]; then
-  echo "❌ ERROR: Cannot retrieve AAP admin password"
-  exit 1
-fi
-
+apd_init_aap_connection || exit 1
 echo "✓ AAP credentials retrieved"
 echo ""
 
-# ==============================================================================
-# VERIFY ANSIBLE
-# ==============================================================================
+apd_resolve_domain_install_ids || exit 1
 
-ANSIBLE_VENV="$HOME/.ansible-venv"
-ANSIBLE_PLAYBOOK="$ANSIBLE_VENV/bin/ansible-playbook"
-
-if [ ! -f "$ANSIBLE_PLAYBOOK" ]; then
-  echo "❌ ERROR: ansible-playbook not found in $ANSIBLE_VENV"
-  echo "This should have been installed by product-demos-base."
-  echo "Please try: aap-demo enable product-demos-base"
-  exit 1
-fi
-
-# ==============================================================================
-# CLONE PRODUCT DEMOS REPOSITORY
-# ==============================================================================
-
-echo "Cloning product-demos repository..."
-
-TEMP_DIR=$(mktemp -d /tmp/product-demos.XXXXXX)
-trap 'rm -rf "$TEMP_DIR"' EXIT
-
-cd "$TEMP_DIR"
-
-if ! git clone --depth 1 --branch "$PRODUCT_DEMOS_BRANCH" "$PRODUCT_DEMOS_REPO" . 2>&1; then
-  echo "❌ ERROR: Failed to clone $PRODUCT_DEMOS_REPO (branch: $PRODUCT_DEMOS_BRANCH)"
-  exit 1
-fi
-
-echo "✓ Repository cloned"
-echo ""
-
-# ==============================================================================
-# RUN DOMAIN-SPECIFIC SETUP
-# ==============================================================================
-
-echo "Installing $DEMO_CATEGORY demo resources in AAP..."
+echo "Installing $DEMO_CATEGORY demo resources via AAP job template..."
 echo "This may take a few minutes..."
 echo ""
 
-# Export environment variables
-export AAP_HOSTNAME
-export AAP_USERNAME
-export AAP_PASSWORD
-export AAP_VALIDATE_CERTS=false
-
-# Run the domain-specific setup playbook
-if "$ANSIBLE_PLAYBOOK" setup_demo.yml -e "demo=$DEMO_CATEGORY"; then
+if apd_install_domain_demo "$DEMO_CATEGORY"; then
   echo ""
   echo "✓ Linux demos installed successfully!"
   echo ""
@@ -183,7 +128,7 @@ if "$ANSIBLE_PLAYBOOK" setup_demo.yml -e "demo=$DEMO_CATEGORY"; then
   echo "  ... and more"
   echo ""
   echo "Next steps:"
-  echo "  - Log into AAP UI at: $AAP_HOSTNAME"
+  echo "  - Log into AAP UI at: ${AAP_UI_URL}"
   echo "  - Navigate to 'Ansible Product Demos (APD)' organization"
   echo "  - Configure the 'Insights Inventory' credential with your Red Hat account"
   echo "  - Add managed Linux hosts to the inventory"
@@ -192,8 +137,6 @@ if "$ANSIBLE_PLAYBOOK" setup_demo.yml -e "demo=$DEMO_CATEGORY"; then
 else
   echo ""
   echo "❌ ERROR: Linux demo installation failed"
-  echo "Please check the output above for details."
+  echo "Re-run from Templates: $(apd_domain_template_name "$DEMO_CATEGORY")"
   exit 1
 fi
-
-# Cleanup happens automatically via trap

@@ -197,6 +197,98 @@ apd_ensure_domain_job_template() {
   printf '%s\n' "$template_id"
 }
 
+apd_init_aap_connection() {
+  NAMESPACE="${NAMESPACE:-aap-operator}"
+  local aap_route
+
+  aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+  if [ -z "$aap_route" ]; then
+    aap_route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  fi
+  if [ -z "$aap_route" ]; then
+    echo "❌ ERROR: Cannot find AAP route" >&2
+    return 1
+  fi
+
+  AAP_UI_URL="https://${aap_route}"
+  AAP_API="${AAP_UI_URL}/api/controller/v2"
+  AAP_USERNAME="${AAP_USERNAME:-admin}"
+  AAP_PASSWORD=$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
+  if [ -z "$AAP_PASSWORD" ]; then
+    echo "❌ ERROR: Cannot retrieve AAP admin password" >&2
+    return 1
+  fi
+
+  export AAP_UI_URL AAP_API AAP_USERNAME AAP_PASSWORD NAMESPACE
+}
+
+apd_resolve_domain_install_ids() {
+  local ee_name="${1:-Product Demos EE}"
+
+  DEFAULT_ORG_ID=$(apd_default_org_id)
+  if [ -z "$DEFAULT_ORG_ID" ]; then
+    echo "❌ ERROR: Cannot resolve Default organization ID" >&2
+    return 1
+  fi
+  export DEFAULT_ORG_ID
+
+  APD_PROJECT_ID=$(apd_default_bootstrap_project_id)
+  if [ -z "$APD_PROJECT_ID" ]; then
+    APD_PROJECT_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1 \
+      | jq -r --argjson org "$DEFAULT_ORG_ID" \
+        '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty')
+  fi
+
+  APD_EE_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/execution_environments/?name=$(jq -rn --arg n "$ee_name" '$n|@uri')" 2>&1 \
+    | jq -r '.results[0].id // empty')
+  APD_CRED_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/credentials/?name=$(jq -rn --arg n "APD Installer - AAP Admin" '$n|@uri')" 2>&1 \
+    | jq -r '.results[0].id // empty')
+
+  if [ -z "$APD_PROJECT_ID" ] || [ -z "$APD_EE_ID" ] || [ -z "$APD_CRED_ID" ]; then
+    echo "❌ ERROR: Missing bootstrap project, execution environment, or installer credential" >&2
+    echo "  project=${APD_PROJECT_ID:-missing} ee=${APD_EE_ID:-missing} credential=${APD_CRED_ID:-missing}" >&2
+    return 1
+  fi
+
+  export APD_PROJECT_ID APD_EE_ID APD_CRED_ID
+}
+
+apd_install_domain_demo() {
+  local demo="$1"
+  local template_name template_id launch_result job_id monitor_rc
+
+  template_name=$(apd_domain_template_name "$demo")
+  echo "Installing ${demo} demos (${template_name})..."
+
+  apd_cleanup_legacy_install_templates
+  apd_cleanup_default_org_apd_projects
+
+  template_id=$(apd_ensure_domain_job_template "$demo" "$APD_PROJECT_ID" "$APD_EE_ID" "$APD_CRED_ID") || return 1
+
+  launch_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    "${AAP_API}/job_templates/${template_id}/launch/" 2>&1)
+
+  job_id=$(echo "$launch_result" | jq -r '.id // empty' 2>/dev/null)
+  if [ -z "$job_id" ]; then
+    echo "❌ ERROR: Failed to launch ${demo} install job"
+    echo "$launch_result" | jq '.' 2>/dev/null || echo "$launch_result"
+    return 1
+  fi
+
+  echo "✓ Job launched for ${demo} (ID: ${job_id})"
+  echo "View in UI: ${AAP_UI_URL}/#/jobs/playbook/${job_id}/output"
+
+  apd_monitor_job "$job_id" "${demo} demo install" 80
+  monitor_rc=$?
+  apd_cleanup_default_org_apd_projects
+  return "$monitor_rc"
+}
+
 apd_launch_extra_vars_json() {
   local demo="${1:-}"
   if [ -n "$demo" ]; then

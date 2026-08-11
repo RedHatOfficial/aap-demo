@@ -123,8 +123,9 @@ extra_vars alone is not sufficient — the patched playbook file is required.
 See [`patches/install-apd.yml`](patches/install-apd.yml) for the upstream PR candidate that adds
 `when: _aap_version is not defined` to the ping task.
 
-Domain-specific addons build on this foundation via `setup_demo.yml` job templates (using the
-bootstrap project in Default org).
+Domain-specific addons (`product-demo-linux`, etc.) launch the same per-domain AAP job
+templates — they do **not** run `setup_demo.yml` locally. The Product Demos EE provides
+`infra.aap_configuration` inside the cluster.
 
 ## Troubleshooting
 
