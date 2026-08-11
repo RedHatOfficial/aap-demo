@@ -19,6 +19,9 @@ This runs `product-demos-base` and then installs every domain via dedicated AAP 
 
 Each template runs `setup_demo.yml` for one domain so you can see per-domain job history and failures in the UI.
 
+Deploy automatically removes legacy `APD | Install Domain Demo` templates and duplicate
+`Ansible Product Demos` projects in the Default org (setup jobs sometimes recreate them).
+
 ## Customization
 
 Install a subset of domains:

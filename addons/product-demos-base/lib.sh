@@ -18,10 +18,76 @@ apd_common_extra_vars_yaml() {
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
+apd_default_org_id() {
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/organizations/?name=Default" 2>&1 \
+    | jq -r '.results[0].id // empty'
+}
+
 apd_default_bootstrap_project_id() {
+  local org_id="${DEFAULT_ORG_ID:-$(apd_default_org_id)}"
   curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     "${AAP_API}/projects/?name=$(jq -rn --arg n "${APD_BOOTSTRAP_PROJECT_NAME:-APD Bootstrap Project}" '$n|@uri')" 2>&1 \
-    | jq -r '.results[0].id // empty'
+    | jq -r --argjson org "$org_id" \
+      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty'
+}
+
+apd_cleanup_default_org_apd_projects() {
+  local org_id="${DEFAULT_ORG_ID:-$(apd_default_org_id)}"
+  local project_ids
+
+  project_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1 \
+    | jq -r --argjson org "$org_id" \
+      '[.results[] | select(.summary_fields.organization.id == $org) | .id] | join(" ")')
+
+  for project_id in $project_ids; do
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X DELETE \
+      "${AAP_API}/projects/${project_id}/" >/dev/null 2>&1 || true
+    echo "  ✓ Removed duplicate Default org project (ID: ${project_id})" >&2
+  done
+}
+
+apd_cleanup_legacy_install_templates() {
+  local org_id="${DEFAULT_ORG_ID:-$(apd_default_org_id)}"
+  local template_ids
+
+  template_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/job_templates/?name=APD+%7C+Install+Domain+Demo" 2>&1 \
+    | jq -r --argjson org "$org_id" \
+      '[.results[] | select(.summary_fields.organization.id == $org) | .id] | join(" ")')
+
+  for template_id in $template_ids; do
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X DELETE \
+      "${AAP_API}/job_templates/${template_id}/" >/dev/null 2>&1 || true
+    echo "  ✓ Removed legacy template APD | Install Domain Demo (ID: ${template_id})" >&2
+  done
+}
+
+apd_dedupe_job_templates() {
+  local template_name="$1"
+  local keep_id="$2"
+  local org_id="${DEFAULT_ORG_ID:-$(apd_default_org_id)}"
+  local encoded_name duplicate_ids
+
+  encoded_name=$(jq -rn --arg n "$template_name" '$n|@uri')
+  duplicate_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/job_templates/?name=${encoded_name}" 2>&1 \
+    | jq -r --argjson org "$org_id" --argjson keep "$keep_id" \
+      '[.results[] | select(.summary_fields.organization.id == $org and .id != $keep) | .id] | join(" ")')
+
+  for template_id in $duplicate_ids; do
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X DELETE \
+      "${AAP_API}/job_templates/${template_id}/" >/dev/null 2>&1 || true
+    echo "  ✓ Removed duplicate template ${template_name} (ID: ${template_id})" >&2
+  done
+}
+
+apd_dedupe_domain_job_templates() {
+  apd_dedupe_job_templates "$(apd_domain_template_name "$1")" "$2"
 }
 
 apd_domain_template_name() {
@@ -71,6 +137,7 @@ apd_ensure_domain_job_template() {
     --arg extra_vars "$extra_vars" \
     --argjson project_id "$project_id" \
     --argjson ee_id "$ee_id" \
+    --argjson org_id "${DEFAULT_ORG_ID}" \
     '{
       name: $name,
       description: $desc,
@@ -79,7 +146,7 @@ apd_ensure_domain_job_template() {
       project: $project_id,
       playbook: "setup_demo.yml",
       ask_variables_on_launch: false,
-      organization: 1,
+      organization: $org_id,
       execution_environment: $ee_id,
       extra_vars: $extra_vars
     }')
@@ -95,7 +162,9 @@ apd_ensure_domain_job_template() {
   if [ -z "$template_id" ]; then
     encoded_name=$(jq -rn --arg n "$template_name" '$n|@uri')
     template_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-      "${AAP_API}/job_templates/?name=${encoded_name}" 2>&1 | jq -r '.results[0].id // empty' 2>/dev/null)
+      "${AAP_API}/job_templates/?name=${encoded_name}" 2>&1 \
+      | jq -r --argjson org "${DEFAULT_ORG_ID}" \
+        '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty' 2>/dev/null)
 
     if [ -z "$template_id" ]; then
       echo "❌ ERROR: Failed to create job template for ${demo}" >&2
@@ -122,6 +191,8 @@ apd_ensure_domain_job_template() {
     -H "Content-Type: application/json" \
     -d "{\"id\": $cred_id}" \
     "${AAP_API}/job_templates/${template_id}/credentials/" >/dev/null 2>&1 || true
+
+  apd_dedupe_domain_job_templates "$demo" "$template_id"
 
   printf '%s\n' "$template_id"
 }
@@ -208,8 +279,17 @@ apd_overlay_install_playbook() {
   echo "Patching synced project install-apd.yml (skip version ping when _aap_version is set)..."
 
   local project_dir task_pod
+  task_pod=$(kubectl get pods -n "$NAMESPACE" \
+    -l app.kubernetes.io/name=aap-controller-task \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+  if [ -z "$task_pod" ]; then
+    echo "  ⚠ Could not find controller task pod; skipping playbook overlay"
+    return 1
+  fi
+
   # Project paths exist on the task pod (not web); get_project_path() replaces removed project_base_dir.
-  project_dir=$(kubectl exec -n "$NAMESPACE" deploy/aap-controller-task -- awx-manage shell -c "
+  project_dir=$(kubectl exec -n "$NAMESPACE" "$task_pod" -- awx-manage shell -c "
 from awx.main.models import Project
 p = Project.objects.get(pk=${project_id})
 print(p.get_project_path() or '')
@@ -220,18 +300,15 @@ print(p.get_project_path() or '')
     return 1
   fi
 
-  task_pod=$(kubectl get pods -n "$NAMESPACE" \
-    -l app.kubernetes.io/name=aap-controller-task \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-
-  if [ -z "$task_pod" ]; then
-    echo "  ⚠ Could not find controller task pod; skipping playbook overlay"
-    return 1
-  fi
-
   if ! kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
     tee "${project_dir}/install-apd.yml" <"$patched_install_src" >/dev/null 2>&1; then
     echo "  ⚠ Failed to copy patched install-apd.yml into project directory"
+    return 1
+  fi
+
+  if ! kubectl exec -n "$NAMESPACE" "$task_pod" -- \
+    grep -q 'when: _aap_version is not defined' "${project_dir}/install-apd.yml" 2>/dev/null; then
+    echo "  ⚠ Patched install-apd.yml verification failed (version ping skip missing)"
     return 1
   fi
 

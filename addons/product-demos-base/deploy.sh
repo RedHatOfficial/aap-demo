@@ -239,6 +239,13 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
+DEFAULT_ORG_ID=$(apd_default_org_id)
+if [ -z "$DEFAULT_ORG_ID" ]; then
+  echo "❌ ERROR: Cannot resolve Default organization ID"
+  exit 1
+fi
+export DEFAULT_ORG_ID APD_BOOTSTRAP_PROJECT_NAME
+
 configure_microshift_job_networking
 
 # ==============================================================================
@@ -316,7 +323,7 @@ if [ -z "$CRED_ID" ]; then
 {
   "name": "APD Installer - AAP Admin",
   "description": "AAP admin credentials for installing product-demos",
-  "organization": 1,
+  "organization": ${DEFAULT_ORG_ID},
   "credential_type": $CRED_TYPE_ID,
   "inputs": {
     "aap_hostname": "${AAP_JOB_HOSTNAME}",
@@ -385,7 +392,7 @@ PROJECT_PAYLOAD=$(
   "scm_url": "$PRODUCT_DEMOS_REPO",
   "scm_branch": "$PRODUCT_DEMOS_BRANCH",
   "scm_update_on_launch": false,
-  "organization": 1
+  "organization": ${DEFAULT_ORG_ID}
 }
 EOF
 )
@@ -409,7 +416,8 @@ if [ -z "$PROJECT_ID" ]; then
     LEGACY_PROJECT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
       "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1)
     PROJECT_ID=$(echo "$LEGACY_PROJECT" | jq -r \
-      '[.results[] | select(.summary_fields.organization.id == 1)] | .[0].id // empty' 2>/dev/null)
+      --argjson org "$DEFAULT_ORG_ID" \
+      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty' 2>/dev/null)
   fi
 
   if [ -n "$PROJECT_ID" ]; then
@@ -436,6 +444,7 @@ fi
 echo "Waiting for project to sync..."
 sleep 5
 
+PROJECT_SYNCED=false
 for i in {1..30}; do
   PROJECT_STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     "${AAP_API}/projects/${PROJECT_ID}/" 2>&1)
@@ -444,6 +453,7 @@ for i in {1..30}; do
 
   if [ "$STATUS" = "successful" ]; then
     echo "✓ Project synced successfully"
+    PROJECT_SYNCED=true
     break
   elif [ "$STATUS" = "failed" ]; then
     echo "❌ ERROR: Project sync failed"
@@ -455,8 +465,14 @@ for i in {1..30}; do
   sleep 2
 done
 
+if [ "$PROJECT_SYNCED" != true ]; then
+  echo "❌ ERROR: Project sync did not complete successfully"
+  exit 1
+fi
+
 if ! apd_overlay_install_playbook "$PROJECT_ID" "${SCRIPT_DIR}/patches/install-apd.yml"; then
-  echo "⚠ Could not patch install-apd.yml on controller; job may run upstream version ping"
+  echo "❌ ERROR: Could not apply install-apd.yml patch (required to skip version ping)"
+  exit 1
 fi
 
 curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
@@ -485,7 +501,7 @@ if [ -z "$EE_ID" ]; then
   "description": "Official Ansible Product Demos execution environment",
   "image": "${PRODUCT_DEMOS_EE}",
   "pull": "missing",
-  "organization": 1
+  "organization": ${DEFAULT_ORG_ID}
 }
 EOF
   )
@@ -531,6 +547,7 @@ TEMPLATE_PAYLOAD=$(jq -n \
   --arg playbook "$APD_INSTALL_PLAYBOOK" \
   --argjson project_id "$PROJECT_ID" \
   --argjson ee_id "$EE_ID" \
+  --argjson org_id "$DEFAULT_ORG_ID" \
   '{
     name: $name,
     description: $desc,
@@ -539,7 +556,7 @@ TEMPLATE_PAYLOAD=$(jq -n \
     project: $project_id,
     playbook: $playbook,
     ask_variables_on_launch: false,
-    organization: 1,
+    organization: $org_id,
     execution_environment: $ee_id,
     extra_vars: $extra_vars
   }')
@@ -557,7 +574,8 @@ if [ -z "$TEMPLATE_ID" ]; then
   EXISTING_TEMPLATE=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     "${AAP_API}/job_templates/?name=APD+%7C+Install+Base+Resources" 2>&1)
 
-  TEMPLATE_ID=$(echo "$EXISTING_TEMPLATE" | jq -r '.results[0].id // empty' 2>/dev/null)
+  TEMPLATE_ID=$(echo "$EXISTING_TEMPLATE" | jq -r --argjson org "$DEFAULT_ORG_ID" \
+    '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty' 2>/dev/null)
 
   if [ -n "$TEMPLATE_ID" ]; then
     echo "✓ Job template already exists (ID: $TEMPLATE_ID)"
@@ -580,6 +598,8 @@ else
   echo "✓ Job template created (ID: $TEMPLATE_ID)"
 fi
 
+apd_dedupe_job_templates "APD | Install Base Resources" "$TEMPLATE_ID"
+
 # Attach credential to job template
 echo "Attaching APD installer credential to template..."
 curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
@@ -597,7 +617,8 @@ echo ""
 echo "Launching APD installation job..."
 
 if ! apd_overlay_install_playbook "$PROJECT_ID" "${SCRIPT_DIR}/patches/install-apd.yml"; then
-  echo "⚠ Could not re-apply install-apd.yml patch before launch"
+  echo "❌ ERROR: Could not apply install-apd.yml patch (required to skip version ping)"
+  exit 1
 fi
 
 LAUNCH_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
@@ -619,12 +640,6 @@ echo "Monitoring job progress..."
 echo "View in UI: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
 
 if apd_monitor_job "$JOB_ID" "APD base install" 60; then
-  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    -X PATCH \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n --arg name "$APD_BOOTSTRAP_PROJECT_NAME" '{name: $name}')" \
-    "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1 || true
-
   echo ""
   echo "Resources created:"
   echo "  - Organization: Ansible Product Demos (APD)"

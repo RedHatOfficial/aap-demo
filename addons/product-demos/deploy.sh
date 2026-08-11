@@ -40,6 +40,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "  APD | Install OpenShift Demos"
   echo "  APD | Install Satellite Demos"
   echo ""
+  echo "Also remove legacy template if present:"
+  echo "  APD | Install Domain Demo"
+  echo ""
   echo "Also remove demo content templates with prefixes:"
   echo "  LINUX |, WINDOWS |, NETWORK |, CLOUD |, OPENSHIFT |, SATELLITE |"
   echo ""
@@ -85,11 +88,19 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
+DEFAULT_ORG_ID=$(apd_default_org_id)
+if [ -z "$DEFAULT_ORG_ID" ]; then
+  echo "❌ ERROR: Cannot resolve Default organization ID"
+  exit 1
+fi
+export DEFAULT_ORG_ID
+
 PROJECT_ID=$(apd_default_bootstrap_project_id)
 if [ -z "$PROJECT_ID" ]; then
   PROJECT_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     "${AAP_API}/projects/?name=Ansible+Product+Demos" 2>&1 \
-    | jq -r '[.results[] | select(.summary_fields.organization.id == 1)] | .[0].id // empty')
+    | jq -r --argjson org "$DEFAULT_ORG_ID" \
+      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty')
 fi
 EE_ID=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
   "${AAP_API}/execution_environments/?name=$(jq -rn --arg n "$PRODUCT_DEMOS_EE_NAME" '$n|@uri')" 2>&1 | jq -r '.results[0].id // empty')
@@ -101,6 +112,10 @@ if [ -z "$PROJECT_ID" ] || [ -z "$EE_ID" ] || [ -z "$CRED_ID" ]; then
   echo "  project=${PROJECT_ID:-missing} ee=${EE_ID:-missing} credential=${CRED_ID:-missing}"
   exit 1
 fi
+
+echo "Cleaning up legacy templates and duplicate Default org projects..."
+apd_cleanup_legacy_install_templates
+apd_cleanup_default_org_apd_projects
 
 echo "Creating per-domain install job templates..."
 FAILED_DOMAINS=()
@@ -132,6 +147,7 @@ for demo in "${DEMO_DOMAINS[@]}"; do
   if ! apd_monitor_job "$JOB_ID" "${demo} demo install" 80; then
     FAILED_DOMAINS+=("$demo")
   fi
+  apd_cleanup_default_org_apd_projects
 done
 
 echo ""

@@ -4,8 +4,10 @@ This addon installs the foundation for Ansible Product Demos (APD) in your AAP e
 
 ## What it Creates
 
-- **Organization**: "Ansible Product Demos (APD)"
-- **Project**: "Ansible Product Demos" (cloned from https://github.com/ansible/product-demos)
+- **Organization**: "Ansible Product Demos (APD)" — created by the install job dispatch
+- **Bootstrap project**: "APD Bootstrap Project" (Default org) — SCM source for `install-apd.yml`
+  and domain `setup_demo.yml` runs
+- **APD project**: "Ansible Product Demos" (APD org) — created inside the APD organization by the install job
 - **Execution Environment**: Product Demos EE (`quay.io/ansible-product-demos/apd-ee-26:latest`)
 - **Inventory**: "Ansible Product Demos Inventory"
 - **Credentials**:
@@ -97,26 +99,43 @@ Note: The addon tracks enabled domains and will prevent removal if any are still
 
 aap-demo targets **AAP 2.7 only**. The installer does not discover the AAP version at runtime.
 
-1. Creates an AAP project synced from ansible/product-demos
-2. Patches `install-apd.yml` in the synced project (skips version ping when `_aap_version` is set)
+1. Creates a **bootstrap project** in the Default organization, synced from ansible/product-demos
+2. Patches `install-apd.yml` in-place on the controller task pod after sync (skips version ping when `_aap_version` is set)
 3. Pins `_aap_version: "2.7"` and the Product Demos EE image in job template extra_vars
 4. Runs the install job inside the Product Demos EE via AAP job template
+5. The install job creates the **APD organization**, its own "Ansible Product Demos" project,
+   inventory, credentials, and setup job templates
+
+The bootstrap project and the APD org project both clone the same upstream repository but serve
+different roles: bootstrap is the SCM source for installer and domain-setup jobs in Default org;
+the APD org project is managed by APD dispatch for demo content.
+
+**Ephemeral patch:** The `install-apd.yml` patch is written directly into the synced project
+directory on the controller task pod. A manual project sync in the AAP UI restores upstream
+content and removes the version-ping skip. Re-run `aap-demo enable product-demos-base` to
+re-sync, re-patch, and reinstall.
 
 Upstream `install-apd.yml` queries `/api/gateway/v1/ping/` to set `_aap_version` for generic
 installs. aap-demo replaces that with a pinned version because the deployed platform is always
-2.7 and the EE is registered explicitly (`PRODUCT_DEMOS_EE`).
+2.7 and the EE is registered explicitly (`PRODUCT_DEMOS_EE`). Setting `_aap_version` in job
+extra_vars alone is not sufficient — the patched playbook file is required.
 
 See [`patches/install-apd.yml`](patches/install-apd.yml) for the upstream PR candidate that adds
 `when: _aap_version is not defined` to the ping task.
 
-Domain-specific addons build on this foundation via `setup_demo.yml` job templates.
+Domain-specific addons build on this foundation via `setup_demo.yml` job templates (using the
+bootstrap project in Default org).
 
 ## Troubleshooting
 
 ### Version ping timeout (`Query AAP version from the API`)
 
 If a job fails pinging `https://…nip.io/api/gateway/v1/ping/` from inside a job pod, the
-playbook overlay did not apply or an old job template is still using unpatched `install-apd.yml`.
+playbook overlay did not apply. The deploy script now aborts before launching the install job
+if the patch cannot be applied or verified — you should see an error instead of a silent timeout.
+
+If an install job still hits this task, the patch was lost (for example after a manual project
+sync) or an old job template is still using unpatched `install-apd.yml`.
 
 Re-run:
 
@@ -162,6 +181,15 @@ The APD execution environment (`quay.io/ansible-product-demos/apd-ee-26:latest`)
 - Check the ansible-navigator output for specific errors
 - Verify AAP is fully deployed and accessible
 - Check AAP admin credentials are correct
+
+### Duplicate Ansible Product Demos project / domain setup fails
+
+If `setup_demo.yml` fails with `projects/?name=Ansible+Product+Demos returned 2 items,
+expected 1`, the Default org has a stray project with the same name as the APD org project.
+
+Re-run `aap-demo enable product-demos` (or a single domain template) — deploy removes duplicate
+Default org projects after each domain job. The bootstrap SCM project is named
+**APD Bootstrap Project** to avoid colliding with the APD org project.
 
 ### Satellite domain fails after bulk install
 
