@@ -98,7 +98,7 @@ Note: The addon tracks enabled domains and will prevent removal if any are still
 aap-demo targets **AAP 2.7 only**. The installer does not discover the AAP version at runtime.
 
 1. Creates an AAP project synced from ansible/product-demos
-2. Overlays `install-apd-aap-demo.yml` (skips the upstream version ping)
+2. Patches `install-apd.yml` in the synced project (skips version ping when `_aap_version` is set)
 3. Pins `_aap_version: "2.7"` and the Product Demos EE image in job template extra_vars
 4. Runs the install job inside the Product Demos EE via AAP job template
 
@@ -124,7 +124,7 @@ Re-run:
 aap-demo enable product-demos-base
 ```
 
-This re-syncs the project, overlays `install-apd-aap-demo.yml`, and pins `_aap_version: "2.7"`.
+This re-syncs the project, patches `install-apd.yml`, and pins `_aap_version: "2.7"`.
 
 On MicroShift, dispatch tasks still require in-cluster `AAP_HOSTNAME` (`http://` route +
 instance-group hostAlias). The version ping skip does not remove that requirement.

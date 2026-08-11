@@ -90,12 +90,14 @@ for ev in j.job_events.filter(event='runner_on_failed').order_by('-id')[:3]:
 
 apd_overlay_install_playbook() {
   local project_id="$1"
-  local playbook_src="$2"
-  local playbook_name
-  playbook_name=$(basename "$playbook_src")
-  local patched_install_src="${3:-}"
+  local patched_install_src="$2"
 
-  echo "Overlaying aap-demo playbook into synced project (${playbook_name})..."
+  if [ ! -f "$patched_install_src" ]; then
+    echo "  ⚠ Patched install playbook not found: ${patched_install_src}"
+    return 1
+  fi
+
+  echo "Patching synced project install-apd.yml (skip version ping when _aap_version is set)..."
 
   local project_dir task_pod
   project_dir=$(kubectl exec -n "$NAMESPACE" deploy/aap-controller-web -- awx-manage shell -c "
@@ -118,12 +120,11 @@ print(p.project_base_dir)
     return 1
   fi
 
-  kubectl cp "$playbook_src" "${NAMESPACE}/${task_pod}:${project_dir}/${playbook_name}" >/dev/null 2>&1
-
-  if [ -n "$patched_install_src" ] && [ -f "$patched_install_src" ]; then
-    kubectl cp "$patched_install_src" \
-      "${NAMESPACE}/${task_pod}:${project_dir}/install-apd.yml" >/dev/null 2>&1 || true
+  if ! kubectl cp "$patched_install_src" \
+    "${NAMESPACE}/${task_pod}:${project_dir}/install-apd.yml" >/dev/null 2>&1; then
+    echo "  ⚠ Failed to copy patched install-apd.yml into project directory"
+    return 1
   fi
 
-  echo "  ✓ Playbook overlay applied: ${project_dir}/${playbook_name}"
+  echo "  ✓ Patched install-apd.yml applied: ${project_dir}/install-apd.yml"
 }

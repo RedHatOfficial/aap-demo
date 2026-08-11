@@ -29,7 +29,7 @@ PRODUCT_DEMOS_REPO="${PRODUCT_DEMOS_REPO:-https://github.com/ansible/product-dem
 PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
 PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-26:latest}"
 PRODUCT_DEMOS_EE_NAME="${PRODUCT_DEMOS_EE_NAME:-Product Demos EE}"
-APD_INSTALL_PLAYBOOK="${APD_INSTALL_PLAYBOOK:-install-apd-aap-demo.yml}"
+APD_INSTALL_PLAYBOOK="${APD_INSTALL_PLAYBOOK:-install-apd.yml}"
 
 # ==============================================================================
 # DELETE HANDLER
@@ -446,9 +446,9 @@ for i in {1..30}; do
   sleep 2
 done
 
-apd_overlay_install_playbook "$PROJECT_ID" \
-  "${SCRIPT_DIR}/playbooks/${APD_INSTALL_PLAYBOOK}" \
-  "${SCRIPT_DIR}/patches/install-apd.yml" || true
+if ! apd_overlay_install_playbook "$PROJECT_ID" "${SCRIPT_DIR}/patches/install-apd.yml"; then
+  echo "⚠ Could not patch install-apd.yml on controller; job may run upstream version ping"
+fi
 
 curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
   -X PATCH \
@@ -586,6 +586,10 @@ echo "✓ Credential attached"
 
 echo ""
 echo "Launching APD installation job..."
+
+if ! apd_overlay_install_playbook "$PROJECT_ID" "${SCRIPT_DIR}/patches/install-apd.yml"; then
+  echo "⚠ Could not re-apply install-apd.yml patch before launch"
+fi
 
 LAUNCH_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
   -X POST \

@@ -13,7 +13,8 @@ when: _aap_version is not defined
 ```
 
 to the version ping and set_fact tasks. aap-demo passes `_aap_version: "2.7"` via job template
-extra_vars and overlays [`playbooks/install-apd-aap-demo.yml`](../playbooks/install-apd-aap-demo.yml)
-into the synced AAP project.
+extra_vars and patches [`patches/install-apd.yml`](install-apd.yml) onto the synced project
+after each `aap-demo enable`. See also [`playbooks/install-apd-aap-demo.yml`](../playbooks/install-apd-aap-demo.yml)
+for the equivalent standalone playbook reference.
 
 Submit this change upstream to ansible/product-demos to remove the overlay requirement.
