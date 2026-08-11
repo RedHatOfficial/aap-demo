@@ -7,6 +7,8 @@ artifacts/
 tsd.json
 test/testing-framework/
 .claude/skills/*/evals/workspace/
+.claude/plans/
+.tokensave/
 .serena/
 
 # Linting and pre-commit
