@@ -28,13 +28,17 @@ aap-demo enable product-demo-satellite
 aap-demo disable product-demo-satellite
 ```
 
-When installing all domains at once, omit Satellite if you do not have a server yet:
+When installing all domains at once, Satellite is excluded by default. Add it when you have a server:
 
 ```bash
-PRODUCT_DEMOS_DOMAINS="linux windows network cloud openshift" aap-demo enable product-demos
+PRODUCT_DEMOS_DOMAINS="linux windows network cloud openshift satellite" aap-demo enable product-demos
 ```
 
-Add Satellite later with the single-domain addon above, or re-run only the Satellite domain job (see below).
+Or install Satellite separately:
+
+```bash
+aap-demo enable product-demo-satellite
+```
 
 ## Prerequisites
 

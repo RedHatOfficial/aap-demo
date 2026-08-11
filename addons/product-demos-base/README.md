@@ -27,7 +27,7 @@ This addon installs the foundation for Ansible Product Demos (APD) in your AAP e
 Install all demo domains at once:
 
 ```bash
-aap-demo enable product-demos   # base + linux, windows, network, cloud, openshift, satellite
+aap-demo enable product-demos   # base + linux, windows, network, cloud, openshift (Satellite opt-in)
 ```
 
 Or install the foundation only (required automatically by domain addons):

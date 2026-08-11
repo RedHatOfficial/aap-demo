@@ -2,10 +2,10 @@
 # Product Demos
 #
 # Installs all Ansible Product Demos domains in one command: base APD resources
-# plus linux, windows, network, cloud, openshift, and satellite demo content.
+# plus linux, windows, network, cloud, and openshift demo content (Satellite is opt-in).
 #
 # Environment variables:
-#   PRODUCT_DEMOS_DOMAINS - Space-separated domain list (default: all six)
+#   PRODUCT_DEMOS_DOMAINS - Space-separated domain list (default: five domains, no satellite)
 #   PRODUCT_DEMOS_REPO    - Git repository URL
 #   PRODUCT_DEMOS_BRANCH  - Git branch to use
 #
@@ -25,7 +25,7 @@ ACTION="${1:-deploy}"
 PRODUCT_DEMOS_REPO="${PRODUCT_DEMOS_REPO:-https://github.com/ansible/product-demos}"
 PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
 PRODUCT_DEMOS_EE_NAME="${PRODUCT_DEMOS_EE_NAME:-Product Demos EE}"
-PRODUCT_DEMOS_DOMAINS="${PRODUCT_DEMOS_DOMAINS:-linux windows network cloud openshift satellite}"
+PRODUCT_DEMOS_DOMAINS="${PRODUCT_DEMOS_DOMAINS:-linux windows network cloud openshift}"
 
 read -r -a DEMO_DOMAINS <<<"$PRODUCT_DEMOS_DOMAINS"
 
