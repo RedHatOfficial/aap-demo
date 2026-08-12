@@ -29,6 +29,7 @@ authentication.
 
 - `kubectl` or `oc`
 - `python3` (3.8+)
+- `helm` 3.10+ (portal Helm chart — auto-installed via brew/dnf when missing)
 - `skopeo` (host-side plugin OCI push — auto-installed via brew/dnf when missing)
 - AAP deployed (`aap-demo deploy`)
 
@@ -51,7 +52,7 @@ aap-demo enable apme-eap
 
 This will:
 
-1. Check system prerequisites (kubectl, python3, skopeo — installs skopeo if missing)
+1. Check system prerequisites (kubectl, python3, helm, skopeo — installs helm/skopeo if missing)
 2. Create venv with full Ansible + collections (if not exists)
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
@@ -290,6 +291,28 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 2. Check port-forward to plugin registry is working
 3. Verify skopeo is installed: `which skopeo`
 4. Check plugin registry pod is running: `kubectl get pods -n apme -l app=plugin-registry`
+
+### Helm not installed
+
+**Symptom**: Playbook fails with `Failed to find required executable 'helm'` or `helm: command not found`
+
+**Solution**: Re-run enable — helm is auto-installed when Homebrew (`brew`) or `dnf` is available:
+
+```bash
+aap-demo enable apme-eap
+```
+
+Or install manually:
+
+```bash
+# macOS
+brew install helm
+
+# RHEL/Fedora
+sudo dnf install helm
+```
+
+Verify: `helm version --short` (requires 3.10+).
 
 ### Helm timeout
 

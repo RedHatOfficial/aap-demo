@@ -29,7 +29,7 @@
     force: "{{ portal_helm_install_force_upgrade | bool }}"
     atomic: "{{ false if portal_helm_install_force_upgrade | bool else true }}"
   environment:
-    PATH: "/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"
+    PATH: "/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
     HELM_CACHE_HOME: "/tmp/.helm/cache"
     HELM_CONFIG_HOME: "/tmp/.helm/config"
     HELM_DATA_HOME: "/tmp/.helm/data"
