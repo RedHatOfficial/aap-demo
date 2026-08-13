@@ -88,7 +88,7 @@ download_artifact() {
   info "Downloading: ${artifact_name}"
 
   WORK_DIR=$(mktemp -d)
-  trap "rm -rf $WORK_DIR" EXIT
+  trap 'rm -rf "$WORK_DIR"' EXIT
 
   curl -sL -H "Authorization: Bearer $(gh auth token)" \
     "https://api.github.com/repos/${PLUGIN_REPO}/actions/artifacts/${artifact_id}/zip" \
@@ -311,7 +311,7 @@ cleanup() {
 # Main
 main() {
   case "$ACTION" in
-    deploy|install)
+    deploy | install)
       check_prereqs
       check_portal
       check_registry
@@ -323,7 +323,7 @@ main() {
       restart_portal
       get_portal_url
       ;;
-    --delete|delete|remove|uninstall)
+    --delete | delete | remove | uninstall)
       cleanup
       ;;
     *)

@@ -2,7 +2,8 @@
 
 Adds the Compliance Dashboard plugin to the Ansible Automation Portal (RHDH).
 
-> **Note:** The compliance plugin is currently in **prototype/preview** status. It downloads artifacts from the `feat/2216-compliance-pipelines` branch of `ansible/ansible-rhdh-plugins`.
+> **Note:** The compliance plugin is currently in **prototype/preview** status. It downloads
+> artifacts from the `feat/2216-compliance-pipelines` branch of `ansible/ansible-rhdh-plugins`.
 
 ## Prerequisites
 
@@ -60,5 +61,8 @@ Or click "Compliance" in the portal sidebar (security shield icon).
 
 ## References
 
-- [ansible-backstage-plugins](https://github.com/ansible/ansible-backstage-plugins/tree/feat/2216-compliance-pipelines) - Plugin source (feature branch)
-- [Compliance Dashboard Installation Guide](../../docs/Compliance_Dashboard_Installation_Guide_v3.md) - Detailed manual installation steps
+- [ansible-backstage-plugins][plugins] - Plugin source (feature branch)
+- [Compliance Dashboard Installation Guide][guide] - Detailed manual installation steps
+
+[plugins]: https://github.com/ansible/ansible-backstage-plugins/tree/feat/2216-compliance-pipelines
+[guide]: ../../docs/Compliance_Dashboard_Installation_Guide_v3.md
