@@ -1,0 +1,82 @@
+---
+# Pre-built portal hub: init runs install-dynamic-plugins; main container uses the same image.
+
+- name: Load plugin pack SHA from manifest  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.slurp:
+    src: "{{ role_path }}/../../../plugin_packs/plugin-pack.manifest.yml"
+  register: apme_plugin_pack_manifest
+
+- name: Parse plugin pack SHA  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    plugin_sha: "{{ (apme_plugin_pack_manifest.content | b64decode | from_yaml).plugin_sha }}"
+
+- name: Set OCI registry URLs for dynamic-plugins ConfigMap placeholders  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
+
+- name: Substitute namespace and cluster domain placeholders  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "{{ item.regexp }}"
+    replace: "{{ item.replace }}"
+  loop:
+    - regexp: "<namespace>"
+      replace: "{{ openshift_project_name }}"
+    - regexp: "<cluster-router-base>"
+      replace: "{{ openshift_cluster_domain }}"
+    - regexp: "<plugin-sha>"
+      replace: "{{ plugin_sha }}"
+    - regexp: "<oci-registry>"
+      replace: "{{ oci_registry_internal }}"
+
+- name: Point APME prototype plugins at baked local paths (pre-built hub)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: >-
+      package: oci://{{ oci_registry_internal | regex_escape }}/apme-prototype-plugins:{{ plugin_sha }}!{{ item }}
+    replace: "package: ./dynamic-plugins/dist/ansible-portal/{{ item }}"
+  loop:
+    - ansible-plugin-scaffolder-backend-module-backstage-rhaap
+    - ansible-backstage-plugin-catalog-backend-module-rhaap
+    - ansible-plugin-backstage-self-service
+    - ansible-backstage-plugin-auth-backend-module-rhaap-provider
+    - ansible-plugin-backstage-apme
+    - ansible-backstage-plugin-catalog-backend-module-apme
+
+- name: Drop dynamic-plugins.default.yaml include for pre-built hub  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^      includes:\n      - dynamic-plugins\.default\.yaml\n'
+    replace: '      includes: []\n'
+
+- name: Configure init container to install plugins like runtime injection  # noqa: var-naming[no-role-prefix]
+  # Run install-dynamic-plugins (reads dynamic-plugins.yaml, merges pluginConfig)
+  # from baked local paths — same flow as runtime OCI injection.
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "<init-install-command>"
+    replace: "- /bin/sh\n        - -c\n        - |\n          set -e\n          cd /opt/app-root/src\n          ./install-dynamic-plugins.sh /opt/app-root/src/dynamic-plugins-root\n          node -e \"const fs=require('fs'),path=require('path');const re=/(\\\\w+)\\\\.tableContainerDiv\\\\.current\\\\.scrollWidth/g;const patch='(\\\\$1.tableContainerDiv.current?\\\\$1.tableContainerDiv.current.scrollWidth:0)';const root='/opt/app-root/src/dynamic-plugins-root';if(fs.existsSync(root)){for(const pkg of fs.readdirSync(root)){const d=path.join(root,pkg,'dist-scalprum');if(!fs.existsSync(d))continue;(function w(dir){for(const e of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,e.name);if(e.isDirectory())w(p);else if(e.name.endsWith('.js')){const s=fs.readFileSync(p,'utf8');if(re.test(s))fs.writeFileSync(p,s.replace(re,patch));}}})(d);}}\"\n          if [ -d /pre-installed/extensions ]; then\n            cp -r /pre-installed/extensions/. /extensions/\n          fi"  # yamllint disable-line rule:line-length
+
+- name: Set init container image to portal hub  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "'<init-container-image>'"
+    replace: "'{{ portal_hub_image }}'"
+
+- name: Parse portal hub image reference  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    portal_hub_registry: "{{ portal_hub_image.split('/')[0] }}"
+    portal_hub_repository: "{{ portal_hub_image | regex_replace('^[^/]+/', '') | regex_replace(':.*$', '') }}"
+    portal_hub_tag: "{{ portal_hub_image.split(':')[-1] if (':' in portal_hub_image) else 'latest' }}"
+
+- name: Override RHDH hub image to pre-built portal hub  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "registry: {{ rhdh_image_registry }}\n        repository: {{ rhdh_image_repository }}"
+    replace: "registry: {{ portal_hub_registry }}\n        repository: {{ portal_hub_repository }}"
+
+- name: Override RHDH hub image tag to pre-built portal hub  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: "repository: {{ portal_hub_repository }}\n        tag: \"{{ rhdh_image_tag }}\""
+    replace: "repository: {{ portal_hub_repository }}\n        tag: \"{{ portal_hub_tag }}\""

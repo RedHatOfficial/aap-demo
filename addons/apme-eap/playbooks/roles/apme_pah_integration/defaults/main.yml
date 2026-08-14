@@ -1,0 +1,23 @@
+---
+# setup-pah / galaxy integration for APME portal deploy
+
+apme_pah_galaxy_token_file: "{{ lookup('env', 'HOME') }}/.aap-demo/galaxy-token"  # noqa: var-naming[no-role-prefix]
+apme_pah_config_file: "{{ lookup('env', 'HOME') }}/.aap-demo/pah-config.yml"  # noqa: var-naming[no-role-prefix]
+apme_pah_setup_script: "{{ role_path }}/../../../../setup-pah/deploy.sh"  # noqa: var-naming[no-role-prefix]
+apme_pah_aap_namespace: >-  # noqa: var-naming[no-role-prefix]
+  {{ lookup('env', 'AAP_NAMESPACE') | default('aap-operator', true) }}
+
+# Run setup-pah to configure rh-certified/validated remotes on AAP when cred files exist
+apme_pah_run_setup_pah: true  # noqa: var-naming[no-role-prefix]
+
+# Seed APME /settings/galaxy-servers from AAP + optional external PAH config
+apme_pah_seed_apme_galaxy_servers: true  # noqa: var-naming[no-role-prefix]
+
+# Enable portal catalog PAH collection sync (rh-certified, validated, published)
+# auto: enable when galaxy-token or pah-config.yml is present
+apme_pah_collections_enabled: auto  # noqa: var-naming[no-role-prefix]
+
+apme_pah_gateway_service: apme-gateway  # noqa: var-naming[no-role-prefix]
+apme_pah_gateway_port: 8080  # noqa: var-naming[no-role-prefix]
+apme_pah_seed_retries: 12  # noqa: var-naming[no-role-prefix]
+apme_pah_seed_delay: 10  # noqa: var-naming[no-role-prefix]

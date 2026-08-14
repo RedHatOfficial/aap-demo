@@ -42,30 +42,10 @@
         remote_src: true
       when: not apme_portal_vars.stat.exists
 
-    - name: Resolve bundled plugin pack
-      ansible.builtin.include_tasks: tasks/resolve_plugin_pack.yml
-      vars:
-        apme_resolve_plugin_pack_required: false
-        apme_resolve_oci_registry: false
-
-    - name: Warn when bundled OCI pack is missing
-      ansible.builtin.debug:
-        msg: >-
-          No OCI pack found in {{ collection_root }}/plugin_packs/.
-          Re-extract the welcome pack zip.
-      when: (plugin_sha is not defined) or (plugin_sha | length == 0)
-
-    - name: Display bundled plugin pack
-      ansible.builtin.debug:
-        msg:
-          - "Bundled plugin SHA: {{ plugin_sha }}"
-          - "OCI pack: {{ apme_oci_tar_resolved | default('not found') }}"
-          - "Deploy pushes this pack to your cluster registry (no manual unzip)."
-      when: plugin_sha is defined and plugin_sha | length > 0
-
     - name: Display next steps
       ansible.builtin.debug:
         msg:
-          - "1. Edit vars/apme_portal.yml (OpenShift, AAP, GitHub, registry paths)"
-          - "2. Run: ansible-playbook playbooks/deploy_apme_portal.yml -e @vars/apme_portal.yml"
+          - "1. Edit vars/apme_portal.yml (OpenShift, AAP, GitHub)"
+          - "2. Set portal_hub_image to your pre-built portal hub container"
+          - "3. Run: ansible-playbook playbooks/deploy_apme_portal.yml -e @vars/apme_portal.yml"
           - "Full guide: docs/apme-portal-install-guide.md"

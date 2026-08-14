@@ -27,15 +27,15 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 # GitHub secrets configuration
 configure_github_secrets: false
 
-# OCI push configuration
-apme_oci_push_force: false  # Set true to re-push plugins even if already in registry
-apme_oci_push_skopeo_binary: skopeo  # Path to skopeo binary (default: skopeo)
+# Portal hub image (APME plugins baked in at build time — no deploy-time plugin loading)
+portal_hub_image: "quay.io/cferman/portal-hub-eap:latest"
+
+# setup-pah / Automation Hub integration (see ~/.aap-demo/galaxy-token and pah-config.yml)
+apme_pah_run_setup_pah: true
+apme_pah_seed_apme_galaxy_servers: true
+apme_pah_collections_enabled: auto
+apme_pah_aap_namespace: aap-operator
 
 # OpenShift DevSpaces (optional)
 # Set to enable "Open in DevSpaces" actions after remediation
 # devspaces_base_url: "https://devspaces.apps.cluster.example.com/"
-
-# Pre-baked plugins image (optional, speeds up portal pod start dramatically)
-# Build with: cd addons/apme-eap && ./build-plugins-image.sh
-# Then set to the image reference printed by the script:
-# apme_prebaked_plugins_image: "image-registry.openshift-image-registry.svc:5000/apme/rhaap-portal-plugins-baked:<sha>"

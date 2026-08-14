@@ -16,11 +16,16 @@ Deployment date: {{ ansible_date_time.iso8601 }}
 - **Redirect URI:** {{ portal_url }}/api/auth/rhaap/handler/frame
 - **GitHub OAuth callback:** {{ portal_url }}/api/auth/github/handler/frame (optional: confirm on github.com)
 
-## APME plugins
+## Portal hub
 
-- **Plugin SHA:** {{ plugin_sha }}
-- **OCI registry:** {{ oci_registry_normalized }}
-- **Image:** `{{ oci_registry_normalized }}/apme-prototype-plugins:{{ plugin_sha }}`
+- **Image:** {{ portal_hub_image }}
+- **Plugins:** Baked into the container image (no OCI push or install-dynamic-plugins at deploy time)
+
+## Automation Hub (setup-pah)
+
+- **setup-pah credentials:** {{ 'yes' if apme_pah_credentials_available | default(false) else 'no' }}
+- **PAH catalog sync:** {{ 'enabled' if apme_pah_collections_sync_enabled | default(false) else 'disabled' }}
+- **APME galaxy servers seeded:** {{ 'yes' if apme_pah_seed_apme_galaxy_servers | default(false) else 'no' }}
 
 ## Helm releases
 

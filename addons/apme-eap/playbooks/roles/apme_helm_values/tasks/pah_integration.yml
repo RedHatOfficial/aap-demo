@@ -1,0 +1,25 @@
+---
+# Apply setup-pah / AAP hub settings to rendered portal Helm values.
+
+- name: Substitute literal AAP host URL in portal app-config  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '\$\{AAP_HOST_URL\}'
+    replace: "{{ aap_host_normalized }}"
+  when:
+    - aap_host_normalized is defined
+    - aap_host_normalized | length > 0
+
+- name: Enable PAH collection catalog sync when setup-pah credentials are present  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^(\s+pahCollections:\n\s+enabled:) false$'
+    replace: '\1 true'
+  when: apme_pah_collections_sync_enabled | default(false) | bool
+
+- name: Note PAH collection sync left disabled  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      pahCollections sync remains disabled — run `aap-demo enable setup-pah` with
+      ~/.aap-demo/galaxy-token or pah-config.yml, then redeploy apme-eap.
+  when: not (apme_pah_collections_sync_enabled | default(false) | bool)

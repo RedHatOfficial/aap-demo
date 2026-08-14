@@ -416,6 +416,7 @@ The APME namespace and portal deployment itself remain unchanged between approac
 
 ## References
 
+- [ADR-022](022-apme-prebuilt-portal-hub.md): Pre-built portal hub image, init contract, and Git Repositories fixes
 - [ADR-019b](019b-apme-aap-native-execution.md): Rejected AAP-native execution approach
 - [ADR-008](008-addon-system.md): Addon system architecture
 - [ADR-004](004-portal-helm-addon.md): Portal Helm addon (similar dual-path pattern)
