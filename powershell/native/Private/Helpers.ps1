@@ -211,9 +211,13 @@ function Get-AapKubeconfigPath {
   if ($env:KUBECONFIG -and (Test-Path -LiteralPath $env:KUBECONFIG)) {
     return $env:KUBECONFIG
   }
+  $aapKube = Join-Path $Script:AapDemoConfigDir 'kubeconfig.microshift'
+  if (Test-Path -LiteralPath $aapKube) { return $aapKube }
+  $legacyKube = Join-Path $Script:AapDemoConfigDir 'kubeconfig'
+  if (Test-Path -LiteralPath $legacyKube) { return $legacyKube }
   $crcKube = Join-Path $env:USERPROFILE '.crc\machines\crc\kubeconfig'
   if (Test-Path -LiteralPath $crcKube) { return $crcKube }
-  return $null
+  return $aapKube
 }
 
 function Initialize-AapKubeEnvironment {
@@ -1258,11 +1262,11 @@ function Sync-AapKubeconfig {
       'config', 'use-context', $ctxName
     ) | Out-Null
 
-    $crcDir = Split-Path -Parent $crcKube
-    New-Item -ItemType Directory -Force -Path $crcDir | Out-Null
-    Move-Item -LiteralPath $tempKube -Destination $crcKube -Force
+    $aapKube = Join-Path $Script:AapDemoConfigDir 'kubeconfig.microshift'
+    New-Item -ItemType Directory -Force -Path $Script:AapDemoConfigDir | Out-Null
+    Move-Item -LiteralPath $tempKube -Destination $aapKube -Force
     if (-not $Quiet) {
-      Write-AapStep 'Saved to ~/.crc/machines/crc/kubeconfig'
+      Write-AapStep "Saved to $aapKube"
     }
     $tempKube = $null
   } finally {
@@ -1271,46 +1275,10 @@ function Sync-AapKubeconfig {
     }
   }
 
-  $userKubeDir = Join-Path $env:USERPROFILE '.kube'
-  $userKube = Join-Path $userKubeDir 'config'
-  New-Item -ItemType Directory -Force -Path $userKubeDir | Out-Null
-
-  if (Test-Path -LiteralPath $userKube) {
-    if (-not $Quiet) {
-      Write-Host '  Removing stale OpenShift Local kubeconfig entries...'
-    }
-    Remove-AapStaleCrcKubeEntries -KubeConfig $userKube
-
-    if (-not $Quiet) {
-      Write-Host '  Merging into existing ~/.kube/config...'
-    }
-    $merged = [System.IO.Path]::GetTempFileName()
-    $prev = $env:KUBECONFIG
-    try {
-      $env:KUBECONFIG = "$userKube;$crcKube"
-      $flat = Invoke-AapExternal oc @('config', 'view', '--flatten')
-      if ($flat.ExitCode -ne 0) { throw 'Failed to merge kubeconfigs' }
-      Set-Content -LiteralPath $merged -Value $flat.Output -Encoding ascii
-      Move-Item -LiteralPath $merged -Destination $userKube -Force
-      if (-not $Quiet) {
-        Write-AapStep 'Merged context into ~/.kube/config'
-      }
-    } finally {
-      $env:KUBECONFIG = $prev
-      if (Test-Path -LiteralPath $merged) {
-        Remove-Item -LiteralPath $merged -Force -ErrorAction SilentlyContinue
-      }
-    }
-  } else {
-    Copy-Item -LiteralPath $crcKube -Destination $userKube -Force
-    if (-not $Quiet) {
-      Write-AapStep 'Created ~/.kube/config'
-    }
-  }
-
-  Invoke-AapOcConfig -KubeConfig $userKube -Arguments @('config', 'use-context', $ctxName) | Out-Null
+  $env:KUBECONFIG = Join-Path $Script:AapDemoConfigDir 'kubeconfig.microshift'
   if (-not $Quiet) {
     Write-AapStep "Current context set to $ctxName"
+    Write-Host "  export KUBECONFIG=$($env:KUBECONFIG)"
   }
 }
 

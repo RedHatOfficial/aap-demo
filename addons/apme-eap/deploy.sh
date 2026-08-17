@@ -7,6 +7,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../includes/aap-demo-paths.sh
+source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
 ACTION="${1:-deploy}"
 NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
@@ -328,11 +330,12 @@ discover_environment() {
 
   # 1. KUBECONFIG
   if [ -z "${KUBECONFIG:-}" ]; then
-    if [ -f "$HOME/.crc/machines/crc/kubeconfig" ]; then
-      export KUBECONFIG="$HOME/.crc/machines/crc/kubeconfig"
+    KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
+    export KUBECONFIG
+    if [ -f "$KUBECONFIG" ]; then
       info "Using KUBECONFIG: $KUBECONFIG"
     else
-      warn "KUBECONFIG not set and default CRC kubeconfig not found"
+      warn "KUBECONFIG not set and aap-demo kubeconfig not found at $AAP_DEMO_KUBECONFIG"
     fi
   fi
 
@@ -726,7 +729,7 @@ deploy() {
   info "(pod status updates every 30s during helm installs)"
 
   # Set environment for kubernetes.core modules
-  export K8S_AUTH_KUBECONFIG="${KUBECONFIG:-${HOME}/.crc/machines/crc/kubeconfig}"
+  export K8S_AUTH_KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}"
   export ANSIBLE_ROLES_PATH="${SCRIPT_DIR}/playbooks/roles"
 
   _pod_watcher "$NAMESPACE" 30 &

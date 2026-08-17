@@ -25,7 +25,7 @@ if echo "$_CATALOG_OP_ARGS" | grep -q '"openshift-marketplace"'; then
 else
   MARKETPLACE_NAMESPACE="olm"
 fi
-KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
+KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.aap-demo/kubeconfig.microshift}"
 if [ -z "${AO_STORAGE_CLASS:-}" ]; then
   if kubectl get sc nfs-local-rwx &>/dev/null 2>&1; then
     STORAGE_CLASS="nfs-local-rwx"

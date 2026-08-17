@@ -79,11 +79,11 @@ function Invoke-AapDemoCreate {
       Start-Sleep -Seconds 5
     }
 
-    $kubeDir = Join-Path $env:USERPROFILE '.crc\machines\crc'
-    New-Item -ItemType Directory -Force -Path $kubeDir | Out-Null
+    $aapKube = Join-Path $Script:AapDemoConfigDir 'kubeconfig.microshift'
+    New-Item -ItemType Directory -Force -Path $Script:AapDemoConfigDir | Out-Null
     Invoke-AapCrcSsh 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' |
-      Set-Content -LiteralPath (Join-Path $kubeDir 'kubeconfig') -Encoding ascii
-    $env:KUBECONFIG = Join-Path $kubeDir 'kubeconfig'
+      Set-Content -LiteralPath $aapKube -Encoding ascii
+    $env:KUBECONFIG = $aapKube
 
     Write-AapStep 'Installing metrics-server...'
     if ((Invoke-AapOcQuiet @('get', 'deployment', 'metrics-server', '-n', 'kube-system')) -ne 0) {
