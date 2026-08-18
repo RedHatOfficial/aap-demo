@@ -4,13 +4,14 @@
 # =============================================================================
 
 # Guard against double-sourcing
-if [ -n "$_AAP_DEMO_PATHS_LOADED" ]; then return 0; fi
+if [ -n "${_AAP_DEMO_PATHS_LOADED:-}" ]; then return 0; fi
 _AAP_DEMO_PATHS_LOADED=1
 
 AAP_DEMO_DIR="${AAP_DEMO_DIR:-$HOME/.aap-demo}"
 AAP_DEMO_KUBECONFIG="${AAP_DEMO_KUBECONFIG:-$AAP_DEMO_DIR/kubeconfig.microshift}"
 
-# Resolve the kubeconfig path aap-demo should use (read-only discovery).
+# Resolve kubeconfig path (read-only discovery). Returns the write target even when
+# missing; callers that read the file must still test -f/-s before use.
 aap_demo_resolve_kubeconfig() {
   if [ -n "${1:-}" ]; then
     echo "$1"

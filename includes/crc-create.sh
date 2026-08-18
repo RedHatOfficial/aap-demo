@@ -433,13 +433,18 @@ eval "$(crc oc-env 2>/dev/null)"
 mkdir -p "$AAP_DEMO_DIR"
 
 # Save cluster credentials under ~/.aap-demo (never touch ~/.kube/config)
-if [ -f "$AAP_DEMO_KUBECONFIG" ]; then
-  echo "  ✓ Kubeconfig saved to $AAP_DEMO_KUBECONFIG"
-else
+if [ ! -s "$AAP_DEMO_KUBECONFIG" ]; then
   ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 \
     'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >"$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
   chmod 600 "$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
+fi
+
+if [ -s "$AAP_DEMO_KUBECONFIG" ]; then
   echo "  ✓ Kubeconfig saved to $AAP_DEMO_KUBECONFIG"
+else
+  printf "  ${_RED}ERROR: Failed to save kubeconfig to $AAP_DEMO_KUBECONFIG${_NC}\n"
+  echo "  Try: aap-demo kubeconfig"
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
