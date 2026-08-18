@@ -36,51 +36,6 @@
     rhdh_image_tag: "1.9"
   when: system_arch not in ['aarch64', 'arm64']
 
-- name: Substitute portal Helm value placeholders  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.replace:
-    path: "{{ apme_portal_helm_values_path }}"
-    regexp: "{{ item.regexp }}"
-    replace: "{{ item.replace }}"
-  loop:
-    - regexp: "<namespace>"
-      replace: "{{ openshift_project_name }}"
-    - regexp: "<cluster-router-base>"
-      replace: "{{ openshift_cluster_domain }}"
-    - regexp: "<plugin-sha>"
-      replace: "{{ plugin_sha }}"
-    - regexp: "<oci-registry>"
-      replace: "{{ oci_registry_internal | default(oci_registry_normalized) }}"
-
-- name: Use pre-baked plugins image for fast init container  # noqa: var-naming[no-role-prefix]
-  when: apme_prebaked_plugins_image | default('') | length > 0
-  block:
-    - name: Set pre-baked init container command  # noqa: var-naming[no-role-prefix]
-      ansible.builtin.replace:
-        path: "{{ apme_portal_helm_values_path }}"
-        regexp: "<init-install-command>"
-        replace: "- /bin/sh\n        - -c\n        - cp -r /pre-installed/dynamic-plugins-root/. /dynamic-plugins-root && cp -r /pre-installed/extensions/. /extensions"  # yamllint disable-line rule:line-length
-
-    - name: Set pre-baked init container image  # noqa: var-naming[no-role-prefix]
-      ansible.builtin.replace:
-        path: "{{ apme_portal_helm_values_path }}"
-        regexp: "'<init-container-image>'"
-        replace: "'{{ apme_prebaked_plugins_image }}'"
-
-- name: Use standard RHDH init container (install-dynamic-plugins)  # noqa: var-naming[no-role-prefix]
-  when: apme_prebaked_plugins_image | default('') | length == 0
-  block:
-    - name: Set standard init container command  # noqa: var-naming[no-role-prefix]
-      ansible.builtin.replace:
-        path: "{{ apme_portal_helm_values_path }}"
-        regexp: "<init-install-command>"
-        replace: "- ./install-dynamic-plugins.sh\n        - /dynamic-plugins-root"
-
-    - name: Set standard init container image  # noqa: var-naming[no-role-prefix]
-      ansible.builtin.replace:
-        path: "{{ apme_portal_helm_values_path }}"
-        regexp: "'<init-container-image>'"
-        replace: "{% raw %}'{{ include \"backstage.image\" . }}'{% endraw %}"
-
 - name: Override RHDH hub image registry  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
@@ -92,6 +47,18 @@
     path: "{{ apme_portal_helm_values_path }}"
     regexp: "repository: {{ rhdh_image_repository }}\n        tag: \"1\\.9\""
     replace: "repository: {{ rhdh_image_repository }}\n        tag: \"{{ rhdh_image_tag }}\""
+
+- name: Configure Helm values for pre-built portal hub image  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: prebuilt_hub.yml
+
+- name: Restrict portal sign-in to AAP (RHAAP) OAuth only  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: aap_auth_only.yml
+
+- name: Apply setup-pah / AAP hub integration to Helm values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: pah_integration.yml
+
+- name: Substitute portal app-config placeholders (AAP token, support URL, routes)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: portal_app_config_substitution.yml
 
 - name: Normalize optional Dev Spaces base URL  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
@@ -113,12 +80,6 @@
     regexp: '(?m)^          # OpenShift Dev Spaces — optional; set devspaces_base_url in vars to enable\.\n          # <devspaces-config>\n'  # yamllint disable-line rule:line-length
     replace: ''
   when: apme_helm_values_devspaces_base_url | length == 0
-
-- name: Add insecure registry support for init container  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.replace:
-    path: "{{ apme_portal_helm_values_path }}"
-    regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
-    replace: "- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins\n        - name: SKOPEO_INSECURE_POLICY\n          value: \"true\""  # yamllint disable-line rule:line-length
 
 # MicroShift / nip.io workarounds for self-signed certs and DNS resolution
 - name: Check if using nip.io domain  # noqa: var-naming[no-role-prefix]
@@ -162,8 +123,8 @@
 - name: Add NODE_TLS_REJECT_UNAUTHORIZED env var for self-signed certs  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
-    regexp: '(- name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins)'
-    replace: "- name: NODE_TLS_REJECT_UNAUTHORIZED\n          value: \"0\"\n        - name: NPM_CONFIG_USERCONFIG\n          value: /opt/app-root/src/.npmrc.dynamic-plugins"  # yamllint disable-line rule:line-length
+    regexp: '(- name: BACKEND_SECRET\n        valueFrom:)'
+    replace: "- name: NODE_TLS_REJECT_UNAUTHORIZED\n        value: \"0\"\n      - name: BACKEND_SECRET\n        valueFrom:"  # yamllint disable-line rule:line-length
   when: needs_ssl_bypass
 
 - name: Extract AAP hostname from aap_host URL  # noqa: var-naming[no-role-prefix]
@@ -176,7 +137,9 @@
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(      - emptyDir: \{\}\n        name: apme-data\n)      hostAliases: \[\]'
     replace: '\1      hostAliases:\n      - ip: "{{ router_cluster_ip }}"\n        hostnames:\n        - "{{ aap_hostname }}"\n        - "registry.{{ openshift_cluster_domain }}"'  # yamllint disable-line rule:line-length
-  when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
+  when:
+    - is_nip_io_domain
+    - router_cluster_ip is defined and router_cluster_ip | length > 0
 
 - name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
@@ -208,11 +171,11 @@
     that:
       - rendered_helm_values.content | b64decode is not search('<namespace>')
       - rendered_helm_values.content | b64decode is not search('<cluster-router-base>')
-      - rendered_helm_values.content | b64decode is not search('<plugin-sha>')
-      - rendered_helm_values.content | b64decode is not search('<oci-registry>')
       - rendered_helm_values.content | b64decode is not search('<devspaces-config>')
       - rendered_helm_values.content | b64decode is not search('<init-install-command>')
       - rendered_helm_values.content | b64decode is not search('<init-container-image>')
+      - rendered_helm_values.content | b64decode is not search('<plugin-sha>')
+      - rendered_helm_values.content | b64decode is not search('<oci-registry>')
     fail_msg: "Unresolved placeholders remain in {{ apme_portal_helm_values_path }}"
 
 - name: Display rendered values path  # noqa: var-naming[no-role-prefix]

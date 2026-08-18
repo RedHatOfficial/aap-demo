@@ -1,0 +1,200 @@
+---
+# Seed APME /api/v1/settings/galaxy-servers from AAP + optional setup-pah external PAH.
+
+- name: Skip APME galaxy-server seeding when disabled  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: "APME galaxy-server seeding disabled (apme_pah_seed_apme_galaxy_servers: false)"
+  when: not (apme_pah_seed_apme_galaxy_servers | bool)
+
+- name: Normalize AAP host URL for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_host_normalized: "{{ aap_host_normalized | default(aap_host | regex_replace('/$', '')) }}"
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - aap_host_normalized is not defined or aap_host_normalized | length == 0
+
+- name: Load AAP API token from portal secret when not in vars  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    name: secrets-rhaap-portal
+    namespace: "{{ openshift_project_name }}"
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_pah_portal_secret
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - aap_api_token is not defined or aap_api_token | length == 0
+
+- name: Set AAP API token from portal secret  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_api_token: "{{ apme_pah_portal_secret.resources[0].data['aap-token'] | b64decode }}"
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - apme_pah_portal_secret is defined
+    - apme_pah_portal_secret is not skipped
+    - apme_pah_portal_secret.resources | default([]) | length > 0
+  no_log: true
+
+- name: Validate AAP host for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - aap_host_normalized is defined
+      - aap_host_normalized | length > 0
+      - aap_api_token is defined
+      - aap_api_token | length > 0
+    fail_msg: "aap_host_normalized and aap_api_token are required to seed APME galaxy servers"
+  when: apme_pah_seed_apme_galaxy_servers | bool
+
+- name: Resolve APME gateway pod for in-cluster API calls  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ openshift_project_name }}"
+    label_selectors:
+      - app.kubernetes.io/component=gateway
+      - app.kubernetes.io/instance={{ apme_helm_release_name | default('apme') }}
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_pah_gateway_pods
+  when: apme_pah_seed_apme_galaxy_servers | bool
+
+- name: Set APME gateway pod name  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_pah_gateway_pod_name: "{{ apme_pah_gateway_pods.resources[0].metadata.name }}"
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - apme_pah_gateway_pods.resources | default([]) | length > 0
+
+- name: Fail when APME gateway pod is unavailable  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: "APME gateway pod not found in namespace {{ openshift_project_name }}"
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - apme_pah_gateway_pod_name is not defined
+
+- name: Wait for APME gateway to accept HTTP requests  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_exec:
+    namespace: "{{ openshift_project_name }}"
+    pod: "{{ apme_pah_gateway_pod_name }}"
+    command: >-
+      curl -sf
+      http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_pah_gateway_wait
+  until: apme_pah_gateway_wait is succeeded
+  retries: "{{ apme_pah_seed_retries }}"
+  delay: "{{ apme_pah_seed_delay }}"
+  when: apme_pah_seed_apme_galaxy_servers | bool
+
+- name: Build desired APME galaxy server definitions  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_pah_desired_galaxy_servers:
+      - name: automation_hub
+        url: "{{ aap_host_normalized }}/api/galaxy/"
+        token: "{{ aap_api_token }}"
+        auth_url: ""
+      - name: community
+        url: https://galaxy.ansible.com/api/
+        token: ""
+        auth_url: ""
+  when: apme_pah_seed_apme_galaxy_servers | bool
+  no_log: true
+
+- name: Add external PAH galaxy server from pah-config.yml  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_pah_desired_galaxy_servers: >-
+      {{
+        apme_pah_desired_galaxy_servers + [{
+          'name': 'external-pah',
+          'url': (
+            apme_pah_external_url
+            if apme_pah_external_url is match('.*/api/galaxy/?$')
+            else apme_pah_external_url | regex_replace('/$', '') ~ '/api/galaxy/'
+          ),
+          'token': apme_pah_external_token | default(''),
+          'auth_url': ''
+        }]
+      }}
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - apme_pah_external_url is defined
+    - apme_pah_external_url | length > 0
+    - apme_pah_external_token | default('') | length > 0
+  no_log: true
+
+- name: List existing APME galaxy servers  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_exec:
+    namespace: "{{ openshift_project_name }}"
+    pod: "{{ apme_pah_gateway_pod_name }}"
+    command: >-
+      curl -sf
+      http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_pah_existing_galaxy_servers_raw
+  when: apme_pah_seed_apme_galaxy_servers | bool
+
+- name: Parse existing APME galaxy servers  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_pah_existing_galaxy_servers:
+      json: "{{ apme_pah_existing_galaxy_servers_raw.stdout | from_json }}"
+  when: apme_pah_seed_apme_galaxy_servers | bool
+
+- name: Create missing APME galaxy server entries  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_exec:
+    namespace: "{{ openshift_project_name }}"
+    pod: "{{ apme_pah_gateway_pod_name }}"
+    command: >-
+      curl -s -o /dev/null -w "%{http_code}"
+      -X POST -H "Content-Type: application/json"
+      -d '{{ {
+        "name": item.name,
+        "url": item.url,
+        "token": item.token | default(""),
+        "auth_url": item.auth_url | default("")
+      } | to_json }}'
+      http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  loop: "{{ apme_pah_desired_galaxy_servers | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: apme_pah_create_galaxy_servers
+  failed_when: apme_pah_create_galaxy_servers.stdout | trim not in ['201', '409']
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - item.name not in (apme_pah_existing_galaxy_servers.json | default([]) | map(attribute='name') | list)
+  no_log: true
+
+- name: Restart portal to pick up galaxy-server catalog sync  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    kind: Deployment
+    api_version: apps/v1
+    namespace: "{{ openshift_project_name }}"
+    name: "{{ portal_helm_release_name }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              apme.eap.welcome.pack/galaxyServersSeededAt: "{{ ansible_date_time.iso8601 }}"
+  when:
+    - apme_pah_seed_apme_galaxy_servers | bool
+    - apme_pah_desired_galaxy_servers is defined

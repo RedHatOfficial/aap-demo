@@ -12,6 +12,7 @@ NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
 GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
 VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
+PORTAL_HUB_IMAGE="${PORTAL_HUB_IMAGE:-quay.io/cferman/portal-hub-eap:latest}"
 
 # Color output
 RED='\033[0;31m'
@@ -173,38 +174,6 @@ setup_venv() {
   fi
 }
 
-_ensure_skopeo() {
-  if command -v skopeo &>/dev/null; then
-    return 0
-  fi
-
-  info "skopeo not found — installing (required for APME plugin OCI push)..."
-  case "$(uname -s)" in
-    Darwin)
-      if command -v brew &>/dev/null; then
-        brew install skopeo
-      else
-        die "skopeo not found. Install Homebrew, then: brew install skopeo"
-      fi
-      ;;
-    Linux)
-      if command -v dnf &>/dev/null; then
-        sudo dnf install -y skopeo
-      else
-        die "skopeo not found and cannot auto-install. Install skopeo from your package manager (e.g. sudo dnf install skopeo)."
-      fi
-      ;;
-    *)
-      die "skopeo not found. Install skopeo for your platform before enabling apme-eap."
-      ;;
-  esac
-
-  if ! command -v skopeo &>/dev/null; then
-    die "skopeo install completed but skopeo is still not on PATH"
-  fi
-  info "skopeo installed: $(command -v skopeo)"
-}
-
 _helm_version_ok() {
   local helm_version helm_major helm_minor
   helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
@@ -282,22 +251,10 @@ check_prerequisites() {
     die "python3 not found. Please install Python 3.8 or later."
   fi
 
-  # Plugin OCI push runs skopeo on the host (outside the cluster)
-  _ensure_skopeo
+  info "Using pre-built portal hub (${PORTAL_HUB_IMAGE})"
 
   # Portal/gateway Helm releases use kubernetes.core.helm (requires helm binary on PATH)
   _ensure_helm
-
-  # MicroShift lacks an integrated registry — deploy the in-cluster registry
-  # addon so APME can store plugin OCI images for the portal init container.
-  if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
-    info "Deploying in-cluster registry addon..."
-    if ! bash "${SCRIPT_DIR}/../registry/deploy.sh"; then
-      warn "Registry deploy reported an error — continuing anyway (SSH/CRI-O config is non-fatal)"
-    fi
-  else
-    info "In-cluster registry already running"
-  fi
 
   info "Prerequisites check complete"
 }
@@ -697,17 +654,14 @@ EOF
 
   cat >>"$VARS_FILE" <<EOF
 
-# OCI registry configuration (MicroShift in-cluster registry addon)
-# oci_registry: External URL for local skopeo push (runs outside cluster)
-oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
-# oci_registry_internal: Internal service URL for pods to pull images
-# Note: No http:// prefix - registries.conf handles the insecure flag
-oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
-skip_plugin_push: false
-apme_oci_push_force: false  # Set true to re-push plugins even if registry has them
-EOF
+# Portal hub image (APME plugins baked in at build time)
+portal_hub_image: "${PORTAL_HUB_IMAGE}"
 
-  cat >>"$VARS_FILE" <<EOF
+# setup-pah / Automation Hub (reads ~/.aap-demo/galaxy-token and pah-config.yml)
+apme_pah_run_setup_pah: true
+apme_pah_seed_apme_galaxy_servers: true
+apme_pah_collections_enabled: auto
+apme_pah_aap_namespace: "${AAP_NAMESPACE:-aap-operator}"
 
 # Architecture (informational)
 # cluster_arch: ${ARCH}

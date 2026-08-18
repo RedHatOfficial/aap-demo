@@ -1,0 +1,18 @@
+---
+# Resolve portal app-config placeholders that Helm does not substitute from env vars.
+
+- name: Substitute AAP API token in portal app-config  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '\$\{AAP_TOKEN\}'
+    replace: "{{ aap_api_token }}"
+  when:
+    - aap_api_token is defined
+    - aap_api_token | length > 0
+  no_log: true
+
+- name: Substitute customer support URL in portal app-config  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '\$\{CUSTOMER_SUPPORT_URL\}'
+    replace: "https://access.redhat.com/support"

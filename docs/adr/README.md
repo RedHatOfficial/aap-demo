@@ -58,6 +58,11 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [016](016-console-pah-authentication.md) | Console and PAH Authentication | Accepted |
 | [017](017-ao-eap-addon.md) | Automation Orchestrator EAP Addon | Accepted |
 | [018](018-product-demos-addon.md) | Ansible Product Demos Addon Integration | Accepted |
+| [019](019-apme-playbook-addon.md) | APME Playbook Addon | Accepted |
+| [019b](019b-apme-aap-native-execution.md) | APME AAP-Native Execution (rejected) | Rejected |
+| [020](020-full-openshift-support.md) | Full OpenShift Support and Resource-Aware Provisioning | Accepted |
+| [021](021-local-cache-addon.md) | Local Cache Addon | Accepted |
+| [022](022-apme-prebuilt-portal-hub.md) | APME Pre-Built Portal Hub Deployment | Accepted |
 
 ## Creating a New ADR
 
@@ -79,4 +84,5 @@ For new contributors, read ADRs in this order:
 4. **006** + **007** + **012** — common deploy failure areas
 5. **008** — how optional components plug in
 6. **002** + **004** — portal (if using Self-Service Portal)
-7. **010** + **014** — Windows and testing
+7. **019** + **022** — APME addon and pre-built portal hub (if using Ansible Quality)
+8. **010** + **014** — Windows and testing

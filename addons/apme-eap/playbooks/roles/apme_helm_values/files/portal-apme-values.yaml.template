@@ -4,13 +4,9 @@
 # Helm applies the full dynamic.plugins list from the rendered file.
 #
 # Rendered by apme-portal-installer role apme_helm_values (placeholders below).
-# Placeholders: <namespace> <cluster-router-base> <plugin-sha> <oci-registry>
+# Placeholders: namespace, cluster-router-base, init-install-command, init-container-image
 #
-# --oci-registry examples: quay.example.com/myorg
-#   or image-registry.openshift-image-registry.svc:5000/<namespace>
-#
-# OCI: apme-prototype-plugins-<plugin-sha>*.oci.tar.gz
-# https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr
+# APME plugins load from paths baked into the portal hub image (see prebuilt_hub.yml).
 
 redhat-developer-hub:
   common:
@@ -259,6 +255,7 @@ redhat-developer-hub:
             frontend:
               ansible.plugin-backstage-apme:
                 apiFactories:
+                - importName: apmeApiFactory
                 - importName: gitRepositoriesExtensionsApiFactory
                 appIcons:
                 - importName: SecurityIcon
@@ -595,6 +592,72 @@ redhat-developer-hub:
                   icon: group
                   priority: 70
                   title: ""
+            ansible.plugin-backstage-self-service:
+              dynamicRoutes:
+              - importName: LandingPage
+                path: /
+              - importName: SelfServicePage
+                path: /self-service
+              - importName: TemplatesPage
+                menuItem:
+                  importName: TemplatesSidebarItem
+                path: /self-service/*
+              - importName: HistoryPage
+                menuItem:
+                  importName: HistorySidebarItem
+                path: /self-service/create/tasks
+              - importName: EEPage
+                path: /self-service/ee/*
+              - importName: EEPage
+                menuItem:
+                  importName: EEBuilderSidebarItem
+                path: /self-service/ee
+              - importName: CollectionsPage
+                menuItem:
+                  importName: CollectionsSidebarItem
+                path: /self-service/collections
+              - importName: CollectionsPage
+                path: /self-service/collections/*
+              - importName: GitRepositoriesPage
+                menuItem:
+                  importName: GitRepositoriesSidebarItem
+                path: /self-service/repositories
+              - importName: GitRepositoriesPage
+                path: /self-service/repositories/*
+              mountPoints:
+              - importName: LocationListener
+                mountPoint: application/listener
+              - importName: AppThemeFixer
+                mountPoint: application/listener
+              - config:
+                  priority: 100
+                importName: AAPLogoutButton
+                mountPoint: global.header/profile
+              providerSettings:
+              - description: Sign in with RHAAP
+                provider: ansible.auth.rhaap
+                title: RHAAP
+              scaffolderFieldExtensions:
+              - importName: AAPTokenFieldExtension
+              - importName: AAPResourcePickerExtension
+              - importName: AdditionalBuildStepsPickerFieldExtension
+              - importName: BaseImagePickerFieldExtension
+              - importName: CollectionsPickerFieldExtension
+              - importName: EEFileNamePickerFieldExtension
+              - importName: FileUploadPickerFieldExtension
+              - importName: PackagesPickerFieldExtension
+              - importName: MCPServersPickerFieldExtension
+              - importName: ScmSelectorFieldExtension
+              signInPage:
+                importName: SignInPage
+            ansible.plugin-backstage-apme:
+              apiFactories:
+              - importName: apmeApiFactory
+              - importName: gitRepositoriesExtensionsApiFactory
+              appIcons:
+              - importName: SecurityIcon
+                module: '@material-ui/icons'
+                name: apmeIcon
             internal.plugin-dynamic-plugins-info:
               appIcons:
               - importName: PluginsInfoIcon
@@ -810,7 +873,7 @@ redhat-developer-hub:
       - mountPath: /opt/app-root/src/.data
         name: apme-data
       extraVolumes:
-      # emptyDir avoids slow NFS plugin rebuilds on CRC; set apme_prebaked_plugins_image for persistence
+      # emptyDir staged by stage-baked-plugins init from the portal hub image
       - emptyDir: {}
         name: dynamic-plugins-root
       - configMap:
@@ -864,7 +927,7 @@ redhat-developer-hub:
         - name: CATALOG_ENTITIES_EXTRACT_DIR
           value: /extensions
         image: '<init-container-image>'
-        imagePullPolicy: ""
+        imagePullPolicy: IfNotPresent
         name: install-dynamic-plugins
         resources:
           limits:
@@ -884,6 +947,8 @@ redhat-developer-hub:
           seccompProfile:
             type: RuntimeDefault
         volumeMounts:
+        - mountPath: /opt/app-root/src/dynamic-plugins-root
+          name: dynamic-plugins-root
         - mountPath: /dynamic-plugins-root
           name: dynamic-plugins-root
         - mountPath: /opt/app-root/src/dynamic-plugins.yaml

@@ -1,16 +1,9 @@
-# Prototype OCI plugin pack (bundled in welcome pack zip)
+# Deprecated — plugin OCI packs are no longer used
 
-The welcome pack ships with an OCI archive in this directory. **Do not unzip it** — deploy
-pushes it to your cluster registry with `skopeo`.
+APME deploy uses a **pre-built portal hub container image** with plugins baked in at
+build time. Deploy does not push OCI plugin archives or run `install-dynamic-plugins`.
 
-`plugin-pack.manifest.yml` records the bundled `plugin_sha`. Deploy auto-detects the pack and
-defaults `oci_registry` to the OpenShift integrated registry for your namespace:
+To use a different plugin build, publish a new `portal-hub-eap` image and set
+`portal_hub_image` in `~/.aap-demo/apme-eap-vars.yml`.
 
-```text
-image-registry.openshift-image-registry.svc:5000/<namespace>
-```
-
-For an external registry (Quay, Harbor), set `oci_registry` and `registry_authfile` in
-`vars/apme_portal.yml` (paths can be anywhere on your workstation).
-
-> Not the collection `plugins/` directory (Ansible plugin types).
+The `*.oci.tar.gz` files in this directory are retained for reference only.

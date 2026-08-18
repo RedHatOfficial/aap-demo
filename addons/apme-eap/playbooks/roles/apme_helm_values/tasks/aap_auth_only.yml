@@ -1,0 +1,36 @@
+---
+# yamllint disable rule:line-length
+# Portal sign-in uses AAP (RHAAP) OAuth only — not GitHub/GitLab identity providers.
+
+- name: Configure portal sign-in for AAP (RHAAP) OAuth only  # noqa: var-naming[no-role-prefix]
+  vars:
+    _helm_tpl_open: "{{ '{{' }}"
+    _helm_tpl_close: "{{ '}}' }}"
+  block:
+    - name: Disable GitHub auth frontend plugin
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: >-  # yamllint disable-line rule:line-length
+          (- disabled: )false(\n[ \t]+package: ''{{ _helm_tpl_open }}- include "plugins\.load\.github-auth-provider" \. {{ _helm_tpl_close }}'')
+        replace: '\1true\2'
+
+    - name: Disable GitLab auth frontend plugin
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: >-  # yamllint disable-line rule:line-length
+          (- disabled: )false(\n[ \t]+package: ''{{ _helm_tpl_open }}- include "plugins\.load\.gitlab-auth-provider" \. {{ _helm_tpl_close }}'')
+        replace: '\1true\2'
+
+    - name: Remove GitHub/GitLab OAuth env vars from portal (SCM token remains for catalog)
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: >-  # yamllint disable-line rule:line-length
+          (?s)      - name: GITHUB_OAUTH_CLIENT_ID\n        valueFrom:\n          secretKeyRef:\n            key: github-oauth-client-id\n            name: secrets-scm\n            optional: true\n      - name: GITHUB_OAUTH_CLIENT_SECRET\n        valueFrom:\n          secretKeyRef:\n            key: github-oauth-client-secret\n            name: secrets-scm\n            optional: true\n
+        replace: ''
+
+    - name: Remove GitLab OAuth env vars from portal
+      ansible.builtin.replace:
+        path: "{{ apme_portal_helm_values_path }}"
+        regexp: >-  # yamllint disable-line rule:line-length
+          (?s)      - name: GITLAB_OAUTH_CLIENT_ID\n        valueFrom:\n          secretKeyRef:\n            key: gitlab-oauth-client-id\n            name: secrets-scm\n            optional: true\n      - name: GITLAB_OAUTH_CLIENT_SECRET\n        valueFrom:\n          secretKeyRef:\n            key: gitlab-oauth-client-secret\n            name: secrets-scm\n            optional: true\n
+        replace: ''
