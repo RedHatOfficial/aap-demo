@@ -1,6 +1,89 @@
+# Addons listed in `aap-demo enable` (matches bash AVAILABLE_ADDONS).
 $Script:AapAvailableAddons = @(
-  'mcp-server', 'portal', 'setup-pah', 'ao', 'apme-eap', 'local-cache'
+  'mcp-server', 'portal', 'setup-pah', 'ao', 'apme-eap', 'local-cache',
+  'product-demos', 'product-demo-satellite'
 )
+
+# Implemented natively in PowerShell (no Git Bash).
+$Script:AapNativeAddons = @('mcp-server', 'portal', 'setup-pah')
+
+function Get-AapBashDelegatedAddons {
+  $addonsDir = Join-Path $Script:AapDemoRepoRoot 'addons'
+  if (-not (Test-Path -LiteralPath $addonsDir)) { return @() }
+
+  return @(
+    Get-ChildItem -LiteralPath $addonsDir -Directory |
+      Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'deploy.sh') } |
+      ForEach-Object { $_.Name } |
+      Where-Object { $_ -notin $Script:AapNativeAddons }
+  )
+}
+
+function Test-AapAddonExists {
+  param([Parameter(Mandatory)][string]$Addon)
+
+  if ($Addon -in $Script:AapNativeAddons) { return $true }
+
+  $deploySh = Join-Path $Script:AapDemoRepoRoot "addons/$Addon/deploy.sh"
+  return Test-Path -LiteralPath $deploySh
+}
+
+function Test-AapAddonUsesBash {
+  param([Parameter(Mandatory)][string]$Addon)
+  return ($Addon -notin $Script:AapNativeAddons) -and (Test-AapAddonExists -Addon $Addon)
+}
+
+function Assert-AapBashAvailable {
+  param([string]$Addon = $null)
+
+  if (Get-Command bash -ErrorAction SilentlyContinue) { return }
+
+  $bashAddons = Get-AapBashDelegatedAddons
+  $addonList = if ($bashAddons.Count -gt 0) { $bashAddons -join ', ' } else { '(see addons/ in repo)' }
+  $prefix = if ($Addon) { "Addon '$Addon'" } else { 'This command' }
+
+  throw @"
+$prefix requires Git Bash (bash on PATH).
+
+Install Git for Windows:
+  winget install --id Git.Git -e --source winget
+
+Then open a new PowerShell window.
+
+Bash-delegated addons: $addonList
+Also requires bash: aap-demo test
+"@
+}
+
+function Initialize-AapBashAddonEnvironment {
+  Sync-AapKubeconfig -Quiet
+  Initialize-AapKubeEnvironment
+
+  $kube = Get-AapKubeconfigPath
+  if ($kube) { $env:KUBECONFIG = $kube }
+
+  $shimDir = Join-Path $Script:AapDemoConfigDir 'bin'
+  New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
+
+  $kubectlBash = Join-Path $shimDir 'kubectl'
+  $kubectlContent = @'
+#!/usr/bin/env bash
+exec oc "$@"
+'@
+  if (-not (Test-Path -LiteralPath $kubectlBash) -or
+      (Get-Content -LiteralPath $kubectlBash -Raw) -ne $kubectlContent) {
+    Set-Content -LiteralPath $kubectlBash -Value $kubectlContent -Encoding ascii -NoNewline
+  }
+
+    $kubectlCmd = Join-Path $shimDir 'kubectl.cmd'
+  if (-not (Test-Path -LiteralPath $kubectlCmd)) {
+    Set-Content -LiteralPath $kubectlCmd -Value "@echo off`r`noc %*" -Encoding ascii
+  }
+
+  if ($env:Path -notlike "*$shimDir*") {
+    $env:Path = "$shimDir;$env:Path"
+  }
+}
 
 function Invoke-AapAddonDeployScript {
   param(
@@ -8,16 +91,16 @@ function Invoke-AapAddonDeployScript {
     [string[]]$ScriptArgs = @()
   )
 
+  Assert-AapBashAvailable -Addon $Addon
+
   $deploySh = Join-Path $Script:AapDemoRepoRoot "addons/$Addon/deploy.sh"
   if (-not (Test-Path -LiteralPath $deploySh)) {
     throw "Addon '$Addon' has no deploy.sh"
   }
 
-  $bash = Get-Command bash -ErrorAction SilentlyContinue
-  if (-not $bash) {
-    throw "Addon '$Addon' requires bash (Git Bash or WSL). Install Git for Windows or use Linux/macOS."
-  }
+  Initialize-AapBashAddonEnvironment
 
+  $bash = Get-Command bash -ErrorAction Stop
   & $bash.Source $deploySh @ScriptArgs
   if ($LASTEXITCODE -ne 0) {
     throw "Addon '$Addon' deploy failed (exit code: $LASTEXITCODE)"
@@ -96,13 +179,15 @@ function Invoke-AapRemoveMcpServerAddon {
 function Invoke-AapAddonEnable {
   param(
     [Parameter(Mandatory)][string]$Addon,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$ScriptArgs = @()
   )
 
   switch ($Addon) {
     'mcp-server' { Invoke-AapDeployMcpServerAddon -Namespace $Namespace }
     'portal' { Invoke-AapDeployPortalAddon -Namespace $Namespace }
-    default { Invoke-AapAddonDeployScript -Addon $Addon }
+    'setup-pah' { Invoke-AapDemoSetupPah -Namespace $Namespace }
+    default { Invoke-AapAddonDeployScript -Addon $Addon -ScriptArgs $ScriptArgs }
   }
 }
 
@@ -146,6 +231,18 @@ function Get-AapAddonStatusLabel {
       if ($portalHost) { return "https://$portalHost" }
       return 'not-deployed'
     }
+    'ao' {
+      $aoNs = 'automation-orchestrator'
+      $routeResult = Invoke-AapOcCapture @(
+        'get', 'routes', '-n', $aoNs,
+        '-o', 'jsonpath={.items[0].spec.host}'
+      )
+      if ($routeResult.ExitCode -eq 0 -and $routeResult.Output.Trim()) {
+        return "https://$($routeResult.Output.Trim())"
+      }
+      if ((Invoke-AapOcQuiet @('get', 'namespace', $aoNs)) -eq 0) { return 'deployed' }
+      return 'not-deployed'
+    }
     default { return $null }
   }
 }
@@ -153,12 +250,16 @@ function Get-AapAddonStatusLabel {
 function Invoke-AapAddonDisable {
   param(
     [Parameter(Mandatory)][string]$Addon,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$ScriptArgs = @()
   )
 
   switch ($Addon) {
     'mcp-server' { Invoke-AapRemoveMcpServerAddon -Namespace $Namespace }
     'portal' { Invoke-AapRemovePortalAddon -Namespace $Namespace }
-    default { Invoke-AapAddonDeployScript -Addon $Addon -ScriptArgs @('--delete') }
+    'setup-pah' {
+      Write-AapWarn 'setup-pah has no cluster resources to remove (credentials remain in ~/.aap-demo/)'
+    }
+    default { Invoke-AapAddonDeployScript -Addon $Addon -ScriptArgs (@('--delete') + $ScriptArgs) }
   }
 }

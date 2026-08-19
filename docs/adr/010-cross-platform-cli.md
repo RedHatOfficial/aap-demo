@@ -50,9 +50,11 @@ AapDemo.psm1
 | create, deploy, status | ✓ | ✓ |
 | diagnose | ✓ | ✓ |
 | diagnose --ai | ✓ (claude CLI) | Delegates to Git Bash |
-| enable mcp-server | ✓ | ✓ |
-| enable portal | ✓ | Limited / Git Bash |
-| test, watch | ✓ | Git Bash delegation |
+| enable mcp-server | ✓ | ✓ (native) |
+| enable portal | ✓ | ✓ (native Helm) |
+| enable setup-pah | ✓ | ✓ (native) |
+| enable product-demos, registry, devspaces | ✓ | ✓ (Git Bash delegation) |
+| test, watch | ✓ | test: Git Bash; watch: native |
 | ingress CA trust | `ingress-ca-trust.sh` | `Install-AapIngressCaTrust` |
 
 PowerShell uses **native CRC/OpenShift operations** for the critical path; Git Bash is optional for advanced commands.

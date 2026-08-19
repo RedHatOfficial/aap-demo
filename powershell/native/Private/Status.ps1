@@ -121,6 +121,32 @@ function Invoke-AapDemoStatus {
   }
   if (-not $foundCred) { Write-Host '  (no admin password secret found yet)' }
 
+  $aoNs = 'automation-orchestrator'
+  if ((Get-AapAddonsList) -contains 'ao-eap' -or (Invoke-AapOcQuiet @('get', 'namespace', $aoNs)) -eq 0) {
+    $aoSecrets = Invoke-AapOcCapture @('get', 'secret', '-n', $aoNs, '-o', 'name')
+    $aoSecretName = $null
+    if ($aoSecrets.ExitCode -eq 0 -and $aoSecrets.Output) {
+      $aoSecretName = @($aoSecrets.Lines | Where-Object { $_ -match 'admin-password' } | Select-Object -First 1)
+      if ($aoSecretName) { $aoSecretName = ($aoSecretName -replace '^secret/', '').Trim() }
+    }
+    if ($aoSecretName) {
+      $aoPwResult = Invoke-AapOcCapture @(
+        'get', 'secret', $aoSecretName, '-n', $aoNs, '-o', 'jsonpath={.data.password}'
+      )
+      $aoPw = if ($aoPwResult.ExitCode -eq 0) { $aoPwResult.Output.Trim() } else { '' }
+      if ($aoPw) {
+        $aoDecoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aoPw))
+        if (-not $foundCred) {
+          Write-Host ''
+          Write-Host 'Credentials:'
+          Write-Host '------------'
+        }
+        Write-Host ("  {0,-20} admin / {1}" -f "${aoNs}:", $aoDecoded)
+        $foundCred = $true
+      }
+    }
+  }
+
   Write-AapCollectionSourcesStatus
 
   $savedAddons = @(Get-AapAddonsList)
@@ -136,7 +162,12 @@ function Invoke-AapDemoStatus {
       $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'apme')) -eq 0
     }
     $state = if ($enabled) { 'enabled' } else { 'disabled' }
-    Write-Host ("  {0,-15} {1}" -f $a, $state)
+    $label = Get-AapAddonStatusLabel -Addon $a -Namespace $Namespace -Enabled:$enabled
+    if ($label) {
+      Write-Host ("  {0,-25} {1}" -f $a, $label)
+    } else {
+      Write-Host ("  {0,-25} {1}" -f $a, $state)
+    }
   }
   Write-Host ''
 }
@@ -176,10 +207,9 @@ STATUS:
     must-gather     Collect diagnostic bundle
 
 ADDONS:
-    enable portal   Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
-                    Requires: AAP 2.6+, Helm 3.10+, Red Hat pull secret
-    enable mcp-server  Enable MCP server for AI assistants
-    disable <name>  Disable an addon (portal, mcp-server)
+    enable <addon>  Enable an addon (portal, mcp-server, setup-pah, product-demos, ...)
+    disable <name>  Disable an addon
+                    Bash-delegated addons require Git for Windows (bash on PATH)
 
 NOTES:
     Requires oc and crc on PATH. OpenShift Local needs Hyper-V.
