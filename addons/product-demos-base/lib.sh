@@ -492,6 +492,45 @@ print(p.get_project_path() or '')
   echo "  ✓ Applied ${dest_name} on task pod: ${project_dir}/${dest_name}"
 }
 
+apd_register_project_playbooks() {
+  local project_id="$1"
+  shift
+
+  if [ $# -eq 0 ]; then
+    return 0
+  fi
+
+  local task_pod names_json
+  task_pod=$(apd_find_controller_task_pod || true)
+  if [ -z "$task_pod" ]; then
+    echo "  ⚠ Could not find controller task pod; cannot register overlay playbooks in AAP" >&2
+    return 1
+  fi
+
+  names_json=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+
+  local register_result
+  register_result=$(kubectl exec -n "$NAMESPACE" "$task_pod" -- awx-manage shell -c "
+import json
+from awx.main.models import Project
+
+names = json.loads('${names_json}')
+p = Project.objects.get(pk=${project_id})
+files = list(p.playbook_files or [])
+added = [name for name in names if name not in files]
+if added:
+    p.playbook_files = files + added
+    p.save(update_fields=['playbook_files'])
+print(','.join(added) if added else '')
+" 2>/dev/null | tail -1 | tr -d '\r')
+
+  if [ -z "$register_result" ]; then
+    echo "  ✓ Overlay playbooks already registered in project catalog"
+  else
+    echo "  ✓ Registered overlay playbooks in project catalog: ${register_result}"
+  fi
+}
+
 apd_apply_bootstrap_playbook_overlays() {
   local project_id="$1"
   local addons_base_dir="$2"
@@ -526,6 +565,21 @@ apd_apply_bootstrap_playbook_overlays() {
       "${addons_base_dir}/patches/install-apd.yml" \
       "install-apd.yml" \
       'when: _aap_version is not defined' >/dev/null 2>&1 || true
+  fi
+
+  # AAP 2.7 validates job template playbooks against project.playbook_files (SCM index).
+  # Overlay playbooks exist on disk but are not in that index until we register them.
+  local overlay_playbooks=()
+  if [ "$install_playbook" = "install-apd-aap-demo.yml" ]; then
+    overlay_playbooks+=("install-apd-aap-demo.yml")
+  elif [ "$install_playbook" != "install-apd.yml" ]; then
+    overlay_playbooks+=("$install_playbook")
+  fi
+
+  if [ ${#overlay_playbooks[@]} -gt 0 ]; then
+    if ! apd_register_project_playbooks "$project_id" "${overlay_playbooks[@]}"; then
+      rc=1
+    fi
   fi
 
   return "$rc"

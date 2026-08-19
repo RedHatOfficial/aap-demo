@@ -131,6 +131,25 @@ templates — they do **not** run `setup_demo.yml` locally. The Product Demos EE
 
 ## Troubleshooting
 
+### Job template creation fails (`Playbook not found for project`)
+
+AAP 2.7 validates job template playbooks against the project's SCM playbook index
+(`playbook_files`), not just files on the controller task pod. `install-apd-aap-demo.yml` is an
+aap-demo overlay and is not in upstream `ansible/product-demos`; the deploy script registers it
+in the project catalog after copying it onto the task pod.
+
+If you see this error on an older deploy script, re-run on the latest branch:
+
+```bash
+aap-demo enable product-demos-base
+```
+
+Or use the upstream playbook name (patched on disk, version ping skipped via extra vars):
+
+```bash
+APD_INSTALL_PLAYBOOK=install-apd.yml aap-demo enable product-demos-base
+```
+
 ### Version ping timeout (`Query AAP version from the API`)
 
 If a job fails pinging `https://…nip.io/api/gateway/v1/ping/` from inside a job pod, the
