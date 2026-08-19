@@ -40,6 +40,8 @@ Export-ModuleMember -Function @(
 
   'Invoke-AapDemoStop'
 
+  'Invoke-AapDemoStart'
+
   'Invoke-AapDemoDestroy'
 
   'Invoke-AapDemoClean'

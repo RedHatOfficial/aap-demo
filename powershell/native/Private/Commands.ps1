@@ -60,7 +60,7 @@ function Invoke-AapDemoDisable {
   Write-AapStep 'Removed from config'
 }
 
-function Write-AapClusterSummary {
+function Write-AapClusterInfo {
   param([string]$Namespace = $Script:AapDemoDefaultNamespace)
 
   Initialize-AapKubeEnvironment
@@ -94,7 +94,44 @@ function Invoke-AapDemoStop {
   if (-not (Invoke-AapCrcStop)) {
     throw 'crc stop failed'
   }
-  Write-Host 'To restart: aap-demo deploy'
+  Write-Host 'To restart: aap-demo start'
+}
+
+function Invoke-AapDemoStart {
+  Write-Host ''
+  Write-Host 'aap-demo start - Starting CRC cluster...' -ForegroundColor Cyan
+
+  $crc = Get-AapCrcStatus
+  switch ([string]$crc.crcStatus) {
+    'Running' {
+      Write-AapStep 'CRC cluster is already running'
+    }
+    'Unknown' {
+      throw 'No cluster found. Run: aap-demo create'
+    }
+    default {
+      if (-not (Invoke-AapCrcStart)) {
+        throw 'crc start failed'
+      }
+    }
+  }
+
+  Sync-AapKubeconfig -Quiet
+  Initialize-AapKubeEnvironment
+
+  $routeDomain = Get-AapRouteDomain
+  if (Test-AapCoreDnsConfigured) {
+    Write-AapStep "CoreDNS already configured for $routeDomain"
+  } else {
+    Write-AapStep "Configuring CoreDNS for $routeDomain..."
+    Set-AapCoreDns -RouteDomain $routeDomain
+    Write-AapStep 'CoreDNS configured'
+  }
+
+  Write-Host ''
+  Write-AapStep 'CRC cluster started'
+  Write-Host "Run 'aap-demo status' to check cluster health"
+  Write-Host ''
 }
 
 function Invoke-AapDemoDestroy {
@@ -146,7 +183,7 @@ function Invoke-AapDemoClean {
   Write-Host ''
   Write-Host 'WARNING: AAP CLEANUP - DESTRUCTIVE OPERATION!' -ForegroundColor Red
   Write-Host ''
-  Write-AapClusterSummary -Namespace $Namespace
+  Write-AapClusterInfo -Namespace $Namespace
   Write-Host ''
 
   $aapResult = Invoke-AapOcCapture @('get', 'aap', '-n', $Namespace, '--no-headers')
@@ -483,7 +520,7 @@ function Invoke-AapDemoMustGather {
   Write-Host "To share: tar czf must-gather.tar.gz $DestDir"
 }
 
-function Write-AapClusterSummary {
+function Invoke-AapDemoRedeploy {
   [CmdletBinding()]
   param(
     [string]$Namespace = $Script:AapDemoDefaultNamespace,

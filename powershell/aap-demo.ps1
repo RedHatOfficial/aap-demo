@@ -200,6 +200,8 @@ try {
 
     'stop' { Invoke-AapDemoStop }
 
+    'start' { Invoke-AapDemoStart }
+
     'destroy' { Invoke-AapDemoDestroy -Reset:$cli.Reset }
 
     'clean' {

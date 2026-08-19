@@ -161,6 +161,31 @@ function Invoke-AapEnsureCluster {
   }
 }
 
+function Get-AapRouteDomain {
+  $routeDomain = 'apps.crc.testing'
+  try {
+    $line = Invoke-AapCrcSsh 'grep -h baseDomain /etc/microshift/config.d/99-aap-demo-dns.yaml /etc/microshift/config.yaml 2>/dev/null | head -1' -AllowFailure
+    if ($line -match 'baseDomain:\s*(\S+)') {
+      $routeDomain = "apps.$($Matches[1])"
+    } elseif ($line) {
+      $field = ($line.Trim() -split '\s+')[-1]
+      if ($field) { $routeDomain = "apps.$field" }
+    }
+  } catch {
+    # openshift preset or SSH unavailable — use default apps.crc.testing
+  }
+  return $routeDomain
+}
+
+function Test-AapCoreDnsConfigured {
+  $result = Invoke-AapOcCapture @(
+    'get', 'configmap', 'dns-default', '-n', 'openshift-dns',
+    '-o', 'jsonpath={.data.Corefile}'
+  )
+  if ($result.ExitCode -ne 0 -or -not $result.Output) { return $false }
+  return $result.Output -match 'router-internal-default'
+}
+
 function Set-AapCoreDns {
   param([Parameter(Mandatory)][string]$RouteDomain)
 
