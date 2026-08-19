@@ -59,6 +59,13 @@ Or click "Compliance" in the portal sidebar (security shield icon).
 | Plugin not appearing in sidebar | Check portal logs: `kubectl logs -n redhat-rhaap-portal -l app.kubernetes.io/component=backstage` |
 | Blank compliance page | Verify `ansible.compliance.enabled: true` in app-config |
 
+## Future: Prebuilt Container
+
+This addon currently downloads artifacts from GitHub Actions (expire after 90 days).
+When the compliance plugin is officially released, this will switch to a prebuilt OCI
+image on `ghcr.io/ansible/ansible-rhdh-plugins` — no `gh` auth required, faster deploys,
+works offline.
+
 ## References
 
 - [ansible-backstage-plugins][plugins] - Plugin source (feature branch)

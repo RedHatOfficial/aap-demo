@@ -36,6 +36,7 @@ check_prereqs() {
   command -v skopeo &>/dev/null || missing+=("skopeo")
   command -v jq &>/dev/null || missing+=("jq")
   command -v kubectl &>/dev/null || missing+=("kubectl")
+  command -v unzip &>/dev/null || missing+=("unzip")
 
   if [ ${#missing[@]} -gt 0 ]; then
     error "Missing required tools: ${missing[*]}"
@@ -92,11 +93,21 @@ download_artifact() {
 
   curl -sL -H "Authorization: Bearer $(gh auth token)" \
     "https://api.github.com/repos/${PLUGIN_REPO}/actions/artifacts/${artifact_id}/zip" \
-    -o "${WORK_DIR}/artifact.tar.gz"
+    -o "${WORK_DIR}/artifact.zip"
 
-  # Extract OCI layout
+  # Extract OCI layout (GitHub wraps artifacts in zip)
   cd "$WORK_DIR"
-  tar -xzf artifact.tar.gz 2>/dev/null || true
+  unzip -q artifact.zip || { error "Failed to extract artifact zip"; exit 1; }
+
+  # Find and extract the OCI tar.gz inside
+  local oci_tarball
+  oci_tarball=$(find . -name "*.oci.tar.gz" -type f | head -1)
+  if [ -z "$oci_tarball" ]; then
+    error "No .oci.tar.gz found in artifact"
+    exit 1
+  fi
+
+  tar -xzf "$oci_tarball" || { error "Failed to extract OCI tarball"; exit 1; }
 
   if [ ! -f index.json ]; then
     error "Invalid artifact: missing index.json"
