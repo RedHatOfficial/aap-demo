@@ -1778,7 +1778,15 @@ cmd_status() {
           echo "------------"
           _cred_found=true
         fi
-        printf "  %-20s admin / %s\n" "$ns:" "$ADMIN_PASSWORD"
+        local AAP_URL=""
+        AAP_URL=$(kubectl get route -n "$ns" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+        echo "AAP ($ns)"
+        if [ -n "$AAP_URL" ]; then
+          echo "  URL:      https://${AAP_URL}"
+        fi
+        echo "  Username: admin"
+        echo "  Password: ${ADMIN_PASSWORD}"
+        echo ""
       fi
     done
     [ "$_cred_found" = "true" ] && echo ""
@@ -1787,20 +1795,31 @@ cmd_status() {
   # Show credentials for Automation Orchestrator (ao addon)
   if echo "$(_addons_list)" | grep -qw "ao" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
     local _ao_ns="automation-orchestrator"
-    local _ao_pw="" _ao_secret=""
+    local _ao_pw="" _ao_secret="" _ao_route=""
+    _ao_route=$(kubectl get routes -n "$_ao_ns" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
     _ao_secret=$(kubectl get secret -n "$_ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)
     if [ -n "$_ao_secret" ]; then
       _ao_pw=$(kubectl get "$_ao_secret" -n "$_ao_ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
     fi
-    if [ -n "$_ao_pw" ]; then
-      if [ "$_cred_found" = "false" ]; then
-        echo "Credentials:"
-        echo "------------"
-      fi
-      printf "  %-20s admin / %s\n" "$_ao_ns:" "$_ao_pw"
-      _cred_found=true
-      echo ""
+    if [ "$_cred_found" = "false" ]; then
+      echo "Credentials:"
+      echo "------------"
     fi
+    echo "Automation Orchestrator (ao-eap)"
+    if [ -n "$_ao_route" ]; then
+      echo "  URL:      https://${_ao_route}"
+    fi
+    echo "  Username: admin"
+    if [ -n "$_ao_pw" ]; then
+      echo "  Password: ${_ao_pw}"
+    else
+      echo "  Password: kubectl get secret -n ${_ao_ns} -o name | grep admin-password"
+    fi
+    if [ -z "$_ao_route" ] && [ -z "$_ao_pw" ]; then
+      echo "  (deployment may still be in progress)"
+    fi
+    _cred_found=true
+    echo ""
   fi
 
   local saved_addons
@@ -2624,6 +2643,71 @@ _addons_remove() {
   _addons_save "$new"
 }
 
+_show_access_entry() {
+  local title="$1" url="$2" username="$3" password="$4" hint="$5"
+  [ -n "$title" ] && echo "$title"
+  [ -n "$url" ] && echo "  URL:      $url"
+  [ -n "$username" ] && echo "  Username: $username"
+  if [ -n "$password" ]; then
+    echo "  Password: $password"
+  elif [ -n "$hint" ]; then
+    echo "  Password: $hint"
+  fi
+  echo ""
+}
+
+_show_addon_access() {
+  local addon="$1"
+  local ns="${NAMESPACE:-aap-operator}"
+  case "$addon" in
+    ao-eap)
+      local ao_ns="automation-orchestrator"
+      kubectl get namespace "$ao_ns" &>/dev/null 2>&1 || return 0
+      echo ""
+      echo "Credentials:"
+      echo "------------"
+      local ao_route="" ao_pw="" ao_secret=""
+      ao_route=$(kubectl get routes -n "$ao_ns" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+      ao_secret=$(kubectl get secret -n "$ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)
+      if [ -n "$ao_secret" ]; then
+        ao_pw=$(kubectl get "$ao_secret" -n "$ao_ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      fi
+      echo "Automation Orchestrator (ao-eap)"
+      if [ -n "$ao_route" ]; then
+        echo "  URL:      https://${ao_route}"
+      fi
+      echo "  Username: admin"
+      if [ -n "$ao_pw" ]; then
+        echo "  Password: ${ao_pw}"
+      else
+        echo "  Password: kubectl get secret -n ${ao_ns} -o name | grep admin-password"
+      fi
+      if [ -z "$ao_route" ] && [ -z "$ao_pw" ]; then
+        echo "  (deployment may still be in progress)"
+      fi
+      echo ""
+      ;;
+    apme-eap)
+      local apme_ns="apme"
+      kubectl get namespace "$apme_ns" &>/dev/null 2>&1 || return 0
+      local apme_route="" aap_pw=""
+      apme_route=$(kubectl get route -n "$apme_ns" redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+      [ -z "$apme_route" ] && return 0
+      aap_pw=$(kubectl get secret -n "$ns" aap-admin-password -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      echo ""
+      echo "Credentials:"
+      echo "------------"
+      _show_access_entry "APME Portal (apme-eap)" \
+        "https://${apme_route}" "admin" "$aap_pw" \
+        "Uses AAP OAuth - retrieve AAP admin password from aap-demo status"
+      echo "  Sign in with AAP admin credentials (AAP OAuth)"
+      echo ""
+      ;;
+    portal|mcp-server|setup-pah|local-cache)
+      ;;
+  esac
+}
+
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
@@ -2687,9 +2771,14 @@ cmd_enable() {
     _addons_add "$addon"
   fi
   bash "$addon_dir/deploy.sh" "$@"
+  local _rc=$?
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
   fi
+  if [ "$_rc" -eq 0 ]; then
+    _show_addon_access "$addon"
+  fi
+  return "$_rc"
 }
 
 cmd_disable() {

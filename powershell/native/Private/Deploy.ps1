@@ -129,6 +129,7 @@ function Invoke-AapDemoDeploy {
   Write-AapStep 'AAP CR applied - reconciliation in progress'
   Write-Host ''
   Write-Host '  Monitor: aap-demo watch'
+  Write-Host '  Login:   aap-demo status (once deployment completes)'
   Write-Host '  Or:      aap-demo status'
   Write-AapSetupPahReminder
 }

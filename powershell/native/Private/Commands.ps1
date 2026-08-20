@@ -5,6 +5,8 @@ function Invoke-AapDemoEnable {
     [string[]]$ScriptArgs = @()
   )
 
+  if ($null -eq $ScriptArgs) { $ScriptArgs = @() }
+
   if (-not $Addon) {
     Write-Host 'Usage: aap-demo enable <addon> [options]'
     Write-Host ''
@@ -41,7 +43,8 @@ function Invoke-AapDemoEnable {
   $skipSave = $false
   $skipCluster = $false
   if ($Addon -eq 'local-cache') {
-    switch ($ScriptArgs[0]) {
+    $subcmd = if ($ScriptArgs.Count -gt 0) { $ScriptArgs[0] } else { $null }
+    switch ($subcmd) {
       'load' {
         $skipSave = $true
         Write-Host 'Loading cached container images...'
@@ -68,6 +71,13 @@ function Invoke-AapDemoEnable {
     $addons = (Get-AapAddonsList) -join ','
     Write-AapStep "Saved to config: ADDONS=$addons"
   }
+
+  try {
+    Write-AapAddonAccessInfo -Addon $Addon -Namespace $Namespace
+  } catch {
+    Write-AapWarn "Could not display login info: $($_.Exception.Message)"
+    Write-Host '  Run: aap-demo status'
+  }
 }
 
 function Invoke-AapDemoDisable {
@@ -76,6 +86,8 @@ function Invoke-AapDemoDisable {
     [string]$Namespace = $Script:AapDemoDefaultNamespace,
     [string[]]$ScriptArgs = @()
   )
+
+  if ($null -eq $ScriptArgs) { $ScriptArgs = @() }
 
   if (-not $Addon) {
     Write-Host 'Usage: aap-demo disable <addon> [options]'

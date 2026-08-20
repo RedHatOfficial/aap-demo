@@ -40,10 +40,34 @@ function Test-CommandExists {
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Test-GitBashInstalled {
+  $candidates = @(
+    (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
+    (Join-Path $env:ProgramFiles 'Git\usr\bin\bash.exe')
+  )
+  if (${env:ProgramFiles(x86)}) {
+    $candidates += (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe')
+  }
+  foreach ($path in $candidates) {
+    if ($path -and (Test-Path -LiteralPath $path)) { return $true }
+  }
+
+  $bash = Get-Command bash -ErrorAction SilentlyContinue
+  if ($bash -and $bash.Source -notmatch '\\Windows\\System32\\bash\.exe$') {
+    return $true
+  }
+  return $false
+}
+
 function Install-GitBash {
-  if (Test-CommandExists 'bash') {
-    Write-Ok 'Git Bash (bash) already on PATH'
+  if (Test-GitBashInstalled) {
+    Write-Ok 'Git Bash already installed'
     return
+  }
+
+  $wslStub = Join-Path $env:SystemRoot 'System32\bash.exe'
+  if ((Test-Path -LiteralPath $wslStub) -and (Test-CommandExists 'bash')) {
+    Write-Warn 'bash on PATH is the WSL stub — Git for Windows is required for addons'
   }
 
   if (-not (Test-CommandExists 'winget')) {
@@ -82,7 +106,7 @@ function Install-GitBash {
 }
 
 function Write-GitBashAddonHint {
-  if (Test-CommandExists 'bash') { return }
+  if (Test-GitBashInstalled) { return }
 
   Write-Warn 'Git Bash not on PATH — some features need bash:'
   Write-Info '- Bash-delegated addons: ao-eap, apme-eap, local-cache, product-demos, registry, devspaces, ...'

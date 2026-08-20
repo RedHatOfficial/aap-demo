@@ -99,55 +99,7 @@ function Invoke-AapDemoStatus {
   if ($routes) { $routes | ForEach-Object { Write-Host $_ } }
   else { Write-Host '  (no routes found)' }
 
-  Write-Host ''
-  Write-Host 'Credentials:'
-  Write-Host '------------'
-  $aapNsResult = Invoke-AapOcCapture @('get', 'aap', '-A', '--no-headers')
-  $aapNs = if ($aapNsResult.ExitCode -eq 0 -and $aapNsResult.Output -notmatch '^No resources found') {
-    $aapNsResult.Lines | ForEach-Object { ($_ -split '\s+')[0] } | Sort-Object -Unique
-  } else { @() }
-  $foundCred = $false
-  foreach ($ns in $aapNs) {
-    foreach ($secretName in @('aap-admin-password', 'myaap-admin-password', 'aap-controller-admin-password')) {
-      $pwResult = Invoke-AapOcCapture @('get', 'secret', $secretName, '-n', $ns, '-o', 'jsonpath={.data.password}')
-      $pw = if ($pwResult.ExitCode -eq 0) { $pwResult.Output.Trim() } else { '' }
-      if ($pw) {
-        $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pw))
-        Write-Host ("  {0,-20} admin / {1}" -f "${ns}:", $decoded)
-        $foundCred = $true
-        break
-      }
-    }
-  }
-  if (-not $foundCred) { Write-Host '  (no admin password secret found yet)' }
-
-  $aoNs = 'automation-orchestrator'
-  if ((Get-AapAddonsList) -contains 'ao-eap' -or (Invoke-AapOcQuiet @('get', 'namespace', $aoNs)) -eq 0) {
-    $aoSecrets = Invoke-AapOcCapture @('get', 'secret', '-n', $aoNs, '-o', 'name')
-    $aoSecretName = $null
-    if ($aoSecrets.ExitCode -eq 0 -and $aoSecrets.Output) {
-      $aoSecretName = @($aoSecrets.Lines | Where-Object { $_ -match 'admin-password' } | Select-Object -First 1)
-      if ($aoSecretName) { $aoSecretName = ($aoSecretName -replace '^secret/', '').Trim() }
-    }
-    if ($aoSecretName) {
-      $aoPwResult = Invoke-AapOcCapture @(
-        'get', 'secret', $aoSecretName, '-n', $aoNs, '-o', 'jsonpath={.data.password}'
-      )
-      $aoPw = if ($aoPwResult.ExitCode -eq 0) { $aoPwResult.Output.Trim() } else { '' }
-      if ($aoPw) {
-        $aoDecoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($aoPw))
-        if (-not $foundCred) {
-          Write-Host ''
-          Write-Host 'Credentials:'
-          Write-Host '------------'
-        }
-        Write-Host ("  {0,-20} admin / {1}" -f "${aoNs}:", $aoDecoded)
-        $foundCred = $true
-      }
-    }
-  }
-
-  Write-AapCollectionSourcesStatus
+  Write-AapCredentialsStatus -Namespace $Namespace
 
   $savedAddons = @(Get-AapAddonsList)
   Write-Host ''
@@ -162,12 +114,7 @@ function Invoke-AapDemoStatus {
       $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'apme')) -eq 0
     }
     $state = if ($enabled) { 'enabled' } else { 'disabled' }
-    $label = Get-AapAddonStatusLabel -Addon $a -Namespace $Namespace -Enabled:$enabled
-    if ($label) {
-      Write-Host ("  {0,-25} {1}" -f $a, $label)
-    } else {
-      Write-Host ("  {0,-25} {1}" -f $a, $state)
-    }
+    Write-Host ("  {0,-15} {1}" -f $a, $state)
   }
   Write-Host ''
 }
