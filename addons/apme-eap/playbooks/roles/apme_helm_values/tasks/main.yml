@@ -150,7 +150,19 @@
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(?s)          github:\n          - host: github\.com\n            token: \$\{GITHUB_TOKEN\}\n            apps:\n            - appId: \$\{GITHUB_APP_ID\}\n              clientId: \$\{GITHUB_APP_CLIENT_ID\}\n              clientSecret: \$\{GITHUB_APP_CLIENT_SECRET\}\n              privateKey: \|\n                \$\{GITHUB_APP_PRIVATE_KEY\}\n'  # yamllint disable-line rule:line-length
     replace: '          # GitHub integration disabled (configure_github_secrets: false)\n'
-  when: not (configure_github_secrets | default(false))
+  when: not (configure_github_secrets | default(false) | bool)
+
+# Token-only GitHub (PAT, no App) still interpolates ${GITHUB_APP_ID}. An empty
+# appId makes Backstage fail scaffolder/catalog/auth startup, so Helm wait hangs
+# until portal_helm_install_timeout (30m) while readiness stays 503.
+- name: Strip GitHub App block for token-only GitHub integration  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?s)            token: \$\{GITHUB_TOKEN\}\n            apps:\n            - appId: \$\{GITHUB_APP_ID\}\n              clientId: \$\{GITHUB_APP_CLIENT_ID\}\n              clientSecret: \$\{GITHUB_APP_CLIENT_SECRET\}\n              privateKey: \|\n                \$\{GITHUB_APP_PRIVATE_KEY\}\n'  # yamllint disable-line rule:line-length
+    replace: "            token: ${GITHUB_TOKEN}\n"
+  when:
+    - configure_github_secrets | default(false) | bool
+    - github_app_id is not defined or (github_app_id | default('') | length) == 0
 
 - name: Remove GitHub auth provider (catalog integration only, not sign-in)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
@@ -163,7 +175,7 @@
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(?s)                      github:\n                      - host: github\.com\n                        name: github-acme-scm\n                        orgs:\n                        - name: acme-scm\n                          branches:\n                          - main\n                          - master\n                          crawlDepth: 5\n                          apme:\n                            enabled: true\n                            scanOnRegister: false\n                          schedule:\n                            frequency:\n                              minutes: 30\n                            timeout:\n                              minutes: 30\n'  # yamllint disable-line rule:line-length
     replace: '                      # GitHub catalog provider disabled (configure_github_secrets: false)\n                      github: []\n'  # yamllint disable-line rule:line-length
-  when: not (configure_github_secrets | default(false))
+  when: not (configure_github_secrets | default(false) | bool)
 
 - name: Read rendered Helm values  # noqa: var-naming[no-role-prefix]
   ansible.builtin.slurp:
