@@ -42,6 +42,59 @@ _ssh() {
   ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "$@"
 }
 
+# Real Python (skip the Windows Store alias that prints "Python was not found")
+_python_cmd() {
+  local cmd
+  for cmd in python3 python; do
+    if command -v "$cmd" >/dev/null 2>&1 && "$cmd" -c 'import json' >/dev/null 2>&1; then
+      echo "$cmd"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Parse crictl images JSON on stdin → "size digest" lines for Red Hat / k8s.io images.
+# Windows jq.exe / python print CRLF; strip CR so skopeo refs stay valid.
+_parse_crictl_images() {
+  local parsed
+  if command -v jq >/dev/null 2>&1; then
+    parsed=$(jq -r '
+      [.images[]?
+       | .size as $s
+       | (.repoDigests // [])[]
+       | select(contains("registry.redhat.io") or contains("registry.k8s.io"))
+       | {size: ($s // 0), digest: .}]
+      | unique_by(.digest)[]
+      | "\(.size) \(.digest)"
+    ') || return $?
+  else
+    local py
+    if py=$(_python_cmd); then
+      parsed=$("$py" -c "
+import sys, json
+data = json.loads(sys.stdin.read() or '{}')
+seen = set()
+registries = ['registry.redhat.io', 'registry.k8s.io']
+for img in data.get('images', []):
+    for digest in img.get('repoDigests') or []:
+        if any(r in digest for r in registries) and digest not in seen:
+            seen.add(digest)
+            size = img.get('size', '0')
+            print(f'{size} {digest}')
+") || return $?
+    else
+      echo "ERROR: jq or Python 3 is required to parse the CRC image list." >&2
+      echo "  Windows Store python3 is not a real interpreter — install jq instead:" >&2
+      echo "    winget install jqlang.jq" >&2
+      echo "  macOS: brew install jq" >&2
+      echo "  Linux: install jq or python3" >&2
+      return 1
+    fi
+  fi
+  printf '%s' "$parsed" | tr -d '\r'
+}
+
 # --- Clear ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ] || [ "$ACTION" = "clear" ]; then
   if [ -d "$CACHE_DIR" ]; then
@@ -120,23 +173,20 @@ if [ "$ACTION" = "save" ] || [ "$ACTION" = "deploy" ]; then
   mkdir -p "$CACHE_DIR"
 
   # Get all Red Hat / registry.k8s.io images from CRI-O
-  all_images=$(_ssh "sudo crictl images -o json" 2>/dev/null | python3 -c "
-import sys, json
-data = json.loads(sys.stdin.read())
-seen = set()
-registries = ['registry.redhat.io', 'registry.k8s.io']
-for img in data.get('images', []):
-    for digest in img.get('repoDigests', []):
-        if any(r in digest for r in registries):
-            if digest not in seen:
-                seen.add(digest)
-                # size in bytes
-                size = img.get('size', '0')
-                print(f'{size} {digest}')
-" 2>/dev/null || true)
+  images_json=$(_ssh "sudo crictl images -o json") || {
+    echo "ERROR: Failed to list images from CRC VM (SSH or crictl failed)"
+    echo "  Is the cluster running? Try: aap-demo status"
+    exit 1
+  }
+
+  if ! all_images=$(printf '%s' "$images_json" | _parse_crictl_images); then
+    exit 1
+  fi
 
   if [ -z "$all_images" ]; then
-    echo "No images found in CRC VM"
+    echo "No registry.redhat.io / registry.k8s.io images found in CRC VM"
+    echo "  Deploy AAP first: aap-demo deploy"
+    echo "  Then re-run: aap-demo enable local-cache"
     exit 1
   fi
 
@@ -161,6 +211,7 @@ for img in data.get('images', []):
   skipped=0
   failed=0
   while IFS=' ' read -r img_size img_ref; do
+    img_ref="${img_ref%$'\r'}"
     [ -z "$img_ref" ] && continue
 
     # Safe filename

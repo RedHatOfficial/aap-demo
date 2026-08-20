@@ -32,6 +32,9 @@ Each image is saved as `<md5>.tar` plus a `<md5>.ref` sidecar with the original 
 - CRC cluster running with AAP deployed (for **save**)
 - CRC cluster running (for **load**)
 - SSH access to the CRC VM (port 2222)
+- `jq` or a real Python 3 (to parse `crictl images` JSON). On Windows, Git Bash often
+  finds a Microsoft Store `python3` stub that is not an interpreter — install jq:
+  `winget install jqlang.jq`
 - ~30 GB free disk space for a full AAP image set
 
 ## Notes
