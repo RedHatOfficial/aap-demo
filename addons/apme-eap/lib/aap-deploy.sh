@@ -382,7 +382,6 @@ apme_deploy_via_aap() {
   fi
 
   extra_vars_file=$(mktemp)
-  trap 'rm -f "$extra_vars_file"' RETURN
   apme_build_extra_vars "$vars_file" "$defaults_file" >"$extra_vars_file"
   apme_sanitize_extra_vars_file "$extra_vars_file"
 
@@ -395,4 +394,5 @@ apme_deploy_via_aap() {
   _apme_info "Launching APME deployment job in AAP (no local Python required)..."
   job_id=$(apme_launch_job "$template_id")
   apme_monitor_job "$job_id" 120
+  rm -f "$extra_vars_file"
 }
