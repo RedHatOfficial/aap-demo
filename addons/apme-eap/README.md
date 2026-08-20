@@ -184,25 +184,32 @@ The deploy.sh wrapper automatically discovers:
 
 These are written to `~/.aap-demo/apme-eap-vars.yml` (regenerated on each deploy).
 
-### GitHub Integration (Manual Configuration)
+### GitHub Integration
 
-To enable repository quality scanning, edit the generated vars file:
+By default, only a **GitHub Personal Access Token (PAT)** is required for repository scanning.
+During `aap-demo enable apme-eap`, you will be prompted for a PAT, or you can set `GITHUB_TOKEN`
+before running enable.
 
-```bash
-vim ~/.aap-demo/apme-eap-vars.yml
-```
+**Create a PAT:** https://github.com/settings/tokens/new
 
-Uncomment and fill in the GitHub section:
+- Note: `APME Portal API Access`
+- Scope: `repo` (full control of private repositories)
+
+The PAT is saved to `~/.aap-demo/apme-eap-github-creds.yml` and written into the generated
+vars file on each deploy.
+
+**Token-only mode** enables repository scanning. OAuth sign-in and portal push require a full
+GitHub App — add these to `~/.aap-demo/apme-eap-vars.yml` if needed:
 
 ```yaml
 configure_github_secrets: true
-github_oauth_client_id: "YOUR_OAUTH_CLIENT_ID"
-github_oauth_client_secret: "YOUR_OAUTH_CLIENT_SECRET"
-github_app_id: "YOUR_APP_ID"
-github_app_client_id: "YOUR_APP_CLIENT_ID"
-github_app_client_secret: "YOUR_APP_CLIENT_SECRET"
+github_token: "ghp_..."
+github_oauth_client_id: "..."
+github_oauth_client_secret: "..."
+github_app_id: "..."
+github_app_client_id: "..."
+github_app_client_secret: "..."
 github_app_private_key_path: "/path/to/private-key.pem"
-github_token: "YOUR_PERSONAL_ACCESS_TOKEN"
 ```
 
 Then re-run:
@@ -211,7 +218,7 @@ Then re-run:
 aap-demo enable apme-eap
 ```
 
-For detailed GitHub setup instructions, see the [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
+For full GitHub App setup, see the [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
 
 ### Advanced Configuration
 

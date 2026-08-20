@@ -15,6 +15,7 @@
 - name: Normalize AAP host URL  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     aap_host_normalized: "{{ aap_host | regex_replace('/$', '') }}"
+    aap_api_host_normalized: "{{ (aap_api_host | default(aap_host)) | regex_replace('/$', '') }}"
 
 - name: Set OAuth redirect URI  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:

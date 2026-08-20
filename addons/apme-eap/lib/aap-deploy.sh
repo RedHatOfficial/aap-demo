@@ -109,7 +109,7 @@ apme_build_extra_vars() {
 openshift_api_url: "https://kubernetes.default.svc:443"
 openshift_validate_certs: false
 openshift_token: "${cluster_token}"
-aap_host: "${internal_aap}"
+aap_api_host: "${internal_aap}"
 aap_validate_certs: false
 EOF
   }
