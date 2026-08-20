@@ -28,6 +28,14 @@ git clone https://github.com/RedHatOfficial/aap-demo.git && cd aap-demo && ./ins
 `aap-demo create` provisions the MicroShift VM only. `aap-demo deploy` installs OLM and AAP
 (use `deploy` for the typical path; `create` alone is for cluster-only setup).
 
+Cluster credentials live at `~/.aap-demo/kubeconfig.microshift` and are **not** merged into
+`~/.kube/config`. If you relied on the old default kubeconfig behavior, run:
+
+```bash
+export KUBECONFIG=~/.aap-demo/kubeconfig.microshift
+# or: aap-demo kubeconfig   # refresh file and print export command
+```
+
 ## Status
 
 ```bash

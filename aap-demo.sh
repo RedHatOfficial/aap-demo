@@ -37,6 +37,9 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
+# shellcheck source=includes/aap-demo-paths.sh
+source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
+
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
 
 # AAP version
@@ -257,11 +260,10 @@ setup_kubeconfig() {
     fi
     export KUBECONFIG="$KUBECTL_KUBECONFIG"
   else
-    # Use OpenShift Local kubeconfig — only refresh if current one doesn't work
-    if [ -f "$HOME/.crc/machines/crc/kubeconfig" ]; then
-      export KUBECONFIG="$HOME/.crc/machines/crc/kubeconfig"
-    fi
-    # Test if kubeconfig works, refresh from VM if not
+    mkdir -p "$AAP_DEMO_DIR"
+    KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
+    export KUBECONFIG
+    # Refresh from cluster if current kubeconfig doesn't work
     if ! kubectl cluster-info &>/dev/null 2>&1; then
       # Ensure infra backend is loaded to set CRC_SSH_KEY
       _infra_ensure_backend 2>/dev/null || true
@@ -270,11 +272,12 @@ setup_kubeconfig() {
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
           -o ConnectTimeout=2 -o BatchMode=yes \
           core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' \
-          >"$HOME/.crc/machines/crc/kubeconfig.tmp" 2>/dev/null; then
-          mv "$HOME/.crc/machines/crc/kubeconfig.tmp" "$HOME/.crc/machines/crc/kubeconfig"
-          export KUBECONFIG="$HOME/.crc/machines/crc/kubeconfig"
+          >"${AAP_DEMO_KUBECONFIG}.tmp" 2>/dev/null; then
+          mv "${AAP_DEMO_KUBECONFIG}.tmp" "$AAP_DEMO_KUBECONFIG"
+          chmod 600 "$AAP_DEMO_KUBECONFIG"
+          export KUBECONFIG="$AAP_DEMO_KUBECONFIG"
         else
-          rm -f "$HOME/.crc/machines/crc/kubeconfig.tmp"
+          rm -f "${AAP_DEMO_KUBECONFIG}.tmp"
         fi
       fi
     fi
@@ -415,7 +418,7 @@ USAGE:
     aap-demo [OPTIONS] <COMMAND>
 
 OPTIONS:
-    --kubeconfig=FILE   Path to kubeconfig file (default: ~/.kube/config)
+    --kubeconfig=FILE   Path to kubeconfig file (default: ~/.aap-demo/kubeconfig.microshift)
     --context=NAME      kubectl context to use (default: current context)
     NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
     QUIET=true          Suppress disclaimer
@@ -503,7 +506,7 @@ determine_pull_secret() {
 
 cmd_repair() {
   NAMESPACE="${NAMESPACE:-aap-operator}"
-  export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
+  export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}"
 
   echo "Running repair..."
   echo ""
@@ -973,7 +976,7 @@ cmd_diagnose() {
     _check_fail "kubectl cannot connect to cluster"
     echo ""
     echo "Cannot proceed without cluster connectivity."
-    echo "  Check KUBECONFIG: ${KUBECONFIG:-~/.kube/config}"
+    echo "  Check KUBECONFIG: ${KUBECONFIG:-$AAP_DEMO_KUBECONFIG}"
     return 1
   fi
   echo ""
@@ -1540,12 +1543,6 @@ cmd_kubeconfig() {
   }
   trap cleanup_temp_files EXIT
 
-  # Skip ~/.kube in CI (permission issues)
-  SKIP_KUBE_DIR=false
-  if [ "${CI:-false}" = "true" ] || [ "${GITHUB_ACTIONS:-false}" = "true" ]; then
-    SKIP_KUBE_DIR=true
-  fi
-
   # Check cluster is reachable
   local cluster_name
   cluster_name=$(infra_get_name 2>/dev/null || echo "")
@@ -1598,64 +1595,17 @@ cmd_kubeconfig() {
   fi
   KUBECONFIG="$TEMP_KUBECONFIG" kubectl config use-context "$ctx_name" >/dev/null 2>&1
 
-  mv "$TEMP_KUBECONFIG" "$HOME/.crc/machines/crc/kubeconfig"
+  mv "$TEMP_KUBECONFIG" "$AAP_DEMO_KUBECONFIG"
   TEMP_FILES=() # Clear since file was moved successfully
-  chmod 600 "$HOME/.crc/machines/crc/kubeconfig"
-  echo "  ✓ Saved to ~/.crc/machines/crc/kubeconfig"
-
-  # Merge into ~/.kube/config (unless in CI)
-  if [ "$SKIP_KUBE_DIR" = "false" ]; then
-    mkdir -p "$HOME/.kube"
-    chmod 700 "$HOME/.kube"
-
-    if [ -f "$HOME/.kube/config" ]; then
-      # Remove old aap-demo entries first (prevents stale certs after repair)
-      echo "  Removing old aap-demo entries..."
-      KUBECONFIG="$HOME/.kube/config" kubectl config delete-context "$ctx_name" 2>/dev/null || true
-      KUBECONFIG="$HOME/.kube/config" kubectl config delete-cluster "$ctx_name" 2>/dev/null || true
-      KUBECONFIG="$HOME/.kube/config" kubectl config delete-user "$ctx_name" 2>/dev/null || true
-      # Also clean legacy names
-      KUBECONFIG="$HOME/.kube/config" kubectl config delete-context microshift 2>/dev/null || true
-      KUBECONFIG="$HOME/.kube/config" kubectl config delete-cluster microshift 2>/dev/null || true
-
-      # Merge into existing config
-      echo "  Merging into existing ~/.kube/config..."
-      TEMP_MERGED=$(mktemp)
-      TEMP_FILES+=("$TEMP_MERGED")
-      chmod 600 "$TEMP_MERGED"
-
-      if ! KUBECONFIG="$HOME/.kube/config:$HOME/.crc/machines/crc/kubeconfig" kubectl config view --flatten >"$TEMP_MERGED" 2>/dev/null; then
-        echo "  ERROR: Failed to merge kubeconfigs"
-        exit 1
-      fi
-
-      if ! KUBECONFIG="$TEMP_MERGED" kubectl config view >/dev/null 2>&1; then
-        echo "  ERROR: Merged kubeconfig is invalid"
-        exit 1
-      fi
-
-      mv "$TEMP_MERGED" "$HOME/.kube/config"
-      TEMP_FILES=()
-      chmod 600 "$HOME/.kube/config"
-      echo "  ✓ Merged context into ~/.kube/config"
-    else
-      cp "$HOME/.crc/machines/crc/kubeconfig" "$HOME/.kube/config"
-      chmod 600 "$HOME/.kube/config"
-      echo "  ✓ Created ~/.kube/config"
-    fi
-
-    # Set aap-demo as current context
-    if KUBECONFIG="$HOME/.kube/config" kubectl config use-context "$ctx_name" >/dev/null 2>&1; then
-      echo "  ✓ Current context set to $ctx_name"
-    else
-      echo "  WARNING: Could not set context to $ctx_name"
-    fi
-  fi
+  chmod 600 "$AAP_DEMO_KUBECONFIG"
+  echo "  ✓ Saved to $AAP_DEMO_KUBECONFIG"
+  export KUBECONFIG="$AAP_DEMO_KUBECONFIG"
 
   trap - EXIT
   echo ""
   echo "  kubectl now connects to OpenShift Local cluster."
   echo "  Context: $ctx_name"
+  echo "  export KUBECONFIG=$AAP_DEMO_KUBECONFIG"
 }
 
 cmd_status() {
@@ -2026,7 +1976,7 @@ cmd_deploy() {
   fi
 
   # Install OLM if not present (OpenShift Local doesn't include it)
-  if ! KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
+  if ! KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
     printf "\n\033[1;31mERROR: OLM installation failed\033[0m\n"
     printf "OLM is required for AAP deployments. Please fix OLM before continuing.\n"
     printf "Try: \033[1maap-demo enable olm\033[0m\n\n"
@@ -2501,7 +2451,7 @@ _patch_gateway_capability() {
 
 watch_aap() {
   NAMESPACE="${NAMESPACE:-aap-operator}"
-  export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
+  export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}"
 
   TIMEOUT=3600 # 60 minutes
   INTERVAL=10  # seconds between refreshes

@@ -11,6 +11,9 @@ set -eo pipefail
 
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
+# shellcheck source=includes/aap-demo-paths.sh
+source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
+
 # Source CRC infra backend (sets CRC_SSH_KEY, CRC_SSH_OPTS)
 # shellcheck source=includes/infra-crc.sh
 source "${SCRIPT_DIR}/includes/infra-crc.sh"
@@ -66,7 +69,7 @@ configure_coredns() {
 
   printf "${_GREEN}▸${_NC} Configuring CoreDNS for in-cluster route resolution...\n"
 
-  export KUBECONFIG="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
+  export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}"
 
   route_domain="apps.crc.testing"
   current_domain=$(ssh -p 2222 $crc_ssh_opts core@127.0.0.1 'grep -h baseDomain /etc/microshift/config.d/99-aap-demo-dns.yaml /etc/microshift/config.yaml 2>/dev/null | head -1' 2>/dev/null | awk '{print $2}' || true)
@@ -410,7 +413,9 @@ if [ "$_api_ready" = false ]; then
 fi
 
 # Refresh kubeconfig
-ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >~/.crc/machines/crc/kubeconfig 2>/dev/null || true
+mkdir -p "$AAP_DEMO_DIR"
+ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >"$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
+chmod 600 "$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
 echo "  ✓ nip.io baseDomain configured (data wiped)"
 
 # ---------------------------------------------------------------------------
@@ -425,17 +430,22 @@ echo "  ✓ nip.io baseDomain configured (data wiped)"
 printf "${_GREEN}▸${_NC} Configuring kubeconfig...\n"
 
 eval "$(crc oc-env 2>/dev/null)"
-mkdir -p "$HOME/.aap-demo"
+mkdir -p "$AAP_DEMO_DIR"
 
-cp ~/.crc/machines/crc/kubeconfig "$HOME/.aap-demo/kubeconfig.microshift" 2>/dev/null
+# Save cluster credentials under ~/.aap-demo (never touch ~/.kube/config)
+if [ ! -s "$AAP_DEMO_KUBECONFIG" ]; then
+  ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 \
+    'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >"$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
+  chmod 600 "$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
+fi
 
-# Set as default kubeconfig (simple copy, no merge)
-# The CRC kubeconfig uses localhost:6443 which is fast and reliable
-mkdir -p "$HOME/.kube"
-cp "$HOME/.crc/machines/crc/kubeconfig" "$HOME/.kube/config"
-chmod 600 "$HOME/.kube/config"
-
-echo "  ✓ KUBECONFIG merged into ~/.kube/config"
+if [ -s "$AAP_DEMO_KUBECONFIG" ]; then
+  echo "  ✓ Kubeconfig saved to $AAP_DEMO_KUBECONFIG"
+else
+  printf "  ${_RED}ERROR: Failed to save kubeconfig to $AAP_DEMO_KUBECONFIG${_NC}\n"
+  echo "  Try: aap-demo kubeconfig"
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Register podman connection
@@ -450,7 +460,8 @@ echo "  podman --connection aap-demo build ."
 # Install metrics-server (enables oc adm top, kubectl top)
 # ---------------------------------------------------------------------------
 printf "${_GREEN}▸${_NC} Installing metrics-server...\n"
-export KUBECONFIG="$HOME/.crc/machines/crc/kubeconfig"
+KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
+export KUBECONFIG
 if kubectl get deployment metrics-server -n kube-system &>/dev/null; then
   echo "  Already installed"
 else
@@ -585,7 +596,7 @@ fi
 echo ""
 echo "  Routes:     *.apps.127.0.0.1.nip.io"
 
-echo "  Kubeconfig: export KUBECONFIG=~/.crc/machines/crc/kubeconfig"
+echo "  Kubeconfig: export KUBECONFIG=$AAP_DEMO_KUBECONFIG"
 echo "  SSH:        aap-demo ssh"
 echo ""
 echo "  Next: aap-demo deploy    # Deploy AAP"

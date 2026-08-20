@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../includes/aap-demo-paths.sh
+source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
+KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
+export KUBECONFIG="$KUBECONFIG_PATH"
+
 # Deploy Automation Orchestrator Early Access to aap-demo
 #
 # Automates the full 10-step AO EAP install using aapctl CLI.
@@ -25,7 +31,6 @@ if echo "$_CATALOG_OP_ARGS" | grep -q '"openshift-marketplace"'; then
 else
   MARKETPLACE_NAMESPACE="olm"
 fi
-KUBECONFIG_PATH="${KUBECONFIG:-$HOME/.crc/machines/crc/kubeconfig}"
 if [ -z "${AO_STORAGE_CLASS:-}" ]; then
   if kubectl get sc nfs-local-rwx &>/dev/null 2>&1; then
     STORAGE_CLASS="nfs-local-rwx"
