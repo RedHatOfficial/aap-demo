@@ -2703,7 +2703,7 @@ _show_addon_access() {
       echo "  Sign in with AAP admin credentials (AAP OAuth)"
       echo ""
       ;;
-    portal|mcp-server|setup-pah|local-cache)
+    portal | mcp-server | setup-pah | local-cache)
       ;;
   esac
 }
