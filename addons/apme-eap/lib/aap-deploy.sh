@@ -115,6 +115,15 @@ EOF
   }
 }
 
+# Strip non-ASCII bytes so Controller API JSON stays valid UTF-8 on Windows/Git Bash.
+apme_sanitize_extra_vars_file() {
+  local file="$1"
+  local tmp="${file}.san"
+
+  sed -e 's/—/-/g' -e 's/–/-/g' "$file" | tr -cd '\11\12\15\40-\176' >"$tmp"
+  mv "$tmp" "$file"
+}
+
 apme_ensure_project() {
   local org_id="$1"
   local project_id payload result
@@ -232,13 +241,13 @@ apme_ensure_execution_environment() {
 }
 
 apme_ensure_job_template() {
-  local org_id="$1" project_id="$2" ee_id="$3" extra_vars="$4"
+  local org_id="$1" project_id="$2" ee_id="$3" extra_vars_file="$4"
   local template_id payload result
 
   payload=$(jq -n \
     --arg name "$APME_TEMPLATE_NAME" \
     --arg desc "Deploy APME portal via aap-demo apme-eap addon" \
-    --arg extra_vars "$extra_vars" \
+    --rawfile extra_vars "$extra_vars_file" \
     --arg playbook "$APME_PLAYBOOK" \
     --argjson project_id "$project_id" \
     --argjson ee_id "$ee_id" \
@@ -274,7 +283,7 @@ apme_ensure_job_template() {
           --argjson ee_id "$ee_id" \
           --argjson project_id "$project_id" \
           --arg playbook "$APME_PLAYBOOK" \
-          --arg extra_vars "$extra_vars" \
+          --rawfile extra_vars "$extra_vars_file" \
           '{execution_environment: $ee_id, project: $project_id, playbook: $playbook, extra_vars: $extra_vars}')" \
         "${AAP_API}/job_templates/${template_id}/" >/dev/null 2>&1
       _apme_info "Job template already exists (ID: ${template_id})"
@@ -338,7 +347,7 @@ apme_launch_job() {
 apme_deploy_via_aap() {
   local vars_file="$1"
   local defaults_file="$2"
-  local repo_root org_id project_id ee_id extra_vars template_id job_id
+  local repo_root org_id project_id ee_id extra_vars_file template_id job_id
 
   repo_root="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -361,13 +370,16 @@ apme_deploy_via_aap() {
     fi
   fi
 
-  extra_vars=$(apme_build_extra_vars "$vars_file" "$defaults_file")
+  extra_vars_file=$(mktemp)
+  trap 'rm -f "$extra_vars_file"' RETURN
+  apme_build_extra_vars "$vars_file" "$defaults_file" >"$extra_vars_file"
+  apme_sanitize_extra_vars_file "$extra_vars_file"
 
   project_id=$(apme_ensure_project "$org_id")
   apme_sync_project "$project_id"
 
   ee_id=$(apme_ensure_execution_environment "$org_id")
-  template_id=$(apme_ensure_job_template "$org_id" "$project_id" "$ee_id" "$extra_vars")
+  template_id=$(apme_ensure_job_template "$org_id" "$project_id" "$ee_id" "$extra_vars_file")
 
   _apme_info "Launching APME deployment job in AAP (no local Python required)..."
   job_id=$(apme_launch_job "$template_id")

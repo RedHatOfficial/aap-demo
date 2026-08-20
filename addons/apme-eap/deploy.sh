@@ -587,7 +587,7 @@ generate_vars_file() {
 EOF
   chmod 600 "$VARS_FILE"
   cat >>"$VARS_FILE" <<EOF
-# Do not edit directly — regenerated on each deploy
+# Do not edit directly - regenerated on each deploy
 # Generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 # OpenShift (discovered from aap-demo environment)
