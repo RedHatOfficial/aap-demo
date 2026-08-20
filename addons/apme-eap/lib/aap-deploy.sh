@@ -316,6 +316,17 @@ apme_monitor_job() {
         ;;
       failed | error | canceled)
         echo ""
+        _apme_warn "Last failed task(s):"
+        kubectl exec -n "${AAP_NAMESPACE:-aap-operator}" deploy/aap-controller-web -- bash -c "awx-manage shell -c \"
+from awx.main.models import Job
+j = Job.objects.get(id=${job_id})
+for ev in j.job_events.filter(event='runner_on_failed').order_by('-id')[:3]:
+    out = (ev.stdout or ev.msg or '').strip()
+    if out:
+        print(ev.task)
+        for line in out.splitlines()[-8:]:
+            print('  ', line)
+\"" 2>/dev/null || true
         die "APME deployment job failed (ID: ${job_id}). View: ${AAP_UI_URL}/#/jobs/playbook/${job_id}/output"
         ;;
     esac

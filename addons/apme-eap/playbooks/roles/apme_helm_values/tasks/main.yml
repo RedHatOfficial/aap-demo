@@ -97,6 +97,10 @@
     namespace: openshift-ingress
     label_selectors:
       - ingresscontroller.operator.openshift.io/owning-ingresscontroller=default
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: router_service
   when: is_nip_io_domain
 
