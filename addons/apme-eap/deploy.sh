@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # APME Playbook Addon - Deploy Ansible Portal with Ansible Quality (APME)
-# Uses official APME EAP welcome pack playbooks executed locally in isolated venv
+# Linux/macOS: local ansible-playbook in isolated venv
+# Windows (Git Bash): playbooks run as AAP Controller jobs (no local Python)
 #
 # ADDON_REQUIRES_AAP=true
 
@@ -30,9 +31,31 @@ die() {
   exit 1
 }
 
+_use_aap_execution() {
+  if [ "${APME_FORCE_LOCAL:-}" = "1" ]; then
+    return 1
+  fi
+  if [ "${APME_USE_AAP:-}" = "1" ]; then
+    return 0
+  fi
+  if [ "${APME_USE_AAP:-}" = "0" ]; then
+    return 1
+  fi
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 _load_github_creds_from_file() {
   local creds_file="$1"
   [ -f "$creds_file" ] || return 1
+
+  if _load_github_creds_from_file_legacy "$creds_file"; then
+    return 0
+  fi
 
   if ! python3 -c "import yaml" 2>/dev/null; then
     return 2
@@ -238,24 +261,31 @@ _ensure_helm() {
 check_prerequisites() {
   info "Checking system prerequisites..."
 
-  # Check kubectl
   if ! command -v kubectl &>/dev/null; then
     die "kubectl not found. Please install kubectl or oc."
   fi
 
-  # Check cluster connectivity
   if ! kubectl cluster-info &>/dev/null; then
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
 
-  # Check python3
+  if _use_aap_execution; then
+    info "Windows/AAP execution mode — playbooks run in AAP (no local Python required)"
+    if ! command -v jq &>/dev/null; then
+      die "jq is required. Install: winget install jqlang.jq"
+    fi
+    if ! command -v curl &>/dev/null; then
+      die "curl is required for AAP API access"
+    fi
+    info "Prerequisites check complete"
+    return 0
+  fi
+
   if ! command -v python3 &>/dev/null; then
-    die "python3 not found. Please install Python 3.8 or later."
+    die "python3 not found. Please install Python 3.8 or later (or set APME_USE_AAP=1 on Linux/macOS)."
   fi
 
   info "Using pre-built portal hub (${PORTAL_HUB_IMAGE})"
-
-  # Portal/gateway Helm releases use kubernetes.core.helm (requires helm binary on PATH)
   _ensure_helm
 
   info "Prerequisites check complete"
@@ -330,6 +360,7 @@ discover_environment() {
   if [ -z "$AAP_PASSWORD" ]; then
     die "Could not retrieve AAP admin password from secret"
   fi
+  export AAP_PASSWORD
   info "AAP admin password retrieved"
 
   # 7. Architecture
@@ -678,8 +709,36 @@ EOF
 # Deployment
 # ---------------------------------------------------------------------------
 
-deploy() {
-  info "Deploying APME using official welcome pack playbooks..."
+deploy_via_aap() {
+  # shellcheck source=lib/aap-deploy.sh
+  source "${SCRIPT_DIR}/lib/aap-deploy.sh"
+
+  export AAP_PASSWORD AAP_USERNAME="${AAP_USERNAME:-admin}"
+  export AAP_NAMESPACE="${AAP_NAMESPACE:-aap-operator}"
+
+  if [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] && [ -f "${GITHUB_APP_PRIVATE_KEY_PATH}" ]; then
+    warn "Full GitHub App mode uses a local private key path that is not available inside AAP."
+    warn "Use token-only GitHub mode on Windows, or set APME_FORCE_LOCAL=1 with Python installed."
+  fi
+
+  info "Deploying APME via AAP Controller job..."
+  info "(pod status updates every 30s while the job runs)"
+
+  _pod_watcher "$NAMESPACE" 30 &
+  _watcher_pid=$!
+  trap '_stop_pod_watcher' EXIT
+
+  apme_deploy_via_aap "$VARS_FILE" "${SCRIPT_DIR}/defaults.yml"
+
+  _stop_pod_watcher
+  trap - EXIT
+
+  info "APME deployment completed successfully"
+  show_routes
+}
+
+deploy_local() {
+  info "Deploying APME using official welcome pack playbooks (local execution)..."
   info "(pod status updates every 30s during helm installs)"
 
   # Set environment for kubernetes.core modules
@@ -690,8 +749,6 @@ deploy() {
   _watcher_pid=$!
   trap '_stop_pod_watcher' EXIT
 
-  # Run main deployment playbook directly
-  # Note: Load defaults first, then vars file so user config takes precedence
   ansible-playbook "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
     -e "@${SCRIPT_DIR}/defaults.yml" \
     -e "@${VARS_FILE}"
@@ -793,12 +850,16 @@ cleanup() {
 case "$ACTION" in
   deploy | --deploy)
     check_prerequisites
-    detect_architecture
+    ARCH=$(detect_architecture)
     discover_environment
     prompt_github_token
     generate_vars_file
-    setup_venv
-    deploy
+    if _use_aap_execution; then
+      deploy_via_aap
+    else
+      setup_venv
+      deploy_local
+    fi
     ;;
 
   --delete | delete | remove)
@@ -807,9 +868,14 @@ case "$ACTION" in
 
   *)
     echo "Usage: $0 [deploy|--delete [--purge-creds]]"
-    echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
+    echo "  deploy              - Deploy APME (local ansible-playbook on Linux/macOS; AAP job on Windows)"
     echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
     echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
+    echo ""
+    echo "Environment:"
+    echo "  APME_USE_AAP=1       - Run playbooks as AAP Controller jobs (no local Python)"
+    echo "  APME_FORCE_LOCAL=1   - Force local venv execution even on Windows"
+    echo "  APME_PROJECT_SCM_URL - Git URL for AAP project (default: origin remote)"
     exit 1
     ;;
 esac
