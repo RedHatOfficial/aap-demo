@@ -181,6 +181,24 @@ older `orchestrator-pg-credentials` names). Force reinstall recreates Postgres w
 FORCE=1 aap-demo enable ao
 ```
 
+### Backend migration / `database "orchestrator" does not exist`
+
+The operator on **`stable`** can install successfully while Postgres databases are still missing. This
+happens when an older CloudNativePG install (without the `Database` CRD) was already on the cluster;
+`deploy.sh` now upgrades CNPG and verifies `orchestrator`, `temporal`, and `temporal_visibility` exist
+before continuing. Re-run:
+
+```bash
+FORCE=1 aap-demo enable ao
+```
+
+Verify databases:
+
+```bash
+kubectl exec -n automation-orchestrator orchestrator-postgres-1 -- psql -U postgres -c '\l'
+kubectl get database -n automation-orchestrator
+```
+
 Check migration job logs:
 
 ```bash

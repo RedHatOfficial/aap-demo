@@ -15,6 +15,7 @@ metadata:
 spec:
   bootstrap:
     initdb:
+      database: orchestrator
       owner: orchestrator
       secret:
         name: orchestrator-postgres-secret

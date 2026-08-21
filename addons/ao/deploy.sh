@@ -559,6 +559,98 @@ show_access_info() {
 
 AO_PULL_SECRET_NAME="${AO_PULL_SECRET_NAME:-automation-orchestrator-pull-secret}"
 
+cnpg_database_crd_available() {
+  kubectl get crd databases.postgresql.cnpg.io &>/dev/null 2>&1
+}
+
+ensure_cnpg_operator() {
+  CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
+  CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
+
+  if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
+    && cnpg_database_crd_available; then
+    echo "✓ CloudNativePG operator ready"
+    mkdir -p "$(dirname "$AO_STATE_FILE")"
+    grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null \
+      || echo "CNPG_VERSION=${CNPG_VERSION}" >>"$AO_STATE_FILE"
+    return 0
+  fi
+
+  if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1; then
+    echo "Upgrading CloudNativePG to v${CNPG_VERSION} (Database CRD required)..."
+  else
+    echo "Installing CloudNativePG operator v${CNPG_VERSION} (dev-only, not Red Hat supported)..."
+  fi
+
+  if ! kubectl apply --server-side -f "$CNPG_MANIFEST" 2>&1 | tail -5; then
+    echo "ERROR: Failed to install CloudNativePG from ${CNPG_MANIFEST}"
+    exit 1
+  fi
+  mkdir -p "$(dirname "$AO_STATE_FILE")"
+  echo "CNPG_VERSION=${CNPG_VERSION}" >"$AO_STATE_FILE"
+  oc adm policy add-scc-to-group anyuid "system:serviceaccounts:cnpg-system" 2>/dev/null || true
+  oc adm policy add-scc-to-group privileged "system:serviceaccounts:cnpg-system" 2>/dev/null || true
+
+  echo "Waiting for CloudNativePG operator..."
+  kubectl rollout status deployment/cnpg-controller-manager \
+    -n cnpg-system --timeout=5m
+  echo "✓ CloudNativePG operator running"
+}
+
+postgres_primary_pod() {
+  kubectl get pod -n "$NAMESPACE" -l "cnpg.io/cluster=orchestrator-postgres,role=primary" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
+    || echo "orchestrator-postgres-1"
+}
+
+postgres_database_exists() {
+  local _db="$1"
+  local _pod
+  _pod=$(postgres_primary_pod)
+  kubectl exec -n "$NAMESPACE" "$_pod" -- psql -U postgres -tAc \
+    "SELECT 1 FROM pg_database WHERE datname='${_db}'" 2>/dev/null | grep -qx 1
+}
+
+ensure_postgres_database() {
+  local _db="$1"
+  local _pod
+  if postgres_database_exists "$_db"; then
+    return 0
+  fi
+  _pod=$(postgres_primary_pod)
+  echo "  Creating PostgreSQL database: ${_db}"
+  kubectl exec -n "$NAMESPACE" "$_pod" -- psql -U postgres -c \
+    "CREATE DATABASE \"${_db}\" OWNER orchestrator" >/dev/null
+}
+
+wait_for_ao_postgres_databases() {
+  local _cr _db_pg _i _applied
+  if cnpg_database_crd_available; then
+    for _cr in orchestrator temporal temporal-visibility; do
+      for _i in $(seq 1 30); do
+        _applied=$(kubectl get database "$_cr" -n "$NAMESPACE" \
+          -o jsonpath='{.status.applied}' 2>/dev/null || echo "")
+        if [ "$_applied" = "true" ]; then
+          break
+        fi
+        sleep 2
+      done
+    done
+  fi
+  for _db_pg in orchestrator temporal temporal_visibility; do
+    if ! postgres_database_exists "$_db_pg"; then
+      ensure_postgres_database "$_db_pg"
+    fi
+  done
+  for _db_pg in orchestrator temporal temporal_visibility; do
+    if ! postgres_database_exists "$_db_pg"; then
+      echo "ERROR: PostgreSQL database ${_db_pg} was not created."
+      exit 1
+    fi
+  done
+  echo "✓ PostgreSQL databases ready (orchestrator, temporal, temporal_visibility)"
+}
+
 ensure_ao_pull_secret() {
   local _src_ns="${CATALOG_NAMESPACE:-$AAP_NAMESPACE}"
   if kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
@@ -730,30 +822,7 @@ INGRESS_HOST="automation-orchestrator.${CLUSTER_DOMAIN}"
 echo "✓ Ingress host: ${INGRESS_HOST}"
 
 # --- CloudNativePG operator (dev-only PostgreSQL) ---
-CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
-
-if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null; then
-  echo "✓ CloudNativePG CRDs already registered"
-  mkdir -p "$(dirname "$AO_STATE_FILE")"
-  grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null \
-    || echo "CNPG_VERSION=${CNPG_VERSION}" >>"$AO_STATE_FILE"
-else
-  echo "Installing CloudNativePG operator v${CNPG_VERSION} (dev-only, not Red Hat supported)..."
-  CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
-  if ! kubectl apply --server-side -f "$CNPG_MANIFEST" 2>&1 | tail -5; then
-    echo "ERROR: Failed to install CloudNativePG from ${CNPG_MANIFEST}"
-    exit 1
-  fi
-  mkdir -p "$(dirname "$AO_STATE_FILE")"
-  echo "CNPG_VERSION=${CNPG_VERSION}" >"$AO_STATE_FILE"
-  oc adm policy add-scc-to-group anyuid "system:serviceaccounts:cnpg-system" 2>/dev/null || true
-  oc adm policy add-scc-to-group privileged "system:serviceaccounts:cnpg-system" 2>/dev/null || true
-
-  echo "Waiting for CloudNativePG operator..."
-  kubectl rollout status deployment/cnpg-controller-manager \
-    -n cnpg-system --timeout=5m
-  echo "✓ CloudNativePG operator running"
-fi
+ensure_cnpg_operator
 
 # --- PostgreSQL cluster + aapctl-shaped credential secrets ---
 # Secret names/keys match `aapctl install ao --dry-run` (GitOps manifests).
@@ -838,7 +907,13 @@ EOF
 
 sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
   -e "s|__STORAGE_CLASS__|${STORAGE_CLASS}|g" \
-  "${MANIFESTS_DIR}/postgres-cluster.yaml" | kubectl apply -f -
+  "${MANIFESTS_DIR}/postgres-cluster.yaml" | kubectl apply -f - || {
+  echo "ERROR: Failed to apply PostgreSQL manifests."
+  if ! cnpg_database_crd_available; then
+    echo "  CloudNativePG Database CRD is missing. Re-run after CNPG upgrade completes."
+  fi
+  exit 1
+}
 
 echo "Waiting for PostgreSQL cluster to be ready..."
 for i in $(seq 1 60); do
@@ -849,13 +924,14 @@ for i in $(seq 1 60); do
     break
   fi
   if [ "$i" -eq 60 ]; then
-    echo "WARNING: PostgreSQL cluster not ready after 10 minutes. Continuing..."
+    echo "ERROR: PostgreSQL cluster not ready after 10 minutes."
+    exit 1
   fi
   printf "\r  $(hat) readyInstances: %-4s    " "${READY}"
   sleep 10
 done
 echo ""
-echo "✓ PostgreSQL databases created"
+wait_for_ao_postgres_databases
 
 # --- Operator install (GA OLM subscription) ---
 # AAP already has an OperatorGroup in aap-operator; a second one there
