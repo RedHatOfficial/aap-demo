@@ -101,18 +101,14 @@ maybe_relax_redhat_registry_signature_policy() {
   # index image fails verification. aap-demo deploy applies the same fix.
   # shellcheck source=../../includes/infra-crc.sh
   source "${REPO_ROOT}/includes/infra-crc.sh" 2>/dev/null || return 0
+  if ! needs_signature_policy_relaxation; then
+    return 0
+  fi
   if [ -z "${CRC_SSH_KEY:-}" ]; then
-    return 0
-  fi
-  local _ocp_version _major _minor
-  _ocp_version=$(resolve_aap_ocp_version)
-  _major="${_ocp_version%%.*}"
-  _minor="${_ocp_version#*.}"
-  if [ "$_major" -lt 4 ]; then
-    return 0
-  fi
-  if [ "$_major" -eq 4 ] && [ "$_minor" -lt 22 ]; then
-    return 0
+    echo "  WARNING: MicroShift 4.22+ blocks unsigned registry.redhat.io images." >&2
+    echo "  Run 'aap-demo deploy' from the CRC host to relax signature policy," >&2
+    echo "  or apply the same /etc/containers/policy.json change on cluster nodes." >&2
+    return 1
   fi
   ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo python3 -c "
 import json
@@ -129,6 +125,20 @@ else:
     echo "  WARNING: Could not relax signature policy via SSH (is CRC running?)" >&2
     return 1
   }
+}
+
+needs_signature_policy_relaxation() {
+  local _ocp_version _major _minor
+  _ocp_version=$(resolve_aap_ocp_version)
+  _major="${_ocp_version%%.*}"
+  _minor="${_ocp_version#*.}"
+  if [ "$_major" -lt 4 ]; then
+    return 1
+  fi
+  if [ "$_major" -eq 4 ] && [ "$_minor" -lt 22 ]; then
+    return 1
+  fi
+  return 0
 }
 
 catalog_pod_has_signature_pull_failure() {
@@ -158,7 +168,9 @@ catalog_pod_wait_reason() {
 maybe_recover_catalog_pull() {
   local _catalog_ns="$1"
   echo "  Attempting catalog pull recovery (signature policy + pod restart)..." >&2
-  maybe_relax_redhat_registry_signature_policy || true
+  if ! maybe_relax_redhat_registry_signature_policy; then
+    return 1
+  fi
   kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     --wait=false 2>/dev/null || true
 }
@@ -296,26 +308,43 @@ wait_for_catalog_ready() {
       -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
     if [ "$_pod_status" = "ImagePullBackOff" ] || [ "$_pod_status" = "ErrImagePull" ]; then
       if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
+        if [ "$_recovery_attempted" -eq 0 ]; then
+          if maybe_recover_catalog_pull "$_catalog_ns"; then
+            _recovery_attempted=1
+            sleep 15
+            continue
+          fi
+        fi
         echo "" >&2
         report_catalog_signature_failure
         return 1
       fi
-      if [ "$_recovery_attempted" -eq 0 ]; then
-        maybe_recover_catalog_pull "$_catalog_ns"
-        _recovery_attempted=1
-        sleep 10
-        continue
+      echo "" >&2
+      _reason=$(catalog_pod_wait_reason "$_catalog_ns")
+      echo "ERROR: Catalog pod cannot pull operator index image." >&2
+      if [ -n "$_reason" ]; then
+        echo "  Pod detail:" >&2
+        echo "$_reason" | sed 's/^/    /' >&2
       fi
+      return 1
     fi
     if [ "$_status" = "TRANSIENT_FAILURE" ] || [ "$_status" = "CONNECTING" ]; then
+      if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
+        if [ "$_recovery_attempted" -eq 0 ]; then
+          if maybe_recover_catalog_pull "$_catalog_ns"; then
+            _recovery_attempted=1
+            sleep 15
+            continue
+          fi
+        fi
+        echo "" >&2
+        report_catalog_signature_failure
+        return 1
+      fi
       if [ "$_pod_status" = "Pending" ] || [ "$_pod_status" = "ContainerCreating" ]; then
         printf "\r  $(hat) Pulling catalog image... (%ds / %ds)    " "$((_i * 5))" "$_timeout" >&2
       else
         printf "\r  $(hat) Catalog initializing (${_status})... (%ds / %ds)    " "$((_i * 5))" "$_timeout" >&2
-      fi
-      if [ "$_recovery_attempted" -eq 0 ] && [ "$((_i * 5))" -ge 60 ]; then
-        maybe_recover_catalog_pull "$_catalog_ns"
-        _recovery_attempted=1
       fi
     else
       printf "\r  $(hat) CatalogSource: %-18s | pod: %-16s (%ds)    " "$_status" "$_pod_status" "$((_i * 5))" >&2
@@ -432,6 +461,14 @@ ensure_ao_catalog_source() {
   sed -e "s|image: .*|image: ${_target_image}|" \
     -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|" \
     "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+
+  if needs_signature_policy_relaxation; then
+    echo "  Ensuring MicroShift 4.22+ registry signature policy..." >&2
+    if ! maybe_relax_redhat_registry_signature_policy; then
+      report_catalog_signature_failure
+      return 1
+    fi
+  fi
 
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
@@ -910,7 +947,6 @@ if catalog_pod_has_signature_pull_failure "$_aap_catalog_ns"; then
   maybe_relax_redhat_registry_signature_policy
 fi
 if ! CATALOG_NAMESPACE=$(ensure_ao_catalog_source); then
-  echo "ERROR: Could not create AO CatalogSource in ${NAMESPACE}."
   exit 1
 fi
 OLM_NAMESPACE="$NAMESPACE"

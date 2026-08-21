@@ -163,7 +163,21 @@ AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao
 
 ### SignatureValidationFailed (MicroShift 4.22+)
 
-Re-run `aap-demo deploy` to relax registry signature policy, then:
+MicroShift 4.22+ rejects unsigned `registry.redhat.io` images. The AO addon copies
+`redhat-operator-index` into `automation-orchestrator`; both AAP and AO catalog pods need
+the same signature-policy fix that `aap-demo deploy` applies on CRC.
+
+**Do not interrupt** a catalog pull that shows `Pulling catalog image...` — the index is
+multi-GB and can take several minutes. Only retry after fixing policy or increasing timeout.
+
+Re-run deploy from the CRC host, then enable AO:
+
+```bash
+aap-demo deploy
+AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao
+```
+
+If the catalog pod was restarted mid-pull, force a clean retry:
 
 ```bash
 AO_REFRESH_CATALOG=1 FORCE=1 aap-demo enable ao
