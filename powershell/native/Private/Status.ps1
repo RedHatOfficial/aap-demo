@@ -99,29 +99,7 @@ function Invoke-AapDemoStatus {
   if ($routes) { $routes | ForEach-Object { Write-Host $_ } }
   else { Write-Host '  (no routes found)' }
 
-  Write-Host ''
-  Write-Host 'Credentials:'
-  Write-Host '------------'
-  $aapNsResult = Invoke-AapOcCapture @('get', 'aap', '-A', '--no-headers')
-  $aapNs = if ($aapNsResult.ExitCode -eq 0 -and $aapNsResult.Output -notmatch '^No resources found') {
-    $aapNsResult.Lines | ForEach-Object { ($_ -split '\s+')[0] } | Sort-Object -Unique
-  } else { @() }
-  $foundCred = $false
-  foreach ($ns in $aapNs) {
-    foreach ($secretName in @('aap-admin-password', 'myaap-admin-password', 'aap-controller-admin-password')) {
-      $pwResult = Invoke-AapOcCapture @('get', 'secret', $secretName, '-n', $ns, '-o', 'jsonpath={.data.password}')
-      $pw = if ($pwResult.ExitCode -eq 0) { $pwResult.Output.Trim() } else { '' }
-      if ($pw) {
-        $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pw))
-        Write-Host ("  {0,-20} admin / {1}" -f "${ns}:", $decoded)
-        $foundCred = $true
-        break
-      }
-    }
-  }
-  if (-not $foundCred) { Write-Host '  (no admin password secret found yet)' }
-
-  Write-AapCollectionSourcesStatus
+  Write-AapCredentialsStatus -Namespace $Namespace
 
   $savedAddons = @(Get-AapAddonsList)
   Write-Host ''
@@ -176,10 +154,9 @@ STATUS:
     must-gather     Collect diagnostic bundle
 
 ADDONS:
-    enable portal   Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
-                    Requires: AAP 2.6+, Helm 3.10+, Red Hat pull secret
-    enable mcp-server  Enable MCP server for AI assistants
-    disable <name>  Disable an addon (portal, mcp-server)
+    enable <addon>  Enable an addon (portal, mcp-server, setup-pah, product-demos, ...)
+    disable <name>  Disable an addon
+                    Bash-delegated addons require Git for Windows (bash on PATH)
 
 NOTES:
     Requires oc and crc on PATH. OpenShift Local needs Hyper-V.

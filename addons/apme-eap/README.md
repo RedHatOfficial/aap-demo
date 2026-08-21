@@ -1,46 +1,48 @@
 # APME Playbook Addon
 
 Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) using
-**official APME EAP welcome pack Ansible playbooks** executed locally in an isolated Python
-virtual environment.
+**official APME EAP welcome pack Ansible playbooks**.
 
 > **Preview:** APME is prototype software for the Early Access Program.
 > Confidential — Red Hat associate and NDA partner use only.
 
 ## Overview
 
-This addon uses the **official APME EAP welcome pack playbooks** executed locally via `ansible-playbook`. This implementation:
+This addon uses the **official APME EAP welcome pack playbooks**:
 
-- **Local execution**: Playbooks run in isolated Python venv (no AAP API dependency)
-- **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access
-- Uses structured Ansible roles from the official APME welcome pack
+- **Linux/macOS**: playbooks run locally in an isolated Python venv (`ansible-playbook`)
+- **Windows (Git Bash / PowerShell)**: playbooks run as **AAP Controller jobs** via REST API — no local Python required
+- **KUBECONFIG / in-cluster token**: cluster access from your workstation or from AAP execution environments
 - Auto-discovers aap-demo environment (no manual configuration)
 - Maintains alignment with upstream APME deployment patterns
 
 **Architecture:** Bash wrapper (`deploy.sh`) handles environment discovery and generates vars
-file, then invokes official APME playbooks via `ansible-playbook` with KUBECONFIG-based
-authentication.
+file, then either invokes `ansible-playbook` locally or registers a Git SCM project in AAP and
+launches `addons/apme-eap/playbooks/deploy_apme_portal.yml` as a job.
 
 ## Quick Start
 
 ### Prerequisites
 
-**System requirements:**
+**System requirements (all platforms):**
 
 - `kubectl` or `oc`
-- `python3` (3.8+)
-- `helm` 3.10+ (portal Helm chart — auto-installed via brew/dnf when missing)
 - AAP deployed (`aap-demo deploy`)
 
-The addon deploys a **pre-built portal hub image** (`quay.io/cferman/portal-hub-eap:latest`)
-with APME plugins baked in at build time. Deploy does **not** push OCI plugin archives,
-run `install-dynamic-plugins`, or require `skopeo` or the in-cluster registry addon.
+**Linux/macOS (local execution):**
 
-**Ansible installation** (auto-installed in venv):
+- `python3` (3.8+)
+- `helm` 3.10+ (portal Helm chart — auto-installed via brew/dnf when missing)
 
-- A venv is created at `~/.aap-demo/apme-eap-venv` with full Ansible suite + collections
-- Includes kubernetes.core, community.okd, and other required collections
-- The playbooks run locally using KUBECONFIG authentication (~150 MB venv)
+**Windows (AAP job execution — default on Git Bash):**
+
+- `jq` (`winget install jqlang.jq`)
+- `curl` (included with Git for Windows)
+- Git clone with `origin` remote (AAP syncs playbooks from Git), or set `APME_PROJECT_SCM_URL`
+- No `python3` or local `ansible-playbook` required
+
+Set `APME_FORCE_LOCAL=1` to use the Linux/macOS venv path on Windows (requires Python + helm).
+Set `APME_USE_AAP=1` on Linux/macOS to run via AAP jobs instead of a local venv.
 
 ### No Manual Configuration Required! 🎉
 
@@ -77,20 +79,19 @@ aap-demo enable apme-eap
 
 This will:
 
-1. Check system prerequisites (kubectl, python3, helm — installs helm if missing)
-2. Create venv with full Ansible + collections (if not exists)
-3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
-4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
-5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Run `playbooks/deploy_apme_portal.yml` with pre-built `portal-hub-eap` container image
+1. Check prerequisites (`kubectl`; on Linux/macOS also `python3` + `helm`)
+2. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
+3. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
+4. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
+5. **Linux/macOS**: create venv at `~/.aap-demo/apme-eap-venv` and run `ansible-playbook` locally
+6. **Windows**: register/update an AAP project (Git SCM), job template, and launch the deployment job
 7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
 
-**Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with
-the cluster. The `K8S_AUTH_KUBECONFIG` environment variable is set automatically by the
-wrapper script.
+**Authentication:** Local runs use KUBECONFIG. AAP jobs use an in-cluster service account token
+and `https://kubernetes.default.svc:443` (configured automatically).
 
-**First run** takes longer (~2-3 minutes) to set up the virtual environment and install
-Ansible collections. Subsequent runs reuse the existing venv and are faster.
+**First run** on Linux/macOS takes longer (~2-3 minutes) to set up the virtual environment.
+Windows runs depend on AAP project sync and job runtime; progress is visible in the AAP UI.
 
 ### Check Status
 
@@ -154,7 +155,8 @@ Environment auto-discovery:
 Generate vars file:
   ~/.aap-demo/apme-eap-vars.yml
     ↓
-ansible-playbook playbooks/deploy_apme_portal.yml
+Linux/macOS: ansible-playbook playbooks/deploy_apme_portal.yml
+Windows:     AAP project sync → job template launch → monitor job
     ↓
 Roles execute in sequence:
   1. openshift_apme_setup
@@ -182,25 +184,32 @@ The deploy.sh wrapper automatically discovers:
 
 These are written to `~/.aap-demo/apme-eap-vars.yml` (regenerated on each deploy).
 
-### GitHub Integration (Manual Configuration)
+### GitHub Integration
 
-To enable repository quality scanning, edit the generated vars file:
+By default, only a **GitHub Personal Access Token (PAT)** is required for repository scanning.
+During `aap-demo enable apme-eap`, you will be prompted for a PAT, or you can set `GITHUB_TOKEN`
+before running enable.
 
-```bash
-vim ~/.aap-demo/apme-eap-vars.yml
-```
+**Create a PAT:** https://github.com/settings/tokens/new
 
-Uncomment and fill in the GitHub section:
+- Note: `APME Portal API Access`
+- Scope: `repo` (full control of private repositories)
+
+The PAT is saved to `~/.aap-demo/apme-eap-github-creds.yml` and written into the generated
+vars file on each deploy.
+
+**Token-only mode** enables repository scanning. OAuth sign-in and portal push require a full
+GitHub App — add these to `~/.aap-demo/apme-eap-vars.yml` if needed:
 
 ```yaml
 configure_github_secrets: true
-github_oauth_client_id: "YOUR_OAUTH_CLIENT_ID"
-github_oauth_client_secret: "YOUR_OAUTH_CLIENT_SECRET"
-github_app_id: "YOUR_APP_ID"
-github_app_client_id: "YOUR_APP_CLIENT_ID"
-github_app_client_secret: "YOUR_APP_CLIENT_SECRET"
+github_token: "ghp_..."
+github_oauth_client_id: "..."
+github_oauth_client_secret: "..."
+github_app_id: "..."
+github_app_client_id: "..."
+github_app_client_secret: "..."
 github_app_private_key_path: "/path/to/private-key.pem"
-github_token: "YOUR_PERSONAL_ACCESS_TOKEN"
 ```
 
 Then re-run:
@@ -209,7 +218,7 @@ Then re-run:
 aap-demo enable apme-eap
 ```
 
-For detailed GitHub setup instructions, see the [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
+For full GitHub App setup, see the [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
 
 ### Advanced Configuration
 
@@ -239,6 +248,8 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 ```
 addons/apme-eap/
 ├── deploy.sh                     # Bash wrapper (addon contract)
+├── lib/
+│   └── aap-deploy.sh             # AAP REST API helpers (Windows / APME_USE_AAP)
 ├── defaults.yml                  # Default configuration
 ├── requirements.yml              # Ansible collection dependencies
 ├── README.md                     # This file
@@ -301,7 +312,7 @@ extensions). Registering only the extensions factory leaves `plugin.apme.api` un
 **Solution**: Redeploy with current `apme-eap` playbooks (values template includes both
 factories). Hard-refresh the browser after redeploy.
 
-### Python venv creation fails
+### Python venv creation fails (Linux/macOS)
 
 **Symptom**: `python3 not found` or venv module errors
 
@@ -314,6 +325,16 @@ brew install python3
 # Verify
 python3 --version  # Should be 3.8 or later
 ```
+
+Or use AAP job execution without Python: `APME_USE_AAP=1 aap-demo enable apme-eap`
+
+### Windows: AAP project sync uses remote Git
+
+**Symptom**: Job runs old playbook content or missing local changes
+
+**Solution**: Commit and push your branch, or set `APME_PROJECT_SCM_URL` / `APME_PROJECT_SCM_BRANCH`
+to a remote that contains your playbooks. For local-only testing on Windows, use
+`APME_FORCE_LOCAL=1` with Python and helm installed.
 
 ### Ansible collection missing
 

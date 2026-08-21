@@ -200,6 +200,8 @@ try {
 
     'stop' { Invoke-AapDemoStop }
 
+    'start' { Invoke-AapDemoStart }
+
     'destroy' { Invoke-AapDemoDestroy -Reset:$cli.Reset }
 
     'clean' {
@@ -265,8 +267,9 @@ try {
     'enable' {
 
       $addon = if ($cli.Positional.Count -gt 0) { $cli.Positional[0] } else { $null }
+      $scriptArgs = if ($cli.Positional.Count -gt 1) { @($cli.Positional[1..($cli.Positional.Count - 1)]) } else { @() }
 
-      $params = @{}
+      $params = @{ ScriptArgs = $scriptArgs }
       if ($addon) { $params.Addon = $addon }
       if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
       Invoke-AapDemoEnable @params
@@ -276,8 +279,9 @@ try {
     'disable' {
 
       $addon = if ($cli.Positional.Count -gt 0) { $cli.Positional[0] } else { $null }
+      $scriptArgs = if ($cli.Positional.Count -gt 1) { @($cli.Positional[1..($cli.Positional.Count - 1)]) } else { @() }
 
-      $params = @{}
+      $params = @{ ScriptArgs = $scriptArgs }
       if ($addon) { $params.Addon = $addon }
       if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
       Invoke-AapDemoDisable @params

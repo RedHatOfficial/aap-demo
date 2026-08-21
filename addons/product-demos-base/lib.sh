@@ -477,14 +477,16 @@ print(p.get_project_path() or '')
     return 1
   fi
 
-  if ! kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
-    tee "${project_dir}/${dest_name}" <"$src" >/dev/null 2>&1; then
+  local dest_path="${project_dir}/${dest_name}"
+  # Git Bash rewrites Unix paths (e.g. /var/lib/awx/...) before kubectl sees them.
+  if ! MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
+    tee "$dest_path" <"$src" >/dev/null 2>&1; then
     echo "  ⚠ Failed to copy ${dest_name} into ${project_dir}" >&2
     return 1
   fi
 
-  if [ -n "$verify_pattern" ] && ! kubectl exec -n "$NAMESPACE" "$task_pod" -- \
-    grep -q "$verify_pattern" "${project_dir}/${dest_name}" 2>/dev/null; then
+  if [ -n "$verify_pattern" ] && ! MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 kubectl exec -n "$NAMESPACE" "$task_pod" -- \
+    grep -q "$verify_pattern" "$dest_path" 2>/dev/null; then
     echo "  ⚠ Overlay verification failed for ${dest_name} (missing: ${verify_pattern})" >&2
     return 1
   fi

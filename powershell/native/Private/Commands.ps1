@@ -1,66 +1,128 @@
 function Invoke-AapDemoEnable {
   param(
     [string]$Addon = $null,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$ScriptArgs = @()
   )
 
+  if ($null -eq $ScriptArgs) { $ScriptArgs = @() }
+
   if (-not $Addon) {
-    Write-Host 'Usage: aap-demo enable <addon>'
+    Write-Host 'Usage: aap-demo enable <addon> [options]'
     Write-Host ''
     Write-Host 'Available addons:'
     $saved = @(Get-AapAddonsList)
     foreach ($a in $Script:AapAvailableAddons) {
       $status = 'available'
       if ($saved -contains $a) { $status = 'enabled' }
-      elseif (-not (Test-Path -LiteralPath (Join-Path $Script:AapDemoRepoRoot "addons/$a"))) {
+      elseif (-not (Test-AapAddonExists -Addon $a)) {
         $status = 'not found'
       }
-      Write-Host ("  {0,-15} ({1})" -f $a, $status)
+      Write-Host ("  {0,-25} ({1})" -f $a, $status)
     }
+    Write-Host ''
+    Write-Host 'Direct-enable addons (not listed above):'
+    Write-Host '  product-demos-base, product-demo-linux, product-demo-windows,'
+    Write-Host '  product-demo-network, product-demo-cloud, product-demo-openshift,'
+    Write-Host '  registry, devspaces'
+    Write-Host ''
+    Write-Host 'local-cache subcommands: load, clear'
     return
   }
 
   $Addon = Resolve-AapAddonName $Addon
 
-  if ($Addon -notin $Script:AapAvailableAddons) {
+  if (-not (Test-AapAddonExists -Addon $Addon)) {
     throw "Unknown addon: $Addon`nAvailable: $($Script:AapAvailableAddons -join ', ')"
   }
 
-  Write-Host "Enabling addon: $Addon"
-  Invoke-AapEnsureClusterReady
-  Invoke-AapAddonEnable -Addon $Addon -Namespace $Namespace
-  Add-AapAddon $Addon
-  $addons = (Get-AapAddonsList) -join ','
-  Write-AapStep "Saved to config: ADDONS=$addons"
+  if (Test-AapAddonUsesBash -Addon $Addon) {
+    Assert-AapBashAvailable -Addon $Addon
+  }
+
+  $skipSave = $false
+  $skipCluster = $false
+  if ($Addon -eq 'local-cache') {
+    $subcmd = if ($ScriptArgs.Count -gt 0) { $ScriptArgs[0] } else { $null }
+    switch ($subcmd) {
+      'load' {
+        $skipSave = $true
+        Write-Host 'Loading cached container images...'
+      }
+      'clear' {
+        $skipSave = $true
+        $skipCluster = $true
+        Write-Host 'Clearing local image cache...'
+      }
+      default { Write-Host "Enabling addon: $Addon" }
+    }
+  } else {
+    Write-Host "Enabling addon: $Addon"
+  }
+
+  if (-not $skipCluster) {
+    Invoke-AapEnsureClusterReady
+  }
+
+  Invoke-AapAddonEnable -Addon $Addon -Namespace $Namespace -ScriptArgs $ScriptArgs
+
+  if (-not $skipSave) {
+    Add-AapAddon $Addon
+    $addons = (Get-AapAddonsList) -join ','
+    Write-AapStep "Saved to config: ADDONS=$addons"
+  }
+
+  try {
+    Write-AapAddonAccessInfo -Addon $Addon -Namespace $Namespace
+  } catch {
+    Write-AapWarn "Could not display login info: $($_.Exception.Message)"
+    Write-Host '  Run: aap-demo status'
+  }
 }
 
 function Invoke-AapDemoDisable {
   param(
     [string]$Addon = $null,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$ScriptArgs = @()
   )
 
+  if ($null -eq $ScriptArgs) { $ScriptArgs = @() }
+
   if (-not $Addon) {
-    Write-Host 'Usage: aap-demo disable <addon>'
+    Write-Host 'Usage: aap-demo disable <addon> [options]'
     Write-Host ''
     Write-Host "Available addons: $($Script:AapAvailableAddons -join ', ')"
+    Write-Host ''
+    Write-Host 'Addon options:'
+    Write-Host '  apme-eap: --purge-creds   Remove saved GitHub credentials and private key'
     return
   }
 
   $Addon = Resolve-AapAddonName $Addon
 
-  if ($Addon -notin $Script:AapAvailableAddons) {
+  if (-not (Test-AapAddonExists -Addon $Addon)) {
     throw "Unknown addon: $Addon"
   }
 
+  if (Test-AapAddonUsesBash -Addon $Addon) {
+    Assert-AapBashAvailable -Addon $Addon
+  }
+
   Write-Host "Disabling addon: $Addon"
-  Invoke-AapEnsureClusterReady
-  Invoke-AapAddonDisable -Addon $Addon -Namespace $Namespace
+  if ($Addon -ne 'setup-pah') {
+    Invoke-AapEnsureClusterReady
+  }
+  Invoke-AapAddonDisable -Addon $Addon -Namespace $Namespace -ScriptArgs $ScriptArgs
   Remove-AapAddon $Addon
-  Write-AapStep 'Removed from config'
+  if ($Addon -eq 'setup-pah') {
+    Write-AapStep 'Removed from config (PAH credentials remain in ~/.aap-demo/)'
+  } else {
+    Write-AapStep 'Removed from config'
+  }
 }
 
-function Write-AapClusterSummary {
+function Write-AapClusterInfo {
   param([string]$Namespace = $Script:AapDemoDefaultNamespace)
 
   Initialize-AapKubeEnvironment
@@ -94,7 +156,44 @@ function Invoke-AapDemoStop {
   if (-not (Invoke-AapCrcStop)) {
     throw 'crc stop failed'
   }
-  Write-Host 'To restart: aap-demo deploy'
+  Write-Host 'To restart: aap-demo start'
+}
+
+function Invoke-AapDemoStart {
+  Write-Host ''
+  Write-Host 'aap-demo start - Starting CRC cluster...' -ForegroundColor Cyan
+
+  $crc = Get-AapCrcStatus
+  switch ([string]$crc.crcStatus) {
+    'Running' {
+      Write-AapStep 'CRC cluster is already running'
+    }
+    'Unknown' {
+      throw 'No cluster found. Run: aap-demo create'
+    }
+    default {
+      if (-not (Invoke-AapCrcStart)) {
+        throw 'crc start failed'
+      }
+    }
+  }
+
+  Sync-AapKubeconfig -Quiet
+  Initialize-AapKubeEnvironment
+
+  $routeDomain = Get-AapRouteDomain
+  if (Test-AapCoreDnsConfigured) {
+    Write-AapStep "CoreDNS already configured for $routeDomain"
+  } else {
+    Write-AapStep "Configuring CoreDNS for $routeDomain..."
+    Set-AapCoreDns -RouteDomain $routeDomain
+    Write-AapStep 'CoreDNS configured'
+  }
+
+  Write-Host ''
+  Write-AapStep 'CRC cluster started'
+  Write-Host "Run 'aap-demo status' to check cluster health"
+  Write-Host ''
 }
 
 function Invoke-AapDemoDestroy {
@@ -146,7 +245,7 @@ function Invoke-AapDemoClean {
   Write-Host ''
   Write-Host 'WARNING: AAP CLEANUP - DESTRUCTIVE OPERATION!' -ForegroundColor Red
   Write-Host ''
-  Write-AapClusterSummary -Namespace $Namespace
+  Write-AapClusterInfo -Namespace $Namespace
   Write-Host ''
 
   $aapResult = Invoke-AapOcCapture @('get', 'aap', '-n', $Namespace, '--no-headers')
@@ -483,7 +582,7 @@ function Invoke-AapDemoMustGather {
   Write-Host "To share: tar czf must-gather.tar.gz $DestDir"
 }
 
-function Write-AapClusterSummary {
+function Invoke-AapDemoRedeploy {
   [CmdletBinding()]
   param(
     [string]$Namespace = $Script:AapDemoDefaultNamespace,

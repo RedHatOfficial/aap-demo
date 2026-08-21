@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # APME Playbook Addon - Deploy Ansible Portal with Ansible Quality (APME)
-# Uses official APME EAP welcome pack playbooks executed locally in isolated venv
+# Linux/macOS: local ansible-playbook in isolated venv
+# Windows (Git Bash): playbooks run as AAP Controller jobs (no local Python)
 #
 # ADDON_REQUIRES_AAP=true
 
@@ -30,9 +31,31 @@ die() {
   exit 1
 }
 
+_use_aap_execution() {
+  if [ "${APME_FORCE_LOCAL:-}" = "1" ]; then
+    return 1
+  fi
+  if [ "${APME_USE_AAP:-}" = "1" ]; then
+    return 0
+  fi
+  if [ "${APME_USE_AAP:-}" = "0" ]; then
+    return 1
+  fi
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 _load_github_creds_from_file() {
   local creds_file="$1"
   [ -f "$creds_file" ] || return 1
+
+  if _load_github_creds_from_file_legacy "$creds_file"; then
+    return 0
+  fi
 
   if ! python3 -c "import yaml" 2>/dev/null; then
     return 2
@@ -238,24 +261,31 @@ _ensure_helm() {
 check_prerequisites() {
   info "Checking system prerequisites..."
 
-  # Check kubectl
   if ! command -v kubectl &>/dev/null; then
     die "kubectl not found. Please install kubectl or oc."
   fi
 
-  # Check cluster connectivity
   if ! kubectl cluster-info &>/dev/null; then
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
 
-  # Check python3
+  if _use_aap_execution; then
+    info "Windows/AAP execution mode — playbooks run in AAP (no local Python required)"
+    if ! command -v jq &>/dev/null; then
+      die "jq is required. Install: winget install jqlang.jq"
+    fi
+    if ! command -v curl &>/dev/null; then
+      die "curl is required for AAP API access"
+    fi
+    info "Prerequisites check complete"
+    return 0
+  fi
+
   if ! command -v python3 &>/dev/null; then
-    die "python3 not found. Please install Python 3.8 or later."
+    die "python3 not found. Please install Python 3.8 or later (or set APME_USE_AAP=1 on Linux/macOS)."
   fi
 
   info "Using pre-built portal hub (${PORTAL_HUB_IMAGE})"
-
-  # Portal/gateway Helm releases use kubernetes.core.helm (requires helm binary on PATH)
   _ensure_helm
 
   info "Prerequisites check complete"
@@ -330,6 +360,7 @@ discover_environment() {
   if [ -z "$AAP_PASSWORD" ]; then
     die "Could not retrieve AAP admin password from secret"
   fi
+  export AAP_PASSWORD
   info "AAP admin password retrieved"
 
   # 7. Architecture
@@ -342,89 +373,44 @@ discover_environment() {
 # ---------------------------------------------------------------------------
 
 prompt_github_token() {
-  # Allow users to optionally provide GitHub App credentials for APME integration
-  # Follows the pattern from setup-pah and portal addons
+  # Optional GitHub PAT for repository scanning (token-only mode).
 
-  # Check saved credentials file from a previous deploy
   if [ -f "$GITHUB_CREDS_FILE" ]; then
     if _load_github_creds_from_file "$GITHUB_CREDS_FILE" || _load_github_creds_from_file_legacy "$GITHUB_CREDS_FILE"; then
       if [ -n "${GITHUB_TOKEN:-}" ]; then
-        info "GitHub credentials found in $GITHUB_CREDS_FILE — reusing"
+        info "GitHub PAT found in $GITHUB_CREDS_FILE - reusing"
         return 0
       fi
     fi
   fi
 
-  # Check environment variables - any token skips the prompt
   if [ -n "${GITHUB_TOKEN:-}" ]; then
-    info "Using GitHub credentials from environment variables"
-    # Default OAuth vars to App client credentials if not explicitly set
-    GITHUB_OAUTH_CLIENT_ID="${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID:-}}"
-    GITHUB_OAUTH_CLIENT_SECRET="${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET:-}}"
+    info "Using GitHub PAT from environment variable GITHUB_TOKEN"
     return 0
   fi
 
-  # Skip prompt if QUIET mode or non-interactive
   if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
-    info "Skipping GitHub configuration (use GITHUB_TOKEN=... to provide, add GITHUB_APP_ID=... for full integration)"
+    info "Skipping GitHub configuration (set GITHUB_TOKEN=... to enable repository scanning)"
     return 0
   fi
 
   echo ""
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  info "GitHub App Configuration (Optional)"
+  info "GitHub Integration (Optional)"
   info ""
-  info "APME integrates with GitHub for repository scanning, quality analysis,"
-  info "and code push operations directly from the portal."
+  info "APME can scan repositories using a GitHub Personal Access Token (PAT)."
+  info "OAuth sign-in and portal push require a full GitHub App setup in $VARS_FILE."
   info ""
-  info "Setup Instructions:"
-  info ""
-  info "STEP 1: Create GitHub App (https://github.com/settings/apps/new)"
-  info "  GitHub App name: apme-portal-local"
-  info "  Homepage URL: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io"
-  info "  Callback URL: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io/api/auth/github/handler/frame"
-  info "  Webhook: Uncheck 'Active'"
-  info "  Repository permissions (REQUIRED):"
-  info "    • Contents: Read and write"
-  info "    • Pull requests: Read and write"
-  info "    • Metadata: Read-only (automatically selected)"
-  info "  Where can this app be installed?: Any account"
-  info ""
-  info "STEP 2: Generate client secret (in your new GitHub App settings)"
-  info "  Navigate to: General → Client secrets"
-  info "  Click: 'Generate a new client secret'"
-  info "  Copy the secret immediately (you won't see it again!)"
-  info ""
-  info "STEP 3: Generate private key (in your GitHub App settings)"
-  info "  Navigate to: General → Private keys"
-  info "  Click: 'Generate a private key'"
-  info "  Save the downloaded .pem file to: ~/.aap-demo/apme-github-app.pem"
-  info ""
-  info "STEP 4: Install the app on your account/organization"
-  info "  Click: 'Install App' (left sidebar)"
-  info "  Select: Your account or organization"
-  info "  Repository access:"
-  info "    • All repositories (recommended for testing), OR"
-  info "    • Only select repositories (choose specific repos)"
-  info "  Click: 'Install'"
-  info ""
-  info "STEP 5: Create Personal Access Token (https://github.com/settings/tokens/new)"
+  info "Create a PAT: https://github.com/settings/tokens/new"
   info "  Note: APME Portal API Access"
   info "  Expiration: 90 days (or your preference)"
-  info "  Scopes (REQUIRED):"
-  info "    ☑ repo (Full control of private repositories)"
-  info "      ☑ repo:status"
-  info "      ☑ repo_deployment"
-  info "      ☑ public_repo"
-  info "      ☑ repo:invite"
-  info "      ☑ security_events"
-  info "  Click: 'Generate token' and copy it (starts with ghp_)"
+  info "  Scopes (REQUIRED): repo (full control of private repositories)"
   info ""
-  info "You can skip this and configure later by editing: $VARS_FILE"
+  info "Skip now and configure later by editing: $VARS_FILE"
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
-  read -r -p "Do you want to configure GitHub integration now? [y/N]: " configure_choice
+  read -r -p "Configure GitHub PAT now? [y/N]: " configure_choice
 
   if [[ ! "$configure_choice" =~ ^[Yy]$ ]]; then
     info "Skipping GitHub integration. You can configure it later."
@@ -432,102 +418,24 @@ prompt_github_token() {
   fi
 
   echo ""
-  info "Enter GitHub App credentials:"
-  info "  (Visit your GitHub App settings: https://github.com/settings/apps/<your-app-name>)"
-  echo ""
-
-  # GitHub App ID
-  info "1. GitHub App ID"
-  info "   Location: General → About → App ID (numeric, e.g., 123456)"
-  read -r -p "   Enter App ID: " github_app_id_input
-  if [ -z "$github_app_id_input" ]; then
-    warn "App ID required for GitHub integration. Skipping."
-    return 0
-  fi
-
-  # GitHub App Client ID
-  echo ""
-  info "2. GitHub App Client ID"
-  info "   Location: General → About → Client ID (starts with Iv1. or Iv23.)"
-  read -r -p "   Enter Client ID: " github_app_client_id_input
-  if [ -z "$github_app_client_id_input" ]; then
-    warn "App Client ID required. Skipping."
-    return 0
-  fi
-
-  # GitHub App Client Secret
-  echo ""
-  info "3. GitHub App Client Secret"
-  info "   Location: General → Client secrets → Generate/copy the secret"
-  info "   (If you don't have one, click 'Generate a new client secret')"
-  read -r -s -p "   Enter Client Secret (hidden): " github_app_client_secret_input
-  echo ""
-  if [ -z "$github_app_client_secret_input" ]; then
-    warn "App Client Secret required. Skipping."
-    return 0
-  fi
-
-  # GitHub App Private Key Path
-  echo ""
-  info "4. GitHub App Private Key"
-  info "   Location: General → Private keys → Generate/download .pem file"
-  info "   (If you don't have one, click 'Generate a private key' - file will download)"
-  info "   Move the downloaded .pem file to: $HOME/.aap-demo/apme-github-app.pem"
-  read -r -p "   Private key path [~/.aap-demo/apme-github-app.pem]: " github_app_private_key_input
-  github_app_private_key_input="${github_app_private_key_input:-$HOME/.aap-demo/apme-github-app.pem}"
-
-  # Expand ~ to full path
-  github_app_private_key_input="${github_app_private_key_input/#\~/$HOME}"
-
-  if [ ! -f "$github_app_private_key_input" ]; then
-    warn "Private key file not found: $github_app_private_key_input"
-    warn "Download the .pem file from GitHub App settings and move it to the path above."
-    warn "Then re-run deployment or edit: $VARS_FILE"
-    return 0
-  fi
-
-  # GitHub Personal Access Token
-  echo ""
-  info "5. GitHub Personal Access Token (PAT)"
-  info "   Location: https://github.com/settings/tokens/new"
-  info "   - Note: 'APME Portal API Access'"
-  info "   - Expiration: 90 days (or your preference)"
-  info "   - Scopes: Check 'repo' (full control of private repositories)"
-  info "   - Generate token and copy it (starts with ghp_)"
-  read -r -s -p "   Enter Personal Access Token (hidden): " github_token_input
+  read -r -s -p "Enter GitHub Personal Access Token (hidden): " github_token_input
   echo ""
   if [ -z "$github_token_input" ]; then
-    warn "Personal Access Token required. Skipping."
+    warn "PAT not provided. Skipping GitHub integration."
     return 0
   fi
 
-  GITHUB_APP_ID="$github_app_id_input"
-  GITHUB_APP_CLIENT_ID="$github_app_client_id_input"
-  GITHUB_APP_CLIENT_SECRET="$github_app_client_secret_input"
-  GITHUB_APP_PRIVATE_KEY_PATH="$github_app_private_key_input"
   GITHUB_TOKEN="$github_token_input"
 
-  GITHUB_OAUTH_CLIENT_ID="$github_app_client_id_input"
-  GITHUB_OAUTH_CLIENT_SECRET="$github_app_client_secret_input"
-
-  # Save credentials so future deploys skip the prompt
   mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
   cat >"$GITHUB_CREDS_FILE" <<CREDS
 ---
-# GitHub credentials for APME portal (persisted across deploys)
+# GitHub PAT for APME portal (persisted across deploys)
 github_token: "${GITHUB_TOKEN}"
-github_app_id: "${GITHUB_APP_ID}"
-github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
-github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
-github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
-github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID}"
-github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET}"
 CREDS
   chmod 600 "$GITHUB_CREDS_FILE"
 
-  info "✓ GitHub App configured (saved to $GITHUB_CREDS_FILE)"
-  info "  App ID: $GITHUB_APP_ID"
-  info "  Private Key: $GITHUB_APP_PRIVATE_KEY_PATH"
+  info "GitHub PAT saved to $GITHUB_CREDS_FILE"
 
   return 0
 }
@@ -556,7 +464,7 @@ generate_vars_file() {
 EOF
   chmod 600 "$VARS_FILE"
   cat >>"$VARS_FILE" <<EOF
-# Do not edit directly — regenerated on each deploy
+# Do not edit directly - regenerated on each deploy
 # Generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 # OpenShift (discovered from aap-demo environment)
@@ -678,8 +586,36 @@ EOF
 # Deployment
 # ---------------------------------------------------------------------------
 
-deploy() {
-  info "Deploying APME using official welcome pack playbooks..."
+deploy_via_aap() {
+  # shellcheck source=lib/aap-deploy.sh
+  source "${SCRIPT_DIR}/lib/aap-deploy.sh"
+
+  export AAP_PASSWORD AAP_USERNAME="${AAP_USERNAME:-admin}"
+  export AAP_NAMESPACE="${AAP_NAMESPACE:-aap-operator}"
+
+  if [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] && [ -f "${GITHUB_APP_PRIVATE_KEY_PATH}" ] && [ -n "${GITHUB_APP_ID:-}" ]; then
+    warn "Full GitHub App mode uses a local private key path that is not available inside AAP."
+    warn "Use PAT-only mode (default) or set APME_FORCE_LOCAL=1 with Python installed."
+  fi
+
+  info "Deploying APME via AAP Controller job..."
+  info "(pod status updates every 30s while the job runs)"
+
+  _pod_watcher "$NAMESPACE" 30 &
+  _watcher_pid=$!
+  trap '_stop_pod_watcher' EXIT
+
+  apme_deploy_via_aap "$VARS_FILE" "${SCRIPT_DIR}/defaults.yml"
+
+  _stop_pod_watcher
+  trap - EXIT
+
+  info "APME deployment completed successfully"
+  show_routes
+}
+
+deploy_local() {
+  info "Deploying APME using official welcome pack playbooks (local execution)..."
   info "(pod status updates every 30s during helm installs)"
 
   # Set environment for kubernetes.core modules
@@ -690,8 +626,6 @@ deploy() {
   _watcher_pid=$!
   trap '_stop_pod_watcher' EXIT
 
-  # Run main deployment playbook directly
-  # Note: Load defaults first, then vars file so user config takes precedence
   ansible-playbook "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
     -e "@${SCRIPT_DIR}/defaults.yml" \
     -e "@${VARS_FILE}"
@@ -793,12 +727,16 @@ cleanup() {
 case "$ACTION" in
   deploy | --deploy)
     check_prerequisites
-    detect_architecture
+    ARCH=$(detect_architecture)
     discover_environment
     prompt_github_token
     generate_vars_file
-    setup_venv
-    deploy
+    if _use_aap_execution; then
+      deploy_via_aap
+    else
+      setup_venv
+      deploy_local
+    fi
     ;;
 
   --delete | delete | remove)
@@ -807,9 +745,14 @@ case "$ACTION" in
 
   *)
     echo "Usage: $0 [deploy|--delete [--purge-creds]]"
-    echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
+    echo "  deploy              - Deploy APME (local ansible-playbook on Linux/macOS; AAP job on Windows)"
     echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
     echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
+    echo ""
+    echo "Environment:"
+    echo "  APME_USE_AAP=1       - Run playbooks as AAP Controller jobs (no local Python)"
+    echo "  APME_FORCE_LOCAL=1   - Force local venv execution even on Windows"
+    echo "  APME_PROJECT_SCM_URL - Git URL for AAP project (default: origin remote)"
     exit 1
     ;;
 esac

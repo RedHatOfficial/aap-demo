@@ -41,6 +41,34 @@ function Test-AapCommand {
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Get-AapGitBashExecutable {
+  $candidates = @(
+    (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
+    (Join-Path $env:ProgramFiles 'Git\usr\bin\bash.exe')
+  )
+  if (${env:ProgramFiles(x86)}) {
+    $candidates += (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe')
+  }
+  foreach ($path in $candidates) {
+    if ($path -and (Test-Path -LiteralPath $path)) {
+      return $path
+    }
+  }
+
+  $bash = Get-Command bash -ErrorAction SilentlyContinue
+  if (-not $bash) { return $null }
+
+  $source = $bash.Source
+  if ($source -match '\\Windows\\System32\\bash\.exe$') {
+    return $null
+  }
+  return $source
+}
+
+function Test-AapGitBashAvailable {
+  return [bool](Get-AapGitBashExecutable)
+}
+
 function Update-AapSessionPath {
   $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -1018,6 +1046,45 @@ function Get-AapOcFirstListName {
   return ($line -split '\s+', 2)[0]
 }
 
+function Get-AapSecretPassword {
+  param(
+    [Parameter(Mandatory)][string]$Namespace,
+    [Parameter(Mandatory)][string]$SecretName,
+    [string]$Field = 'password'
+  )
+
+  $pwResult = Invoke-AapOcCapture @(
+    'get', 'secret', $SecretName, '-n', $Namespace,
+    '-o', "jsonpath={.data.$Field}"
+  )
+  if ($pwResult.ExitCode -ne 0 -or -not $pwResult.Output.Trim()) { return $null }
+  try {
+    return [Text.Encoding]::UTF8.GetString(
+      [Convert]::FromBase64String($pwResult.Output.Trim())
+    )
+  } catch {
+    return $null
+  }
+}
+
+function Get-AapRouteHost {
+  param(
+    [Parameter(Mandatory)][string]$Namespace,
+    [string]$RouteName = $null
+  )
+
+  $args = @('get', 'route')
+  if ($RouteName) {
+    $args += $RouteName
+    $args += @('-n', $Namespace, '-o', 'jsonpath={.spec.host}')
+  } else {
+    $args += @('-n', $Namespace, '-o', 'jsonpath={.items[0].spec.host}')
+  }
+  $result = Invoke-AapOcCapture $args
+  if ($result.ExitCode -ne 0 -or -not $result.Output.Trim()) { return $null }
+  return $result.Output.Trim()
+}
+
 function Get-AapAdminPassword {
   param([Parameter(Mandatory)][string]$Namespace)
 
@@ -1037,15 +1104,8 @@ function Get-AapAdminPassword {
   )
 
   foreach ($secretName in ($secretNames | Select-Object -Unique)) {
-    $pwResult = Invoke-AapOcCapture @(
-      'get', 'secret', $secretName, '-n', $Namespace,
-      '-o', 'jsonpath={.data.password}'
-    )
-    if ($pwResult.ExitCode -eq 0 -and $pwResult.Output.Trim()) {
-      return [Text.Encoding]::UTF8.GetString(
-        [Convert]::FromBase64String($pwResult.Output.Trim())
-      )
-    }
+    $password = Get-AapSecretPassword -Namespace $Namespace -SecretName $secretName
+    if ($password) { return $password }
   }
   return $null
 }
@@ -1182,6 +1242,17 @@ function Remove-AapStaleCrcKubeEntries {
   }
 }
 
+function Test-AapOcClusterInfoKube {
+  param([Parameter(Mandatory)][string]$KubeConfig)
+  $prev = $env:KUBECONFIG
+  try {
+    $env:KUBECONFIG = $KubeConfig
+    return (Invoke-AapOcQuiet @('cluster-info')) -eq 0
+  } finally {
+    $env:KUBECONFIG = $prev
+  }
+}
+
 function Sync-AapKubeconfig {
   [CmdletBinding()]
   param(
@@ -1201,6 +1272,21 @@ function Sync-AapKubeconfig {
   $ctxName = 'aap-demo'
   $tempKube = [System.IO.Path]::GetTempFileName()
   Copy-Item -LiteralPath $crcKube -Destination $tempKube -Force
+
+  # CRC kubeconfig can be stale after MicroShift wipe/restart (nip.io setup).
+  if (-not (Test-AapOcClusterInfoKube -KubeConfig $tempKube)) {
+    $kubeadmin = Invoke-AapCrcSsh 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' -AllowFailure
+    if (-not $kubeadmin) {
+      throw 'Could not fetch kubeconfig from cluster (CRC and kubeadmin sources failed)'
+    }
+    Set-Content -LiteralPath $tempKube -Value $kubeadmin -Encoding ascii
+    if (-not (Test-AapOcClusterInfoKube -KubeConfig $tempKube)) {
+      throw 'Fetched kubeconfig is not valid for cluster access'
+    }
+    if (-not $Quiet) {
+      Write-AapStep 'Refreshed credentials from MicroShift kubeadmin kubeconfig'
+    }
+  }
 
   try {
     $config = Get-AapOcConfigJson -KubeConfig $tempKube

@@ -47,9 +47,9 @@ AO_ACTIVE_INDEX_IMAGE=""
 AO_INDEX_FALLBACK_USED=0
 
 if [ -z "${AO_STORAGE_CLASS:-}" ]; then
-  if kubectl get sc nfs-local-rwx &>/dev/null 2>&1; then
+  if oc get sc nfs-local-rwx &>/dev/null 2>&1; then
     STORAGE_CLASS="nfs-local-rwx"
-  elif kubectl get sc topolvm-provisioner &>/dev/null 2>&1; then
+  elif oc get sc topolvm-provisioner &>/dev/null 2>&1; then
     STORAGE_CLASS="topolvm-provisioner"
   else
     echo "ERROR: No suitable StorageClass found (expected nfs-local-rwx or topolvm-provisioner)"
@@ -90,7 +90,7 @@ short_image_ref() {
 find_catalog_namespace() {
   local _ns
   for _ns in aap-operator openshift-marketplace olm; do
-    if kubectl get catalogsource redhat-operators -n "$_ns" &>/dev/null 2>&1; then
+    if oc get catalogsource redhat-operators -n "$_ns" &>/dev/null 2>&1; then
       echo "$_ns"
       return 0
     fi
@@ -101,9 +101,9 @@ find_catalog_namespace() {
 report_catalog_failure() {
   local _catalog_ns="$1"
   local _status _pod_status _reason
-  _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
+  _status=$(oc get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
-  _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+  _pod_status=$(oc get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "unknown")
   echo "ERROR: CatalogSource not READY after waiting." >&2
   echo "  Namespace: ${_catalog_ns}" >&2
@@ -116,7 +116,7 @@ report_catalog_failure() {
   fi
   if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
     local _fail_phase
-    _fail_phase=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    _fail_phase=$(oc get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
       -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
     if [ "$_fail_phase" = "ImagePullBackOff" ] || [ "$_fail_phase" = "ErrImagePull" ]; then
       echo "" >&2
@@ -130,17 +130,17 @@ report_catalog_failure() {
   echo "  On slower networks or disks this can exceed 10 minutes." >&2
   echo "" >&2
   echo "  Verify AAP catalog is healthy first:" >&2
-  echo "    kubectl get catalogsource redhat-operators -n ${AAP_NAMESPACE}" >&2
-  echo "    kubectl get pods -n ${AAP_NAMESPACE} -l olm.catalogSource=redhat-operators" >&2
+  echo "    oc get catalogsource redhat-operators -n ${AAP_NAMESPACE}" >&2
+  echo "    oc get pods -n ${AAP_NAMESPACE} -l olm.catalogSource=redhat-operators" >&2
   echo "" >&2
   echo "  Then inspect the AO catalog pod and events:" >&2
-  echo "    kubectl describe pod -n ${_catalog_ns} -l olm.catalogSource=redhat-operators" >&2
-  echo "    kubectl get events -n ${_catalog_ns} --sort-by=.lastTimestamp | tail -15" >&2
+  echo "    oc describe pod -n ${_catalog_ns} -l olm.catalogSource=redhat-operators" >&2
+  echo "    oc get events -n ${_catalog_ns} --sort-by=.lastTimestamp | tail -15" >&2
   echo "" >&2
   echo "  Retry with a longer wait or after fixing AAP deploy:" >&2
   echo "    aap-demo deploy" >&2
   echo "    AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao" >&2
-  kubectl describe catalogsource redhat-operators -n "$_catalog_ns" 2>/dev/null | tail -20 >&2
+  oc describe catalogsource redhat-operators -n "$_catalog_ns" 2>/dev/null | tail -20 >&2
   return 1
 }
 
@@ -219,25 +219,22 @@ copy_pull_secret_to_namespace() {
   local _dst_ns="$2"
   local _src_name="$3"
   local _dst_name="${4:-$_src_name}"
-  if ! kubectl get secret "$_src_name" -n "$_src_ns" &>/dev/null; then
+  local _tmp
+  if ! oc get secret "$_src_name" -n "$_src_ns" &>/dev/null; then
     return 1
   fi
-  kubectl get secret "$_src_name" -n "$_src_ns" -o json \
-    | DST_NAME="$_dst_name" DST_NS="$_dst_ns" python3 -c "
-import json, os, sys
-secret = json.load(sys.stdin)
-out = {
-    'apiVersion': 'v1',
-    'kind': 'Secret',
-    'metadata': {
-        'name': os.environ['DST_NAME'],
-        'namespace': os.environ['DST_NS'],
-    },
-    'type': secret.get('type', 'kubernetes.io/dockerconfigjson'),
-    'data': secret.get('data', {}),
-}
-json.dump(out, sys.stdout)
-" | kubectl apply -f - >&2
+  _tmp="$(mktemp)"
+  if ! oc get secret "$_src_name" -n "$_src_ns" \
+    -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | base64 -d >"$_tmp"; then
+    rm -f "$_tmp"
+    return 1
+  fi
+  oc create secret generic "$_dst_name" \
+    --namespace "$_dst_ns" \
+    --type=kubernetes.io/dockerconfigjson \
+    --from-file=.dockerconfigjson="$_tmp" \
+    --dry-run=client -o yaml | oc apply -f - >&2
+  rm -f "$_tmp"
 }
 
 select_ao_index_image() {
@@ -252,9 +249,9 @@ select_ao_index_image() {
     return 0
   fi
   _aap_ns=$(find_catalog_namespace)
-  _aap_image=$(kubectl get catalogsource redhat-operators -n "$_aap_ns" \
+  _aap_image=$(oc get catalogsource redhat-operators -n "$_aap_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
-  _aap_state=$(kubectl get catalogsource redhat-operators -n "$_aap_ns" \
+  _aap_state=$(oc get catalogsource redhat-operators -n "$_aap_ns" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
   if [ -n "$_aap_image" ]; then
     if [ "$_aap_state" = "READY" ]; then
@@ -284,7 +281,7 @@ ensure_ao_catalog_source() {
 
   _src_ns=$(find_catalog_namespace)
   _target_image=$(select_ao_index_image)
-  _current_image=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
+  _current_image=$(oc get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
 
   echo "Creating AO CatalogSource in ${_catalog_ns}..." >&2
@@ -306,11 +303,11 @@ ensure_ao_catalog_source() {
 
   sed -e "s|image: .*|image: ${_target_image}|" \
     -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|" \
-    "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+    "$CATALOG_SOURCE_TEMPLATE" | oc apply -f - >&2
 
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
-    kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    oc delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
       --wait=false >/dev/null 2>&1 || true
   fi
 
@@ -334,7 +331,7 @@ ensure_ao_catalog_source() {
 
 resolve_cluster_domain() {
   local _host _domain
-  _host=$(kubectl get route -n "$AAP_NAMESPACE" \
+  _host=$(oc get route -n "$AAP_NAMESPACE" \
     -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
   if [ -n "$_host" ]; then
     _domain="${_host#*.}"
@@ -350,7 +347,7 @@ operator_controller_namespace() {
   local _ns
   for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE"; do
     [ -z "$_ns" ] && continue
-    if kubectl get deployment automation-orchestrator-operator-controller-manager \
+    if oc get deployment automation-orchestrator-operator-controller-manager \
       -n "$_ns" &>/dev/null; then
       echo "$_ns"
       return 0
@@ -362,39 +359,31 @@ operator_controller_namespace() {
 operator_is_available() {
   local _ns
   _ns=$(operator_controller_namespace)
-  kubectl wait --for=condition=Available \
+  oc wait --for=condition=Available \
     deployment/automation-orchestrator-operator-controller-manager \
     -n "$_ns" --timeout=5s &>/dev/null 2>&1
 }
 
 operator_package_in_catalog() {
   local _catalog_ns="$1"
-  kubectl get packagemanifest automation-orchestrator-operator \
+  oc get packagemanifest automation-orchestrator-operator \
     -n "$_catalog_ns" &>/dev/null 2>&1
 }
 
 subscription_has_resolution_failure() {
-  kubectl get subscription automation-orchestrator-operator -n "${OLM_NAMESPACE}" \
-    -o json 2>/dev/null | python3 -c '
-import json, sys
-try:
-    data = json.load(sys.stdin)
-except json.JSONDecodeError:
-    sys.exit(1)
-for cond in data.get("status", {}).get("conditions", []):
-    if cond.get("status") != "True":
-        continue
-    if cond.get("type") == "ResolutionFailed":
-        sys.exit(0)
-    if cond.get("type") == "CatalogSourcesUnhealthy":
-        if cond.get("reason") != "AllCatalogSourcesHealthy":
-            sys.exit(0)
-sys.exit(1)
-' 2>/dev/null
+  local _types _reason
+  _types=$(oc get subscription automation-orchestrator-operator -n "${OLM_NAMESPACE}" \
+    -o jsonpath='{range .status.conditions[?(@.status=="True")]}{.type}{"\n"}{end}' 2>/dev/null || echo "")
+  if echo "$_types" | grep -qx 'ResolutionFailed'; then
+    return 0
+  fi
+  _reason=$(oc get subscription automation-orchestrator-operator -n "${OLM_NAMESPACE}" \
+    -o jsonpath='{range .status.conditions[?(@.type=="CatalogSourcesUnhealthy" && @.status=="True")]}{.reason}{end}' 2>/dev/null || echo "")
+  [ -n "$_reason" ] && [ "$_reason" != "AllCatalogSourcesHealthy" ]
 }
 
 subscription_failure_detail() {
-  kubectl get subscription automation-orchestrator-operator -n "${OLM_NAMESPACE}" \
+  oc get subscription automation-orchestrator-operator -n "${OLM_NAMESPACE}" \
     -o jsonpath='{range .status.conditions[*]}{.type}: {.message}{"\n"}{end}' 2>/dev/null \
     || echo ""
 }
@@ -403,23 +392,23 @@ apply_operator_olm_manifests() {
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     -e "s|__CATALOG_NAMESPACE__|${CATALOG_NAMESPACE}|g" \
     -e "s|__OPERATOR_CHANNEL__|${OPERATOR_CHANNEL}|g" \
-    "${MANIFESTS_DIR}/operator-subscription.yaml" | kubectl apply -f -
+    "${MANIFESTS_DIR}/operator-subscription.yaml" | oc apply -f -
 }
 
 cleanup_ao_olm_state() {
   local _ns
   for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE" "$AAP_NAMESPACE"; do
     [ -z "$_ns" ] && continue
-    kubectl delete subscription automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true
-    kubectl delete operatorgroup automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true
+    oc delete subscription automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true
+    oc delete operatorgroup automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true
     if [ "$_ns" = "$AAP_NAMESPACE" ]; then
       continue
     fi
-    kubectl get installplan -n "$_ns" -o name 2>/dev/null \
-      | xargs -r kubectl delete -n "$_ns" --wait=false 2>/dev/null || true
-    kubectl get csv -n "$_ns" -o name 2>/dev/null \
+    oc get installplan -n "$_ns" -o name 2>/dev/null \
+      | xargs -r oc delete -n "$_ns" --wait=false 2>/dev/null || true
+    oc get csv -n "$_ns" -o name 2>/dev/null \
       | grep "automation-orchestrator" \
-      | xargs -r kubectl delete -n "$_ns" --wait=false 2>/dev/null || true
+      | xargs -r oc delete -n "$_ns" --wait=false 2>/dev/null || true
   done
 }
 
@@ -456,7 +445,7 @@ report_subscription_resolution_failure() {
 report_operator_not_in_catalog() {
   local _catalog_ns="$1"
   local _index_image
-  _index_image=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
+  _index_image=$(oc get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "unknown")
   echo "ERROR: automation-orchestrator-operator is not in catalog redhat-operators (${_catalog_ns})."
   echo ""
@@ -470,8 +459,8 @@ report_operator_not_in_catalog() {
   echo "  (v4.18+). If the package is missing, verify catalog index version and refresh."
   echo ""
   echo "  Verify:"
-  echo "    kubectl get packagemanifest automation-orchestrator-operator -n ${_catalog_ns}"
-  echo "    kubectl get subscription automation-orchestrator-operator -n ${OLM_NAMESPACE:-$CATALOG_NAMESPACE} -o yaml"
+  echo "    oc get packagemanifest automation-orchestrator-operator -n ${_catalog_ns}"
+  echo "    oc get subscription automation-orchestrator-operator -n ${OLM_NAMESPACE:-$CATALOG_NAMESPACE} -o yaml"
   echo ""
   echo "  Clean up a failed attempt:"
   echo "    aap-demo disable ao"
@@ -486,46 +475,46 @@ report_operator_not_in_catalog() {
 
 show_access_info() {
   local AO_ROUTE PASS_SECRET AO_PASSWORD
-  AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
+  AO_ROUTE=$(oc get routes -n "$NAMESPACE" \
     -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-  PASS_SECRET=$(kubectl get secret -n "$NAMESPACE" \
+  PASS_SECRET=$(oc get secret -n "$NAMESPACE" \
     -o name 2>/dev/null | grep -i "admin-password" | head -1 || echo "")
 
   if [ -n "$AO_ROUTE" ]; then
     echo "  URL:      https://${AO_ROUTE}"
   else
-    echo "  URL:      kubectl get routes -n ${NAMESPACE} -o jsonpath='{.items[0].spec.host}'"
+    echo "  URL:      oc get routes -n ${NAMESPACE} -o jsonpath='{.items[0].spec.host}'"
   fi
   echo "  Username: admin"
   if [ -n "$PASS_SECRET" ]; then
     if [ "${CI:-}" != "true" ]; then
-      AO_PASSWORD=$(kubectl get "$PASS_SECRET" -n "$NAMESPACE" \
+      AO_PASSWORD=$(oc get "$PASS_SECRET" -n "$NAMESPACE" \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
       if [ -n "$AO_PASSWORD" ]; then
         echo "  Password: ${AO_PASSWORD}"
       else
-        echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
+        echo "  Password: oc get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
       fi
     else
-      echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
+      echo "  Password: oc get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
     fi
   else
-    echo "  Password: kubectl get secret -n $NAMESPACE | grep admin-password"
+    echo "  Password: oc get secret -n $NAMESPACE | grep admin-password"
   fi
-  echo "  Status:   kubectl get pods -n $NAMESPACE"
+  echo "  Status:   oc get pods -n $NAMESPACE"
 }
 
 AO_PULL_SECRET_NAME="${AO_PULL_SECRET_NAME:-automation-orchestrator-pull-secret}"
 
 cnpg_database_crd_available() {
-  kubectl get crd databases.postgresql.cnpg.io &>/dev/null 2>&1
+  oc get crd databases.postgresql.cnpg.io &>/dev/null 2>&1
 }
 
 ensure_cnpg_operator() {
   CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
   CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
 
-  if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
+  if oc get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
     && cnpg_database_crd_available; then
     echo "✓ CloudNativePG operator ready"
     mkdir -p "$(dirname "$AO_STATE_FILE")"
@@ -534,13 +523,13 @@ ensure_cnpg_operator() {
     return 0
   fi
 
-  if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1; then
+  if oc get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1; then
     echo "Upgrading CloudNativePG to v${CNPG_VERSION} (Database CRD required)..."
   else
     echo "Installing CloudNativePG operator v${CNPG_VERSION} (dev-only, not Red Hat supported)..."
   fi
 
-  if ! kubectl apply --server-side -f "$CNPG_MANIFEST" 2>&1 | tail -5; then
+  if ! oc apply --server-side -f "$CNPG_MANIFEST" 2>&1 | tail -5; then
     echo "ERROR: Failed to install CloudNativePG from ${CNPG_MANIFEST}"
     exit 1
   fi
@@ -550,13 +539,13 @@ ensure_cnpg_operator() {
   oc adm policy add-scc-to-group privileged "system:serviceaccounts:cnpg-system" 2>/dev/null || true
 
   echo "Waiting for CloudNativePG operator..."
-  kubectl rollout status deployment/cnpg-controller-manager \
+  oc rollout status deployment/cnpg-controller-manager \
     -n cnpg-system --timeout=5m
   echo "✓ CloudNativePG operator running"
 }
 
 postgres_primary_pod() {
-  kubectl get pod -n "$NAMESPACE" -l "cnpg.io/cluster=orchestrator-postgres,role=primary" \
+  oc get pod -n "$NAMESPACE" -l "cnpg.io/cluster=orchestrator-postgres,role=primary" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
     || echo "orchestrator-postgres-1"
 }
@@ -565,7 +554,7 @@ postgres_database_exists() {
   local _db="$1"
   local _pod
   _pod=$(postgres_primary_pod)
-  kubectl exec -n "$NAMESPACE" "$_pod" -- psql -U postgres -tAc \
+  oc exec -n "$NAMESPACE" "$_pod" -- psql -U postgres -tAc \
     "SELECT 1 FROM pg_database WHERE datname='${_db}'" 2>/dev/null | grep -qx 1
 }
 
@@ -577,7 +566,7 @@ ensure_postgres_database() {
   fi
   _pod=$(postgres_primary_pod)
   echo "  Creating PostgreSQL database: ${_db}"
-  kubectl exec -n "$NAMESPACE" "$_pod" -- psql -U postgres -c \
+  oc exec -n "$NAMESPACE" "$_pod" -- psql -U postgres -c \
     "CREATE DATABASE \"${_db}\" OWNER orchestrator" >/dev/null
 }
 
@@ -586,7 +575,7 @@ wait_for_ao_postgres_databases() {
   if cnpg_database_crd_available; then
     for _cr in orchestrator temporal temporal-visibility; do
       for _i in $(seq 1 30); do
-        _applied=$(kubectl get database "$_cr" -n "$NAMESPACE" \
+        _applied=$(oc get database "$_cr" -n "$NAMESPACE" \
           -o jsonpath='{.status.applied}' 2>/dev/null || echo "")
         if [ "$_applied" = "true" ]; then
           break
@@ -611,24 +600,16 @@ wait_for_ao_postgres_databases() {
 
 ensure_ao_pull_secret() {
   local _src_ns="${CATALOG_NAMESPACE:-$AAP_NAMESPACE}"
-  if kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
+  if oc get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
     return 0
   fi
-  if ! kubectl get secret redhat-operators-pull-secret -n "$_src_ns" &>/dev/null; then
+  if ! oc get secret redhat-operators-pull-secret -n "$_src_ns" &>/dev/null; then
     echo "WARNING: redhat-operators-pull-secret not found in ${_src_ns}"
     return 1
   fi
   echo "Copying pull secret into ${NAMESPACE}..."
-  kubectl get secret redhat-operators-pull-secret -n "$_src_ns" -o json \
-    | AO_PULL_SECRET_NAME="$AO_PULL_SECRET_NAME" NAMESPACE="$NAMESPACE" python3 -c "
-import json, os, sys
-secret = json.load(sys.stdin)
-secret['metadata'] = {
-    'name': os.environ['AO_PULL_SECRET_NAME'],
-    'namespace': os.environ['NAMESPACE'],
-}
-json.dump(secret, sys.stdout)
-" | kubectl apply -f -
+  copy_pull_secret_to_namespace "$_src_ns" "$NAMESPACE" \
+    "redhat-operators-pull-secret" "$AO_PULL_SECRET_NAME"
 }
 
 link_ao_pull_secrets_to_operator() {
@@ -638,8 +619,8 @@ link_ao_pull_secrets_to_operator() {
   for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE"; do
     [ -z "$_ns" ] && continue
     for _sa in automation-orchestrator-operator-controller-manager default; do
-      if kubectl get sa "$_sa" -n "$_ns" &>/dev/null; then
-        kubectl patch sa "$_sa" -n "$_ns" --type=merge \
+      if oc get sa "$_sa" -n "$_ns" &>/dev/null; then
+        oc patch sa "$_sa" -n "$_ns" --type=merge \
           -p "{\"imagePullSecrets\":[{\"name\":\"${AO_PULL_SECRET_NAME}\"}]}" 2>/dev/null || true
       fi
     done
@@ -647,21 +628,21 @@ link_ao_pull_secrets_to_operator() {
 }
 
 deploy_ao_instance() {
-  kubectl delete secret automation-orchestrator-initial-admin-password \
+  oc delete secret automation-orchestrator-initial-admin-password \
     -n "$NAMESPACE" 2>/dev/null || true
 
   echo "Creating AutomationOrchestrator instance (aapctl GitOps CR)..."
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     -e "s|__INGRESS_HOST__|${INGRESS_HOST}|g" \
     -e "s|__PULL_SECRET_NAME__|${AO_PULL_SECRET_NAME}|g" \
-    "${MANIFESTS_DIR}/automationorchestrator-cr.yaml" | kubectl apply -f -
+    "${MANIFESTS_DIR}/automationorchestrator-cr.yaml" | oc apply -f -
 }
 
 cleanup_legacy_ea_resources() {
   local _ns
   for _ns in aap-operator olm openshift-marketplace; do
-    kubectl delete catalogsource cs-automation-orchestrator -n "$_ns" --wait=false 2>/dev/null || true
-    kubectl delete secret ao-registry-pull-secret -n "$_ns" 2>/dev/null || true
+    oc delete catalogsource cs-automation-orchestrator -n "$_ns" --wait=false 2>/dev/null || true
+    oc delete secret ao-registry-pull-secret -n "$_ns" 2>/dev/null || true
   done
 }
 
@@ -673,26 +654,26 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     aapctl uninstall automation-orchestrator --force --yes 2>/dev/null || true
   fi
 
-  kubectl get automationorchestrator -n "$NAMESPACE" -o name 2>/dev/null \
-    | xargs -r -I{} kubectl patch {} -n "$NAMESPACE" \
+  oc get automationorchestrator -n "$NAMESPACE" -o name 2>/dev/null \
+    | xargs -r -I{} oc patch {} -n "$NAMESPACE" \
       --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
       2>/dev/null || true
-  kubectl get automationorchestrators.aap.ansible.com -n "$NAMESPACE" -o name 2>/dev/null \
-    | xargs -r -I{} kubectl patch {} -n "$NAMESPACE" \
+  oc get automationorchestrators.aap.ansible.com -n "$NAMESPACE" -o name 2>/dev/null \
+    | xargs -r -I{} oc patch {} -n "$NAMESPACE" \
       --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
       2>/dev/null || true
 
-  kubectl delete automationorchestrator --all -n "$NAMESPACE" --wait=false 2>/dev/null || true
+  oc delete automationorchestrator --all -n "$NAMESPACE" --wait=false 2>/dev/null || true
   OLM_NAMESPACE="$NAMESPACE"
   cleanup_ao_olm_state
 
   cleanup_legacy_ea_resources
 
-  kubectl delete namespace "$NAMESPACE" --wait=false 2>/dev/null || true
+  oc delete namespace "$NAMESPACE" --wait=false 2>/dev/null || true
 
   echo "  Waiting for namespace to terminate..."
   for _i in $(seq 1 60); do
-    _ao_ns=$(kubectl get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ') || _ao_ns=0
+    _ao_ns=$(oc get namespace "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ') || _ao_ns=0
     printf "\r  $(hat) automation-orchestrator: %s    " \
       "$([ "$_ao_ns" -eq 0 ] && echo "gone" || echo "terminating")"
     if [ "$_ao_ns" -eq 0 ]; then
@@ -702,7 +683,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     if [ "$_i" -eq 60 ]; then
       echo ""
       echo "  ⚠ Namespace still terminating after 5 minutes — continuing anyway"
-      echo "  Check: kubectl get namespace $NAMESPACE"
+      echo "  Check: oc get namespace $NAMESPACE"
     fi
     sleep 5
   done
@@ -716,14 +697,14 @@ fi
 
 ao_instance_ready_to_skip() {
   local _degraded _route _reason
-  if ! kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" &>/dev/null 2>&1; then
+  if ! oc get automationorchestrator automation-orchestrator -n "$NAMESPACE" &>/dev/null 2>&1; then
     return 0
   fi
-  _degraded=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+  _degraded=$(oc get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
     -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' 2>/dev/null || echo "")
-  _reason=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+  _reason=$(oc get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
     -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.reason}{end}' 2>/dev/null || echo "")
-  _route=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  _route=$(oc get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
   if [ "$_degraded" = "True" ]; then
     echo "  Instance is Degraded (${_reason:-unknown}) — continuing install..."
     return 1
@@ -737,11 +718,11 @@ ao_instance_ready_to_skip() {
 
 # --- Skip if already running (unless --force) ---
 if [ -z "$FORCE" ]; then
-  _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+  _ao_total=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
     | { grep -v "Completed" || true; } | wc -l | tr -d ' ' || echo "0")
-  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+  _ao_running=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
     | { grep "Running" || true; } | wc -l | tr -d ' ' || echo "0")
-  _sub_channel=$(kubectl get subscription automation-orchestrator-operator -n "$NAMESPACE" \
+  _sub_channel=$(oc get subscription automation-orchestrator-operator -n "$NAMESPACE" \
     -o jsonpath='{.spec.channel}' 2>/dev/null || echo "")
   if [ "${_ao_total:-0}" -gt 2 ] \
     && [ "${_ao_running:-0}" -eq "${_ao_total:-0}" ] \
@@ -758,7 +739,7 @@ fi
 
 # --- Namespace + SCCs ---
 echo "Creating namespace and SCC grants..."
-kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+oc create namespace "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 echo "✓ Namespace ready"
@@ -766,18 +747,18 @@ echo "✓ Namespace ready"
 # --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---
 echo "Checking AAP redhat-operators catalog (for index image and pull secret)..."
 _aap_catalog_ns=$(find_catalog_namespace)
-if ! kubectl get catalogsource redhat-operators -n "$_aap_catalog_ns" &>/dev/null; then
+if ! oc get catalogsource redhat-operators -n "$_aap_catalog_ns" &>/dev/null; then
   echo "ERROR: redhat-operators CatalogSource is missing."
   echo "  Run 'aap-demo deploy' first to install OLM and the operator catalog."
   exit 1
 fi
-_aap_catalog_state=$(kubectl get catalogsource redhat-operators -n "$_aap_catalog_ns" \
+_aap_catalog_state=$(oc get catalogsource redhat-operators -n "$_aap_catalog_ns" \
   -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
 if [ "$_aap_catalog_state" != "READY" ]; then
   echo "ERROR: AAP redhat-operators catalog is not READY (state: ${_aap_catalog_state:-unknown})."
   echo "  Fix the AAP catalog before enabling AO:"
   echo "    aap-demo deploy"
-  echo "  Check: kubectl get catalogsource redhat-operators -n ${_aap_catalog_ns}"
+  echo "  Check: oc get catalogsource redhat-operators -n ${_aap_catalog_ns}"
   exit 1
 fi
 if ! CATALOG_NAMESPACE=$(ensure_ao_catalog_source); then
@@ -808,33 +789,33 @@ ensure_cnpg_operator
 echo "Creating PostgreSQL cluster for Automation Orchestrator..."
 
 _legacy_secret=""
-if kubectl get cluster orchestrator-postgres -n "$NAMESPACE" -o jsonpath='{.spec.bootstrap.initdb.secret.name}' 2>/dev/null \
+if oc get cluster orchestrator-postgres -n "$NAMESPACE" -o jsonpath='{.spec.bootstrap.initdb.secret.name}' 2>/dev/null \
   | grep -qx "orchestrator-pg-credentials"; then
   _legacy_secret=1
 fi
-if kubectl get secret orchestrator-pg-credentials -n "$NAMESPACE" &>/dev/null \
-  || kubectl get secret temporal-pg-credentials -n "$NAMESPACE" &>/dev/null; then
+if oc get secret orchestrator-pg-credentials -n "$NAMESPACE" &>/dev/null \
+  || oc get secret temporal-pg-credentials -n "$NAMESPACE" &>/dev/null; then
   _legacy_secret=1
 fi
 
 if [ -n "$FORCE" ] || [ -n "$_legacy_secret" ]; then
   if [ -n "$_legacy_secret" ]; then
     echo "  Recreating postgres to match aapctl secret names..."
-    kubectl delete secret orchestrator-pg-credentials temporal-pg-credentials -n "$NAMESPACE" \
+    oc delete secret orchestrator-pg-credentials temporal-pg-credentials -n "$NAMESPACE" \
       --ignore-not-found 2>/dev/null || true
   fi
-  if kubectl get cluster orchestrator-postgres -n "$NAMESPACE" &>/dev/null \
-    || kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
+  if oc get cluster orchestrator-postgres -n "$NAMESPACE" &>/dev/null \
+    || oc get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
     echo "  Resetting postgres cluster for fresh init..."
-    kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
-    kubectl wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || true
-    kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
+    oc delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
+    oc wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || true
+    oc delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
   fi
 fi
 
 # Reuse the existing aapctl secret password so we never desync from CNPG.
-if kubectl get secret orchestrator-postgres-secret -n "$NAMESPACE" &>/dev/null; then
-  PG_PASSWORD=$(kubectl get secret orchestrator-postgres-secret -n "$NAMESPACE" \
+if oc get secret orchestrator-postgres-secret -n "$NAMESPACE" &>/dev/null; then
+  PG_PASSWORD=$(oc get secret orchestrator-postgres-secret -n "$NAMESPACE" \
     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
 fi
 if [ -z "${PG_PASSWORD:-}" ]; then
@@ -842,7 +823,7 @@ if [ -z "${PG_PASSWORD:-}" ]; then
 fi
 PG_HOST="orchestrator-postgres-rw.${NAMESPACE}.svc"
 
-kubectl apply -f - <<EOF
+oc apply -f - <<EOF
 ---
 apiVersion: v1
 kind: Secret
@@ -886,7 +867,7 @@ EOF
 
 sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
   -e "s|__STORAGE_CLASS__|${STORAGE_CLASS}|g" \
-  "${MANIFESTS_DIR}/postgres-cluster.yaml" | kubectl apply -f - || {
+  "${MANIFESTS_DIR}/postgres-cluster.yaml" | oc apply -f - || {
   echo "ERROR: Failed to apply PostgreSQL manifests."
   if ! cnpg_database_crd_available; then
     echo "  CloudNativePG Database CRD is missing. Re-run after CNPG upgrade completes."
@@ -896,7 +877,7 @@ sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
 
 echo "Waiting for PostgreSQL cluster to be ready..."
 for i in $(seq 1 60); do
-  READY=$(kubectl get cluster orchestrator-postgres -n "$NAMESPACE" \
+  READY=$(oc get cluster orchestrator-postgres -n "$NAMESPACE" \
     -o jsonpath='{.status.readyInstances}' 2>/dev/null || echo "0")
   if [ "$READY" = "1" ]; then
     echo "✓ PostgreSQL cluster ready"
@@ -915,27 +896,27 @@ wait_for_ao_postgres_databases
 # --- Operator install (GA OLM subscription) ---
 # AAP already has an OperatorGroup in aap-operator; a second one there
 # makes OLM refuse all subscriptions in that namespace.
-kubectl delete subscription automation-orchestrator-operator -n "$AAP_NAMESPACE" --wait=false 2>/dev/null || true
-kubectl delete operatorgroup automation-orchestrator-operator -n "$AAP_NAMESPACE" --wait=false 2>/dev/null || true
+oc delete subscription automation-orchestrator-operator -n "$AAP_NAMESPACE" --wait=false 2>/dev/null || true
+oc delete operatorgroup automation-orchestrator-operator -n "$AAP_NAMESPACE" --wait=false 2>/dev/null || true
 
 if [ -n "$FORCE" ]; then
   echo "Clearing existing operator OLM state..."
-  kubectl delete automationorchestrator --all -n "$NAMESPACE" --wait=false 2>/dev/null || true
+  oc delete automationorchestrator --all -n "$NAMESPACE" --wait=false 2>/dev/null || true
   cleanup_ao_olm_state
   for _csv_wait in $(seq 1 12); do
     _stuck_csv=""
     for _csv_ns in "$OLM_NAMESPACE" "$NAMESPACE"; do
-      _stuck_csv="${_stuck_csv}$(kubectl get csv -n "$_csv_ns" -o name 2>/dev/null \
+      _stuck_csv="${_stuck_csv}$(oc get csv -n "$_csv_ns" -o name 2>/dev/null \
         | grep "automation-orchestrator" || true)"
     done
     [ -z "$_stuck_csv" ] && break
     if [ "$_csv_wait" -ge 6 ]; then
       echo "  Clearing stuck CSV finalizers..."
       for _csv_ns in "$OLM_NAMESPACE" "$NAMESPACE"; do
-        kubectl get csv -n "$_csv_ns" -o name 2>/dev/null \
+        oc get csv -n "$_csv_ns" -o name 2>/dev/null \
           | grep "automation-orchestrator" \
           | while read -r _csv; do
-            kubectl patch "$_csv" -n "$_csv_ns" --type=json \
+            oc patch "$_csv" -n "$_csv_ns" --type=json \
               -p='[{"op":"remove","path":"/metadata/finalizers"}]' 2>/dev/null || true
           done
       done
@@ -951,23 +932,16 @@ apply_operator_olm_manifests
 echo "Waiting for InstallPlan..."
 _sub_reset=0
 for i in $(seq 1 30); do
-  _pending_ips=$(kubectl get installplan -n "$OLM_NAMESPACE" -o json 2>/dev/null \
-    | python3 -c '
-import json, sys
-data = json.load(sys.stdin)
-for item in data.get("items", []):
-    if not item.get("spec", {}).get("approved", False):
-        print(item["metadata"]["name"])
-' 2>/dev/null || echo "")
+  _pending_ips=$(oc get installplan -n "$OLM_NAMESPACE" -o jsonpath='{range .items[?(@.spec.approved==false)]}{.metadata.name}{"\n"}{end}' 2>/dev/null || echo "")
   if [ -n "$_pending_ips" ]; then
     while read -r _ip; do
       [ -z "$_ip" ] && continue
       echo "  Approving InstallPlan: ${_ip}"
-      kubectl patch installplan "$_ip" -n "$OLM_NAMESPACE" \
+      oc patch installplan "$_ip" -n "$OLM_NAMESPACE" \
         --type merge -p '{"spec":{"approved":true}}'
     done <<<"$_pending_ips"
   fi
-  if kubectl get csv -n "$OLM_NAMESPACE" -o name 2>/dev/null | grep -q "automation-orchestrator"; then
+  if oc get csv -n "$OLM_NAMESPACE" -o name 2>/dev/null | grep -q "automation-orchestrator"; then
     echo "✓ CSV created"
     break
   fi
@@ -1009,15 +983,15 @@ for item in data.get("items", []):
     echo "  Subscription conditions:"
     subscription_failure_detail | sed 's/^/    /'
     echo "  InstallPlans:"
-    kubectl get installplan -n "$OLM_NAMESPACE" 2>/dev/null
+    oc get installplan -n "$OLM_NAMESPACE" 2>/dev/null
     echo ""
     report_subscription_resolution_failure "$CATALOG_NAMESPACE" || true
     exit 1
   fi
-  SUB_STATE=$(kubectl get subscription automation-orchestrator-operator -n "$OLM_NAMESPACE" \
+  SUB_STATE=$(oc get subscription automation-orchestrator-operator -n "$OLM_NAMESPACE" \
     -o jsonpath='{.status.state}' 2>/dev/null || echo "")
   if [ -z "$SUB_STATE" ]; then
-    SUB_STATE=$(kubectl get subscription automation-orchestrator-operator -n "$OLM_NAMESPACE" \
+    SUB_STATE=$(oc get subscription automation-orchestrator-operator -n "$OLM_NAMESPACE" \
       -o jsonpath='{.status.conditions[0].reason}' 2>/dev/null || echo "pending")
   fi
   printf "\r  $(hat) subscription: %-15s    " "${SUB_STATE}"
@@ -1026,22 +1000,22 @@ done
 echo ""
 
 echo "Waiting for operator to become available..."
-if ! kubectl wait --for=condition=Available \
+if ! oc wait --for=condition=Available \
   deployment/automation-orchestrator-operator-controller-manager \
   -n "$(operator_controller_namespace)" --timeout=300s 2>/dev/null; then
   echo "ERROR: Operator deployment not Available after 5 minutes."
-  kubectl get pods -n "$OLM_NAMESPACE" 2>/dev/null || true
-  kubectl get pods -n "$NAMESPACE" 2>/dev/null || true
+  oc get pods -n "$OLM_NAMESPACE" 2>/dev/null || true
+  oc get pods -n "$NAMESPACE" 2>/dev/null || true
   exit 1
 fi
 echo "✓ Operator running"
 
 link_ao_pull_secrets_to_operator
-if kubectl get deployment automation-orchestrator-operator-controller-manager \
+if oc get deployment automation-orchestrator-operator-controller-manager \
   -n "$(operator_controller_namespace)" &>/dev/null; then
-  kubectl rollout restart deployment/automation-orchestrator-operator-controller-manager \
+  oc rollout restart deployment/automation-orchestrator-operator-controller-manager \
     -n "$(operator_controller_namespace)" 2>/dev/null || true
-  kubectl rollout status deployment/automation-orchestrator-operator-controller-manager \
+  oc rollout status deployment/automation-orchestrator-operator-controller-manager \
     -n "$(operator_controller_namespace)" --timeout=5m 2>/dev/null || true
 fi
 
@@ -1054,14 +1028,14 @@ _AO_TIMEOUT=1200
 _AO_START=$(date +%s)
 while true; do
   _AO_ELAPSED=$(($(date +%s) - _AO_START))
-  _ao_reason=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+  _ao_reason=$(oc get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
     -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.reason}{end}' 2>/dev/null || echo "")
-  _ao_degraded=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+  _ao_degraded=$(oc get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
     -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' 2>/dev/null || echo "")
-  _ao_route=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+  _ao_route=$(oc get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  _ao_running=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
     | awk '$3=="Running" && $1 !~ /^redhat-operators-/ {c++} END {print c+0}')
-  _ao_problem=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+  _ao_problem=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
     | awk '$3 ~ /CrashLoopBackOff|Error|ImagePullBackOff/ {c++} END {print c+0}')
   printf "\r  running=%s degraded=%s" "${_ao_running}" "${_ao_reason:-none}"
   [ "${_ao_problem:-0}" -gt 0 ] && printf " problems=%s" "$_ao_problem"
@@ -1074,7 +1048,7 @@ while true; do
   if [ "$_AO_ELAPSED" -ge "$_AO_TIMEOUT" ]; then
     echo ""
     echo "  ⚠ Instance not ready after 20 minutes — continuing anyway"
-    echo "  Check: kubectl get automationorchestrator,pods,routes -n $NAMESPACE"
+    echo "  Check: oc get automationorchestrator,pods,routes -n $NAMESPACE"
     break
   fi
   sleep 10

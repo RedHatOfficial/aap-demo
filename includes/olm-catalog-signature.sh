@@ -31,7 +31,7 @@ resolve_aap_ocp_version() {
     echo "${BASH_REMATCH[1]}"
     return 0
   fi
-  _cluster_version=$(kubectl get clusterversion version \
+  _cluster_version=$(oc get clusterversion version \
     -o jsonpath='{.status.desired.version}' 2>/dev/null || echo "")
   if [[ "$_cluster_version" =~ ^([0-9]+\.[0-9]+) ]]; then
     echo "${BASH_REMATCH[1]}"
@@ -119,7 +119,7 @@ else:
 
 catalog_pod_container_waiting() {
   local _catalog_ns="$1"
-  kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+  oc get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     -o jsonpath='{range .items[0].status.containerStatuses[*].state.waiting}{.reason}{": "}{.message}{"\n"}{end}' \
     2>/dev/null || echo ""
 }
@@ -127,7 +127,7 @@ catalog_pod_container_waiting() {
 catalog_pod_has_image_pull_backoff() {
   local _catalog_ns="$1"
   local _pod_status _waiting
-  _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+  _pod_status=$(oc get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
   if [ "$_pod_status" = "ImagePullBackOff" ] || [ "$_pod_status" = "ErrImagePull" ]; then
     return 0
@@ -139,19 +139,19 @@ catalog_pod_has_image_pull_backoff() {
 catalog_pod_has_signature_pull_failure() {
   local _catalog_ns="$1"
   local _pod _waiting _phase
-  _pod=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+  _pod=$(oc get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
   if [ -z "$_pod" ]; then
     return 1
   fi
-  _phase=$(kubectl get pod "$_pod" -n "$_catalog_ns" \
+  _phase=$(oc get pod "$_pod" -n "$_catalog_ns" \
     -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
   _waiting=$(catalog_pod_container_waiting "$_catalog_ns")
   if echo "$_waiting" | grep -q "SignatureValidationFailed"; then
     return 0
   fi
   if catalog_pod_has_image_pull_backoff "$_catalog_ns"; then
-    kubectl get events -n "$_catalog_ns" --field-selector "involvedObject.name=${_pod}" \
+    oc get events -n "$_catalog_ns" --field-selector "involvedObject.name=${_pod}" \
       2>/dev/null | grep -q "SignatureValidationFailed"
     return $?
   fi
@@ -167,7 +167,7 @@ report_catalog_signature_failure() {
 
 catalog_pod_wait_reason() {
   local _catalog_ns="$1"
-  kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+  oc get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     -o jsonpath='{range .items[0].status.conditions[?(@.type=="PodScheduled")]}{.reason}{": "}{.message}{"\n"}{end}{range .items[0].status.containerStatuses[*].state.waiting}{.reason}{": "}{.message}{"\n"}{end}' \
     2>/dev/null | head -3
 }
@@ -182,7 +182,7 @@ maybe_recover_catalog_pull() {
     fi
   fi
   echo "  Restarting catalog pod..."
-  kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+  oc delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     --wait=false >/dev/null 2>&1 || true
 }
 
@@ -219,13 +219,13 @@ wait_for_catalog_ready() {
   _pod_restart_attempted=0
   _signature_fix_attempted=0
   for _i in $(seq 1 "$((_timeout / 5))"); do
-    _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
+    _status=$(oc get catalogsource redhat-operators -n "$_catalog_ns" \
       -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
     if [ "$_status" = "READY" ]; then
       echo ""
       return 0
     fi
-    _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    _pod_status=$(oc get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
       -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
     # Pod phase stays Pending while the container reports ImagePullBackOff.
     if catalog_pod_has_image_pull_backoff "$_catalog_ns"; then

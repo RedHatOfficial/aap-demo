@@ -1,7 +1,8 @@
 # aap-demo on Windows (PowerShell)
 
-Install and run [aap-demo](../README.md) on Windows using PowerShell. All commands
-run natively in PowerShell; only `diagnose --ai` uses Git Bash.
+Install and run [aap-demo](../README.md) on Windows using PowerShell. Core cluster
+and deploy commands run natively; bash-delegated addons and `aap-demo test` use
+Git Bash when installed.
 
 ## Requirements
 
@@ -11,7 +12,7 @@ run natively in PowerShell; only `diagnose --ai` uses Git Bash.
 | **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
 | **OpenShift CLI (`oc`)**    | Installed by `install.ps1` via winget when missing.                             |
 | **Red Hat pull secret**     | [Download](https://console.redhat.com/openshift/install/pull-secret)            |
-| **Git for Windows**         | Optional. Only needed for `diagnose --ai`.                                      |
+| **Git for Windows**         | Required for bash-delegated addons, `aap-demo test`, and `diagnose --ai`. Installed via winget by `install.ps1` when missing. |
 | **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
 `kubectl` is **not** required on Windows — all commands use `oc` exclusively.
@@ -86,7 +87,7 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo idle true` / `false` | Scale AAP down/up                                                  |
 | `aap-demo kubeconfig`          | Sync kubeconfig (context: `aap-demo`)                              |
 | `aap-demo ssh`                 | SSH into CRC VM                                                    |
-| `aap-demo enable` / `disable`  | Enable or disable addons                                           |
+| `aap-demo enable` / `disable`  | Enable or disable addons (see [Addons](#addons))                   |
 | `aap-demo must-gather`         | Collect diagnostic bundle                                          |
 | `aap-demo redhat-status`       | Check Red Hat registry status                                      |
 | `aap-demo config`              | Show or set `~/.aap-demo/config` values                            |
@@ -94,6 +95,26 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo help`                | Show command help                                                  |
 
 `aap-demo diagnose --ai` delegates to Git Bash for Claude-assisted analysis.
+
+## Addons
+
+Run `aap-demo enable` with no arguments to list addons and their status.
+
+| Addon | Windows mechanism |
+| ----- | ----------------- |
+| `portal` | Native (Helm) |
+| `mcp-server` | Native (`oc apply`) |
+| `setup-pah` | Native (Pulp API) — or `aap-demo setup-pah` |
+| `ao-eap`, `apme-eap`, `local-cache` | Git Bash (`addons/*/deploy.sh`) |
+| `product-demos`, `product-demo-satellite` | Git Bash |
+| `registry`, `devspaces` | Git Bash (enable directly; not shown in default list) |
+| `product-demo-linux`, `product-demo-windows`, etc. | Git Bash (direct enable) |
+
+`local-cache` subcommands (bash): `aap-demo enable local-cache load` and
+`aap-demo enable local-cache clear`.
+
+Bash-delegated addons require **Git for Windows** with `bash` on PATH. Re-run
+`.\powershell\install.ps1` to install Git via winget when missing.
 
 ## Environment variables
 
@@ -159,7 +180,7 @@ Re-run from the repo directory:
 
 Do not move or delete the cloned repo after install — the launcher points at it.
 
-### Git Bash required for diagnose --ai
+### Git Bash required for addons or test
 
 Re-run the installer (it installs Git for Windows via winget when missing), then
 open a new PowerShell window:
@@ -168,7 +189,11 @@ open a new PowerShell window:
 .\powershell\install.ps1
 ```
 
-Most commands (`create`, `deploy`, `destroy`, …) do not need Git Bash.
+Core commands (`create`, `deploy`, `destroy`, …) do not need Git Bash. These do:
+
+- Bash-delegated addons (`ao-eap`, `apme-eap`, `local-cache`, `product-demos`, `registry`, `devspaces`, …)
+- `aap-demo test` (ATF interop tests)
+- `aap-demo diagnose --ai`
 
 ### `oc` or `crc` not found
 
@@ -280,8 +305,9 @@ Then run commands with `pwsh` instead of `powershell`.
 ```
 aap-demo (launcher in ~/.local/bin)
   └── powershell/aap-demo.ps1
-        └── powershell/native/AapDemo.psm1  (all commands)
-              └── diagnose --ai  →  Git Bash (when needed)
+        └── powershell/native/AapDemo.psm1
+              ├── portal, mcp-server, setup-pah  →  native PowerShell
+              └── other addons, test, diagnose --ai  →  Git Bash (when needed)
 ```
 
 ## Updating

@@ -40,6 +40,81 @@ function Test-CommandExists {
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Test-GitBashInstalled {
+  $candidates = @(
+    (Join-Path $env:ProgramFiles 'Git\bin\bash.exe'),
+    (Join-Path $env:ProgramFiles 'Git\usr\bin\bash.exe')
+  )
+  if (${env:ProgramFiles(x86)}) {
+    $candidates += (Join-Path ${env:ProgramFiles(x86)} 'Git\bin\bash.exe')
+  }
+  foreach ($path in $candidates) {
+    if ($path -and (Test-Path -LiteralPath $path)) { return $true }
+  }
+
+  $bash = Get-Command bash -ErrorAction SilentlyContinue
+  if ($bash -and $bash.Source -notmatch '\\Windows\\System32\\bash\.exe$') {
+    return $true
+  }
+  return $false
+}
+
+function Install-GitBash {
+  if (Test-GitBashInstalled) {
+    Write-Ok 'Git Bash already installed'
+    return
+  }
+
+  $wslStub = Join-Path $env:SystemRoot 'System32\bash.exe'
+  if ((Test-Path -LiteralPath $wslStub) -and (Test-CommandExists 'bash')) {
+    Write-Warn 'bash on PATH is the WSL stub — Git for Windows is required for addons'
+  }
+
+  if (-not (Test-CommandExists 'winget')) {
+    Write-Warn 'Git Bash not found and winget is unavailable'
+    Write-Info 'Some addons and aap-demo test require bash — install Git for Windows'
+    return
+  }
+
+  Write-Info 'Installing Git for Windows via winget (provides bash for addon scripts)...'
+  $wingetArgs = @(
+    'install', '--id', 'Git.Git', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements'
+  )
+  if ($Quiet) { $wingetArgs += '--disable-interactivity' }
+
+  try {
+    & winget @wingetArgs
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warn "winget install Git.Git failed (exit $LASTEXITCODE)"
+      return
+    }
+  } catch {
+    Write-Warn "Could not install Git via winget: $($_.Exception.Message)"
+    return
+  }
+
+  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $env:Path = @($machinePath, $userPath) -join ';'
+
+  if (Test-CommandExists 'bash') {
+    Write-Ok 'Git Bash installed via winget'
+  } else {
+    Write-Warn 'Git installed but bash is not on PATH yet — open a new PowerShell window'
+  }
+}
+
+function Write-GitBashAddonHint {
+  if (Test-GitBashInstalled) { return }
+
+  Write-Warn 'Git Bash not on PATH — some features need bash:'
+  Write-Info '- Bash-delegated addons: ao-eap, apme-eap, local-cache, product-demos, registry, devspaces, ...'
+  Write-Info '- aap-demo test (ATF interop tests)'
+  Write-Info '- aap-demo diagnose --ai'
+  Write-Info 'Install: winget install --id Git.Git -e --source winget'
+}
+
 function Install-Oc {
   if (Test-CommandExists 'oc') {
     Write-Ok 'oc already on PATH'
@@ -172,6 +247,7 @@ function Install-AapDemo {
   }
 
   Install-Oc
+  Install-GitBash
 
   $checks = Test-Prerequisites
   if ($checks.Missing.Count -gt 0) {
@@ -218,6 +294,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\bin\aa
 
   Install-OperatorSdk
   Ensure-PullSecretHint
+  Write-GitBashAddonHint
 
   Write-Host ''
   Write-Host 'Done.' -ForegroundColor Green
@@ -228,7 +305,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\bin\aa
   Write-Info '  aap-demo deploy'
   Write-Host ''
   Write-Info 'Notes:'
-  Write-Info '- All commands run in PowerShell.'
+  Write-Info '- Core commands (create, deploy, status, ...) run natively in PowerShell.'
+  Write-Info '- Bash-delegated addons and aap-demo test require Git Bash (bash on PATH).'
   Write-Info '- OpenShift Local on Windows needs Hyper-V enabled.'
   Write-Info '- Kubeconfig default: %USERPROFILE%\.crc\machines\crc\kubeconfig'
   Write-Host ''

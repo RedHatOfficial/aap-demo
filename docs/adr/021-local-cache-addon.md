@@ -87,6 +87,15 @@ additional presets are reintroduced later.
   resolves preset in order: `CRC_PRESET` env var → `CRC_PRESET` in `~/.aap-demo/config` →
   `crc config get preset` → default `microshift`. Avoids mis-parsing CRC's "not set"
   message (which mentions openshift as CRC's default, not aap-demo's).
+- **JSON parsing**: Save lists images from `crictl images -o json`. Parsing uses `jq`
+  first, then a real Python 3 interpreter. On Windows, Git Bash often resolves `python3`
+  to the Microsoft Store stub (`Python was not found`), which is not an interpreter —
+  treat that as missing and require jq (`winget install jqlang.jq`). Do not swallow
+  parser failures as "no images found".
+- **CRLF from Windows jq**: Native `jq.exe` emits `\r\n`. `read` keeps the trailing `\r`
+  on the image reference, so `skopeo copy containers-storage:'...sha256:...\r'` fails and
+  the image is skipped. The last line often has no CR (command substitution), so exactly
+  one image can save. Strip CR from parsed output and from each `img_ref`.
 
 ## Consequences
 
