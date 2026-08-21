@@ -18,6 +18,7 @@
 ## Checklist
 - [ ] I have tested this change and it works as expected
 - [ ] I have updated documentation (if applicable)
+- [ ] I bumped `VERSION` at the repo root when this PR changes code or docs (required for merge to `main`)
 - [ ] This PR follows the repository’s contribution guidelines
 
 ## Additional Information

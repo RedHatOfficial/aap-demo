@@ -136,3 +136,13 @@ aap-demo destroy       # Delete everything
 - **[Architecture Decision Records](docs/adr/)** — Design decisions and rationale
 - **[Contributing](docs/CONTRIBUTING.md)** — Development guidelines
 - **[Linting](docs/LINTING.md)** — Ansible linting setup
+
+### Versioning
+
+Every PR to `main` that changes files (other than `VERSION` itself) must **bump** the semver
+in [`VERSION`](VERSION). CI enforces this via [`.github/workflows/version-check.yaml`](.github/workflows/version-check.yaml).
+
+```bash
+aap-demo version              # show current version + git build info
+cz bump --increment PATCH     # after ./scripts/setup-linting.sh (optional)
+```
