@@ -1,0 +1,36 @@
+---
+name: Version Check
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+
+jobs:
+  version-bump:
+    name: VERSION bump required
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        run: git fetch origin "${{ github.base_ref }}"
+
+      - name: Verify VERSION bump (pull request)
+        if: github.event_name == 'pull_request'
+        run: ./scripts/check-version-bump.sh "origin/${{ github.base_ref }}"
+
+      - name: Verify VERSION bump (push to main)
+        if: github.event_name == 'push'
+        run: |
+          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            echo "Initial push or new branch — skipping strict bump check"
+            exit 0
+          fi
+          git fetch origin "${{ github.ref_name }}" --depth=2 || true
+          ./scripts/check-version-bump.sh "${{ github.event.before }}"

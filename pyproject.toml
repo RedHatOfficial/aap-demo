@@ -1,0 +1,10 @@
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "semver"
+version_provider = "commitizen"
+update_changelog_on_bump = false
+version_files = [
+    ["VERSION", ""],
+]
+bump_message = "chore: bump version to $new_version"

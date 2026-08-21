@@ -7,6 +7,9 @@ if [ "${QUIET}" = "true" ]; then
   exit 0
 fi
 
+# shellcheck source=aap-demo-version.sh
+source "$(dirname "$0")/aap-demo-version.sh"
+
 echo ""
 echo ""
 echo "                                                ░██                                       "
@@ -19,10 +22,8 @@ echo " ░█████░██  ░█████░██ ░██░█�
 echo "                      ░██                                                                 "
 echo "                      ░██                                                                 "
 echo "                                                                                          "
-_AAP_DEMO_DIR=$(cd "$(dirname "$0")/.." && pwd)
-_AAP_DEMO_SHA=$(git -C "$_AAP_DEMO_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-_AAP_DEMO_DATE=$(git -C "$_AAP_DEMO_DIR" log -1 --format=%cd --date=short 2>/dev/null || echo "unknown")
-printf "                                   version %s \033[31m|\033[0m %s\n" "$_AAP_DEMO_SHA" "$_AAP_DEMO_DATE"
+printf "                                   aap-demo %s \033[31m|\033[0m %s \033[31m|\033[0m %s\n" \
+  "$AAP_DEMO_VERSION" "$AAP_DEMO_GIT_SHA" "$AAP_DEMO_GIT_DATE"
 echo ""
 echo ""
 printf "                   \033[1m** PLEASE READ BEFORE PROCEEDING: **\033[0m\n"

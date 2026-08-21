@@ -170,6 +170,12 @@ try {
 
     'status' { Invoke-AapDemoStatus }
 
+    'version' { Invoke-AapDemoVersion }
+
+    '--version' { Invoke-AapDemoVersion }
+
+    '-v' { Invoke-AapDemoVersion }
+
     'diagnose' {
 
       $params = @{}

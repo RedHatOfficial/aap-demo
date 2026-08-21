@@ -72,6 +72,10 @@ Export-ModuleMember -Function @(
 
   'Get-AapDemoHelp'
 
+  'Invoke-AapDemoVersion'
+
+  'Show-AapDemoVersion'
+
   'Invoke-AapDemoSetupPah'
 
 )

@@ -37,6 +37,9 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
+# shellcheck source=includes/aap-demo-version.sh
+source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
+
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 
@@ -121,14 +124,17 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
-      COMMAND="$arg"
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | version | help | --help | -h | --version | -V)
+      case "$arg" in
+        --version | -V) COMMAND="version" ;;
+        *) COMMAND="$arg" ;;
+      esac
       ;;
-    --ai | --reset)
-      # Flags for diagnose --ai and destroy --reset
+    --ai | --reset | --force | --refresh-catalog)
+      # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
+    mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -398,7 +404,7 @@ Addons:
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao-eap   Install Automation Orchestrator Early Access
+  enable ao       Install Automation Orchestrator
   enable local-cache Cache container images locally (~30GB) to speed up deploys
 
 Examples:
@@ -452,6 +458,7 @@ COMMANDS (all infrastructure types):
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
     update          Pull latest code and reinstall
+    version         Show aap-demo version and build timestamp
     help            Show this help
 
 COMMANDS:
@@ -724,9 +731,14 @@ cmd_config() {
   mkdir -p "$(dirname "$AAP_DEMO_CONFIG")"
 }
 
+cmd_version() {
+  aap_demo_print_version
+}
+
 cmd_update() {
   echo ""
   printf "\033[1maap-demo update\033[0m - Pulling latest code and reinstalling...\n"
+  printf "  Current:   %s\n" "$(aap_demo_version_short)"
   echo ""
 
   local repo_root="$SCRIPT_DIR"
@@ -755,6 +767,9 @@ cmd_update() {
 
   echo ""
   echo "  ✓ Update complete"
+  aap_demo_reload_version
+  printf "  Now:       %s\n" "$(aap_demo_version_short)"
+  printf "  Built:     %s\n" "$AAP_DEMO_GIT_DATE"
 }
 
 cmd_redhat_status() {
@@ -1612,6 +1627,8 @@ cmd_status() {
   echo ""
   printf "\033[1mAAP Demo Status\033[0m\n"
   echo "==============="
+  printf "Tool:        %s\n" "$(aap_demo_version_short)"
+  printf "Built:       %s\n" "$AAP_DEMO_GIT_DATE"
   echo ""
 
   # Check cluster status via infra abstraction
@@ -1653,12 +1670,8 @@ cmd_status() {
 
   # Show kubeconfig
   echo "Kubeconfig:  $KUBECONFIG"
-  local _script_dir _script_branch _script_remote
-  _script_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
-  _script_branch=$(cd "$_script_dir" && git branch --show-current 2>/dev/null || echo "unknown")
-  _script_remote=$(cd "$_script_dir" && git remote get-url origin 2>/dev/null || echo "")
-  echo "Source:      $_script_dir (branch: $_script_branch)"
-  [ -n "$_script_remote" ] && echo "Repo:        $_script_remote"
+  echo "Source:      $AAP_DEMO_REPO_ROOT (branch: $AAP_DEMO_GIT_BRANCH)"
+  [ -n "$AAP_DEMO_GIT_REMOTE" ] && echo "Repo:        $AAP_DEMO_GIT_REMOTE"
 
   # VM stats
   echo ""
@@ -1771,8 +1784,8 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
-  # Show credentials for Automation Orchestrator (ao-eap addon)
-  if echo "$(_addons_list)" | grep -qw "ao-eap" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+  # Show credentials for Automation Orchestrator (ao addon)
+  if echo "$(_addons_list)" | grep -qw "ao" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
     local _ao_ns="automation-orchestrator"
     local _ao_pw="" _ao_secret=""
     _ao_secret=$(kubectl get secret -n "$_ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)
@@ -1799,7 +1812,7 @@ cmd_status() {
     local enabled=false
     if echo "$saved_addons" | grep -qw "$a"; then
       enabled=true
-    elif [ "$a" = "ao-eap" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+    elif [ "$a" = "ao" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
       enabled=true
     fi
     if [ "$enabled" = true ]; then
@@ -2043,24 +2056,16 @@ deploy_latest() {
   # Demo-only: disables signature verification for registry.redhat.io on the VM.
   # shellcheck source=includes/infra-crc.sh
   source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
+  # shellcheck source=includes/olm-catalog-signature.sh
+  source "${SCRIPT_DIR}/includes/olm-catalog-signature.sh"
   _deploy_preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
-  if [ "$_deploy_preset" = "microshift" ] && [ -n "${CRC_SSH_KEY:-}" ]; then
-    # Only needed for MicroShift 4.22+ which enforces GPG signatures on index images
-    _ocp_major="${AAP_OCP_VERSION%%.*}"
-    _ocp_minor="${AAP_OCP_VERSION#*.}"
-    if [ "$_ocp_major" -gt 4 ] || { [ "$_ocp_major" -eq 4 ] && [ "$_ocp_minor" -ge 22 ]; }; then
-      ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo python3 -c "
-import json, sys
-p = \"/etc/containers/policy.json\"
-with open(p) as f: d = json.load(f)
-reg = d.get(\"transports\",{}).get(\"docker\",{}).get(\"registry.redhat.io\",[])
-if reg and reg[0].get(\"type\") != \"insecureAcceptAnything\":
-    d[\"transports\"][\"docker\"][\"registry.redhat.io\"] = [{\"type\": \"insecureAcceptAnything\"}]
-    with open(p, \"w\") as f: json.dump(d, f, indent=4)
-    print(\"  ✓ Signature policy relaxed for registry.redhat.io\")
-else:
-    print(\"  Signature policy already relaxed\")
-"' 2>/dev/null || true
+  if [ "$_deploy_preset" = "microshift" ] && needs_signature_policy_relaxation; then
+    echo ""
+    echo "Relaxing container signature policy for registry.redhat.io (MicroShift 4.22+)..."
+    refresh_crc_ssh_config 2>/dev/null || true
+    if ! maybe_relax_redhat_registry_signature_policy; then
+      echo "  WARNING: Could not relax signature policy — catalog pull may fail"
+      echo "  Try: crc start && aap-demo ssh   # verify VM SSH works, then re-run deploy"
     fi
   fi
 
@@ -2081,35 +2086,14 @@ else:
   else
     echo ""
     echo "Waiting for CatalogSource to be ready..."
-    echo "  (This may take a few minutes while the catalog image is pulled)"
-    CATSRC_READY=false
-    for i in $(seq 1 60); do
-      STATUS=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
-        -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "Pending")
-      if [ "$STATUS" = "READY" ]; then
-        echo ""
-        echo "  ✓ CatalogSource is ready"
-        CATSRC_READY=true
-        break
-      fi
-      POD_STATUS=$(kubectl get pods -n "$NAMESPACE" -l olm.catalogSource=redhat-operators \
-        -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
-      if [ "$STATUS" = "TRANSIENT_FAILURE" ]; then
-        if [ "$POD_STATUS" = "Pending" ] || [ "$POD_STATUS" = "ContainerCreating" ]; then
-          printf "\r  Pulling catalog image... ($i/60)    "
-        else
-          printf "\r  Catalog initializing... ($i/60)    "
-        fi
-      elif [ "$STATUS" = "CONNECTING" ]; then
-        printf "\r  Connecting to catalog... ($i/60)    "
-      else
-        printf "\r  Waiting ($STATUS)... ($i/60)    "
-      fi
-      sleep 5
-    done
-    if [ "$CATSRC_READY" != "true" ]; then
-      echo ""
-      echo "  ⚠ CatalogSource not ready after 5 minutes, continuing anyway..."
+    echo "  (The operator index is multi-GB; this can take 10+ minutes on first pull)"
+    if wait_for_catalog_ready "$NAMESPACE"; then
+      echo "  ✓ CatalogSource is ready"
+      CATSRC_READY=true
+    else
+      echo "✗ CatalogSource not ready after $(catalog_wait_timeout_seconds)s"
+      echo "  Check: kubectl describe pod -n $NAMESPACE -l olm.catalogSource=redhat-operators"
+      exit 1
     fi
   fi
 
@@ -2568,18 +2552,39 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap local-cache product-demos product-demo-satellite"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite"
+
+_normalize_addon_name() {
+  case "$1" in
+    ao-eap) echo "ao" ;;
+    *) echo "$1" ;;
+  esac
+}
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
 }
 
 _addons_list() {
-  local config
+  local config _raw _addon _normalized _result=""
   config="$(_addons_config_file)"
   if [ -f "$config" ]; then
-    grep '^ADDONS=' "$config" 2>/dev/null | cut -d= -f2 | tr ',' ' '
+    _raw=$(grep '^ADDONS=' "$config" 2>/dev/null | cut -d= -f2 | tr ',' ' ')
+    for _addon in $_raw; do
+      _normalized=$(_normalize_addon_name "$_addon")
+      case " $_result " in
+        *" $_normalized "*) ;;
+        *)
+          if [ -n "$_result" ]; then
+            _result="$_result $_normalized"
+          else
+            _result="$_normalized"
+          fi
+          ;;
+      esac
+    done
   fi
+  echo "$_result"
 }
 
 _addons_save() {
@@ -2597,6 +2602,7 @@ _addons_save() {
 _addons_add() {
   local addon="$1"
   local current
+  addon=$(_normalize_addon_name "$addon")
   current=$(_addons_list)
   # Don't add if already present
   if echo "$current" | grep -qw "$addon"; then
@@ -2612,6 +2618,7 @@ _addons_add() {
 _addons_remove() {
   local addon="$1"
   local current new
+  addon=$(_normalize_addon_name "$addon")
   current=$(_addons_list)
   new=$(echo "$current" | tr ' ' '\n' | grep -v "^${addon}$" | tr '\n' ',' | sed 's/,$//')
   _addons_save "$new"
@@ -2620,8 +2627,10 @@ _addons_remove() {
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
+  addon=$(_normalize_addon_name "$addon")
   if [ -z "$addon" ]; then
-    echo "Usage: aap-demo enable <addon>"
+    echo "Usage: aap-demo enable <addon> [--force] [--refresh-catalog]"
+    echo "       FORCE=1 aap-demo enable <addon>   # same as --force"
     echo ""
     local saved
     saved=$(_addons_list)
@@ -2669,6 +2678,8 @@ cmd_enable() {
   else
     echo "Enabling addon: $addon"
   fi
+  aap_demo_reload_version
+  printf '  Source: %s (%s)\n' "${addon_dir}/deploy.sh" "$(aap_demo_version_short)"
   if [ "$_skip_cluster_verify" != true ]; then
     _verify_cluster || return 1
   fi
@@ -2684,6 +2695,7 @@ cmd_enable() {
 cmd_disable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
+  addon=$(_normalize_addon_name "$addon")
   if [ -z "$addon" ]; then
     echo "Usage: aap-demo disable <addon> [options]"
     echo ""
@@ -2786,7 +2798,7 @@ esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in
-  help | --help | -h | config | update | "" | destroy)
+  help | --help | -h | config | update | version | "" | destroy)
     # These commands don't need cluster access
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
@@ -2838,6 +2850,9 @@ case "$COMMAND" in
     ;;
   update)
     cmd_update
+    ;;
+  version | --version | -V)
+    cmd_version
     ;;
   config)
     cmd_config "${EXTRA_ARGS[@]}"

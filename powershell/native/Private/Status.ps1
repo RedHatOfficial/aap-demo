@@ -6,6 +6,11 @@ function Invoke-AapDemoStatus {
 
   Write-AapHeader 'AAP Demo Status'
 
+  $versionInfo = Get-AapDemoVersionInfo
+  Write-Host ("Tool:        {0} ({1})" -f $versionInfo.Version, $versionInfo.GitSha)
+  Write-Host ("Built:       {0}" -f $versionInfo.GitDate)
+  Write-Host ''
+
   $crc = Get-AapCrcStatus
   $state = [string]$crc.crcStatus
   Write-Host "Infra:       OpenShift Local (CRC)"
@@ -124,7 +129,7 @@ function Invoke-AapDemoStatus {
   Write-Host '-------'
   foreach ($a in $Script:AapAvailableAddons) {
     $enabled = $savedAddons -contains $a
-    if (-not $enabled -and $a -eq 'ao-eap') {
+    if (-not $enabled -and $a -eq 'ao') {
       $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'automation-orchestrator')) -eq 0
     }
     if (-not $enabled -and $a -eq 'apme-eap') {
@@ -134,6 +139,10 @@ function Invoke-AapDemoStatus {
     Write-Host ("  {0,-15} {1}" -f $a, $state)
   }
   Write-Host ''
+}
+
+function Invoke-AapDemoVersion {
+  Show-AapDemoVersion -RepoRoot (Get-AapInstalledRepoRoot)
 }
 
 function Get-AapDemoHelp {
@@ -160,6 +169,7 @@ DEPLOY:
 
 STATUS:
     status          Show cluster and AAP status
+    version         Show aap-demo version and build timestamp
     diagnose        Check environment health
     idle            Scale AAP down/up (true|false)
     redhat-status   Check Red Hat registry status (alias: rh-status)

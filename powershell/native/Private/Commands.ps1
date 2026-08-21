@@ -20,6 +20,8 @@ function Invoke-AapDemoEnable {
     return
   }
 
+  $Addon = Resolve-AapAddonName $Addon
+
   if ($Addon -notin $Script:AapAvailableAddons) {
     throw "Unknown addon: $Addon`nAvailable: $($Script:AapAvailableAddons -join ', ')"
   }
@@ -44,6 +46,8 @@ function Invoke-AapDemoDisable {
     Write-Host "Available addons: $($Script:AapAvailableAddons -join ', ')"
     return
   }
+
+  $Addon = Resolve-AapAddonName $Addon
 
   if ($Addon -notin $Script:AapAvailableAddons) {
     throw "Unknown addon: $Addon"
@@ -337,6 +341,7 @@ function Invoke-AapDemoUpdate {
   Push-Location $repoRoot
   try {
     Write-AapStep 'Pulling latest code...'
+    Write-Host ("  Current:   {0}" -f (Get-AapDemoVersionShort))
     & git pull
     if ($LASTEXITCODE -ne 0) { throw 'git pull failed' }
     $install = Join-Path $repoRoot 'powershell\install.ps1'
@@ -344,6 +349,9 @@ function Invoke-AapDemoUpdate {
     & $install
     if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
     Write-AapStep 'Update complete'
+    $updated = Get-AapDemoVersionInfo -RepoRoot $repoRoot
+    Write-Host ("  Now:       {0} ({1})" -f $updated.Version, $updated.GitSha)
+    Write-Host ("  Built:     {0}" -f $updated.GitDate)
   } finally {
     Pop-Location
   }

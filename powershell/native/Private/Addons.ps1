@@ -1,5 +1,5 @@
 $Script:AapAvailableAddons = @(
-  'mcp-server', 'portal', 'setup-pah', 'ao-eap', 'apme-eap', 'local-cache'
+  'mcp-server', 'portal', 'setup-pah', 'ao', 'apme-eap', 'local-cache'
 )
 
 function Invoke-AapAddonDeployScript {

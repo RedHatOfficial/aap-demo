@@ -56,7 +56,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [014](014-testing-strategy.md) | CLI Testing Strategy | Accepted |
 | [015](015-ingress-ca-user-store-trust.md) | Ingress CA Trust via User Certificate Stores | Accepted |
 | [016](016-console-pah-authentication.md) | Console and PAH Authentication | Accepted |
-| [017](017-ao-eap-addon.md) | Automation Orchestrator EAP Addon | Accepted |
+| [017](017-ao-addon.md) | Automation Orchestrator Addon | Accepted |
 | [018](018-product-demos-addon.md) | Ansible Product Demos Addon Integration | Accepted |
 | [019](019-apme-playbook-addon.md) | APME Playbook Addon | Accepted |
 | [019b](019b-apme-aap-native-execution.md) | APME AAP-Native Execution (rejected) | Rejected |

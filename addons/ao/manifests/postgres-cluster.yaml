@@ -1,0 +1,62 @@
+# Generated from: aapctl install ao --dry-run -o yaml
+# Docs:
+# https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops
+#
+# Secrets are NOT committed (aapctl randomizes passwords each run).
+# Placeholders substituted by deploy.sh:
+#   __NAMESPACE__         -> automation-orchestrator
+#   __STORAGE_CLASS__     -> nfs-local-rwx / topolvm-provisioner
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: orchestrator-postgres
+  namespace: __NAMESPACE__
+spec:
+  bootstrap:
+    initdb:
+      database: orchestrator
+      owner: orchestrator
+      secret:
+        name: orchestrator-postgres-secret
+  imageName: ghcr.io/cloudnative-pg/postgresql:15
+  instances: 1
+  postgresql:
+    parameters:
+      max_connections: "200"
+  storage:
+    size: 5Gi
+    storageClass: __STORAGE_CLASS__
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: orchestrator
+  namespace: __NAMESPACE__
+spec:
+  cluster:
+    name: orchestrator-postgres
+  name: orchestrator
+  owner: orchestrator
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: temporal
+  namespace: __NAMESPACE__
+spec:
+  cluster:
+    name: orchestrator-postgres
+  name: temporal
+  owner: orchestrator
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: temporal-visibility
+  namespace: __NAMESPACE__
+spec:
+  cluster:
+    name: orchestrator-postgres
+  name: temporal_visibility
+  owner: orchestrator

@@ -39,6 +39,7 @@ export KUBECONFIG=~/.aap-demo/kubeconfig.microshift
 ## Status
 
 ```bash
+aap-demo version       # Tool version, commit, and build timestamp
 aap-demo status        # Show routes and credentials
 ```
 
@@ -66,7 +67,7 @@ Addons:
   mcp-server      disabled
   portal          disabled
   setup-pah       disabled
-  ao-eap          disabled
+  ao            disabled
   apme-eap        disabled
   local-cache     disabled
   product-demos       disabled
@@ -80,7 +81,7 @@ aap-demo enable              # List all addons
 aap-demo enable portal       # Installs Automation Portal
 aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
-aap-demo enable ao-eap       # Early Access Program only for Automation Orchestrator
+aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
 aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 
@@ -135,3 +136,13 @@ aap-demo destroy       # Delete everything
 - **[Architecture Decision Records](docs/adr/)** — Design decisions and rationale
 - **[Contributing](docs/CONTRIBUTING.md)** — Development guidelines
 - **[Linting](docs/LINTING.md)** — Ansible linting setup
+
+### Versioning
+
+Every PR to `main` that changes files (other than `VERSION` itself) must **bump** the semver
+in [`VERSION`](VERSION). CI enforces this via [`.github/workflows/version-check.yaml`](.github/workflows/version-check.yaml).
+
+```bash
+aap-demo version              # show current version + git build info
+cz bump --increment PATCH     # after ./scripts/setup-linting.sh (optional)
+```
