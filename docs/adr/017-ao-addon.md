@@ -51,7 +51,7 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 | OLM can't resolve AO subscription | Catalog in `aap-operator`; subscription in another namespace | Copy `redhat-operators` CatalogSource into `automation-orchestrator` |
 | Second OperatorGroup in `aap-operator` | AO operator requires AllNamespaces; AAP already has `aap-operator-og` | Install AO OLM resources only in `automation-orchestrator` |
 | CNPG via OLM fails | No `certified-operators` on MicroShift | Install CNPG from upstream release manifest |
-| Catalog signature failures | MicroShift 4.22+ GPG policy on `registry.redhat.io` | Same policy relaxation as `aap-demo deploy` |
+| Catalog signature failures | MicroShift 4.22+ GPG policy on `registry.redhat.io` | Shared [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh): relax `policy.json`, reload CRI-O, `wait_for_catalog_ready()` with auto-recovery; `ensure_catalog_signature_policy()` before AO catalog create |
 | Postgres password drift on re-run | Secret regenerated but CNPG cluster retains bootstrap password | Reuse password from existing secrets; `FORCE=1` recreates cluster |
 | AO missing from default index | Index version / publish lag | Automatic `AO_FALLBACK_INDEX_IMAGE` |
 
@@ -106,6 +106,7 @@ occupy the same namespace. Rejected.
 ## References
 
 - [`addons/ao/README.md`](../../addons/ao/README.md)
+- [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh)
 - [Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)
 - [Install the operator from the OpenShift CLI](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-install_the_operator_from_the_openshift_cli)
 - ADR-008: Addon system
@@ -126,3 +127,4 @@ the full EA install sequence.
 |------|--------|
 | 2026-08-20 | GA migration: `redhat-operators` OLM path, hand-written CR |
 | 2026-08-21 | Rename `ao-eap` → `ao`; GitOps manifests from `aapctl --dry-run`; MicroShift catalog in app namespace; aapctl optional at runtime |
+| 2026-08-21 | Catalog signature policy: shared `olm-catalog-signature.sh` with deploy; SSH key refresh; CRI-O reload; signature pull auto-recovery |

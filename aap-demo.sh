@@ -2056,24 +2056,16 @@ deploy_latest() {
   # Demo-only: disables signature verification for registry.redhat.io on the VM.
   # shellcheck source=includes/infra-crc.sh
   source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
+  # shellcheck source=includes/olm-catalog-signature.sh
+  source "${SCRIPT_DIR}/includes/olm-catalog-signature.sh"
   _deploy_preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
-  if [ "$_deploy_preset" = "microshift" ] && [ -n "${CRC_SSH_KEY:-}" ]; then
-    # Only needed for MicroShift 4.22+ which enforces GPG signatures on index images
-    _ocp_major="${AAP_OCP_VERSION%%.*}"
-    _ocp_minor="${AAP_OCP_VERSION#*.}"
-    if [ "$_ocp_major" -gt 4 ] || { [ "$_ocp_major" -eq 4 ] && [ "$_ocp_minor" -ge 22 ]; }; then
-      ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo python3 -c "
-import json, sys
-p = \"/etc/containers/policy.json\"
-with open(p) as f: d = json.load(f)
-reg = d.get(\"transports\",{}).get(\"docker\",{}).get(\"registry.redhat.io\",[])
-if reg and reg[0].get(\"type\") != \"insecureAcceptAnything\":
-    d[\"transports\"][\"docker\"][\"registry.redhat.io\"] = [{\"type\": \"insecureAcceptAnything\"}]
-    with open(p, \"w\") as f: json.dump(d, f, indent=4)
-    print(\"  ✓ Signature policy relaxed for registry.redhat.io\")
-else:
-    print(\"  Signature policy already relaxed\")
-"' 2>/dev/null || true
+  if [ "$_deploy_preset" = "microshift" ] && needs_signature_policy_relaxation; then
+    echo ""
+    echo "Relaxing container signature policy for registry.redhat.io (MicroShift 4.22+)..."
+    refresh_crc_ssh_config 2>/dev/null || true
+    if ! maybe_relax_redhat_registry_signature_policy; then
+      echo "  WARNING: Could not relax signature policy — catalog pull may fail"
+      echo "  Try: crc start && aap-demo ssh   # verify VM SSH works, then re-run deploy"
     fi
   fi
 
@@ -2094,35 +2086,14 @@ else:
   else
     echo ""
     echo "Waiting for CatalogSource to be ready..."
-    echo "  (This may take a few minutes while the catalog image is pulled)"
-    CATSRC_READY=false
-    for i in $(seq 1 60); do
-      STATUS=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
-        -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "Pending")
-      if [ "$STATUS" = "READY" ]; then
-        echo ""
-        echo "  ✓ CatalogSource is ready"
-        CATSRC_READY=true
-        break
-      fi
-      POD_STATUS=$(kubectl get pods -n "$NAMESPACE" -l olm.catalogSource=redhat-operators \
-        -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
-      if [ "$STATUS" = "TRANSIENT_FAILURE" ]; then
-        if [ "$POD_STATUS" = "Pending" ] || [ "$POD_STATUS" = "ContainerCreating" ]; then
-          printf "\r  Pulling catalog image... ($i/60)    "
-        else
-          printf "\r  Catalog initializing... ($i/60)    "
-        fi
-      elif [ "$STATUS" = "CONNECTING" ]; then
-        printf "\r  Connecting to catalog... ($i/60)    "
-      else
-        printf "\r  Waiting ($STATUS)... ($i/60)    "
-      fi
-      sleep 5
-    done
-    if [ "$CATSRC_READY" != "true" ]; then
-      echo ""
-      echo "  ⚠ CatalogSource not ready after 5 minutes, continuing anyway..."
+    echo "  (The operator index is multi-GB; this can take 10+ minutes on first pull)"
+    if wait_for_catalog_ready "$NAMESPACE"; then
+      echo "  ✓ CatalogSource is ready"
+      CATSRC_READY=true
+    else
+      echo "✗ CatalogSource not ready after $(catalog_wait_timeout_seconds)s"
+      echo "  Check: kubectl describe pod -n $NAMESPACE -l olm.catalogSource=redhat-operators"
+      exit 1
     fi
   fi
 

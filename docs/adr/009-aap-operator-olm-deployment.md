@@ -55,6 +55,34 @@ kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=privilege
 
 Pull secret copied/created as `redhat-operators-pull-secret`.
 
+### MicroShift 4.22+ catalog signature policy
+
+On MicroShift 4.22+, CRI-O rejects the unsigned `redhat-operator-index` image with
+`SignatureValidationFailed`. Catalog pods may show `TRANSIENT_FAILURE` while pulling, or
+`ImagePullBackOff` with pod phase still `Pending`.
+
+Before creating the `redhat-operators` CatalogSource, `aap-demo deploy` (MicroShift preset):
+
+1. Calls shared helpers in [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh)
+2. Relaxes `/etc/containers/policy.json` for `registry.redhat.io` on the CRC VM via SSH
+3. Reloads CRI-O when the policy file changes
+4. Waits up to 600s (override with `AAP_CATALOG_TIMEOUT`) for CatalogSource `READY`, with
+   automatic recovery if a signature pull failure is detected
+
+The same module is used by **`aap-demo enable ao`**, which copies a local `redhat-operators`
+CatalogSource into `automation-orchestrator` and calls `ensure_catalog_signature_policy()` before
+the catalog pod is created.
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AAP_CATALOG_TIMEOUT` | `600` | Seconds to wait for AAP catalog READY during deploy |
+| `AO_CATALOG_TIMEOUT` | `600` | Seconds to wait for AO-local catalog READY |
+
+SSH to the CRC VM requires a key under `~/.crc/machines/crc/` and a running cluster (`crc start`).
+Use `aap-demo ssh` to verify connectivity before deploy.
+
+**Demo-only.** Do not use signature policy relaxation in production.
+
 ### Deploy modes
 
 | Command | Behavior |
@@ -72,6 +100,7 @@ on emptyDir volumes — a common local-dev failure mode.
 - `aap-demo watch` — polls AAP CR conditions
 - `aap-demo diagnose` — checks CR phase, pod health, PVC binding
 - Expected deploy time: 5–15 minutes depending on preset and hardware
+- First catalog pull of `redhat-operator-index` is multi-GB and may take 10+ minutes on slow networks
 
 ## Consequences
 
@@ -112,6 +141,9 @@ Rejected: channel subscription is the supported customer path.
 
 - [config/olm/](../../config/olm/)
 - [config/crs/](../../config/crs/)
+- [includes/olm-catalog-signature.sh](../../includes/olm-catalog-signature.sh)
+- [includes/infra-crc.sh](../../includes/infra-crc.sh) — `refresh_crc_ssh_config()`
 - [ADR-005](005-olm-on-microshift.md)
 - [ADR-006](006-storage-architecture.md)
 - [ADR-012](012-scc-and-pod-security.md)
+- [ADR-020 §7](020-full-openshift-support.md) — original signature-policy rationale

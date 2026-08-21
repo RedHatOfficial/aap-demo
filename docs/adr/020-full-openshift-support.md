@@ -198,9 +198,24 @@ running OCP version from `crc status -o json` and uses it for the
 
 MicroShift 4.22+ enforces GPG signature verification for `registry.redhat.io` images.
 The `redhat-operator-index` image fails this check. Before creating the CatalogSource,
-the deploy command SSHs into the CRC VM and modifies `/etc/containers/policy.json` to
-set `insecureAcceptAnything` for `registry.redhat.io`. This is acceptable in a
-development/testing environment.
+`aap-demo deploy` (MicroShift preset only) relaxes policy on the CRC VM.
+
+**Implementation (refined 2026-08-21):** shared helpers in
+[`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh), invoked from
+[`aap-demo.sh`](../../aap-demo.sh) `deploy_latest()` and from [`addons/ao/deploy.sh`](../../addons/ao/deploy.sh).
+
+| Step | Behavior |
+|------|----------|
+| SSH key | `refresh_crc_ssh_config()` in [`includes/infra-crc.sh`](../../includes/infra-crc.sh) re-detects `~/.crc/machines/crc/id_ed25519` or `id_ecdsa` on every VM operation (keys may appear after `crc start` in the same deploy session) |
+| Policy | SSH to CRC VM; set `transports.docker.registry.redhat.io` → `insecureAcceptAnything` in `/etc/containers/policy.json` (creates the entry if missing — required on fresh MicroShift 4.22) |
+| CRI-O | `systemctl reload crio` after policy changes, or when recovering from a signature pull failure |
+| Catalog wait | `wait_for_catalog_ready()` — default 600s (`AAP_CATALOG_TIMEOUT` / `AO_CATALOG_TIMEOUT`); detects `SignatureValidationFailed` even when pod phase stays `Pending` while the container reports `ImagePullBackOff`; auto-applies policy + restarts catalog pod once |
+
+**Infra guard fix:** `infra-crc.sh` must not use top-level `return` when double-sourced from a
+function (that silently skipped the policy step). Use an `if [ -z _INFRA_CRC_LOADED ]` block instead.
+
+This is acceptable in a development/testing environment only — not a production pattern.
+See also [ADR-009 § MicroShift catalog signature policy](009-aap-operator-olm-deployment.md).
 
 ### 8. CoreDNS auto-fix during deploy
 
@@ -382,3 +397,4 @@ works but is reverted on operator reconciliation.
 - [config/crs/aap-minimal.yaml](../../config/crs/aap-minimal.yaml) — Default AAP CR template
   (single-replica settings)
 - [aap-demo.sh](../../aap-demo.sh) — `_check_for_updates`, `verify_coredns` auto-fix
+- [includes/olm-catalog-signature.sh](../../includes/olm-catalog-signature.sh) — catalog signature policy (§7 implementation)

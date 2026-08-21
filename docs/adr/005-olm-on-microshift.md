@@ -75,6 +75,10 @@ spec:
 
 Version is overridable via `AAP_OCP_VERSION` to match the cluster's OpenShift version mapping.
 
+On MicroShift 4.22+, the index image requires a demo-only signature policy relaxation on the
+CRC VM before the catalog pod can pull. See [ADR-009 § MicroShift catalog signature policy](009-aap-operator-olm-deployment.md)
+and [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh).
+
 ## Consequences
 
 ### Positive
