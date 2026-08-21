@@ -110,8 +110,8 @@ maybe_relax_redhat_registry_signature_policy() {
     echo "  or apply the same /etc/containers/policy.json change on cluster nodes." >&2
     return 1
   fi
-  echo "  Connecting to CRC VM (127.0.0.1:${CRC_SSH_PORT})..." >&2
-  ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo python3 -c "
+  echo "  Connecting to CRC VM (127.0.0.1:${CRC_SSH_PORT}, timeout 10s)..." >&2
+  if ! ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo python3 -c "
 import json
 p = \"/etc/containers/policy.json\"
 with open(p) as f: d = json.load(f)
@@ -122,10 +122,10 @@ if reg and reg[0].get(\"type\") != \"insecureAcceptAnything\":
     print(\"  ✓ Relaxed container signature policy (MicroShift 4.22+)\")
 else:
     print(\"  Container signature policy already relaxed\")
-"' || {
-    echo "  WARNING: Could not relax signature policy via SSH (is CRC running?)" >&2
+"'; then
+    echo "  WARNING: Could not relax signature policy via SSH (is CRC running? port ${CRC_SSH_PORT} open?)" >&2
     return 1
-  }
+  fi
 }
 
 needs_signature_policy_relaxation() {
@@ -457,22 +457,6 @@ ensure_ao_catalog_source() {
   if [ ! -f "$CATALOG_SOURCE_TEMPLATE" ]; then
     echo "ERROR: CatalogSource template not found: ${CATALOG_SOURCE_TEMPLATE}" >&2
     return 1
-  fi
-
-  # Signature policy is node-level. Main flow requires AAP catalog READY, so the cluster
-  # already pulls redhat-operator-index — skip redundant CRC SSH (can hang on port 2222).
-  if needs_signature_policy_relaxation; then
-    _aap_state=$(kubectl get catalogsource redhat-operators -n "$_src_ns" \
-      -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
-    if [ "$_aap_state" = "READY" ]; then
-      echo "  ✓ AAP catalog READY — cluster can pull operator index" >&2
-    else
-      echo "  Ensuring MicroShift 4.22+ registry signature policy..." >&2
-      if ! maybe_relax_redhat_registry_signature_policy; then
-        report_catalog_signature_failure
-        return 1
-      fi
-    fi
   fi
 
   sed -e "s|image: .*|image: ${_target_image}|" \
@@ -952,8 +936,10 @@ if [ "$_aap_catalog_state" != "READY" ]; then
   exit 1
 fi
 if catalog_pod_has_signature_pull_failure "$_aap_catalog_ns"; then
-  echo "  Catalog pod cannot pull operator index (signature verification)..."
-  maybe_relax_redhat_registry_signature_policy
+  echo "ERROR: AAP catalog cannot pull operator index (SignatureValidationFailed)." >&2
+  echo "  Run 'aap-demo deploy' on this machine to relax MicroShift 4.22+ signature policy." >&2
+  echo "  Then retry: aap-demo enable ao" >&2
+  exit 1
 fi
 if ! CATALOG_NAMESPACE=$(ensure_ao_catalog_source); then
   exit 1
