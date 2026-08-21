@@ -66,7 +66,7 @@ Addons:
   mcp-server      disabled
   portal          disabled
   setup-pah       disabled
-  ao-eap          disabled
+  ao            disabled
   apme-eap        disabled
   local-cache     disabled
   product-demos       disabled
@@ -80,7 +80,7 @@ aap-demo enable              # List all addons
 aap-demo enable portal       # Installs Automation Portal
 aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
-aap-demo enable ao-eap       # Early Access Program only for Automation Orchestrator
+aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
 aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 

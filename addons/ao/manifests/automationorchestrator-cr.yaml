@@ -1,0 +1,32 @@
+# Generated from: aapctl install ao --dry-run -o yaml
+# Docs:
+# https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops
+#
+# Placeholders substituted by deploy.sh:
+#   __NAMESPACE__         -> automation-orchestrator
+#   __INGRESS_HOST__      -> route hostname
+#   __PULL_SECRET_NAME__  -> registry pull secret (addon addition; not in aapctl output)
+---
+apiVersion: aap.ansible.com/v1alpha1
+kind: AutomationOrchestrator
+metadata:
+  name: automation-orchestrator
+  namespace: __NAMESPACE__
+spec:
+  imagePullSecrets:
+    - name: __PULL_SECRET_NAME__
+  ingress:
+    host: __INGRESS_HOST__
+    type: Route
+  postgres:
+    backendDatabase:
+      secretRef:
+        name: orchestrator-postgres-secret
+    caCertSecretRef:
+      name: orchestrator-postgres-ca
+    host: orchestrator-postgres-rw
+    port: 5432
+    sslMode: verify-ca
+    temporalDatabase:
+      secretRef:
+        name: temporal-postgres-secret

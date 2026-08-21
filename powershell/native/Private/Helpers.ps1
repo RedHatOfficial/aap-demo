@@ -1087,10 +1087,25 @@ function Wait-AapUserContinue {
   Write-Host ''
 }
 
+function Resolve-AapAddonName {
+  param([string]$Addon)
+  switch ($Addon) {
+    'ao-eap' { return 'ao' }
+    default { return $Addon }
+  }
+}
+
 function Get-AapAddonsList {
   $raw = Get-AapConfigValue 'ADDONS'
   if (-not $raw) { return @() }
-  return @($raw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $normalized = @()
+  foreach ($addon in @($raw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+    $name = Resolve-AapAddonName $addon
+    if ($normalized -notcontains $name) {
+      $normalized += $name
+    }
+  }
+  return $normalized
 }
 
 function Set-AapAddonsList {
@@ -1113,6 +1128,7 @@ function Set-AapAddonsList {
 
 function Add-AapAddon {
   param([Parameter(Mandatory)][string]$Addon)
+  $Addon = Resolve-AapAddonName $Addon
   $current = @(Get-AapAddonsList)
   if ($current -contains $Addon) { return }
   $current += $Addon
@@ -1121,6 +1137,7 @@ function Add-AapAddon {
 
 function Remove-AapAddon {
   param([Parameter(Mandatory)][string]$Addon)
+  $Addon = Resolve-AapAddonName $Addon
   $current = @(Get-AapAddonsList) | Where-Object { $_ -ne $Addon }
   Set-AapAddonsList $current
 }

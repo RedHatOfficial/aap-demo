@@ -1,0 +1,27 @@
+# Automation Orchestrator operator OLM subscription (GA).
+# Placeholders substituted at runtime by deploy.sh:
+#   __NAMESPACE__           -> automation-orchestrator
+#   __CATALOG_NAMESPACE__   -> namespace of the CatalogSource (same ns on MicroShift)
+#   __OPERATOR_CHANNEL__    -> stable or early-access
+#
+# OperatorGroup spec is empty (AllNamespaces). The GA operator does not support
+# OwnNamespace / SingleNamespace / MultiNamespace install modes.
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: automation-orchestrator-operator
+  namespace: __NAMESPACE__
+spec: {}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: automation-orchestrator-operator
+  namespace: __NAMESPACE__
+spec:
+  channel: __OPERATOR_CHANNEL__
+  name: automation-orchestrator-operator
+  source: redhat-operators
+  sourceNamespace: __CATALOG_NAMESPACE__
+  installPlanApproval: Manual

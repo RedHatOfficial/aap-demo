@@ -124,11 +124,11 @@ for arg in "$@"; do
     deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
       COMMAND="$arg"
       ;;
-    --ai | --reset)
-      # Flags for diagnose --ai and destroy --reset
+    --ai | --reset | --force | --refresh-catalog)
+      # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
+    mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -398,7 +398,7 @@ Addons:
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao-eap   Install Automation Orchestrator Early Access
+  enable ao       Install Automation Orchestrator
   enable local-cache Cache container images locally (~30GB) to speed up deploys
 
 Examples:
@@ -1771,8 +1771,8 @@ cmd_status() {
     [ "$_cred_found" = "true" ] && echo ""
   fi
 
-  # Show credentials for Automation Orchestrator (ao-eap addon)
-  if echo "$(_addons_list)" | grep -qw "ao-eap" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+  # Show credentials for Automation Orchestrator (ao addon)
+  if echo "$(_addons_list)" | grep -qw "ao" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
     local _ao_ns="automation-orchestrator"
     local _ao_pw="" _ao_secret=""
     _ao_secret=$(kubectl get secret -n "$_ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)
@@ -1799,7 +1799,7 @@ cmd_status() {
     local enabled=false
     if echo "$saved_addons" | grep -qw "$a"; then
       enabled=true
-    elif [ "$a" = "ao-eap" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+    elif [ "$a" = "ao" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
       enabled=true
     fi
     if [ "$enabled" = true ]; then
@@ -2568,18 +2568,39 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao-eap apme-eap local-cache product-demos product-demo-satellite"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite"
+
+_normalize_addon_name() {
+  case "$1" in
+    ao-eap) echo "ao" ;;
+    *) echo "$1" ;;
+  esac
+}
 
 _addons_config_file() {
   echo "${HOME}/.aap-demo/config"
 }
 
 _addons_list() {
-  local config
+  local config _raw _addon _normalized _result=""
   config="$(_addons_config_file)"
   if [ -f "$config" ]; then
-    grep '^ADDONS=' "$config" 2>/dev/null | cut -d= -f2 | tr ',' ' '
+    _raw=$(grep '^ADDONS=' "$config" 2>/dev/null | cut -d= -f2 | tr ',' ' ')
+    for _addon in $_raw; do
+      _normalized=$(_normalize_addon_name "$_addon")
+      case " $_result " in
+        *" $_normalized "*) ;;
+        *)
+          if [ -n "$_result" ]; then
+            _result="$_result $_normalized"
+          else
+            _result="$_normalized"
+          fi
+          ;;
+      esac
+    done
   fi
+  echo "$_result"
 }
 
 _addons_save() {
@@ -2597,6 +2618,7 @@ _addons_save() {
 _addons_add() {
   local addon="$1"
   local current
+  addon=$(_normalize_addon_name "$addon")
   current=$(_addons_list)
   # Don't add if already present
   if echo "$current" | grep -qw "$addon"; then
@@ -2612,6 +2634,7 @@ _addons_add() {
 _addons_remove() {
   local addon="$1"
   local current new
+  addon=$(_normalize_addon_name "$addon")
   current=$(_addons_list)
   new=$(echo "$current" | tr ' ' '\n' | grep -v "^${addon}$" | tr '\n' ',' | sed 's/,$//')
   _addons_save "$new"
@@ -2620,8 +2643,10 @@ _addons_remove() {
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
+  addon=$(_normalize_addon_name "$addon")
   if [ -z "$addon" ]; then
-    echo "Usage: aap-demo enable <addon>"
+    echo "Usage: aap-demo enable <addon> [--force] [--refresh-catalog]"
+    echo "       FORCE=1 aap-demo enable <addon>   # same as --force"
     echo ""
     local saved
     saved=$(_addons_list)
@@ -2684,6 +2709,7 @@ cmd_enable() {
 cmd_disable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
+  addon=$(_normalize_addon_name "$addon")
   if [ -z "$addon" ]; then
     echo "Usage: aap-demo disable <addon> [options]"
     echo ""

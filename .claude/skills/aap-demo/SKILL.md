@@ -52,7 +52,7 @@ This environment includes characteristics specific to local development:
 | Destroy and rebuild from scratch | `aap-demo redeploy-all` |
 | Show help | `aap-demo help` |
 
-Available addons: olm, console, registry, mcp-server, devspaces, prometheus, portal
+Available addons: olm, console, registry, mcp-server, devspaces, prometheus, portal, **ao** (Automation Orchestrator)
 
 ## Portal Addon
 
@@ -65,6 +65,19 @@ Helm-based Self-Service Portal on OpenShift (`aap-demo enable portal`):
 **Access**: `aap-demo status portal` for route URL. Sign in with AAP OAuth (admin credentials).
 
 **Prerequisites**: AAP deployed, Helm 3.10+, `registry.redhat.io` pull secret for OCI plugins.
+
+## Automation Orchestrator (`ao`) Addon
+
+GA install via checked-in GitOps manifests (`aap-demo enable ao`):
+
+- **No `aapctl` required** at install time — see [`addons/ao/README.md`](addons/ao/README.md)
+- Namespace: `automation-orchestrator`
+- AO operator OLM + catalog live in **app namespace** (not `aap-operator` — avoids MultipleOperatorGroupsFound)
+- Default channel: `stable` (`AO_OPERATOR_CHANNEL=early-access` to override)
+- Dev Postgres: CloudNativePG upstream manifest (not Red Hat supported)
+- Force reinstall after password drift: `FORCE=1 aap-demo enable ao`
+
+**Access**: `aap-demo status` or `kubectl get routes -n automation-orchestrator`. Admin password in `automation-orchestrator-initial-admin-password`.
 
 ## Workflow
 
@@ -323,6 +336,7 @@ Use Ansible modules only when kubectl/curl are insufficient for complex workflow
 - NFS provisioner uses `__NFS_SERVER_IP__` placeholder resolved at deploy time
 - MicroShift lacks `ingresses.config.openshift.io` API — route hosts use nip.io
 - OLM is not built into MicroShift — installed via `operator-sdk olm install` during create
-- Latest CatalogSource must be in `aap-operator` namespace (no `openshift-marketplace` on MicroShift)
+- Latest CatalogSource for **AAP** must be in `aap-operator` namespace (no `openshift-marketplace` on MicroShift)
+- **AO addon** copies its own `redhat-operators` CatalogSource into `automation-orchestrator` (see ADR-017)
 - Bundle unpack jobs need `privileged` SCC (not just `anyuid`) due to seccomp annotations
 - `inotify` sysctl limits (`max_user_instances=2099999999`) are critical for operator performance

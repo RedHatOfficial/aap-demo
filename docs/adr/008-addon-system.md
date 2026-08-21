@@ -59,7 +59,7 @@ Current first-class addons in `AVAILABLE_ADDONS`:
 | `mcp-server` | Yes | AnsibleMCPServer CR |
 | `portal` | Yes | Helm chart |
 | `setup-pah` | Yes | Private Automation Hub credentials |
-| `ao-eap` | Yes | Automation Orchestrator EAP (aapctl + OLM) |
+| `ao` | Yes | Automation Orchestrator — GA OLM + GitOps manifests ([ADR-017](017-ao-addon.md), [`addons/ao/README.md`](../../addons/ao/README.md)) |
 | `apme-eap` | Yes | APME playbook addon (Ansible + Helm) |
 | `local-cache` | No | Host-side image save/load via CRC SSH (see ADR-021) |
 

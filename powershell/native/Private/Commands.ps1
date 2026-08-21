@@ -20,6 +20,8 @@ function Invoke-AapDemoEnable {
     return
   }
 
+  $Addon = Resolve-AapAddonName $Addon
+
   if ($Addon -notin $Script:AapAvailableAddons) {
     throw "Unknown addon: $Addon`nAvailable: $($Script:AapAvailableAddons -join ', ')"
   }
@@ -44,6 +46,8 @@ function Invoke-AapDemoDisable {
     Write-Host "Available addons: $($Script:AapAvailableAddons -join ', ')"
     return
   }
+
+  $Addon = Resolve-AapAddonName $Addon
 
   if ($Addon -notin $Script:AapAvailableAddons) {
     throw "Unknown addon: $Addon"

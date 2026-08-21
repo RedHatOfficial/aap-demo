@@ -121,7 +121,7 @@ Select namespaces to scale down:
   2) [x] openshift-console  (2 running)
   3) [x] openshift-insights  (1 running)
   4) [x] openshift-image-registry  (1 running)
-  5) [x] automation-orchestrator  [ao-eap addon] (3 running)
+  5) [x] automation-orchestrator  [ao addon] (3 running)
 
   Enter numbers to toggle, a for all, n for none, or press Enter to confirm:
 ```
@@ -147,7 +147,7 @@ is no intermediate "reduce to 1" option since they are already at 1.
 
 **Addon namespaces** (included when their addon is enabled):
 
-- `automation-orchestrator` (ao-eap)
+- `automation-orchestrator` (ao)
 - `apme` (apme-eap)
 - `redhat-rhaap-portal` (portal)
 

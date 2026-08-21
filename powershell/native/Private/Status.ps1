@@ -124,7 +124,7 @@ function Invoke-AapDemoStatus {
   Write-Host '-------'
   foreach ($a in $Script:AapAvailableAddons) {
     $enabled = $savedAddons -contains $a
-    if (-not $enabled -and $a -eq 'ao-eap') {
+    if (-not $enabled -and $a -eq 'ao') {
       $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'automation-orchestrator')) -eq 0
     }
     if (-not $enabled -and $a -eq 'apme-eap') {
