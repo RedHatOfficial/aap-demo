@@ -1,0 +1,16 @@
+# RHDH operator subscription for x2ansible
+# Placeholders substituted by deploy.sh:
+#   __OPERATOR_NAMESPACE__  - openshift-operators or operators
+#   __CATALOG_NAMESPACE__   - namespace where redhat-operators CatalogSource lives
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: developer-hub-operator-subscription
+  namespace: __OPERATOR_NAMESPACE__
+spec:
+  channel: "fast-1.9"
+  installPlanApproval: Automatic
+  name: rhdh
+  source: redhat-operators
+  sourceNamespace: __CATALOG_NAMESPACE__

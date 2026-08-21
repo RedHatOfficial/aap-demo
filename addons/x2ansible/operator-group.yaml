@@ -1,0 +1,9 @@
+# Optional OperatorGroup — only applied when the operator namespace has none yet.
+# On full OpenShift, openshift-operators already has a global OperatorGroup.
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: rhdh-operator-group
+  namespace: __OPERATOR_NAMESPACE__
+spec: {}
