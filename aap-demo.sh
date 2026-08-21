@@ -2707,6 +2707,8 @@ cmd_enable() {
   else
     echo "Enabling addon: $addon"
   fi
+  aap_demo_reload_version
+  printf '  Source: %s (%s)\n' "${addon_dir}/deploy.sh" "$(aap_demo_version_short)"
   if [ "$_skip_cluster_verify" != true ]; then
     _verify_cluster || return 1
   fi
