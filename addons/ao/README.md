@@ -31,6 +31,9 @@ Remove:
 aap-demo disable ao
 ```
 
+This removes the `automation-orchestrator` namespace and AO OLM resources. The CloudNativePG
+operator in `cnpg-system` is **not** removed (it may be shared).
+
 ## Prerequisites
 
 | Requirement | Notes |
