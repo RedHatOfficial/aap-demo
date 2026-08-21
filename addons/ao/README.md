@@ -80,12 +80,11 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `CNPG_VERSION` | `1.25.1` | CloudNativePG operator version (dev-only) |
 | `AAP_DEMO_NAMESPACE` | `aap-operator` | Used to derive cluster ingress domain for the AO route |
 | `FORCE` | unset | Set to `1` or use `--force` to reinstall |
-| `AO_REFRESH_CATALOG` | unset | Re-apply AO catalog index and restart catalog pod |
+| `AO_REFRESH_CATALOG` | unset | Set to `1` to restart the AO catalog pod before install |
 | `AO_INDEX_IMAGE` | auto | Pin operator index image explicitly |
 | `AO_FALLBACK_INDEX_IMAGE` | `...v4.22-automation-orchestrator-operator-early-access-1787151066` | Used when default AAP catalog lacks AO |
 | `AO_OPERATOR_CHANNEL` | `stable` | OLM subscription channel (`early-access` also available in the index) |
 | `AO_PULL_SECRET_NAME` | `automation-orchestrator-pull-secret` | Registry pull secret in AO namespace |
-| `AO_REFRESH_CATALOG` | unset | Set to `1` to restart the AO catalog pod before install |
 | `AO_CATALOG_TIMEOUT` | `600` | Seconds to wait for AO CatalogSource READY (index pull can be slow) |
 | `AO_DISABLE_INDEX_FALLBACK` | unset | Set to `1` to disable automatic fallback index |
 | `AAP_OCP_VERSION` | auto-detected | OCP version for default index tag |

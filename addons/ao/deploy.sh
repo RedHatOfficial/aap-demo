@@ -832,18 +832,33 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     sleep 5
   done
 
-  if [ -f "$AO_STATE_FILE" ]; then
-    # shellcheck source=/dev/null
-    source "$AO_STATE_FILE"
-  fi
-  CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
-  CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
-  kubectl delete -f "$CNPG_MANIFEST" 2>/dev/null || true
   rm -f "$AO_STATE_FILE"
 
   echo "✓ Automation Orchestrator removed"
+  echo "  CloudNativePG operator (cnpg-system) was left installed — it may be shared by other workloads."
   exit 0
 fi
+
+ao_instance_ready_to_skip() {
+  local _degraded _route _reason
+  if ! kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" &>/dev/null 2>&1; then
+    return 0
+  fi
+  _degraded=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+    -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' 2>/dev/null || echo "")
+  _reason=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+    -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.reason}{end}' 2>/dev/null || echo "")
+  _route=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  if [ "$_degraded" = "True" ]; then
+    echo "  Instance is Degraded (${_reason:-unknown}) — continuing install..."
+    return 1
+  fi
+  if [ -z "$_route" ]; then
+    echo "  Route not ready yet — continuing install..."
+    return 1
+  fi
+  return 0
+}
 
 # --- Skip if already running (unless --force) ---
 if [ -z "$FORCE" ]; then
@@ -856,7 +871,8 @@ if [ -z "$FORCE" ]; then
   if [ "${_ao_total:-0}" -gt 2 ] \
     && [ "${_ao_running:-0}" -eq "${_ao_total:-0}" ] \
     && [ "$_sub_channel" = "$OPERATOR_CHANNEL" ] \
-    && operator_is_available; then
+    && operator_is_available \
+    && ao_instance_ready_to_skip; then
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
     echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
     echo ""
