@@ -183,7 +183,7 @@ maybe_recover_catalog_pull() {
   fi
   echo "  Restarting catalog pod..."
   kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
-    --wait=false 2>/dev/null || true
+    --wait=false >/dev/null 2>&1 || true
 }
 
 ensure_catalog_signature_policy() {

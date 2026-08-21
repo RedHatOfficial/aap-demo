@@ -192,6 +192,7 @@ try_fallback_operator_index() {
   AO_INDEX_FALLBACK_USED=1
   refresh_operator_channel
   CATALOG_NAMESPACE=$(ensure_ao_catalog_source) || return 1
+  CATALOG_NAMESPACE="${CATALOG_NAMESPACE##*$'\n'}"
   OLM_NAMESPACE="$NAMESPACE"
   operator_package_in_catalog "$CATALOG_NAMESPACE"
 }
@@ -310,7 +311,7 @@ ensure_ao_catalog_source() {
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
     kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
-      --wait=false 2>/dev/null || true
+      --wait=false >/dev/null 2>&1 || true
   fi
 
   echo "  Waiting for CatalogSource READY..." >&2
@@ -328,7 +329,7 @@ ensure_ao_catalog_source() {
     echo "    The index image may not include this operator yet." >&2
   fi
 
-  echo "$_catalog_ns"
+  printf '%s\n' "$_catalog_ns"
 }
 
 resolve_cluster_domain() {
@@ -782,6 +783,7 @@ fi
 if ! CATALOG_NAMESPACE=$(ensure_ao_catalog_source); then
   exit 1
 fi
+CATALOG_NAMESPACE="${CATALOG_NAMESPACE##*$'\n'}"
 OLM_NAMESPACE="$NAMESPACE"
 refresh_operator_channel
 if ! operator_package_in_catalog "$CATALOG_NAMESPACE"; then
