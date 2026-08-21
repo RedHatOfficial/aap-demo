@@ -148,6 +148,62 @@ report_catalog_signature_failure() {
   echo "    AO_REFRESH_CATALOG=1 aap-demo enable ao" >&2
 }
 
+catalog_pod_wait_reason() {
+  local _catalog_ns="$1"
+  kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    -o jsonpath='{range .items[0].status.conditions[?(@.type=="PodScheduled")]}{.reason}{": "}{.message}{"\n"}{end}{range .items[0].status.containerStatuses[*].state.waiting}{.reason}{": "}{.message}{"\n"}{end}' \
+    2>/dev/null | head -3
+}
+
+maybe_recover_catalog_pull() {
+  local _catalog_ns="$1"
+  echo "  Attempting catalog pull recovery (signature policy + pod restart)..." >&2
+  maybe_relax_redhat_registry_signature_policy || true
+  kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    --wait=false 2>/dev/null || true
+}
+
+report_catalog_failure() {
+  local _catalog_ns="$1"
+  local _status _pod_status _reason
+  _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
+    -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
+  _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "unknown")
+  echo "ERROR: CatalogSource not READY after waiting." >&2
+  echo "  Namespace: ${_catalog_ns}" >&2
+  echo "  CatalogSource state: ${_status}" >&2
+  echo "  Catalog pod phase: ${_pod_status}" >&2
+  _reason=$(catalog_pod_wait_reason "$_catalog_ns")
+  if [ -n "$_reason" ]; then
+    echo "  Pod detail:" >&2
+    echo "$_reason" | sed 's/^/    /' >&2
+  fi
+  if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
+    echo "" >&2
+    report_catalog_signature_failure
+    return 1
+  fi
+  echo "" >&2
+  echo "  The AO addon copies redhat-operators into ${NAMESPACE}. TRANSIENT_FAILURE while" >&2
+  echo "  the pod is Pending usually means the index image is still pulling (multi-GB)." >&2
+  echo "  On slower networks or disks this can exceed 10 minutes." >&2
+  echo "" >&2
+  echo "  Verify AAP catalog is healthy first:" >&2
+  echo "    kubectl get catalogsource redhat-operators -n ${AAP_NAMESPACE}" >&2
+  echo "    kubectl get pods -n ${AAP_NAMESPACE} -l olm.catalogSource=redhat-operators" >&2
+  echo "" >&2
+  echo "  Then inspect the AO catalog pod and events:" >&2
+  echo "    kubectl describe pod -n ${_catalog_ns} -l olm.catalogSource=redhat-operators" >&2
+  echo "    kubectl get events -n ${_catalog_ns} --sort-by=.lastTimestamp | tail -15" >&2
+  echo "" >&2
+  echo "  Retry with a longer wait or after fixing AAP deploy:" >&2
+  echo "    aap-demo deploy" >&2
+  echo "    AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao" >&2
+  kubectl describe catalogsource redhat-operators -n "$_catalog_ns" 2>/dev/null | tail -20 >&2
+  return 1
+}
+
 resolve_aap_ocp_version() {
   if [ -n "${AAP_OCP_VERSION:-}" ]; then
     echo "$AAP_OCP_VERSION"
@@ -226,8 +282,10 @@ refresh_operator_channel
 
 wait_for_catalog_ready() {
   local _catalog_ns="$1"
-  local _i _status _pod_status
-  for _i in $(seq 1 60); do
+  local _i _status _pod_status _timeout _recovery_attempted
+  _timeout="${AO_CATALOG_TIMEOUT:-600}"
+  _recovery_attempted=0
+  for _i in $(seq 1 "$((_timeout / 5))"); do
     _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
       -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "Pending")
     if [ "$_status" = "READY" ]; then
@@ -242,8 +300,26 @@ wait_for_catalog_ready() {
         report_catalog_signature_failure
         return 1
       fi
+      if [ "$_recovery_attempted" -eq 0 ]; then
+        maybe_recover_catalog_pull "$_catalog_ns"
+        _recovery_attempted=1
+        sleep 10
+        continue
+      fi
     fi
-    printf "\r  $(hat) CatalogSource: %-18s | pod: %-16s    " "$_status" "$_pod_status" >&2
+    if [ "$_status" = "TRANSIENT_FAILURE" ] || [ "$_status" = "CONNECTING" ]; then
+      if [ "$_pod_status" = "Pending" ] || [ "$_pod_status" = "ContainerCreating" ]; then
+        printf "\r  $(hat) Pulling catalog image... (%ds / %ds)    " "$((_i * 5))" "$_timeout" >&2
+      else
+        printf "\r  $(hat) Catalog initializing (${_status})... (%ds / %ds)    " "$((_i * 5))" "$_timeout" >&2
+      fi
+      if [ "$_recovery_attempted" -eq 0 ] && [ "$((_i * 5))" -ge 60 ]; then
+        maybe_recover_catalog_pull "$_catalog_ns"
+        _recovery_attempted=1
+      fi
+    else
+      printf "\r  $(hat) CatalogSource: %-18s | pod: %-16s (%ds)    " "$_status" "$_pod_status" "$((_i * 5))" >&2
+    fi
     sleep 5
   done
   echo "" >&2
@@ -292,7 +368,7 @@ json.dump(out, sys.stdout)
 }
 
 select_ao_index_image() {
-  local _aap_ns _aap_image
+  local _aap_ns _aap_image _aap_state
   if [ -n "${AO_INDEX_IMAGE:-}" ]; then
     AO_ACTIVE_INDEX_IMAGE="$AO_INDEX_IMAGE"
     echo "$AO_ACTIVE_INDEX_IMAGE"
@@ -305,7 +381,15 @@ select_ao_index_image() {
   _aap_ns=$(find_catalog_namespace)
   _aap_image=$(kubectl get catalogsource redhat-operators -n "$_aap_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
-  if operator_package_in_catalog "$_aap_ns" && [ -n "$_aap_image" ]; then
+  _aap_state=$(kubectl get catalogsource redhat-operators -n "$_aap_ns" \
+    -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
+  if [ -n "$_aap_image" ]; then
+    if [ "$_aap_state" = "READY" ]; then
+      AO_ACTIVE_INDEX_IMAGE="$_aap_image"
+      echo "$AO_ACTIVE_INDEX_IMAGE"
+      return 0
+    fi
+    echo "  Using AAP catalog index (AAP catalog state: ${_aap_state:-unknown})" >&2
     AO_ACTIVE_INDEX_IMAGE="$_aap_image"
     echo "$AO_ACTIVE_INDEX_IMAGE"
     return 0
@@ -357,8 +441,7 @@ ensure_ao_catalog_source() {
 
   echo "  Waiting for CatalogSource READY..." >&2
   if ! wait_for_catalog_ready "$_catalog_ns"; then
-    echo "ERROR: CatalogSource not READY after refresh." >&2
-    kubectl describe catalogsource redhat-operators -n "$_catalog_ns" 2>/dev/null | tail -20 >&2
+    report_catalog_failure "$_catalog_ns"
     return 1
   fi
   echo "✓ CatalogSource READY" >&2
@@ -795,6 +878,15 @@ _aap_catalog_ns=$(find_catalog_namespace)
 if ! kubectl get catalogsource redhat-operators -n "$_aap_catalog_ns" &>/dev/null; then
   echo "ERROR: redhat-operators CatalogSource is missing."
   echo "  Run 'aap-demo deploy' first to install OLM and the operator catalog."
+  exit 1
+fi
+_aap_catalog_state=$(kubectl get catalogsource redhat-operators -n "$_aap_catalog_ns" \
+  -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
+if [ "$_aap_catalog_state" != "READY" ]; then
+  echo "ERROR: AAP redhat-operators catalog is not READY (state: ${_aap_catalog_state:-unknown})."
+  echo "  Fix the AAP catalog before enabling AO:"
+  echo "    aap-demo deploy"
+  echo "  Check: kubectl get catalogsource redhat-operators -n ${_aap_catalog_ns}"
   exit 1
 fi
 if catalog_pod_has_signature_pull_failure "$_aap_catalog_ns"; then

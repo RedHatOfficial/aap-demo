@@ -85,6 +85,8 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_FALLBACK_INDEX_IMAGE` | `...v4.22-automation-orchestrator-operator-early-access-1787151066` | Used when default AAP catalog lacks AO |
 | `AO_OPERATOR_CHANNEL` | `stable` | OLM subscription channel (`early-access` also available in the index) |
 | `AO_PULL_SECRET_NAME` | `automation-orchestrator-pull-secret` | Registry pull secret in AO namespace |
+| `AO_REFRESH_CATALOG` | unset | Set to `1` to restart the AO catalog pod before install |
+| `AO_CATALOG_TIMEOUT` | `600` | Seconds to wait for AO CatalogSource READY (index pull can be slow) |
 | `AO_DISABLE_INDEX_FALLBACK` | unset | Set to `1` to disable automatic fallback index |
 | `AAP_OCP_VERSION` | auto-detected | OCP version for default index tag |
 
@@ -128,13 +130,33 @@ Username: **admin**
 
 ## Troubleshooting
 
-### Catalog not READY
+### Catalog not READY / `TRANSIENT_FAILURE`
 
-Run `aap-demo deploy` first, then check the **AO-local** catalog (not only `aap-operator`):
+MicroShift requires a **copy** of `redhat-operators` in `automation-orchestrator`. While the
+catalog pod pulls the operator index (multi-GB), OLM reports `TRANSIENT_FAILURE` and the pod
+may stay `Pending` — this is normal and can take **10+ minutes** on slow networks.
+
+**Prerequisite:** the AAP catalog in `aap-operator` must be `READY` first:
+
+```bash
+kubectl get catalogsource redhat-operators -n aap-operator \
+  -o jsonpath='{.status.connectionState.lastObservedState}{"\n"}'
+aap-demo deploy   # if not READY
+```
+
+Check the **AO-local** catalog:
 
 ```bash
 kubectl get catalogsource redhat-operators -n automation-orchestrator
 kubectl get pods -n automation-orchestrator -l olm.catalogSource=redhat-operators
+kubectl describe pod -n automation-orchestrator -l olm.catalogSource=redhat-operators
+kubectl get events -n automation-orchestrator --sort-by=.lastTimestamp | tail -15
+```
+
+Retry with a longer wait:
+
+```bash
+AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao
 ```
 
 ### SignatureValidationFailed (MicroShift 4.22+)
