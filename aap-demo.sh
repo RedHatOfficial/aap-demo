@@ -37,6 +37,9 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
+# shellcheck source=includes/aap-demo-version.sh
+source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
+
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 
@@ -121,8 +124,11 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | help | --help | -h)
-      COMMAND="$arg"
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | version | help | --help | -h | --version | -V)
+      case "$arg" in
+        --version | -V) COMMAND="version" ;;
+        *) COMMAND="$arg" ;;
+      esac
       ;;
     --ai | --reset | --force | --refresh-catalog)
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
@@ -452,6 +458,7 @@ COMMANDS (all infrastructure types):
     redhat-status   Check Red Hat registry status (alias: rh-status)
     config          Configure aap-demo settings
     update          Pull latest code and reinstall
+    version         Show aap-demo version and build timestamp
     help            Show this help
 
 COMMANDS:
@@ -724,9 +731,14 @@ cmd_config() {
   mkdir -p "$(dirname "$AAP_DEMO_CONFIG")"
 }
 
+cmd_version() {
+  aap_demo_print_version
+}
+
 cmd_update() {
   echo ""
   printf "\033[1maap-demo update\033[0m - Pulling latest code and reinstalling...\n"
+  printf "  Current:   %s\n" "$(aap_demo_version_short)"
   echo ""
 
   local repo_root="$SCRIPT_DIR"
@@ -755,6 +767,9 @@ cmd_update() {
 
   echo ""
   echo "  ✓ Update complete"
+  aap_demo_reload_version
+  printf "  Now:       %s\n" "$(aap_demo_version_short)"
+  printf "  Built:     %s\n" "$AAP_DEMO_GIT_DATE"
 }
 
 cmd_redhat_status() {
@@ -1612,6 +1627,8 @@ cmd_status() {
   echo ""
   printf "\033[1mAAP Demo Status\033[0m\n"
   echo "==============="
+  printf "Tool:        %s\n" "$(aap_demo_version_short)"
+  printf "Built:       %s\n" "$AAP_DEMO_GIT_DATE"
   echo ""
 
   # Check cluster status via infra abstraction
@@ -1653,12 +1670,8 @@ cmd_status() {
 
   # Show kubeconfig
   echo "Kubeconfig:  $KUBECONFIG"
-  local _script_dir _script_branch _script_remote
-  _script_dir="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")" && pwd)"
-  _script_branch=$(cd "$_script_dir" && git branch --show-current 2>/dev/null || echo "unknown")
-  _script_remote=$(cd "$_script_dir" && git remote get-url origin 2>/dev/null || echo "")
-  echo "Source:      $_script_dir (branch: $_script_branch)"
-  [ -n "$_script_remote" ] && echo "Repo:        $_script_remote"
+  echo "Source:      $AAP_DEMO_REPO_ROOT (branch: $AAP_DEMO_GIT_BRANCH)"
+  [ -n "$AAP_DEMO_GIT_REMOTE" ] && echo "Repo:        $AAP_DEMO_GIT_REMOTE"
 
   # VM stats
   echo ""
@@ -2812,7 +2825,7 @@ esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in
-  help | --help | -h | config | update | "" | destroy)
+  help | --help | -h | config | update | version | "" | destroy)
     # These commands don't need cluster access
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
@@ -2864,6 +2877,9 @@ case "$COMMAND" in
     ;;
   update)
     cmd_update
+    ;;
+  version | --version | -V)
+    cmd_version
     ;;
   config)
     cmd_config "${EXTRA_ARGS[@]}"

@@ -39,6 +39,7 @@ export KUBECONFIG=~/.aap-demo/kubeconfig.microshift
 ## Status
 
 ```bash
+aap-demo version       # Tool version, commit, and build timestamp
 aap-demo status        # Show routes and credentials
 ```
 

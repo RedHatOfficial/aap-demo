@@ -1330,3 +1330,70 @@ Run from the repo directory or install with:
   }
   return $repoRoot
 }
+
+function Get-AapDemoVersionInfo {
+  param(
+    [string]$RepoRoot = $Script:AapDemoRepoRoot
+  )
+
+  $versionFile = Join-Path $RepoRoot 'VERSION'
+  $version = '0.0.0-dev'
+  if (Test-Path -LiteralPath $versionFile) {
+    $version = (Get-Content -LiteralPath $versionFile -TotalCount 1).Trim()
+    if (-not $version) { $version = '0.0.0-dev' }
+  }
+
+  $gitSha = 'unknown'
+  $gitShaFull = 'unknown'
+  $gitBranch = 'unknown'
+  $gitDate = 'unknown'
+  $gitRemote = ''
+
+  if (Test-AapCommand 'git') {
+    Push-Location $RepoRoot
+    try {
+      $gitSha = (& git rev-parse --short HEAD 2>$null).Trim()
+      if (-not $gitSha) { $gitSha = 'unknown' }
+      $gitShaFull = (& git rev-parse HEAD 2>$null).Trim()
+      if (-not $gitShaFull) { $gitShaFull = 'unknown' }
+      $gitBranch = (& git branch --show-current 2>$null).Trim()
+      if (-not $gitBranch) { $gitBranch = 'unknown' }
+      $gitDate = (& git log -1 --format=%cd --date=iso-strict 2>$null).Trim()
+      if (-not $gitDate) { $gitDate = 'unknown' }
+      $gitRemote = (& git remote get-url origin 2>$null).Trim()
+    } finally {
+      Pop-Location
+    }
+  }
+
+  return [pscustomobject]@{
+    Version   = $version
+    GitSha    = $gitSha
+    GitShaFull = $gitShaFull
+    GitBranch = $gitBranch
+    GitDate   = $gitDate
+    GitRemote = $gitRemote
+    RepoRoot  = $RepoRoot
+  }
+}
+
+function Get-AapDemoVersionShort {
+  $info = Get-AapDemoVersionInfo
+  return ('{0} ({1})' -f $info.Version, $info.GitSha)
+}
+
+function Show-AapDemoVersion {
+  param(
+    [string]$RepoRoot = $Script:AapDemoRepoRoot
+  )
+
+  $info = Get-AapDemoVersionInfo -RepoRoot $RepoRoot
+  Write-Host ("aap-demo {0}" -f $info.Version)
+  Write-Host ("  built:    {0}" -f $info.GitDate)
+  Write-Host ("  commit:   {0}" -f $info.GitShaFull)
+  Write-Host ("  branch:   {0}" -f $info.GitBranch)
+  Write-Host ("  source:   {0}" -f $info.RepoRoot)
+  if ($info.GitRemote) {
+    Write-Host ("  repo:     {0}" -f $info.GitRemote)
+  }
+}

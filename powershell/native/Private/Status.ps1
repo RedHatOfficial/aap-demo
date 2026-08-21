@@ -6,6 +6,11 @@ function Invoke-AapDemoStatus {
 
   Write-AapHeader 'AAP Demo Status'
 
+  $versionInfo = Get-AapDemoVersionInfo
+  Write-Host ("Tool:        {0} ({1})" -f $versionInfo.Version, $versionInfo.GitSha)
+  Write-Host ("Built:       {0}" -f $versionInfo.GitDate)
+  Write-Host ''
+
   $crc = Get-AapCrcStatus
   $state = [string]$crc.crcStatus
   Write-Host "Infra:       OpenShift Local (CRC)"
@@ -136,6 +141,10 @@ function Invoke-AapDemoStatus {
   Write-Host ''
 }
 
+function Invoke-AapDemoVersion {
+  Show-AapDemoVersion -RepoRoot (Get-AapInstalledRepoRoot)
+}
+
 function Get-AapDemoHelp {
   @'
 aap-demo — Windows PowerShell CLI
@@ -160,6 +169,7 @@ DEPLOY:
 
 STATUS:
     status          Show cluster and AAP status
+    version         Show aap-demo version and build timestamp
     diagnose        Check environment health
     idle            Scale AAP down/up (true|false)
     redhat-status   Check Red Hat registry status (alias: rh-status)
