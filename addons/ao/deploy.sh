@@ -110,6 +110,7 @@ maybe_relax_redhat_registry_signature_policy() {
     echo "  or apply the same /etc/containers/policy.json change on cluster nodes." >&2
     return 1
   fi
+  echo "  Connecting to CRC VM (127.0.0.1:${CRC_SSH_PORT})..." >&2
   ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo python3 -c "
 import json
 p = \"/etc/containers/policy.json\"
@@ -458,17 +459,25 @@ ensure_ao_catalog_source() {
     return 1
   fi
 
+  # Signature policy is node-level. Main flow requires AAP catalog READY, so the cluster
+  # already pulls redhat-operator-index — skip redundant CRC SSH (can hang on port 2222).
+  if needs_signature_policy_relaxation; then
+    _aap_state=$(kubectl get catalogsource redhat-operators -n "$_src_ns" \
+      -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
+    if [ "$_aap_state" = "READY" ]; then
+      echo "  ✓ AAP catalog READY — cluster can pull operator index" >&2
+    else
+      echo "  Ensuring MicroShift 4.22+ registry signature policy..." >&2
+      if ! maybe_relax_redhat_registry_signature_policy; then
+        report_catalog_signature_failure
+        return 1
+      fi
+    fi
+  fi
+
   sed -e "s|image: .*|image: ${_target_image}|" \
     -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|" \
     "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
-
-  if needs_signature_policy_relaxation; then
-    echo "  Ensuring MicroShift 4.22+ registry signature policy..." >&2
-    if ! maybe_relax_redhat_registry_signature_policy; then
-      report_catalog_signature_failure
-      return 1
-    fi
-  fi
 
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
