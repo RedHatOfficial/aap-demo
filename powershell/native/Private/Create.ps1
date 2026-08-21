@@ -157,7 +157,15 @@ function Invoke-AapEnsureCluster {
 
   Initialize-AapKubeEnvironment
   if ((Invoke-AapOcQuiet @('cluster-info')) -ne 0) {
-    throw 'oc cannot connect to cluster'
+    try {
+      Sync-AapKubeconfig -Quiet
+      Initialize-AapKubeEnvironment
+    } catch {
+      # Fall through to connection check below.
+    }
+    if ((Invoke-AapOcQuiet @('cluster-info')) -ne 0) {
+      throw 'oc cannot connect to cluster'
+    }
   }
 }
 

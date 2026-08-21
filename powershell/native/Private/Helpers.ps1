@@ -1242,6 +1242,17 @@ function Remove-AapStaleCrcKubeEntries {
   }
 }
 
+function Test-AapOcClusterInfoKube {
+  param([Parameter(Mandatory)][string]$KubeConfig)
+  $prev = $env:KUBECONFIG
+  try {
+    $env:KUBECONFIG = $KubeConfig
+    return (Invoke-AapOcQuiet @('cluster-info')) -eq 0
+  } finally {
+    $env:KUBECONFIG = $prev
+  }
+}
+
 function Sync-AapKubeconfig {
   [CmdletBinding()]
   param(
@@ -1261,6 +1272,21 @@ function Sync-AapKubeconfig {
   $ctxName = 'aap-demo'
   $tempKube = [System.IO.Path]::GetTempFileName()
   Copy-Item -LiteralPath $crcKube -Destination $tempKube -Force
+
+  # CRC kubeconfig can be stale after MicroShift wipe/restart (nip.io setup).
+  if (-not (Test-AapOcClusterInfoKube -KubeConfig $tempKube)) {
+    $kubeadmin = Invoke-AapCrcSsh 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' -AllowFailure
+    if (-not $kubeadmin) {
+      throw 'Could not fetch kubeconfig from cluster (CRC and kubeadmin sources failed)'
+    }
+    Set-Content -LiteralPath $tempKube -Value $kubeadmin -Encoding ascii
+    if (-not (Test-AapOcClusterInfoKube -KubeConfig $tempKube)) {
+      throw 'Fetched kubeconfig is not valid for cluster access'
+    }
+    if (-not $Quiet) {
+      Write-AapStep 'Refreshed credentials from MicroShift kubeadmin kubeconfig'
+    }
+  }
 
   try {
     $config = Get-AapOcConfigJson -KubeConfig $tempKube
