@@ -144,19 +144,27 @@ needs_signature_policy_relaxation() {
 
 catalog_pod_has_signature_pull_failure() {
   local _catalog_ns="$1"
-  local _pod _waiting
+  local _pod _waiting _phase
   _pod=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
   if [ -z "$_pod" ]; then
     return 1
   fi
+  _phase=$(kubectl get pod "$_pod" -n "$_catalog_ns" \
+    -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
   _waiting=$(kubectl get pod "$_pod" -n "$_catalog_ns" \
     -o jsonpath='{range .status.containerStatuses[*].state.waiting}{.reason}{": "}{.message}{"\n"}{end}' 2>/dev/null || echo "")
   if echo "$_waiting" | grep -q "SignatureValidationFailed"; then
     return 0
   fi
-  kubectl get events -n "$_catalog_ns" --field-selector "involvedObject.name=${_pod}" \
-    2>/dev/null | grep -q "SignatureValidationFailed"
+  # Events can show SignatureValidationFailed during ContainerCreating before the
+  # node uses a cached layer or policy is applied — only fail once pull backs off.
+  if [ "$_phase" = "ImagePullBackOff" ] || [ "$_phase" = "ErrImagePull" ]; then
+    kubectl get events -n "$_catalog_ns" --field-selector "involvedObject.name=${_pod}" \
+      2>/dev/null | grep -q "SignatureValidationFailed"
+    return $?
+  fi
+  return 1
 }
 
 report_catalog_signature_failure() {
@@ -177,6 +185,13 @@ catalog_pod_wait_reason() {
 
 maybe_recover_catalog_pull() {
   local _catalog_ns="$1"
+  local _fix_signature="${2:-0}"
+  if [ "$_fix_signature" = "1" ] && needs_signature_policy_relaxation; then
+    echo "  Applying MicroShift 4.22+ signature policy fix..." >&2
+    if ! maybe_relax_redhat_registry_signature_policy; then
+      return 1
+    fi
+  fi
   echo "  Restarting AO catalog pod..." >&2
   kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
     --wait=false 2>/dev/null || true
@@ -213,9 +228,14 @@ report_catalog_failure() {
     echo "$_reason" | sed 's/^/    /' >&2
   fi
   if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
-    echo "" >&2
-    report_catalog_signature_failure
-    return 1
+    local _fail_phase
+    _fail_phase=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+      -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
+    if [ "$_fail_phase" = "ImagePullBackOff" ] || [ "$_fail_phase" = "ErrImagePull" ]; then
+      echo "" >&2
+      report_catalog_signature_failure
+      return 1
+    fi
   fi
   echo "" >&2
   echo "  The AO addon copies redhat-operators into ${NAMESPACE}. TRANSIENT_FAILURE while" >&2
@@ -315,9 +335,10 @@ refresh_operator_channel
 
 wait_for_catalog_ready() {
   local _catalog_ns="$1"
-  local _i _status _pod_status _timeout _pod_restart_attempted
+  local _i _status _pod_status _timeout _pod_restart_attempted _signature_fix_attempted
   _timeout="${AO_CATALOG_TIMEOUT:-600}"
   _pod_restart_attempted=0
+  _signature_fix_attempted=0
   for _i in $(seq 1 "$((_timeout / 5))"); do
     _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
       -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
@@ -329,6 +350,14 @@ wait_for_catalog_ready() {
       -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
     if [ "$_pod_status" = "ImagePullBackOff" ] || [ "$_pod_status" = "ErrImagePull" ]; then
       if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
+        if [ "$_signature_fix_attempted" -eq 0 ]; then
+          if maybe_recover_catalog_pull "$_catalog_ns" 1; then
+            _signature_fix_attempted=1
+            _pod_restart_attempted=1
+            sleep 15
+            continue
+          fi
+        fi
         echo "" >&2
         report_catalog_signature_failure
         return 1
@@ -349,11 +378,6 @@ wait_for_catalog_ready() {
       return 1
     fi
     if catalog_pod_is_pulling "$_status" "$_pod_status"; then
-      if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
-        echo "" >&2
-        report_catalog_signature_failure
-        return 1
-      fi
       printf "\r  $(hat) Pulling catalog image... (%ds / %ds)    " "$((_i * 5))" "$_timeout" >&2
     else
       printf "\r  $(hat) CatalogSource: %-18s | pod: %-16s (%ds)    " \
@@ -942,12 +966,6 @@ if [ "$_aap_catalog_state" != "READY" ]; then
   echo "  Fix the AAP catalog before enabling AO:"
   echo "    aap-demo deploy"
   echo "  Check: kubectl get catalogsource redhat-operators -n ${_aap_catalog_ns}"
-  exit 1
-fi
-if catalog_pod_has_signature_pull_failure "$_aap_catalog_ns"; then
-  echo "ERROR: AAP catalog pod reports SignatureValidationFailed." >&2
-  echo "  Run 'aap-demo deploy' on this machine to relax MicroShift 4.22+ signature policy." >&2
-  echo "  Then retry: aap-demo enable ao" >&2
   exit 1
 fi
 if ! CATALOG_NAMESPACE=$(ensure_ao_catalog_source); then
