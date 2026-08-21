@@ -1,9 +1,10 @@
 # Automation Orchestrator manifests
 
-Checked-in Kubernetes templates applied by [`../deploy.sh`](../deploy.sh). They follow the
-resource shapes from
-[`aapctl install ao --dry-run`](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)
-but **do not require `aapctl` at install time**.
+Checked-in Kubernetes templates applied by [`../deploy.sh`](../deploy.sh). Shapes match
+[Automation Orchestrator documentation](https://docs.redhat.com/en/documentation/automation_orchestrator/)
+(the GitOps guide used when these files were generated:
+[Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)).
+**`deploy.sh` applies them without calling `aapctl`.**
 
 ## Files
 
@@ -17,8 +18,10 @@ Placeholders (`__NAMESPACE__`, `__OPERATOR_CHANNEL__`, etc.) are substituted by 
 
 ## Not checked in (by design)
 
-Per Red Hat GitOps guidance, **database Secrets are not committed** — passwords change on every
-`aapctl --dry-run` invocation. `deploy.sh` creates these at install time:
+Database **Secrets are not committed** (Red Hat GitOps guidance: credentials must not live in git).
+**`deploy.sh` creates them at install time**—no `aapctl` call is required. Maintainers who regenerate
+templates with `./scripts/generate-manifests.sh` / `aapctl --dry-run` must strip Secret manifests before
+committing; dry-run output uses one-time passwords.
 
 | Secret | Purpose |
 |--------|---------|
@@ -31,7 +34,9 @@ CNPG also creates `orchestrator-postgres-ca`, referenced by the instance CR as `
 
 ## Application order
 
-Matches [Understand aapctl manifest application order](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-understand_aapctl_manifest_application_order):
+Matches [Understand aapctl manifest application order](https://docs.redhat.com/en/documentation/automation_orchestrator/)
+(doc version at generation time:
+[application order](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-understand_aapctl_manifest_application_order)):
 
 1. Namespace + SCC grants (script)
 2. AO-local `CatalogSource` copy (MicroShift only — script)
