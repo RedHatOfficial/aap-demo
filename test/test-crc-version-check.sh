@@ -56,7 +56,7 @@ echo ""
 
 # Create a mock crc command that returns wrong version
 MOCK_CRC_DIR=$(mktemp -d)
-cat > "$MOCK_CRC_DIR/crc" <<EOF
+cat >"$MOCK_CRC_DIR/crc" <<EOF
 #!/bin/bash
 # Mock crc command for testing
 if [ "\$1" = "status" ] && [ "\$2" = "-o" ] && [ "\$3" = "json" ]; then
@@ -75,7 +75,7 @@ EOF
 chmod +x "$MOCK_CRC_DIR/crc"
 
 # Also create a mock for kubectl to simulate cluster running
-cat > "$MOCK_CRC_DIR/kubectl" <<'EOF'
+cat >"$MOCK_CRC_DIR/kubectl" <<'EOF'
 #!/bin/bash
 case "$1" in
   cluster-info)
@@ -108,7 +108,7 @@ export NAMESPACE=test-version-check
 
 # Run deploy and capture output
 deploy_exit_code=0
-(cd "$SCRIPT_DIR/.." && ./aap-demo.sh deploy > /tmp/deploy-test.log 2>&1) || deploy_exit_code=$?
+(cd "$SCRIPT_DIR/.." && ./aap-demo.sh deploy >/tmp/deploy-test.log 2>&1) || deploy_exit_code=$?
 deploy_output=$(cat /tmp/deploy-test.log 2>/dev/null || echo "")
 
 # Check that deploy failed (non-zero exit)
