@@ -85,5 +85,5 @@ For new contributors, read ADRs in this order:
 4. **006** + **007** + **012** — common deploy failure areas
 5. **008** — how optional components plug in
 6. **002** + **004** — portal (if using Self-Service Portal)
-7. **019** + **022** — APME addon and pre-built portal hub (if using Ansible Quality)
+7. **019** + **022** + **023** — APME addon, pre-built portal hub, and OpenShift template deploy (if using Ansible Quality)
 8. **010** + **014** — Windows and testing

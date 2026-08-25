@@ -1,0 +1,71 @@
+---
+# Launch the APME deploy job template and wait for completion.
+
+- name: Launch APME portal deployment job
+  hosts: localhost
+  gather_facts: false
+  vars:
+    apme_job_template_name: "{{ apme_aap_job_template_name | default('APME | Deploy Portal') }}"
+
+  tasks:
+    - name: Resolve job template by name
+      ansible.builtin.uri:
+        url: >-
+          {{ aap_host }}/api/controller/v2/job_templates/?name={{ apme_job_template_name | urlencode }}
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: apme_template_lookup
+
+    - name: Fail when job template is missing
+      ansible.builtin.fail:
+        msg: "Job template '{{ apme_job_template_name }}' not found in AAP"
+      when: apme_template_lookup.json.results | length == 0
+
+    - name: Set job template ID
+      ansible.builtin.set_fact:
+        apme_job_template_id: "{{ apme_template_lookup.json.results[0].id }}"
+
+    - name: Launch APME deploy job template
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/job_templates/{{ apme_job_template_id }}/launch/"
+        method: POST
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [201]
+        return_content: true
+      register: apme_launch_result
+
+    - name: Set launched job ID
+      ansible.builtin.set_fact:
+        apme_job_id: "{{ apme_launch_result.json.id }}"
+
+    - name: Poll job until complete
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/jobs/{{ apme_job_id }}/"
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+      register: apme_job_status
+      until: apme_job_status.json.status in ['successful', 'failed', 'error', 'cancelled']
+      retries: 120
+      delay: 5
+
+    - name: Fail when job did not succeed
+      ansible.builtin.fail:
+        msg: >-
+          APME deploy job {{ apme_job_id }} finished with status {{ apme_job_status.json.status }}.
+          View: {{ aap_host }}/#/jobs/playbook/{{ apme_job_id }}/output
+      when: apme_job_status.json.status != 'successful'
+
+    - name: Display success
+      ansible.builtin.debug:
+        msg: >-
+          APME deploy job {{ apme_job_id }} completed successfully.
+          View: {{ aap_host }}/#/jobs/playbook/{{ apme_job_id }}/output

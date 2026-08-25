@@ -1,0 +1,19 @@
+---
+# defaults for apme_template_deploy
+
+apme_template_file: "{{ playbook_dir }}/../deploy.yaml"
+apme_template_release_name: redhat-rhaap-portal
+apme_skip_openshift_secret_creation: true
+
+apme_portal_db_password: ""
+apme_portal_session_secret: ""
+apme_abbenay_token: ""
+
+apme_route_tls_enabled: false
+apme_route_tls_termination: edge
+apme_route_tls_certificate: ""
+apme_route_tls_key: ""
+apme_route_tls_ca_certificate: ""
+apme_route_tls_destination_ca_certificate: ""
+
+configure_github_app_secrets: false

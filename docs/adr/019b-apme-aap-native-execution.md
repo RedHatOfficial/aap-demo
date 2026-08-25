@@ -1,10 +1,12 @@
 <!-- markdownlint-disable MD013 MD024 -->
 # ADR-019b: APME AAP-Native Execution
 
-**Status:** Rejected
-**Date:** 2026-07-21
+**Status:** Accepted
+**Date:** 2026-07-21 (revised 2026-08-21)
 **Author:** Chad Ferman
-**Reason:** Overcomplex and adds multiple new support needs like
+**Supersedes:** Local venv execution in ADR-019 for deploy orchestration
+
+**See also:** [ADR-023](023-apme-openshift-template.md) — deploy mechanism changed from Helm charts to OpenShift Template processing while keeping AAP job orchestration.
 
 ## Context
 
@@ -16,7 +18,7 @@ ADR-019 established the `apme-eap` addon using official APME playbooks via a bas
 4. **System dependencies**: Required local Ansible installation
 5. **No UI visibility**: Playbook runs were opaque to users
 
-**Key insight:** Since `aap-demo` deploys AAP, we can use AAP's REST API to execute the playbooks *within AAP itself*, eliminating the venv entirely.
+**Key insight:** Since `aap-demo` deploys AAP, we can use AAP's REST API to execute the playbooks *within AAP itself*. With the pre-built portal hub container (ADR-022), host-side registry/skopeo dependencies are eliminated; a custom EE (`apme-ee`) carries helm and collections.
 
 ## Decision
 

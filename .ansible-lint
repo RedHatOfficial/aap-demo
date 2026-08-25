@@ -18,6 +18,7 @@ skip_list:
   - name[casing]       # Task names don't follow capitalization
   - role-name          # Role name doesn't match requirements
   - yaml[document-start] # Allow '---' at the start of YAML files
+  - var-naming         # Playbook-level vars passed from deploy.sh use apme_* prefix
 
 # Warn only
 warn_list:

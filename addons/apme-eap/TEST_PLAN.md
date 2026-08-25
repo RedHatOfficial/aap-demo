@@ -2,8 +2,13 @@
 
 ## Overview
 
-This test plan validates the AAP-native execution approach for the APME addon, which uses
-Ansible playbooks with `ansible.builtin.uri` to interact with AAP's REST API.
+This test plan validates the AAP-native execution approach for the APME addon,
+which launches an AAP job that processes the OpenShift Template (`deploy.yaml`)
+via `oc process --local` in Product Demos EE.
+
+**End-user validation (Issue #96 — OAuth on `apps.crc.testing`):**
+see [TEST_PLAN_ISSUE_96.md](TEST_PLAN_ISSUE_96.md) for branch checkout,
+step-by-step testing, and PR instructions.
 
 ## Test Environment
 
@@ -167,65 +172,63 @@ curl -k -H "Authorization: Bearer $AAP_TOKEN" "$AAP_HOST/api/controller/v2/me/" 
 
 - ✅ **Project**:
   - Name: `aap-demo-apme`
-  - Type: Manual
-  - Local Path: `aap-demo-apme-<timestamp>`
+  - Type: Git SCM (aap-demo repository, current branch)
   - Organization: Default
-  - Files exist in controller pod at `/var/lib/awx/projects/aap-demo-apme-<timestamp>/`
-- ✅ **Inventory**:
-  - Name: `localhost`
-  - Organization: Default
-  - Hosts: 1 (localhost with `ansible_connection: local`)
+  - Playbook path: `addons/apme-eap/playbooks/deploy_apme_portal.yml`
+- ✅ **Execution environment**:
+  - Name: `Product Demos EE`
+  - Image: `quay.io/ansible-product-demos/apd-ee-26:latest` (or `APME_EE_IMAGE` override)
 - ✅ **Job Template**:
-  - Name: `Deploy APME`
+  - Name: `APME | Deploy Portal`
   - Project: `aap-demo-apme`
-  - Inventory: `localhost`
-  - Playbook: `playbooks/deploy_apme_portal.yml`
-  - Ask variables on launch: Yes
+  - Inventory: `localhost` (built-in ID 1)
+  - Playbook: `addons/apme-eap/playbooks/deploy_apme_portal.yml`
+  - Ask variables on launch: No (pre-configured extra_vars)
 
 **Validation**:
 
 ```bash
-# Check files in controller pod
+# Check project synced on controller
 POD=$(kubectl get pods -n aap-operator -l app.kubernetes.io/name=aap-controller-task -o name | head -1)
-kubectl exec -n aap-operator $POD -- ls -la /var/lib/awx/projects/ | grep aap-demo-apme
+kubectl exec -n aap-operator $POD -- find /var/lib/awx/projects -path '*apme-eap/playbooks/deploy_apme_portal.yml' 2>/dev/null
 ```
 
-**Pass Criteria**: All resources visible in AAP UI, files present on controller pod
+**Pass Criteria**: All resources visible in AAP UI; playbook present after project sync
 
 ---
 
 ### TC-005: Job Launch and Monitoring
 
-**Objective**: Verify job launches correctly and output is streamed
+**Objective**: Verify AAP job launches correctly and completes successfully
 
 **Prerequisites**:
 
 - AAP resources exist (TC-004)
+- Product Demos EE image pullable from registry (`quay.io/ansible-product-demos/apd-ee-26:latest`)
 
 **Steps**:
 
 1. Run: `./aap-demo.sh enable apme-eap`
 2. Watch console output during job execution
-3. Click AAP Web UI link from console
+3. Open AAP Web UI link from console
 
 **Expected Results**:
 
-- ✅ Console shows: "Launching APME deployment job..."
+- ✅ Console shows: "APME deploy job launched"
 - ✅ Job ID displayed
-- ✅ AAP Web UI link provided
-- ✅ Job status polled (waiting message)
-- ✅ Job output streamed to console
-- ✅ Success/failure status displayed
-- ✅ AAP UI shows same job with matching output
+- ✅ AAP Web UI link provided (`#/jobs/playbook/<id>/output`)
+- ✅ Job status polled until successful or failed
+- ✅ On success: portal route `redhat-rhaap-portal-apme` exists
+- ✅ AAP UI shows job `APME | Deploy Portal` with matching output
 
 **Validation**:
 
 ```bash
-# Check AAP UI manually
-# Resources → Jobs → Recent Jobs → "Deploy APME"
+# Check AAP UI: Resources → Jobs → "APME | Deploy Portal"
+kubectl get route -n apme redhat-rhaap-portal
 ```
 
-**Pass Criteria**: Job launches, output streams, status reported correctly
+**Pass Criteria**: Job completes successfully; portal route accessible with AAP OAuth
 
 ---
 
@@ -260,6 +263,45 @@ grep -r "ProjectRequest" addons/apme-eap/roles/openshift_apme_setup/tasks/ || ec
 ```
 
 **Pass Criteria**: Namespace created without Project API errors
+
+---
+
+### TC-006b: OAuth on apps.crc.testing (Issue #96)
+
+**Objective**: Verify portal OAuth sign-in works on default CRC route domain (`apps.crc.testing`)
+
+**Prerequisites**:
+
+- CRC preset `microshift` with routes on `apps.crc.testing` (no nip.io override)
+- AAP deployed (`aap-demo deploy`)
+
+**Steps**:
+
+1. Run: `aap-demo create && aap-demo deploy && aap-demo enable apme-eap`
+2. Confirm deploy script OAuth verification passes (AAP host URL, host alias, token endpoint)
+3. Sign in to the portal with AAP admin credentials
+
+**Expected Results**:
+
+- ✅ `AAP_HOST_URL` in portal pod is `http://<aap-route>` (not `https://`)
+- ✅ `getent hosts <aap-route>` from portal pod resolves to AAP Service ClusterIP
+- ✅ Portal OAuth sign-in succeeds (no `fetch failed` error)
+- ✅ `aap-demo diagnose` reports CoreDNS route rewrite present (or warns with fix hint)
+
+**Validation**:
+
+```bash
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n apme -- printenv AAP_HOST_URL
+# Expected: http://aap-aap-operator.apps.crc.testing
+
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n apme -- \
+  getent hosts aap-aap-operator.apps.crc.testing
+# Expected: <AAP Service ClusterIP>
+
+aap-demo diagnose
+```
+
+**Pass Criteria**: OAuth verification passes during deploy; browser sign-in succeeds
 
 ---
 

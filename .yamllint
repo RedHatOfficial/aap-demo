@@ -49,3 +49,4 @@ ignore: |
   .serena/
   test/
   .github/
+  addons/apme-eap/deploy.yaml

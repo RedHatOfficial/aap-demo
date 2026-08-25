@@ -1,0 +1,982 @@
+# EAP Portal + APME — OpenShift Template (single file)
+# 1. Edit params.example.env (or your param file)
+# 2. oc process -f deploy.yaml --param-file=params.example.env | oc apply -f -
+# Regenerate from Helm APME chart: python3 scripts/generate-deploy.py
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: eap-portal-apme
+  annotations:
+    description: Ansible automation portal (portal-hub-eap) + APME gateway with Abbenay
+    tags: ansible,apme,portal
+labels:
+  app: eap-portal-apme
+parameters:
+- name: NAMESPACE
+  description: Target OpenShift namespace
+  value: apme
+- name: CLUSTER_ROUTER_BASE
+  description: OpenShift apps ingress domain (e.g. apps.cluster.example.com)
+  required: true
+- name: RHAAP_URL
+  description: External AAP route URL (https://aap-...) — no trailing slash
+  required: true
+- name: RHAAP_OAUTH_CLIENT_ID
+  description: AAP OAuth application client ID
+  required: true
+- name: RHAAP_OAUTH_CLIENT_SECRET
+  description: AAP OAuth application client secret
+  required: true
+- name: RHAAP_TOKEN
+  description: AAP API token for catalog sync
+  required: true
+- name: PORTAL_DB_PASSWORD
+  description: PostgreSQL password for bn_backstage user (auto-generated if omitted)
+  required: false
+  generate: expression
+  from: '[a-zA-Z0-9]{32}'
+- name: PORTAL_SESSION_SECRET
+  description: Backstage backend session secret (auto-generated if omitted)
+  required: false
+  generate: expression
+  from: '[a-zA-Z0-9]{32}'
+- name: ABBENAY_TOKEN
+  description: Shared token for APME <-> Abbenay auth (auto-generated if omitted)
+  required: false
+  generate: expression
+  from: '[a-zA-Z0-9]{32}'
+- name: PORTAL_IMAGE
+  description: Portal hub container image (init + app containers)
+  value: quay.io/cferman/portal-hub-eap:latest
+- name: GITHUB_TOKEN
+  description: GitHub PAT for integrations.github (repo reads/API). Leave empty if using OAuth only.
+  value: ''
+  required: false
+- name: GITHUB_OAUTH_CLIENT_ID
+  description: GitHub OAuth App client ID for ScmAuth / interactive GitHub. Leave empty if using PAT only.
+  value: ''
+  required: false
+- name: GITHUB_OAUTH_CLIENT_SECRET
+  description: GitHub OAuth App client secret. Leave empty if using PAT only.
+  value: ''
+  required: false
+objects:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: ${NAMESPACE}
+    labels:
+      name: ${NAMESPACE}
+    annotations:
+      openshift.io/display-name: APME automation portal
+      openshift.io/description: Ansible automation portal with APME quality engine
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: secrets-rhaap-portal
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    aap-host-url: ${RHAAP_URL}
+    oauth-client-id: ${RHAAP_OAUTH_CLIENT_ID}
+    oauth-client-secret: ${RHAAP_OAUTH_CLIENT_SECRET}
+    aap-token: ${RHAAP_TOKEN}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: secrets-github-portal
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    github-token: ${GITHUB_TOKEN}
+    github-oauth-client-id: ${GITHUB_OAUTH_CLIENT_ID}
+    github-oauth-client-secret: ${GITHUB_OAUTH_CLIENT_SECRET}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: portal-postgresql
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    postgres-password: ${PORTAL_DB_PASSWORD}
+    password: ${PORTAL_DB_PASSWORD}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: portal-backend-secret
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    backend-secret: ${PORTAL_SESSION_SECRET}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: portal-app-config
+    namespace: ${NAMESPACE}
+  data:
+    app-config.local.yaml: "ansible:\n  apme:\n    baseUrl: http://apme-gateway:8080\n    checkSSL: false\n    enabled: true\n\
+      \    enableAi: true\n    mockMode: false\n  rhaap:\n    baseUrl: ${AAP_HOST_URL}\n    checkSSL: false\n    token: ${AAP_TOKEN}\n\
+      \  automationHub:\n    baseUrl: ${AAP_HOST_URL}\napp:\n  baseUrl: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n\
+      \  title: Ansible automation portal\nauth:\n  environment: production\n  omitIdentityTokenOwnershipClaim: true\n  providers:\n\
+      \    rhaap:\n      production:\n        checkSSL: false\n        clientId: ${OAUTH_CLIENT_ID}\n        clientSecret:\
+      \ ${OAUTH_CLIENT_SECRET}\n        host: ${AAP_HOST_URL}\n        signIn:\n          resolvers:\n            - resolver:\
+      \ allowNewAAPUserSignIn\n    # Optional: leave GITHUB_OAUTH_* empty if using PAT-only integrations.github\n    github:\n\
+      \      production:\n        clientId: ${GITHUB_OAUTH_CLIENT_ID}\n        clientSecret: ${GITHUB_OAUTH_CLIENT_SECRET}\n\
+      \  signInPage: rhaap\nbackend:\n  auth:\n    keys:\n      - secret: ${BACKEND_SECRET}\n  baseUrl: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n\
+      \  cors:\n    origin: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n  database:\n    client: pg\n    connection:\n\
+      \      host: portal-postgresql\n      port: 5432\n      user: bn_backstage\n      password: ${POSTGRES_PASSWORD}\n \
+      \ listen:\n    port: 7007\n  reading:\n    allow:\n      - host: github.com\n      - host: raw.githubusercontent.com\n\
+      # Optional: leave GITHUB_TOKEN empty if using OAuth-only ScmAuth\nintegrations:\n  github:\n    - host: github.com\n\
+      \      token: ${GITHUB_TOKEN}\ncatalog:\n  locations:\n    - type: file\n      target: /opt/app-root/src/configs/catalog/apme-register-git-repository/template.yaml\n\
+      \      rules:\n        - allow: [Template]\n  providers:\n    rhaap:\n      production:\n        orgs:\n          -\
+      \ Default\n        sync:\n          ansibleGitContents:\n            enabled: true\n            schedule:\n        \
+      \      frequency:\n                minutes: 30\n              timeout:\n                minutes: 30\n          pahCollections:\n\
+      \            enabled: true\n            repositories:\n              - name: community\n                schedule:\n\
+      \                  frequency:\n                    minutes: 30\n                  timeout:\n                    minutes:\
+      \ 10\n              - name: validated\n                schedule:\n                  frequency:\n                   \
+      \ minutes: 60\n                  timeout:\n                    minutes: 15\n              - name: rh-certified\n   \
+      \             schedule:\n                  frequency:\n                    minutes: 60\n                  timeout:\n\
+      \                    minutes: 15\n          jobTemplates:\n            schedule:\n              frequency:\n       \
+      \         minutes: 60\n              timeout:\n                seconds: 30\n          orgsUsersTeams:\n            schedule:\n\
+      \              frequency:\n                minutes: 60\n              timeout:\n                seconds: 30\norganization:\n\
+      \  name: Ansible\n"
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: apme-scaffolder-templates
+    namespace: ${NAMESPACE}
+  data:
+    template.yaml: "apiVersion: scaffolder.backstage.io/v1beta3\nkind: Template\nmetadata:\n  name: apme-register-git-repository\n\
+      \  title: Register repo for Ansible content modernization\n  description: Register a GitHub repository for APME quality\
+      \ scans.\n  tags: [apme, quality]\nspec:\n  owner: user:guest\n  type: service\n  parameters:\n    - title: Repository\n\
+      \      required: [repoUrl, defaultBranch]\n      properties:\n        repoUrl:\n          title: GitHub repository\n\
+      \          type: string\n          ui:field: RepoUrlPicker\n          ui:options:\n            allowedHosts: [github.com]\n\
+      \        defaultBranch:\n          title: Default branch\n          type: string\n          default: main\n  steps:\n\
+      \    - id: register-direct\n      name: Register in catalog\n      action: ansible:register:git-repository\n      input:\n\
+      \        sourceControlProvider: github\n        repositoryOwner: \"${{ (parameters.repoUrl | parseRepoUrl).owner }}\"\
+      \n        repositoryName: \"${{ (parameters.repoUrl | parseRepoUrl).repo }}\"\n        repositoryUrl: \"https://github.com/${{\
+      \ (parameters.repoUrl | parseRepoUrl).owner }}/${{ (parameters.repoUrl | parseRepoUrl).repo }}\"\n        defaultBranch:\
+      \ \"${{ parameters.defaultBranch }}\"\n"
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: portal-postgresql-data
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 8Gi
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: portal-postgresql
+    namespace: ${NAMESPACE}
+    labels:
+      app: portal-postgresql
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: portal-postgresql
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: portal-postgresql
+      spec:
+        containers:
+        - name: postgresql
+          image: docker.io/library/postgres:15
+          imagePullPolicy: IfNotPresent
+          ports:
+          - name: postgres
+            containerPort: 5432
+          env:
+          - name: POSTGRES_USER
+            value: bn_backstage
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portal-postgresql
+                key: password
+          - name: POSTGRES_DB
+            value: backstage_plugin_catalog
+          - name: PGDATA
+            value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+          - name: data
+            mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+              - sh
+              - -c
+              - pg_isready -U bn_backstage -d backstage_plugin_catalog
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+              - sh
+              - -c
+              - pg_isready -U bn_backstage -d backstage_plugin_catalog
+            initialDelaySeconds: 30
+            periodSeconds: 20
+        volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: portal-postgresql-data
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: portal-postgresql
+    namespace: ${NAMESPACE}
+    labels:
+      app: portal-postgresql
+  spec:
+    ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+    selector:
+      app: portal-postgresql
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: redhat-rhaap-portal
+    namespace: ${NAMESPACE}
+    labels:
+      app: redhat-rhaap-portal
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: redhat-rhaap-portal
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: redhat-rhaap-portal
+      spec:
+        initContainers:
+        - name: install-dynamic-plugins
+          image: ${PORTAL_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command:
+          - /bin/sh
+          - -c
+          args:
+          - "set -e\ncd /opt/app-root/src\npython3 - <<'PY'\nimport yaml\nfrom pathlib import Path\n\n# Use the hub image\
+            \ manifest (plugin-config-overrides baked at build time), not a\n# trimmed ConfigMap. RBAC stays enabled for admin\
+            \ UI.\nsrc = Path(\"dynamic-plugins/ansible-portal.yaml\")\ndata = yaml.safe_load(src.read_text())\nplugins =\
+            \ data.get(\"plugins\") or []\nmanifest = {\n    \"includes\": [],\n    \"plugins\": [\n        {\n          \
+            \  \"enabled\": True,\n            \"package\": \"./dynamic-plugins/dist/backstage-community-plugin-rbac\",\n\
+            \        },\n        *plugins,\n    ],\n}\nPath(\"dynamic-plugins.yaml\").write_text(\n    yaml.dump(manifest,\
+            \ default_flow_style=False, sort_keys=False, width=120)\n)\nPY\n./install-dynamic-plugins.sh /opt/app-root/src/dynamic-plugins-root\n\
+            if [ -d /pre-installed/extensions ]; then\n  cp -r /pre-installed/extensions/. /extensions/\nfi\n"
+          env:
+          - name: NPM_CONFIG_USERCONFIG
+            value: /opt/app-root/src/.npmrc.dynamic-plugins
+          - name: MAX_ENTRY_SIZE
+            value: '30000000'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+          - name: dynamic-plugins-root
+            mountPath: /opt/app-root/src/dynamic-plugins-root
+          - name: dynamic-plugins-root
+            mountPath: /dynamic-plugins-root
+          - name: npmcacache
+            mountPath: /opt/app-root/src/.npm/_cacache
+          - name: extensions-catalog
+            mountPath: /extensions
+          - name: temp
+            mountPath: /tmp
+          workingDir: /opt/app-root/src
+        containers:
+        - name: backstage-backend
+          image: ${PORTAL_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args:
+          - --config
+          - dynamic-plugins-root/app-config.dynamic-plugins.yaml
+          - --config
+          - /opt/app-root/src/app-config.local.yaml
+          ports:
+          - name: backend
+            containerPort: 7007
+          env:
+          - name: BACKEND_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: portal-backend-secret
+                key: backend-secret
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portal-postgresql
+                key: password
+          - name: AAP_HOST_URL
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: aap-host-url
+          - name: OAUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: oauth-client-id
+          - name: OAUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: oauth-client-secret
+          - name: AAP_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: aap-token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secrets-github-portal
+                key: github-token
+          - name: GITHUB_OAUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: secrets-github-portal
+                key: github-oauth-client-id
+          - name: GITHUB_OAUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: secrets-github-portal
+                key: github-oauth-client-secret
+          - name: ENABLE_AUTH_PROVIDER_MODULE_OVERRIDE
+            value: 'true'
+          - name: CUSTOMER_SUPPORT_URL
+            value: https://access.redhat.com/support
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /.backstage/health/v1/readiness
+              port: backend
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /.backstage/health/v1/liveness
+              port: backend
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          volumeMounts:
+          - name: dynamic-plugins-root
+            mountPath: /opt/app-root/src/dynamic-plugins-root
+          - name: portal-app-config
+            mountPath: /opt/app-root/src/app-config.local.yaml
+            subPath: app-config.local.yaml
+            readOnly: true
+          - name: extensions-catalog
+            mountPath: /extensions
+          - name: temp
+            mountPath: /tmp
+          - name: apme-scaffolder-templates
+            mountPath: /opt/app-root/src/configs/catalog/apme-register-git-repository
+            readOnly: true
+          - name: apme-data
+            mountPath: /opt/app-root/src/.data
+        volumes:
+        - name: dynamic-plugins-root
+          emptyDir: {}
+        - name: portal-app-config
+          configMap:
+            name: portal-app-config
+        - name: npmcacache
+          emptyDir: {}
+        - name: extensions-catalog
+          emptyDir: {}
+        - name: temp
+          emptyDir: {}
+        - name: apme-scaffolder-templates
+          configMap:
+            name: apme-scaffolder-templates
+        - name: apme-data
+          emptyDir: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: redhat-rhaap-portal
+    namespace: ${NAMESPACE}
+    labels:
+      app: redhat-rhaap-portal
+  spec:
+    ports:
+    - name: backend
+      port: 7007
+      targetPort: backend
+    selector:
+      app: redhat-rhaap-portal
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: redhat-rhaap-portal
+    namespace: ${NAMESPACE}
+    labels:
+      app: redhat-rhaap-portal
+  spec:
+    host: redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}
+    to:
+      kind: Service
+      name: redhat-rhaap-portal
+      weight: 100
+    port:
+      targetPort: backend
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: apme
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+      app.kubernetes.io/managed-by: Helm
+    namespace: ${NAMESPACE}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: apme-secrets
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    abbenay-token: ${ABBENAY_TOKEN}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: apme-abbenay-config
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+      app.kubernetes.io/component: abbenay
+    namespace: ${NAMESPACE}
+  data:
+    config.yaml: "# ADR-070: HTTP admin on loopback; token from ABBENAY_API_TOKEN env\nserver:\n  host: \"127.0.0.1\"\n  api_token_env:\
+      \ ABBENAY_API_TOKEN\nproviders: {}\nconsumers:\n  apme:\n    token_env: APME_ABBENAY_TOKEN\n    capabilities:\n    \
+      \  inline_policy: true\n"
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: apme-sessions
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 2Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: apme-gateway-data
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 2Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: apme-proxy-cache
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 2Gi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: apme-engine
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+      app.kubernetes.io/component: engine
+    namespace: ${NAMESPACE}
+  spec:
+    type: ClusterIP
+    ports:
+    - name: grpc-primary
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+    - name: grpc-collection-health
+      port: 50058
+      targetPort: 50058
+      protocol: TCP
+    - name: grpc-dep-audit
+      port: 50059
+      targetPort: 50059
+      protocol: TCP
+    selector:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/component: engine
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: apme-gateway
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+      app.kubernetes.io/component: gateway
+    namespace: ${NAMESPACE}
+    annotations:
+      service.kubernetes.io/publish-not-ready-addresses: 'true'
+  spec:
+    type: ClusterIP
+    ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    selector:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/component: engine
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: apme-engine
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: 2026.8.6
+      app.kubernetes.io/component: engine
+    namespace: ${NAMESPACE}
+  spec:
+    replicas: 1
+    strategy:
+      type: Recreate
+    selector:
+      matchLabels:
+        app.kubernetes.io/name: apme
+        app.kubernetes.io/instance: apme
+        app.kubernetes.io/component: engine
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/name: apme
+          app.kubernetes.io/instance: apme
+          app.kubernetes.io/component: engine
+      spec:
+        serviceAccountName: apme
+        initContainers:
+        - name: init-abbenay-config
+          image: ghcr.io/redhat-developer/abbenay:v2026.8.6
+          imagePullPolicy: IfNotPresent
+          command:
+          - sh
+          - -c
+          - "mkdir -p /mnt/config/abbenay\nif [ ! -f /mnt/config/abbenay/config.yaml ]; then\n  cp /seed/config.yaml /mnt/config/abbenay/config.yaml\n\
+            fi\n"
+          volumeMounts:
+          - name: abbenay-config-seed
+            mountPath: /seed
+            readOnly: true
+          - name: abbenay-config
+            mountPath: /mnt/config
+        containers:
+        - name: primary
+          image: quay.io/ansible/apme-primary:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: UV_CACHE_DIR
+            value: /tmp/uv-cache
+          - name: APME_PRIMARY_LISTEN
+            value: 0.0.0.0:50051
+          - name: NATIVE_GRPC_ADDRESS
+            value: 127.0.0.1:50055
+          - name: OPA_GRPC_ADDRESS
+            value: 127.0.0.1:50054
+          - name: ANSIBLE_GRPC_ADDRESS
+            value: 127.0.0.1:50053
+          - name: GITLEAKS_GRPC_ADDRESS
+            value: 127.0.0.1:50056
+          - name: COLLECTION_HEALTH_GRPC_ADDRESS
+            value: 127.0.0.1:50058
+          - name: DEP_AUDIT_GRPC_ADDRESS
+            value: 127.0.0.1:50059
+          - name: APME_GALAXY_PROXY_URL
+            value: http://127.0.0.1:8765
+          - name: APME_REPORTING_ENDPOINT
+            value: 127.0.0.1:50060
+          - name: APME_ABBENAY_ADDR
+            value: 127.0.0.1:50057
+          - name: APME_ABBENAY_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          ports:
+          - name: grpc
+            containerPort: 50051
+            protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+          resources:
+            limits:
+              cpu: '2'
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+        - name: native
+          image: quay.io/ansible/apme-native:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_NATIVE_VALIDATOR_LISTEN
+            value: 0.0.0.0:50055
+          readinessProbe:
+            tcpSocket:
+              port: 50055
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50055
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: opa
+          image: quay.io/ansible/apme-opa:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_OPA_VALIDATOR_LISTEN
+            value: 0.0.0.0:50054
+          readinessProbe:
+            tcpSocket:
+              port: 50054
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50054
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: ansible
+          image: quay.io/ansible/apme-ansible:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_ANSIBLE_VALIDATOR_LISTEN
+            value: 0.0.0.0:50053
+          - name: APME_GALAXY_PROXY_URL
+            value: http://127.0.0.1:8765
+          readinessProbe:
+            tcpSocket:
+              port: 50053
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50053
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+            readOnly: true
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: gitleaks
+          image: quay.io/ansible/apme-gitleaks:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_GITLEAKS_VALIDATOR_LISTEN
+            value: 0.0.0.0:50056
+          readinessProbe:
+            tcpSocket:
+              port: 50056
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50056
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+        - name: collection-health
+          image: quay.io/ansible/apme-collection-health:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_COLLECTION_HEALTH_VALIDATOR_LISTEN
+            value: 0.0.0.0:50058
+          readinessProbe:
+            tcpSocket:
+              port: 50058
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50058
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+            readOnly: true
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: dep-audit
+          image: quay.io/ansible/apme-dep-audit:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_DEP_AUDIT_VALIDATOR_LISTEN
+            value: 0.0.0.0:50059
+          readinessProbe:
+            tcpSocket:
+              port: 50059
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50059
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+            readOnly: true
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: galaxy-proxy
+          image: quay.io/ansible/apme-galaxy-proxy:2026.8.6
+          imagePullPolicy: IfNotPresent
+          readinessProbe:
+            tcpSocket:
+              port: 8765
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8765
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+          - name: proxy-cache
+            mountPath: /cache
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+        - name: gateway
+          image: quay.io/ansible/apme-gateway:2026.8.6
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_PRIMARY_ADDRESS
+            value: 127.0.0.1:50051
+          - name: APME_DB_PATH
+            value: /data/apme.db
+          - name: APME_GATEWAY_GRPC_LISTEN
+            value: 0.0.0.0:50060
+          - name: APME_GATEWAY_HTTP_HOST
+            value: 0.0.0.0
+          - name: APME_GATEWAY_HTTP_PORT
+            value: '8080'
+          - name: APME_ABBENAY_HTTP_URL
+            value: http://127.0.0.1:8787
+          - name: APME_ABBENAY_HTTP_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          - name: COLLECTION_HEALTH_GRPC_ADDRESS
+            value: 127.0.0.1:50058
+          - name: DEP_AUDIT_GRPC_ADDRESS
+            value: 127.0.0.1:50059
+          ports:
+          - name: gateway-grpc
+            containerPort: 50060
+            protocol: TCP
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/v1/dashboard/summary
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/dashboard/summary
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+          - name: gateway-data
+            mountPath: /data
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+        - name: abbenay
+          image: ghcr.io/redhat-developer/abbenay:v2026.8.6
+          imagePullPolicy: IfNotPresent
+          args:
+          - web
+          - --host
+          - 127.0.0.1
+          - --port
+          - '8787'
+          - --grpc-host
+          - 127.0.0.1
+          - --grpc-port
+          - '50057'
+          env:
+          - name: APME_ABBENAY_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          - name: ABBENAY_API_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          - name: XDG_RUNTIME_DIR
+            value: /tmp/abbenay-run
+          - name: XDG_CONFIG_HOME
+            value: /etc/abbenay-config
+          ports:
+          - name: abbenay-grpc
+            containerPort: 50057
+            protocol: TCP
+          readinessProbe:
+            exec: &id001
+              command:
+              - curl
+              - -sf
+              - http://127.0.0.1:8787/
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: *id001
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: '2'
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          volumeMounts:
+          - name: abbenay-config
+            mountPath: /etc/abbenay-config
+        volumes:
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: apme-sessions
+        - name: proxy-cache
+          persistentVolumeClaim:
+            claimName: apme-proxy-cache
+        - name: gateway-data
+          persistentVolumeClaim:
+            claimName: apme-gateway-data
+        - name: abbenay-config-seed
+          configMap:
+            name: apme-abbenay-config
+        - name: abbenay-config
+          emptyDir: {}
