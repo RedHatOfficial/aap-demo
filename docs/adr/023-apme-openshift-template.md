@@ -139,7 +139,7 @@ Helm roles remain in the tree for reference but are **not** invoked by the main 
 
 ### Neutral
 
-- Host `deploy.sh` still discovers environment and orchestrates AAP REST API
+- Host `deploy.sh` still discovers environment and orchestrates AAP REST API (no host-side Ansible venv)
 - Pre-built portal hub image and init contract unchanged (ADR-022)
 - `setup-pah` and Automation Hub catalog sync behavior unchanged
 - GitHub App remains available for advanced users who configure it explicitly
