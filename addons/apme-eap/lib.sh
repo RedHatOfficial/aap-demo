@@ -31,13 +31,22 @@ apme_configure_microshift_job_networking() {
 
   pod_spec_override=$(printf 'spec:\n  hostAliases:\n  - ip: "%s"\n    hostnames:\n    - "%s"\n' "$aap_ip" "$AAP_ROUTE")
 
-  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  local patch_http patch_body
+  patch_body=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     -X PATCH \
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg spec "$pod_spec_override" '{pod_spec_override: $spec}')" \
-    "${AAP_API}/instance_groups/${ig_id}/" >/dev/null 2>&1
+    -w "\n%{http_code}" \
+    "${AAP_API}/instance_groups/${ig_id}/" 2>/dev/null || echo "000")
+
+  patch_http=$(echo "$patch_body" | tail -1)
+  if [ "$patch_http" != "200" ]; then
+    echo "  ⚠ Failed to configure job pod hostAlias (HTTP ${patch_http})"
+    return 1
+  fi
 
   echo "  ✓ Job pod hostAlias configured: ${AAP_ROUTE} → ${aap_ip}"
+  return 0
 }
 
 apme_init_aap_connection() {

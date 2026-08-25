@@ -72,9 +72,37 @@
     msg: >-
       Applied {{ apme_template_objects | length }} objects from template eap-portal-apme
 
+- name: Roll portal deployment to load template secrets  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              apme.eap.welcome.pack/restartedAt: "{{ ansible_date_time.iso8601 }}"
+  when: apme_skip_openshift_secret_creation | default(true) | bool
+
 - name: Configure MicroShift portal networking  # noqa: var-naming[no-role-prefix]
   ansible.builtin.include_tasks: microshift_networking.yml
 
 - name: Apply optional Route TLS certificates  # noqa: var-naming[no-role-prefix]
   ansible.builtin.include_tasks: route_tls.yml
   when: apme_route_tls_enabled | default(false) | bool
+
+- name: Wait for portal deployment rollout  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    cmd: >-
+      oc rollout status deployment/{{ apme_template_release_name }}
+      -n {{ openshift_project_name }} --timeout=600s
+  register: apme_portal_rollout
+  changed_when: false
+  failed_when: apme_portal_rollout.rc != 0
+  when: apme_skip_openshift_secret_creation | default(true) | bool
