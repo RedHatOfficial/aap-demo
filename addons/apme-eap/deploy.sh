@@ -708,7 +708,9 @@ deploy() {
   info "(pod status updates every 30s during template apply)"
 
   apme_init_aap_connection || die "Failed to initialize AAP connection"
-  apme_configure_microshift_job_networking || true
+  if ! apme_configure_microshift_job_networking; then
+    warn "MicroShift job pod networking not configured — AAP job OAuth prerequisites may fail"
+  fi
 
   apme_ensure_aap_resources || die "Failed to configure AAP resources"
 
