@@ -63,6 +63,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [020](020-full-openshift-support.md) | Full OpenShift Support and Resource-Aware Provisioning | Accepted |
 | [021](021-local-cache-addon.md) | Local Cache Addon | Accepted |
 | [022](022-apme-prebuilt-portal-hub.md) | APME Pre-Built Portal Hub Deployment | Accepted |
+| [023](023-apme-openshift-template.md) | APME OpenShift Template Deployment | Proposed |
 
 ## Creating a New ADR
 
@@ -84,5 +85,5 @@ For new contributors, read ADRs in this order:
 4. **006** + **007** + **012** — common deploy failure areas
 5. **008** — how optional components plug in
 6. **002** + **004** — portal (if using Self-Service Portal)
-7. **019** + **022** — APME addon and pre-built portal hub (if using Ansible Quality)
+7. **019** + **022** + **023** — APME addon, pre-built portal hub, and OpenShift template deploy (if using Ansible Quality)
 8. **010** + **014** — Windows and testing

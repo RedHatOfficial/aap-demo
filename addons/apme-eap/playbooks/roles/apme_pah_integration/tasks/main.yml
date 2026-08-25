@@ -7,6 +7,7 @@
   register: apme_pah_galaxy_token_stat
   delegate_to: localhost
   become: false
+  when: apme_pah_has_galaxy_token is not defined
 
 - name: Check for external PAH config file  # noqa: var-naming[no-role-prefix]
   ansible.builtin.stat:
@@ -14,14 +15,21 @@
   register: apme_pah_config_stat
   delegate_to: localhost
   become: false
+  when: apme_pah_has_pah_config is not defined
 
 - name: Set credential availability facts  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    apme_pah_has_galaxy_token: "{{ apme_pah_galaxy_token_stat.stat.exists | default(false) }}"
-    apme_pah_has_pah_config: "{{ apme_pah_config_stat.stat.exists | default(false) }}"
+    apme_pah_has_galaxy_token: >-
+      {{ apme_pah_has_galaxy_token | default(
+         apme_pah_galaxy_token_stat.stat.exists | default(false)) }}
+    apme_pah_has_pah_config: >-
+      {{ apme_pah_has_pah_config | default(
+         apme_pah_config_stat.stat.exists | default(false)) }}
     apme_pah_credentials_available: >-
-      {{ (apme_pah_galaxy_token_stat.stat.exists | default(false))
-         or (apme_pah_config_stat.stat.exists | default(false)) }}
+      {{ (apme_pah_has_galaxy_token | default(
+           apme_pah_galaxy_token_stat.stat.exists | default(false)) | bool)
+         or (apme_pah_has_pah_config | default(
+           apme_pah_config_stat.stat.exists | default(false)) | bool) }}
 
 - name: Load external PAH config when present  # noqa: var-naming[no-role-prefix]
   ansible.builtin.slurp:
@@ -29,13 +37,17 @@
   register: apme_pah_config_slurp
   delegate_to: localhost
   become: false
-  when: apme_pah_has_pah_config | bool
+  when:
+    - apme_pah_has_pah_config | default(false) | bool
+    - apme_pah_external_url is not defined
 
 - name: Parse external PAH config  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     apme_pah_external_url: "{{ (apme_pah_config_slurp.content | b64decode | from_yaml).url | default('') | trim }}"
     apme_pah_external_token: "{{ (apme_pah_config_slurp.content | b64decode | from_yaml).token | default('') | trim }}"
-  when: apme_pah_has_pah_config | bool
+  when:
+    - apme_pah_has_pah_config | default(false) | bool
+    - apme_pah_external_url is not defined
   no_log: true
 
 - name: Warn when setup-pah credentials are missing  # noqa: var-naming[no-role-prefix]
@@ -59,7 +71,7 @@
   failed_when: apme_pah_setup_result.rc != 0
   when:
     - apme_pah_run_setup_pah | bool
-    - apme_pah_has_galaxy_token | bool
+    - apme_pah_has_galaxy_token | default(false) | bool
 
 - name: Display setup-pah result  # noqa: var-naming[no-role-prefix]
   ansible.builtin.debug:

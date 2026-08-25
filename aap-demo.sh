@@ -1188,6 +1188,27 @@ cmd_diagnose() {
   else
     _check_warn "CoreDNS pods not found in openshift-dns"
   fi
+
+  local route_domain corefile
+  route_domain=$(kubectl get route -n openshift-console console -o jsonpath='{.spec.host}' 2>/dev/null | sed 's/^console-openshift-console\.//' || echo "")
+  if [ -z "$route_domain" ]; then
+    route_domain=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null | sed 's/^[^.]*\.//' || echo "")
+  fi
+  corefile=$(kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+  if [ -n "$corefile" ] && echo "$corefile" | grep -q "router-internal-default"; then
+    if [ -n "$route_domain" ]; then
+      _check_pass "CoreDNS route rewrite configured (${route_domain})"
+    else
+      _check_pass "CoreDNS route rewrite configured"
+    fi
+  elif [ -n "$corefile" ]; then
+    if [ -n "$route_domain" ]; then
+      _check_warn "CoreDNS missing rewrite for ${route_domain} — pods may not resolve route hostnames"
+    else
+      _check_warn "CoreDNS missing route rewrite rule — pods may not resolve route hostnames"
+    fi
+    _check_info "Fix: aap-demo start (or aap-demo deploy) to re-apply CoreDNS config"
+  fi
   echo ""
 
   # =========================================================================

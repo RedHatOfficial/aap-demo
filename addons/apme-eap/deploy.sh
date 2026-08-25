@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # APME Playbook Addon - Deploy Ansible Portal with Ansible Quality (APME)
-# Uses official APME EAP welcome pack playbooks executed locally in isolated venv
+# Orchestrates deployment via AAP job templates (Product Demos execution environment).
 #
 # ADDON_REQUIRES_AAP=true
 
@@ -9,12 +9,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 ACTION="${1:-deploy}"
 NAMESPACE="apme"
+AAP_NAMESPACE="${AAP_NAMESPACE:-aap-operator}"
+IS_MICROSHIFT=false
+AAP_HOST_URL=""
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
+PARAMS_FILE="$HOME/.aap-demo/apme-eap-params.env"
+TLS_DIR="$HOME/.aap-demo/apme-eap-tls"
 GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
 VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
 PORTAL_HUB_IMAGE="${PORTAL_HUB_IMAGE:-quay.io/cferman/portal-hub-eap:latest}"
+APME_PROJECT_NAME="${APME_PROJECT_NAME:-aap-demo-apme}"
+APME_EE_NAME="${APME_EE_NAME:-Product Demos EE}"
+APME_EE_IMAGE="${APME_EE_IMAGE:-quay.io/ansible-product-demos/apd-ee-26:latest}"
+APME_JOB_TEMPLATE_NAME="${APME_JOB_TEMPLATE_NAME:-APME | Deploy Portal}"
+APME_DEPLOY_PLAYBOOK="addons/apme-eap/playbooks/deploy_apme_portal.yml"
+GALAXY_TOKEN_FILE="$HOME/.aap-demo/galaxy-token"
+PAH_CONFIG_FILE="$HOME/.aap-demo/pah-config.yml"
+OPENSHIFT_DEPLOY_TOKEN=""
 
 # Color output
 RED='\033[0;31m'
@@ -128,135 +143,52 @@ _stop_pod_watcher() {
 # Prerequisites
 # ---------------------------------------------------------------------------
 
-setup_venv() {
-  # Create venv with full Ansible suite + collections for local playbook execution
-  local req_checksum_file="${VENV_DIR}/.requirements_checksum"
-  local pip_checksum_file="${VENV_DIR}/.pip_requirements_checksum"
-
+setup_minimal_venv() {
+  # Minimal venv for optional local bootstrap playbooks (ansible-core only)
   if [ -d "$VENV_DIR" ] && { [ ! -x "$VENV_DIR/bin/python3" ] || [ ! -x "$VENV_DIR/bin/pip" ]; }; then
     warn "APME venv at $VENV_DIR is incomplete — recreating..."
     rm -rf "$VENV_DIR"
   fi
 
   if [ ! -d "$VENV_DIR" ]; then
-    info "Creating Python venv with Ansible and collections..."
+    info "Creating minimal Python venv (ansible-core)..."
     python3 -m venv "$VENV_DIR"
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
-
     pip install --quiet --upgrade pip
-    pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
-    sha256sum "${SCRIPT_DIR}/requirements.txt" >"$pip_checksum_file"
-
-    ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml"
-    sha256sum "${SCRIPT_DIR}/requirements.yml" >"$req_checksum_file"
-
-    info "Venv created at $VENV_DIR (~150MB)"
+    pip install --quiet 'ansible-core>=2.15' PyYAML
+    info "Minimal venv created at $VENV_DIR (~50MB)"
   else
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
-
-    # Reinstall pip packages only when requirements.txt changed
-    if ! sha256sum --check "$pip_checksum_file" --status 2>/dev/null; then
-      info "requirements.txt changed — upgrading pip packages..."
-      pip install --quiet --upgrade -r "${SCRIPT_DIR}/requirements.txt"
-      sha256sum "${SCRIPT_DIR}/requirements.txt" >"$pip_checksum_file"
-    else
-      info "pip packages up to date (requirements.txt unchanged)"
-    fi
-
-    # Reinstall collections only when requirements.yml changed
-    if ! sha256sum --check "$req_checksum_file" --status 2>/dev/null; then
-      info "requirements.yml changed — reinstalling Ansible collections..."
-      ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml" --force
-      sha256sum "${SCRIPT_DIR}/requirements.yml" >"$req_checksum_file"
-    else
-      info "Ansible collections up to date (requirements.yml unchanged)"
-    fi
   fi
-}
-
-_helm_version_ok() {
-  local helm_version helm_major helm_minor
-  helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
-  [ -n "$helm_version" ] || return 1
-  helm_major=$(echo "$helm_version" | cut -d. -f1)
-  helm_minor=$(echo "$helm_version" | cut -d. -f2)
-  # Require helm >= 3.10 (v4+ is also OK)
-  if [ "$helm_major" -gt 3 ]; then
-    return 0
-  fi
-  if [ "$helm_major" -eq 3 ] && [ "$helm_minor" -ge 10 ]; then
-    return 0
-  fi
-  return 1
-}
-
-_ensure_helm() {
-  # Homebrew (macOS) and common install paths — ansible playbook tasks also prepend these
-  export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
-
-  if command -v helm &>/dev/null && _helm_version_ok; then
-    info "helm found: $(command -v helm) ($(helm version --short 2>/dev/null || echo 'unknown version'))"
-    return 0
-  fi
-
-  if command -v helm &>/dev/null; then
-    die "Helm 3.10+ required (found: $(helm version --short 2>/dev/null || echo 'unknown')). Upgrade from https://helm.sh/docs/intro/install/"
-  fi
-
-  info "helm not found — installing (required for portal Helm chart deployment)..."
-  case "$(uname -s)" in
-    Darwin)
-      if command -v brew &>/dev/null; then
-        brew install helm
-      else
-        die "helm not found. Install Homebrew, then: brew install helm"
-      fi
-      ;;
-    Linux)
-      if command -v dnf &>/dev/null; then
-        sudo dnf install -y helm
-      else
-        die "helm not found and cannot auto-install. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-      fi
-      ;;
-    *)
-      die "helm not found. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-      ;;
-  esac
-
-  if ! command -v helm &>/dev/null; then
-    die "helm install completed but helm is still not on PATH"
-  fi
-  if ! _helm_version_ok; then
-    die "Helm 3.10+ required after install (found: $(helm version --short 2>/dev/null || echo 'unknown'))"
-  fi
-  info "helm installed: $(command -v helm) ($(helm version --short 2>/dev/null || echo 'unknown version'))"
 }
 
 check_prerequisites() {
   info "Checking system prerequisites..."
 
-  # Check kubectl
   if ! command -v kubectl &>/dev/null; then
     die "kubectl not found. Please install kubectl or oc."
   fi
 
-  # Check cluster connectivity
   if ! kubectl cluster-info &>/dev/null; then
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
 
-  # Check python3
   if ! command -v python3 &>/dev/null; then
     die "python3 not found. Please install Python 3.8 or later."
   fi
 
-  info "Using pre-built portal hub (${PORTAL_HUB_IMAGE})"
+  if ! command -v curl &>/dev/null; then
+    die "curl not found. Required for AAP REST API orchestration."
+  fi
 
-  # Portal/gateway Helm releases use kubernetes.core.helm (requires helm binary on PATH)
-  _ensure_helm
+  if ! command -v jq &>/dev/null; then
+    die "jq not found. Install: brew install jq (macOS) or sudo dnf install jq (RHEL/Fedora)"
+  fi
+
+  info "Using pre-built portal hub (${PORTAL_HUB_IMAGE})"
+  info "Deployment runs in AAP via Product Demos EE (${APME_EE_IMAGE})"
 
   info "Prerequisites check complete"
 }
@@ -317,7 +249,20 @@ discover_environment() {
     die "AAP route not found. Deploy AAP first with 'aap-demo deploy'"
   fi
   AAP_HOST="https://${AAP_ROUTE}"
+
+  # MicroShift lacks ingresses.config — portal backend OAuth needs http:// in-cluster
+  if [ -z "$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>/dev/null || true)" ]; then
+    IS_MICROSHIFT=true
+    AAP_HOST_URL="http://${AAP_ROUTE}"
+  else
+    IS_MICROSHIFT=false
+    AAP_HOST_URL="${AAP_HOST}"
+  fi
+
   info "AAP host: $AAP_HOST"
+  if [ "$IS_MICROSHIFT" = true ]; then
+    info "AAP in-cluster host URL (portal OAuth): $AAP_HOST_URL"
+  fi
 
   # 5. AAP CR name
   AAP_CR_NAME=$(kubectl get aap -n aap-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
@@ -338,14 +283,130 @@ discover_environment() {
 }
 
 # ---------------------------------------------------------------------------
+# Host pre-steps (setup-pah, credential discovery)
+# ---------------------------------------------------------------------------
+
+_has_pah_credentials() {
+  [ -f "$GALAXY_TOKEN_FILE" ] || [ -f "$PAH_CONFIG_FILE" ]
+}
+
+run_setup_pah_prestep() {
+  if ! _has_pah_credentials; then
+    info "No galaxy-token or pah-config.yml — skipping setup-pah pre-step"
+    APME_PAH_HAS_GALAXY_TOKEN=false
+    APME_PAH_HAS_PAH_CONFIG=false
+    return 0
+  fi
+
+  APME_PAH_HAS_GALAXY_TOKEN=false
+  APME_PAH_HAS_PAH_CONFIG=false
+  [ -f "$GALAXY_TOKEN_FILE" ] && APME_PAH_HAS_GALAXY_TOKEN=true
+  [ -f "$PAH_CONFIG_FILE" ] && APME_PAH_HAS_PAH_CONFIG=true
+
+  info "Running setup-pah on host (before AAP job)..."
+  NAMESPACE="$AAP_NAMESPACE" \
+    GALAXY_TOKEN_FILE="$GALAXY_TOKEN_FILE" \
+    PAH_CONFIG_FILE="$PAH_CONFIG_FILE" \
+    KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}" \
+    bash "${SCRIPT_DIR}/../setup-pah/deploy.sh"
+}
+
+prepare_github_key_content() {
+  GITHUB_APP_PRIVATE_KEY_CONTENT=""
+  if [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] && [ -f "${GITHUB_APP_PRIVATE_KEY_PATH}" ]; then
+    GITHUB_APP_PRIVATE_KEY_CONTENT=$(cat "${GITHUB_APP_PRIVATE_KEY_PATH}")
+  fi
+}
+
+generate_openshift_deploy_token() {
+  info "Generating OpenShift service account token for AAP job..."
+  OPENSHIFT_DEPLOY_TOKEN=$(apme_create_openshift_deploy_token)
+  if [ -z "$OPENSHIFT_DEPLOY_TOKEN" ]; then
+    die "Failed to generate OpenShift deploy token"
+  fi
+  info "OpenShift deploy token generated"
+}
+
+# ---------------------------------------------------------------------------
 # GitHub Token Prompt
 # ---------------------------------------------------------------------------
 
-prompt_github_token() {
-  # Allow users to optionally provide GitHub App credentials for APME integration
-  # Follows the pattern from setup-pah and portal addons
+_has_github_app_creds() {
+  [ -n "${GITHUB_TOKEN:-}" ] \
+    && [ -n "${GITHUB_APP_ID:-}" ] \
+    && [ -n "${GITHUB_APP_CLIENT_ID:-}" ] \
+    && [ -n "${GITHUB_APP_CLIENT_SECRET:-}" ] \
+    && { [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] && [ -f "${GITHUB_APP_PRIVATE_KEY_PATH}" ]; }
+}
 
-  # Check saved credentials file from a previous deploy
+_generate_random_secret() {
+  openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32
+}
+
+_read_params_value() {
+  local key="$1"
+  [ -f "$PARAMS_FILE" ] || return 1
+  local line
+  line=$(grep -E "^${key}=" "$PARAMS_FILE" 2>/dev/null | tail -1 || true)
+  [ -n "$line" ] || return 1
+  printf '%s' "${line#*=}"
+}
+
+_load_pinned_secrets() {
+  APME_PORTAL_DB_PASSWORD="$(_read_params_value PORTAL_DB_PASSWORD || _generate_random_secret)"
+  APME_PORTAL_SESSION_SECRET="$(_read_params_value PORTAL_SESSION_SECRET || _generate_random_secret)"
+  APME_ABBENAY_TOKEN="$(_read_params_value ABBENAY_TOKEN || _generate_random_secret)"
+}
+
+_load_route_tls_creds() {
+  APME_ROUTE_TLS_ENABLED=false
+  APME_ROUTE_TLS_TERMINATION="${ROUTE_TLS_TERMINATION:-edge}"
+  APME_ROUTE_TLS_CERTIFICATE=""
+  APME_ROUTE_TLS_KEY=""
+  APME_ROUTE_TLS_CA_CERTIFICATE=""
+  APME_ROUTE_TLS_DEST_CA_CERTIFICATE=""
+
+  local cert_file="${ROUTE_TLS_CERT_PATH:-$TLS_DIR/tls.crt}"
+  local key_file="${ROUTE_TLS_KEY_PATH:-$TLS_DIR/tls.key}"
+  local ca_file="${ROUTE_TLS_CA_CERT_PATH:-$TLS_DIR/ca.crt}"
+  local dest_ca_file="${ROUTE_TLS_DEST_CA_PATH:-$TLS_DIR/dest-ca.crt}"
+
+  cert_file="${cert_file/#\~/$HOME}"
+  key_file="${key_file/#\~/$HOME}"
+  ca_file="${ca_file/#\~/$HOME}"
+  dest_ca_file="${dest_ca_file/#\~/$HOME}"
+
+  if [ -f "$cert_file" ] && [ -f "$key_file" ]; then
+    APME_ROUTE_TLS_ENABLED=true
+    APME_ROUTE_TLS_CERTIFICATE=$(cat "$cert_file")
+    APME_ROUTE_TLS_KEY=$(cat "$key_file")
+    [ -f "$ca_file" ] && APME_ROUTE_TLS_CA_CERTIFICATE=$(cat "$ca_file")
+    [ -f "$dest_ca_file" ] && APME_ROUTE_TLS_DEST_CA_CERTIFICATE=$(cat "$dest_ca_file")
+    info "Custom Route TLS certificates loaded from ${TLS_DIR}/"
+  fi
+}
+
+generate_params_file() {
+  mkdir -p "$(dirname "$PARAMS_FILE")"
+  cat >"$PARAMS_FILE" <<EOF
+NAMESPACE=${NAMESPACE}
+CLUSTER_ROUTER_BASE=${CLUSTER_DOMAIN}
+RHAAP_URL=
+RHAAP_OAUTH_CLIENT_ID=
+RHAAP_OAUTH_CLIENT_SECRET=
+RHAAP_TOKEN=
+GITHUB_TOKEN=${GITHUB_TOKEN:-}
+GITHUB_OAUTH_CLIENT_ID=${GITHUB_OAUTH_CLIENT_ID:-}
+GITHUB_OAUTH_CLIENT_SECRET=${GITHUB_OAUTH_CLIENT_SECRET:-}
+PORTAL_DB_PASSWORD=${APME_PORTAL_DB_PASSWORD}
+PORTAL_SESSION_SECRET=${APME_PORTAL_SESSION_SECRET}
+ABBENAY_TOKEN=${APME_ABBENAY_TOKEN}
+PORTAL_IMAGE=${PORTAL_HUB_IMAGE}
+EOF
+  chmod 600 "$PARAMS_FILE"
+}
+
+prompt_github_token() {
   if [ -f "$GITHUB_CREDS_FILE" ]; then
     if _load_github_creds_from_file "$GITHUB_CREDS_FILE" || _load_github_creds_from_file_legacy "$GITHUB_CREDS_FILE"; then
       if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -355,181 +416,48 @@ prompt_github_token() {
     fi
   fi
 
-  # Check environment variables - any token skips the prompt
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     info "Using GitHub credentials from environment variables"
-    # Default OAuth vars to App client credentials if not explicitly set
     GITHUB_OAUTH_CLIENT_ID="${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID:-}}"
     GITHUB_OAUTH_CLIENT_SECRET="${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET:-}}"
     return 0
   fi
 
-  # Skip prompt if QUIET mode or non-interactive
   if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
-    info "Skipping GitHub configuration (use GITHUB_TOKEN=... to provide, add GITHUB_APP_ID=... for full integration)"
+    info "Skipping GitHub configuration (set GITHUB_TOKEN=... or edit $VARS_FILE)"
     return 0
   fi
 
   echo ""
-  info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  info "GitHub App Configuration (Optional)"
-  info ""
-  info "APME integrates with GitHub for repository scanning, quality analysis,"
-  info "and code push operations directly from the portal."
-  info ""
-  info "Setup Instructions:"
-  info ""
-  info "STEP 1: Create GitHub App (https://github.com/settings/apps/new)"
-  info "  GitHub App name: apme-portal-local"
-  info "  Homepage URL: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io"
-  info "  Callback URL: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io/api/auth/github/handler/frame"
-  info "  Webhook: Uncheck 'Active'"
-  info "  Repository permissions (REQUIRED):"
-  info "    • Contents: Read and write"
-  info "    • Pull requests: Read and write"
-  info "    • Metadata: Read-only (automatically selected)"
-  info "  Where can this app be installed?: Any account"
-  info ""
-  info "STEP 2: Generate client secret (in your new GitHub App settings)"
-  info "  Navigate to: General → Client secrets"
-  info "  Click: 'Generate a new client secret'"
-  info "  Copy the secret immediately (you won't see it again!)"
-  info ""
-  info "STEP 3: Generate private key (in your GitHub App settings)"
-  info "  Navigate to: General → Private keys"
-  info "  Click: 'Generate a private key'"
-  info "  Save the downloaded .pem file to: ~/.aap-demo/apme-github-app.pem"
-  info ""
-  info "STEP 4: Install the app on your account/organization"
-  info "  Click: 'Install App' (left sidebar)"
-  info "  Select: Your account or organization"
-  info "  Repository access:"
-  info "    • All repositories (recommended for testing), OR"
-  info "    • Only select repositories (choose specific repos)"
-  info "  Click: 'Install'"
-  info ""
-  info "STEP 5: Create Personal Access Token (https://github.com/settings/tokens/new)"
-  info "  Note: APME Portal API Access"
-  info "  Expiration: 90 days (or your preference)"
-  info "  Scopes (REQUIRED):"
-  info "    ☑ repo (Full control of private repositories)"
-  info "      ☑ repo:status"
-  info "      ☑ repo_deployment"
-  info "      ☑ public_repo"
-  info "      ☑ repo:invite"
-  info "      ☑ security_events"
-  info "  Click: 'Generate token' and copy it (starts with ghp_)"
-  info ""
-  info "You can skip this and configure later by editing: $VARS_FILE"
-  info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  echo ""
-
-  read -r -p "Do you want to configure GitHub integration now? [y/N]: " configure_choice
-
+  info "GitHub integration (optional) — PAT for repo scans; OAuth for ScmAuth UI"
+  info "GitHub App (push/PR) is documented in README Advanced section — not prompted here."
+  read -r -p "Configure GitHub PAT now? [y/N]: " configure_choice
   if [[ ! "$configure_choice" =~ ^[Yy]$ ]]; then
-    info "Skipping GitHub integration. You can configure it later."
     return 0
   fi
 
+  read -r -s -p "GitHub PAT (repo scope): " github_token_input
   echo ""
-  info "Enter GitHub App credentials:"
-  info "  (Visit your GitHub App settings: https://github.com/settings/apps/<your-app-name>)"
-  echo ""
-
-  # GitHub App ID
-  info "1. GitHub App ID"
-  info "   Location: General → About → App ID (numeric, e.g., 123456)"
-  read -r -p "   Enter App ID: " github_app_id_input
-  if [ -z "$github_app_id_input" ]; then
-    warn "App ID required for GitHub integration. Skipping."
-    return 0
-  fi
-
-  # GitHub App Client ID
-  echo ""
-  info "2. GitHub App Client ID"
-  info "   Location: General → About → Client ID (starts with Iv1. or Iv23.)"
-  read -r -p "   Enter Client ID: " github_app_client_id_input
-  if [ -z "$github_app_client_id_input" ]; then
-    warn "App Client ID required. Skipping."
-    return 0
-  fi
-
-  # GitHub App Client Secret
-  echo ""
-  info "3. GitHub App Client Secret"
-  info "   Location: General → Client secrets → Generate/copy the secret"
-  info "   (If you don't have one, click 'Generate a new client secret')"
-  read -r -s -p "   Enter Client Secret (hidden): " github_app_client_secret_input
-  echo ""
-  if [ -z "$github_app_client_secret_input" ]; then
-    warn "App Client Secret required. Skipping."
-    return 0
-  fi
-
-  # GitHub App Private Key Path
-  echo ""
-  info "4. GitHub App Private Key"
-  info "   Location: General → Private keys → Generate/download .pem file"
-  info "   (If you don't have one, click 'Generate a private key' - file will download)"
-  info "   Move the downloaded .pem file to: $HOME/.aap-demo/apme-github-app.pem"
-  read -r -p "   Private key path [~/.aap-demo/apme-github-app.pem]: " github_app_private_key_input
-  github_app_private_key_input="${github_app_private_key_input:-$HOME/.aap-demo/apme-github-app.pem}"
-
-  # Expand ~ to full path
-  github_app_private_key_input="${github_app_private_key_input/#\~/$HOME}"
-
-  if [ ! -f "$github_app_private_key_input" ]; then
-    warn "Private key file not found: $github_app_private_key_input"
-    warn "Download the .pem file from GitHub App settings and move it to the path above."
-    warn "Then re-run deployment or edit: $VARS_FILE"
-    return 0
-  fi
-
-  # GitHub Personal Access Token
-  echo ""
-  info "5. GitHub Personal Access Token (PAT)"
-  info "   Location: https://github.com/settings/tokens/new"
-  info "   - Note: 'APME Portal API Access'"
-  info "   - Expiration: 90 days (or your preference)"
-  info "   - Scopes: Check 'repo' (full control of private repositories)"
-  info "   - Generate token and copy it (starts with ghp_)"
-  read -r -s -p "   Enter Personal Access Token (hidden): " github_token_input
-  echo ""
-  if [ -z "$github_token_input" ]; then
-    warn "Personal Access Token required. Skipping."
-    return 0
-  fi
-
-  GITHUB_APP_ID="$github_app_id_input"
-  GITHUB_APP_CLIENT_ID="$github_app_client_id_input"
-  GITHUB_APP_CLIENT_SECRET="$github_app_client_secret_input"
-  GITHUB_APP_PRIVATE_KEY_PATH="$github_app_private_key_input"
+  [ -z "$github_token_input" ] && return 0
   GITHUB_TOKEN="$github_token_input"
 
-  GITHUB_OAUTH_CLIENT_ID="$github_app_client_id_input"
-  GITHUB_OAUTH_CLIENT_SECRET="$github_app_client_secret_input"
+  read -r -p "GitHub OAuth client ID (optional, for ScmAuth): " github_oauth_id_input
+  if [ -n "$github_oauth_id_input" ]; then
+    GITHUB_OAUTH_CLIENT_ID="$github_oauth_id_input"
+    read -r -s -p "GitHub OAuth client secret: " github_oauth_secret_input
+    echo ""
+    GITHUB_OAUTH_CLIENT_SECRET="$github_oauth_secret_input"
+  fi
 
-  # Save credentials so future deploys skip the prompt
   mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
   cat >"$GITHUB_CREDS_FILE" <<CREDS
 ---
-# GitHub credentials for APME portal (persisted across deploys)
 github_token: "${GITHUB_TOKEN}"
-github_app_id: "${GITHUB_APP_ID}"
-github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
-github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
-github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
-github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID}"
-github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET}"
+github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID:-}"
+github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
 CREDS
   chmod 600 "$GITHUB_CREDS_FILE"
-
-  info "✓ GitHub App configured (saved to $GITHUB_CREDS_FILE)"
-  info "  App ID: $GITHUB_APP_ID"
-  info "  Private Key: $GITHUB_APP_PRIVATE_KEY_PATH"
-
-  return 0
+  info "GitHub PAT/OAuth saved to $GITHUB_CREDS_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -538,140 +466,237 @@ CREDS
 
 generate_vars_file() {
   info "Generating playbook vars file: $VARS_FILE"
+  _load_pinned_secrets
+  _load_route_tls_creds
+  generate_params_file
 
   mkdir -p "$(dirname "$VARS_FILE")"
 
-  # Extract token for API and registry authentication.
-  # CRC kubeconfig uses client certificate auth (no token field), so fall back
-  # to the active oc session token.
-  local openshift_token
-  openshift_token=$(kubectl config view --minify --raw -o jsonpath='{.users[0].user.token}' 2>/dev/null || echo "")
-  if [ -z "$openshift_token" ]; then
-    openshift_token=$(oc whoami -t 2>/dev/null || echo "")
+  local configure_github_app=false
+  if _has_github_app_creds; then
+    configure_github_app=true
   fi
 
   cat >"$VARS_FILE" <<EOF
 ---
 # Auto-generated by aap-demo enable apme-eap
-EOF
-  chmod 600 "$VARS_FILE"
-  cat >>"$VARS_FILE" <<EOF
-# Do not edit directly — regenerated on each deploy
 # Generated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
-# OpenShift (discovered from aap-demo environment)
 openshift_api_url: "${OPENSHIFT_API_URL}"
 openshift_project_name: ${NAMESPACE}
 openshift_cluster_domain: "${CLUSTER_DOMAIN}"
 openshift_validate_certs: false
-# Token extracted from kubeconfig (if available)
-$(if [ -n "$openshift_token" ]; then echo "openshift_token: \"${openshift_token}\""; else echo "# openshift_token not available - using KUBECONFIG"; fi)
 
-# AAP (for OAuth app creation - external route for redirect)
+is_microshift: $([ "$IS_MICROSHIFT" = true ] && echo true || echo false)
 aap_host: "${AAP_HOST}"
+aap_host_url: "${AAP_HOST_URL}"
 aap_username: admin
 aap_password: "${AAP_PASSWORD}"
 
-# Helm chart configuration (portal)
-portal_helm_chart_repo: openshift-helm-charts
-portal_helm_chart_repo_url: https://charts.openshift.io/
-portal_helm_chart_name: redhat-rhaap-portal
-portal_helm_chart_version: 2.2.3
 portal_helm_release_name: redhat-rhaap-portal
-portal_helm_install_timeout: 1800
-
-# Helm chart configuration (APME gateway - x86 only)
-apme_helm_chart_repo: apme
-apme_helm_chart_repo_url: https://ansible.github.io/apme
-apme_helm_chart_name: apme
-apme_helm_chart_version: 0.1.2
-apme_helm_release_name: apme
-
-# AAP organization
 aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
+
+apme_skip_openshift_secret_creation: true
+apme_template_release_name: redhat-rhaap-portal
+
+apme_portal_db_password: "${APME_PORTAL_DB_PASSWORD}"
+apme_portal_session_secret: "${APME_PORTAL_SESSION_SECRET}"
+apme_abbenay_token: "${APME_ABBENAY_TOKEN}"
+
+portal_hub_image: "${PORTAL_HUB_IMAGE}"
+
+github_token: "${GITHUB_TOKEN:-}"
+github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID:-}"
+github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET:-}"
+
+configure_github_app_secrets: ${configure_github_app}
 EOF
 
-  # GitHub secrets configuration
-  if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_APP_ID:-}" ]; then
-    # Full GitHub App configuration
+  if [ "$configure_github_app" = true ]; then
     cat >>"$VARS_FILE" <<EOF
-
-# GitHub secrets configuration (full GitHub App integration)
-configure_github_secrets: true
-
-# GitHub Personal Access Token
-github_token: "${GITHUB_TOKEN}"
-
-# GitHub OAuth configuration (for user authentication)
-github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID}"
-github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET}"
-
-# GitHub App configuration (for repository operations)
 github_app_id: "${GITHUB_APP_ID}"
 github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
 github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
 github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
 EOF
-  elif [ -n "${GITHUB_TOKEN:-}" ]; then
-    # Token-only configuration (limited functionality)
-    cat >>"$VARS_FILE" <<EOF
-
-# GitHub secrets configuration (token-only mode)
-configure_github_secrets: true
-github_token: "${GITHUB_TOKEN}"
-
-# Note: Token-only mode provides limited functionality.
-# For full integration (repository push from portal), configure GitHub App:
-# github_oauth_client_id: ""
-# github_oauth_client_secret: ""
-# github_app_id: ""
-# github_app_client_id: ""
-# github_app_client_secret: ""
-# github_app_private_key_path: "$HOME/.aap-demo/apme-github-app.pem"
-EOF
-  else
-    # No GitHub integration
-    cat >>"$VARS_FILE" <<EOF
-
-# GitHub secrets configuration
-configure_github_secrets: false
-# To enable GitHub integration, provide credentials during deployment or edit this file.
-#
-# Option 1: Token-only (basic scanning, no portal push)
-# github_token: "ghp_..."
-# configure_github_secrets: true
-#
-# Option 2: Full GitHub App (includes portal push, PR creation)
-# github_token: "ghp_..."
-# github_oauth_client_id: "Iv1...."
-# github_oauth_client_secret: "..."
-# github_app_id: "123456"
-# github_app_client_id: "Iv1...."
-# github_app_client_secret: "..."
-# github_app_private_key_path: "$HOME/.aap-demo/apme-github-app.pem"
-# configure_github_secrets: true
-#
-# Setup guide: https://github.com/settings/apps/new
-EOF
   fi
 
   cat >>"$VARS_FILE" <<EOF
 
-# Portal hub image (APME plugins baked in at build time)
-portal_hub_image: "${PORTAL_HUB_IMAGE}"
-
-# setup-pah / Automation Hub (reads ~/.aap-demo/galaxy-token and pah-config.yml)
-apme_pah_run_setup_pah: true
+apme_pah_run_setup_pah: false
 apme_pah_seed_apme_galaxy_servers: true
 apme_pah_collections_enabled: auto
-apme_pah_aap_namespace: "${AAP_NAMESPACE:-aap-operator}"
+apme_pah_aap_namespace: "${AAP_NAMESPACE}"
+apme_pah_has_galaxy_token: $([ "${APME_PAH_HAS_GALAXY_TOKEN:-false}" = true ] && echo true || echo false)
+apme_pah_has_pah_config: $([ "${APME_PAH_HAS_PAH_CONFIG:-false}" = true ] && echo true || echo false)
 
-# Architecture (informational)
-# cluster_arch: ${ARCH}
+apme_route_tls_enabled: $([ "$APME_ROUTE_TLS_ENABLED" = true ] && echo true || echo false)
+apme_route_tls_termination: "${APME_ROUTE_TLS_TERMINATION}"
 EOF
 
+  if [ "$APME_ROUTE_TLS_ENABLED" = true ]; then
+    cat >>"$VARS_FILE" <<'TLSHDR'
+
+apme_route_tls_certificate: |
+TLSHDR
+    sed 's/^/  /' <<<"${APME_ROUTE_TLS_CERTIFICATE}" >>"$VARS_FILE"
+    cat >>"$VARS_FILE" <<'TLSHDR'
+apme_route_tls_key: |
+TLSHDR
+    sed 's/^/  /' <<<"${APME_ROUTE_TLS_KEY}" >>"$VARS_FILE"
+    if [ -n "${APME_ROUTE_TLS_CA_CERTIFICATE:-}" ]; then
+      cat >>"$VARS_FILE" <<'TLSHDR'
+
+apme_route_tls_ca_certificate: |
+TLSHDR
+      sed 's/^/  /' <<<"${APME_ROUTE_TLS_CA_CERTIFICATE}" >>"$VARS_FILE"
+    fi
+    if [ -n "${APME_ROUTE_TLS_DEST_CA_CERTIFICATE:-}" ]; then
+      cat >>"$VARS_FILE" <<'TLSHDR'
+
+apme_route_tls_destination_ca_certificate: |
+TLSHDR
+      sed 's/^/  /' <<<"${APME_ROUTE_TLS_DEST_CA_CERTIFICATE}" >>"$VARS_FILE"
+    fi
+  fi
+
+  if [ -n "${GITHUB_APP_PRIVATE_KEY_CONTENT:-}" ]; then
+    cat >>"$VARS_FILE" <<'KEYHDR'
+
+github_app_private_key_content: |
+KEYHDR
+    sed 's/^/  /' <<<"${GITHUB_APP_PRIVATE_KEY_CONTENT}" >>"$VARS_FILE"
+  fi
+
+  chmod 600 "$VARS_FILE"
+  info "Params file: $PARAMS_FILE"
   info "Vars file generated successfully"
-  info "To configure GitHub integration, edit: $VARS_FILE"
+}
+
+# ---------------------------------------------------------------------------
+# Post-deploy OAuth verification (MicroShift / CRC)
+# ---------------------------------------------------------------------------
+
+APME_PORTAL_DEPLOYMENT="${APME_PORTAL_DEPLOYMENT:-redhat-rhaap-portal}"
+
+verify_apme_aap_host_url() {
+  info "Verifying AAP host URL in portal pod..."
+
+  local aap_host_url
+  aap_host_url=$(kubectl exec "deployment/${APME_PORTAL_DEPLOYMENT}" \
+    -c backstage-backend \
+    -n "$NAMESPACE" \
+    -- printenv AAP_HOST_URL 2>/dev/null || true)
+
+  if [ -z "$aap_host_url" ]; then
+    warn "Could not read AAP_HOST_URL from portal pod"
+    return 1
+  fi
+
+  if [[ "$aap_host_url" == *".svc"* ]]; then
+    error "Portal is configured with in-cluster AAP URL: $aap_host_url"
+    error "Browser OAuth redirects require the external AAP route hostname."
+    error "Re-run: aap-demo enable apme-eap"
+    return 1
+  fi
+
+  if [ "${IS_MICROSHIFT:-false}" = true ] && [[ "$aap_host_url" == https://* ]]; then
+    error "Portal AAP URL uses HTTPS on MicroShift: $aap_host_url"
+    error "In-cluster OAuth token exchange requires http://<aap-route> on CRC/MicroShift."
+    error "Re-run: aap-demo enable apme-eap"
+    return 1
+  fi
+
+  info "AAP host URL: $aap_host_url"
+  return 0
+}
+
+verify_apme_host_alias() {
+  if [ "${IS_MICROSHIFT:-false}" != true ]; then
+    return 0
+  fi
+
+  info "Verifying AAP route host alias in portal pod..."
+
+  local aap_ip resolved_ip
+  aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  if [ -z "$aap_ip" ]; then
+    warn "Could not resolve AAP service ClusterIP; skipping host alias check"
+    return 1
+  fi
+
+  resolved_ip=$(kubectl exec "deployment/${APME_PORTAL_DEPLOYMENT}" \
+    -c backstage-backend \
+    -n "$NAMESPACE" \
+    -- getent hosts "$AAP_ROUTE" 2>/dev/null | awk '{print $1}' | head -1 || true)
+
+  if [ -z "$resolved_ip" ]; then
+    error "Portal pod cannot resolve AAP route hostname: ${AAP_ROUTE}"
+    error "hostAliases may be missing — in-pod OAuth token exchange will fail."
+    error "Re-run: aap-demo enable apme-eap"
+    return 1
+  fi
+
+  if [ "$resolved_ip" = "127.0.0.1" ] || [ "$resolved_ip" = "::1" ]; then
+    error "AAP route ${AAP_ROUTE} resolves to ${resolved_ip} inside portal pod"
+    error "Expected AAP Service ClusterIP (${aap_ip}). Re-run: aap-demo enable apme-eap"
+    return 1
+  fi
+
+  if [ "$resolved_ip" != "$aap_ip" ]; then
+    warn "AAP route resolves to ${resolved_ip} (expected Service ClusterIP ${aap_ip})"
+    return 1
+  fi
+
+  info "AAP route host alias: ${AAP_ROUTE} → ${resolved_ip}"
+  return 0
+}
+
+verify_apme_oauth_reachability() {
+  if [ "${IS_MICROSHIFT:-false}" != true ]; then
+    return 0
+  fi
+
+  info "Verifying OAuth token endpoint reachability from portal pod..."
+
+  local apme_route http_code
+  apme_route=$(kubectl get route -n "$NAMESPACE" "${APME_PORTAL_DEPLOYMENT}" \
+    -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+
+  http_code=$(kubectl exec "deployment/${APME_PORTAL_DEPLOYMENT}" \
+    -c backstage-backend \
+    -n "$NAMESPACE" \
+    -- sh -c '
+      AUTH=$(printf "%s:%s" "$OAUTH_CLIENT_ID" "$OAUTH_CLIENT_SECRET" | base64 -w0 2>/dev/null || printf "%s:%s" "$OAUTH_CLIENT_ID" "$OAUTH_CLIENT_SECRET" | base64)
+      curl -s -o /dev/null -w "%{http_code}" -X POST "'"${AAP_HOST_URL}"'/o/token/" \
+        -H "Authorization: Basic $AUTH" \
+        -H "Content-Type: application/x-www-form-urlencoded" \
+        -d "grant_type=authorization_code&code=invalid&redirect_uri=https://'"${apme_route}"'/api/auth/rhaap/handler/frame"
+    ' 2>/dev/null || echo "000")
+
+  if [ "$http_code" = "000" ]; then
+    error "Portal pod cannot reach AAP token endpoint at ${AAP_HOST_URL}/o/token/"
+    error "On CRC/MicroShift, route hostnames may not resolve inside pods without hostAliases."
+    error "Re-run: aap-demo enable apme-eap"
+    return 1
+  fi
+
+  if [ "$http_code" = "401" ]; then
+    error "OAuth client credentials rejected by AAP (invalid_client)"
+    error "Re-run: aap-demo enable apme-eap"
+    return 1
+  fi
+
+  info "OAuth token endpoint reachable (HTTP ${http_code})"
+  return 0
+}
+
+verify_apme_oauth() {
+  local rc=0
+  verify_apme_aap_host_url || rc=1
+  verify_apme_host_alias || rc=1
+  verify_apme_oauth_reachability || rc=1
+  return "$rc"
 }
 
 # ---------------------------------------------------------------------------
@@ -679,27 +704,32 @@ EOF
 # ---------------------------------------------------------------------------
 
 deploy() {
-  info "Deploying APME using official welcome pack playbooks..."
-  info "(pod status updates every 30s during helm installs)"
+  info "Deploying APME via AAP job template (${APME_JOB_TEMPLATE_NAME})..."
+  info "(pod status updates every 30s during template apply)"
 
-  # Set environment for kubernetes.core modules
-  export K8S_AUTH_KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}"
-  export ANSIBLE_ROLES_PATH="${SCRIPT_DIR}/playbooks/roles"
+  apme_init_aap_connection || die "Failed to initialize AAP connection"
+  apme_configure_microshift_job_networking || true
+
+  apme_ensure_aap_resources || die "Failed to configure AAP resources"
 
   _pod_watcher "$NAMESPACE" 30 &
   _watcher_pid=$!
   trap '_stop_pod_watcher' EXIT
 
-  # Run main deployment playbook directly
-  # Note: Load defaults first, then vars file so user config takes precedence
-  ansible-playbook "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
-    -e "@${SCRIPT_DIR}/defaults.yml" \
-    -e "@${VARS_FILE}"
+  local job_id
+  job_id=$(apme_launch_job_template "${APME_JOB_TEMPLATE_ID}") || die "Failed to launch AAP job"
+  apme_monitor_job "$job_id" "APME portal deploy" 120 || die "APME deployment job failed"
 
   _stop_pod_watcher
   trap - EXIT
 
   info "APME deployment completed successfully"
+  local apme_route
+  apme_route=$(kubectl get route -n "$NAMESPACE" redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+  apme_wait_for_portal_route "$apme_route" 180 || warn "Portal may still be starting — retry the URL in a minute"
+  if ! verify_apme_oauth; then
+    warn "OAuth verification failed — portal sign-in may not work until you re-run: aap-demo enable apme-eap"
+  fi
   show_routes
 }
 
@@ -775,6 +805,9 @@ cleanup() {
   if [ -f "$VARS_FILE" ]; then
     rm -f "$VARS_FILE"
   fi
+  if [ -f "$PARAMS_FILE" ]; then
+    rm -f "$PARAMS_FILE"
+  fi
 
   if _should_purge_apme_credentials "$@"; then
     _purge_apme_local_credentials
@@ -796,8 +829,11 @@ case "$ACTION" in
     detect_architecture
     discover_environment
     prompt_github_token
+    prepare_github_key_content
+    run_setup_pah_prestep
+    generate_openshift_deploy_token
     generate_vars_file
-    setup_venv
+    setup_minimal_venv
     deploy
     ;;
 
@@ -807,7 +843,7 @@ case "$ACTION" in
 
   *)
     echo "Usage: $0 [deploy|--delete [--purge-creds]]"
-    echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
+    echo "  deploy              - Deploy APME via AAP job template (Product Demos EE)"
     echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
     echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
     exit 1
