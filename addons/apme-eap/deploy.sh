@@ -20,7 +20,6 @@ VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
 PARAMS_FILE="$HOME/.aap-demo/apme-eap-params.env"
 TLS_DIR="$HOME/.aap-demo/apme-eap-tls"
 GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
-VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
 PORTAL_HUB_IMAGE="${PORTAL_HUB_IMAGE:-quay.io/cferman/portal-hub-eap:latest}"
 APME_PROJECT_NAME="${APME_PROJECT_NAME:-aap-demo-apme}"
 APME_EE_NAME="${APME_EE_NAME:-Product Demos EE}"
@@ -142,27 +141,6 @@ _stop_pod_watcher() {
 # ---------------------------------------------------------------------------
 # Prerequisites
 # ---------------------------------------------------------------------------
-
-setup_minimal_venv() {
-  # Minimal venv for optional local bootstrap playbooks (ansible-core only)
-  if [ -d "$VENV_DIR" ] && { [ ! -x "$VENV_DIR/bin/python3" ] || [ ! -x "$VENV_DIR/bin/pip" ]; }; then
-    warn "APME venv at $VENV_DIR is incomplete — recreating..."
-    rm -rf "$VENV_DIR"
-  fi
-
-  if [ ! -d "$VENV_DIR" ]; then
-    info "Creating minimal Python venv (ansible-core)..."
-    python3 -m venv "$VENV_DIR"
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
-    pip install --quiet --upgrade pip
-    pip install --quiet 'ansible-core>=2.15' PyYAML
-    info "Minimal venv created at $VENV_DIR (~50MB)"
-  else
-    # shellcheck disable=SC1091
-    source "$VENV_DIR/bin/activate"
-  fi
-}
 
 check_prerequisites() {
   info "Checking system prerequisites..."
@@ -818,7 +796,6 @@ cleanup() {
   fi
 
   info "APME cleanup complete"
-  info "To fully remove the venv: rm -rf $VENV_DIR"
 }
 
 # ---------------------------------------------------------------------------
@@ -835,7 +812,6 @@ case "$ACTION" in
     run_setup_pah_prestep
     generate_openshift_deploy_token
     generate_vars_file
-    setup_minimal_venv
     deploy
     ;;
 

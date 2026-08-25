@@ -48,13 +48,11 @@ step-by-step testing, and PR instructions.
 
 **Expected Results**:
 
-- ✅ Venv created at `~/.aap-demo/apme-eap-venv/` with ansible-core
-- ✅ API token auto-created and stored in `aap-api-token` secret
 - ✅ AAP resources created:
   - Organization: Default (existing)
-  - Project: `aap-demo-apme` (manual type)
-  - Inventory: `localhost` with host `localhost`
-  - Job Template: `Deploy APME`
+  - Project: `aap-demo-apme` (Git SCM)
+  - Execution environment: Product Demos EE
+  - Job template: `APME | Deploy Portal`
 - ✅ Job launched in AAP
 - ✅ Console displays AAP Web UI link
 - ✅ APME namespace created with pods running
@@ -62,13 +60,7 @@ step-by-step testing, and PR instructions.
 **Validation Commands**:
 
 ```bash
-# Check token secret
-kubectl get secret aap-api-token -n aap-operator
-
-# Check venv
-ls ~/.aap-demo/apme-eap-venv/
-
-# Check APME deployment
+# Check AAP job completed
 kubectl get pods -n apme
 kubectl get route -n apme
 ```
@@ -94,10 +86,7 @@ kubectl get route -n apme
 
 **Expected Results**:
 
-- ✅ Existing token reused (no new token created)
-- ✅ Existing venv reused
-- ✅ Project check finds existing project OR creates new one with unique timestamp path
-- ✅ Inventory reused (not recreated)
+- ✅ Existing AAP project synced or overlay applied
 - ✅ Job template updated (if needed) or reused
 - ✅ New job launched successfully
 
@@ -441,23 +430,24 @@ kubectl get pods -n apme  # Should exist again
 
 **Acceptance Criteria**:
 
-- First run (venv creation): < 5 minutes
-- Subsequent runs (venv exists): < 3 minutes
+- First run: < 5 minutes (AAP project sync + template apply)
+- Subsequent runs: < 3 minutes
 
 ---
 
-### PT-002: Venv Size
+### PT-002: Host footprint
 
-**Objective**: Verify minimal venv footprint
+**Objective**: Verify host does not install Ansible or create a venv
 
 **Steps**:
 
-1. After deployment: `du -sh ~/.aap-demo/apme-eap-venv/`
+1. Before deploy: `test ! -d ~/.aap-demo/apme-eap-venv`
+2. Run deploy and confirm directory still absent
 
 **Acceptance Criteria**:
 
-- Venv size: < 100 MB (target: ~50 MB)
-- Much smaller than full Ansible install (150+ MB)
+- No `~/.aap-demo/apme-eap-venv` created
+- Host prerequisites remain kubectl, python3, curl, jq only
 
 ---
 

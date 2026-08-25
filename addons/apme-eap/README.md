@@ -129,8 +129,7 @@ kubectl get route -n apme
 aap-demo disable apme-eap
 ```
 
-This removes the APME namespace and generated vars file but preserves GitHub credentials
-and the minimal venv for future use.
+This removes the APME namespace and generated vars/params files but preserves GitHub credentials.
 
 **Clean re-test cycle** (remove saved GitHub creds and private key):
 
@@ -141,12 +140,6 @@ APME_PURGE_CREDS=true aap-demo disable apme-eap
 ```
 
 When run interactively, disable also prompts to remove saved credentials.
-
-**To completely remove the minimal venv:**
-
-```bash
-rm -rf ~/.aap-demo/apme-eap-venv
-```
 
 ## Architecture
 
@@ -272,28 +265,26 @@ Verify: `kubectl get secret secrets-scm -n apme`
 | Upstream alignment | Custom logic | Official APME welcome pack roles |
 | Configuration | Hardcoded in script | Ansible vars file (editable) |
 | Maintainability | Single script | Structured roles |
-| Prerequisites | kubectl, helm, gh | ansible-playbook + kubectl, helm |
+| Prerequisites | kubectl, helm, gh | kubectl, python3, curl, jq |
 | Plugin delivery | Pre-built portal hub image | Same |
 
 ## File Structure
 
 ```
 addons/apme-eap/
-├── deploy.sh                     # Bash wrapper (addon contract)
+├── deploy.sh                     # Bash wrapper (AAP REST API orchestration)
+├── deploy.yaml                   # OpenShift Template (portal + APME engine)
+├── lib.sh                        # AAP project/EE/job template helpers
 ├── defaults.yml                  # Default configuration
-├── requirements.yml              # Ansible collection dependencies
 ├── README.md                     # This file
 ├── playbooks/
-│   ├── deploy_apme_portal.yml    # Main deployment playbook
-│   ├── tasks/
-│   └── templates/
-├── roles/
-│   ├── openshift_apme_setup/
-│   ├── aap_apme_prerequisites/
-│   ├── apme_helm_values/
-│   ├── apme_scm_secrets/
-│   ├── portal_helm_install/
-│   └── apme_gateway_helm/
+│   ├── deploy_apme_portal.yml    # Main deployment playbook (runs in AAP EE)
+│   └── roles/
+│       ├── apme_template_deploy/
+│       ├── aap_apme_prerequisites/
+│       ├── apme_pah_integration/
+│       └── apme_scm_secrets/
+├── execution-environment/        # Optional custom EE (default: Product Demos EE)
 └── plugin_packs/                 # Deprecated (reference OCI packs only)
 ```
 
@@ -342,9 +333,9 @@ extensions). Registering only the extensions factory leaves `plugin.apme.api` un
 **Solution**: Redeploy with current `apme-eap` playbooks (values template includes both
 factories). Hard-refresh the browser after redeploy.
 
-### Python venv creation fails
+### python3 missing on host
 
-**Symptom**: `python3 not found` or venv module errors
+**Symptom**: `python3 not found` when loading GitHub credentials from YAML
 
 **Solution**:
 
@@ -356,7 +347,7 @@ brew install python3
 python3 --version  # Should be 3.8 or later
 ```
 
-### Ansible collection missing
+### Ansible collection missing (AAP job)
 
 **Symptom**: `ERROR! couldn't resolve module/action 'kubernetes.core.k8s'`
 
