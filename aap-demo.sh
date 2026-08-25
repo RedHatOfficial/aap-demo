@@ -50,6 +50,11 @@ source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 AAP_VERSION="2.7"
 AAP_CHANNEL="stable-2.7"
 
+# Minimum CRC/MicroShift version threshold for deployment
+# Default: 4.22 (avoids signature validation issues)
+# Override to lower value to force deployment on older versions (advanced users only)
+CRC_VERSION="${CRC_VERSION:-4.22}"
+
 # Default values
 _NAMESPACE_EXPLICIT="${NAMESPACE:+true}"
 NAMESPACE="${NAMESPACE:-aap-operator}"
@@ -613,6 +618,60 @@ _check_disk_space() {
 }
 
 # Verify cluster is accessible — used before deploy, enable, and other cluster operations
+_verify_crc_version() {
+  # Check that the installed CRC version matches the required version
+  local installed_version
+
+  # Get installed CRC version from status
+  installed_version=$(crc status -o json 2>/dev/null \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('openshiftVersion',''))" 2>/dev/null \
+    | grep -oE '^[0-9]+\.[0-9]+' || echo "")
+
+  if [ -z "$installed_version" ]; then
+    echo ""
+    echo "ERROR: Could not detect CRC version"
+    echo ""
+    echo "Ensure CRC cluster is created and running:"
+    echo "  aap-demo create"
+    echo ""
+    echo "Or bypass version check with explicit override:"
+    echo "  CRC_VERSION=4.22 aap-demo deploy"
+    echo ""
+    return 1
+  fi
+
+  # Parse major.minor from installed version
+  local major="${installed_version%%.*}"
+  local minor="${installed_version#*.}"
+  minor="${minor%%.*}" # Handle 4.22.5 → 4.22
+
+  # Parse major.minor from required version (CRC_VERSION)
+  local req_major="${CRC_VERSION%%.*}"
+  local req_minor="${CRC_VERSION#*.}"
+  req_minor="${req_minor%%.*}" # Handle 4.22.5 → 4.22
+
+  # Reject if installed < CRC_VERSION (same logic as needs_signature_policy_relaxation)
+  if [ "$major" -lt "$req_major" ] || { [ "$major" -eq "$req_major" ] && [ "$minor" -lt "$req_minor" ]; }; then
+    echo ""
+    echo "ERROR: CRC version too old"
+    echo "  Required: $CRC_VERSION or newer"
+    echo "  Installed: $installed_version"
+    echo ""
+    echo "MicroShift 4.22+ is required to avoid signature validation issues with the operator catalog."
+    echo ""
+    echo "To fix:"
+    echo "  1. Delete the current cluster: aap-demo destroy"
+    echo "  2. Download latest CRC: https://console.redhat.com/openshift/create/local"
+    echo "  3. Install and create new cluster: aap-demo create"
+    echo ""
+    echo "Or override the version check: CRC_VERSION=$installed_version aap-demo deploy"
+    echo ""
+    return 1
+  fi
+
+  return 0
+}
+
 _verify_cluster() {
   setup_kubeconfig
   if kubectl cluster-info &>/dev/null 2>&1; then
@@ -1994,6 +2053,9 @@ cmd_deploy() {
   fi
   echo "Connected to: $(kubectl config current-context 2>/dev/null)"
   echo ""
+
+  # Verify CRC version matches required version
+  _verify_crc_version || exit 1
 
   # Check if AAP already exists — skip OLM and the full deploy if so
   if [ "$FORCE" != "true" ]; then
