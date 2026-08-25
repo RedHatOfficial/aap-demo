@@ -643,12 +643,12 @@ _verify_crc_version() {
   # Parse major.minor from installed version
   local major="${installed_version%%.*}"
   local minor="${installed_version#*.}"
-  minor="${minor%%.*}"  # Handle 4.22.5 → 4.22
+  minor="${minor%%.*}" # Handle 4.22.5 → 4.22
 
   # Parse major.minor from required version (CRC_VERSION)
   local req_major="${CRC_VERSION%%.*}"
   local req_minor="${CRC_VERSION#*.}"
-  req_minor="${req_minor%%.*}"  # Handle 4.22.5 → 4.22
+  req_minor="${req_minor%%.*}" # Handle 4.22.5 → 4.22
 
   # Reject if installed < CRC_VERSION (same logic as needs_signature_policy_relaxation)
   if [ "$major" -lt "$req_major" ] || { [ "$major" -eq "$req_major" ] && [ "$minor" -lt "$req_minor" ]; }; then
