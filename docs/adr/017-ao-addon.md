@@ -24,8 +24,11 @@ invoked via `aap-demo enable ao`.
 
 The addon applies **checked-in Kubernetes manifests** shaped like
 [`aapctl install ao --dry-run`](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops).
-**`aapctl` is not required at install time** — only `kubectl`/`oc` and a cluster from
-`aap-demo deploy`.
+**`aapctl` is not required at install time** — only `kubectl`/`oc`, a cluster from
+`aap-demo create`, and a `registry.redhat.io` pull secret. **`aap-demo deploy` is optional:**
+when `aap-operator` already has a healthy `redhat-operators` catalog, AO reuses its index
+image; otherwise `enable ao` installs OLM (if missing) and bootstraps the catalog in
+`automation-orchestrator`.
 
 | Aspect | Choice |
 |--------|--------|
@@ -75,7 +78,8 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 
 ### Positive
 
-- Single command: `aap-demo enable ao`
+- Single command: `aap-demo enable ao` (with or without prior `aap-demo deploy`)
+- AO-only path: `aap-demo create` then `enable ao` — no `aap-operator` namespace
 - No Quay POC, no `gh`, no runtime `aapctl` dependency
 - Manifests track Red Hat GitOps documentation; maintainers can refresh with `generate-manifests.sh`
 - Idempotent with explicit `FORCE=1` reinstall path
@@ -128,3 +132,4 @@ the full EA install sequence.
 | 2026-08-20 | GA migration: `redhat-operators` OLM path, hand-written CR |
 | 2026-08-21 | Rename `ao-eap` → `ao`; GitOps manifests from `aapctl --dry-run`; MicroShift catalog in app namespace; aapctl optional at runtime |
 | 2026-08-21 | Catalog signature policy: shared `olm-catalog-signature.sh` with deploy; SSH key refresh; CRI-O reload; signature pull auto-recovery |
+| 2026-08-25 | Standalone AO: `enable ao` bootstraps OLM + catalog without `aap-operator` |

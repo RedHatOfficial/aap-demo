@@ -4,8 +4,9 @@ Deploys **Automation Orchestrator (GA)** on aap-demo MicroShift clusters.
 
 - **Command:** `aap-demo enable ao` (legacy alias: `ao-eap`)
 - **Namespace:** `automation-orchestrator`
-- **Requires:** `aap-demo deploy` (AAP + OLM + `redhat-operators` in `aap-operator`)
-- **Does not require:** `aapctl`, Quay credentials, GitHub CLI, or a private operator index
+- **Requires:** `aap-demo create` (cluster + storage) and a `registry.redhat.io` pull secret
+- **Optional:** `aap-demo deploy` — when AAP is already deployed, AO reuses its operator catalog
+- **Does not require:** `aapctl`, Quay credentials, GitHub CLI, a private operator index, or the `aap-operator` namespace
 
 Manifests follow the
 [aapctl GitOps shape](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)
@@ -13,10 +14,20 @@ and are checked in under [`manifests/`](manifests/). `deploy.sh` applies them wi
 
 ## Quick start
 
+**AO only (no AAP):**
+
 ```bash
-aap-demo deploy          # once: AAP + OLM + catalog
-aap-demo enable ao       # install Automation Orchestrator
+aap-demo create          # cluster + storage
+aap-demo enable ao       # installs OLM + AO (no aap-operator namespace)
 aap-demo status          # route URL + admin password when ready
+```
+
+**AO alongside AAP:**
+
+```bash
+aap-demo deploy          # AAP + OLM + catalog in aap-operator
+aap-demo enable ao       # install Automation Orchestrator
+aap-demo status
 ```
 
 Force a clean reinstall (resets Postgres if secret names or passwords drifted):
@@ -38,8 +49,10 @@ operator in `cnpg-system` is **not** removed (it may be shared).
 
 | Requirement | Notes |
 |-------------|-------|
-| `aap-demo deploy` | Installs OLM and `redhat-operators` CatalogSource in `aap-operator` |
+| `aap-demo create` | Cluster, storage, and kubeconfig |
 | Pull secret | `registry.redhat.io` access (`~/.aap-demo/pull-secret.txt`) |
+| OLM | Installed automatically by `aap-demo enable ao` when missing |
+| Operator catalog | Bootstrapped in `automation-orchestrator` when `aap-operator` is absent |
 | Operator in index | `automation-orchestrator-operator` in `redhat-operator-index` v4.18+; automatic fallback index if missing |
 | StorageClass | Auto-detected: `nfs-local-rwx` or `topolvm-provisioner` |
 
@@ -50,15 +63,17 @@ operator in `cnpg-system` is **not** removed (it may be shared).
 ## How it works
 
 ```
-aap-demo deploy                    aap-demo enable ao
+aap-demo create                    aap-demo enable ao
      │                                    │
      ▼                                    ▼
- redhat-operators                  automation-orchestrator ns
- in aap-operator          ──►      + local CatalogSource copy
- (AAP subscription)                + CNPG (upstream manifest)
+ cluster + storage                 automation-orchestrator ns
+ (OLM installed if needed)        + local redhat-operators CatalogSource
+                                   + CNPG (upstream manifest)
                                    + Postgres secrets + Cluster
                                    + OLM Subscription (AO operator)
                                    + AutomationOrchestrator CR
+
+Optional: aap-demo deploy first — AO reuses the catalog index from aap-operator when present.
 ```
 
 ### MicroShift OLM constraints
@@ -138,12 +153,14 @@ MicroShift requires a **copy** of `redhat-operators` in `automation-orchestrator
 catalog pod pulls the operator index (multi-GB), OLM reports `TRANSIENT_FAILURE` and the pod
 may stay `Pending` — this is normal and can take **10+ minutes** on slow networks.
 
-**Prerequisite:** the AAP catalog in `aap-operator` must be `READY` first:
+**Prerequisite:** when using AAP, the catalog in `aap-operator` should be `READY` before
+enabling AO if you want to reuse its index image. Standalone AO installs bootstrap the catalog
+in `automation-orchestrator` automatically.
 
 ```bash
 kubectl get catalogsource redhat-operators -n aap-operator \
   -o jsonpath='{.status.connectionState.lastObservedState}{"\n"}'
-aap-demo deploy   # if not READY
+aap-demo deploy   # only if using AAP and catalog is not READY
 ```
 
 Check the **AO-local** catalog:
@@ -163,15 +180,14 @@ AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao
 
 ### SignatureValidationFailed (MicroShift 4.22+)
 
-MicroShift 4.22+ rejects unsigned `registry.redhat.io` images. **`aap-demo enable ao` does not
-SSH to the CRC VM** — run **`aap-demo deploy` first** on the same machine; deploy relaxes
-signature policy and waits for the AAP catalog to become `READY`.
+MicroShift 4.22+ rejects unsigned `registry.redhat.io` images. **`aap-demo enable ao`**
+relaxes signature policy on the CRC VM when needed (same as deploy). Ensure CRC is running
+and SSH works (`aap-demo ssh`).
 
 **Do not interrupt** a catalog pull that shows `Pulling catalog image...` — the index is
 multi-GB and can take several minutes. Only retry after fixing policy or increasing timeout.
 
 ```bash
-aap-demo deploy
 AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao
 ```
 

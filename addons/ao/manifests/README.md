@@ -28,7 +28,7 @@ committing; dry-run output uses one-time passwords.
 | `orchestrator-postgres-secret` | CNPG bootstrap + backend DB connection (`kubernetes.io/basic-auth`) |
 | `temporal-postgres-secret` | Temporal DB connection |
 | `temporal-visibility-postgres-secret` | Temporal visibility DB connection |
-| `automation-orchestrator-pull-secret` | Copied from `redhat-operators-pull-secret` in `aap-operator` |
+| `automation-orchestrator-pull-secret` | Copied from `redhat-operators-pull-secret` (from `aap-operator` when present, else `~/.aap-demo/pull-secret.txt`) |
 
 CNPG also creates `orchestrator-postgres-ca`, referenced by the instance CR as `caCertSecretRef`.
 

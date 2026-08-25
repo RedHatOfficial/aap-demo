@@ -17,8 +17,11 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 # manifest because certified-operators is not on MicroShift.
 #
 # Prerequisites:
-#   1. aap-demo cluster with OLM (aap-demo deploy)
-#   2. Valid registry.redhat.io pull secret
+#   1. aap-demo cluster (aap-demo create) — OLM is installed automatically if missing
+#   2. Valid registry.redhat.io pull secret (~/.aap-demo/pull-secret.txt)
+#
+# AAP is optional. When aap-operator is absent, this script bootstraps OLM and a
+# local redhat-operators CatalogSource in automation-orchestrator.
 #
 # aapctl is NOT required at install time (manifests are checked in under manifests/).
 # Optional: aapctl for disable cleanup and for scripts/generate-manifests.sh refresh.
@@ -87,7 +90,7 @@ short_image_ref() {
   esac
 }
 
-find_catalog_namespace() {
+find_external_catalog_namespace() {
   local _ns
   for _ns in aap-operator openshift-marketplace olm; do
     if kubectl get catalogsource redhat-operators -n "$_ns" &>/dev/null 2>&1; then
@@ -95,7 +98,105 @@ find_catalog_namespace() {
       return 0
     fi
   done
+  return 1
+}
+
+find_catalog_namespace() {
+  local _ns
+  if _ns=$(find_external_catalog_namespace 2>/dev/null); then
+    echo "$_ns"
+    return 0
+  fi
+  if kubectl get catalogsource redhat-operators -n "$NAMESPACE" &>/dev/null 2>&1; then
+    echo "$NAMESPACE"
+    return 0
+  fi
   echo "aap-operator"
+}
+
+resolve_local_pull_secret_path() {
+  local _path
+  for _path in "${PULL_SECRET_PATH:-}" "$HOME/.aap-demo/pull-secret" \
+    "$HOME/.aap-demo/pull-secret.txt" "$HOME/.aap-demo/pull-secret.json"; do
+    if [ -n "$_path" ] && [ -f "$_path" ]; then
+      echo "$_path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_olm_for_ao() {
+  if kubectl get crd subscriptions.operators.coreos.com &>/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing OLM (required for Automation Orchestrator)..."
+  if ! bash "${REPO_ROOT}/addons/olm/deploy.sh"; then
+    echo "ERROR: OLM installation failed." >&2
+    echo "  Try: aap-demo enable olm" >&2
+    return 1
+  fi
+  echo "✓ OLM installed"
+}
+
+link_pull_secret_to_default_sa() {
+  local _ns="$1"
+  local _secret_name="${2:-redhat-operators-pull-secret}"
+  local _existing_secrets _secrets_json
+
+  if ! kubectl get secret "$_secret_name" -n "$_ns" &>/dev/null; then
+    return 1
+  fi
+  _existing_secrets=$(kubectl get serviceaccount default -n "$_ns" \
+    -o jsonpath='{.imagePullSecrets[*].name}' 2>/dev/null || echo "")
+  if echo "$_existing_secrets" | grep -qw "$_secret_name"; then
+    return 0
+  fi
+  _secrets_json='[{"name": "'"${_secret_name}"'"}'
+  for _secret in $_existing_secrets; do
+    [ "$_secret" = "$_secret_name" ] && continue
+    _secrets_json="${_secrets_json}, {\"name\": \"${_secret}\"}"
+  done
+  _secrets_json="${_secrets_json}]"
+  kubectl patch serviceaccount default -n "$_ns" \
+    -p "{\"imagePullSecrets\": ${_secrets_json}}" 2>/dev/null || true
+}
+
+ensure_redhat_pull_secret_in_namespace() {
+  local _dst_ns="$1"
+  local _secret_name="${2:-redhat-operators-pull-secret}"
+  local _src_ns _pull_secret_path
+
+  if kubectl get secret "$_secret_name" -n "$_dst_ns" &>/dev/null; then
+    return 0
+  fi
+
+  if _src_ns=$(find_external_catalog_namespace 2>/dev/null); then
+    if [ "$_src_ns" != "$_dst_ns" ] \
+      && kubectl get secret "$_secret_name" -n "$_src_ns" &>/dev/null; then
+      echo "Copying ${_secret_name} from ${_src_ns} to ${_dst_ns}..."
+      copy_pull_secret_to_namespace "$_src_ns" "$_dst_ns" "$_secret_name" "$_secret_name"
+      return 0
+    fi
+  fi
+
+  if ! _pull_secret_path=$(resolve_local_pull_secret_path); then
+    echo "ERROR: No pull secret found." >&2
+    echo "  Save registry.redhat.io credentials to ~/.aap-demo/pull-secret.txt" >&2
+    return 1
+  fi
+  echo "Creating ${_secret_name} in ${_dst_ns} from local pull secret..."
+  kubectl delete secret "$_secret_name" -n "$_dst_ns" 2>/dev/null || true
+  kubectl create secret generic "$_secret_name" \
+    --from-file=.dockerconfigjson="$_pull_secret_path" \
+    --type=kubernetes.io/dockerconfigjson \
+    -n "$_dst_ns"
+}
+
+ensure_ao_platform_prerequisites() {
+  ensure_olm_for_ao || return 1
+  ensure_redhat_pull_secret_in_namespace "$NAMESPACE" "redhat-operators-pull-secret" || return 1
+  link_pull_secret_to_default_sa "$NAMESPACE" "redhat-operators-pull-secret"
 }
 
 report_catalog_failure() {
@@ -129,16 +230,11 @@ report_catalog_failure() {
   echo "  the pod is Pending usually means the index image is still pulling (multi-GB)." >&2
   echo "  On slower networks or disks this can exceed 10 minutes." >&2
   echo "" >&2
-  echo "  Verify AAP catalog is healthy first:" >&2
-  echo "    kubectl get catalogsource redhat-operators -n ${AAP_NAMESPACE}" >&2
-  echo "    kubectl get pods -n ${AAP_NAMESPACE} -l olm.catalogSource=redhat-operators" >&2
-  echo "" >&2
-  echo "  Then inspect the AO catalog pod and events:" >&2
+  echo "  Inspect the AO catalog pod and events:" >&2
   echo "    kubectl describe pod -n ${_catalog_ns} -l olm.catalogSource=redhat-operators" >&2
   echo "    kubectl get events -n ${_catalog_ns} --sort-by=.lastTimestamp | tail -15" >&2
   echo "" >&2
-  echo "  Retry with a longer wait or after fixing AAP deploy:" >&2
-  echo "    aap-demo deploy" >&2
+  echo "  Retry with a longer wait:" >&2
   echo "    AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao" >&2
   kubectl describe catalogsource redhat-operators -n "$_catalog_ns" 2>/dev/null | tail -20 >&2
   return 1
@@ -251,7 +347,14 @@ select_ao_index_image() {
     echo "$AO_ACTIVE_INDEX_IMAGE"
     return 0
   fi
-  _aap_ns=$(find_catalog_namespace)
+  _aap_ns=""
+  if ! _aap_ns=$(find_external_catalog_namespace 2>/dev/null); then
+    _aap_ns=""
+  fi
+  if [ -z "$_aap_ns" ]; then
+    resolve_operator_index_image
+    return 0
+  fi
   _aap_image=$(kubectl get catalogsource redhat-operators -n "$_aap_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
   _aap_state=$(kubectl get catalogsource redhat-operators -n "$_aap_ns" \
@@ -280,9 +383,8 @@ select_ao_index_image() {
 
 ensure_ao_catalog_source() {
   local _catalog_ns="$NAMESPACE"
-  local _src_ns _target_image _current_image
+  local _target_image _current_image
 
-  _src_ns=$(find_catalog_namespace)
   _target_image=$(select_ao_index_image)
   _current_image=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
@@ -292,12 +394,10 @@ ensure_ao_catalog_source() {
 
   ensure_catalog_signature_policy >&2 || return 1
 
-  if ! copy_pull_secret_to_namespace "$_src_ns" "$_catalog_ns" \
-    "redhat-operators-pull-secret" "redhat-operators-pull-secret"; then # pragma: allowlist secret
-    echo "ERROR: redhat-operators-pull-secret not found in ${_src_ns}" >&2
-    echo "  Run 'aap-demo deploy' first." >&2
+  if ! ensure_redhat_pull_secret_in_namespace "$_catalog_ns" "redhat-operators-pull-secret"; then
     return 1
   fi
+  link_pull_secret_to_default_sa "$_catalog_ns" "redhat-operators-pull-secret"
 
   if [ ! -f "$CATALOG_SOURCE_TEMPLATE" ]; then
     echo "ERROR: CatalogSource template not found: ${CATALOG_SOURCE_TEMPLATE}" >&2
@@ -334,8 +434,12 @@ ensure_ao_catalog_source() {
 
 resolve_cluster_domain() {
   local _host _domain
-  _host=$(kubectl get route -n "$AAP_NAMESPACE" \
+  _host=$(kubectl get routes -n "$NAMESPACE" \
     -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  if [ -z "$_host" ]; then
+    _host=$(kubectl get route -n "$AAP_NAMESPACE" \
+      -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  fi
   if [ -n "$_host" ]; then
     _domain="${_host#*.}"
     if [ "$_domain" != "$_host" ]; then
@@ -610,16 +714,15 @@ wait_for_ao_postgres_databases() {
 }
 
 ensure_ao_pull_secret() {
-  local _src_ns="${CATALOG_NAMESPACE:-$AAP_NAMESPACE}"
   if kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
     return 0
   fi
-  if ! kubectl get secret redhat-operators-pull-secret -n "$_src_ns" &>/dev/null; then
-    echo "WARNING: redhat-operators-pull-secret not found in ${_src_ns}"
+  if ! ensure_redhat_pull_secret_in_namespace "$NAMESPACE" "redhat-operators-pull-secret"; then
+    echo "WARNING: redhat-operators-pull-secret not available in ${NAMESPACE}"
     return 1
   fi
   echo "Copying pull secret into ${NAMESPACE}..."
-  kubectl get secret redhat-operators-pull-secret -n "$_src_ns" -o json \
+  kubectl get secret redhat-operators-pull-secret -n "$NAMESPACE" -o json \
     | AO_PULL_SECRET_NAME="$AO_PULL_SECRET_NAME" NAMESPACE="$NAMESPACE" python3 -c "
 import json, os, sys
 secret = json.load(sys.stdin)
@@ -763,23 +866,22 @@ oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/d
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 echo "✓ Namespace ready"
 
-# --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---
-echo "Checking AAP redhat-operators catalog (for index image and pull secret)..."
-_aap_catalog_ns=$(find_catalog_namespace)
-if ! kubectl get catalogsource redhat-operators -n "$_aap_catalog_ns" &>/dev/null; then
-  echo "ERROR: redhat-operators CatalogSource is missing."
-  echo "  Run 'aap-demo deploy' first to install OLM and the operator catalog."
-  exit 1
+# --- OLM + operator catalog (AO-local; aap-operator namespace not required) ---
+echo "Ensuring platform prerequisites (OLM, pull secret)..."
+ensure_ao_platform_prerequisites || exit 1
+
+if _ext_catalog_ns=$(find_external_catalog_namespace 2>/dev/null); then
+  _ext_catalog_state=$(kubectl get catalogsource redhat-operators -n "$_ext_catalog_ns" \
+    -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
+  if [ "$_ext_catalog_state" = "READY" ]; then
+    echo "Using operator catalog from ${_ext_catalog_ns} (index image source)"
+  else
+    echo "External catalog in ${_ext_catalog_ns} is ${_ext_catalog_state:-unknown}; bootstrapping AO-local catalog"
+  fi
+else
+  echo "Bootstrapping AO-local operator catalog in ${NAMESPACE} (no aap-operator namespace required)"
 fi
-_aap_catalog_state=$(kubectl get catalogsource redhat-operators -n "$_aap_catalog_ns" \
-  -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
-if [ "$_aap_catalog_state" != "READY" ]; then
-  echo "ERROR: AAP redhat-operators catalog is not READY (state: ${_aap_catalog_state:-unknown})."
-  echo "  Fix the AAP catalog before enabling AO:"
-  echo "    aap-demo deploy"
-  echo "  Check: kubectl get catalogsource redhat-operators -n ${_aap_catalog_ns}"
-  exit 1
-fi
+
 if ! CATALOG_NAMESPACE=$(ensure_ao_catalog_source); then
   exit 1
 fi

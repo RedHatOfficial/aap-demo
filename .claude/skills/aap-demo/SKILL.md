@@ -71,6 +71,7 @@ Helm-based Self-Service Portal on OpenShift (`aap-demo enable portal`):
 GA install via checked-in GitOps manifests (`aap-demo enable ao`):
 
 - **No `aapctl` required** at install time — see [`addons/ao/README.md`](addons/ao/README.md)
+- **AAP optional** — `aap-demo create` + `aap-demo enable ao` works without `aap-operator`
 - Namespace: `automation-orchestrator`
 - AO operator OLM + catalog live in **app namespace** (not `aap-operator` — avoids MultipleOperatorGroupsFound)
 - Default channel: `stable` (`AO_OPERATOR_CHANNEL=early-access` to override)
