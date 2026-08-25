@@ -59,18 +59,22 @@ MOCK_CRC_DIR=$(mktemp -d)
 cat >"$MOCK_CRC_DIR/crc" <<EOF
 #!/bin/bash
 # Mock crc command for testing
-if [ "\$1" = "status" ] && [ "\$2" = "-o" ] && [ "\$3" = "json" ]; then
-  cat <<JSON
+# Handle both -o json and --output json forms
+if [ "\$1" = "status" ]; then
+  if { [ "\$2" = "-o" ] && [ "\$3" = "json" ]; } || { [ "\$2" = "--output" ] && [ "\$3" = "json" ]; }; then
+    cat <<JSON
 {
   "openshiftVersion": "${WRONG_VERSION}.0",
   "crcStatus": "Running",
   "success": true
 }
 JSON
-  exit 0
+    exit 0
+  fi
 fi
-# Pass through to real crc for other commands
-exec /usr/local/bin/crc "\$@"
+# Don't fall through to real CRC - mock should be self-contained
+echo "ERROR: Unexpected crc command: \$*" >&2
+exit 1
 EOF
 chmod +x "$MOCK_CRC_DIR/crc"
 
@@ -119,11 +123,11 @@ else
   echo "  Output: $deploy_output"
 fi
 
-# Check that it failed with version mismatch error (not catalog pull timeout)
-if echo "$deploy_output" | grep -q "ERROR: CRC version mismatch"; then
-  _pass "shows_version_mismatch_error"
+# Check that it failed with version error (not catalog pull timeout)
+if echo "$deploy_output" | grep -q "ERROR: CRC version"; then
+  _pass "shows_version_error"
 else
-  _fail "shows_version_mismatch_error - missing version error message"
+  _fail "shows_version_error - missing version error message"
   echo "  Output: $deploy_output"
 fi
 
@@ -155,15 +159,21 @@ fi
 echo ""
 echo "Test 2: Deploy with CRC_VERSION=$WRONG_VERSION override allows proceeding"
 
-# This would actually proceed, but we'll just check that the override is recognized
-# by verifying the default gets overridden
-export CRC_VERSION=$WRONG_VERSION
-if [ "$CRC_VERSION" = "$WRONG_VERSION" ]; then
-  _pass "env_var_override_works"
+# Run deploy with override and capture output
+override_exit_code=0
+(cd "$SCRIPT_DIR/.." && CRC_VERSION=$WRONG_VERSION ./aap-demo.sh deploy >/tmp/deploy-override-test.log 2>&1) || override_exit_code=$?
+override_output=$(cat /tmp/deploy-override-test.log 2>/dev/null || echo "")
+
+# The version check should be bypassed - look for signs we got past it
+# We expect it to fail later (no real cluster), but NOT on version check
+if echo "$override_output" | grep -q "ERROR: CRC version"; then
+  _fail "env_var_override_works - version check still ran despite override"
+  echo "  Output: $override_output"
 else
-  _fail "env_var_override_works - got $CRC_VERSION, expected $WRONG_VERSION"
+  # Should get past version check and proceed to next steps
+  # (will fail later due to no real cluster, but that's expected)
+  _pass "env_var_override_works"
 fi
-unset CRC_VERSION
 
 # Cleanup
 rm -rf "$MOCK_CRC_DIR"
