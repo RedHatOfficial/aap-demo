@@ -70,6 +70,7 @@ Helm-based Self-Service Portal on OpenShift (`aap-demo enable portal`):
 
 GA install via checked-in GitOps manifests (`aap-demo enable ao`):
 
+- **Requires `mcp-server`** — enabled automatically; AO wiring registers both AAP and MCP integrations
 - **No `aapctl` required** at install time — see [`addons/ao/README.md`](addons/ao/README.md)
 - Namespace: `automation-orchestrator`
 - AO operator OLM + catalog live in **app namespace** (not `aap-operator` — avoids MultipleOperatorGroupsFound)

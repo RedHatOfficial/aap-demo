@@ -31,7 +31,8 @@ aap-demo disable product-demo-openshift
 ## Configuration
 
 On aap-demo MicroShift clusters, the **OpenShift Credential** is configured
-automatically after installation:
+automatically when product demos are wired (`aap-demo enable product-demo-openshift`,
+`aap-demo enable product-demos`, or `aap-demo wire`):
 
 - **API host**: `https://kubernetes.default.svc:443` (in-cluster endpoint for job pods)
 - **Bearer token**: from your active `oc` session or kubeconfig

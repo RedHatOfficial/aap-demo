@@ -18,7 +18,8 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 #
 # Prerequisites:
 #   1. aap-demo cluster with OLM (aap-demo deploy)
-#   2. Valid registry.redhat.io pull secret
+#   2. mcp-server addon (installed automatically by `aap-demo enable ao`)
+#   3. Valid registry.redhat.io pull secret
 #
 # aapctl is NOT required at install time (manifests are checked in under manifests/).
 # Optional: aapctl for disable cleanup and for scripts/generate-manifests.sh refresh.
@@ -714,6 +715,29 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   exit 0
 fi
 
+ao_ensure_mcp_server() {
+  if kubectl get ansiblemcpserver aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1 \
+    || kubectl get deployment aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing required mcp-server addon..."
+  bash "${REPO_ROOT}/addons/mcp-server/deploy.sh"
+  local config="${HOME}/.aap-demo/config"
+  local current
+  if [ -f "$config" ]; then
+    current=$(grep '^ADDONS=' "$config" 2>/dev/null | cut -d= -f2 | tr ',' ' ')
+    if ! echo " $current " | grep -qw ' mcp-server '; then
+      if [ -n "$current" ]; then
+        sed -i.bak "s/^ADDONS=.*/ADDONS=${current},mcp-server/" "$config" && rm -f "${config}.bak"
+      else
+        echo "ADDONS=mcp-server" >>"$config"
+      fi
+    fi
+  fi
+}
+
+ao_ensure_mcp_server
+
 ao_instance_ready_to_skip() {
   local _degraded _route _reason
   if ! kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" &>/dev/null 2>&1; then
@@ -1087,3 +1111,8 @@ if [ -z "${_ao_route:-}" ]; then
 fi
 echo ""
 show_access_info
+
+# Wire AO ↔ AAP and MCP using cluster-local endpoints.
+# shellcheck source=../../includes/addon-wire.sh
+source "${REPO_ROOT}/includes/addon-wire.sh"
+aap_demo_wire || true

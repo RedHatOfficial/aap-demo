@@ -129,7 +129,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
@@ -407,9 +407,9 @@ Cluster management:
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
-  enable mcp-server Enable MCP server for AI assistants
+  enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao       Install Automation Orchestrator
+  enable ao       Install Automation Orchestrator (enables mcp-server automatically)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
 
 Examples:
@@ -457,6 +457,7 @@ COMMANDS (all infrastructure types):
                     Output saved to must-gather.local.<timestamp> (or specified dir)
     enable [addon]  Enable an addon (mcp-server, portal, setup-pah, local-cache)
     disable [addon] Disable an addon
+    wire            Wire enabled addons together (APD credentials, AO integrations)
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
                     Usage: enable local-cache [save|load|clear]
@@ -2686,6 +2687,18 @@ _addons_remove() {
   _addons_save "$new"
 }
 
+_ensure_addon_dependency() {
+  local dep="$1"
+  shift 2>/dev/null || true
+  dep=$(_normalize_addon_name "$dep")
+  if echo "$(_addons_list)" | grep -qw "$dep"; then
+    return 0
+  fi
+  echo ""
+  echo "Required addon: ${dep}"
+  cmd_enable "$dep" "$@" || return 1
+}
+
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
@@ -2745,6 +2758,9 @@ cmd_enable() {
   if [ "$_skip_cluster_verify" != true ]; then
     _verify_cluster || return 1
   fi
+  if [ "$addon" = "ao" ] && [ "$_skip_addon_save" != true ]; then
+    _ensure_addon_dependency mcp-server "$@" || return 1
+  fi
   if [ "$_skip_addon_save" != true ]; then
     _addons_add "$addon"
   fi
@@ -2752,6 +2768,21 @@ cmd_enable() {
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
   fi
+  # shellcheck source=includes/addon-wire.sh
+  source "${SCRIPT_DIR}/includes/addon-wire.sh"
+  if [ "$addon" = "ao" ]; then
+    aap_demo_wire || return 1
+  else
+    aap_demo_wire || true
+  fi
+}
+
+cmd_wire() {
+  setup_kubeconfig
+  _verify_cluster || return 1
+  # shellcheck source=includes/addon-wire.sh
+  source "${SCRIPT_DIR}/includes/addon-wire.sh"
+  aap_demo_wire
 }
 
 cmd_disable() {
@@ -2952,6 +2983,9 @@ case "$COMMAND" in
     ;;
   enable)
     cmd_enable "${EXTRA_ARGS[@]}"
+    ;;
+  wire)
+    cmd_wire
     ;;
   disable)
     cmd_disable "${EXTRA_ARGS[@]}"

@@ -322,3 +322,8 @@ if [ -n "$MCP_TOKEN" ]; then
   echo "  NOTE: The OAuth token will expire. Re-run 'aap-demo enable mcp-server'"
   echo "  or generate a new token from the AAP UI to refresh it."
 fi
+
+# Register MCP server in Automation Orchestrator when AO is installed.
+# shellcheck source=../../includes/addon-wire.sh
+source "${SCRIPT_DIR}/../../includes/addon-wire.sh"
+aap_demo_wire || true

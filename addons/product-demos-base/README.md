@@ -58,11 +58,9 @@ Network access is required to:
 
 After installation, you'll need to configure some credentials in the AAP UI:
 
-1. **Galaxy/Automation Hub Tokens** (for downloading certified/validated content):
-   - Log into AAP UI
-   - Navigate to Credentials
-   - Update "Automation Hub Certified Content" and "Automation Hub Validated Content"
-   - Add your Red Hat automation hub tokens
+1. **Galaxy/Automation Hub Tokens** (optional when `~/.aap-demo/galaxy-token` exists):
+   - Place your offline token at `~/.aap-demo/galaxy-token`, then run `aap-demo wire`
+   - Or update "Automation Hub Certified Content" and "Automation Hub Validated Content" manually in the AAP UI
 
 2. **Machine Credential** (for connecting to managed nodes):
    - Update "APD Machine Credential"
@@ -70,8 +68,10 @@ After installation, you'll need to configure some credentials in the AAP UI:
 
 3. **Cloud Credentials** (optional, for cloud demos):
    - Update "AWS" credential with your AWS access keys
-   - **OpenShift Credential** is auto-configured for local MicroShift when you
-     enable `product-demo-openshift` (uses in-cluster API + your `oc` token)
+   - **OpenShift Credential** is auto-configured for local MicroShift when product demos are
+     installed (`aap-demo wire` or `product-demo-openshift`)
+   - **AAP Credential** is auto-configured to the in-cluster gateway when wiring runs
+   - **Automation Hub** credentials are updated when `~/.aap-demo/galaxy-token` exists
 
 ### Custom Repository
 
