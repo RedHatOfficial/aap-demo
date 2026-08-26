@@ -70,6 +70,9 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 - `ao` in `AVAILABLE_ADDONS`; `ao-eap` normalized via `_normalize_addon_name()`
 - Pass-through: `--force`, `--refresh-catalog`
 - `show_status`: AO route URL when enabled
+- Post-install wiring via [`includes/addon-wire.sh`](../../includes/addon-wire.sh): registers global
+  **AAP** and **MCP Server** integrations using in-cluster URLs and gateway tokens (`aap-demo wire`).
+  **`mcp-server` is a hard dependency of `ao`** — `aap-demo enable ao` enables MCP first.
 
 ## Consequences
 
@@ -123,8 +126,13 @@ the full EA install sequence.
 
 ### Amendment log
 
+See [ADR-023](023-addon-auto-wiring.md) for the full auto-wiring design.
+
 | Date | Change |
 |------|--------|
 | 2026-08-20 | GA migration: `redhat-operators` OLM path, hand-written CR |
 | 2026-08-21 | Rename `ao-eap` → `ao`; GitOps manifests from `aapctl --dry-run`; MicroShift catalog in app namespace; aapctl optional at runtime |
 | 2026-08-21 | Catalog signature policy: shared `olm-catalog-signature.sh` with deploy; SSH key refresh; CRI-O reload; signature pull auto-recovery |
+| 2026-08-26 | Addon auto-wiring: `includes/addon-wire.sh` configures AO ↔ AAP OAuth and MCP integrations after enable |
+| 2026-08-26 | Wire applies APD-style AO network access (`APP_INTEGRATION_URL_ALLOWED_HOSTS`) before integration registration on MicroShift |
+| 2026-08-26 | `mcp-server` is a required dependency of `ao`; enable ao installs MCP and wire fails if MCP integration is missing |
