@@ -9,10 +9,20 @@ AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
 PORTAL_NAMESPACE="${PORTAL_NAMESPACE:-redhat-rhaap-portal}"
 ACTION="${1:-deploy}"
 PORTAL_DIR="${HOME}/.aap-demo/portal"
+AAP_DEMO_LOCAL_BIN="${HOME}/.local/bin"
+if [[ ":${PATH:-}:" == *":${AAP_DEMO_LOCAL_BIN}:"* ]]; then
+  AAP_DEMO_LOCAL_BIN_IN_PATH=true
+else
+  AAP_DEMO_LOCAL_BIN_IN_PATH=false
+fi
+# Prefer user-local binaries (Helm auto-install, oc, kubectl) over system PATH.
+export PATH="${AAP_DEMO_LOCAL_BIN}:/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
 
 # Helm release name and chart
 RELEASE_NAME="redhat-rhaap-portal"
 CHART_REPO="openshift-helm-charts/redhat-rhaap-portal"
+# Official Helm 3 binary installed to ~/.local/bin when helm is missing (no sudo).
+HELM_INSTALL_VERSION="${HELM_INSTALL_VERSION:-v3.21.4}"
 
 # Default plugin version (AAP 2.7 compatible)
 DEFAULT_PLUGIN_VERSION="2.2"
@@ -167,6 +177,136 @@ check_architecture() {
   return 0
 }
 
+helm_version_ok() {
+  local helm_version helm_major helm_minor
+  command -v helm &>/dev/null || return 1
+  helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
+  [ -n "$helm_version" ] || return 1
+  helm_major=$(echo "$helm_version" | cut -d. -f1)
+  helm_minor=$(echo "$helm_version" | cut -d. -f2)
+  if [ "$helm_major" -gt 3 ]; then
+    return 0
+  fi
+  if [ "$helm_major" -eq 3 ] && [ "$helm_minor" -ge 10 ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Download the official Helm tarball into ~/.local/bin (no sudo).
+# Same pattern as addons/olm/deploy.sh (operator-sdk) and install.sh (oc/kubectl).
+install_helm_binary() {
+  local os arch url tmp_dir tarball checksum_file expected actual dest helm_bin
+
+  case "$(uname -s)" in
+    Darwin) os="darwin" ;;
+    Linux) os="linux" ;;
+    *)
+      echo "❌ Unsupported OS for Helm auto-install: $(uname -s)"
+      echo "Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+      exit 1
+      ;;
+  esac
+  case "$(uname -m)" in
+    x86_64) arch="amd64" ;;
+    aarch64 | arm64) arch="arm64" ;;
+    *)
+      echo "❌ Unsupported architecture for Helm auto-install: $(uname -m)"
+      echo "Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+      exit 1
+      ;;
+  esac
+
+  if ! command -v curl &>/dev/null; then
+    echo "❌ curl not found (required to download Helm)"
+    exit 1
+  fi
+
+  dest="${AAP_DEMO_LOCAL_BIN}"
+  mkdir -p "$dest"
+  url="https://get.helm.sh/helm-${HELM_INSTALL_VERSION}-${os}-${arch}.tar.gz"
+  echo "Downloading Helm ${HELM_INSTALL_VERSION} for ${os}/${arch}..."
+
+  tmp_dir=$(mktemp -d)
+  tarball="${tmp_dir}/helm.tar.gz"
+  checksum_file="${tmp_dir}/helm.sha256sum"
+
+  if ! curl -fsSL -o "$tarball" "$url"; then
+    rm -rf "$tmp_dir"
+    echo "❌ Failed to download Helm from $url"
+    echo "Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+    echo "  Fedora/RHEL: sudo dnf install -y helm"
+    echo "  macOS: brew install helm"
+    exit 1
+  fi
+
+  if ! curl -fsSL -o "$checksum_file" "${url}.sha256sum"; then
+    rm -rf "$tmp_dir"
+    echo "❌ Failed to download Helm checksum from ${url}.sha256sum"
+    exit 1
+  fi
+
+  expected=$(awk '{print $1}' "$checksum_file")
+  if command -v sha256sum &>/dev/null; then
+    actual=$(sha256sum "$tarball" | awk '{print $1}')
+  else
+    actual=$(shasum -a 256 "$tarball" | awk '{print $1}')
+  fi
+  if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    rm -rf "$tmp_dir"
+    echo "❌ Helm checksum mismatch"
+    echo "  Expected: $expected"
+    echo "  Actual:   $actual"
+    exit 1
+  fi
+
+  if ! tar -xzf "$tarball" -C "$tmp_dir"; then
+    rm -rf "$tmp_dir"
+    echo "❌ Failed to extract Helm archive"
+    exit 1
+  fi
+
+  helm_bin="${tmp_dir}/${os}-${arch}/helm"
+  if [ ! -f "$helm_bin" ]; then
+    rm -rf "$tmp_dir"
+    echo "❌ Helm binary not found in archive"
+    exit 1
+  fi
+
+  mv "$helm_bin" "${dest}/helm"
+  chmod +x "${dest}/helm"
+  rm -rf "$tmp_dir"
+  export PATH="${dest}:${PATH}"
+  echo "✓ Helm installed to ${dest}/helm"
+
+  if [ "${AAP_DEMO_LOCAL_BIN_IN_PATH}" = false ]; then
+    echo "NOTE: Add ~/.local/bin to PATH to use helm outside this command:"
+    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+}
+
+ensure_helm() {
+  if helm_version_ok; then
+    echo "✓ Helm: $(helm version --short 2>/dev/null || echo 'found')"
+    return 0
+  fi
+
+  if command -v helm &>/dev/null; then
+    echo "Helm $(helm version --short 2>/dev/null || echo 'unknown') is too old — installing ${HELM_INSTALL_VERSION}..."
+  else
+    echo "Helm not found — installing ${HELM_INSTALL_VERSION}..."
+  fi
+
+  install_helm_binary
+
+  if ! helm_version_ok; then
+    echo "❌ Helm install completed but helm is not usable (found: $(helm version --short 2>/dev/null || echo 'not on PATH'))"
+    echo "Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+    exit 1
+  fi
+  echo "✓ Helm: $(helm version --short 2>/dev/null)"
+}
+
 check_prerequisites() {
   echo "Checking prerequisites..."
 
@@ -187,25 +327,7 @@ check_prerequisites() {
     exit 1
   fi
 
-  # Check Helm installed
-  if ! command -v helm &>/dev/null; then
-    echo "❌ Helm not found"
-    echo "Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-    exit 1
-  fi
-
-  # Check Helm version
-  local helm_version
-  helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
-  local helm_major
-  local helm_minor
-  helm_major=$(echo "$helm_version" | cut -d. -f1)
-  helm_minor=$(echo "$helm_version" | cut -d. -f2)
-
-  if [ "$helm_major" -lt 3 ] || ([ "$helm_major" -eq 3 ] && [ "$helm_minor" -lt 10 ]); then
-    echo "❌ Helm version 3.10+ required (found: v$helm_version)"
-    exit 1
-  fi
+  ensure_helm
 
   # Check jq installed
   if ! command -v jq &>/dev/null; then

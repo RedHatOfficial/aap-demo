@@ -46,7 +46,7 @@ See [ADR-002](../../docs/adr/002-portal-helm-deployment.md) for full architectur
 
 ### Local Tools
 
-- Helm 3.10+ installed ([install guide](https://helm.sh/docs/intro/install/))
+- Helm 3.10+ (`aap-demo enable portal` installs it to `~/.local/bin` if missing)
 - `jq` for JSON parsing (`brew install jq` on macOS)
 - `kubectl` or `oc` CLI configured
 
@@ -79,7 +79,7 @@ aap-demo enable portal
 
 ### What Happens During Install
 
-1. **Prerequisites check:** Verifies AAP, Helm, oc, cluster CPU (x86 vs ARM profile)
+1. **Prerequisites check:** Verifies AAP, Helm (auto-installs 3.10+ to `~/.local/bin` if missing), oc, cluster CPU (x86 vs ARM profile)
 2. **AAP configuration:**
    - Selects/creates organization for template sync
    - Creates OAuth application (placeholder redirect URI)
