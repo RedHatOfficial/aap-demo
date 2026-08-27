@@ -64,7 +64,7 @@ Helm-based Self-Service Portal on OpenShift (`aap-demo enable portal`):
 
 **Access**: `aap-demo status portal` for route URL. Sign in with AAP OAuth (admin credentials).
 
-**Prerequisites**: AAP deployed, Helm 3.10+, `registry.redhat.io` pull secret for OCI plugins.
+**Prerequisites**: AAP deployed, `registry.redhat.io` pull secret for OCI plugins. Helm 3.10+ is installed automatically if missing.
 
 ## Automation Orchestrator (`ao`) Addon
 
