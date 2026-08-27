@@ -4,8 +4,10 @@
 # =============================================================================
 #
 # Mirrors PowerShell Install-AapIngressCaTrust for bash/Linux/macOS.
-# Saves the CA to ~/.aap-demo/crc-ingress-ca.crt and exports CURL_CA_BUNDLE /
-# SSL_CERT_FILE for CLI tools.
+# Saves the CA to ~/.aap-demo/crc-ingress-ca.crt. CURL_CA_BUNDLE / SSL_CERT_FILE
+# replace the default trust store, so they are only exported when the CA is not
+# already in the OS store (Fedora/RHEL ca-trust, Debian ca-certificates, macOS
+# keychain). In that case a combined bundle (system CAs + ingress CA) is used.
 #
 # Usage:
 #   source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
@@ -144,10 +146,68 @@ _ingress_ca_fully_trusted() {
   _ingress_ca_in_nss_store "$path" || return 1
 }
 
-_ingress_ca_export_env() {
+_ingress_ca_system_bundle() {
+  local p
+  for p in \
+    "${AAP_DEMO_SYSTEM_CA_BUNDLE:-}" \
+    /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \
+    /etc/pki/tls/certs/ca-bundle.crt \
+    /etc/pki/tls/cert.pem \
+    /etc/ssl/certs/ca-certificates.crt \
+    /etc/ssl/cert.pem; do
+    [ -n "$p" ] && [ -f "$p" ] && [ -s "$p" ] || continue
+    echo "$p"
+    return 0
+  done
+  return 1
+}
+
+get_ingress_ca_cli_bundle_path() {
+  local ca_dir="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}"
+  echo "${ca_dir}/ca-bundle.crt"
+}
+
+_ingress_ca_export_standalone() {
   local ca_path="$1"
+
+  echo "  ⚠ Exporting standalone ingress CA as CURL_CA_BUNDLE (public HTTPS may fail)" >&2
+  echo "  Import the ingress CA to your OS trust store or set AAP_DEMO_SYSTEM_CA_BUNDLE" >&2
   export CURL_CA_BUNDLE="$ca_path"
   export SSL_CERT_FILE="$ca_path"
+  export REQUESTS_CA_BUNDLE="$ca_path"
+}
+
+_ingress_ca_export_env() {
+  local ca_path="$1"
+  local combined sys_bundle
+
+  [ -f "$ca_path" ] || return 0
+
+  # CURL_CA_BUNDLE / SSL_CERT_FILE replace OpenSSL's default store. After
+  # update-ca-trust on Fedora/RHEL the ingress CA is already in that store, so
+  # exporting the standalone PEM breaks public HTTPS (e.g. GitHub operator-sdk).
+  if _ingress_ca_in_trust_store "$ca_path"; then
+    unset CURL_CA_BUNDLE SSL_CERT_FILE REQUESTS_CA_BUNDLE
+    return 0
+  fi
+
+  combined=$(get_ingress_ca_cli_bundle_path)
+  mkdir -p "$(dirname "$combined")"
+
+  if sys_bundle=$(_ingress_ca_system_bundle); then
+    if cat "$sys_bundle" "$ca_path" >"$combined" 2>/dev/null; then
+      chmod 644 "$combined"
+      export CURL_CA_BUNDLE="$combined"
+      export SSL_CERT_FILE="$combined"
+      export REQUESTS_CA_BUNDLE="$combined"
+      return 0
+    fi
+    echo "  ⚠ Could not write combined CA bundle to $combined" >&2
+  else
+    echo "  ⚠ No system CA bundle found on this host" >&2
+  fi
+
+  _ingress_ca_export_standalone "$ca_path"
 }
 
 _fetch_ingress_ca_from_cluster() {
@@ -407,11 +467,15 @@ install_ingress_ca_trust() {
       echo "  Could not fetch ingress CA from cluster" >&2
       return 0
     fi
-    import_ingress_ca_certificate "$ca_path" true || {
-      echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
-      echo "  CLI tools can use CURL_CA_BUNDLE=$ca_path; browsers may still warn until imported" >&2
-    }
+    local import_ok=true
+    import_ingress_ca_certificate "$ca_path" true || import_ok=false
     _ingress_ca_export_env "$ca_path"
+    if [ "$import_ok" = false ]; then
+      echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
+      if [ -n "${CURL_CA_BUNDLE:-}" ]; then
+        echo "  CLI tools can use CURL_CA_BUNDLE=$CURL_CA_BUNDLE; browsers may still warn until imported" >&2
+      fi
+    fi
     return 0
   fi
 
@@ -435,10 +499,14 @@ install_ingress_ca_trust() {
     fi
   fi
 
-  import_ingress_ca_certificate "$ca_path" || {
-    echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
-    echo "  CLI tools can use CURL_CA_BUNDLE=$ca_path; browsers may still warn until imported" >&2
-  }
+  local import_ok=true
+  import_ingress_ca_certificate "$ca_path" || import_ok=false
   _ingress_ca_export_env "$ca_path"
+  if [ "$import_ok" = false ]; then
+    echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
+    if [ -n "${CURL_CA_BUNDLE:-}" ]; then
+      echo "  CLI tools can use CURL_CA_BUNDLE=$CURL_CA_BUNDLE; browsers may still warn until imported" >&2
+    fi
+  fi
   return 0
 }
