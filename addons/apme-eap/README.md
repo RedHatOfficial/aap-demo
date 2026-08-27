@@ -1,25 +1,48 @@
 # APME Playbook Addon
 
-Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) using
-**official APME EAP welcome pack Ansible playbooks** executed locally in an isolated Python
-virtual environment.
+Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) via
+**AAP job templates** and the shared **Product Demos EE** (`apd-ee-26`).
 
 > **Preview:** APME is prototype software for the Early Access Program.
 > Confidential — Red Hat associate and NDA partner use only.
 
 ## Overview
 
-This addon uses the **official APME EAP welcome pack playbooks** executed locally via `ansible-playbook`. This implementation:
+This addon deploys APME by **launching an AAP job** (`APME | Deploy Portal`) that runs
+`deploy_apme_portal.yml` inside the Product Demos execution environment. The job processes
+[`deploy.yaml`](deploy.yaml) with parameters from `~/.aap-demo/apme-eap-params.env`. The CLI (`deploy.sh`) is a
+thin orchestrator:
 
-- **Local execution**: Playbooks run in isolated Python venv (no AAP API dependency)
-- **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access
-- Uses structured Ansible roles from the official APME welcome pack
-- Auto-discovers aap-demo environment (no manual configuration)
-- Maintains alignment with upstream APME deployment patterns
+- **AAP-native execution**: Playbooks run in Product Demos EE (`oc process --local` + `kubernetes.core`)
+- **REST API orchestration**: Creates Git project, EE, inventory, and job template via curl
+- **Pre-built portal hub**: `quay.io/cferman/portal-hub-eap:latest` (no registry/skopeo at deploy)
+- **UI visibility**: Watch deployment progress in the AAP job output
 
-**Architecture:** Bash wrapper (`deploy.sh`) handles environment discovery and generates vars
-file, then invokes official APME playbooks via `ansible-playbook` with KUBECONFIG-based
-authentication.
+**Architecture:** `deploy.sh` discovers the environment, runs host pre-steps (`setup-pah`,
+GitHub creds), registers AAP resources, and launches the job template.
+
+## OpenShift Template install
+
+Deploy uses a single OpenShift Template ([`deploy.yaml`](deploy.yaml)) instead of Helm charts:
+
+```bash
+oc process -f addons/apme-eap/deploy.yaml --param-file=~/.aap-demo/apme-eap-params.env | oc apply -f -
+```
+
+`aap-demo enable apme-eap` generates the param file and runs the same flow via an AAP job.
+
+See [ADR-023](../../docs/adr/023-apme-openshift-template.md) for the full decision record.
+
+### Optional Route TLS
+
+Place PEM files in `~/.aap-demo/apme-eap-tls/` (`tls.crt`, `tls.key`, optional `ca.crt`, `dest-ca.crt`) before deploy.
+
+### GitHub integration
+
+| Mode | Default | Configuration |
+| ---- | ------- | ------------- |
+| PAT + OAuth | Yes | Prompt or `GITHUB_TOKEN` / `GITHUB_OAUTH_*` in cred file |
+| GitHub App (push/PR) | No | See **Advanced configuration → GitHub App** below |
 
 ## Quick Start
 
@@ -29,18 +52,16 @@ authentication.
 
 - `kubectl` or `oc`
 - `python3` (3.8+)
-- `helm` 3.10+ (portal Helm chart — auto-installed via brew/dnf when missing)
+- `curl` and `jq`
 - AAP deployed (`aap-demo deploy`)
+- Product Demos EE image `quay.io/ansible-product-demos/apd-ee-26:latest`
+  (shared with product-demos addons; optional custom build in `execution-environment/`)
 
 The addon deploys a **pre-built portal hub image** (`quay.io/cferman/portal-hub-eap:latest`)
 with APME plugins baked in at build time. Deploy does **not** push OCI plugin archives,
-run `install-dynamic-plugins`, or require `skopeo` or the in-cluster registry addon.
+run `install-dynamic-plugins` on the host, or require `skopeo` or the in-cluster registry addon.
 
-**Ansible installation** (auto-installed in venv):
-
-- A venv is created at `~/.aap-demo/apme-eap-venv` with full Ansible suite + collections
-- Includes kubernetes.core, community.okd, and other required collections
-- The playbooks run locally using KUBECONFIG authentication (~150 MB venv)
+**Host does not need Helm or a full Ansible install** — OpenShift Template processing runs in Product Demos EE.
 
 ### No Manual Configuration Required! 🎉
 
@@ -60,12 +81,11 @@ aap-demo enable setup-pah
 aap-demo enable apme-eap
 ```
 
-When credential files exist, apme-eap automatically:
+When credential files exist, apme-eap automatically on the **host** (before the AAP job):
 
 - Runs `setup-pah` to configure rh-certified / validated remotes on AAP
-- Enables portal `pahCollections` catalog sync
-- Seeds APME `/settings/galaxy-servers` with AAP Automation Hub (`{AAP}/api/galaxy/`) + community Galaxy
-- Writes literal AAP URLs into portal app-config (fixes `/undefined` navigation from unset `${AAP_HOST_URL}`)
+- Passes credential flags into the job for portal `pahCollections` catalog sync
+- Seeds APME `/settings/galaxy-servers` from inside the job
 
 See [collection authentication](../../docs/collection-authentication.md).
 
@@ -77,20 +97,22 @@ aap-demo enable apme-eap
 
 This will:
 
-1. Check system prerequisites (kubectl, python3, helm — installs helm if missing)
-2. Create venv with full Ansible + collections (if not exists)
-3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
-4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
-5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Run `playbooks/deploy_apme_portal.yml` with pre-built `portal-hub-eap` container image
-7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
+1. Check prerequisites (kubectl, python3, curl, jq)
+2. Auto-discover cluster domain, AAP route, and admin password
+3. Run **setup-pah** on the host when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists
+4. Generate OpenShift SA token and vars at `~/.aap-demo/apme-eap-vars.yml`
+5. Register AAP project `aap-demo-apme`, EE `Product Demos EE`, and job template `APME | Deploy Portal`
+6. Launch the AAP job (overlay local playbooks for uncommitted dev changes)
+7. Poll until the job completes and print the AAP UI link
 
-**Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with
-the cluster. The `K8S_AUTH_KUBECONFIG` environment variable is set automatically by the
-wrapper script.
+**Authentication in the job:** `openshift_token` + `https://kubernetes.default.svc:443`
+(service account token generated by `deploy.sh`).
 
-**First run** takes longer (~2-3 minutes) to set up the virtual environment and install
-Ansible collections. Subsequent runs reuse the existing venv and are faster.
+Override the EE image:
+
+```bash
+APME_EE_IMAGE=quay.io/yourorg/custom-ee:1.0.0 aap-demo enable apme-eap
+```
 
 ### Check Status
 
@@ -98,6 +120,7 @@ Ansible collections. Subsequent runs reuse the existing venv and are faster.
 aap-demo status        # Shows APME in addons section
 kubectl get pods -n apme
 kubectl get route -n apme
+# AAP UI → Jobs → "APME | Deploy Portal"
 ```
 
 ### Undeploy
@@ -106,8 +129,7 @@ kubectl get route -n apme
 aap-demo disable apme-eap
 ```
 
-This removes the APME namespace and generated vars file but preserves GitHub credentials
-and the virtual environment for future use.
+This removes the APME namespace and generated vars/params files but preserves GitHub credentials.
 
 **Clean re-test cycle** (remove saved GitHub creds and private key):
 
@@ -119,14 +141,18 @@ APME_PURGE_CREDS=true aap-demo disable apme-eap
 
 When run interactively, disable also prompts to remove saved credentials.
 
-**To completely remove everything** (including venv):
-
-```bash
-aap-demo disable apme-eap --purge-creds
-rm -rf ~/.aap-demo/apme-eap-venv
-```
-
 ## Architecture
+
+### AAP resources
+
+| Resource | Name |
+| -------- | ---- |
+| Project | `aap-demo-apme` (Git SCM → aap-demo repo) |
+| Execution environment | Product Demos EE (apd-ee-26 image) |
+| Job template | `APME Deploy Portal` |
+| Playbook | `addons/apme-eap/playbooks/deploy_apme_portal.yml` |
+
+Reuses the same EE registered by `product-demos-base` when enabled. Optional custom EE: see `execution-environment/`.
 
 ### Welcome Pack Roles
 
@@ -143,28 +169,21 @@ The addon uses these roles from the official APME welcome pack:
 ### Deployment Flow
 
 ```
-deploy.sh (bash wrapper)
+aap-demo enable apme-eap
     ↓
-Environment auto-discovery:
-  - KUBECONFIG from CRC
-  - OpenShift API URL
-  - AAP route and credentials
-  - Cluster architecture (x86/ARM)
+deploy.sh (CLI orchestrator)
+  - Discover cluster + AAP credentials
+  - setup-pah on host (if cred files exist)
+  - Generate SA token + vars file
+  - Register AAP project / EE / job template (REST API)
+  - Overlay local playbooks (dev changes)
+  - Launch "APME | Deploy Portal" job
     ↓
-Generate vars file:
-  ~/.aap-demo/apme-eap-vars.yml
+AAP EE pod runs deploy_apme_portal.yml
+  - openshift_token → kubernetes.default.svc:443
+  - Roles: apme_pah_integration → aap_apme_prerequisites → apme_template_deploy → galaxy seed
     ↓
-ansible-playbook playbooks/deploy_apme_portal.yml
-    ↓
-Roles execute in sequence:
-  1. openshift_apme_setup
-  2. apme_pah_integration (setup-pah + galaxy facts)
-  3. aap_apme_prerequisites
-  4. apme_helm_values (portal-hub-eap image + PAH sync)
-  5. apme_scm_secrets (if enabled)
-  6. portal_helm_install
-  7. apme_gateway_helm
-  8. post_tasks: seed APME galaxy servers + portal rollout
+Portal route ready — login via AAP OAuth
 ```
 
 ## Configuration
@@ -223,6 +242,21 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 - **apme_helm_chart_version** - Override APME gateway chart version
 - **devspaces_base_url** - Enable "Open in DevSpaces" actions
 
+## Advanced configuration
+
+### GitHub App (optional)
+
+For portal push branch and PR creation from Quality workflows, configure a GitHub App in addition to a PAT:
+
+1. Create a GitHub App at https://github.com/settings/apps/new
+2. Callback URL: `https://redhat-rhaap-portal-apme.<cluster-domain>/api/auth/github/handler/frame`
+3. Permissions: Contents and Pull requests (read/write)
+4. Save credentials to `~/.aap-demo/apme-eap-github-creds.yml` with `github_app_*` fields
+5. Set `configure_github_app_secrets: true` in `~/.aap-demo/apme-eap-vars.yml` or include App fields in the cred file
+6. Re-run `aap-demo enable apme-eap`
+
+Verify: `kubectl get secret secrets-scm -n apme`
+
 ## Differences from Bash Addon
 
 | Feature | Bash Addon | Playbook Addon |
@@ -231,28 +265,26 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 | Upstream alignment | Custom logic | Official APME welcome pack roles |
 | Configuration | Hardcoded in script | Ansible vars file (editable) |
 | Maintainability | Single script | Structured roles |
-| Prerequisites | kubectl, helm, gh | ansible-playbook + kubectl, helm |
+| Prerequisites | kubectl, helm, gh | kubectl, python3, curl, jq |
 | Plugin delivery | Pre-built portal hub image | Same |
 
 ## File Structure
 
 ```
 addons/apme-eap/
-├── deploy.sh                     # Bash wrapper (addon contract)
+├── deploy.sh                     # Bash wrapper (AAP REST API orchestration)
+├── deploy.yaml                   # OpenShift Template (portal + APME engine)
+├── lib.sh                        # AAP project/EE/job template helpers
 ├── defaults.yml                  # Default configuration
-├── requirements.yml              # Ansible collection dependencies
 ├── README.md                     # This file
 ├── playbooks/
-│   ├── deploy_apme_portal.yml    # Main deployment playbook
-│   ├── tasks/
-│   └── templates/
-├── roles/
-│   ├── openshift_apme_setup/
-│   ├── aap_apme_prerequisites/
-│   ├── apme_helm_values/
-│   ├── apme_scm_secrets/
-│   ├── portal_helm_install/
-│   └── apme_gateway_helm/
+│   ├── deploy_apme_portal.yml    # Main deployment playbook (runs in AAP EE)
+│   └── roles/
+│       ├── apme_template_deploy/
+│       ├── aap_apme_prerequisites/
+│       ├── apme_pah_integration/
+│       └── apme_scm_secrets/
+├── execution-environment/        # Optional custom EE (default: Product Demos EE)
 └── plugin_packs/                 # Deprecated (reference OCI packs only)
 ```
 
@@ -301,9 +333,9 @@ extensions). Registering only the extensions factory leaves `plugin.apme.api` un
 **Solution**: Redeploy with current `apme-eap` playbooks (values template includes both
 factories). Hard-refresh the browser after redeploy.
 
-### Python venv creation fails
+### python3 missing on host
 
-**Symptom**: `python3 not found` or venv module errors
+**Symptom**: `python3 not found` when loading GitHub credentials from YAML
 
 **Solution**:
 
@@ -315,18 +347,20 @@ brew install python3
 python3 --version  # Should be 3.8 or later
 ```
 
-### Ansible collection missing
+### Ansible collection missing (AAP job)
 
 **Symptom**: `ERROR! couldn't resolve module/action 'kubernetes.core.k8s'`
 
-**Cause**: Virtual environment was corrupted or collections install failed
+**Cause**: Job template not using Product Demos EE, or EE image missing `kubernetes.core`
 
 **Solution**:
 
 ```bash
-# Remove and recreate venv
-rm -rf ~/.aap-demo/apme-eap-venv
-aap-demo enable apme-eap  # Will recreate venv
+# Re-register EE and relaunch (uses Product Demos EE by default)
+aap-demo enable apme-eap
+
+# Or override EE image
+APME_EE_IMAGE=quay.io/ansible-product-demos/apd-ee-26:latest aap-demo enable apme-eap
 ```
 
 ### Playbook fails with "AAP route not found"
@@ -350,6 +384,32 @@ aap-demo enable apme-eap
 ```bash
 kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_password}' | base64 -d
 # Verify password works by logging into AAP web UI
+```
+
+### Portal OAuth login fails (`fetch failed`)
+
+**Symptom**: AAP username/password sign-in works, but portal OAuth returns
+`Login failed; caused by Error: Failed to send POST request: fetch failed`
+
+**Cause**: On MicroShift/CRC, the portal backend must POST to `http://<aap-route>/o/token/`
+with a `hostAliases` entry mapping the route hostname to the AAP Service ClusterIP.
+External route hostnames (`apps.crc.testing`, `nip.io`) do not resolve correctly inside pods.
+
+**Fix**: Re-run `aap-demo enable apme-eap`. On MicroShift the addon sets `aap_host_url` to
+`http://<aap-route>` and patches `hostAliases` on the portal Deployment.
+
+After deploy, `aap-demo enable apme-eap` runs automatic OAuth verification (AAP host URL,
+host alias, token endpoint reachability). If verification fails, re-run the enable command.
+Use `aap-demo diagnose` to check whether the CoreDNS route rewrite rule is configured.
+
+Verify from the portal pod:
+
+```bash
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n apme -- printenv AAP_HOST_URL
+# MicroShift expected: http://aap-aap-operator.apps.crc.testing (or *.nip.io)
+
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n apme -- \
+  getent hosts aap-aap-operator.apps.crc.testing
 ```
 
 ### Portal hub image pull fails

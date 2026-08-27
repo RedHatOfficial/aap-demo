@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  author: Red Hat
+  role_name: apme_template_deploy
+  description: Process and apply APME OpenShift Template
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+dependencies: []

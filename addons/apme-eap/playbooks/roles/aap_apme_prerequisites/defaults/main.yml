@@ -9,3 +9,5 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 aap_apme_prerequisites_force_oauth_recreation: false
 aap_apme_prerequisites_api_token_description: "APME Portal API Access"
 aap_apme_prerequisites_force_token_recreation: false
+
+aap_apme_prerequisites_skip_openshift_secret_creation: true
