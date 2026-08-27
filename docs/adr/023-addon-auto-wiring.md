@@ -1,4 +1,4 @@
-# ADR-023: Addon Auto-Wiring (`aap-demo wire`)
+# ADR-023: Addon Auto-Wiring
 
 **Status**: Accepted
 
@@ -31,20 +31,22 @@ integration and health-check credential on each AAP node.
 
 ## Decision
 
-Add cross-addon auto-wiring as a shared module and CLI command.
+Add cross-addon auto-wiring as a shared module invoked automatically by the CLI.
 
-### Module and command
+### Module and triggers
 
 | Piece | Location | Behavior |
 |-------|----------|----------|
 | Wiring module | [`includes/addon-wire.sh`](../../includes/addon-wire.sh) | `aap_demo_wire()` — idempotent API calls |
-| CLI command | `aap-demo wire` | Runs wiring on demand |
-| Post-enable hook | `cmd_enable` in [`aap-demo.sh`](../../aap-demo.sh) | Best-effort `aap_demo_wire` after each successful enable |
+| CLI helper | `_aap_demo_run_addon_wire()` in [`aap-demo.sh`](../../aap-demo.sh) | Sources addon-wire and runs wiring |
+| After enable | `cmd_enable` | Runs after each successful `aap-demo enable` (strict for `ao`) |
+| After deploy | `watch_aap` / existing-AAP skip in `cmd_deploy` | Runs when AAP reaches Successful |
+| Optional re-run | `aap-demo wire` | Troubleshooting only; not required in normal workflows |
 
 ### Wiring order
 
 ```text
-aap-demo wire
+aap_demo_wire (automatic)
   ├─ APD: AAP Credential (in-cluster URL for EE pods)
   ├─ APD: OpenShift Credential (SA token + API host)
   ├─ APD: Galaxy credentials (if ~/.aap-demo/galaxy-token exists)
@@ -92,7 +94,7 @@ external routes.
 
 ### Positive
 
-- Single command (`aap-demo wire`) or automatic run after `enable` completes cross-addon setup.
+- Single automatic path after enable and deploy; idempotent PATCH/create; safe to re-run.
 - Idempotent PATCH/create; safe to re-run.
 - Removes need for ad hoc APD Infrastructure AO network job on MicroShift demos.
 - Validated on MicroShift: integrations reach **Available**; proxy APIs work with dual query IDs.

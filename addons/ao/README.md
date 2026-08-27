@@ -37,8 +37,8 @@ operator in `cnpg-system` is **not** removed (it may be shared).
 
 ### Auto-wiring (AAP + MCP)
 
-After the instance is ready, `aap-demo enable ao` runs [`includes/addon-wire.sh`](../../includes/addon-wire.sh)
-to configure cluster-local integrations:
+After the instance is ready, `aap-demo enable ao` automatically configures cluster-local
+integrations (no separate wiring step):
 
 - **Integration URL allow-list** — patches AO deployments with
   `APP_INTEGRATION_URL_ALLOWED_HOSTS` and `APP_OIDC_ALLOW_PRIVATE_NETWORKS` (same intent as
@@ -49,11 +49,8 @@ to configure cluster-local integrations:
 - **MCP integration** (`aap-demo MCP Server`) — **required**; `mcp-server` is enabled automatically
   and wired to AO (route or in-cluster `/mcp` URL with tools enabled)
 
-Re-run wiring after enabling other addons:
-
-```bash
-aap-demo wire
-```
+Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
+Use `aap-demo wire` only to re-run wiring after manual cluster changes.
 
 **Workflow builder note:** Configuration → Integrations may show **Available** while the workflow
 UI still reports “AAP credential not configured” until you select **aap-demo AAP** and

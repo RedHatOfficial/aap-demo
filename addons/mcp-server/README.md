@@ -48,7 +48,7 @@ The addon automatically:
 3. Generates an OAuth token for Claude Code
 4. Configures the MCP server in your Claude Code settings (if `claude` CLI is available)
 5. Registers the MCP server in Automation Orchestrator when the `ao` addon is installed
-   (via `includes/addon-wire.sh`; re-run `aap-demo wire` if you enable addons out of order)
+   (via `includes/addon-wire.sh`; runs automatically after enable and deploy)
 
 ## Configuration
 

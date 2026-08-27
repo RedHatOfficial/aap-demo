@@ -71,7 +71,7 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 - Pass-through: `--force`, `--refresh-catalog`
 - `show_status`: AO route URL when enabled
 - Post-install wiring via [`includes/addon-wire.sh`](../../includes/addon-wire.sh): registers global
-  **AAP** and **MCP Server** integrations using in-cluster URLs and gateway tokens (`aap-demo wire`).
+  **AAP** and **MCP Server** integrations automatically after enable and deploy (see ADR-023).
   **`mcp-server` is a hard dependency of `ao`** — `aap-demo enable ao` enables MCP first.
 
 ## Consequences

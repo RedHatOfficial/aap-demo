@@ -670,6 +670,9 @@ if apd_monitor_job "$JOB_ID" "APD base install" 60; then
   echo "  - Or one domain: aap-demo enable product-demo-linux"
   echo "  - Log into AAP UI at: $AAP_UI_URL"
   echo ""
+  # shellcheck source=../../includes/addon-wire.sh
+  source "${SCRIPT_DIR}/../../includes/addon-wire.sh"
+  aap_demo_wire || true
   exit 0
 fi
 

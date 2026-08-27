@@ -457,7 +457,6 @@ COMMANDS (all infrastructure types):
                     Output saved to must-gather.local.<timestamp> (or specified dir)
     enable [addon]  Enable an addon (mcp-server, portal, setup-pah, local-cache)
     disable [addon] Disable an addon
-    wire            Wire enabled addons together (APD credentials, AO integrations)
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
                     Usage: enable local-cache [save|load|clear]
@@ -2047,6 +2046,7 @@ cmd_deploy() {
       echo "  (Use FORCE=true to reinstall)"
       echo ""
       watch_aap
+      _aap_demo_run_addon_wire || true
       exit 0
     fi
   fi
@@ -2596,6 +2596,7 @@ watch_aap() {
       fi
       echo ""
 
+      _aap_demo_run_addon_wire || true
       return 0
     fi
 
@@ -2699,6 +2700,20 @@ _ensure_addon_dependency() {
   cmd_enable "$dep" "$@" || return 1
 }
 
+# Auto-wire enabled addons (APD credentials, AO integrations). Runs after enable,
+# deploy, and watch; idempotent and safe to call multiple times.
+_aap_demo_run_addon_wire() {
+  local strict="${1:-false}"
+  setup_kubeconfig
+  # shellcheck source=includes/addon-wire.sh
+  source "${SCRIPT_DIR}/includes/addon-wire.sh"
+  if [ "$strict" = true ]; then
+    aap_demo_wire
+  else
+    aap_demo_wire || true
+  fi
+}
+
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
@@ -2768,21 +2783,17 @@ cmd_enable() {
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
   fi
-  # shellcheck source=includes/addon-wire.sh
-  source "${SCRIPT_DIR}/includes/addon-wire.sh"
   if [ "$addon" = "ao" ]; then
-    aap_demo_wire || return 1
+    _aap_demo_run_addon_wire true || return 1
   else
-    aap_demo_wire || true
+    _aap_demo_run_addon_wire false
   fi
 }
 
 cmd_wire() {
-  setup_kubeconfig
+  echo "Re-running addon wiring (also runs automatically after enable and deploy)..."
   _verify_cluster || return 1
-  # shellcheck source=includes/addon-wire.sh
-  source "${SCRIPT_DIR}/includes/addon-wire.sh"
-  aap_demo_wire
+  _aap_demo_run_addon_wire false
 }
 
 cmd_disable() {

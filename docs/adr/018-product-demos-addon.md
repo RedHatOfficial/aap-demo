@@ -206,10 +206,11 @@ PRODUCT_DEMOS_BRANCH=custom \
 
 ### Known Issues
 
-See [ADR-023](023-addon-auto-wiring.md) for APD credential auto-wiring via `aap-demo wire`.
+See [ADR-023](023-addon-auto-wiring.md) for APD credential auto-wiring (runs automatically).
 
 **Credential creation during install job**: If `install-apd.yml` fails to create the **AAP
-Credential**, run `aap-demo wire` after the APD organization exists. Wiring creates or updates
+Credential**, re-run `aap-demo enable product-demos` after the APD organization exists, or
+`aap-demo wire` to force a wiring pass. Wiring creates or updates
 **AAP Credential**, **OpenShift Credential**, and Galaxy credentials using in-cluster URLs.
 
 Historical note (pre-wiring):
