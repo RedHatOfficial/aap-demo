@@ -26,6 +26,7 @@ Use **non-destructive CLI integration tests** that validate the command surface 
 | Script | Scope |
 |--------|-------|
 | `test/test-core-commands.sh` | Subset documented in README |
+| `test/test-ingress-ca-export.sh` | Ingress CA `CURL_CA_BUNDLE` export (combined bundle, OS-trust skip) |
 | `test/test-aap-demo.sh` | Comprehensive CLI coverage |
 
 ### What tests validate

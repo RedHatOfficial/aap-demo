@@ -21,8 +21,8 @@ Requirements:
   Current User — both stores may be needed
 - **Chrome and Firefox on Linux** use **NSS databases** in the user home directory,
   not the system `ca-trust` store
-- The CA PEM must be **saved locally** so curl and other tools can use
-  `CURL_CA_BUNDLE` / `SSL_CERT_FILE` without re-fetching from the cluster
+- The CA PEM must be **saved locally** (`~/.aap-demo/crc-ingress-ca.crt`) so tools
+  can trust cluster routes without re-fetching from the cluster
 - Cluster recreate issues a **new CA** — stale certificates must be removed before re-import
 
 ADR-010 documents cross-platform CLI parity at a high level. This ADR records the
@@ -39,7 +39,18 @@ access is available. Always persist the CA to `~/.aap-demo/crc-ingress-ca.crt`.
 1. SSH to the CRC VM (`core@127.0.0.1:2222`) and read
    `/var/lib/microshift/certs/ingress-ca/ca.crt`
 2. Save to `~/.aap-demo/crc-ingress-ca.crt` (Windows: `%USERPROFILE%\.aap-demo\`)
-3. Export `CURL_CA_BUNDLE` and `SSL_CERT_FILE` pointing at the saved file
+3. Configure CLI TLS env vars via `_ingress_ca_export_env` (bash) or
+   `Set-AapIngressCaEnv` (PowerShell):
+
+   | Condition | `CURL_CA_BUNDLE` / `SSL_CERT_FILE` |
+   |-----------|-------------------------------------|
+   | Ingress CA already in OS trust store | **Unset** — curl uses the system store (avoids breaking public HTTPS) |
+   | CA not in OS store, system bundle found | Combined PEM at `~/.aap-demo/ca-bundle.crt` (system CAs + ingress CA) |
+   | No system bundle (last resort) | Standalone ingress CA PEM with a warning |
+
+   `CURL_CA_BUNDLE` and `SSL_CERT_FILE` **replace** OpenSSL's default trust store;
+   pointing them at the standalone ingress CA alone breaks public HTTPS (e.g. GitHub
+   downloads during OLM install). See issue #105.
 
 If fetch fails but a previously saved PEM exists, import from the saved copy.
 

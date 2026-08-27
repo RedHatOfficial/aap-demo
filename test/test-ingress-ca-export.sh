@@ -76,12 +76,30 @@ if [ -f "$REAL_CA" ] && _ingress_ca_in_trust_store "$REAL_CA"; then
   export CURL_CA_BUNDLE="$REAL_CA" SSL_CERT_FILE="$REAL_CA"
   _ingress_ca_export_env "$REAL_CA"
   if [ -z "${CURL_CA_BUNDLE:-}" ] && [ -z "${SSL_CERT_FILE:-}" ]; then
-    _pass "fedora_ca_trust_skips_env_override"
+    _pass "os_trust_skips_env_override"
   else
-    _fail "fedora_ca_trust_skips_env_override (CURL_CA_BUNDLE=${CURL_CA_BUNDLE:-unset})"
+    _fail "os_trust_skips_env_override (CURL_CA_BUNDLE=${CURL_CA_BUNDLE:-unset})"
   fi
 else
-  echo "⊘ fedora_ca_trust_skips_env_override (ingress CA not in OS store on this host)"
+  echo "⊘ os_trust_skips_env_override (ingress CA not in OS store on this host)"
+fi
+
+# Last resort: no system bundle — warn and export standalone with all three env vars.
+_ingress_ca_system_bundle() { return 1; }
+unset CURL_CA_BUNDLE SSL_CERT_FILE REQUESTS_CA_BUNDLE
+_ingress_ca_export_env "$DUMMY_CA" 2>"$TMPDIR/warn.txt"
+warn_output=$(cat "$TMPDIR/warn.txt")
+if echo "$warn_output" | grep -q "No system CA bundle found"; then
+  _pass "no_system_bundle_warns"
+else
+  _fail "no_system_bundle_warns"
+fi
+if [ "${CURL_CA_BUNDLE:-}" = "$DUMMY_CA" ] \
+  && [ "${SSL_CERT_FILE:-}" = "$DUMMY_CA" ] \
+  && [ "${REQUESTS_CA_BUNDLE:-}" = "$DUMMY_CA" ]; then
+  _pass "no_system_bundle_exports_standalone"
+else
+  _fail "no_system_bundle_exports_standalone (CURL_CA_BUNDLE=${CURL_CA_BUNDLE:-unset})"
 fi
 
 echo ""

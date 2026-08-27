@@ -167,6 +167,16 @@ get_ingress_ca_cli_bundle_path() {
   echo "${ca_dir}/ca-bundle.crt"
 }
 
+_ingress_ca_export_standalone() {
+  local ca_path="$1"
+
+  echo "  ⚠ Exporting standalone ingress CA as CURL_CA_BUNDLE (public HTTPS may fail)" >&2
+  echo "  Import the ingress CA to your OS trust store or set AAP_DEMO_SYSTEM_CA_BUNDLE" >&2
+  export CURL_CA_BUNDLE="$ca_path"
+  export SSL_CERT_FILE="$ca_path"
+  export REQUESTS_CA_BUNDLE="$ca_path"
+}
+
 _ingress_ca_export_env() {
   local ca_path="$1"
   local combined sys_bundle
@@ -185,16 +195,19 @@ _ingress_ca_export_env() {
   mkdir -p "$(dirname "$combined")"
 
   if sys_bundle=$(_ingress_ca_system_bundle); then
-    cat "$sys_bundle" "$ca_path" >"$combined" || return 0
-    chmod 644 "$combined"
-    export CURL_CA_BUNDLE="$combined"
-    export SSL_CERT_FILE="$combined"
-    export REQUESTS_CA_BUNDLE="$combined"
-    return 0
+    if cat "$sys_bundle" "$ca_path" >"$combined" 2>/dev/null; then
+      chmod 644 "$combined"
+      export CURL_CA_BUNDLE="$combined"
+      export SSL_CERT_FILE="$combined"
+      export REQUESTS_CA_BUNDLE="$combined"
+      return 0
+    fi
+    echo "  ⚠ Could not write combined CA bundle to $combined" >&2
+  else
+    echo "  ⚠ No system CA bundle found on this host" >&2
   fi
 
-  export CURL_CA_BUNDLE="$ca_path"
-  export SSL_CERT_FILE="$ca_path"
+  _ingress_ca_export_standalone "$ca_path"
 }
 
 _fetch_ingress_ca_from_cluster() {
