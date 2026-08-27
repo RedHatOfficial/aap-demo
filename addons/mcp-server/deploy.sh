@@ -324,6 +324,8 @@ if [ -n "$MCP_TOKEN" ]; then
 fi
 
 # Register MCP server in Automation Orchestrator when AO is installed.
-# shellcheck source=../../includes/addon-wire.sh
-source "${SCRIPT_DIR}/../../includes/addon-wire.sh"
-aap_demo_wire || true
+if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
+  # shellcheck source=../../includes/addon-wire.sh
+  source "${SCRIPT_DIR}/../../includes/addon-wire.sh"
+  aap_demo_wire || true
+fi

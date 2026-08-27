@@ -1112,7 +1112,9 @@ fi
 echo ""
 show_access_info
 
-# Wire AO ↔ AAP and MCP using cluster-local endpoints.
-# shellcheck source=../../includes/addon-wire.sh
-source "${REPO_ROOT}/includes/addon-wire.sh"
-aap_demo_wire || true
+# Wire AO ↔ AAP and MCP when deploy.sh is invoked directly (not via aap-demo enable).
+if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
+  # shellcheck source=../../includes/addon-wire.sh
+  source "${REPO_ROOT}/includes/addon-wire.sh"
+  aap_demo_wire || true
+fi

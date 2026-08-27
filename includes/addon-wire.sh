@@ -166,7 +166,26 @@ wire_aap_gateway_token() {
 }
 
 wire_ao_route_host() {
-  kubectl get route -n "$AO_NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true
+  local route
+  route=$(kubectl get route -n "$AO_NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+  if [ -z "$route" ]; then
+    return 1
+  fi
+  printf '%s' "$route"
+}
+
+wire_ao_wait_for_route() {
+  local attempt
+  for attempt in $(seq 1 12); do
+    if wire_ao_route_host >/dev/null; then
+      return 0
+    fi
+    if [ "$attempt" -lt 12 ]; then
+      sleep 5
+    fi
+  done
+  wire_warn "Automation Orchestrator route not ready after 60s"
+  return 1
 }
 
 # Mirrors ansible/product-demos infrastructure/ao/network-access.yml: allow-list hostnames
@@ -657,10 +676,6 @@ wire_ao_aap() {
   if ! wire_aap_deployed || ! wire_ao_deployed; then
     return 0
   fi
-  if ! wire_ao_route_host >/dev/null; then
-    wire_warn "AO route not ready; skipping AAP integration wiring"
-    return 0
-  fi
 
   wire_log "Wiring Automation Orchestrator → AAP integration..."
   aap_url=$(wire_aap_url_for_ao)
@@ -684,10 +699,6 @@ wire_ao_mcp() {
   if ! wire_mcp_deployed; then
     wire_warn "mcp-server is required for Automation Orchestrator but is not deployed"
     wire_warn "  Run: aap-demo enable ao (installs mcp-server automatically)"
-    return 1
-  fi
-  if ! wire_ao_route_host >/dev/null; then
-    wire_warn "AO route not ready; skipping MCP integration wiring"
     return 1
   fi
 
@@ -719,8 +730,9 @@ aap_demo_wire() {
   wire_apd_galaxy_if_present
   wire_apd_openshift
   wire_ao_network_access || wire_warn "AO integration allow-list configuration skipped"
-  wire_ao_aap
   if wire_ao_deployed; then
+    wire_ao_wait_for_route || return 1
+    wire_ao_aap || return 1
     wire_ao_mcp || return 1
   fi
 

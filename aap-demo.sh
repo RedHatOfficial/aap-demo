@@ -2779,12 +2779,19 @@ cmd_enable() {
   if [ "$_skip_addon_save" != true ]; then
     _addons_add "$addon"
   fi
+  export AAP_DEMO_WIRE_AFTER_DEPLOY=0
   bash "$addon_dir/deploy.sh" "$@"
+  unset AAP_DEMO_WIRE_AFTER_DEPLOY
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
   fi
   if [ "$addon" = "ao" ]; then
-    _aap_demo_run_addon_wire true || return 1
+    if ! _aap_demo_run_addon_wire true; then
+      echo ""
+      echo "  Automation Orchestrator is installed but integration wiring failed."
+      echo "  Re-run: aap-demo wire"
+      return 1
+    fi
   else
     _aap_demo_run_addon_wire false
   fi
@@ -2793,7 +2800,7 @@ cmd_enable() {
 cmd_wire() {
   echo "Re-running addon wiring (also runs automatically after enable and deploy)..."
   _verify_cluster || return 1
-  _aap_demo_run_addon_wire false
+  _aap_demo_run_addon_wire true
 }
 
 cmd_disable() {
