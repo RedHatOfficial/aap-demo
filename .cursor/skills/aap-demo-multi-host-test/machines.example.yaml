@@ -1,0 +1,65 @@
+# Copy to ~/.aap-demo/test-hosts.yaml and fill in real values.
+# NEVER commit test-hosts.yaml — it may contain hostnames and credential paths.
+#
+#   mkdir -p ~/.aap-demo
+#   cp .cursor/skills/aap-demo-multi-host-test/machines.example.yaml ~/.aap-demo/test-hosts.yaml
+
+defaults:
+  repo_path: ~/Documents/GitHub/aap-demo
+  quiet: true
+  trust_ca: false               # false → AAP_DEMO_TRUST_CA=false (no sudo/keychain prompt)
+  use_local_cache: true         # save images before destroy; AAP_DEMO_LOAD_CACHE=1 on deploy
+  destroy_reset: false          # true → aap-demo destroy --reset
+  pull_secret_required: true
+  sync_repo: false              # git pull in repo_path before test (ignored when pr is set)
+  git_remote: origin            # remote for PR fetch fallback (when gh is unavailable)
+  # pr: 123                     # optional default PR; overridden by --pr on CLI
+  strict: false                 # true → fail on missing optional prereqs
+
+hosts:
+  mac:
+    type: local                 # local | ssh
+    shell: bash
+    aap_demo_cmd: aap-demo
+    repo_path: ~/Documents/GitHub/aap-demo
+
+  linux-vm:
+    type: ssh
+    host: linux-vm.example.com
+    user: dev
+    identity_file: ~/.ssh/id_ed25519
+    shell: bash
+    aap_demo_cmd: aap-demo
+    repo_path: ~/aap-demo
+
+  windows:
+    type: ssh                   # OpenSSH Server on Windows
+    host: winbox.example.com
+    user: dev
+    identity_file: ~/.ssh/id_ed25519
+    shell: powershell
+    aap_demo_cmd: aap-demo
+    repo_path: C:\Users\dev\Documents\GitHub\aap-demo
+
+prerequisites:
+  galaxy_token_path: ~/.aap-demo/galaxy-token
+  pull_secret_paths:
+    - ~/.aap-demo/pull-secret.txt
+    - ~/.aap-demo/pull-secret.json
+  satellite:
+    url: https://satellite.example.com
+    # Host-local credential files or env vars — document paths here, do not store secrets
+    # credential_env:
+    #   SATELLITE_USER: admin
+    #   SATELLITE_PASSWORD_FILE: ~/.aap-demo/satellite-password
+
+# Addon enable order (override only if needed)
+addon_order:
+  - setup-pah
+  - mcp-server
+  - portal
+  - ao
+  - apme-eap
+  - product-demos
+  - product-demo-satellite
+  - local-cache

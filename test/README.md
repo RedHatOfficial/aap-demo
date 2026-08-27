@@ -2,6 +2,16 @@
 
 Validation tests for `aap-demo.sh` command-line interface.
 
+## Multi-host integration testing
+
+Full destroy → deploy → addon regression across Mac, Linux VM, and Windows is **not**
+part of this directory. Use the project skill and orchestrator instead:
+
+- [`.cursor/skills/aap-demo-multi-host-test/SKILL.md`](../.cursor/skills/aap-demo-multi-host-test/SKILL.md)
+- [`scripts/multi-host-test.sh`](../scripts/multi-host-test.sh)
+
+See `docs/adr/014-testing-strategy.md` — CI stays non-destructive; integration runs are manual.
+
 ## test-aap-demo.sh
 
 Comprehensive test script validating all aap-demo commands.

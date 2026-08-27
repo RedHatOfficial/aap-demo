@@ -23,3 +23,7 @@ __pycache__/
 .tox/
 node_modules/
 .npm/
+
+# Local multi-host test config (may contain hostnames and credential paths)
+.aap-demo/test-hosts.yaml
+test-hosts.yaml
