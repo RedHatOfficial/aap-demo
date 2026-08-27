@@ -154,8 +154,7 @@ _ingress_ca_system_bundle() {
     /etc/pki/tls/certs/ca-bundle.crt \
     /etc/pki/tls/cert.pem \
     /etc/ssl/certs/ca-certificates.crt \
-    /etc/ssl/cert.pem
-  do
+    /etc/ssl/cert.pem; do
     [ -n "$p" ] && [ -f "$p" ] && [ -s "$p" ] || continue
     echo "$p"
     return 0
