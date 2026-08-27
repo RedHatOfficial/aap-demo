@@ -79,7 +79,8 @@ aap-demo enable portal
 
 ### What Happens During Install
 
-1. **Prerequisites check:** Verifies AAP, Helm (auto-installs 3.10+ to `~/.local/bin` if missing), oc, cluster CPU (x86 vs ARM profile)
+1. **Prerequisites check:** Verifies AAP, Helm (auto-installs 3.10+ to `~/.local/bin`
+   if missing), oc, cluster CPU (x86 vs ARM profile)
 2. **AAP configuration:**
    - Selects/creates organization for template sync
    - Creates OAuth application (placeholder redirect URI)
