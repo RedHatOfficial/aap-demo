@@ -2479,6 +2479,19 @@ _patch_gateway_capability() {
     sleep 5
   done
 
+  # Scale to 1 immediately — before capability patch — to prevent concurrent
+  # migration race when 2+ replicas spin up simultaneously on fast systems.
+  local current_replicas
+  current_replicas=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")
+  if [ "$current_replicas" != "1" ]; then
+    echo "  Setting gateway replicas to 1 (prevents concurrent migration race condition)..."
+    if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=merge -p '{"spec":{"replicas":1}}' &>/dev/null; then
+      echo "  ✓ Gateway replicas set to 1"
+    else
+      echo "  ⚠ Gateway replica patch failed — migration race may occur"
+    fi
+  fi
+
   # Check if already patched
   local existing_caps
   existing_caps=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}' 2>/dev/null || echo "")

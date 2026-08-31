@@ -28,6 +28,19 @@ jobs:
           done
           exit $EXIT_CODE
 
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ingress CA export tests
+        run: ./test/test-ingress-ca-export.sh
+
+      - name: Run core command tests
+        run: ./test/test-core-commands.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest
