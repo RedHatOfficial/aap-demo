@@ -242,15 +242,41 @@ apd_create_openshift_demo_token() {
   kubectl create token "$sa" -n "$ns" --duration=8760h
 }
 
-apd_configure_openshift_credential() {
-  local apd_org_id cred_id patch_result
+apd_find_apd_credential_by_name() {
+  local name="$1"
+  local org_id="${2:-$(apd_apd_org_id)}"
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/credentials/?name=$(jq -rn --arg n "$name" '$n|@uri')" 2>&1 \
+    | jq -r --argjson org "$org_id" \
+      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty'
+}
+
+apd_controller_credential_type_id() {
+  local type_name="$1"
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/credential_types/?name=$(jq -rn --arg n "$type_name" '$n|@uri')" 2>&1 \
+    | jq -r '.results[0].id // empty'
+}
+
+apd_aap_job_hostname() {
+  local ns="${NAMESPACE:-aap-operator}"
+  if ! kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s >/dev/null 2>&1; then
+    printf 'http://aap.%s.svc.cluster.local' "$ns"
+  elif [ -n "${AAP_JOB_HOSTNAME:-}" ]; then
+    printf '%s' "$AAP_JOB_HOSTNAME"
+  else
+    printf '%s' "${AAP_UI_URL:-}"
+  fi
+}
+
+apd_ensure_openshift_credential() {
+  local apd_org_id cred_id type_id create_result patch_result
 
   if [ -z "${AAP_API:-}" ] || [ -z "${AAP_USERNAME:-}" ] || [ -z "${AAP_PASSWORD:-}" ]; then
     apd_init_aap_connection || return 1
   fi
 
   echo "Configuring OpenShift Credential for local MicroShift cluster..."
-
   apd_discover_openshift_connection || return 1
 
   apd_org_id=$(apd_apd_org_id)
@@ -259,35 +285,184 @@ apd_configure_openshift_credential() {
     return 1
   fi
 
-  cred_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/credentials/?name=$(jq -rn --arg n 'OpenShift Credential' '$n|@uri')" 2>&1 \
-    | jq -r --argjson org "$apd_org_id" \
-      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty')
-
+  cred_id=$(apd_find_apd_credential_by_name "OpenShift Credential" "$apd_org_id")
   if [ -z "$cred_id" ]; then
-    echo "  ⚠ OpenShift Credential not found in APD organization; skipping" >&2
+    type_id=$(apd_controller_credential_type_id "OpenShift or Kubernetes API Bearer Token")
+    if [ -z "$type_id" ]; then
+      echo "  ⚠ OpenShift credential type not found; skipping" >&2
+      return 1
+    fi
+    create_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X POST \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n \
+        --arg name "OpenShift Credential" \
+        --argjson org "$apd_org_id" \
+        --argjson type_id "$type_id" \
+        --arg host "$OPENSHIFT_API_HOST" \
+        --arg token "$OPENSHIFT_BEARER_TOKEN" \
+        '{
+          name: $name,
+          organization: $org,
+          credential_type: $type_id,
+          inputs: {host: $host, bearer_token: $token, verify_ssl: false}
+        }')" \
+      "${AAP_API}/credentials/" 2>&1)
+    cred_id=$(echo "$create_result" | jq -r '.id // empty' 2>/dev/null)
+    if [ -z "$cred_id" ]; then
+      echo "  ⚠ Failed to create OpenShift Credential" >&2
+      echo "$create_result" | jq '.' 2>/dev/null || echo "$create_result" >&2
+      return 1
+    fi
+    echo "  ✓ OpenShift Credential created (ID: ${cred_id})"
+  else
+    patch_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X PATCH \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n \
+        --arg host "$OPENSHIFT_API_HOST" \
+        --arg token "$OPENSHIFT_BEARER_TOKEN" \
+        '{inputs: {host: $host, bearer_token: $token, verify_ssl: false}}')" \
+      "${AAP_API}/credentials/${cred_id}/" 2>&1)
+    if ! echo "$patch_result" | jq -e '.id' >/dev/null 2>&1; then
+      echo "  ⚠ Failed to update OpenShift Credential" >&2
+      echo "$patch_result" | jq '.' 2>/dev/null || echo "$patch_result" >&2
+      return 1
+    fi
+    echo "  ✓ OpenShift Credential configured"
+  fi
+
+  echo "    API host: ${OPENSHIFT_API_HOST}"
+  echo "    verify_ssl: false"
+  return 0
+}
+
+apd_configure_openshift_credential() {
+  apd_ensure_openshift_credential
+}
+
+apd_ensure_aap_credential() {
+  local apd_org_id cred_id type_id token create_result patch_result host
+
+  if [ -z "${AAP_API:-}" ] || [ -z "${AAP_USERNAME:-}" ] || [ -z "${AAP_PASSWORD:-}" ]; then
+    apd_init_aap_connection || return 1
+  fi
+
+  if ! kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s >/dev/null 2>&1; then
+    IS_MICROSHIFT=true
+  fi
+
+  host=$(apd_aap_job_hostname)
+  token=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"description":"APD AAP callback (aap-demo)","scope":"write"}' \
+    "${AAP_UI_URL}/api/gateway/v1/tokens/" 2>&1 \
+    | jq -r '.token // empty' 2>/dev/null)
+  if [ -z "$token" ]; then
+    echo "  ⚠ Could not mint AAP OAuth token for APD AAP Credential" >&2
     return 1
   fi
 
-  patch_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    -X PATCH \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n \
-      --arg host "$OPENSHIFT_API_HOST" \
-      --arg token "$OPENSHIFT_BEARER_TOKEN" \
-      '{inputs: {host: $host, bearer_token: $token, verify_ssl: false}}')" \
-    "${AAP_API}/credentials/${cred_id}/" 2>&1)
+  apd_org_id=$(apd_apd_org_id)
+  if [ -z "$apd_org_id" ]; then
+    echo "  ⚠ APD organization not found; skipping AAP credential configuration" >&2
+    return 1
+  fi
 
-  if echo "$patch_result" | jq -e '.id' >/dev/null 2>&1; then
-    echo "  ✓ OpenShift Credential configured"
-    echo "    API host: ${OPENSHIFT_API_HOST}"
-    echo "    verify_ssl: false"
+  cred_id=$(apd_find_apd_credential_by_name "AAP Credential" "$apd_org_id")
+  type_id=$(apd_controller_credential_type_id "Red Hat Ansible Automation Platform")
+  if [ -z "$type_id" ]; then
+    echo "  ⚠ AAP credential type not found; skipping" >&2
+    return 1
+  fi
+
+  if [ -z "$cred_id" ]; then
+    create_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X POST \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n \
+        --arg name "AAP Credential" \
+        --argjson org "$apd_org_id" \
+        --argjson type_id "$type_id" \
+        --arg host "$host" \
+        --arg token "$token" \
+        '{
+          name: $name,
+          organization: $org,
+          credential_type: $type_id,
+          inputs: {host: $host, oauth_token: $token, verify_ssl: false}
+        }')" \
+      "${AAP_API}/credentials/" 2>&1)
+    cred_id=$(echo "$create_result" | jq -r '.id // empty' 2>/dev/null)
+    if [ -z "$cred_id" ]; then
+      echo "  ⚠ Failed to create AAP Credential" >&2
+      echo "$create_result" | jq '.' 2>/dev/null || echo "$create_result" >&2
+      return 1
+    fi
+    echo "  ✓ AAP Credential created (ID: ${cred_id})"
+  else
+    patch_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X PATCH \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n \
+        --arg host "$host" \
+        --arg token "$token" \
+        '{inputs: {host: $host, oauth_token: $token, verify_ssl: false}}')" \
+      "${AAP_API}/credentials/${cred_id}/" 2>&1)
+    if ! echo "$patch_result" | jq -e '.id' >/dev/null 2>&1; then
+      echo "  ⚠ Failed to update AAP Credential" >&2
+      echo "$patch_result" | jq '.' 2>/dev/null || echo "$patch_result" >&2
+      return 1
+    fi
+    echo "  ✓ AAP Credential configured"
+  fi
+
+  echo "    AAP host: ${host}"
+  return 0
+}
+
+apd_configure_galaxy_credentials() {
+  local token_file="${1:-${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}}"
+  local apd_org_id token cred_name cred_id patch_result
+  local -a cred_names=("Automation Hub Certified Content" "Automation Hub Validated Content")
+
+  if [ ! -f "$token_file" ]; then
     return 0
   fi
 
-  echo "  ⚠ Failed to update OpenShift Credential" >&2
-  echo "$patch_result" | jq '.' 2>/dev/null || echo "$patch_result" >&2
-  return 1
+  if [ -z "${AAP_API:-}" ] || [ -z "${AAP_USERNAME:-}" ] || [ -z "${AAP_PASSWORD:-}" ]; then
+    apd_init_aap_connection || return 1
+  fi
+
+  token=$(tr -d '[:space:]' <"$token_file")
+  if [ -z "$token" ]; then
+    echo "  ⚠ Galaxy token file is empty: ${token_file}" >&2
+    return 1
+  fi
+
+  apd_org_id=$(apd_apd_org_id)
+  if [ -z "$apd_org_id" ]; then
+    echo "  ⚠ APD organization not found; skipping Galaxy credential configuration" >&2
+    return 1
+  fi
+
+  for cred_name in "${cred_names[@]}"; do
+    cred_id=$(apd_find_apd_credential_by_name "$cred_name" "$apd_org_id")
+    if [ -z "$cred_id" ]; then
+      echo "  ⚠ ${cred_name} not found in APD org; skipping" >&2
+      continue
+    fi
+    patch_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X PATCH \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n --arg token "$token" '{inputs: {token: $token}}')" \
+      "${AAP_API}/credentials/${cred_id}/" 2>&1)
+    if echo "$patch_result" | jq -e '.id' >/dev/null 2>&1; then
+      echo "  ✓ ${cred_name} token updated"
+    else
+      echo "  ⚠ Failed to update ${cred_name}" >&2
+    fi
+  done
 }
 
 apd_init_aap_connection() {
@@ -382,7 +557,7 @@ apd_install_domain_demo() {
 
   if [ "$monitor_rc" -eq 0 ] && [ "$demo" = "openshift" ]; then
     echo ""
-    apd_configure_openshift_credential || {
+    apd_ensure_openshift_credential || {
       echo ""
       echo "  Configure manually in AAP UI: Credentials → OpenShift Credential"
       echo "  Use API host ${OPENSHIFT_API_HOST:-https://kubernetes.default.svc:443} and a cluster bearer token"

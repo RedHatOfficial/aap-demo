@@ -5,6 +5,7 @@ Deploys **Automation Orchestrator (GA)** on aap-demo MicroShift clusters.
 - **Command:** `aap-demo enable ao` (legacy alias: `ao-eap`)
 - **Namespace:** `automation-orchestrator`
 - **Requires:** `aap-demo deploy` (AAP + OLM + `redhat-operators` in `aap-operator`)
+- **Requires:** `mcp-server` addon (`aap-demo enable ao` installs it automatically)
 - **Does not require:** `aapctl`, Quay credentials, GitHub CLI, or a private operator index
 
 Manifests follow the
@@ -15,7 +16,7 @@ and are checked in under [`manifests/`](manifests/). `deploy.sh` applies them wi
 
 ```bash
 aap-demo deploy          # once: AAP + OLM + catalog
-aap-demo enable ao       # install Automation Orchestrator
+aap-demo enable ao       # mcp-server + Automation Orchestrator + wiring
 aap-demo status          # route URL + admin password when ready
 ```
 
@@ -34,11 +35,34 @@ aap-demo disable ao
 This removes the `automation-orchestrator` namespace and AO OLM resources. The CloudNativePG
 operator in `cnpg-system` is **not** removed (it may be shared).
 
+### Auto-wiring (AAP + MCP)
+
+After the instance is ready, `aap-demo enable ao` automatically configures cluster-local
+integrations (no separate wiring step):
+
+- **Integration URL allow-list** — patches AO deployments with
+  `APP_INTEGRATION_URL_ALLOWED_HOSTS` and `APP_OIDC_ALLOW_PRIVATE_NETWORKS` (same intent as
+  upstream APD `infrastructure/ao/network-access.yml`) so co-located AAP/MCP base URLs that
+  resolve to private addresses on MicroShift pass AO SSRF validation
+- **AAP integration** (`aap-demo AAP`) → AAP route URL (fallback: in-cluster service) with a
+  write-scoped gateway token stored as an AO credential
+- **MCP integration** (`aap-demo MCP Server`) — **required**; `mcp-server` is enabled automatically
+  and wired to AO (route or in-cluster `/mcp` URL with tools enabled)
+
+Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
+Use `aap-demo wire` only to re-run wiring after manual cluster changes.
+
+**Workflow builder note:** Configuration → Integrations may show **Available** while the workflow
+UI still reports “AAP credential not configured” until you select **aap-demo AAP** and
+**aap-demo AAP Token** on an AAP job-template node. AO proxy APIs require both `integration_id`
+and `credential_id`; that message is expected before both are chosen on the node.
+
 ## Prerequisites
 
 | Requirement | Notes |
 |-------------|-------|
 | `aap-demo deploy` | Installs OLM and `redhat-operators` CatalogSource in `aap-operator` |
+| `mcp-server` addon | Installed automatically by `aap-demo enable ao`; required for AO MCP integration wiring |
 | Pull secret | `registry.redhat.io` access (`~/.aap-demo/pull-secret.txt`) |
 | Operator in index | `automation-orchestrator-operator` in `redhat-operator-index` v4.18+; automatic fallback index if missing |
 | StorageClass | Auto-detected: `nfs-local-rwx` or `topolvm-provisioner` |
@@ -255,6 +279,7 @@ See [Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentat
 ## Related documentation
 
 - ADR: [`docs/adr/017-ao-addon.md`](../../docs/adr/017-ao-addon.md)
+- ADR: [`docs/adr/023-addon-auto-wiring.md`](../../docs/adr/023-addon-auto-wiring.md)
 - Manifest index: [`manifests/README.md`](manifests/README.md)
 - [Install the operator from the OpenShift CLI](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-install_the_operator_from_the_openshift_cli)
 - [Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)

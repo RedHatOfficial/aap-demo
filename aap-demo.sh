@@ -129,7 +129,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
@@ -407,9 +407,9 @@ Cluster management:
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
-  enable mcp-server Enable MCP server for AI assistants
+  enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao       Install Automation Orchestrator
+  enable ao       Install Automation Orchestrator (enables mcp-server automatically)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
 
 Examples:
@@ -2046,6 +2046,7 @@ cmd_deploy() {
       echo "  (Use FORCE=true to reinstall)"
       echo ""
       watch_aap
+      _aap_demo_run_addon_wire || true
       exit 0
     fi
   fi
@@ -2608,6 +2609,7 @@ watch_aap() {
       fi
       echo ""
 
+      _aap_demo_run_addon_wire || true
       return 0
     fi
 
@@ -2699,6 +2701,32 @@ _addons_remove() {
   _addons_save "$new"
 }
 
+_ensure_addon_dependency() {
+  local dep="$1"
+  shift 2>/dev/null || true
+  dep=$(_normalize_addon_name "$dep")
+  if echo "$(_addons_list)" | grep -qw "$dep"; then
+    return 0
+  fi
+  echo ""
+  echo "Required addon: ${dep}"
+  cmd_enable "$dep" "$@" || return 1
+}
+
+# Auto-wire enabled addons (APD credentials, AO integrations). Runs after enable,
+# deploy, and watch; idempotent and safe to call multiple times.
+_aap_demo_run_addon_wire() {
+  local strict="${1:-false}"
+  setup_kubeconfig
+  # shellcheck source=includes/addon-wire.sh
+  source "${SCRIPT_DIR}/includes/addon-wire.sh"
+  if [ "$strict" = true ]; then
+    aap_demo_wire
+  else
+    aap_demo_wire || true
+  fi
+}
+
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
@@ -2758,13 +2786,34 @@ cmd_enable() {
   if [ "$_skip_cluster_verify" != true ]; then
     _verify_cluster || return 1
   fi
+  if [ "$addon" = "ao" ] && [ "$_skip_addon_save" != true ]; then
+    _ensure_addon_dependency mcp-server "$@" || return 1
+  fi
   if [ "$_skip_addon_save" != true ]; then
     _addons_add "$addon"
   fi
+  export AAP_DEMO_WIRE_AFTER_DEPLOY=0
   bash "$addon_dir/deploy.sh" "$@"
+  unset AAP_DEMO_WIRE_AFTER_DEPLOY
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
   fi
+  if [ "$addon" = "ao" ]; then
+    if ! _aap_demo_run_addon_wire true; then
+      echo ""
+      echo "  Automation Orchestrator is installed but integration wiring failed."
+      echo "  Re-run: aap-demo wire"
+      return 1
+    fi
+  else
+    _aap_demo_run_addon_wire false
+  fi
+}
+
+cmd_wire() {
+  echo "Re-running addon wiring (also runs automatically after enable and deploy)..."
+  _verify_cluster || return 1
+  _aap_demo_run_addon_wire true
 }
 
 cmd_disable() {
@@ -2965,6 +3014,9 @@ case "$COMMAND" in
     ;;
   enable)
     cmd_enable "${EXTRA_ARGS[@]}"
+    ;;
+  wire)
+    cmd_wire
     ;;
   disable)
     cmd_disable "${EXTRA_ARGS[@]}"
