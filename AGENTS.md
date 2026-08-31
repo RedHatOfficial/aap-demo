@@ -42,8 +42,11 @@ Use `--pr NUMBER` to checkout a GitHub pull request on each host before destroy/
 (`gh pr checkout` when available, else `git fetch origin pull/N/head`). Optional default:
 `defaults.pr` in `test-hosts.yaml`.
 
-By default the orchestrator **saves local-cache before destroy** and sets **`AAP_DEMO_LOAD_CACHE=1`**
-on deploy to reuse cached container images. Disable with `--skip-local-cache` or
+When `repo_path` is omitted, the orchestrator resolves the git checkout from the
+`aap-demo` launcher (`~/.local/bin/aap-demo` → directory containing `aap-demo.sh`).
+
+By default the orchestrator runs **local-cache save → destroy → create → load → deploy**
+(`AAP_DEMO_LOAD_CACHE=1` on deploy). Disable with `--skip-local-cache` or
 `use_local_cache: false` in config.
 
 Full integration testing is intentionally **not** in CI (see `docs/adr/014-testing-strategy.md`).

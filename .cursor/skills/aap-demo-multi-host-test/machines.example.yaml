@@ -5,7 +5,7 @@
 #   cp .cursor/skills/aap-demo-multi-host-test/machines.example.yaml ~/.aap-demo/test-hosts.yaml
 
 defaults:
-  repo_path: ~/Documents/GitHub/aap-demo
+  # repo_path: optional; when omitted, resolve from ~/.local/bin/aap-demo → repo dir (install.sh symlink)
   quiet: true
   trust_ca: false               # false → AAP_DEMO_TRUST_CA=false (no sudo/keychain prompt)
   use_local_cache: true         # save images before destroy; AAP_DEMO_LOAD_CACHE=1 on deploy
@@ -21,7 +21,7 @@ hosts:
     type: local                 # local | ssh
     shell: bash
     aap_demo_cmd: aap-demo
-    repo_path: ~/Documents/GitHub/aap-demo
+    # repo_path: auto from ~/.local/bin/aap-demo symlink when omitted
 
   linux-vm:
     type: ssh

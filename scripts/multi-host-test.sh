@@ -11,11 +11,11 @@
 #   --only-addons       Skip destroy/deploy; enable addons on running cluster
 #   --strict            Fail on missing prerequisites
 #   --pr NUMBER         Checkout GitHub PR on each host before test (gh pr checkout, or git fetch)
-#   --skip-local-cache  Skip save-before-destroy and load-on-deploy (local-cache addon)
+#   --skip-local-cache  Skip save/load local-cache steps (still runs local-cache addon test)
 #   --config PATH       Config file (default: ~/.aap-demo/test-hosts.yaml)
 #
 # Requires: yq (v4), ssh (for remote hosts)
-# On macOS use Homebrew bash 5+ if /bin/bash is 3.2 (associative arrays).
+# Requires: yq (v4), ssh (for remote hosts), bash 3.2+ (bash 5+ recommended on macOS)
 #
 # See: .cursor/skills/aap-demo-multi-host-test/SKILL.md
 
@@ -45,6 +45,140 @@ warn() { printf '[multi-host-test] WARN: %s\n' "$*" >&2; }
 die() {
   printf '[multi-host-test] ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+SCRIPT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+REPO_CACHE_FILE=""
+
+_resolve_symlink() {
+  local path="$1" link dir
+  while [ -L "$path" ]; do
+    link=$(readlink "$path") || return 1
+    if [[ "$link" != /* ]]; then
+      dir=$(cd "$(dirname "$path")" && pwd) || return 1
+      path="${dir}/${link}"
+    else
+      path="$link"
+    fi
+  done
+  echo "$path"
+}
+
+_discover_repo_from_aap_cmd() {
+  local aap_cmd="${1:-aap-demo}"
+  local bin="" resolved repo_root
+
+  for candidate in "${HOME}/.local/bin/${aap_cmd}" "$(command -v "${aap_cmd}" 2>/dev/null || true)"; do
+    [ -n "$candidate" ] && [ -e "$candidate" ] && bin="$candidate" && break
+  done
+  [ -n "$bin" ] || return 1
+
+  resolved=$(_resolve_symlink "$bin") || return 1
+  repo_root=$(dirname "$resolved")
+  [ -f "${repo_root}/aap-demo.sh" ] || return 1
+  echo "$repo_root"
+}
+
+_discover_repo_remote_bash() {
+  local host="$1" aap_cmd="${2:-aap-demo}"
+  local target discover_cmd out
+
+  target=$(_ssh_target "$host")
+  discover_cmd=$(
+    cat <<EOF
+aap_cmd=$(printf '%q' "$aap_cmd")
+bin="\$HOME/.local/bin/\$aap_cmd"
+if command -v "\$aap_cmd" >/dev/null 2>&1; then
+  bin="\$(command -v "\$aap_cmd")"
+fi
+[ -e "\$bin" ] || exit 1
+while [ -L "\$bin" ]; do
+  link=\$(readlink "\$bin") || exit 1
+  if [[ "\$link" != /* ]]; then
+    bin="\$(cd "\$(dirname "\$bin")" && pwd)/\$link"
+  else
+    bin="\$link"
+  fi
+done
+root=\$(dirname "\$bin")
+[ -f "\$root/aap-demo.sh" ] || exit 1
+printf '%s\n' "\$root"
+EOF
+  )
+
+  if [ "$DRY_RUN" = true ]; then
+    log "[dry-run] ssh ${target}: discover repo from ~/.local/bin/${aap_cmd} symlink"
+    echo '$HOME/aap-demo'
+    return 0
+  fi
+
+  # shellcheck disable=SC2046
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new \
+    $(_ssh_identity_opt "$host") "$target" "bash -lc $(printf '%q' "$discover_cmd")") || return 1
+  out=${out//$'\r'/}
+  [ -n "$out" ] || return 1
+  echo "$out"
+}
+
+_discover_repo_remote_powershell() {
+  local host="$1"
+  local target ps_cmd out
+
+  target=$(_ssh_target "$host")
+  ps_cmd=$(
+    cat <<'EOF'
+$marker = Join-Path $env:USERPROFILE '.aap-demo\repo-path'
+if (Test-Path -LiteralPath $marker) {
+  (Get-Content -LiteralPath $marker -Raw).Trim()
+  exit 0
+}
+$bin = Join-Path $env:USERPROFILE '.local\bin\aap-demo.cmd'
+if (-not (Test-Path -LiteralPath $bin)) {
+  $cmd = Get-Command aap-demo -ErrorAction SilentlyContinue
+  if ($cmd) { $bin = $cmd.Source }
+}
+if (-not (Test-Path -LiteralPath $bin)) { exit 1 }
+$root = Split-Path -Parent $bin
+if (-not (Test-Path -LiteralPath (Join-Path $root 'aap-demo.sh'))) { exit 1 }
+Write-Output $root
+EOF
+  )
+
+  if [ "$DRY_RUN" = true ]; then
+    log "[dry-run] ssh ${target}: discover repo from %USERPROFILE%\\.aap-demo\\repo-path or ~/.local/bin/aap-demo"
+    echo 'C:\Users\dev\Documents\GitHub\aap-demo'
+    return 0
+  fi
+
+  # shellcheck disable=SC2046
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new \
+    $(_ssh_identity_opt "$host") "$target" \
+    powershell -NoProfile -NonInteractive -Command "$ps_cmd") || return 1
+  out=${out//$'\r'/}
+  [ -n "$out" ] || return 1
+  echo "$out"
+}
+
+_host_aap_cmd() {
+  local host="$1" cmd
+  cmd=$(_host_field "$host" aap_cmd)
+  [ -z "$cmd" ] || [ "$cmd" = '""' ] && cmd=$(_host_field "$host" aap_demo_cmd)
+  [ -z "$cmd" ] || [ "$cmd" = '""' ] && cmd="aap-demo"
+  echo "$cmd"
+}
+
+_repo_cache_get() {
+  local host="$1" val
+  [ -n "$REPO_CACHE_FILE" ] || return 1
+  val=$(grep -m1 "^${host}=" "$REPO_CACHE_FILE" 2>/dev/null | cut -d= -f2- || true)
+  [ -n "$val" ] || return 1
+  echo "$val"
+}
+
+_repo_cache_set() {
+  local host="$1" repo="$2"
+  [ -n "$REPO_CACHE_FILE" ] || return 0
+  echo "${host}=${repo}" >>"$REPO_CACHE_FILE"
 }
 
 result_set() {
@@ -110,7 +244,13 @@ TRUST_CA=$(_cfg '.defaults.trust_ca // false')
 DESTROY_RESET=$(_cfg '.defaults.destroy_reset // false')
 SYNC_REPO=$(_cfg '.defaults.sync_repo // false')
 GIT_REMOTE=$(_cfg '.defaults.git_remote // "origin"')
-DEFAULT_REPO=$(_cfg '.defaults.repo_path // "~/Documents/GitHub/aap-demo"')
+_cfg_default_repo=$(_cfg '.defaults.repo_path // ""')
+[ "$_cfg_default_repo" = '""' ] && _cfg_default_repo=""
+if [ -n "$_cfg_default_repo" ]; then
+  DEFAULT_REPO="$_cfg_default_repo"
+else
+  DEFAULT_REPO=$(_discover_repo_from_aap_cmd "aap-demo") || DEFAULT_REPO="$SCRIPT_ROOT"
+fi
 
 if [ -z "$PR_NUMBER" ]; then
   PR_NUMBER=$(_cfg '.defaults.pr // ""')
@@ -134,12 +274,53 @@ _host_field() {
 }
 
 _host_repo() {
-  local host="$1" repo
-  repo=$(_host_field "$host" repo_path)
-  if [ -z "$repo" ] || [ "$repo" = '""' ]; then
-    repo="$DEFAULT_REPO"
+  local host="$1" repo htype shell aap_cmd discovered source="" cached
+  if cached=$(_repo_cache_get "$host"); then
+    echo "$cached"
+    return 0
   fi
-  echo "${repo/#\~/$HOME}"
+
+  repo=$(_host_field "$host" repo_path)
+  [ "$repo" = '""' ] && repo=""
+  htype=$(_host_field "$host" type)
+  [ -z "$htype" ] || [ "$htype" = '""' ] && htype="local"
+  shell=$(_host_shell "$host")
+  aap_cmd=$(_host_aap_cmd "$host")
+
+  if [ -z "$repo" ]; then
+    case "$htype" in
+      local)
+        if discovered=$(_discover_repo_from_aap_cmd "$aap_cmd"); then
+          repo="$discovered"
+          source="${HOME}/.local/bin/${aap_cmd} symlink"
+        else
+          repo="$DEFAULT_REPO"
+          source="defaults.repo_path or orchestrator script root"
+        fi
+        ;;
+      ssh)
+        if [ "$shell" = "powershell" ]; then
+          discovered=$(_discover_repo_remote_powershell "$host") || die "Host $host: set repo_path or install aap-demo (repo-path / ~/.local/bin/aap-demo)"
+          repo="$discovered"
+          source="remote repo-path or ~/.local/bin/aap-demo"
+        else
+          discovered=$(_discover_repo_remote_bash "$host" "$aap_cmd") || die "Host $host: set repo_path or install aap-demo to ~/.local/bin/${aap_cmd}"
+          repo="$discovered"
+          source="remote ${HOME}/.local/bin/${aap_cmd} symlink"
+        fi
+        ;;
+      *) die "Host $host: unknown type $htype" ;;
+    esac
+    log "$host: repo_path from ${source} → ${repo}" >&2
+  fi
+
+  # Expand ~ only for local execution; SSH targets must expand ~ on the remote host.
+  if [ "$htype" = "local" ]; then
+    repo="${repo/#\~/$HOME}"
+  fi
+
+  _repo_cache_set "$host" "$repo"
+  echo "$repo"
 }
 
 _host_shell() {
@@ -182,9 +363,10 @@ _run_ssh_bash() {
   local host="$1" repo="$2" cmd="$3"
   local target remote_cmd
   target=$(_ssh_target "$host")
-  remote_cmd="cd $(printf '%q' "$repo") && ${cmd}"
+  remote_cmd=$(printf 'cd %q && ' "$repo")
+  remote_cmd+=$(printf '%q' "$cmd")
   if [ "$DRY_RUN" = true ]; then
-    log "[dry-run] ssh bash ${target}: ${remote_cmd}"
+    log "[dry-run] ssh bash ${target}: cd ${repo} && ${cmd}"
     return 0
   fi
   # shellcheck disable=SC2046
@@ -359,8 +541,7 @@ save_local_cache_before_destroy() {
   [ "$USE_LOCAL_CACHE" = true ] || return 0
 
   shell=$(_host_shell "$host")
-  aap_cmd=$(_host_field "$host" aap_cmd)
-  aap_cmd=${aap_cmd:-aap-demo}
+  aap_cmd=$(_host_aap_cmd "$host")
 
   log "Save local-cache before destroy: $host"
   if [ "$DRY_RUN" = true ]; then
@@ -401,16 +582,116 @@ save_local_cache_before_destroy() {
   return 0
 }
 
+_local_cache_exists_cmd_bash() {
+  echo 'test -d ~/.aap-demo/local-cache && ls ~/.aap-demo/local-cache/*/*.tar >/dev/null 2>&1'
+}
+
+_local_cache_exists_cmd_ps() {
+  echo 'Test-Path "$env:USERPROFILE\.aap-demo\local-cache\*\*.tar"'
+}
+
+create_cluster_on_host() {
+  local host="$1"
+  local shell aap_cmd
+  shell=$(_host_shell "$host")
+  aap_cmd=$(_host_aap_cmd "$host")
+
+  log "Create cluster: $host"
+  if [ "$DRY_RUN" = true ]; then
+    log "[dry-run] $host: aap-demo create"
+    return 0
+  fi
+
+  if [ "$shell" = "powershell" ]; then
+    run_on_host "$host" "$(_aap_invoke_ps "$aap_cmd" create)" || {
+      result_set "${host}.create" fail
+      return 1
+    }
+  else
+    run_on_host "$host" "$(_aap_invoke_bash "$aap_cmd" create)" || {
+      result_set "${host}.create" fail
+      return 1
+    }
+  fi
+  result_set "${host}.create" pass
+  return 0
+}
+
+load_local_cache_on_host() {
+  local host="$1"
+  local shell aap_cmd exists_cmd
+  [ "$USE_LOCAL_CACHE" = true ] || return 0
+
+  shell=$(_host_shell "$host")
+  aap_cmd=$(_host_aap_cmd "$host")
+
+  if [ "$shell" = "powershell" ]; then
+    exists_cmd=$(_local_cache_exists_cmd_ps)
+  else
+    exists_cmd=$(_local_cache_exists_cmd_bash)
+  fi
+
+  log "Load local-cache into cluster: $host"
+  if [ "$DRY_RUN" = true ]; then
+    log "[dry-run] $host: aap-demo enable local-cache load (if cache present)"
+    return 0
+  fi
+
+  if ! run_on_host "$host" "$exists_cmd"; then
+    warn "$host: no local-cache tarballs — skipping load (first run or use --skip-local-cache)"
+    result_set "${host}.local_cache_load" skipped
+    return 0
+  fi
+
+  if [ "$shell" = "powershell" ]; then
+    run_on_host "$host" "$(_aap_invoke_ps "$aap_cmd" enable "local-cache load")" || {
+      warn "$host: local-cache load failed"
+      result_set "${host}.local_cache_load" fail
+      [ "$STRICT" = true ] && return 1
+      return 0
+    }
+  else
+    run_on_host "$host" "$(_aap_invoke_bash "$aap_cmd" enable "local-cache load")" || {
+      warn "$host: local-cache load failed"
+      result_set "${host}.local_cache_load" fail
+      [ "$STRICT" = true ] && return 1
+      return 0
+    }
+  fi
+
+  result_set "${host}.local_cache_load" pass
+  return 0
+}
+
+preflight_local_cache_status() {
+  local host="$1" shell exists_cmd
+  [ "$USE_LOCAL_CACHE" = true ] || return 0
+
+  shell=$(_host_shell "$host")
+  if [ "$shell" = "powershell" ]; then
+    exists_cmd=$(_local_cache_exists_cmd_ps)
+  else
+    exists_cmd=$(_local_cache_exists_cmd_bash)
+  fi
+
+  if run_on_host "$host" "$exists_cmd"; then
+    log "$host: local-cache tarballs found — save/load will run around destroy/deploy"
+  else
+    log "$host: no local-cache yet — deploy will pull from registry; save after run seeds next cycle"
+  fi
+  return 0
+}
+
 preflight_host() {
   local host="$1"
   local shell repo aap_cmd
   log "Preflight: $host"
   shell=$(_host_shell "$host")
   repo=$(_host_repo "$host")
-  aap_cmd=$(_host_field "$host" aap_cmd)
-  aap_cmd=${aap_cmd:-aap-demo}
+  aap_cmd=$(_host_aap_cmd "$host")
 
   sync_repo_on_host "$host" || return 1
+  preflight_local_cache_status "$host" || true
 
   if [ "$shell" = "powershell" ]; then
     run_on_host "$host" "$(_aap_invoke_ps "$aap_cmd" version)" || return 1
@@ -448,25 +729,39 @@ destroy_deploy_host() {
   local host="$1"
   local shell aap_cmd reset_arg=""
   shell=$(_host_shell "$host")
-  aap_cmd=$(_host_field "$host" aap_cmd)
-  aap_cmd=${aap_cmd:-aap-demo}
+  aap_cmd=$(_host_aap_cmd "$host")
   [ "$DESTROY_RESET" = "true" ] && reset_arg="--reset"
 
   save_local_cache_before_destroy "$host" || return 1
 
   log "Destroy: $host"
   if [ "$shell" = "powershell" ]; then
-    run_on_host "$host" "$(_aap_invoke_ps "$aap_cmd" destroy "$reset_arg")"
+    run_on_host "$host" "$(_aap_invoke_ps "$aap_cmd" destroy "$reset_arg")" || {
+      result_set "${host}.destroy" fail
+      return 1
+    }
   else
-    run_on_host "$host" "$(_aap_invoke_bash "$aap_cmd" destroy "$reset_arg")"
+    run_on_host "$host" "$(_aap_invoke_bash "$aap_cmd" destroy "$reset_arg")" || {
+      result_set "${host}.destroy" fail
+      return 1
+    }
   fi
   result_set "${host}.destroy" pass
 
+  create_cluster_on_host "$host" || return 1
+  load_local_cache_on_host "$host" || return 1
+
   log "Deploy: $host"
   if [ "$shell" = "powershell" ]; then
-    run_on_host "$host" "$(_aap_invoke_ps "$aap_cmd" deploy "" load_cache)"
+    run_on_host "$host" "$(_aap_invoke_ps "$aap_cmd" deploy "" load_cache)" || {
+      result_set "${host}.deploy" fail
+      return 1
+    }
   else
-    run_on_host "$host" "$(_aap_invoke_bash "$aap_cmd" deploy "" load_cache)"
+    run_on_host "$host" "$(_aap_invoke_bash "$aap_cmd" deploy "" load_cache)" || {
+      result_set "${host}.deploy" fail
+      return 1
+    }
   fi
   result_set "${host}.deploy" pass
 
@@ -542,9 +837,12 @@ enable_addons_host() {
   local host="$1"
   local shell aap_cmd addon sat_url enable_cmd
   shell=$(_host_shell "$host")
-  aap_cmd=$(_host_field "$host" aap_cmd)
-  aap_cmd=${aap_cmd:-aap-demo}
+  aap_cmd=$(_host_aap_cmd "$host")
   sat_url=$(_cfg '.prerequisites.satellite.url // ""')
+
+  if [ "$ONLY_ADDONS" = true ]; then
+    load_local_cache_on_host "$host" || return 1
+  fi
 
   while IFS= read -r addon; do
     [ -n "$addon" ] || continue
@@ -554,7 +852,7 @@ enable_addons_host() {
       if [ "$shell" = "powershell" ]; then
         enable_cmd="\$env:SATELLITE_URL = '${sat_url}'; $(_aap_invoke_ps "$aap_cmd" enable "$addon")"
       else
-        enable_cmd="export SATELLITE_URL='${sat_url}'; $(_aap_invoke_bash "$aap_cmd" enable "$addon")"
+        enable_cmd="export SATELLITE_URL=$(printf '%q' "$sat_url"); $(_aap_invoke_bash "$aap_cmd" enable "$addon")"
       fi
     else
       if [ "$shell" = "powershell" ]; then
@@ -616,6 +914,8 @@ write_report() {
       printf '      "deploy": "%s",\n' "$(result_get "${host}.deploy")"
       printf '      "diagnose": "%s",\n' "$(result_get "${host}.diagnose")"
       printf '      "local_cache_save": "%s",\n' "$(result_get "${host}.local_cache_save")"
+      printf '      "local_cache_load": "%s",\n' "$(result_get "${host}.local_cache_load")"
+      printf '      "create": "%s",\n' "$(result_get "${host}.create")"
       printf '      "addons": {'
       local first_addon=true
       while IFS= read -r addon; do
@@ -667,13 +967,15 @@ EOF
 main() {
   local host failures=0 matched=0
   RESULTS_FILE=$(mktemp)
-  trap 'rm -f "$RESULTS_FILE"' EXIT
+  REPO_CACHE_FILE=$(mktemp)
+  trap 'rm -f "$RESULTS_FILE" "$REPO_CACHE_FILE"' EXIT
 
   log "Config: $CONFIG_FILE"
+  log "Default repo: ${DEFAULT_REPO}"
   [ "$DRY_RUN" = true ] && log "Mode: dry-run"
   [ -n "$HOST_FILTER" ] && log "Host filter: $HOST_FILTER"
   [ -n "$PR_NUMBER" ] && log "PR under test: #${PR_NUMBER}"
-  [ "$USE_LOCAL_CACHE" = true ] && log "Local-cache: save before destroy, load on deploy"
+  [ "$USE_LOCAL_CACHE" = true ] && log "Local-cache: save → destroy → create → load → deploy"
   [ "$USE_LOCAL_CACHE" = false ] && log "Local-cache: disabled (--skip-local-cache or use_local_cache: false)"
 
   while IFS= read -r host; do

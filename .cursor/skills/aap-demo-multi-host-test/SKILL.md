@@ -93,10 +93,15 @@ Requires the repo at `repo_path` to be a git clone of the GitHub repo the PR tar
 
 To avoid re-pulling ~30GB of container images on every destroy → deploy cycle:
 
-1. **Before destroy** — if CRC is running, `aap-demo enable local-cache save` exports images from the VM to `~/.aap-demo/local-cache/<preset>/`
-2. **On deploy** — `AAP_DEMO_LOAD_CACHE=1` triggers auto-load during `aap-demo deploy` (no-op if cache empty)
+1. **Preflight** — log whether `~/.aap-demo/local-cache/<preset>/*.tar` exists on the host
+2. **Before destroy** — if CRC is running, `aap-demo enable local-cache save`
+3. **Destroy** — delete CRC VM (cache files on disk are preserved)
+4. **Create** — `aap-demo create` (standalone, so the cluster is up before load)
+5. **Load** — `aap-demo enable local-cache load` (before deploy pulls catalog/AAP images)
+6. **Deploy** — `AAP_DEMO_LOAD_CACHE=1` also loads during deploy if needed (belt-and-suspenders)
+7. **Addon test** — `local-cache` enable at end refreshes cache for the next run
 
-First matrix run has nothing to save; the final `local-cache` addon step seeds cache for the next run.
+First matrix run has nothing to load; the final `local-cache` addon step seeds cache for the next run.
 
 Disable with `--skip-local-cache` or `defaults.use_local_cache: false` in config.
 
@@ -107,8 +112,9 @@ so deploy never blocks on macOS `sudo security add-trusted-cert` or Windows elev
 The ingress CA is still saved to `~/.aap-demo/crc-ingress-ca.crt`; CLI tools use `CURL_CA_BUNDLE`
 (combined system + ingress bundle). Browsers may show TLS warnings until you import manually.
 
-When **`use_local_cache`** is enabled (default), the script runs **`aap-demo enable local-cache save`**
-before destroy (if CRC is running), then **`AAP_DEMO_LOAD_CACHE=1`** on deploy to preload images.
+When **`use_local_cache`** is enabled (default), the orchestrator runs:
+
+`save` → `destroy` → `create` → `enable local-cache load` → `deploy` (with `AAP_DEMO_LOAD_CACHE=1`)
 
 **Bash (Mac, Linux):**
 
@@ -168,9 +174,28 @@ Script writes JSON to `~/.aap-demo/test-reports/<timestamp>.json`.
 
 | Host type | How to run |
 |-----------|------------|
-| `type: local` | Execute commands in local shell at `repo_path` |
+| `type: local` | Execute commands in local shell at `repo_path` (see auto-discovery below) |
 | `type: ssh` + `shell: bash` | `ssh -i KEY USER@HOST "bash -lc 'cd REPO && CMD'"` |
 | `type: ssh` + `shell: powershell` | `ssh USER@HOST powershell -NoProfile -Command "Set-Location 'REPO'; CMD"` |
+
+**Repo path (`repo_path`):** optional per host and under `defaults`. When omitted, the orchestrator
+finds the git checkout by resolving the `aap-demo` launcher symlink:
+
+```bash
+ls -l ~/.local/bin/aap-demo
+# ~/.local/bin/aap-demo -> .../aap-demo/aap-demo.sh
+# repo_path = directory containing aap-demo.sh
+```
+
+Local hosts: resolve on the orchestrator machine (`command -v aap-demo`, then `~/.local/bin/aap-demo`).
+Remote bash hosts: same logic over SSH on the remote. Remote Windows: `%USERPROFILE%\.aap-demo\repo-path`
+(written by `install.ps1`) or `%USERPROFILE%\.local\bin\aap-demo.cmd`.
+
+Override with explicit `repo_path` when the symlink is not how you run aap-demo on that host.
+
+**SSH `repo_path`:** when set explicitly, use a path valid on the **remote** host (`~/aap-demo` or `/home/user/aap-demo`).
+Do not rely on the orchestrator Mac path. Tilde is expanded on the remote shell, not locally.
+Prerequisites (`galaxy-token`, pull secret) must exist on each remote host under that host's `~/.aap-demo/`.
 
 Windows requires **OpenSSH Server** and `aap-demo` installed via [`powershell/install.ps1`](../../../powershell/install.ps1).
 
