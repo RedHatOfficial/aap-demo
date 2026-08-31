@@ -147,7 +147,8 @@ aap-demo disable portal
 aap-demo status portal       # Portal route URL
 ```
 
-**Requirements:** AAP deployed, Helm 3.10+, `registry.redhat.io` credentials for OCI plugins.
+**Requirements:** AAP deployed, `registry.redhat.io` credentials for OCI plugins.
+Helm 3.10+ is installed automatically if missing.
 
 **Profiles:** x86 clusters use Red Hat RHDH chart images; arm64 clusters (e.g. CRC on Apple
 Silicon) use community multi-arch RHDH overrides. See

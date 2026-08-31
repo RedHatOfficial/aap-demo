@@ -406,7 +406,7 @@ Cluster management:
 
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
-                  Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
+                  Requires: AAP 2.6+, registry.redhat.io credentials (Helm auto-installed if missing)
   enable mcp-server Enable MCP server for AI assistants
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator
