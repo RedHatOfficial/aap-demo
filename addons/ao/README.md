@@ -50,7 +50,8 @@ integrations (no separate wiring step):
   and wired to AO (route or in-cluster `/mcp` URL with tools enabled)
 
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
-Use `aap-demo wire` only to re-run wiring after manual cluster changes.
+Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
+the CoreDNS route rewrite if MicroShift's DNS operator has dropped it.
 
 **Workflow builder note:** Configuration → Integrations may show **Available** while the workflow
 UI still reports “AAP credential not configured” until you select **aap-demo AAP** and
@@ -175,7 +176,8 @@ aap-demo enable ao
 
 That restores the CoreDNS route rewrite if missing (so the hostname resolves
 inside AO pods), allowlists it, and restarts AO backend/worker pods. Then retry
-the credential in AO. `aap-demo wire` also reapplies the integration allow-list.
+the credential in AO. `aap-demo wire` restores the rewrite and reapplies the
+integration allow-list without reinstalling AO.
 
 ### Catalog not READY / `TRANSIENT_FAILURE`
 
