@@ -257,6 +257,34 @@ wire_ao_wait_for_workload_rollout() {
   done
 }
 
+# MicroShift's DNS operator overwrites dns-default; without the rewrite, AO pods
+# cannot resolve AAP/MCP route hostnames and proxy APIs return AAP_NOT_CONFIGURED.
+wire_restore_coredns_route_rewrite() {
+  local corefile
+  if ! wire_is_microshift; then
+    return 0
+  fi
+  corefile=$(kubectl get configmap dns-default -n openshift-dns \
+    -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+  if echo "$corefile" | grep -q "router-internal-default"; then
+    return 0
+  fi
+  if [ ! -f "${REPO_ROOT}/includes/crc-create.sh" ]; then
+    wire_warn "CoreDNS rewrite missing and crc-create.sh was not found"
+    return 1
+  fi
+  wire_log "CoreDNS missing rewrite for in-cluster route hostnames — configuring..."
+  bash -c "
+    AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
+    source '${REPO_ROOT}/includes/crc-create.sh'
+    configure_coredns
+  " || {
+    wire_warn "CoreDNS rewrite could not be applied"
+    wire_warn "  Run: aap-demo start"
+    return 1
+  }
+}
+
 wire_ao_network_access() {
   local allowed_json host_count dep patched=0
 
@@ -729,6 +757,7 @@ aap_demo_wire() {
   wire_apd_aap_credential
   wire_apd_galaxy_if_present
   wire_apd_openshift
+  wire_restore_coredns_route_rewrite || wire_warn "CoreDNS route rewrite skipped"
   wire_ao_network_access || wire_warn "AO integration allow-list configuration skipped"
   if wire_ao_deployed; then
     wire_ao_wait_for_route || return 1

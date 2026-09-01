@@ -54,6 +54,7 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 | Catalog signature failures | MicroShift 4.22+ GPG policy on `registry.redhat.io` | Shared [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh): relax `policy.json`, reload CRI-O, `wait_for_catalog_ready()` with auto-recovery; `ensure_catalog_signature_policy()` before AO catalog create |
 | Postgres password drift on re-run | Secret regenerated but CNPG cluster retains bootstrap password | Reuse password from existing secrets; `FORCE=1` recreates cluster |
 | AO missing from default index | Index version / publish lag | Automatic `AO_FALLBACK_INDEX_IMAGE` |
+| AAP credential SSRF (`base_url must not resolve to a private...`) | AO blocks integration URLs that resolve to RFC1918/loopback; CRC/MicroShift routes are private and CoreDNS rewrite is often missing so the hostname does not resolve inside AO pods | `configure_ao_local_aap_access` restores CoreDNS rewrite; ConfigMap + CR allowlist; `includes/addon-wire.sh` also sets `APP_INTEGRATION_URL_ALLOWED_HOSTS` (ADR-023) |
 
 ### Delete flow
 
@@ -136,3 +137,4 @@ See [ADR-023](023-addon-auto-wiring.md) for the full auto-wiring design.
 | 2026-08-26 | Addon auto-wiring: `includes/addon-wire.sh` configures AO ↔ AAP OAuth and MCP integrations after enable |
 | 2026-08-26 | Wire applies APD-style AO network access (`APP_INTEGRATION_URL_ALLOWED_HOSTS`) before integration registration on MicroShift |
 | 2026-08-26 | `mcp-server` is a required dependency of `ao`; enable ao installs MCP and wire fails if MCP integration is missing |
+| 2026-09-01 | Local AAP integration: restore CoreDNS route rewrite when missing so allowlisted gateway hosts actually resolve inside AO pods |

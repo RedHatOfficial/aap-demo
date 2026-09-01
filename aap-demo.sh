@@ -1240,12 +1240,28 @@ cmd_diagnose() {
   # =========================================================================
   echo ""
   echo "DNS:"
-  local coredns_running
+  local coredns_running corefile
   coredns_running=$(kubectl get pods -n openshift-dns --no-headers 2>/dev/null | grep -c "Running" || echo "0")
   if [ "$coredns_running" -gt 0 ]; then
     _check_pass "CoreDNS running ($coredns_running pods)"
   else
     _check_warn "CoreDNS pods not found in openshift-dns"
+  fi
+  corefile=$(kubectl get configmap dns-default -n openshift-dns \
+    -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+  if echo "$corefile" | grep -q "router-internal-default"; then
+    _check_pass "CoreDNS route rewrite present"
+  elif [ -n "$corefile" ]; then
+    _check_fail "CoreDNS missing rewrite for apps.<domain> route hostnames"
+    _check_info "AO/portal/MCP cannot resolve AAP routes from inside the cluster"
+    verify_coredns
+    corefile=$(kubectl get configmap dns-default -n openshift-dns \
+      -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+    if echo "$corefile" | grep -q "router-internal-default"; then
+      _check_pass "CoreDNS route rewrite restored"
+    else
+      _check_info "Fix: aap-demo start   (or aap-demo wire / aap-demo enable ao)"
+    fi
   fi
   echo ""
 

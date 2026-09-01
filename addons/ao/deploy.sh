@@ -485,6 +485,115 @@ report_operator_not_in_catalog() {
   echo "    AO_DISABLE_INDEX_FALLBACK=1 aap-demo enable ao"
 }
 
+aap_gateway_route_host() {
+  kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null \
+    || kubectl get route -n "$AAP_NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null \
+    || echo ""
+}
+
+is_local_aap_hostname() {
+  local _host="${1:-}"
+  [[ "$_host" == *".crc.testing" ]] \
+    || [[ "$_host" == *".nip.io" ]] \
+    || [[ "$_host" == *"127.0.0.1"* ]] \
+    || [[ "$_host" == *"localhost"* ]]
+}
+
+ensure_coredns_route_rewrite() {
+  local _corefile _repo_root
+  _corefile=$(kubectl get configmap dns-default -n openshift-dns \
+    -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+  if echo "$_corefile" | grep -q "router-internal-default"; then
+    return 0
+  fi
+  _repo_root="$(cd "$REPO_ROOT" && pwd)"
+  if [ ! -f "${_repo_root}/includes/crc-create.sh" ]; then
+    echo "  ⚠ CoreDNS rewrite missing and crc-create.sh was not found"
+    echo "    Run: aap-demo start"
+    return 1
+  fi
+  echo "  CoreDNS missing rewrite for in-cluster route hostnames — configuring..."
+  bash -c "
+    AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
+    source '${_repo_root}/includes/crc-create.sh'
+    configure_coredns
+  " || {
+    echo "  ⚠ CoreDNS rewrite could not be applied"
+    echo "    Run: aap-demo start"
+    return 1
+  }
+}
+
+configure_ao_local_aap_access() {
+  local _aap_host _hosts_json _cm_current _cr_current _changed=""
+  _aap_host=$(aap_gateway_route_host)
+  if [ -z "$_aap_host" ]; then
+    echo "  ⚠ AAP gateway route not found in ${AAP_NAMESPACE} — skip AO SSRF allowlist"
+    echo "    After AAP is up, re-run: aap-demo enable ao"
+    return 0
+  fi
+  if ! is_local_aap_hostname "$_aap_host"; then
+    echo "✓ AAP route ${_aap_host} is not a local/private hostname — SSRF allowlist not required"
+    return 0
+  fi
+
+  echo "Configuring AO to reach local AAP (${_aap_host})..."
+  ensure_coredns_route_rewrite || true
+
+  _hosts_json=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$_aap_host")
+  _cm_current=$(kubectl get configmap automation-orchestrator-admin-settings -n "$NAMESPACE" \
+    -o jsonpath='{.data.APP_INTEGRATION_URL_ALLOWED_HOSTS}' 2>/dev/null || echo "")
+  HOST="$_aap_host" NAMESPACE="$NAMESPACE" python3 -c '
+import json, os
+host = os.environ["HOST"]
+hosts = json.dumps([host])
+print(json.dumps({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "automation-orchestrator-admin-settings",
+        "namespace": os.environ["NAMESPACE"],
+        "labels": {
+            "app.kubernetes.io/managed-by": "aap-demo",
+            "app.kubernetes.io/part-of": "automation-orchestrator",
+        },
+    },
+    "data": {
+        "APP_INTEGRATION_URL_ALLOWED_HOSTS": hosts,
+        "APP_WORKFLOW_HTTP_REQUEST_ALLOWED_HOSTS": hosts,
+    },
+}))
+' | kubectl apply -f - >/dev/null
+  if [ "$_cm_current" != "$_hosts_json" ]; then
+    _changed=1
+  fi
+
+  _cr_current=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+    -o jsonpath='{.spec.workflowHttpRequestAllowedHosts[0]}' 2>/dev/null || echo "")
+  if kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" &>/dev/null; then
+    kubectl patch automationorchestrator automation-orchestrator -n "$NAMESPACE" --type merge \
+      -p "{\"spec\":{\"workflowHttpRequestAllowedHosts\":[\"${_aap_host}\"]}}" >/dev/null
+    if [ "$_cr_current" != "$_aap_host" ]; then
+      _changed=1
+    fi
+  fi
+
+  if [ -n "$_changed" ]; then
+    echo "  Restarting AO backend/worker to load SSRF allowlist..."
+    kubectl rollout restart deployment/automation-orchestrator-backend \
+      deployment/automation-orchestrator-worker \
+      deployment/automation-orchestrator-background-worker \
+      -n "$NAMESPACE" >/dev/null 2>&1 || true
+    kubectl rollout status deployment/automation-orchestrator-backend \
+      -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 || true
+    kubectl rollout status deployment/automation-orchestrator-worker \
+      -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 || true
+    kubectl rollout status deployment/automation-orchestrator-background-worker \
+      -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 || true
+  fi
+  echo "✓ AO SSRF allowlist includes ${_aap_host}"
+}
+
 show_access_info() {
   local AO_ROUTE PASS_SECRET AO_PASSWORD
   AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
@@ -775,6 +884,7 @@ if [ -z "$FORCE" ]; then
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
     echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
     echo ""
+    configure_ao_local_aap_access
     show_access_info
     exit 0
   fi
@@ -1110,6 +1220,7 @@ if [ -z "${_ao_route:-}" ]; then
   echo "  Route is not ready yet; instance may still be reconciling."
 fi
 echo ""
+configure_ao_local_aap_access
 show_access_info
 
 # Wire AO ↔ AAP and MCP when deploy.sh is invoked directly (not via aap-demo enable).
