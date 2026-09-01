@@ -133,6 +133,7 @@ When troubleshooting:
 | CatalogSource TRANSIENT_FAILURE | DNS race condition. Check catalog pod: `kubectl get pods -n $NAMESPACE -l olm.catalogSource`. If pod is running but catalog stuck, restart catalog-operator: `kubectl rollout restart deployment/catalog-operator -n openshift-operator-lifecycle-manager`. Verify pull secret exists. |
 | Gateway CrashLoopBackOff (EACCES) | Usually self-resolves after reconciliation. If persistent: `kubectl delete pod -l app.kubernetes.io/name=gateway -n $NAMESPACE` |
 | DNS resolution failures | `aap-demo start` (re-applies CoreDNS config) or `kubectl rollout restart daemonset/dns-default -n openshift-dns`. Root cause: CoreDNS template plugin returns router ClusterIP directly for *.nip.io — if router IP changes after restart, CoreDNS config is stale. |
+| AO: `base_url must not resolve to a private...` | `aap-demo enable ao` — allowlists the AAP gateway hostname and restores CoreDNS rewrite. AO SSRF blocks CRC/MicroShift private route IPs. |
 | Disk space / pod eviction | `aap-demo ssh` then `sudo crictl rmi --prune` |
 | Pods stuck Pending (resources) | `kubectl describe node | grep -A 5 Allocated` — consider `aap-demo idle true` on other deployments |
 | Stale pod mounts after crash | Restart kube-proxy and CoreDNS: `kubectl rollout restart daemonset/kube-proxy -n kube-proxy && kubectl rollout restart daemonset/dns-default -n openshift-dns`. Symptom: "transport endpoint is not connected" or "executable file not found" |

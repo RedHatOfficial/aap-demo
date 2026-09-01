@@ -54,6 +54,7 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 | Catalog signature failures | MicroShift 4.22+ GPG policy on `registry.redhat.io` | Shared [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh): relax `policy.json`, reload CRI-O, `wait_for_catalog_ready()` with auto-recovery; `ensure_catalog_signature_policy()` before AO catalog create |
 | Postgres password drift on re-run | Secret regenerated but CNPG cluster retains bootstrap password | Reuse password from existing secrets; `FORCE=1` recreates cluster |
 | AO missing from default index | Index version / publish lag | Automatic `AO_FALLBACK_INDEX_IMAGE` |
+| AAP credential SSRF (`base_url must not resolve to a private...`) | AO blocks integration URLs that resolve to RFC1918/loopback; CRC/MicroShift routes are private and often have no CoreDNS rewrite | `configure_ao_local_aap_access`: CoreDNS rewrite, ConfigMap `automation-orchestrator-admin-settings` (`APP_INTEGRATION_URL_ALLOWED_HOSTS`), CR `workflowHttpRequestAllowedHosts` |
 
 ### Delete flow
 
@@ -128,3 +129,4 @@ the full EA install sequence.
 | 2026-08-20 | GA migration: `redhat-operators` OLM path, hand-written CR |
 | 2026-08-21 | Rename `ao-eap` → `ao`; GitOps manifests from `aapctl --dry-run`; MicroShift catalog in app namespace; aapctl optional at runtime |
 | 2026-08-21 | Catalog signature policy: shared `olm-catalog-signature.sh` with deploy; SSH key refresh; CRI-O reload; signature pull auto-recovery |
+| 2026-09-01 | Local AAP integration: CoreDNS rewrite + SSRF allowlist for CRC/MicroShift gateway hostnames |

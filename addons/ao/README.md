@@ -130,7 +130,27 @@ kubectl get secret -n automation-orchestrator automation-orchestrator-initial-ad
 
 Username: **admin**
 
+Connecting AAP (Settings → Automation Orchestrator credential) uses the gateway
+route hostname. On CRC/MicroShift that hostname resolves to a private IP, and AO
+rejects it unless the addon allowlists it. `aap-demo enable ao` configures this
+automatically (CoreDNS rewrite + `APP_INTEGRATION_URL_ALLOWED_HOSTS`).
+
 ## Troubleshooting
+
+### `base_url must not resolve to a private, reserved, or cloud metadata address`
+
+AO SSRF protection blocks the AAP URL from the generated credential. On aap-demo
+the gateway host (`aap-<ns>.apps.crc.testing` or `*.nip.io`) is private, and
+without a CoreDNS rewrite it may not resolve inside AO pods at all.
+
+Re-run the addon (does not reinstall AO):
+
+```bash
+aap-demo enable ao
+```
+
+That allowlists the AAP gateway hostname, restores the CoreDNS route rewrite if
+missing, and restarts AO backend/worker pods. Then retry the credential in AO.
 
 ### Catalog not READY / `TRANSIENT_FAILURE`
 
