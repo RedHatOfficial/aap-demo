@@ -585,10 +585,13 @@ wire_ao_enable_all_tools() {
     return 0
   fi
 
-  echo "$tool_ids_json" | jq -c '[_nwise(50)] | .[]' | while read -r chunk; do
-    wire_ao_api PATCH "/integrations/${integration_id}/tools/bulk_update" \
-      "$(jq -n --argjson ids "$chunk" '{tool_ids: $ids, enabled: true}')" >/dev/null 2>&1 || true
-  done
+  # Portable chunking (_nwise is missing from some jq builds, e.g. Fedora jq 1.8.1).
+  echo "$tool_ids_json" | jq -c --argjson n 50 \
+    '. as $arr | [range(0; ($arr | length); $n) as $i | $arr[$i:$i+$n]] | .[]' \
+    | while read -r chunk; do
+      wire_ao_api PATCH "/integrations/${integration_id}/tools/bulk_update" \
+        "$(jq -n --argjson ids "$chunk" '{tool_ids: $ids, enabled: true}')" >/dev/null 2>&1 || true
+    done
 }
 
 wire_ao_ensure_integration() {
