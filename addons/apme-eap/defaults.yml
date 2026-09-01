@@ -23,3 +23,5 @@ apme_template_release_name: redhat-rhaap-portal
 
 apme_route_tls_enabled: false
 apme_route_tls_termination: edge
+
+apme_debug: false

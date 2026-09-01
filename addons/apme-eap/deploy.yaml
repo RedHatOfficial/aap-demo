@@ -1,7 +1,7 @@
 # EAP Portal + APME — OpenShift Template (single file)
 # 1. Edit params.example.env (or your param file)
 # 2. oc process -f deploy.yaml --param-file=params.example.env | oc apply -f -
-# Regenerate from Helm APME chart: python3 scripts/generate-deploy.py
+# Maintain manually or regenerate from upstream portal-hub-EAP template (see ADR-023).
 apiVersion: template.openshift.io/v1
 kind: Template
 metadata:

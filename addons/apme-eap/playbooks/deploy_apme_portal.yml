@@ -14,8 +14,8 @@
       ansible.builtin.debug:
         msg:
           - "openshift_token defined: {{ openshift_token is defined }}"
-          - "openshift_token length: {{ openshift_token | default('') | length }}"
           - "openshift_api_url: {{ openshift_api_url | default('NOT SET') }}"
+      when: apme_debug | default(false) | bool
 
     - name: Derive OpenShift cluster domain from API URL if not specified
       ansible.builtin.set_fact:
