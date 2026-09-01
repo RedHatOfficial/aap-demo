@@ -28,8 +28,10 @@ These configurations **bypass critical security protections** and are acceptable
 
 ## Usage
 
+`aap-demo enable ao` installs **mcp-server** automatically (required for Automation Orchestrator).
+
 ```bash
-# Deploy MCP server
+# Deploy MCP server (also installed by `aap-demo enable ao`)
 aap-demo enable mcp-server
 
 # Check status
@@ -45,6 +47,8 @@ The addon automatically:
 2. Configures ingress CA trust for token validation
 3. Generates an OAuth token for Claude Code
 4. Configures the MCP server in your Claude Code settings (if `claude` CLI is available)
+5. Registers the MCP server in Automation Orchestrator when the `ao` addon is installed
+   (via `includes/addon-wire.sh`; runs automatically after enable and deploy)
 
 ## Configuration
 
