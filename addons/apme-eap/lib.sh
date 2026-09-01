@@ -7,11 +7,48 @@ apme_default_org_id() {
     | jq -r '.results[0].id // empty'
 }
 
+apme_default_inventory_id() {
+  local org_id="$1"
+  local inventory_id name encoded result
+
+  if [ -n "${APME_INVENTORY_ID:-}" ]; then
+    printf '%s\n' "$APME_INVENTORY_ID"
+    return 0
+  fi
+
+  for name in "Demo Inventory" "localhost"; do
+    encoded=$(jq -rn --arg n "$name" '$n|@uri')
+    result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      "${AAP_API}/inventories/?name=${encoded}" 2>&1)
+    inventory_id=$(echo "$result" | jq -r --argjson org "$org_id" \
+      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty' 2>/dev/null)
+    if [ -n "$inventory_id" ]; then
+      echo "  ✓ Using inventory '${name}' (ID: ${inventory_id})" >&2
+      printf '%s\n' "$inventory_id"
+      return 0
+    fi
+  done
+
+  result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/inventories/?order_by=id&page_size=50" 2>&1)
+  inventory_id=$(echo "$result" | jq -r --argjson org "$org_id" \
+    '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty' 2>/dev/null)
+  if [ -n "$inventory_id" ]; then
+    echo "  ✓ Using first inventory in Default org (ID: ${inventory_id})" >&2
+    printf '%s\n' "$inventory_id"
+    return 0
+  fi
+
+  echo "  ⚠ No inventory found in Default org; falling back to ID 1" >&2
+  printf '%s\n' "1"
+}
+
 apme_configure_microshift_job_networking() {
   if [ "${IS_MICROSHIFT:-false}" != true ]; then
     return 0
   fi
 
+  # Patches the default instance group pod_spec_override — affects all jobs on that IG.
   echo "Configuring MicroShift job pod networking..."
 
   local aap_ip ig_id pod_spec_override
@@ -411,9 +448,10 @@ apme_ensure_job_template() {
   local project_id="$2"
   local ee_id="$3"
   local extra_vars_json="$4"
-  local extra_vars_yaml template_id result existing encoded_name patch_result
+  local extra_vars_yaml template_id result existing encoded_name patch_result inventory_id
 
   extra_vars_yaml=$(apme_extra_vars_yaml "$extra_vars_json")
+  inventory_id=$(apme_default_inventory_id "$org_id")
 
   result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     -X POST \
@@ -426,11 +464,12 @@ apme_ensure_job_template() {
       --argjson project_id "$project_id" \
       --argjson ee_id "$ee_id" \
       --argjson org_id "$org_id" \
+      --argjson inventory_id "$inventory_id" \
       '{
         name: $name,
         description: $desc,
         job_type: "run",
-        inventory: 1,
+        inventory: $inventory_id,
         project: $project_id,
         playbook: $playbook,
         ask_variables_on_launch: false,
@@ -461,8 +500,9 @@ apme_ensure_job_template() {
       -d "$(jq -n \
         --argjson ee_id "$ee_id" \
         --argjson project_id "$project_id" \
+        --argjson inventory_id "$inventory_id" \
         --arg extra_vars "$extra_vars_yaml" \
-        '{execution_environment: $ee_id, project: $project_id, extra_vars: $extra_vars, ask_variables_on_launch: false}')" \
+        '{execution_environment: $ee_id, project: $project_id, inventory: $inventory_id, extra_vars: $extra_vars, ask_variables_on_launch: false}')" \
       "${AAP_API}/job_templates/${template_id}/" 2>&1)
     if ! echo "$patch_result" | jq -e '.id' >/dev/null 2>&1; then
       echo "❌ ERROR: Failed to update job template extra_vars" >&2

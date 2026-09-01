@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 MD024 -->
 # ADR-023: APME OpenShift Template Deployment
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-08-24
 
