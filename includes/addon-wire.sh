@@ -33,6 +33,8 @@ WIRE_AAP_CREDENTIAL_NAME="${WIRE_AAP_CREDENTIAL_NAME:-aap-demo AAP Token}"
 WIRE_MCP_CREDENTIAL_NAME="${WIRE_MCP_CREDENTIAL_NAME:-aap-demo MCP Token}"
 WIRE_AAP_OAUTH_APP_NAME="${WIRE_AAP_OAUTH_APP_NAME:-Automation Orchestrator (aap-demo)}"
 WIRE_AO_LIST_LIMIT="${WIRE_AO_LIST_LIMIT:-100}"
+WIRE_AO_PROJECT_WAIT_ATTEMPTS="${WIRE_AO_PROJECT_WAIT_ATTEMPTS:-36}"
+WIRE_AO_DEFAULT_PROJECT_NAME="${WIRE_AO_DEFAULT_PROJECT_NAME:-Default}"
 
 export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")}"
 
@@ -41,7 +43,7 @@ wire_warn() { printf '  ⚠ %s\n' "$*" >&2; }
 
 # AO list endpoints use ?limit= and return .resources (not page_size / .results).
 wire_ao_list_items() {
-  jq -c '(.resources // .results // [])' 2>/dev/null
+  jq -c 'if type == "array" then . else (.resources // .results // []) end' 2>/dev/null
 }
 
 wire_require_tools() {
@@ -299,11 +301,20 @@ wire_ao_network_access() {
 }
 
 wire_ao_admin_password() {
-  local secret
+  local secret pass
+  for secret in automation-orchestrator-initial-admin-password \
+    automation-orchestrator-admin-password; do
+    pass=$(kubectl get secret -n "$AO_NAMESPACE" "$secret" \
+      -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+    if [ -n "$pass" ]; then
+      printf '%s' "$pass"
+      return 0
+    fi
+  done
   secret=$(kubectl get secret -n "$AO_NAMESPACE" -o name 2>/dev/null \
     | grep -i 'admin-password' | head -1 | sed 's|secret/||')
   if [ -z "$secret" ]; then
-    secret="automation-orchestrator-initial-admin-password" # pragma: allowlist secret
+    return 1
   fi
   kubectl get secret -n "$AO_NAMESPACE" "$secret" \
     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d
@@ -319,7 +330,13 @@ wire_ao_api_base() {
 }
 
 wire_ao_login_token() {
-  local api_base pass login_json
+  local api_base pass login_json token
+
+  if [ -n "${_WIRE_AO_ACCESS_TOKEN:-}" ]; then
+    printf '%s' "$_WIRE_AO_ACCESS_TOKEN"
+    return 0
+  fi
+
   api_base=$(wire_ao_api_base) || return 1
   pass=$(wire_ao_admin_password)
   if [ -z "$pass" ]; then
@@ -329,9 +346,13 @@ wire_ao_login_token() {
   login_json=$(jq -n --arg user admin --arg pass "$pass" \
     '{username: $user, password: $pass}')
 
-  curl -sk -X POST "${api_base}/auth/login" \
+  token=$(curl -sk -X POST "${api_base}/auth/login" \
     -H "Content-Type: application/json" \
-    -d "$login_json" 2>/dev/null | jq -r '.access_token // empty'
+    -d "$login_json" 2>/dev/null | jq -r '.access_token // empty')
+  if [ -n "$token" ]; then
+    _WIRE_AO_ACCESS_TOKEN="$token"
+  fi
+  printf '%s' "$token"
 }
 
 wire_ao_api() {
@@ -359,22 +380,111 @@ wire_ao_api() {
   fi
 }
 
+wire_ao_invalidate_login_token() {
+  unset _WIRE_AO_ACCESS_TOKEN _WIRE_AO_DEFAULT_PROJECT_ID AO_ACCESS_TOKEN
+}
+
+wire_ao_projects_from_response() {
+  local response="$1"
+  echo "$response" | wire_ao_list_items \
+    | jq -r '[.[] | select(.id != null)]' 2>/dev/null
+}
+
+wire_ao_pick_project_id() {
+  local projects_json="$1"
+  echo "$projects_json" | jq -r '
+    ([.[] | select(.is_default == true)] | .[0].id)
+    // (.[0].id // empty)' 2>/dev/null
+}
+
+wire_ao_create_default_project() {
+  local result project_id payload
+
+  payload=$(jq -n \
+    --arg name "$WIRE_AO_DEFAULT_PROJECT_NAME" \
+    --arg desc "Default project (auto-created by aap-demo)" \
+    '{name: $name, description: $desc, is_default: true}')
+
+  result=$(wire_ao_api POST "/projects" "$payload" 2>/dev/null)
+  if wire_ao_response_is_error "$result"; then
+    result=$(wire_ao_api POST "/projects" \
+      "$(jq -n --arg name "$WIRE_AO_DEFAULT_PROJECT_NAME" \
+        '{name: $name, is_default: true}')" 2>/dev/null)
+  fi
+  if wire_ao_response_is_error "$result"; then
+    return 1
+  fi
+  project_id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null)
+  if [ -n "$project_id" ]; then
+    printf '%s' "$project_id"
+    return 0
+  fi
+  return 1
+}
+
+wire_ao_wait_for_default_project() {
+  local attempt projects_json projects_response project_id last_error=""
+
+  for attempt in $(seq 1 "$WIRE_AO_PROJECT_WAIT_ATTEMPTS"); do
+    wire_ao_invalidate_login_token
+    if ! wire_ao_login_token >/dev/null; then
+      [ "$attempt" -lt "$WIRE_AO_PROJECT_WAIT_ATTEMPTS" ] && sleep 5
+      continue
+    fi
+
+    projects_response=$(wire_ao_api GET "/projects?limit=${WIRE_AO_LIST_LIMIT}" 2>/dev/null || true)
+    if wire_ao_response_is_error "$projects_response"; then
+      last_error=$(echo "$projects_response" | jq -r '.title // .detail // .code // empty' 2>/dev/null)
+      [ "$attempt" -lt "$WIRE_AO_PROJECT_WAIT_ATTEMPTS" ] && sleep 5
+      continue
+    fi
+
+    projects_json=$(wire_ao_projects_from_response "$projects_response")
+    project_id=$(wire_ao_pick_project_id "$projects_json")
+    if [ -n "$project_id" ]; then
+      printf '%s' "$project_id"
+      return 0
+    fi
+
+    [ "$attempt" -lt "$WIRE_AO_PROJECT_WAIT_ATTEMPTS" ] && sleep 5
+  done
+
+  if [ -n "$last_error" ]; then
+    wire_warn "AO projects API not ready (${last_error})"
+  fi
+  return 1
+}
+
+wire_ao_default_project_id() {
+  local project_id
+
+  if [ -n "${_WIRE_AO_DEFAULT_PROJECT_ID:-}" ]; then
+    printf '%s' "$_WIRE_AO_DEFAULT_PROJECT_ID"
+    return 0
+  fi
+
+  wire_log "  Resolving AO default project..."
+  project_id=$(wire_ao_wait_for_default_project) && [ -n "$project_id" ] && {
+    _WIRE_AO_DEFAULT_PROJECT_ID="$project_id"
+    printf '%s' "$project_id"
+    return 0
+  }
+
+  project_id=$(wire_ao_create_default_project) || true
+  if [ -n "$project_id" ]; then
+    wire_log "  ✓ Created AO default project (${WIRE_AO_DEFAULT_PROJECT_NAME})"
+    _WIRE_AO_DEFAULT_PROJECT_ID="$project_id"
+    printf '%s' "$project_id"
+    return 0
+  fi
+
+  return 1
+}
+
 wire_ao_response_is_error() {
   local result="$1"
   [ -z "$result" ] && return 0
   echo "$result" | jq -e 'select(.code != null)' >/dev/null 2>&1
-}
-
-wire_ao_default_project_id() {
-  local projects project_id
-  projects=$(wire_ao_api GET "/projects?limit=10&is_default=true" 2>/dev/null)
-  project_id=$(echo "$projects" | wire_ao_list_items \
-    | jq -r '[.[] | select(.is_default == true)] | .[0].id // empty' 2>/dev/null)
-  if [ -z "$project_id" ]; then
-    projects=$(wire_ao_api GET "/projects?limit=10" 2>/dev/null)
-    project_id=$(echo "$projects" | wire_ao_list_items | jq -r '.[0].id // empty' 2>/dev/null)
-  fi
-  printf '%s' "$project_id"
 }
 
 wire_ao_find_credential_type_by_name() {
@@ -421,6 +531,8 @@ wire_ao_ensure_credential() {
   project_id=$(wire_ao_default_project_id)
   if [ -z "$project_id" ]; then
     wire_warn "No AO project found for credential ${cred_name}"
+    wire_warn "  AO may still be starting after a rollout — wait 1–2 minutes and run: aap-demo wire"
+    wire_warn "  Check backend logs: kubectl logs -n ${AO_NAMESPACE} deploy/automation-orchestrator-backend --tail=50"
     return 1
   fi
 
@@ -557,7 +669,7 @@ wire_ao_enable_all_tools() {
     return 0
   fi
 
-  echo "$tool_ids_json" | jq -c '[_nwise(50)] | .[]' | while read -r chunk; do
+  echo "$tool_ids_json" | jq -c 'range(0; length; 50) as $i | .[$i:$i+50]' | while read -r chunk; do
     wire_ao_api PATCH "/integrations/${integration_id}/tools/bulk_update" \
       "$(jq -n --argjson ids "$chunk" '{tool_ids: $ids, enabled: true}')" >/dev/null 2>&1 || true
   done
@@ -721,6 +833,8 @@ aap_demo_wire() {
     wire_warn "Cluster not reachable; skipping addon wiring"
     return 1
   fi
+
+  wire_ao_invalidate_login_token
 
   wire_log ""
   wire_log "Addon wiring (cluster-local endpoints)..."
