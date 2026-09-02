@@ -255,7 +255,7 @@ objects:
           - /bin/sh
           - -c
           args:
-          - "set -e\ncd /opt/app-root/src\npython3 - <<'PY'\nimport os\nimport yaml\nfrom pathlib import Path\n\nsrc = Path(\"dynamic-plugins/ansible-portal.yaml\")\ndata = yaml.safe_load(src.read_text())\nplugins = data.get(\"plugins\") or []\nexclude_apme = os.environ.get(\"EXCLUDE_APME_PLUGINS\", \"\").lower() in (\"true\", \"1\", \"yes\")\nif exclude_apme:\n    plugins = [p for p in plugins if \"apme\" not in (p.get(\"package\") or \"\") or (p.get(\"package\") or \"\").endswith(\"ansible-plugin-backstage-apme\")]\ndisable_scm_auth = os.environ.get(\"DISABLE_SCM_AUTH\", \"\").lower() in (\"true\", \"1\", \"yes\")\nif disable_scm_auth:\n    skip = (\"github-auth\", \"gitlab-auth\")\n    plugins = [p for p in plugins if not any(s in (p.get(\"package\") or \"\") for s in skip)]\nmanifest = {\n    \"includes\": [],\n    \"plugins\": [\n        {\n            \"enabled\": True,\n            \"package\": \"./dynamic-plugins/dist/backstage-community-plugin-rbac\",\n        },\n        *plugins,\n    ],\n}\nPath(\"dynamic-plugins.yaml\").write_text(\n    yaml.dump(manifest, default_flow_style=False, sort_keys=False, width=120)\n)\nPY\n./install-dynamic-plugins.sh /opt/app-root/src/dynamic-plugins-root\nif [ -d /pre-installed/extensions ]; then\n  cp -r /pre-installed/extensions/. /extensions/\nfi\n"
+          - "set -e\ncd /opt/app-root/src\npython3 - <<'PY'\nimport os\nimport yaml\nfrom pathlib import Path\n\nsrc = Path(\"dynamic-plugins/ansible-portal.yaml\")\ndata = yaml.safe_load(src.read_text())\nplugins = data.get(\"plugins\") or []\nexclude_apme = os.environ.get(\"EXCLUDE_APME_PLUGINS\", \"\").lower() in (\"true\", \"1\", \"yes\")\nif exclude_apme:\n    plugins = [p for p in plugins if \"apme\" not in (p.get(\"package\") or \"\")]\ndisable_scm_auth = os.environ.get(\"DISABLE_SCM_AUTH\", \"\").lower() in (\"true\", \"1\", \"yes\")\nif disable_scm_auth:\n    skip = (\"github-auth\", \"gitlab-auth\")\n    plugins = [p for p in plugins if not any(s in (p.get(\"package\") or \"\") for s in skip)]\nmanifest = {\n    \"includes\": [],\n    \"plugins\": [\n        {\n            \"enabled\": True,\n            \"package\": \"./dynamic-plugins/dist/backstage-community-plugin-rbac\",\n        },\n        *plugins,\n    ],\n}\nPath(\"dynamic-plugins.yaml\").write_text(\n    yaml.dump(manifest, default_flow_style=False, sort_keys=False, width=120)\n)\nPY\n./install-dynamic-plugins.sh /opt/app-root/src/dynamic-plugins-root\nif [ -d /pre-installed/extensions ]; then\n  cp -r /pre-installed/extensions/. /extensions/\nfi\n"
           env:
           - name: EXCLUDE_APME_PLUGINS
             value: ${EXCLUDE_APME_PLUGINS}
@@ -284,6 +284,29 @@ objects:
             mountPath: /extensions
           - name: temp
             mountPath: /tmp
+          workingDir: /opt/app-root/src
+        - name: sanitize-dynamic-plugin-config
+          image: ${PORTAL_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command:
+          - /bin/sh
+          - -c
+          args:
+          - "set -e\npython3 - <<'PY'\nfrom pathlib import Path\nimport yaml\n\nconfig_path = Path(\"/opt/app-root/src/dynamic-plugins-root/app-config.dynamic-plugins.yaml\")\nif config_path.exists():\n    config = yaml.safe_load(config_path.read_text()) or {}\n    frontend = config.get(\"dynamicPlugins\", {}).get(\"frontend\", {})\n    apme = frontend.get(\"ansible.plugin-backstage-apme\")\n    if isinstance(apme, dict):\n        apme.pop(\"appIcons\", None)\n    self_service = frontend.get(\"ansible.plugin-backstage-self-service\")\n    if isinstance(self_service, dict):\n        fields = self_service.get(\"scaffolderFieldExtensions\") or []\n        self_service[\"scaffolderFieldExtensions\"] = [\n            field for field in fields\n            if field.get(\"importName\") != \"EEFileNamePickerExtension\"\n        ]\n    config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False, width=120))\nPY\n"
+          env:
+          - name: NPM_CONFIG_USERCONFIG
+            value: /opt/app-root/src/.npmrc.dynamic-plugins
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+          - name: dynamic-plugins-root
+            mountPath: /opt/app-root/src/dynamic-plugins-root
           workingDir: /opt/app-root/src
         containers:
         - name: backstage-backend
@@ -380,6 +403,9 @@ objects:
             mountPath: /opt/app-root/src/app-config.local.yaml
             subPath: app-config.local.yaml
             readOnly: true
+          - name: apme-scaffolder-templates
+            mountPath: /opt/app-root/src/configs/catalog/apme-register-git-repository
+            readOnly: true
           - name: extensions-catalog
             mountPath: /extensions
           - name: temp
@@ -390,6 +416,10 @@ objects:
         - name: portal-app-config
           configMap:
             name: portal-app-config
+        - name: apme-scaffolder-templates
+          configMap:
+            name: apme-scaffolder-templates
+            optional: true
         - name: npmcacache
           emptyDir: {}
         - name: extensions-catalog

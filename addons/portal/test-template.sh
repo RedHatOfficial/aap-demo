@@ -65,7 +65,7 @@ assert env.get('DISABLE_SCM_AUTH') == 'true', 'DISABLE_SCM_AUTH not set on init'
 cfg = next(i for i in items if i.get('kind')=='ConfigMap' and i['metadata']['name']=='portal-app-config')
 text = cfg['data']['app-config.local.yaml']
 assert 'apme:' not in text or 'enabled: true' not in text.split('apme:')[1][:80], 'app-config should not enable apme'
-assert 'http://aap-aap-operator.apps.crc.testing' in text, 'app-config must render the internal RHAAP URL for API calls'
+assert 'https://aap-aap-operator.apps.crc.testing' in text, 'app-config must render the RHAAP URL for API calls'
 assert 'handler/frame' in text, 'app-config must set explicit OAuth callbackUrl'
 assert 'enableExperimentalRedirectFlow: true' in text, 'redirect OAuth flow must be enabled'
 assert 'signInPage: rhaap' in text, 'signInPage must be set'
@@ -85,16 +85,48 @@ plugins = [
 ]
 exclude_apme = True
 if exclude_apme:
-    plugins = [p for p in plugins if "apme" not in (p.get("package") or "") or (p.get("package") or "").endswith("ansible-plugin-backstage-apme")]
+    plugins = [p for p in plugins if "apme" not in (p.get("package") or "")]
 disable_scm_auth = True
 if disable_scm_auth:
     skip = ("github-auth", "gitlab-auth")
     plugins = [p for p in plugins if not any(s in (p.get("package") or "") for s in skip)]
-assert len(plugins) == 2
+assert len(plugins) == 1
 assert any("self-service" in p["package"] for p in plugins)
-assert any(p["package"].endswith("ansible-plugin-backstage-apme") for p in plugins)
+assert not any("apme" in p["package"] for p in plugins)
 PY
 pass "plugin filter logic"
+
+# Dynamic plugin compatibility filter (unit test for the sanitizer init container)
+python3 - <<'PY'
+config = {
+    'dynamicPlugins': {
+        'frontend': {
+            'ansible.plugin-backstage-apme': {
+                'appIcons': [{'module': '@material-ui/icons', 'name': 'apmeIcon'}],
+            },
+            'ansible.plugin-backstage-self-service': {
+                'scaffolderFieldExtensions': [
+                    {'importName': 'AAPTokenFieldExtension'},
+                    {'importName': 'EEFileNamePickerExtension'},
+                ],
+            },
+        },
+    },
+}
+frontend = config['dynamicPlugins']['frontend']
+apme = frontend['ansible.plugin-backstage-apme']
+apme.pop('appIcons', None)
+self_service = frontend['ansible.plugin-backstage-self-service']
+self_service['scaffolderFieldExtensions'] = [
+    field for field in self_service['scaffolderFieldExtensions']
+    if field.get('importName') != 'EEFileNamePickerExtension'
+]
+assert 'appIcons' not in apme
+assert self_service['scaffolderFieldExtensions'] == [
+    {'importName': 'AAPTokenFieldExtension'}
+]
+PY
+pass "dynamic plugin compatibility filter"
 
 echo ""
 echo "All portal template smoke tests passed."
