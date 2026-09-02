@@ -63,7 +63,8 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [020](020-full-openshift-support.md) | Full OpenShift Support and Resource-Aware Provisioning | Accepted |
 | [021](021-local-cache-addon.md) | Local Cache Addon | Accepted |
 | [022](022-apme-prebuilt-portal-hub.md) | APME Pre-Built Portal Hub Deployment | Accepted |
-| [023](023-apme-openshift-template.md) | APME OpenShift Template Deployment | Proposed |
+| [023](023-addon-auto-wiring.md) | Addon Auto-Wiring | Accepted |
+| [024](023-apme-openshift-template.md) | APME OpenShift Template Deployment | Proposed |
 
 ## Creating a New ADR
 

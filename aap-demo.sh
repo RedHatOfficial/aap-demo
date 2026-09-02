@@ -1240,7 +1240,7 @@ cmd_diagnose() {
   # =========================================================================
   echo ""
   echo "DNS:"
-  local coredns_running
+  local coredns_running corefile
   coredns_running=$(kubectl get pods -n openshift-dns --no-headers 2>/dev/null | grep -c "Running" || echo "0")
   if [ "$coredns_running" -gt 0 ]; then
     _check_pass "CoreDNS running ($coredns_running pods)"
@@ -1248,7 +1248,7 @@ cmd_diagnose() {
     _check_warn "CoreDNS pods not found in openshift-dns"
   fi
 
-  local route_domain corefile
+  local route_domain
   route_domain=$(kubectl get route -n openshift-console console -o jsonpath='{.spec.host}' 2>/dev/null | sed 's/^console-openshift-console\.//' || echo "")
   if [ -z "$route_domain" ]; then
     route_domain=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null | sed 's/^[^.]*\.//' || echo "")
