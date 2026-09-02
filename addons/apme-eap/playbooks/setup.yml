@@ -1,51 +1,19 @@
 ---
-# One-time workstation setup after extracting the welcome pack (collection root).
+# DEPRECATED — host-side workstation setup (local venv + ansible-playbook).
+#
+# APME deploy runs in AAP via Product Demos EE. Use:
+#   aap-demo enable apme-eap
+#
+# For local playbook debugging, run deploy_apme_portal.yml inside an EE or with
+# collections from execution-environment/requirements.yml.
 
-- name: Prepare ansible.apme_portal workstation
+- name: Deprecated — use AAP-native deploy
   hosts: localhost
   gather_facts: false
-  vars:
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
-    collection_root: "{{ playbook_dir | dirname }}"
-
   tasks:
-    - name: Display collection path
-      ansible.builtin.debug:
-        msg:
-          - "Collection: ansible.apme_portal"
-          - "Root: {{ collection_root }}"
-
-    - name: Install Python dependencies
-      ansible.builtin.pip:
-        requirements: "{{ collection_root }}/requirements.txt"
-
-    - name: Install required Ansible collections
-      ansible.builtin.command:
-        argv:
-          - ansible-galaxy
-          - collection
-          - install
-          - -r
-          - "{{ collection_root }}/requirements.yml"
-      changed_when: true
-
-    - name: Check for vars/apme_portal.yml
-      ansible.builtin.stat:
-        path: "{{ collection_root }}/vars/apme_portal.yml"
-      register: apme_portal_vars
-
-    - name: Create vars/apme_portal.yml from example
-      ansible.builtin.copy:
-        src: "{{ collection_root }}/vars/apme_portal.yml.example"
-        dest: "{{ collection_root }}/vars/apme_portal.yml"
-        mode: "0644"
-        remote_src: true
-      when: not apme_portal_vars.stat.exists
-
-    - name: Display next steps
-      ansible.builtin.debug:
-        msg:
-          - "1. Edit vars/apme_portal.yml (OpenShift, AAP, GitHub)"
-          - "2. Set portal_hub_image to your pre-built portal hub container"
-          - "3. Run: ansible-playbook playbooks/deploy_apme_portal.yml -e @vars/apme_portal.yml"
-          - "Full guide: docs/apme-portal-install-guide.md"
+    - name: Fail with migration instructions
+      ansible.builtin.fail:
+        msg: >-
+          playbooks/setup.yml is deprecated. Host-side Ansible is not used for apme-eap deploy.
+          Run: aap-demo enable apme-eap
+          See addons/apme-eap/README.md and docs/adr/023-apme-openshift-template.md

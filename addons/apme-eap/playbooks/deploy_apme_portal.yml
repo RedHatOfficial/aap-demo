@@ -1,15 +1,12 @@
 ---
-# Deploy Ansible automation portal with Ansible Quality (APME) on OpenShift
+# Deploy Ansible automation portal with Ansible Quality (APME) via the APME operator
 
 - name: Deploy APME automation portal
   hosts: localhost
   gather_facts: true
   vars:
-    # Use the same Python that runs ansible (avoids brew vs venv module mismatches)
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
     collection_root: "{{ playbook_dir | dirname }}"
-    apme_portal_helm_values_path: "{{ playbook_dir | dirname }}/.rendered/portal-apme-values.yaml"
-    # Force use of api_key/host auth instead of kubeconfig
     ansible_kubernetes_context: ~
 
   pre_tasks:
@@ -17,8 +14,8 @@
       ansible.builtin.debug:
         msg:
           - "openshift_token defined: {{ openshift_token is defined }}"
-          - "openshift_token length: {{ openshift_token | default('') | length }}"
           - "openshift_api_url: {{ openshift_api_url | default('NOT SET') }}"
+      when: apme_debug | default(false) | bool
 
     - name: Derive OpenShift cluster domain from API URL if not specified
       ansible.builtin.set_fact:
@@ -29,15 +26,15 @@
              regex_replace(':[0-9]+$', '')
           ) }}
 
-    - name: Set portal route host
+    - name: Set portal route host (RHDH portal fixed hostname)
       ansible.builtin.set_fact:
-        portal_route_host: "redhat-rhaap-portal-{{ openshift_project_name }}.{{ openshift_cluster_domain }}"
-        portal_url: "https://redhat-rhaap-portal-{{ openshift_project_name }}.{{ openshift_cluster_domain }}"
+        portal_route_host: "redhat-rhaap-portal-apme.{{ openshift_cluster_domain }}"
+        portal_url: "https://redhat-rhaap-portal-apme.{{ openshift_cluster_domain }}"
 
     - name: Display deployment info
       ansible.builtin.debug:
         msg:
-          - "==== Ansible Quality (APME) portal deployment ===="
+          - "==== Ansible Quality (APME) portal deployment (APME operator) ===="
           - "Target namespace: {{ openshift_project_name }}"
           - "Cluster domain: {{ openshift_cluster_domain }}"
           - "Portal URL (expected): {{ portal_url }}"
@@ -51,24 +48,29 @@
 
     - name: Fail when kubernetes.core collection is missing
       ansible.builtin.fail:
-        msg: "kubernetes.core collection not found. Run: ansible-playbook playbooks/setup.yml"
+        msg: >-
+          kubernetes.core collection not found.
+          Use Product Demos EE (quay.io/ansible-product-demos/apd-ee-26:latest)
+          or set APME_EE_IMAGE to an EE that includes kubernetes.core.
       when: "'kubernetes.core' not in collections_list.stdout"
 
-    - name: Create local directory for rendered Helm values
-      ansible.builtin.file:
-        path: "{{ apme_portal_helm_values_path | dirname }}"
-        state: directory
-        mode: "0755"
+    - name: Fail when redhat.openshift collection is missing
+      ansible.builtin.fail:
+        msg: >-
+          redhat.openshift collection not found.
+          Use Product Demos EE (quay.io/ansible-product-demos/apd-ee-26:latest)
+          or set APME_EE_IMAGE to an EE that includes redhat.openshift.
+      when: "'redhat.openshift' not in collections_list.stdout"
 
   roles:
-    - role: openshift_apme_setup
     - role: apme_pah_integration
     - role: aap_apme_prerequisites
-    - role: apme_helm_values
+    - role: apme_template_deploy
     - role: apme_scm_secrets
-      when: configure_github_secrets | default(false) | bool
-    - role: portal_helm_install
-    - role: apme_gateway_helm
+      when: configure_github_app_secrets | default(false) | bool
+    - role: apme_template_deploy
+      tasks_from: github_app_wiring.yml
+      when: configure_github_app_secrets | default(false) | bool
 
   post_tasks:
     - name: Seed APME galaxy servers from AAP and setup-pah credentials
@@ -79,17 +81,13 @@
     - name: Save deployment info
       ansible.builtin.template:
         src: deployment-info.md.j2
-        # yamllint disable rule:line-length
         dest: >-
-          {{ collection_root }}/apme-portal-deployment-{{ ansible_date_time.year }}-{{ ansible_date_time.month }}-{{ ansible_date_time.day }}-{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}.md
-        # yamllint enable rule:line-length
+          {{ collection_root }}/apme-portal-deployment-{{
+          ansible_date_time.year }}-{{ ansible_date_time.month }}-{{
+          ansible_date_time.day }}-{{ ansible_date_time.hour }}{{
+          ansible_date_time.minute }}.md
         mode: "0644"
       changed_when: false
-
-    - name: Remove local rendered artifacts
-      ansible.builtin.file:
-        path: "{{ collection_root }}/.rendered"
-        state: absent
 
     - name: Display deployment complete
       ansible.builtin.debug:
@@ -102,6 +100,7 @@
           - "Portal URL: {{ portal_url }}"
           - "Namespace: {{ openshift_project_name }}"
           - "Portal hub: {{ portal_hub_image }}"
+          - "Install method: APME operator (portal/deploy.yaml + Apme custom resource)"
           - ""
           - "Verify: oc get pods -n {{ openshift_project_name }}"
           - "Sign in via AAP OAuth, then open Quality tab after registering a repo."

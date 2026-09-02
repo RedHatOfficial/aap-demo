@@ -55,7 +55,7 @@ rewrite stop {
 Some addons (portal, ADR-002) additionally use:
 
 - `hostAliases` mapping route hostname → AAP Service ClusterIP
-- `AAP_HOST_URL` as `http://` for in-cluster token exchange
+- `AAP_HOST_URL` as `https://` for in-cluster token exchange
 - `checkSSL: false` in Backstage auth providers
 
 CoreDNS fixes general in-cluster DNS; OAuth-specific workarounds address TLS and nip.io edge cases.

@@ -102,21 +102,22 @@ metadata reports `amd64`. This is experimental and not Red Hat supported.
 On MicroShift, ingress is not available on in-cluster Service port 443. The
 deploy script:
 
-1. Sets `AAP_HOST_URL` to `http://<aap-route>` (not `https://`) for pod→AAP
-   token exchange
+1. Sets `AAP_HOST_URL` to `https://<aap-route>` for pod→AAP token exchange. AAP
+   redirects HTTP token requests to HTTPS with an empty response body, which
+   breaks JSON parsing in the OAuth client.
 2. Patches the portal Deployment with a `hostAliases` entry mapping the AAP
    route hostname to the AAP Service ClusterIP (nip.io resolves to `127.0.0.1`
    inside pods)
 3. Sets `checkSSL: false` in appConfig for rhaap auth/catalog providers
 
-Browsers still reach AAP over HTTPS via ingress; only backend token exchange uses
-HTTP with the host alias.
+Browsers and backend token exchange both use HTTPS via the route; the host alias
+ensures the route hostname reaches the AAP Service from inside the pod.
 
 ### OAuth two-phase configuration
 
 1. **Pre-Helm:** Create OAuth app with placeholder redirect URI
 2. **Post-Helm:** Patch redirect URI to
-   `https://<portal-route>/api/auth/rhaap/handler/frame`
+   `https://<portal-route>/api/auth/rhaap/handler/frame?env=production`
 
 Credentials persist in `~/.aap-demo/portal/oauth_credentials.json` because AAP
 does not return `client_secret` on subsequent reads.

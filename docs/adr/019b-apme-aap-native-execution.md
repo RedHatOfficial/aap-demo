@@ -1,10 +1,12 @@
 <!-- markdownlint-disable MD013 MD024 -->
 # ADR-019b: APME AAP-Native Execution
 
-**Status:** Rejected
-**Date:** 2026-07-21
+**Status:** Accepted
+**Date:** 2026-07-21 (revised 2026-08-21)
 **Author:** Chad Ferman
-**Reason:** Overcomplex and adds multiple new support needs like
+**Supersedes:** Local venv execution in ADR-019 for deploy orchestration
+
+**See also:** [ADR-023](023-apme-openshift-template.md) — deploy mechanism changed from Helm charts to OpenShift Template processing while keeping AAP job orchestration.
 
 ## Context
 
@@ -16,7 +18,7 @@ ADR-019 established the `apme-eap` addon using official APME playbooks via a bas
 4. **System dependencies**: Required local Ansible installation
 5. **No UI visibility**: Playbook runs were opaque to users
 
-**Key insight:** Since `aap-demo` deploys AAP, we can use AAP's REST API to execute the playbooks *within AAP itself*, eliminating the venv entirely.
+**Key insight:** Since `aap-demo` deploys AAP, we can use AAP's REST API to execute the playbooks *within AAP itself*. With the pre-built portal hub container (ADR-022), host-side registry/skopeo dependencies are eliminated; a custom EE (`apme-ee`) carries helm and collections.
 
 ## Decision
 
@@ -61,9 +63,8 @@ The implementation uses **Git SCM** for project source and **Ansible playbooks**
 
 **Modified:** `addons/apme-eap/deploy.sh`
 
-- `setup_minimal_venv()` - Creates venv with `ansible-core` (not full Ansible suite)
-- `ensure_aap_token()` - Auto-creates token via playbook if not exists
-- `deploy()` - Orchestrates playbooks instead of bash functions
+- AAP REST API orchestration via `lib.sh` (project, EE, job template, launch)
+- Host does not run `ansible-playbook` or create a local venv (see ADR-023 follow-up cleanup)
 - Removed dependency on `lib/aap-api.sh` (bash+curl approach)
 
 **Key Implementation Details:**
@@ -455,10 +456,9 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
 
 **From venv-based (ADR-019) to AAP-native (ADR-019b):**
 
-1. No user action required - deployment command is the same
-2. Venv now contains `ansible-core` instead of just PyYAML
-3. `~/.aap-demo/apme-eap-venv/` is still created but much smaller (~50 MB vs 150+ MB)
-4. Token creation is automatic (no manual Web UI steps)
+1. No user action required - deployment command is the same (`aap-demo enable apme-eap`)
+2. Host no longer creates `~/.aap-demo/apme-eap-venv/` — Ansible runs only in Product Demos EE
+3. Token and OAuth setup run inside the AAP job playbook
 
 ## Test Plan
 

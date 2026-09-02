@@ -1,0 +1,323 @@
+---
+# Process portal + APME OpenShift templates and apply manifests
+
+- name: Validate portal template file exists  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_portal_template_file }}"
+  register: apme_portal_template_stat
+
+- name: Fail when portal template is missing  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: "Portal OpenShift template not found: {{ apme_portal_template_file }}"
+  when: not apme_portal_template_stat.stat.exists
+
+- name: Validate APME engine template file exists  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_engine_template_file }}"
+  register: apme_engine_template_stat
+
+- name: Fail when APME engine template is missing  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: "APME engine OpenShift template not found: {{ apme_engine_template_file }}"
+  when: not apme_engine_template_stat.stat.exists
+
+- name: Build shared OpenShift template parameter map  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_template_parameters:
+      NAMESPACE: "{{ openshift_project_name }}"
+      CLUSTER_ROUTER_BASE: "{{ openshift_cluster_domain }}"
+      RHAAP_URL: "{{ aap_host_url_normalized | default(aap_host_url | default(aap_host)) | regex_replace('/$', '') }}"
+      RHAAP_PUBLIC_URL: "{{ aap_public_url | default(aap_host | default(aap_host_url)) | regex_replace('/$', '') }}"
+      RHAAP_OAUTH_CLIENT_ID: "{{ oauth_client_id }}"
+      RHAAP_OAUTH_CLIENT_SECRET: "{{ oauth_client_secret }}"
+      RHAAP_TOKEN: "{{ aap_api_token }}"
+      PORTAL_IMAGE: "{{ portal_hub_image }}"
+      GITHUB_TOKEN: "{{ github_token | default('') }}"
+      GITHUB_OAUTH_CLIENT_ID: "{{ github_oauth_client_id | default('') }}"
+      GITHUB_OAUTH_CLIENT_SECRET: "{{ github_oauth_client_secret | default('') }}"
+      PORTAL_DB_PASSWORD: "{{ apme_portal_db_password }}"
+      PORTAL_SESSION_SECRET: "{{ apme_portal_session_secret }}"
+      EXCLUDE_APME_PLUGINS: "{{ 'true' if apme_exclude_apme_plugins | default(false) | bool else 'false' }}"
+      DISABLE_SCM_AUTH: "{{ 'false' if (github_oauth_client_id | default('')) else 'true' }}"
+  no_log: true
+
+- name: Build APME engine template parameter map  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_engine_template_parameters:
+      NAMESPACE: "{{ openshift_project_name }}"
+      CLUSTER_ROUTER_BASE: "{{ openshift_cluster_domain }}"
+      ABBENAY_TOKEN: "{{ apme_abbenay_token }}"
+      APME_IMAGE_TAG: "{{ apme_image_tag }}"
+  no_log: true
+
+- name: Write temporary portal param file for oc process --local  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.copy:
+    dest: "{{ ansible_env.TMPDIR | default('/tmp') }}/apme-portal-template-params.env"
+    mode: "0600"
+    content: |
+      {% for key, value in apme_template_parameters.items() %}
+      {{ key }}={{ value }}
+      {% endfor %}
+  no_log: true
+  register: apme_portal_template_param_file
+
+- name: Write temporary APME engine param file for oc process --local  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.copy:
+    dest: "{{ ansible_env.TMPDIR | default('/tmp') }}/apme-engine-template-params.env"
+    mode: "0600"
+    content: |
+      {% for key, value in apme_engine_template_parameters.items() %}
+      {{ key }}={{ value }}
+      {% endfor %}
+  no_log: true
+  register: apme_engine_template_param_file
+
+- name: Process portal OpenShift template locally (MicroShift lacks Template API)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    cmd: >-
+      oc process --local -f {{ apme_portal_template_file }}
+      --param-file={{ apme_portal_template_param_file.dest }}
+      -o json
+  register: apme_portal_template_process_raw
+  changed_when: false
+  no_log: true
+
+- name: Process APME engine OpenShift template locally  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    cmd: >-
+      oc process --local -f {{ apme_engine_template_file }}
+      --param-file={{ apme_engine_template_param_file.dest }}
+      -o json
+  register: apme_engine_template_process_raw
+  changed_when: false
+  no_log: true
+
+- name: Parse processed portal template objects  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_portal_template_objects: "{{ (apme_portal_template_process_raw.stdout | from_json)['items'] }}"
+  no_log: true
+
+- name: Parse processed APME engine template objects  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_engine_template_objects: "{{ (apme_engine_template_process_raw.stdout | from_json)['items'] }}"
+  no_log: true
+
+- name: Apply processed portal template objects  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  loop: "{{ apme_portal_template_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name | default('cluster') }}"
+  register: apme_portal_template_apply
+
+- name: Download APME operator install manifest  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.uri:
+    url: "https://github.com/ansible/apme-operator/releases/download/{{ apme_operator_version }}/install.yaml"
+    method: GET
+    return_content: true
+    status_code: 200
+  register: apme_operator_manifest
+  when: apme_use_operator | bool
+
+- name: Apply APME operator install manifest  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  loop: "{{ apme_operator_manifest.content | default('') | from_yaml_all | list }}"
+  loop_control:
+    label: "{{ item.kind | default('manifest') }}/{{ item.metadata.name | default('unnamed') }}"
+  when:
+    - apme_use_operator | bool
+    - item is not none
+  no_log: true
+
+- name: Wait for APME operator CRD  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    name: apmes.apme.ansible.com
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_operator_crd
+  until:
+    - apme_operator_crd.resources | length > 0
+    - >-
+      (apme_operator_crd.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Established') | map(attribute='status') | list
+      | first | default('False')) == 'True'
+  retries: 60
+  delay: 5
+  no_log: true
+  when: apme_use_operator | bool
+
+- name: Wait for APME operator controller  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: apme-operator-controller-manager
+    namespace: apme-operator-system
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_operator_controller
+  until:
+    - apme_operator_controller.resources | length > 0
+    - apme_operator_controller.resources[0].status.availableReplicas | default(0) | int >= 1
+  retries: 60
+  delay: 5
+  no_log: true
+  when: apme_use_operator | bool
+
+- name: Apply processed APME engine template objects  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  loop: "{{ apme_engine_template_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name | default('cluster') }}"
+  register: apme_engine_template_apply
+  when: not (apme_use_operator | bool)
+
+- name: Apply portal scaffolder templates for APME integration  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  loop: >-
+    {{ apme_engine_template_objects
+       | selectattr('kind', 'equalto', 'ConfigMap')
+       | selectattr('metadata.name', 'equalto', 'apme-scaffolder-templates')
+       | list }}
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name }}"
+  when: apme_use_operator | bool
+
+- name: Apply APME operator custom resource  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      apiVersion: apme.ansible.com/v1alpha1
+      kind: Apme
+      metadata:
+        name: "{{ apme_operator_name }}"
+        namespace: "{{ openshift_project_name }}"
+      spec:
+        version: "{{ apme_operator_image_tag }}"
+        image:
+          registry: "{{ apme_operator_image_registry }}"
+          pullSecrets: "{{ apme_operator_pull_secrets }}"
+        replicas: 1
+        components:
+          gitleaks: true
+          collectionHealth: true
+          depAudit: true
+          ui: false
+        exposure:
+          route:
+            enabled: false
+        abbenay:
+          enabled: false
+  when: apme_use_operator | bool
+
+- name: Wait for APME operator custom resource readiness  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: apme.ansible.com/v1alpha1
+    kind: Apme
+    name: "{{ apme_operator_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_operator_status
+  until:
+    - apme_operator_status.resources | length > 0
+    - >-
+      (apme_operator_status.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | list
+      | first | default('False')) == 'True'
+  retries: 120
+  delay: 5
+  no_log: true
+  when: apme_use_operator | bool
+
+- name: Display template apply result  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      Applied {{ apme_portal_template_objects | length }} portal objects and
+      {% if apme_use_operator | bool %}
+      applied APME operator custom resource '{{ apme_operator_name }}'
+      {% else %}
+      {{ apme_engine_template_objects | length }} APME engine objects
+      {% endif %}
+
+- name: Patch portal deployment for APME integration  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: patch_portal_for_apme.yml
+
+- name: Roll portal deployment to load template secrets  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              apme.eap.welcome.pack/restartedAt: "{{ ansible_date_time.iso8601 }}"
+  when: apme_skip_openshift_secret_creation | default(true) | bool
+
+- name: Configure MicroShift portal networking  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: microshift_networking.yml
+
+- name: Apply optional Route TLS certificates  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: route_tls.yml
+  when: apme_route_tls_enabled | default(false) | bool
+
+- name: Wait for portal deployment rollout  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: apme_portal_rollout
+  changed_when: false
+  until:
+    - apme_portal_rollout.resources | length > 0
+    - >-
+      apme_portal_rollout.resources[0].status.observedGeneration | default(0) | int >=
+      apme_portal_rollout.resources[0].metadata.generation | default(0) | int
+    - >-
+      apme_portal_rollout.resources[0].status.updatedReplicas | default(0) | int ==
+      apme_portal_rollout.resources[0].spec.replicas | default(0) | int
+    - >-
+      apme_portal_rollout.resources[0].status.availableReplicas | default(0) | int ==
+      apme_portal_rollout.resources[0].spec.replicas | default(0) | int
+    - apme_portal_rollout.resources[0].status.unavailableReplicas | default(0) | int == 0
+  retries: 120
+  delay: 5
+  no_log: true
+  when: apme_skip_openshift_secret_creation | default(true) | bool

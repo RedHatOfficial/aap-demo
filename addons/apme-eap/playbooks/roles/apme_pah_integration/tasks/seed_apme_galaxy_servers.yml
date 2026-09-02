@@ -54,7 +54,7 @@
     kind: Pod
     namespace: "{{ openshift_project_name }}"
     label_selectors:
-      - app.kubernetes.io/component=gateway
+      - app.kubernetes.io/component=engine
       - app.kubernetes.io/instance={{ apme_helm_release_name | default('apme') }}
     api_key: "{{ openshift_token | default(omit) }}"
     kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
@@ -81,6 +81,7 @@
   kubernetes.core.k8s_exec:
     namespace: "{{ openshift_project_name }}"
     pod: "{{ apme_pah_gateway_pod_name }}"
+    container: gateway
     command: >-
       curl -sf
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
@@ -134,6 +135,7 @@
   kubernetes.core.k8s_exec:
     namespace: "{{ openshift_project_name }}"
     pod: "{{ apme_pah_gateway_pod_name }}"
+    container: gateway
     command: >-
       curl -sf
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
@@ -154,6 +156,7 @@
   kubernetes.core.k8s_exec:
     namespace: "{{ openshift_project_name }}"
     pod: "{{ apme_pah_gateway_pod_name }}"
+    container: gateway
     command: >-
       curl -s -o /dev/null -w "%{http_code}"
       -X POST -H "Content-Type: application/json"

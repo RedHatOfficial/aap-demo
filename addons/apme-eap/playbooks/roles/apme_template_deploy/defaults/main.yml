@@ -1,0 +1,28 @@
+---
+# defaults for apme_template_deploy
+
+apme_portal_template_file: "{{ playbook_dir }}/../../portal/deploy.yaml"
+apme_engine_template_file: "{{ playbook_dir }}/../deploy-apme.yaml"
+apme_template_release_name: redhat-rhaap-portal
+apme_exclude_apme_plugins: false
+apme_skip_openshift_secret_creation: true
+
+apme_portal_db_password: ""
+apme_portal_session_secret: ""
+apme_abbenay_token: ""
+apme_image_tag: sha-d1ac741
+apme_use_operator: true
+apme_operator_version: v0.1.0
+apme_operator_name: apme
+apme_operator_image_tag: 2026.8.10
+apme_operator_image_registry: quay.io/ansible
+apme_operator_pull_secrets: []
+
+apme_route_tls_enabled: false
+apme_route_tls_termination: edge
+apme_route_tls_certificate: ""
+apme_route_tls_key: ""
+apme_route_tls_ca_certificate: ""
+apme_route_tls_destination_ca_certificate: ""
+
+configure_github_app_secrets: false

@@ -1,0 +1,106 @@
+---
+# MicroShift in-pod AAP route resolution (ADR-022)
+
+- name: Resolve MicroShift cluster flag  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    is_microshift_cluster: "{{ is_microshift | default(false) | bool }}"
+
+- name: Detect MicroShift when not passed from deploy script  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Ingress
+    name: cluster
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: openshift_ingress_config
+  failed_when: false
+  when: not is_microshift_cluster
+
+- name: Infer MicroShift from missing ingresses.config  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    is_microshift_cluster: true
+  when:
+    - not is_microshift_cluster
+    - openshift_ingress_config.resources | default([]) | length == 0
+
+- name: Get AAP service ClusterIP for hostAliases  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Service
+    name: aap
+    namespace: "{{ apme_pah_aap_namespace | default('aap-operator') }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: aap_service
+  when: is_microshift_cluster
+
+- name: Set AAP service ClusterIP fact  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_service_cluster_ip: "{{ aap_service.resources[0].spec.clusterIP | default('') }}"
+  when:
+    - is_microshift_cluster
+    - aap_service.resources | default([]) | length > 0
+
+- name: Extract AAP route hostname for hostAliases  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    aap_route_hostname: "{{ aap_host | regex_replace('^https?://', '') | regex_replace('/.*$', '') }}"
+  when: is_microshift_cluster
+
+- name: Warn if AAP service not found for MicroShift hostAliases  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: AAP service not found in {{ apme_pah_aap_namespace | default('aap-operator') }}.
+      hostAliases cannot be configured — in-pod OAuth may fail.
+  when:
+    - is_microshift_cluster
+    - aap_service.resources | default([]) | length == 0
+
+- name: Patch portal Deployment with MicroShift hostAliases  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          spec:
+            hostAliases:
+              - ip: "{{ aap_service_cluster_ip }}"
+                hostnames:
+                  - "{{ aap_route_hostname }}"
+                  - "registry.{{ openshift_cluster_domain }}"
+  when:
+    - is_microshift_cluster
+    - aap_service_cluster_ip is defined
+    - aap_service_cluster_ip | length > 0
+
+- name: Add NODE_TLS_REJECT_UNAUTHORIZED for self-signed ingress  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backstage-backend
+                env:
+                  - name: NODE_TLS_REJECT_UNAUTHORIZED
+                    value: "0"
+  when:
+    - is_microshift_cluster
+    - aap_service_cluster_ip is defined
+    - aap_service_cluster_ip | length > 0
