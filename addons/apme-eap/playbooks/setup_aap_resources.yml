@@ -1,0 +1,35 @@
+---
+# Bootstrap AAP resources for APME portal deployment.
+# Normally invoked by deploy.sh via REST API; can be run locally for debugging:
+#   ansible-playbook playbooks/setup_aap_resources.yml -e @../defaults.yml -e @~/.aap-demo/apme-eap-vars.yml
+
+- name: Setup AAP resources for APME deployment
+  hosts: localhost
+  gather_facts: false
+  vars:
+    apme_project_name: "{{ apme_aap_project_name | default('aap-demo-apme') }}"
+    apme_job_template_name: "{{ apme_aap_job_template_name | default('APME | Deploy Portal') }}"
+    apme_deploy_playbook: "{{ apme_aap_deploy_playbook | default('addons/apme-eap/playbooks/deploy_apme_portal.yml') }}"
+
+  tasks:
+    - name: Validate AAP connection variables
+      ansible.builtin.assert:
+        that:
+          - aap_host is defined
+          - aap_username is defined
+          - aap_password is defined
+        fail_msg: "aap_host, aap_username, and aap_password are required"
+
+    - name: Display bootstrap info
+      ansible.builtin.debug:
+        msg:
+          - "Project: {{ apme_project_name }}"
+          - "Job template: {{ apme_job_template_name }}"
+          - "Playbook: {{ apme_deploy_playbook }}"
+          - "EE image: {{ apme_ee_image | default('quay.io/ansible-product-demos/apd-ee-26:latest') }}"
+
+    - name: Note — use deploy.sh for full bootstrap
+      ansible.builtin.debug:
+        msg: >-
+          deploy.sh creates the Git project, execution environment, inventory,
+          and job template via the AAP REST API. This playbook is a diagnostic stub.

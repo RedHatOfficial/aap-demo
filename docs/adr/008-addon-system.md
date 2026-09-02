@@ -60,7 +60,7 @@ Current first-class addons in `AVAILABLE_ADDONS`:
 | `portal` | Yes | Helm chart |
 | `setup-pah` | Yes | Private Automation Hub credentials |
 | `ao` | Yes | Automation Orchestrator — GA OLM + GitOps manifests ([ADR-017](017-ao-addon.md), [`addons/ao/README.md`](../../addons/ao/README.md)) |
-| `apme-eap` | Yes | APME playbook addon (Ansible + Helm) |
+| `apme-eap` | Yes | APME portal via AAP job template + custom EE |
 | `local-cache` | No | Host-side image save/load via CRC SSH (see ADR-021) |
 
 Additional addons invoked via `enable` but not in `AVAILABLE_ADDONS` list:

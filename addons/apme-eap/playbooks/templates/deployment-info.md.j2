@@ -11,28 +11,24 @@ Deployment date: {{ ansible_date_time.iso8601 }}
 ## AAP integration
 
 - **AAP host:** {{ aap_host_normalized | default(aap_host) }}
+{% if is_microshift | default(false) | bool %}
+- **AAP in-cluster URL (portal OAuth):** {{ aap_host_url_normalized | default(aap_host_url | default(aap_host)) }}
+{% endif %}
 - **Organization:** {{ aap_organization }}
 - **OAuth application:** {{ aap_apme_prerequisites_oauth_application_name }}
-- **Redirect URI:** {{ portal_url }}/api/auth/rhaap/handler/frame
-- **GitHub OAuth callback:** {{ portal_url }}/api/auth/github/handler/frame (optional: confirm on github.com)
+- **Redirect URI:** {{ portal_url }}/api/auth/rhaap/handler/frame?env=production
+- **GitHub OAuth callback:** {{ portal_url }}/api/auth/github/handler/frame (optional)
 
 ## Portal hub
 
 - **Image:** {{ portal_hub_image }}
-- **Plugins:** Baked into the container image (no OCI push or install-dynamic-plugins at deploy time)
+- **Install method:** OpenShift Template (`deploy.yaml`)
 
 ## Automation Hub (setup-pah)
 
 - **setup-pah credentials:** {{ 'yes' if apme_pah_credentials_available | default(false) else 'no' }}
 - **PAH catalog sync:** {{ 'enabled' if apme_pah_collections_sync_enabled | default(false) else 'disabled' }}
 - **APME galaxy servers seeded:** {{ 'yes' if apme_pah_seed_apme_galaxy_servers | default(false) else 'no' }}
-
-## Helm releases
-
-| Release | Chart | Version |
-| --- | --- | --- |
-| {{ portal_helm_release_name }} | {{ portal_helm_chart_name }} | {{ portal_helm_chart_version }} |
-| {{ apme_helm_release_name }} | {{ apme_helm_chart_name }} | {{ apme_helm_chart_version }} |
 
 ## Verification
 

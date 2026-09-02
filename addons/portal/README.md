@@ -1,6 +1,8 @@
-# Portal Addon - Ansible Automation Portal (Helm)
+# Portal Addon - Ansible Automation Portal
 
-Production-ready deployment of Ansible Automation Portal via OpenShift Helm chart.
+Production-ready deployment of Ansible Automation Portal via the OpenShift Template at
+[`deploy.yaml`](deploy.yaml). Uses a pre-built portal hub image with RHAAP plugins only
+(`EXCLUDE_APME_PLUGINS=true`).
 
 ## Overview
 
@@ -15,14 +17,16 @@ Built on Red Hat Developer Hub (RHDH) with AAP-specific plugins.
 - OAuth integration with AAP for authentication
 - Built-in PostgreSQL database (can use external)
 
+**Install method:** OpenShift Template (`addons/portal/deploy.yaml`) — no Helm required.
+
 **Architecture profiles:**
 
-| Profile | Cluster CPU | RHDH hub |
-|---------|-------------|----------|
-| x86 | `amd64` | Red Hat chart default |
-| ARM | `arm64` | `quay.io/rhdh-community/rhdh:1.10` (experimental) |
+| Profile | Cluster CPU | Portal image |
+|---------|-------------|--------------|
+| x86 | `amd64` | Pre-built `portal-hub-eap` (default) |
+| ARM | `arm64` | Same pre-built hub image |
 
-See [ADR-002](../../docs/adr/002-portal-helm-deployment.md) for full architecture.
+See [ADR-002](../../docs/adr/002-portal-helm-deployment.md) for historical Helm context.
 
 ## Prerequisites
 
@@ -46,15 +50,23 @@ See [ADR-002](../../docs/adr/002-portal-helm-deployment.md) for full architectur
 
 ### Local Tools
 
-- Helm 3.10+ installed ([install guide](https://helm.sh/docs/intro/install/))
+- `oc` CLI (OpenShift client) for template processing
 - `jq` for JSON parsing (`brew install jq` on macOS)
 - `kubectl` or `oc` CLI configured
+- `python3` + `PyYAML` (optional — catalog org patch when not using Default org)
 
-### Registry Access
+### Portal hub image
 
-- Red Hat account with access to `registry.redhat.io`
-- Registry credentials (username + password or token)
-- Or existing pull secret in OpenShift cluster
+Default: `quay.io/cferman/portal-hub-eap:latest`. Override:
+
+```bash
+PORTAL_HUB_IMAGE=quay.io/ansible/portal-hub-eap:latest aap-demo enable portal
+```
+
+### Registry Access (legacy Helm only)
+
+Registry credentials are **not** required for the OpenShift Template path (plugins are
+baked into the hub image). Legacy Helm installs may still need `registry.redhat.io` access.
 
 ### Architecture
 
@@ -258,7 +270,85 @@ upstream:
 
 **Fix:** Ensure registry credentials valid, cluster has resources.
 
-### OAuth Login Fails
+### OAuth Login Fails with "code or refreshToken"
+
+**Symptom:** `Login failed; caused by Error: You have to provide code or refreshToken`
+after AAP redirects back to the portal (redirect flow, not popup).
+
+**Cause:** The redirect OAuth flow exchanges the authorization `code` at
+`/api/auth/rhaap/handler/frame?env=production`, then persists the session via a refresh-token
+cookie. This error means the backend `/refresh` call ran without a valid code or
+refresh token — usually because:
+
+1. **Redirect URI mismatch** — AAP OAuth app URI does not exactly match
+   `https://<portal-route>/api/auth/rhaap/handler/frame?env=production`
+2. **Auth host split** — `auth.providers.rhaap.host` must use the public HTTPS AAP route
+   (`AAP_PUBLIC_URL`) so the token POST is not redirected to GET. The catalog continues
+   using `AAP_HOST_URL` for in-cluster access.
+3. **hostAliases missing** — portal pod cannot resolve the AAP route hostname
+
+**Fix:** Re-run enable (updates callbackUrl, redirect URI, hostAliases):
+
+```bash
+aap-demo enable portal
+```
+
+Verify:
+
+```bash
+PORTAL_ROUTE=$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}')
+echo "Redirect URI must be: https://${PORTAL_ROUTE}/api/auth/rhaap/handler/frame?env=production"
+
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- \
+  printenv AAP_HOST_URL OAUTH_CLIENT_ID
+
+kubectl logs deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal --tail=80 | grep -i rhaap
+```
+
+### OAuth Login Popup Fails or Shows Wrong Provider
+
+**Symptom:** `Login failed; caused by PopupClosedError: Login failed, popup was closed`
+after clicking Sign In (popup may flash and close immediately).
+
+**Cause:** Default RHAAP OAuth uses a browser popup. On CRC/MicroShift and some browsers,
+popup `postMessage` back to the portal fails (COOP/CORS/origin mismatch). The Helm-based
+portal addon sets `enableExperimentalRedirectFlow: true` to use a full-page redirect instead.
+
+**Fix:** Re-run enable (template deploy now includes redirect flow):
+
+```bash
+aap-demo enable portal
+```
+
+**Symptom:** Clicking Sign In opens a popup that fails, shows GitHub instead of AAP, or
+navigates to `http://` AAP and errors while the portal page is `https://`.
+
+**Cause:** The portal needs **two** AAP URLs on MicroShift/CRC:
+
+| Purpose | Config key | URL | Example |
+| ------- | ---------- | --- | ------- |
+| Catalog and token exchange (`ansible.rhaap`) | `AAP_HOST_URL` | `https://` route + hostAliases | `https://aap-aap-operator.apps...` |
+| Browser auth (`auth.providers.rhaap.host`) | `AAP_PUBLIC_URL` | `https://` route | `https://aap-aap-operator.apps...` |
+
+Both URLs use HTTPS. The route host alias makes that HTTPS route reachable from the
+portal pod on MicroShift/CRC and avoids the HTTP redirect that returns an empty response
+to the OAuth token POST.
+
+**Fix:** Re-run enable (applies split URLs and RHAAP-only auth):
+
+```bash
+aap-demo enable portal
+```
+
+Verify in the portal pod:
+
+```bash
+kubectl exec deploy/redhat-rhaap-portal -c backstage-backend -n redhat-rhaap-portal -- \
+  printenv AAP_HOST_URL AAP_PUBLIC_URL
+# Expected on CRC: https://aap-...  and  https://aap-...
+```
+
+### OAuth Login Fails (invalid redirect / unreachable host)
 
 **Symptom:** "Invalid redirect URI" error during sign-in, or browser redirects to
 an unreachable `*.svc.cluster.local` / `*.svc` URL ("page can't be displayed").
@@ -317,11 +407,11 @@ AAP_ROUTE=$(kubectl get route aap -n aap-operator -o jsonpath='{.spec.host}')
 ADMIN_PASS=$(kubectl get secret aap-admin-password -n aap-operator \
   -o jsonpath='{.data.password}' | base64 -d)
 
-# Update redirect URI (rhaap provider uses /api/auth/rhaap/handler/frame)
+# Update redirect URI (rhaap provider requires the environment query)
 curl -k -u "admin:$ADMIN_PASS" \
   -X PATCH "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
   -H "Content-Type: application/json" \
-  -d "{\"redirect_uris\": \"https://$PORTAL_ROUTE/api/auth/rhaap/handler/frame\"}"
+  -d "{\"redirect_uris\": \"https://$PORTAL_ROUTE/api/auth/rhaap/handler/frame?env=production\"}"
 ```
 
 ### Login Failed: "fetch failed" on Token Exchange
@@ -329,15 +419,18 @@ curl -k -u "admin:$ADMIN_PASS" \
 **Symptom:** AAP login page works, but portal shows
 `Login failed; caused by Error: Failed to send POST request: fetch failed`.
 
-**Cause:** After OAuth, the portal backend POSTs to `{AAP_HOST_URL}/o/token/`.
+**Cause:** After OAuth, the portal backend POSTs to `{AAP_PUBLIC_URL}/o/token/`.
 On CRC/MicroShift this fails when:
 
-1. **`AAP_HOST_URL` uses `https://`** — in-cluster traffic hits the AAP Service on port 80, not 443.
+1. **The auth provider uses the HTTP route URL** — the route redirects the token POST to
+   HTTPS and the client retries it as GET, producing an empty 405 response.
 2. **nip.io resolves to `127.0.0.1` inside pods** —
    connection refused.
 
 **Fix:** Re-run `aap-demo enable portal`. On MicroShift the addon sets `AAP_HOST_URL` to
-`http://<aap-route>` and patches a `hostAliases` entry for the AAP route hostname.
+`https://<aap-route>` for the catalog and auth, `AAP_PUBLIC_URL` to `https://<aap-route>` for
+external access,
+and patches a `hostAliases` entry for the AAP route hostname.
 
 Verify:
 

@@ -136,6 +136,7 @@
       organization: "{{ aap_org_lookup.json.results[0].id }}"
       authorization_grant_type: authorization-code
       client_type: confidential
+      pkce_required: false
       redirect_uris: "{{ aap_oauth_redirect_uri }}"
       app_url: "{{ portal_url }}"
     validate_certs: "{{ aap_apme_prerequisites_validate_certs }}"
@@ -154,6 +155,28 @@
     - oauth_create_result is defined
     - oauth_create_result is not skipped
     - oauth_create_result.json is defined
+  no_log: true
+
+- name: Reconcile OAuth application redirect URI  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.uri:
+    url: "{{ aap_host_normalized }}/api/gateway/v1/applications/{{ oauth_app_id }}/"
+    method: PATCH
+    user: "{{ aap_username | default(omit) }}"
+    password: "{{ aap_password | default(omit) }}"
+    force_basic_auth: "{{ aap_username is defined and aap_username | length > 0 }}"
+    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"
+    body_format: json
+    body:
+      redirect_uris: "{{ aap_oauth_redirect_uri }}"
+      app_url: "{{ portal_url }}"
+      pkce_required: false
+    validate_certs: "{{ aap_apme_prerequisites_validate_certs }}"
+    timeout: "{{ aap_apme_prerequisites_request_timeout }}"
+    status_code: [200]
+  when:
+    - oauth_app_id is defined
+    - oauth_app_id is not none
+    - oauth_app_id | string | length > 0
   no_log: true
 
 - name: Fail when OAuth credentials are unavailable  # noqa: var-naming[no-role-prefix]

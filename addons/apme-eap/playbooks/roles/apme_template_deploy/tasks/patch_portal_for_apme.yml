@@ -1,0 +1,89 @@
+---
+# After portal + APME templates: wire portal app-config and mount scaffolder catalog.
+
+- name: Load current portal app-config ConfigMap  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: ConfigMap
+    name: portal-app-config
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  register: portal_app_config_cm
+
+- name: Parse portal app-config YAML  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    portal_app_config_parsed: "{{ portal_app_config_cm.resources[0].data['app-config.local.yaml'] | from_yaml }}"
+  when: portal_app_config_cm.resources | default([]) | length > 0
+
+- name: Merge APME settings into portal app-config  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    portal_app_config_patched: >-
+      {{
+        portal_app_config_parsed | combine({
+          'ansible': (portal_app_config_parsed.ansible | default({})) | combine({
+            'apme': {
+              'baseUrl': 'http://apme-gateway:8080',
+              'checkSSL': false,
+              'enabled': true,
+              'enableAi': true,
+              'mockMode': false,
+            }
+          }, recursive=True),
+          'catalog': (portal_app_config_parsed.catalog | default({})) | combine({
+            'locations': (portal_app_config_parsed.catalog.locations | default([])) + [
+              {
+                'type': 'file',
+                'target': '/opt/app-root/src/configs/catalog/apme-register-git-repository/template.yaml',
+                'rules': [{'allow': ['Template']}],
+              }
+            ]
+          }, recursive=True),
+        }, recursive=True)
+      }}
+  when: portal_app_config_parsed is defined
+
+- name: Patch portal-app-config ConfigMap with APME settings  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    api_version: v1
+    kind: ConfigMap
+    name: portal-app-config
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      data:
+        app-config.local.yaml: "{{ portal_app_config_patched | to_nice_yaml(indent=2) }}"
+  when: portal_app_config_patched is defined
+
+- name: Patch portal Deployment with APME volume mounts  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backstage-backend
+                volumeMounts:
+                  - name: apme-scaffolder-templates
+                    mountPath: /opt/app-root/src/configs/catalog/apme-register-git-repository
+                    readOnly: true
+                  - name: apme-data
+                    mountPath: /opt/app-root/src/.data
+            volumes:
+              - name: apme-scaffolder-templates
+                configMap:
+                  name: apme-scaffolder-templates
+              - name: apme-data
+                emptyDir: {}

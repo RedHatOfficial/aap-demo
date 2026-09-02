@@ -1,0 +1,430 @@
+# Ansible automation portal — OpenShift Template (portal + PostgreSQL; no Helm)
+# 1. Edit params.example.env (or your param file)
+# 2. oc process --local -f deploy.yaml --param-file=params.example.env | oc apply -f -
+# APME engine: addons/apme-eap/deploy-apme.yaml (applied after portal by apme-eap addon)
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: aap-demo-portal
+  annotations:
+    description: Ansible automation portal (RHDH + RHAAP plugins; optional APME plugin exclusion)
+    tags: ansible,portal
+labels:
+  app: aap-demo-portal
+parameters:
+- name: NAMESPACE
+  description: Target OpenShift namespace
+  value: redhat-rhaap-portal
+- name: CLUSTER_ROUTER_BASE
+  description: OpenShift apps ingress domain (e.g. apps.cluster.example.com)
+  required: true
+- name: RHAAP_URL
+  description: In-cluster AAP URL for portal backend catalog/token exchange (http on MicroShift)
+  required: true
+- name: RHAAP_PUBLIC_URL
+  description: External AAP route URL for browser OAuth sign-in popup (https://...)
+  required: true
+- name: RHAAP_OAUTH_CLIENT_ID
+  description: AAP OAuth application client ID
+  required: true
+- name: RHAAP_OAUTH_CLIENT_SECRET
+  description: AAP OAuth application client secret
+  required: true
+- name: RHAAP_TOKEN
+  description: AAP API token for catalog sync
+  required: true
+- name: PORTAL_DB_PASSWORD
+  description: PostgreSQL password for bn_backstage user (auto-generated if omitted)
+  required: false
+  generate: expression
+  from: '[a-zA-Z0-9]{32}'
+- name: PORTAL_SESSION_SECRET
+  description: Backstage backend session secret (auto-generated if omitted)
+  required: false
+  generate: expression
+  from: '[a-zA-Z0-9]{32}'
+- name: PORTAL_IMAGE
+  description: Portal hub container image (init + app containers)
+  value: quay.io/cferman/portal-hub-eap:latest
+- name: EXCLUDE_APME_PLUGINS
+  description: Omit APME dynamic plugins at init (portal-only mode)
+  value: 'true'
+- name: DISABLE_SCM_AUTH
+  description: Omit GitHub/GitLab identity provider plugins (RHAAP sign-in only)
+  value: 'true'
+- name: GITHUB_TOKEN
+  description: GitHub PAT for integrations.github (repo reads/API). Leave empty if using OAuth only.
+  value: ''
+  required: false
+- name: GITHUB_OAUTH_CLIENT_ID
+  description: GitHub OAuth App client ID for ScmAuth / interactive GitHub. Leave empty if using PAT only.
+  value: ''
+  required: false
+- name: GITHUB_OAUTH_CLIENT_SECRET
+  description: GitHub OAuth App client secret. Leave empty if using PAT only.
+  value: ''
+  required: false
+objects:
+- apiVersion: v1
+  kind: Namespace
+  metadata:
+    name: ${NAMESPACE}
+    labels:
+      name: ${NAMESPACE}
+    annotations:
+      openshift.io/display-name: Ansible automation portal
+      openshift.io/description: Self-service Ansible automation portal (RHDH + RHAAP)
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: secrets-rhaap-portal
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    aap-host-url: ${RHAAP_URL}
+    aap-public-url: ${RHAAP_PUBLIC_URL}
+    oauth-client-id: ${RHAAP_OAUTH_CLIENT_ID}
+    oauth-client-secret: ${RHAAP_OAUTH_CLIENT_SECRET}
+    aap-token: ${RHAAP_TOKEN}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: secrets-github-portal
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    github-token: ${GITHUB_TOKEN}
+    github-oauth-client-id: ${GITHUB_OAUTH_CLIENT_ID}
+    github-oauth-client-secret: ${GITHUB_OAUTH_CLIENT_SECRET}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: portal-postgresql
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    postgres-password: ${PORTAL_DB_PASSWORD}
+    password: ${PORTAL_DB_PASSWORD}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: portal-backend-secret
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    backend-secret: ${PORTAL_SESSION_SECRET}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: portal-app-config
+    namespace: ${NAMESPACE}
+  data:
+    app-config.local.yaml: "ansible:\n  rhaap:\n    baseUrl: ${RHAAP_URL}\n    checkSSL: false\n    token: ${RHAAP_TOKEN}\n\
+      \  automationHub:\n    baseUrl: ${RHAAP_URL}\napp:\n  baseUrl: https://redhat-rhaap-portal-${NAMESPACE}.${CLUSTER_ROUTER_BASE}\n\
+      \  title: Ansible automation portal\nenableExperimentalRedirectFlow: true\nsignInPage: rhaap\nauth:\n  environment: production\n  omitIdentityTokenOwnershipClaim: true\n  providers:\n\
+      \    rhaap:\n      production:\n        checkSSL: false\n        clientId: ${RHAAP_OAUTH_CLIENT_ID}\n        clientSecret:\
+      \ ${RHAAP_OAUTH_CLIENT_SECRET}\n        host: ${RHAAP_URL}\n        callbackUrl: https://redhat-rhaap-portal-${NAMESPACE}.${CLUSTER_ROUTER_BASE}/api/auth/rhaap/handler/frame?env=production\n\
+      \        signIn:\n          resolvers:\n            - resolver:\
+      \ allowNewAAPUserSignIn\nbackend:\n  auth:\n    keys:\n      - secret: ${PORTAL_SESSION_SECRET}\n  baseUrl: https://redhat-rhaap-portal-${NAMESPACE}.${CLUSTER_ROUTER_BASE}\n\
+      \  cors:\n    origin: https://redhat-rhaap-portal-${NAMESPACE}.${CLUSTER_ROUTER_BASE}\n  database:\n    client: pg\n    connection:\n\
+      \      host: portal-postgresql\n      port: 5432\n      user: bn_backstage\n      password: ${PORTAL_DB_PASSWORD}\n \
+      \ listen:\n    port: 7007\n  reading:\n    allow:\n      - host: github.com\n      - host: raw.githubusercontent.com\n\
+      # Optional: leave GITHUB_TOKEN empty if using OAuth-only ScmAuth\nintegrations:\n  github:\n    - host: github.com\n\
+      \      token: ${GITHUB_TOKEN}\ncatalog:\n  providers:\n    rhaap:\n      production:\n        orgs:\n          -\
+      \ Default\n        sync:\n          ansibleGitContents:\n            enabled: true\n            schedule:\n        \
+      \      frequency:\n                minutes: 30\n              timeout:\n                minutes: 30\n          pahCollections:\n\
+      \            enabled: true\n            repositories:\n              - name: community\n                schedule:\n\
+      \                  frequency:\n                    minutes: 30\n                  timeout:\n                    minutes:\
+      \ 10\n              - name: validated\n                schedule:\n                  frequency:\n                   \
+      \ minutes: 60\n                  timeout:\n                    minutes: 15\n              - name: rh-certified\n   \
+      \             schedule:\n                  frequency:\n                    minutes: 60\n                  timeout:\n\
+      \                    minutes: 15\n          jobTemplates:\n            schedule:\n              frequency:\n       \
+      \         minutes: 60\n              timeout:\n                seconds: 30\n          orgsUsersTeams:\n            schedule:\n\
+      \              frequency:\n                minutes: 60\n              timeout:\n                seconds: 30\norganization:\n\
+      \  name: Ansible\n"
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: portal-postgresql-data
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 8Gi
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: portal-postgresql
+    namespace: ${NAMESPACE}
+    labels:
+      app: portal-postgresql
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: portal-postgresql
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: portal-postgresql
+      spec:
+        containers:
+        - name: postgresql
+          image: docker.io/library/postgres:15
+          imagePullPolicy: IfNotPresent
+          ports:
+          - name: postgres
+            containerPort: 5432
+          env:
+          - name: POSTGRES_USER
+            value: bn_backstage
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portal-postgresql
+                key: password
+          - name: POSTGRES_DB
+            value: backstage_plugin_catalog
+          - name: PGDATA
+            value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+          - name: data
+            mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+              - sh
+              - -c
+              - pg_isready -U bn_backstage -d backstage_plugin_catalog
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+              - sh
+              - -c
+              - pg_isready -U bn_backstage -d backstage_plugin_catalog
+            initialDelaySeconds: 30
+            periodSeconds: 20
+        volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: portal-postgresql-data
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: portal-postgresql
+    namespace: ${NAMESPACE}
+    labels:
+      app: portal-postgresql
+  spec:
+    ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+    selector:
+      app: portal-postgresql
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: redhat-rhaap-portal
+    namespace: ${NAMESPACE}
+    labels:
+      app: redhat-rhaap-portal
+  spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: redhat-rhaap-portal
+    strategy:
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          app: redhat-rhaap-portal
+      spec:
+        initContainers:
+        - name: install-dynamic-plugins
+          image: ${PORTAL_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command:
+          - /bin/sh
+          - -c
+          args:
+          - "set -e\ncd /opt/app-root/src\npython3 - <<'PY'\nimport os\nimport yaml\nfrom pathlib import Path\n\nsrc = Path(\"dynamic-plugins/ansible-portal.yaml\")\ndata = yaml.safe_load(src.read_text())\nplugins = data.get(\"plugins\") or []\nexclude_apme = os.environ.get(\"EXCLUDE_APME_PLUGINS\", \"\").lower() in (\"true\", \"1\", \"yes\")\nif exclude_apme:\n    plugins = [p for p in plugins if \"apme\" not in (p.get(\"package\") or \"\") or (p.get(\"package\") or \"\").endswith(\"ansible-plugin-backstage-apme\")]\ndisable_scm_auth = os.environ.get(\"DISABLE_SCM_AUTH\", \"\").lower() in (\"true\", \"1\", \"yes\")\nif disable_scm_auth:\n    skip = (\"github-auth\", \"gitlab-auth\")\n    plugins = [p for p in plugins if not any(s in (p.get(\"package\") or \"\") for s in skip)]\nmanifest = {\n    \"includes\": [],\n    \"plugins\": [\n        {\n            \"enabled\": True,\n            \"package\": \"./dynamic-plugins/dist/backstage-community-plugin-rbac\",\n        },\n        *plugins,\n    ],\n}\nPath(\"dynamic-plugins.yaml\").write_text(\n    yaml.dump(manifest, default_flow_style=False, sort_keys=False, width=120)\n)\nPY\n./install-dynamic-plugins.sh /opt/app-root/src/dynamic-plugins-root\nif [ -d /pre-installed/extensions ]; then\n  cp -r /pre-installed/extensions/. /extensions/\nfi\n"
+          env:
+          - name: EXCLUDE_APME_PLUGINS
+            value: ${EXCLUDE_APME_PLUGINS}
+          - name: DISABLE_SCM_AUTH
+            value: ${DISABLE_SCM_AUTH}
+          - name: NPM_CONFIG_USERCONFIG
+            value: /opt/app-root/src/.npmrc.dynamic-plugins
+          - name: MAX_ENTRY_SIZE
+            value: '30000000'
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+          - name: dynamic-plugins-root
+            mountPath: /opt/app-root/src/dynamic-plugins-root
+          - name: dynamic-plugins-root
+            mountPath: /dynamic-plugins-root
+          - name: npmcacache
+            mountPath: /opt/app-root/src/.npm/_cacache
+          - name: extensions-catalog
+            mountPath: /extensions
+          - name: temp
+            mountPath: /tmp
+          workingDir: /opt/app-root/src
+        containers:
+        - name: backstage-backend
+          image: ${PORTAL_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args:
+          - --config
+          - dynamic-plugins-root/app-config.dynamic-plugins.yaml
+          - --config
+          - /opt/app-root/src/app-config.local.yaml
+          ports:
+          - name: backend
+            containerPort: 7007
+          env:
+          - name: BACKEND_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: portal-backend-secret
+                key: backend-secret
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: portal-postgresql
+                key: password
+          - name: AAP_HOST_URL
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: aap-host-url
+          - name: AAP_PUBLIC_URL
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: aap-public-url
+          - name: OAUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: oauth-client-id
+          - name: OAUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: oauth-client-secret
+          - name: AAP_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secrets-rhaap-portal
+                key: aap-token
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: secrets-github-portal
+                key: github-token
+          - name: GITHUB_OAUTH_CLIENT_ID
+            valueFrom:
+              secretKeyRef:
+                name: secrets-github-portal
+                key: github-oauth-client-id
+          - name: GITHUB_OAUTH_CLIENT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: secrets-github-portal
+                key: github-oauth-client-secret
+          - name: ENABLE_AUTH_PROVIDER_MODULE_OVERRIDE
+            value: 'true'
+          - name: CUSTOMER_SUPPORT_URL
+            value: https://access.redhat.com/support
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /.backstage/health/v1/readiness
+              port: backend
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /.backstage/health/v1/liveness
+              port: backend
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          volumeMounts:
+          - name: dynamic-plugins-root
+            mountPath: /opt/app-root/src/dynamic-plugins-root
+          - name: portal-app-config
+            mountPath: /opt/app-root/src/app-config.local.yaml
+            subPath: app-config.local.yaml
+            readOnly: true
+          - name: extensions-catalog
+            mountPath: /extensions
+          - name: temp
+            mountPath: /tmp
+        volumes:
+        - name: dynamic-plugins-root
+          emptyDir: {}
+        - name: portal-app-config
+          configMap:
+            name: portal-app-config
+        - name: npmcacache
+          emptyDir: {}
+        - name: extensions-catalog
+          emptyDir: {}
+        - name: temp
+          emptyDir: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: redhat-rhaap-portal
+    namespace: ${NAMESPACE}
+    labels:
+      app: redhat-rhaap-portal
+  spec:
+    ports:
+    - name: backend
+      port: 7007
+      targetPort: backend
+    selector:
+      app: redhat-rhaap-portal
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: redhat-rhaap-portal
+    namespace: ${NAMESPACE}
+    labels:
+      app: redhat-rhaap-portal
+  spec:
+    host: redhat-rhaap-portal-${NAMESPACE}.${CLUSTER_ROUTER_BASE}
+    to:
+      kind: Service
+      name: redhat-rhaap-portal
+      weight: 100
+    port:
+      targetPort: backend
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect

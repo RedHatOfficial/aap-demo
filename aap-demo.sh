@@ -405,7 +405,7 @@ Cluster management:
   ssh             SSH into cluster node
 
 Addons:
-  enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
+  enable portal    Enable Self-Service Portal (OpenShift Template)
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
@@ -414,7 +414,7 @@ Addons:
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
-  aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
+  aap-demo enable portal          # Enable Self-Service Portal (OpenShift Template)
   aap-demo enable setup-pah       # Configure Private Automation Hub
 
 Run 'aap-demo help' for full documentation.
@@ -1795,6 +1795,10 @@ cmd_status() {
       # Skip empty namespaces
       if [ "$POD_TOTAL" -eq 0 ] 2>/dev/null; then continue; fi
       AAP_CR=$(kubectl get aap -n "$ns" --no-headers 2>/dev/null | awk '{print $1}' | head -1 || true)
+      APME_CR=$(kubectl get apme -n "$ns" --no-headers 2>/dev/null | awk '{print $1}' | head -1 || true)
+      APME_DEPLOYMENT=$(kubectl get deployment -n "$ns" \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+        | grep -E '^(apme|apme-engine)$' | head -1 || true)
 
       if [ -n "$AAP_CR" ]; then
         AAP_STATUS=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
@@ -1808,6 +1812,19 @@ cmd_status() {
             printf "  %-30s %s/%s pods   %s\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
           fi
         fi
+      elif [ -n "$APME_CR" ]; then
+        APME_READY=$(kubectl get apme "$APME_CR" -n "$ns" \
+          -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+        if [ "$APME_READY" = "True" ]; then
+          printf "  %-30s %s/%s pods   \033[1;32mAPME/%s (Ready)\033[0m\n" \
+            "$ns" "$POD_RUNNING" "$POD_TOTAL" "$APME_CR"
+        else
+          printf "  %-30s %s/%s pods   \033[1;33mAPME/%s (Deploying)\033[0m\n" \
+            "$ns" "$POD_RUNNING" "$POD_TOTAL" "$APME_CR"
+        fi
+      elif [ -n "$APME_DEPLOYMENT" ]; then
+        printf "  %-30s %s/%s pods   \033[1;33mAPME (%s)\033[0m\n" \
+          "$ns" "$POD_RUNNING" "$POD_TOTAL" "$APME_DEPLOYMENT"
       else
         printf "  %-30s %s/%s pods\n" "$ns" "$POD_RUNNING" "$POD_TOTAL"
       fi

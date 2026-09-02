@@ -1,0 +1,573 @@
+# APME extension — apply after addons/portal/deploy.yaml (apme-eap addon)
+# oc process --local -f deploy-apme.yaml --param-file=params.env | oc apply -f -
+apiVersion: template.openshift.io/v1
+kind: Template
+metadata:
+  name: aap-demo-apme-extension
+  annotations:
+    description: APME engine + gateway for apme-eap addon
+    tags: ansible,apme
+labels:
+  app: aap-demo-apme
+parameters:
+- name: NAMESPACE
+  description: Target OpenShift namespace
+  value: apme
+- name: CLUSTER_ROUTER_BASE
+  description: OpenShift apps ingress domain
+  required: true
+- name: ABBENAY_TOKEN
+  description: Shared token for APME <-> Abbenay auth (auto-generated if omitted)
+  required: false
+  generate: expression
+  from: '[a-zA-Z0-9]{32}'
+- name: APME_IMAGE_TAG
+  description: APME component image tag
+  value: sha-d1ac741
+objects:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: apme-scaffolder-templates
+    namespace: ${NAMESPACE}
+  data:
+    template.yaml: "apiVersion: scaffolder.backstage.io/v1beta3\nkind: Template\nmetadata:\n  name: apme-register-git-repository\n\
+      \  title: Register repo for Ansible content modernization\n  description: Register a GitHub repository for APME quality\
+      \ scans.\n  tags: [apme, quality]\nspec:\n  owner: user:guest\n  type: service\n  parameters:\n    - title: Repository\n\
+      \      required: [repoUrl, defaultBranch]\n      properties:\n        repoUrl:\n          title: GitHub repository\n\
+      \          type: string\n          ui:field: RepoUrlPicker\n          ui:options:\n            allowedHosts: [github.com]\n\
+      \        defaultBranch:\n          title: Default branch\n          type: string\n          default: main\n  steps:\n\
+      \    - id: register-direct\n      name: Register in catalog\n      action: ansible:register:git-repository\n      input:\n\
+      \        sourceControlProvider: github\n        repositoryOwner: \"${{ (parameters.repoUrl | parseRepoUrl).owner }}\"\
+      \n        repositoryName: \"${{ (parameters.repoUrl | parseRepoUrl).repo }}\"\n        repositoryUrl: \"https://github.com/${{\
+      \ (parameters.repoUrl | parseRepoUrl).owner }}/${{ (parameters.repoUrl | parseRepoUrl).repo }}\"\n        defaultBranch:\
+      \ \"${{ parameters.defaultBranch }}\"\n"
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: apme
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+      app.kubernetes.io/managed-by: Helm
+    namespace: ${NAMESPACE}
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: apme-secrets
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+    namespace: ${NAMESPACE}
+  type: Opaque
+  stringData:
+    abbenay-token: ${ABBENAY_TOKEN}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: apme-abbenay-config
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+      app.kubernetes.io/component: abbenay
+    namespace: ${NAMESPACE}
+  data:
+    config.yaml: "# ADR-070: HTTP admin on loopback; token from ABBENAY_API_TOKEN env\nserver:\n  host: \"127.0.0.1\"\n  api_token_env:\
+      \ ABBENAY_API_TOKEN\nproviders: {}\nconsumers:\n  apme:\n    token_env: APME_ABBENAY_TOKEN\n    capabilities:\n    \
+      \  inline_policy: true\n"
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: apme-sessions
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 2Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: apme-gateway-data
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 2Gi
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    name: apme-proxy-cache
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+    namespace: ${NAMESPACE}
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 2Gi
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: apme-engine
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+      app.kubernetes.io/component: engine
+    namespace: ${NAMESPACE}
+  spec:
+    type: ClusterIP
+    ports:
+    - name: grpc-primary
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+    - name: grpc-collection-health
+      port: 50058
+      targetPort: 50058
+      protocol: TCP
+    - name: grpc-dep-audit
+      port: 50059
+      targetPort: 50059
+      protocol: TCP
+    selector:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/component: engine
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: apme-gateway
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+      app.kubernetes.io/component: gateway
+    namespace: ${NAMESPACE}
+    annotations:
+      service.kubernetes.io/publish-not-ready-addresses: 'true'
+  spec:
+    type: ClusterIP
+    ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+    selector:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/component: engine
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: apme-engine
+    labels:
+      app.kubernetes.io/name: apme
+      app.kubernetes.io/instance: apme
+      app.kubernetes.io/version: ${APME_IMAGE_TAG}
+      app.kubernetes.io/component: engine
+    namespace: ${NAMESPACE}
+  spec:
+    replicas: 1
+    strategy:
+      type: Recreate
+    selector:
+      matchLabels:
+        app.kubernetes.io/name: apme
+        app.kubernetes.io/instance: apme
+        app.kubernetes.io/component: engine
+    template:
+      metadata:
+        labels:
+          app.kubernetes.io/name: apme
+          app.kubernetes.io/instance: apme
+          app.kubernetes.io/component: engine
+      spec:
+        serviceAccountName: apme
+        initContainers:
+        - name: init-abbenay-config
+          image: ghcr.io/redhat-developer/abbenay:v2026.8.6
+          imagePullPolicy: IfNotPresent
+          command:
+          - sh
+          - -c
+          - "mkdir -p /mnt/config/abbenay\nif [ ! -f /mnt/config/abbenay/config.yaml ]; then\n  cp /seed/config.yaml /mnt/config/abbenay/config.yaml\n\
+            fi\n"
+          volumeMounts:
+          - name: abbenay-config-seed
+            mountPath: /seed
+            readOnly: true
+          - name: abbenay-config
+            mountPath: /mnt/config
+        containers:
+        - name: primary
+          image: quay.io/ansible/apme-engine:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: UV_CACHE_DIR
+            value: /tmp/uv-cache
+          - name: APME_PRIMARY_LISTEN
+            value: 0.0.0.0:50051
+          - name: NATIVE_GRPC_ADDRESS
+            value: 127.0.0.1:50055
+          - name: OPA_GRPC_ADDRESS
+            value: 127.0.0.1:50054
+          - name: ANSIBLE_GRPC_ADDRESS
+            value: 127.0.0.1:50053
+          - name: GITLEAKS_GRPC_ADDRESS
+            value: 127.0.0.1:50056
+          - name: COLLECTION_HEALTH_GRPC_ADDRESS
+            value: 127.0.0.1:50058
+          - name: DEP_AUDIT_GRPC_ADDRESS
+            value: 127.0.0.1:50059
+          - name: APME_GALAXY_PROXY_URL
+            value: http://127.0.0.1:8765
+          - name: APME_REPORTING_ENDPOINT
+            value: 127.0.0.1:50060
+          - name: APME_ABBENAY_ADDR
+            value: 127.0.0.1:50057
+          - name: APME_ABBENAY_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          ports:
+          - name: grpc
+            containerPort: 50051
+            protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+          resources:
+            limits:
+              cpu: '2'
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+        - name: native
+          image: quay.io/ansible/apme-native:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_NATIVE_VALIDATOR_LISTEN
+            value: 0.0.0.0:50055
+          readinessProbe:
+            tcpSocket:
+              port: 50055
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50055
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: opa
+          image: quay.io/ansible/apme-opa:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_OPA_VALIDATOR_LISTEN
+            value: 0.0.0.0:50054
+          readinessProbe:
+            tcpSocket:
+              port: 50054
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50054
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: ansible
+          image: quay.io/ansible/apme-ansible:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_ANSIBLE_VALIDATOR_LISTEN
+            value: 0.0.0.0:50053
+          - name: APME_GALAXY_PROXY_URL
+            value: http://127.0.0.1:8765
+          readinessProbe:
+            tcpSocket:
+              port: 50053
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50053
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+            readOnly: true
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: gitleaks
+          image: quay.io/ansible/apme-gitleaks:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_GITLEAKS_VALIDATOR_LISTEN
+            value: 0.0.0.0:50056
+          readinessProbe:
+            tcpSocket:
+              port: 50056
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50056
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+        - name: collection-health
+          image: quay.io/ansible/apme-collection-health:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_COLLECTION_HEALTH_VALIDATOR_LISTEN
+            value: 0.0.0.0:50058
+          readinessProbe:
+            tcpSocket:
+              port: 50058
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50058
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+            readOnly: true
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: dep-audit
+          image: quay.io/ansible/apme-dep-audit:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_DEP_AUDIT_VALIDATOR_LISTEN
+            value: 0.0.0.0:50059
+          readinessProbe:
+            tcpSocket:
+              port: 50059
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 50059
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          volumeMounts:
+          - name: sessions
+            mountPath: /sessions
+            readOnly: true
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        - name: galaxy-proxy
+          image: quay.io/ansible/apme-galaxy-proxy:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          readinessProbe:
+            tcpSocket:
+              port: 8765
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8765
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          volumeMounts:
+          - name: proxy-cache
+            mountPath: /cache
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+        - name: gateway
+          image: quay.io/ansible/apme-gateway:${APME_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: APME_PRIMARY_ADDRESS
+            value: 127.0.0.1:50051
+          - name: APME_DB_PATH
+            value: /data/apme.db
+          - name: APME_GATEWAY_GRPC_LISTEN
+            value: 0.0.0.0:50060
+          - name: APME_GATEWAY_HTTP_HOST
+            value: 0.0.0.0
+          - name: APME_GATEWAY_HTTP_PORT
+            value: '8080'
+          - name: APME_ABBENAY_HTTP_URL
+            value: http://127.0.0.1:8787
+          - name: APME_ABBENAY_HTTP_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          - name: COLLECTION_HEALTH_GRPC_ADDRESS
+            value: 127.0.0.1:50058
+          - name: DEP_AUDIT_GRPC_ADDRESS
+            value: 127.0.0.1:50059
+          ports:
+          - name: gateway-grpc
+            containerPort: 50060
+            protocol: TCP
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /api/v1/dashboard/summary
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/dashboard/summary
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+          - name: gateway-data
+            mountPath: /data
+          resources:
+            limits:
+              cpu: '1'
+              memory: 1Gi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+        - name: abbenay
+          image: ghcr.io/redhat-developer/abbenay:v2026.8.6
+          imagePullPolicy: IfNotPresent
+          args:
+          - web
+          - --host
+          - 127.0.0.1
+          - --port
+          - '8787'
+          - --grpc-host
+          - 127.0.0.1
+          - --grpc-port
+          - '50057'
+          env:
+          - name: APME_ABBENAY_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          - name: ABBENAY_API_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: apme-secrets
+                key: abbenay-token
+          - name: XDG_RUNTIME_DIR
+            value: /tmp/abbenay-run
+          - name: XDG_CONFIG_HOME
+            value: /etc/abbenay-config
+          ports:
+          - name: abbenay-grpc
+            containerPort: 50057
+            protocol: TCP
+          readinessProbe:
+            exec: &id001
+              command:
+              - curl
+              - -sf
+              - http://127.0.0.1:8787/
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec: *id001
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            limits:
+              cpu: '2'
+              memory: 2Gi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+          volumeMounts:
+          - name: abbenay-config
+            mountPath: /etc/abbenay-config
+        volumes:
+        - name: sessions
+          persistentVolumeClaim:
+            claimName: apme-sessions
+        - name: proxy-cache
+          persistentVolumeClaim:
+            claimName: apme-proxy-cache
+        - name: gateway-data
+          persistentVolumeClaim:
+            claimName: apme-gateway-data
+        - name: abbenay-config-seed
+          configMap:
+            name: apme-abbenay-config
+        - name: abbenay-config
+          emptyDir: {}
