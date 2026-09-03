@@ -64,7 +64,8 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [021](021-local-cache-addon.md) | Local Cache Addon | Accepted |
 | [022](022-apme-prebuilt-portal-hub.md) | APME Pre-Built Portal Hub Deployment | Accepted |
 | [023](023-addon-auto-wiring.md) | Addon Auto-Wiring | Accepted |
-| [024](023-apme-openshift-template.md) | APME OpenShift Template Deployment | Proposed |
+| [023](023-apme-openshift-template.md) | APME OpenShift Template Deployment | Proposed |
+| [024](024-apme-operator-only-installation.md) | APME Operator-Only Installation | Accepted |
 
 ## Creating a New ADR
 
