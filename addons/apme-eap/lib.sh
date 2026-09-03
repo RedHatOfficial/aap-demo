@@ -149,6 +149,7 @@ apme_install_operator() {
 
 apme_apply_operator() {
   local version="${APME_OPERATOR_IMAGE_TAG:-2026.8.10}"
+  kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   echo "Applying APME operator resource..."
   kubectl apply -f - <<EOF >/dev/null
 apiVersion: apme.ansible.com/v1alpha1
