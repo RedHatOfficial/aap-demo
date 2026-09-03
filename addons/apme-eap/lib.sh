@@ -148,9 +148,20 @@ apme_install_operator() {
 
 apme_apply_operator() {
   local sample="https://raw.githubusercontent.com/ansible/apme-operator/main/config/samples/apme_v1alpha1_apme.yaml"
+  local cluster_domain apme_host
+
+  cluster_domain=$(kubectl get route -n openshift-console console \
+    -o jsonpath='{.spec.host}' 2>/dev/null | sed 's/^console-openshift-console\.//' || true)
+  if [ -z "$cluster_domain" ]; then
+    cluster_domain="apps.crc.testing"
+  fi
+  apme_host="apme.${cluster_domain}"
+
   kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   echo "Applying Apme sample from ansible/apme-operator..."
-  kubectl apply -n "$NAMESPACE" -f "$sample" >/dev/null
+  curl -fsSL "$sample" \
+    | sed "s|^      # host: apme.apps.example.com|      host: ${apme_host}|" \
+    | kubectl apply -n "$NAMESPACE" -f - >/dev/null || return 1
   kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
     apme/apme -n "$NAMESPACE" --timeout=600s >/dev/null
   echo "✓ APME operator resource ready"

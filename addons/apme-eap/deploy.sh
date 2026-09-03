@@ -188,6 +188,10 @@ check_prerequisites() {
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
 
+  if ! command -v curl &>/dev/null; then
+    die "curl not found. Required to retrieve the upstream Apme sample."
+  fi
+
   info "APME will be installed only from ansible/apme-operator"
 
   info "Prerequisites check complete"
