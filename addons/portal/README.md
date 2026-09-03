@@ -1,8 +1,8 @@
 # Portal Addon - Ansible Automation Portal
 
 Production-ready deployment of Ansible Automation Portal via the OpenShift Template at
-[`deploy.yaml`](deploy.yaml). Uses a pre-built portal hub image with RHAAP plugins only
-(`EXCLUDE_APME_PLUGINS=true`).
+[`deploy.yaml`](deploy.yaml). Uses a pre-built portal hub image with RHAAP and APME plugins;
+the APME plugin supplies the Git Repositories feature.
 
 ## Overview
 
@@ -14,6 +14,7 @@ Built on Red Hat Developer Hub (RHDH) with AAP-specific plugins.
 
 - RHDH base application (catalog, templates, plugins)
 - AAP plugins for job template synchronization and execution
+- APME plugin and gateway integration for Git Repositories
 - OAuth integration with AAP for authentication
 - Built-in PostgreSQL database (can use external)
 
@@ -334,7 +335,7 @@ Both URLs use HTTPS. The route host alias makes that HTTPS route reachable from 
 portal pod on MicroShift/CRC and avoids the HTTP redirect that returns an empty response
 to the OAuth token POST.
 
-**Fix:** Re-run enable (applies split URLs and RHAAP-only auth):
+**Fix:** Re-run enable (applies split URLs and RHAAP-only sign-in):
 
 ```bash
 aap-demo enable portal
