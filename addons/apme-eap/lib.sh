@@ -150,8 +150,12 @@ apme_apply_operator() {
   local sample="https://raw.githubusercontent.com/ansible/apme-operator/main/config/samples/apme_v1alpha1_apme.yaml"
   local cluster_domain apme_host
 
-  cluster_domain=$(kubectl get route -n openshift-console console \
-    -o jsonpath='{.spec.host}' 2>/dev/null | sed 's/^console-openshift-console\.//' || true)
+  cluster_domain=$(kubectl get route -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.items[0].spec.host}' 2>/dev/null | sed 's/^[^.]*\.//' || true)
+  if [ -z "$cluster_domain" ]; then
+    cluster_domain=$(kubectl get route -n openshift-console console \
+      -o jsonpath='{.spec.host}' 2>/dev/null | sed 's/^console-openshift-console\.//' || true)
+  fi
   if [ -z "$cluster_domain" ]; then
     cluster_domain="apps.crc.testing"
   fi
