@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Portal addon — Ansible Automation Portal via OpenShift Template (portal/deploy.yaml)
-# Pre-built portal hub image; EXCLUDE_APME_PLUGINS=true for RHAAP-only self-service.
+# Pre-built portal hub image; APME plugins provide the Git Repositories feature.
 
 set -e
 
@@ -15,6 +15,7 @@ PARAMS_FILE="${PORTAL_DIR}/params.env"
 RELEASE_NAME="redhat-rhaap-portal"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-ansible-automation-portal}"
 PORTAL_HUB_IMAGE="${PORTAL_HUB_IMAGE:-quay.io/cferman/portal-hub-eap:latest}"
+APME_URL="${APME_URL:-http://apme-gateway.apme.svc:8080}"
 
 IS_ARM_CLUSTER=false
 IS_MICROSHIFT=false
@@ -395,7 +396,8 @@ GITHUB_OAUTH_CLIENT_SECRET=
 PORTAL_DB_PASSWORD=${PORTAL_DB_PASSWORD}
 PORTAL_SESSION_SECRET=${PORTAL_SESSION_SECRET}
 PORTAL_IMAGE=${PORTAL_HUB_IMAGE}
-EXCLUDE_APME_PLUGINS="${EXCLUDE_APME_PLUGINS:-true}"
+EXCLUDE_APME_PLUGINS="${EXCLUDE_APME_PLUGINS:-false}"
+APME_URL=${APME_URL}
 DISABLE_SCM_AUTH=true
 EOF
   chmod 600 "$PARAMS_FILE"
@@ -588,7 +590,11 @@ display_success() {
   echo "Portal URL: https://$PORTAL_ROUTE"
   echo "Install: OpenShift Template (addons/portal/deploy.yaml)"
   echo "Image: ${PORTAL_HUB_IMAGE}"
-  echo "APME plugins: excluded (EXCLUDE_APME_PLUGINS=true)"
+  if [ "${EXCLUDE_APME_PLUGINS:-false}" = "true" ]; then
+    echo "APME plugins: excluded (Git Repositories unavailable)"
+  else
+    echo "APME plugins: enabled (Git Repositories available)"
+  fi
   echo ""
   echo "Next steps:"
   echo "1. Open the portal URL in your browser"

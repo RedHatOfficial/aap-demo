@@ -38,7 +38,8 @@ RHAAP_TOKEN=test-token
 PORTAL_DB_PASSWORD=testdbpass123456789012345678901234
 PORTAL_SESSION_SECRET=testsession1234567890123456789012
 PORTAL_IMAGE=quay.io/cferman/portal-hub-eap:latest
-EXCLUDE_APME_PLUGINS=true
+EXCLUDE_APME_PLUGINS=false
+APME_URL=http://apme-gateway.apme.svc:8080
 DISABLE_SCM_AUTH=true
 EOF
 
@@ -47,8 +48,8 @@ oc process --local -f "$TEMPLATE" --param-file="$TEST_PARAMS" -o json >/dev/null
 pass "oc process portal template"
 
 object_count=$(oc process --local -f "$TEMPLATE" --param-file="$TEST_PARAMS" -o json | python3 -c "import json,sys; print(len(json.load(sys.stdin)['items']))")
-[ "$object_count" -eq 12 ] || fail "expected 12 objects, got $object_count"
-pass "portal template emits 12 objects"
+[ "$object_count" -eq 13 ] || fail "expected 13 objects, got $object_count"
+pass "portal template emits 13 objects"
 
 processed=$(oc process --local -f "$TEMPLATE" --param-file="$TEST_PARAMS" -o json)
 echo "$processed" | python3 -c "
@@ -60,7 +61,7 @@ missing = required - kinds
 assert not missing, f'missing kinds: {missing}'
 init = next(i for i in items if i.get('kind')=='Deployment' and i['metadata']['name']=='redhat-rhaap-portal')
 env = {e['name']: e.get('value') for e in init['spec']['template']['spec']['initContainers'][0].get('env', [])}
-assert env.get('EXCLUDE_APME_PLUGINS') == 'true', 'EXCLUDE_APME_PLUGINS not set on init'
+assert env.get('EXCLUDE_APME_PLUGINS') == 'false', 'EXCLUDE_APME_PLUGINS not set on init'
 assert env.get('DISABLE_SCM_AUTH') == 'true', 'DISABLE_SCM_AUTH not set on init'
 cfg = next(i for i in items if i.get('kind')=='ConfigMap' and i['metadata']['name']=='portal-app-config')
 text = cfg['data']['app-config.local.yaml']
@@ -73,8 +74,10 @@ assert text.index('signInPage: rhaap') < text.index('auth:'), 'signInPage must b
 assert 'auth.providers.github' not in text.replace(' ', ''), 'github auth provider should be omitted'
 secret = next(i for i in items if i.get('kind')=='Secret' and i['metadata']['name']=='secrets-rhaap-portal')
 assert 'aap-public-url' in secret['stringData'], 'secret missing aap-public-url'
+apme_cfg = next(i for i in items if i.get('kind')=='ConfigMap' and i['metadata']['name']=='portal-apme-config')
+assert 'http://apme-gateway.apme.svc:8080' in apme_cfg['data']['app-config.apme.yaml'], 'APME gateway URL missing'
 "
-pass "portal template structure and EXCLUDE_APME_PLUGINS"
+pass "portal template structure and APME Git Repositories configuration"
 
 # Plugin filter logic (unit test embedded init script)
 python3 - <<'PY'
@@ -124,6 +127,24 @@ self_service['scaffolderFieldExtensions'] = [
 assert 'appIcons' not in apme
 assert self_service['scaffolderFieldExtensions'] == [
     {'importName': 'AAPTokenFieldExtension'}
+]
+
+portal_only_frontend = {
+    'ansible.plugin-backstage-self-service': {
+        'dynamicRoutes': [
+            {'importName': 'SelfServicePage'},
+            {'importName': 'GitRepositoriesPage'},
+        ],
+    },
+}
+portal_only_self_service = portal_only_frontend['ansible.plugin-backstage-self-service']
+if 'ansible.plugin-backstage-apme' not in portal_only_frontend:
+    portal_only_self_service['dynamicRoutes'] = [
+        route for route in portal_only_self_service['dynamicRoutes']
+        if route.get('importName') != 'GitRepositoriesPage'
+    ]
+assert portal_only_self_service['dynamicRoutes'] == [
+    {'importName': 'SelfServicePage'}
 ]
 PY
 pass "dynamic plugin compatibility filter"
