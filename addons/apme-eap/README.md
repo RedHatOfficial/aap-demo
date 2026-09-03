@@ -1,39 +1,37 @@
-# APME Playbook Addon
+# APME Operator Addon
 
-Deploy Ansible Portal with Ansible Quality (APME) on OpenShift Local (MicroShift) via
-the published **APME operator**.
+Deploy APME on OpenShift via the published **APME operator** from
+[`ansible/apme-operator`](https://github.com/ansible/apme-operator).
 
 > **Preview:** APME is prototype software for the Early Access Program.
 > Confidential — Red Hat associate and NDA partner use only.
 
 ## Overview
 
-The CLI (`deploy.sh`) installs the published [APME operator](https://github.com/ansible/apme-operator/releases/tag/v0.1.0),
-applies its `Apme` resource, and deploys the portal directly through the local Kubernetes API:
+The CLI (`deploy.sh`) follows the upstream operator quick start: it installs the published
+operator release and applies the upstream `Apme` sample resource:
 
-- **Direct deployment**: No AAP project, execution environment, job template, or AAP job is created
-- **AAP integration**: AAP remains the OAuth and Ansible API backend used by the portal
-- **Pre-built portal hub**: `quay.io/cferman/portal-hub-eap:latest` (no registry/skopeo at deploy)
-- **Operator-managed APME**: The operator manages the APME engine, gateway, and Postgres resources
+- **Single source**: APME installation resources come only from `ansible/apme-operator`
+- **Operator-managed**: The operator manages APME, Postgres, and the OpenShift Route
+- **No portal integration**: This addon does not install RHDH, Helm charts, AAP jobs, or AAP resources
 
-**Architecture:** `deploy.sh` discovers the environment, runs host pre-steps (`setup-pah`,
-GitHub credentials), installs the operator, deploys the portal, and configures the portal to use
-the internal APME gateway.
+**Architecture:** `deploy.sh` verifies cluster access, installs the operator release, applies the
+upstream sample, and waits for the `Apme` resource to become ready.
 
 ## Operator install
 
-The local deploy script installs the published APME operator and applies an `Apme` custom resource.
-The RHDH portal remains deployed from `addons/portal/deploy.yaml`; the operator manages
-the APME engine, gateway, and Postgres resources.
+The local deploy script uses only the upstream operator repository's published install manifest and
+sample resource.
 
 ```bash
-kubectl apply -f https://github.com/ansible/apme-operator/releases/download/v0.1.0/install.yaml
+kubectl apply -f https://github.com/ansible/apme-operator/releases/latest/download/install.yaml
+kubectl create namespace apme --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -n apme -f https://raw.githubusercontent.com/ansible/apme-operator/main/config/samples/apme_v1alpha1_apme.yaml
 kubectl get apme -n apme
 ```
 
 `aap-demo enable apme-eap` uses the kubeconfig resolved from `KUBECONFIG` or
-`~/.aap-demo/kubeconfig.microshift`. AAP is still required as the portal's OAuth/API backend,
-but it is not used to run the deployment.
+`~/.aap-demo/kubeconfig.microshift`.
 
 See [ADR-023](../../docs/adr/023-apme-openshift-template.md) for the full decision record.
 
@@ -59,13 +57,7 @@ Place PEM files in `~/.aap-demo/apme-eap-tls/` (`tls.crt`, `tls.key`, optional `
 - `yq` (mikefarah/yq; installed automatically on macOS and Linux when Homebrew,
   dnf, or apt is available)
 - `curl` and `jq`
-- AAP deployed (`aap-demo deploy`) for portal OAuth/API integration
-
-The addon deploys a **pre-built portal hub image** (`quay.io/cferman/portal-hub-eap:latest`)
-with APME plugins baked in at build time. Deploy does **not** push OCI plugin archives,
-run `install-dynamic-plugins` on the host, or require `skopeo` or the in-cluster registry addon.
-
-**Host does not need Helm or a full Ansible install** — OpenShift Template processing runs locally.
+- An OpenShift or Kubernetes cluster reachable with `kubectl` or `oc`
 
 ### No Manual Configuration Required! 🎉
 
@@ -101,12 +93,10 @@ aap-demo enable apme-eap
 
 This will:
 
-1. Check prerequisites (kubectl, python3, curl, jq)
-2. Auto-discover cluster domain, AAP route, and admin password
-3. Run **setup-pah** on the host when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists
-4. Install the APME operator and wait for its CRD/controller
-5. Apply the `Apme` resource and wait for APME readiness
-6. Deploy the portal and configure its internal APME gateway connection
+1. Check cluster access (`kubectl`)
+2. Install the latest APME operator release from `ansible/apme-operator`
+3. Apply the upstream `Apme` sample from `ansible/apme-operator`
+4. Wait for APME readiness
 
 Override the EE image:
 
@@ -120,7 +110,8 @@ APME_EE_IMAGE=quay.io/yourorg/custom-ee:1.0.0 aap-demo enable apme-eap
 aap-demo status        # Shows APME in addons section
 kubectl get pods -n apme
 kubectl get route -n apme
-# AAP remains the OAuth/API backend; inspect APME with `kubectl get pods -n apme`
+# Inspect the operator-managed instance
+kubectl get apme -n apme
 ```
 
 ### Undeploy
@@ -129,7 +120,8 @@ kubectl get route -n apme
 aap-demo disable apme-eap
 ```
 
-This removes the APME namespace and generated vars/params files but preserves GitHub credentials.
+This removes the APME namespace and its operator-managed resources. The operator installation
+remains available for other `Apme` instances in the cluster.
 
 **Clean re-test cycle** (remove saved GitHub creds and private key):
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # APME Playbook Addon - Deploy Ansible Portal with Ansible Quality (APME)
-# Deploys the APME operator and portal directly with the local kubeconfig.
+# Deploys APME using only the published ansible/apme-operator resources.
 #
 # ADDON_REQUIRES_AAP=true
 
@@ -188,22 +188,7 @@ check_prerequisites() {
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
 
-  if ! command -v python3 &>/dev/null; then
-    die "python3 not found. Please install Python 3.8 or later."
-  fi
-
-  install_yq
-
-  if ! command -v curl &>/dev/null; then
-    die "curl not found. Required for AAP REST API orchestration."
-  fi
-
-  if ! command -v jq &>/dev/null; then
-    die "jq not found. Install: brew install jq (macOS) or sudo dnf install jq (RHEL/Fedora)"
-  fi
-
-  info "Using pre-built portal hub (${PORTAL_HUB_IMAGE})"
-  info "APME will be deployed directly through the Kubernetes API"
+  info "APME will be installed only from ansible/apme-operator"
 
   info "Prerequisites check complete"
 }
@@ -723,44 +708,31 @@ verify_apme_oauth() {
 # ---------------------------------------------------------------------------
 
 deploy() {
-  info "Deploying APME directly via the operator..."
+  info "Deploying APME using only ansible/apme-operator..."
   apme_install_operator || die "Failed to install APME operator"
   apme_apply_operator || die "Failed to apply APME operator resource"
-  PORTAL_NAMESPACE="$NAMESPACE" \
-    OAUTH_APP_NAME="APME Portal OAuth" \
-    EXCLUDE_APME_PLUGINS=false \
-    PORTAL_HUB_IMAGE="$PORTAL_HUB_IMAGE" \
-    bash "${SCRIPT_DIR}/../portal/deploy.sh" || die "Failed to deploy portal"
-  apme_apply_scaffolder_config || die "Failed to apply portal scaffolder configuration"
-  apme_patch_portal_config || die "Failed to configure portal for APME"
   info "APME deployment completed successfully"
-  local apme_route
-  apme_route=$(kubectl get route -n "$NAMESPACE" redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
-  apme_wait_for_portal_route "$apme_route" 180 || warn "Portal may still be starting — retry the URL in a minute"
-  if ! verify_apme_oauth; then
-    warn "OAuth verification failed — portal sign-in may not work until you re-run: aap-demo enable apme-eap"
-  fi
   show_routes
 }
 
 show_routes() {
-  local apme_route
-  apme_route=$(kubectl get route -n "$NAMESPACE" redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+  local apme_url apme_route
+  apme_url=$(kubectl get apme apme -n "$NAMESPACE" -o jsonpath='{.status.url}' 2>/dev/null || echo "")
+  apme_route=$(kubectl get route -n "$NAMESPACE" -l app.kubernetes.io/managed-by=apme-operator \
+    -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
 
   info ""
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  info "APME Portal deployed successfully!"
+  info "APME deployed successfully!"
   info ""
 
-  if [ -n "$apme_route" ]; then
-    info "Portal Access:"
-    info "  URL:      https://${apme_route}"
-    info "  Username: admin"
-    info "  Password: ${AAP_PASSWORD}"
-    info ""
-    info "  (Uses AAP OAuth - login with AAP admin credentials shown above)"
+  if [ -n "$apme_url" ]; then
+    info "APME Access:"
+    info "  URL: ${apme_url}"
+  elif [ -n "$apme_route" ]; then
+    info "APME Access: https://${apme_route}"
   else
-    warn "Portal route not found yet - may still be deploying"
+    warn "APME URL not found yet - it may still be deploying"
   fi
 
   info ""
@@ -839,11 +811,6 @@ case "$ACTION" in
       export KUBECONFIG
     fi
     check_prerequisites
-    detect_architecture
-    discover_environment
-    prompt_github_token
-    prepare_github_key_content
-    run_setup_pah_prestep
     deploy
     ;;
 

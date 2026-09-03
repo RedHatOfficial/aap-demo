@@ -137,9 +137,8 @@ apme_create_openshift_deploy_token() {
 }
 
 apme_install_operator() {
-  local version="${APME_OPERATOR_VERSION:-v0.1.0}"
-  local manifest="https://github.com/ansible/apme-operator/releases/download/${version}/install.yaml"
-  echo "Installing APME operator ${version}..."
+  local manifest="https://github.com/ansible/apme-operator/releases/latest/download/install.yaml"
+  echo "Installing APME operator from ansible/apme-operator..."
   kubectl apply -f "$manifest" >/dev/null
   kubectl wait --for=condition=Established crd/apmes.apme.ansible.com --timeout=300s >/dev/null
   kubectl wait --for=condition=Available deployment/apme-operator-controller-manager \
@@ -148,29 +147,10 @@ apme_install_operator() {
 }
 
 apme_apply_operator() {
-  local version="${APME_OPERATOR_IMAGE_TAG:-2026.8.10}"
+  local sample="https://raw.githubusercontent.com/ansible/apme-operator/main/config/samples/apme_v1alpha1_apme.yaml"
   kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  echo "Applying APME operator resource..."
-  kubectl apply -f - <<EOF >/dev/null
-apiVersion: apme.ansible.com/v1alpha1
-kind: Apme
-metadata:
-  name: apme
-  namespace: ${NAMESPACE}
-spec:
-  version: ${version}
-  replicas: 1
-  components:
-    gitleaks: true
-    collectionHealth: true
-    depAudit: true
-    ui: false
-  exposure:
-    route:
-      enabled: false
-  abbenay:
-    enabled: false
-EOF
+  echo "Applying Apme sample from ansible/apme-operator..."
+  kubectl apply -n "$NAMESPACE" -f "$sample" >/dev/null
   kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
     apme/apme -n "$NAMESPACE" --timeout=600s >/dev/null
   echo "✓ APME operator resource ready"
