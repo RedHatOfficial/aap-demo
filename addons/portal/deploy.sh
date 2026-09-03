@@ -421,6 +421,38 @@ apply_portal_template() {
   echo "✓ Portal template applied"
 }
 
+configure_apme_template() {
+  if ! kubectl get apme apme -n "$PORTAL_NAMESPACE" &>/dev/null; then
+    return 0
+  fi
+
+  local template_file
+  template_file="${SCRIPT_DIR}/../apme-eap/playbooks/roles/openshift_apme_setup/files/apme-register-git-repository/template.yaml"
+  if [ ! -f "$template_file" ]; then
+    echo "⚠️  APME repository template not found: $template_file"
+    return 1
+  fi
+
+  echo "Registering APME repository template in the portal catalog..."
+  kubectl create configmap apme-scaffolder-templates \
+    --from-file=template.yaml="$template_file" \
+    -n "$PORTAL_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+  if ! command -v yq &>/dev/null; then
+    echo "⚠️  yq not available — APME template catalog registration skipped"
+    return 1
+  fi
+
+  local config patched
+  config=$(kubectl get configmap portal-app-config -n "$PORTAL_NAMESPACE" \
+    -o jsonpath='{.data.app-config\.local\.yaml}')
+  patched=$(printf '%s' "$config" | yq '.catalog.locations = ((.catalog.locations // []) | map(select(.target != "/opt/app-root/src/configs/catalog/apme-register-git-repository/template.yaml"))) + [{"type": "file", "target": "/opt/app-root/src/configs/catalog/apme-register-git-repository/template.yaml", "rules": [{"allow": ["Template"]}]}]')
+  kubectl get configmap portal-app-config -n "$PORTAL_NAMESPACE" -o json \
+    | jq --arg cfg "$patched" '.data["app-config.local.yaml"] = $cfg' \
+    | kubectl apply -f - >/dev/null
+  echo "✓ APME repository template registered"
+}
+
 patch_catalog_org() {
   if [ "${ORG_NAME:-Default}" = "Default" ]; then
     return 0
@@ -622,6 +654,7 @@ main() {
   get_cluster_info
   generate_params_file
   apply_portal_template
+  configure_apme_template
   patch_catalog_org
   rollout_portal
   wait_for_deployment
