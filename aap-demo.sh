@@ -1799,6 +1799,10 @@ cmd_status() {
       APME_DEPLOYMENT=$(kubectl get deployment -n "$ns" \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
         | grep -E '^(apme|apme-engine)$' | head -1 || true)
+      PORTAL_DEPLOYMENT=$(kubectl get deployment redhat-rhaap-portal -n "$ns" \
+        -o jsonpath='{.metadata.name}' 2>/dev/null || true)
+      PORTAL_ROUTE=$(kubectl get route redhat-rhaap-portal -n "$ns" \
+        -o jsonpath='{.spec.host}' 2>/dev/null || true)
 
       if [ -n "$AAP_CR" ]; then
         AAP_STATUS=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
@@ -1827,6 +1831,26 @@ cmd_status() {
           "$ns" "$POD_RUNNING" "$POD_TOTAL" "$APME_DEPLOYMENT"
       else
         printf "  %-30s %s/%s pods\n" "$ns" "$POD_RUNNING" "$POD_TOTAL"
+      fi
+
+      if [ -n "$PORTAL_DEPLOYMENT" ]; then
+        PORTAL_READY=$(kubectl get deployment "$PORTAL_DEPLOYMENT" -n "$ns" \
+          -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
+        PORTAL_DESIRED=$(kubectl get deployment "$PORTAL_DEPLOYMENT" -n "$ns" \
+          -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+        if [ "$PORTAL_READY" = "$PORTAL_DESIRED" ] && [ "$PORTAL_DESIRED" != "0" ]; then
+          PORTAL_STATE="Ready"
+        else
+          PORTAL_STATE="Deploying"
+        fi
+        if [ -n "$PORTAL_ROUTE" ]; then
+          printf "  %-30s portal %s/%s   \033[1;32mPortal (%s)\033[0m\n" \
+            "" "$PORTAL_READY" "$PORTAL_DESIRED" "$PORTAL_STATE"
+          printf "  %-30s URL: https://%s\n" "" "$PORTAL_ROUTE"
+        else
+          printf "  %-30s portal %s/%s   \033[1;33mPortal (%s)\033[0m\n" \
+            "" "$PORTAL_READY" "$PORTAL_DESIRED" "$PORTAL_STATE"
+        fi
       fi
     done
   fi
