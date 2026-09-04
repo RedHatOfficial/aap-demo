@@ -486,10 +486,19 @@ patch_aap_route_host_alias() {
   fi
 
   echo "Configuring AAP route host alias for in-pod OAuth token exchange..."
-  local aap_ip current_ip
-  aap_ip=$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
-  [ -n "$aap_ip" ] || {
-    echo "⚠️  Could not resolve AAP service ClusterIP"
+  local router_ip current_ip
+  # nip.io resolves to 127.0.0.1 inside MicroShift pods. Use the internal
+  # ingress router so HTTPS remains terminated by the Route; the AAP service
+  # itself only exposes HTTP on port 80.
+  router_ip=$(kubectl get svc router-internal-default -n openshift-ingress \
+    -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  if [ -z "$router_ip" ]; then
+    # Older MicroShift versions may not expose the internal router Service.
+    router_ip=$(kubectl get svc router-default -n openshift-ingress \
+      -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  fi
+  [ -n "$router_ip" ] || {
+    echo "⚠️  Could not resolve OpenShift ingress router ClusterIP"
     return 1
   }
 
@@ -501,7 +510,7 @@ patch_aap_route_host_alias() {
       \"template\": {
         \"spec\": {
           \"hostAliases\": [
-            {\"ip\": \"$aap_ip\", \"hostnames\": [\"$AAP_ROUTE\", \"registry.${CLUSTER_BASE_URL}\"]}
+            {\"ip\": \"$router_ip\", \"hostnames\": [\"$AAP_ROUTE\", \"registry.${CLUSTER_BASE_URL}\"]}
           ],
           \"containers\": [{
             \"name\": \"backstage-backend\",
@@ -512,10 +521,10 @@ patch_aap_route_host_alias() {
     }
   }" 2>/dev/null || true
 
-  if [ "$current_ip" = "$aap_ip" ]; then
+  if [ "$current_ip" = "$router_ip" ]; then
     echo "✓ AAP route host alias already configured"
   else
-    echo "✓ AAP route host alias: $AAP_ROUTE → $aap_ip"
+    echo "✓ AAP route host alias: $AAP_ROUTE → $router_ip"
   fi
 }
 
