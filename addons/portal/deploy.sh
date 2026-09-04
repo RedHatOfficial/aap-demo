@@ -16,6 +16,7 @@ RELEASE_NAME="redhat-rhaap-portal"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-ansible-automation-portal}"
 PORTAL_HUB_IMAGE="${PORTAL_HUB_IMAGE:-quay.io/cferman/portal-hub-eap:latest}"
 APME_URL="${APME_URL:-http://apme-gateway.apme.svc:8080}"
+GITHUB_CREDS_FILE="${GITHUB_CREDS_FILE:-${HOME}/.aap-demo/github-credentials.yml}"
 
 IS_ARM_CLUSTER=false
 IS_MICROSHIFT=false
@@ -375,6 +376,28 @@ get_aap_public_url() {
   echo "https://${AAP_ROUTE}"
 }
 
+load_github_token() {
+  GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+  if [ -z "$GITHUB_TOKEN" ]; then
+    if ! command -v yq &>/dev/null; then
+      echo "⚠️  yq not found — GitHub token file not loaded"
+    else
+      local creds_file
+      for creds_file in "$GITHUB_CREDS_FILE" "${HOME}/.aap-demo/apme-eap-github-creds.yml"; do
+        [ -f "$creds_file" ] || continue
+        GITHUB_TOKEN=$(yq -r '.github_token // ""' "$creds_file" 2>/dev/null || true)
+        [ -n "$GITHUB_TOKEN" ] && break
+      done
+    fi
+  fi
+
+  if [ -n "$GITHUB_TOKEN" ]; then
+    echo "✓ GitHub token loaded from installer credentials"
+  else
+    echo "⚠️  No GitHub token configured; GitHub API integrations may be unavailable"
+  fi
+}
+
 generate_params_file() {
   mkdir -p "$PORTAL_DIR"
   chmod 700 "$PORTAL_DIR"
@@ -390,7 +413,7 @@ RHAAP_PUBLIC_URL=${rhaap_public_url}
 RHAAP_OAUTH_CLIENT_ID=${CLIENT_ID}
 RHAAP_OAUTH_CLIENT_SECRET=${CLIENT_SECRET}
 RHAAP_TOKEN=${API_TOKEN}
-GITHUB_TOKEN=
+GITHUB_TOKEN=${GITHUB_TOKEN:-}
 GITHUB_OAUTH_CLIENT_ID=
 GITHUB_OAUTH_CLIENT_SECRET=
 PORTAL_DB_PASSWORD=${PORTAL_DB_PASSWORD}
@@ -661,6 +684,7 @@ main() {
   enable_oauth_tokens
   create_api_token
   get_cluster_info
+  load_github_token
   generate_params_file
   apply_portal_template
   configure_apme_template
