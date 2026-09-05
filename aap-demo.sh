@@ -135,8 +135,9 @@ for arg in "$@"; do
         *) COMMAND="$arg" ;;
       esac
       ;;
-    --ai | --reset | --force | --refresh-catalog)
-      # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
+    --ai | --reset | --force | --refresh-catalog | --dev-spaces)
+      # Flags for diagnose --ai, destroy --reset, addon deploy.sh options,
+      # create --dev-spaces
       EXTRA_ARGS+=("$arg")
       ;;
     mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | devspaces)
@@ -469,7 +470,8 @@ COMMANDS (all infrastructure types):
     help            Show this help
 
 COMMANDS:
-    create          Create OpenShift Local cluster
+    create [--dev-spaces] Create OpenShift Local cluster
+                    --dev-spaces: size VM for Dev Spaces (18GB) and enable it
     destroy [--reset] Delete local cluster (--reset also clears config)
     stop            Stop local cluster gracefully
     start           Start stopped cluster (re-applies CoreDNS config)
@@ -2001,6 +2003,16 @@ cmd_create() {
     AAP_DEMO_NOTICE_SHOWN=1
   fi
 
+  # --dev-spaces: Dev Spaces needs more headroom than the plain default.
+  # Only raise memory if the user hasn't already asked for more.
+  if [ "${_CREATE_DEV_SPACES:-false}" = true ]; then
+    local _ds_min_memory_mb=18432
+    if [ -z "${CRC_MEMORY:-}" ] || [ "$CRC_MEMORY" -lt "$_ds_min_memory_mb" ]; then
+      export CRC_MEMORY=$_ds_min_memory_mb
+    fi
+    echo "--dev-spaces: sizing cluster for Dev Spaces (CRC_MEMORY=${CRC_MEMORY}MB)"
+  fi
+
   if ! bash "${SCRIPT_DIR}/includes/crc-create.sh"; then
     _err "OpenShift Local cluster creation failed"
     exit 1
@@ -2008,6 +2020,17 @@ cmd_create() {
 
   install_ingress_ca_trust
   setup_kubeconfig
+
+  if [ "${_CREATE_DEV_SPACES:-false}" = true ]; then
+    echo ""
+    echo "--dev-spaces: installing OLM and enabling the devspaces addon..."
+    if ! KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
+      _err "OLM installation failed; run 'aap-demo enable devspaces' manually once OLM is fixed"
+      exit 1
+    fi
+    _verify_cluster || exit 1
+    cmd_enable devspaces
+  fi
 }
 
 # shellcheck source=includes/galaxy-auth.sh
@@ -2976,6 +2999,9 @@ case "$COMMAND" in
     cmd_start
     ;;
   create)
+    for _arg in "${EXTRA_ARGS[@]}"; do
+      [ "$_arg" = "--dev-spaces" ] && _CREATE_DEV_SPACES=true
+    done
     cmd_create
     ;;
   setup)

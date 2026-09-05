@@ -23,6 +23,14 @@ CRC_CPUS=8 CRC_MEMORY=18432 aap-demo create
 
 (8 vCPU / 18GB — adjust upward if you plan to run several workspaces at once.)
 
+Or use the `--dev-spaces` shortcut, which sizes memory to 18GB automatically and installs OLM +
+enables the addon in one step (no `aap-demo deploy`/AAP install required — Dev Spaces doesn't
+need AAP):
+
+```bash
+aap-demo create --dev-spaces
+```
+
 ## Quick start
 
 ```bash
@@ -31,6 +39,8 @@ aap-demo deploy                # installs OLM (required by devspaces)
 aap-demo enable devspaces       # installs Dev Spaces
 aap-demo status                 # shows devspaces addon state
 ```
+
+Or in one step: `aap-demo create --dev-spaces` (see above).
 
 Remove:
 
