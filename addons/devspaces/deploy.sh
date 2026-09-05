@@ -11,6 +11,8 @@ set -euo pipefail
 #   1. aap-demo cluster running (aap-demo create)
 #   2. OLM installed (auto-installed by aap-demo deploy)
 #   3. operator-sdk installed
+#   4. Suggest 8 vCPU / 18GB minimum for the CRC VM:
+#        CRC_CPUS=8 CRC_MEMORY=18432 aap-demo create
 #
 # Usage:
 #   ./deploy.sh          # Deploy DevSpaces
@@ -62,6 +64,33 @@ kubectl label namespace "$NAMESPACE" \
 # Grant SCCs needed by DevSpaces
 oc adm policy add-scc-to-user privileged -z default -n "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-user anyuid -z default -n "$NAMESPACE" 2>/dev/null || true
+
+# Optional: GitHub OAuth for Dev Spaces git-provider integration.
+# See addons/devspaces/README.md for how to set these credentials.
+GITHUB_OAUTH_CREDS_FILE="$HOME/.aap-demo/devspaces-github-oauth.env"
+if [ -f "$GITHUB_OAUTH_CREDS_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$GITHUB_OAUTH_CREDS_FILE"
+fi
+
+if [ -n "${GITHUB_OAUTH_CLIENT_ID:-}" ] && [ -n "${GITHUB_OAUTH_CLIENT_SECRET:-}" ]; then
+  echo "Configuring GitHub OAuth for Dev Spaces..."
+  kubectl create secret generic devspaces-github-oauth-config \
+    -n "$NAMESPACE" \
+    --from-literal=id="$GITHUB_OAUTH_CLIENT_ID" \
+    --from-literal=secret="$GITHUB_OAUTH_CLIENT_SECRET" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl label secret devspaces-github-oauth-config \
+    app.kubernetes.io/part-of=che.eclipse.org \
+    app.kubernetes.io/component=oauth-scm-configuration \
+    -n "$NAMESPACE" --overwrite
+  kubectl annotate secret devspaces-github-oauth-config \
+    che.eclipse.org/oauth-scm-server=github \
+    -n "$NAMESPACE" --overwrite
+  echo "  ✓ GitHub OAuth secret configured"
+else
+  echo "  (GitHub OAuth not configured — see addons/devspaces/README.md to enable it)"
+fi
 
 # Install devworkspace-operator first (DevSpaces dependency)
 echo "Installing DevWorkspace operator (DevSpaces dependency)..."

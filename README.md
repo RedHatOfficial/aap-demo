@@ -72,6 +72,7 @@ Addons:
   local-cache     disabled
   product-demos       disabled
   product-demo-satellite  disabled
+  devspaces       disabled
 ```
 
 ## Addons to add additional functionality
@@ -84,6 +85,7 @@ aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
 aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
+aap-demo enable devspaces    # OpenShift Dev Spaces (browser-based dev workspaces, see addons/devspaces/README.md)
 
 # Ansible Product Demos - Official demo content from ansible/product-demos
 aap-demo enable product-demos        # Five domains at once (includes base; Satellite opt-in)
