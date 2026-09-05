@@ -36,7 +36,7 @@ spec:
     storage:
       perUserStrategyPvcConfig:
         claimSize: 10Gi
-        storageClass: local-path
+        storageClass: topolvm-provisioner
       pvcStrategy: per-user
   gitServices: {}
   networking:
