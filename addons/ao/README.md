@@ -132,6 +132,15 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_IMPORT_DEMOS` | `1` | Download and synchronize upstream AO workflow exports after wiring |
 | `AO_DEMOS_REPOSITORY` | `https://github.com/ansible-tmm/aap-orchestrator-demos` | Upstream AO workflow repository |
 | `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
+| `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
+| `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
+| `AO_SYNC_API_URL` | cluster-local AO backend URL | AO API URL passed to the AAP sync job |
+
+When AO and AAP are wired, the addon creates the `AAP Demo Control Plane` AAP project
+and `Sync AO Workflows from TMM` job template. The job downloads the pinned workflow
+exports from the TMM repository and updates AO through its API. The addon launches this
+job through AAP; the local importer remains only as a bootstrap fallback when the AAP
+job cannot be launched yet.
 
 ### Operator channel
 

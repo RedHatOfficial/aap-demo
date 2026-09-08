@@ -1,0 +1,107 @@
+- name: Synchronize TMM workflows into Automation Orchestrator
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ao_api_url: "http://automation-orchestrator-backend.automation-orchestrator.svc.cluster.local:8000/api/v1"
+    ao_demo_repository: "https://github.com/ansible-tmm/aap-orchestrator-demos"
+    ao_demo_ref: "abcc1a1482a"
+    ao_demo_source: "{{ ao_demo_repository.rstrip('/') }}/archive/{{ ao_demo_ref }}.tar.gz"
+    ao_demo_project_id: ""
+    ao_aap_credential_id: ""
+    ao_aap_integration_id: ""
+    ao_agent_credential_id: ""
+  pre_tasks:
+    - name: Validate required AO variables
+      ansible.builtin.assert:
+        that:
+          - ao_api_token | length > 0
+          - ao_aap_credential_id | length > 0
+          - ao_aap_integration_id | length > 0
+        fail_msg: >-
+          ao_api_token, ao_aap_credential_id, and ao_aap_integration_id are
+          required. Pass them as AAP extra variables or through a credential.
+      no_log: true
+
+    - name: Find the AO project for imported workflows
+      ansible.builtin.uri:
+        url: "{{ ao_api_url }}/projects?limit=100"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ao_api_token }}"
+        validate_certs: false
+        return_content: true
+      register: __ao_projects
+      no_log: true
+
+    - name: Select the target AO project
+      ansible.builtin.set_fact:
+        ao_demo_project_id: >-
+          {{ ao_demo_project_id
+             or ((__ao_projects.json.resources | default(__ao_projects.json.results | default([])))
+                 | selectattr('is_default', 'equalto', true)
+                 | map(attribute='id') | first | default('')) }}
+
+    - name: Require a target AO project
+      ansible.builtin.assert:
+        that:
+          - ao_demo_project_id | length > 0
+        fail_msg: "AO has no default project and ao_demo_project_id was not provided."
+
+    - name: Create temporary source directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: aap-ao-demos-
+      register: __ao_temp_dir
+
+    - name: Download the pinned TMM demo archive
+      ansible.builtin.get_url:
+        url: "{{ ao_demo_source }}"
+        dest: "{{ __ao_temp_dir.path }}/demos.tar.gz"
+        mode: "0600"
+        checksum: "{{ ao_demo_checksum | default(omit) }}"
+      register: __ao_archive
+
+    - name: Extract the TMM demo archive
+      ansible.builtin.unarchive:
+        src: "{{ __ao_archive.dest }}"
+        dest: "{{ __ao_temp_dir.path }}"
+        remote_src: true
+
+    - name: Locate upstream AO workflow exports
+      ansible.builtin.find:
+        paths: "{{ __ao_temp_dir.path }}"
+        patterns: "*.json"
+        recurse: true
+        file_type: file
+      register: __ao_workflow_files
+
+    - name: Keep only AO workflow exports
+      ansible.builtin.set_fact:
+        __ao_sources: >-
+          {{ __ao_workflow_files.files
+             | selectattr('path', 'search', '/ao/[^/]+\\.json$')
+             | sort(attribute='path')
+             | list }}
+
+    - name: Ensure upstream exports were found
+      ansible.builtin.assert:
+        that:
+          - __ao_sources | length > 0
+        fail_msg: "No AO workflow JSON files were found in the upstream archive."
+
+  tasks:
+    - name: Synchronize upstream AO workflows
+      block:
+        - name: Synchronize each AO workflow export
+          ansible.builtin.include_tasks: tasks/sync_workflow.yml
+          loop: "{{ __ao_sources }}"
+          loop_control:
+            loop_var: __ao_source
+            label: "{{ __ao_source.path | basename }}"
+      always:
+        - name: Remove temporary source directory
+          ansible.builtin.file:
+            path: "{{ __ao_temp_dir.path | default('') }}"
+            state: absent
+          when: __ao_temp_dir is defined

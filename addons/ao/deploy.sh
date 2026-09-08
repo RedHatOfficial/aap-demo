@@ -665,9 +665,15 @@ sync_ao_demos() {
   python3 "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" || true
 }
 
+AO_AAP_SYNC_RAN=0
+
 provision_aap_demos() {
-  local _aap_route _aap_token _ao_namespace
+  local _aap_route _aap_token _ao_namespace _ao_token _ao_credential _ao_integration
+  local -a _provision_args
   _aap_route=$(aap_gateway_route_host)
+  _ao_token=$(wire_ao_login_token 2>/dev/null || true)
+  _ao_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _ao_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
   _ao_namespace="$NAMESPACE"
   NAMESPACE="$AAP_NAMESPACE"
   _aap_token=$(wire_aap_gateway_token "aap-demo AO template provisioning" write 2>/dev/null || true)
@@ -676,9 +682,30 @@ provision_aap_demos() {
     echo "  ⚠ AAP demo template provisioning deferred (AAP credentials not ready)"
     return 0
   fi
-  python3 "${SCRIPT_DIR}/scripts/provision-aap-demos.py" \
-    --route "$_aap_route" \
-    --token "$_aap_token" || true
+  _provision_args=(
+    --route "$_aap_route"
+    --token "$_aap_token"
+  )
+  if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
+    _provision_args+=(
+      --ao-api-url "${AO_SYNC_API_URL:-http://automation-orchestrator-backend.automation-orchestrator.svc.cluster.local:8000/api/v1}"
+      --ao-token "$_ao_token"
+      --ao-credential-id "$_ao_credential"
+      --ao-integration-id "$_ao_integration"
+      --control-repository "${AO_SYNC_REPOSITORY:-https://github.com/RedHatOfficial/aap-demo.git}"
+      --control-branch "${AO_SYNC_BRANCH:-main}"
+      --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
+    )
+  else
+    echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
+  fi
+  if python3 "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
+    if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
+      AO_AAP_SYNC_RAN=1
+    fi
+  else
+    echo "  ⚠ AAP demo provisioning or AO sync job failed"
+  fi
 }
 
 AO_PULL_SECRET_NAME="${AO_PULL_SECRET_NAME:-automation-orchestrator-pull-secret}"
@@ -1001,7 +1028,9 @@ if [ -z "$FORCE" ]; then
     fi
     if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
       provision_aap_demos
-      sync_ao_demos
+      if [ "$AO_AAP_SYNC_RAN" -eq 0 ]; then
+        sync_ao_demos
+      fi
     fi
     exit 0
   fi
@@ -1353,5 +1382,7 @@ fi
 # governed by AAP rather than being run directly by this addon.
 if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
   provision_aap_demos
-  sync_ao_demos
+  if [ "$AO_AAP_SYNC_RAN" -eq 0 ]; then
+    sync_ao_demos
+  fi
 fi

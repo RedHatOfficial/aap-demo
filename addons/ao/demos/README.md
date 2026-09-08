@@ -19,3 +19,8 @@ LLM credential IDs are omitted unless `AO_AGENT_CREDENTIAL_ID` is set; this avoi
 importing stale IDs from another AO instance. The AAP and MCP configuration used by
 the demos is created automatically from the local `aap-demo` deployment; no token is
 stored in this directory.
+
+The normal synchronization path is the `Sync AO Workflows from TMM` job template in
+the `AAP Demo Control Plane` project. It runs
+[`playbooks/sync-ao-demos.yml`](../playbooks/sync-ao-demos.yml) from AAP and uses the
+same pinned upstream source as the addon bootstrap fallback.

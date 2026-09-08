@@ -1,0 +1,136 @@
+- name: Read workflow export {{ __ao_source.path | basename }}
+  ansible.builtin.set_fact:
+    __ao_workflow: "{{ lookup('file', __ao_source.path) | from_json }}"
+
+- name: Normalize workflow triggers
+  ansible.builtin.set_fact:
+    __ao_triggers: "{{ __ao_triggers | default([]) + [__ao_trigger] }}"
+  loop: "{{ __ao_workflow.triggers | default([]) }}"
+  loop_control:
+    loop_var: __ao_trigger_item
+  vars:
+    __ao_trigger:
+      "{{ __ao_trigger_item
+         | dict2items
+         | rejectattr('key', 'equalto', 'config')
+         | list
+         | items2dict
+         | combine({'parameters': __ao_trigger_item.parameters | default(__ao_trigger_item.config | default({}))}) }}"
+
+- name: Normalize workflow nodes
+  ansible.builtin.set_fact:
+    __ao_nodes: "{{ __ao_nodes | default([]) + [__ao_node] }}"
+  loop: "{{ __ao_workflow.nodes | default([]) }}"
+  loop_control:
+    loop_var: __ao_node_item
+  vars:
+    __ao_node_parameters: "{{ __ao_node_item.parameters | default(__ao_node_item.config | default({})) }}"
+    __ao_node_drop: >-
+      {{ ['config', 'parameters']
+         + (['credential_id', 'response_schema', 'responseSchema', 'tool_selection_strategy', 'tool_selections']
+            if __ao_node_item.type == 'agentic' else [])
+         + (['credential_id', 'integration_id']
+            if __ao_node_item.type == 'aap_job_template' else []) }}
+    __ao_node_base: >-
+      {{ __ao_node_item
+         | dict2items
+         | rejectattr('key', 'in', ['config', 'parameters'])
+         | list
+         | items2dict }}
+    __ao_node_clean_parameters: >-
+      {{ __ao_node_parameters
+         | dict2items
+         | rejectattr('key', 'in', __ao_node_drop)
+         | list
+         | items2dict }}
+    __ao_agent_parameters: >-
+      {{ __ao_node_clean_parameters
+         | combine(
+             ({'credential_id': ao_agent_credential_id}
+              if __ao_node_item.type == 'agentic' and ao_agent_credential_id | length > 0 else {})
+             | combine(
+                 ({'responseSchema': __ao_node_parameters.response_schema}
+                  if __ao_node_item.type == 'agentic' and __ao_node_parameters.response_schema is defined else {})
+                 | combine(
+                     ({'tool_selection_strategy':
+                       ('ALL' if __ao_node_parameters.tool_selection_strategy is not defined
+                        or (__ao_node_parameters.tool_selection_strategy == 'SELECTED'
+                            and (__ao_node_parameters.tool_selections | default([]) | length == 0))
+                        else __ao_node_parameters.tool_selection_strategy)}
+                      if __ao_node_item.type == 'agentic' else {})))) }}
+    __ao_parameters: >-
+      {{ __ao_agent_parameters
+         | combine(
+             ({'credential_id': ao_aap_credential_id,
+               'integration_id': ao_aap_integration_id}
+              if __ao_node_item.type == 'aap_job_template' else {})) }}
+    __ao_node: "{{ __ao_node_base | combine({'parameters': __ao_parameters}) }}"
+
+- name: Build normalized workflow payload
+  ansible.builtin.set_fact:
+    __ao_payload:
+      name: "{{ __ao_workflow.name | default(__ao_source.path | basename | splitext | first) }}"
+      description: "{{ __ao_workflow.description | default('') }}"
+      labels:
+        aap-demo: "true"
+        source: "ansible-tmm/aap-orchestrator-demos"
+        source_file: "{{ __ao_source.path | basename }}"
+      workflow_definition: >-
+        {{ __ao_workflow
+           | combine({'triggers': __ao_triggers | default([]), 'nodes': __ao_nodes | default([])}) }}
+      project_id: "{{ ao_demo_project_id }}"
+
+- name: Find an existing AO workflow by source file
+  ansible.builtin.uri:
+    url: "{{ ao_api_url }}/workflows?limit=100"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ao_api_token }}"
+    validate_certs: false
+    return_content: true
+  register: __ao_existing_workflows
+  no_log: true
+
+- name: Select existing AO workflow
+  ansible.builtin.set_fact:
+    __ao_existing: >-
+      {{ (__ao_existing_workflows.json.resources | default(__ao_existing_workflows.json.results | default([])))
+         | selectattr('labels.source_file', 'defined')
+         | selectattr('labels.source_file', 'equalto', __ao_payload.labels.source_file)
+         | list | first | default({}) }}
+
+- name: Create AO workflow {{ __ao_payload.name }}
+  ansible.builtin.uri:
+    url: "{{ ao_api_url }}/workflows"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ ao_api_token }}"
+      Content-Type: application/json
+    body_format: json
+    body: "{{ __ao_payload }}"
+    status_code: [200, 201]
+    validate_certs: false
+  when: __ao_existing | length == 0
+  no_log: true
+
+- name: Update AO workflow {{ __ao_payload.name }}
+  ansible.builtin.uri:
+    url: "{{ ao_api_url }}/workflows/{{ __ao_existing.id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ ao_api_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      description: "{{ __ao_payload.description }}"
+      labels: "{{ __ao_payload.labels }}"
+      workflow_definition: "{{ __ao_payload.workflow_definition }}"
+      change_description: "Synchronized from aap-orchestrator-demos by AAP"
+    status_code: [200, 202]
+    validate_certs: false
+  when: __ao_existing | length > 0
+  no_log: true
+
+- name: Report synchronized workflow
+  ansible.builtin.debug:
+    msg: "Synchronized AO workflow {{ __ao_payload.name }}"
