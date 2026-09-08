@@ -88,6 +88,7 @@
       Authorization: "Bearer {{ ao_api_token }}"
       Host: "{{ ao_api_host }}"
     validate_certs: false
+    use_proxy: false
     return_content: true
   register: __ao_existing_workflows
   no_log: true
@@ -112,6 +113,7 @@
     body: "{{ __ao_payload }}"
     status_code: [200, 201]
     validate_certs: false
+    use_proxy: false
   when: __ao_existing | length == 0
   no_log: true
 
@@ -131,6 +133,7 @@
       change_description: "Synchronized from aap-orchestrator-demos by AAP"
     status_code: [200, 202]
     validate_certs: false
+    use_proxy: false
   when: __ao_existing | length > 0
   no_log: true
 

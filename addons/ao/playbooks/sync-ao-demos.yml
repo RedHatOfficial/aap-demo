@@ -33,6 +33,7 @@
         headers:
           Authorization: "Bearer {{ ao_api_token }}"
         validate_certs: false
+        use_proxy: false
         return_content: true
       register: __ao_projects
       no_log: true
