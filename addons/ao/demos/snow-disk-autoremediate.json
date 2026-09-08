@@ -1,0 +1,85 @@
+{
+  "name": "ServiceNow - Disk Space Auto-Remediation",
+  "description": "Streamlined auto-remediation workflow for disk space incidents. AI agent fetches the incident, determines the cleanup action, runs an AAP job to remediate, then resolves the ticket in ServiceNow - no human in the loop.",
+  "schema_version": "2.0.0",
+  "triggers": [
+    {
+      "id": "trigger_manual",
+      "name": "Disk Space Alert",
+      "type": "manual_trigger",
+      "config": {
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "incident_number": {
+              "type": "string",
+              "default": "INC0021757",
+              "description": "ServiceNow incident number for the disk space alert"
+            }
+          }
+        }
+      },
+      "position": { "x": 0, "y": 300 }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "triage_agent",
+      "name": "AI Triage Agent",
+      "type": "agentic",
+      "config": {
+        "model": "claude-sonnet-4-6",
+        "credential_id": "b9b3529b-5211-4b9b-90f6-e37c1106919e",
+        "prompt": "You are an IT operations AI agent responding to a disk space incident in ServiceNow.\n\nIncident number: ${trigger.incident_number}\n\nStep 1 - Fetch the incident record:\nCall 'servicenow-mcp::perform_query' with:\n  table: 'incident'\n  query: 'number=${trigger.incident_number}'\n  fields: ['number', 'short_description', 'description', 'cmdb_ci', 'sys_id']\n  limit: 1\n\nStep 2 - Add an internal work note to acknowledge:\nCall 'servicenow-mcp::add_work_notes' with:\n  number: '${trigger.incident_number}'\n  work_notes: 'AI agent activated by Ansible Automation Orchestrator. Analyzing disk space incident and initiating automated cleanup.'\n\nStep 3 - Extract the key details from the incident and output ONLY valid JSON:\n{\n  \"affected_host\": \"\",\n  \"filesystem\": \"\",\n  \"usage_percent\": \"\",\n  \"root_cause\": \"\",\n  \"cleanup_action\": \"\",\n  \"incident_sys_id\": \"\"\n}",
+        "response_schema": {
+          "type": "object",
+          "properties": {
+            "affected_host": { "type": "string" },
+            "filesystem": { "type": "string" },
+            "usage_percent": { "type": "string" },
+            "root_cause": { "type": "string" },
+            "cleanup_action": { "type": "string" },
+            "incident_sys_id": { "type": "string" }
+          }
+        }
+      },
+      "position": { "x": 360, "y": 300 }
+    },
+    {
+      "id": "remediation_job",
+      "name": "Run Disk Cleanup",
+      "type": "aap_job_template",
+      "config": {
+        "diff_mode": false,
+        "credential_id": "09381e35-ec03-45bc-b8b7-2d8a7c1c9670",
+        "job_template_id": 22,
+        "job_template_name": "SNOW - Auto Remediation",
+        "organization_name": "Default",
+        "limit": "${triage_agent.result.content.affected_host}",
+        "extra_vars": {
+          "incident_number": "${trigger.incident_number}",
+          "affected_system": "${triage_agent.result.content.affected_host}",
+          "category": "software",
+          "recommended_action": "${triage_agent.result.content.cleanup_action}"
+        }
+      },
+      "position": { "x": 720, "y": 300 }
+    },
+    {
+      "id": "resolve_agent",
+      "name": "Resolve Incident",
+      "type": "agentic",
+      "config": {
+        "model": "claude-sonnet-4-6",
+        "credential_id": "b9b3529b-5211-4b9b-90f6-e37c1106919e",
+        "prompt": "Disk cleanup has completed successfully on ${triage_agent.result.content.affected_host} for incident ${trigger.incident_number}. Close the ticket.\n\nStep 1 - Resolve the incident:\nCall 'servicenow-mcp::update_incident' with:\n  number: '${trigger.incident_number}'\n  updates: {\n    'state': '6',\n    'close_code': 'Solved (Permanently)',\n    'close_notes': 'Automated disk cleanup executed by Ansible Automation Orchestrator. Action: ${triage_agent.result.content.cleanup_action}. Filesystem ${triage_agent.result.content.filesystem} on ${triage_agent.result.content.affected_host} has been remediated.'\n  }\n\nStep 2 - Notify the requestor:\nCall 'servicenow-mcp::add_comment' with:\n  number: '${trigger.incident_number}'\n  comment: 'The disk space issue on ${triage_agent.result.content.affected_host} has been automatically resolved by the Ansible Automation Orchestrator. Cleanup action performed: ${triage_agent.result.content.cleanup_action}. Please monitor disk usage over the next hour to confirm stability. If the issue recurs, a log rotation policy review may be required.'\n\nConfirm both actions completed successfully."
+      },
+      "position": { "x": 1080, "y": 300 }
+    }
+  ],
+  "edges": [
+    { "to": "triage_agent", "from": "trigger_manual" },
+    { "to": "remediation_job", "from": "triage_agent" },
+    { "to": "resolve_agent", "from": "remediation_job" }
+  ]
+}

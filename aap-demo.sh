@@ -2808,7 +2808,13 @@ cmd_enable() {
   if [ "$_skip_addon_save" != true ]; then
     _addons_add "$addon"
   fi
-  export AAP_DEMO_WIRE_AFTER_DEPLOY=0
+  # AO imports its workflows immediately after wiring because the importer needs
+  # the AAP credential created by addon-wire.sh. Keep deferred wiring for others.
+  if [ "$addon" = "ao" ]; then
+    export AAP_DEMO_WIRE_AFTER_DEPLOY=1
+  else
+    export AAP_DEMO_WIRE_AFTER_DEPLOY=0
+  fi
   bash "$addon_dir/deploy.sh" "$@"
   unset AAP_DEMO_WIRE_AFTER_DEPLOY
   if [ "$_skip_addon_save" != true ]; then

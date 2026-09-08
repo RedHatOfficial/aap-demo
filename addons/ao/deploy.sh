@@ -625,6 +625,38 @@ show_access_info() {
   echo "  Status:   kubectl get pods -n $NAMESPACE"
 }
 
+sync_ao_demos() {
+  local _route _token _aap_credential _project _ao_namespace
+  local -a _import_args
+  _route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  [ -n "$_route" ] || return 0
+
+  # The wiring layer creates these records and keeps their credentials current.
+  _ao_namespace="$NAMESPACE"
+  NAMESPACE="$AAP_NAMESPACE"
+  AO_NAMESPACE="$_ao_namespace"
+  # shellcheck source=../../includes/addon-wire.sh
+  source "${REPO_ROOT}/includes/addon-wire.sh"
+  _token=$(wire_ao_login_token 2>/dev/null || true)
+  _aap_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _project=$(wire_ao_default_project_id 2>/dev/null || true)
+  if [ -z "$_token" ] || [ -z "$_aap_credential" ]; then
+    echo "  ⚠ AO demo synchronization deferred (AO credentials not ready)"
+    return 0
+  fi
+
+  _import_args=(
+    --route "$_route"
+    --token "$_token"
+    --source-dir "${SCRIPT_DIR}/demos"
+    --aap-credential-id "$_aap_credential"
+  )
+  if [ -n "$_project" ]; then
+    _import_args+=(--project-id "$_project")
+  fi
+  python3 "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" || true
+}
+
 AO_PULL_SECRET_NAME="${AO_PULL_SECRET_NAME:-automation-orchestrator-pull-secret}"
 
 cnpg_database_crd_available() {
@@ -886,6 +918,17 @@ if [ -z "$FORCE" ]; then
     echo ""
     configure_ao_local_aap_access
     show_access_info
+    if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
+      # shellcheck source=../../includes/addon-wire.sh
+      AO_NAMESPACE="$NAMESPACE"
+      NAMESPACE="$AAP_NAMESPACE"
+      source "${REPO_ROOT}/includes/addon-wire.sh"
+      aap_demo_wire || true
+      NAMESPACE="$AO_NAMESPACE"
+    fi
+    if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
+      sync_ao_demos
+    fi
     exit 0
   fi
 fi
@@ -1226,6 +1269,16 @@ show_access_info
 # Wire AO ↔ AAP and MCP when deploy.sh is invoked directly (not via aap-demo enable).
 if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
   # shellcheck source=../../includes/addon-wire.sh
+  NAMESPACE="$AAP_NAMESPACE"
+  AO_NAMESPACE="automation-orchestrator"
   source "${REPO_ROOT}/includes/addon-wire.sh"
   aap_demo_wire || true
+  NAMESPACE="$AO_NAMESPACE"
+fi
+
+# Import the upstream AO workflows after integrations and credentials exist. The
+# workflow nodes launch AAP job templates, so playbooks remain executed and
+# governed by AAP rather than being run directly by this addon.
+if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
+  sync_ao_demos
 fi

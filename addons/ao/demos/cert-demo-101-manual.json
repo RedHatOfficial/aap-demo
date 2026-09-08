@@ -1,0 +1,129 @@
+{
+  "name": "Cert Demo 101 - Manual Reactive Renewal",
+  "description": "Manual trigger simulates a cert expiry alert. AI agent discovers job templates, analyzes inventory and previous runs, plans the renewal. Operator approves, AAP renews and validates.",
+  "schema_version": "2.0.0",
+  "triggers": [
+    {
+      "id": "trigger",
+      "name": "Cert Expiry Alert",
+      "type": "manual_trigger",
+      "position": { "x": 0, "y": 188 },
+      "parameters": {
+        "input_schema": {
+          "type": "object",
+          "required": ["hostname", "service", "port"],
+          "properties": {
+            "hostname": {
+              "type": "string",
+              "default": "certdemo.demoredhat.com",
+              "description": "Host with the expired certificate"
+            },
+            "service": {
+              "type": "string",
+              "default": "nginx",
+              "description": "Web service using the certificate"
+            },
+            "port": {
+              "type": "string",
+              "default": "443",
+              "description": "TLS port"
+            },
+            "days_remaining": {
+              "type": "string",
+              "default": "-7",
+              "description": "Days until expiry (negative means already expired)"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "plan_renewal",
+      "name": "Plan Renewal",
+      "type": "agentic",
+      "position": { "x": 360, "y": 136 },
+      "parameters": {
+        "model": "claude-sonnet-4-6",
+        "credential_id": "REPLACE_WITH_AI_CREDENTIAL_ID",
+        "prompt": "You are a certificate lifecycle automation agent for Ansible Automation Platform.\n\nA monitoring alert has detected an expired or expiring TLS certificate:\n- Hostname: ${trigger.hostname}\n- Service: ${trigger.service}\n- Port: ${trigger.port}\n- Days remaining: ${trigger.days_remaining}\n\nPerform the following analysis using the available AAP tools:\n1. List the available job templates to find one that can renew this certificate\n2. Check the inventory to confirm the target host exists and is reachable\n3. Check if this job template has been run before, how many times, and what the last result was\n4. Determine what extra variables the job template needs based on host variables and past successful runs\n5. Assess the blast radius: what services, users, or downstream systems depend on this certificate\n\nBased on your analysis, select the right job template and provide your confidence and risk assessment.\n\nDo not launch the job template. Only plan the remediation.",
+        "response_schema": {
+          "type": "object",
+          "required": ["selected_template", "confidence", "risk_level", "analysis", "recommendation"],
+          "properties": {
+            "selected_template": {
+              "type": "string",
+              "description": "Exact AAP job template name to execute"
+            },
+            "confidence": {
+              "type": "integer",
+              "description": "Confidence percentage 0-100 that this will succeed"
+            },
+            "risk_level": {
+              "type": "string",
+              "description": "low, medium, or high"
+            },
+            "analysis": {
+              "type": "string",
+              "description": "Summary of what you found: job templates discovered, inventory verification, previous run results, extra vars needed"
+            },
+            "recommendation": {
+              "type": "string",
+              "description": "One sentence recommendation for the operator"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "approve_renewal",
+      "name": "Approve Renewal",
+      "type": "approval",
+      "position": { "x": 840, "y": 133 },
+      "parameters": {}
+    },
+    {
+      "id": "run_renewal",
+      "name": "Run Renewal Job",
+      "type": "aap_job_template",
+      "position": { "x": 1200, "y": -9 },
+      "parameters": {
+        "credential_id": "REPLACE_WITH_AAP_CREDENTIAL_ID",
+        "job_template_name": "${plan_renewal.result.content.selected_template}",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "validate_renewal",
+      "name": "Validate Renewal",
+      "type": "aap_job_template",
+      "position": { "x": 1553, "y": 0 },
+      "parameters": {
+        "credential_id": "REPLACE_WITH_AAP_CREDENTIAL_ID",
+        "job_template_name": "Validate Cert Renewal",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "notify_rejected",
+      "name": "Renewal Rejected",
+      "type": "script",
+      "position": { "x": 1211, "y": 391 },
+      "parameters": {
+        "language": "python",
+        "code": "import os\nprint(f'Renewal REJECTED for {os.getenv(\"REJ_HOSTNAME\", \"unknown\")}')\nprint('Certificate remains expired. Manual intervention required.')",
+        "environment": {
+          "REJ_HOSTNAME": "${trigger.hostname}"
+        }
+      }
+    }
+  ],
+  "edges": [
+    { "from": "trigger", "to": "plan_renewal" },
+    { "from": "plan_renewal", "to": "approve_renewal" },
+    { "from": "approve_renewal", "to": "run_renewal", "from_port": "approved" },
+    { "from": "approve_renewal", "to": "notify_rejected", "from_port": "rejected" },
+    { "from": "run_renewal", "to": "validate_renewal" }
+  ]
+}

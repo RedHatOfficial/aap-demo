@@ -49,6 +49,12 @@ integrations (no separate wiring step):
 - **MCP integration** (`aap-demo MCP Server`) — **required**; `mcp-server` is enabled automatically
   and wired to AO (route or in-cluster `/mcp` URL with tools enabled)
 
+The addon also imports the 10 AO workflow exports from [`demos/`](demos/). Their
+`aap_job_template` nodes launch job templates in AAP, so automation remains
+implemented by the upstream Ansible playbooks running under AAP governance. The
+importer supplies the local AAP credential and upgrades older export formats. Set
+`AO_IMPORT_DEMOS=0` to deploy AO without importing the demos.
+
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
 Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
 the CoreDNS route rewrite if MicroShift's DNS operator has dropped it.
@@ -116,6 +122,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_CATALOG_TIMEOUT` | `600` | Seconds to wait for AO CatalogSource READY (index pull can be slow) |
 | `AO_DISABLE_INDEX_FALLBACK` | unset | Set to `1` to disable automatic fallback index |
 | `AAP_OCP_VERSION` | auto-detected | OCP version for default index tag |
+| `AO_IMPORT_DEMOS` | `1` | Synchronize vendored upstream AO workflow exports after wiring |
 
 ### Operator channel
 

@@ -1,0 +1,318 @@
+{
+  "schema_version": "2.0.0",
+  "name": "disk-utilization-demo-tier-switch",
+  "description": "Disk utilization demo \u2014 routes on disk_tier (ok/warn/critical). Reliable fallback while troubleshooting numeric disk_use_percent switch comparisons.",
+  "triggers": [
+    {
+      "id": "trigger_manual",
+      "type": "manual_trigger",
+      "name": "Manual Trigger",
+      "parameters": {},
+      "position": {
+        "x": 0,
+        "y": 486.5
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "activity_595ded69_fca6_4ffd_95f4_bb345237efa6",
+      "type": "aap_job_template",
+      "name": "Fallback - Catch All",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Disk Utilization - Fallback",
+        "organization_name": "Default"
+      },
+      "position": {
+        "x": 1092.1868008948547,
+        "y": 842.1079418344519
+      }
+    },
+    {
+      "id": "activity_162ebe75_5846_4640_a309_61d516aac9eb",
+      "type": "aap_job_template",
+      "name": "Fallback - Notify Chatroom",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "dry_run": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.dry_run}",
+          "disk_tier": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.disk_tier}",
+          "disk_mount": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.disk_mount}",
+          "notify_host": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.notify_host}",
+          "logs_freed_mb": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.logs_freed_mb}",
+          "disk_expand_gb": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.disk_expand_gb}",
+          "disk_use_percent": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.disk_use_percent}",
+          "dnf_cache_removed": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.dnf_cache_removed}",
+          "dnf_cache_freed_mb": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.dnf_cache_freed_mb}",
+          "log_retention_days": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.log_retention_days}",
+          "remediation_action": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.remediation_action}",
+          "total_reclaimed_mb": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.total_reclaimed_mb}",
+          "log_archives_removed": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.log_archives_removed}",
+          "volume_size_after_gb": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.volume_size_after_gb}",
+          "volume_size_before_gb": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.volume_size_before_gb}",
+          "disk_use_percent_after": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.disk_use_percent_after}",
+          "disk_use_percent_before": "${activity_595ded69_fca6_4ffd_95f4_bb345237efa6.artifacts.disk_use_percent_before}"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Notify Chatroom",
+        "organization_name": "Default"
+      },
+      "position": {
+        "x": 1468.0296420581656,
+        "y": 851.2602768456377
+      }
+    },
+    {
+      "id": "activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59",
+      "type": "aap_job_template",
+      "name": "Remediate  - Clean Disk",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "disk_tier": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_tier}",
+          "disk_mount": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_mount}",
+          "disk_use_percent": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_use_percent}"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Linux - Remediate - Disk Cleanup",
+        "organization_name": "Default"
+      },
+      "settings": {},
+      "position": {
+        "x": 1103.1549217002237,
+        "y": 300.5005592841163
+      }
+    },
+    {
+      "id": "activity_61ac9127_f147_4fa8_9c04_189097e753e9",
+      "type": "aap_job_template",
+      "name": "Launch AAP job template",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Disk Utilization Check",
+        "organization_name": "Default"
+      },
+      "settings": {},
+      "position": {
+        "x": 360,
+        "y": 435
+      }
+    },
+    {
+      "id": "activity_b1aa86c0_001a_4240_b7fb_99f2d0b4ba2d",
+      "type": "aap_job_template",
+      "name": "Warn - Notify Chatroom - Clean Disk",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "dry_run": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.dry_run}",
+          "disk_tier": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.disk_tier}",
+          "disk_mount": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.disk_mount}",
+          "notify_host": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.notify_host}",
+          "logs_freed_mb": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.logs_freed_mb}",
+          "disk_expand_gb": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.disk_expand_gb}",
+          "disk_use_percent": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.disk_use_percent}",
+          "dnf_cache_removed": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.dnf_cache_removed}",
+          "dnf_cache_freed_mb": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.dnf_cache_freed_mb}",
+          "log_retention_days": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.log_retention_days}",
+          "remediation_action": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.remediation_action}",
+          "total_reclaimed_mb": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.total_reclaimed_mb}",
+          "log_archives_removed": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.log_archives_removed}",
+          "volume_size_after_gb": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.volume_size_after_gb}",
+          "volume_size_before_gb": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.volume_size_before_gb}",
+          "disk_use_percent_after": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.disk_use_percent_after}",
+          "disk_use_percent_before": "${activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59.artifacts.disk_use_percent_before}"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Notify Chatroom",
+        "organization_name": "Default"
+      },
+      "position": {
+        "x": 1468.5040684704932,
+        "y": 299.2703865489463
+      }
+    },
+    {
+      "id": "activity_e18d67ef_1f99_4553_9807_81710484a424",
+      "type": "aap_job_template",
+      "name": "Remediate - Expand Disk",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Linux - Remediate - Disk Expand",
+        "organization_name": "Default"
+      },
+      "position": {
+        "x": 1142.1526845637586,
+        "y": 557.2030201342283
+      }
+    },
+    {
+      "id": "activity_e31726ba_d2bc_41c2_96e0_3d00c4a175cf",
+      "type": "aap_job_template",
+      "name": "Critical - Notify Chatroom - Expand Disk",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "dry_run": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.dry_run}",
+          "disk_tier": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.disk_tier}",
+          "disk_mount": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.disk_mount}",
+          "notify_host": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.notify_host}",
+          "logs_freed_mb": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.logs_freed_mb}",
+          "disk_expand_gb": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.disk_expand_gb}",
+          "disk_use_percent": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.disk_use_percent}",
+          "dnf_cache_removed": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.dnf_cache_removed}",
+          "dnf_cache_freed_mb": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.dnf_cache_freed_mb}",
+          "log_retention_days": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.log_retention_days}",
+          "remediation_action": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.remediation_action}",
+          "total_reclaimed_mb": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.total_reclaimed_mb}",
+          "log_archives_removed": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.log_archives_removed}",
+          "volume_size_after_gb": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.volume_size_after_gb}",
+          "volume_size_before_gb": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.volume_size_before_gb}",
+          "disk_use_percent_after": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.disk_use_percent_after}",
+          "disk_use_percent_before": "${activity_e18d67ef_1f99_4553_9807_81710484a424.artifacts.disk_use_percent_before}"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Notify Chatroom",
+        "organization_name": "Default"
+      },
+      "position": {
+        "x": 1472.9043624161075,
+        "y": 556.5495733851347
+      }
+    },
+    {
+      "id": "activity_ee976dab_737f_4a8f_a6ba_e774897e84e8",
+      "type": "aap_job_template",
+      "name": "Remediate - Continue",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "disk_tier": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_tier}",
+          "disk_mount": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_mount}",
+          "notify_host": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.notify_host}",
+          "disk_use_percent": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_use_percent}"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Linux - Remediate - Continue",
+        "organization_name": "Default"
+      },
+      "position": {
+        "x": 1038.564876957494,
+        "y": 40.70218120805356
+      }
+    },
+    {
+      "id": "activity_5a271a41_50fc_4b58_a670_64fd613f0356",
+      "type": "aap_job_template",
+      "name": "OK - Notify Chatroom - Do nothing",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "dry_run": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.dry_run}",
+          "disk_tier": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.disk_tier}",
+          "disk_mount": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.disk_mount}",
+          "notify_host": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.notify_host}",
+          "logs_freed_mb": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.logs_freed_mb}",
+          "disk_expand_gb": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.disk_expand_gb}",
+          "disk_use_percent": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.disk_use_percent}",
+          "dnf_cache_removed": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.dnf_cache_removed}",
+          "dnf_cache_freed_mb": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.dnf_cache_freed_mb}",
+          "log_retention_days": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.log_retention_days}",
+          "remediation_action": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.remediation_action}",
+          "total_reclaimed_mb": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.total_reclaimed_mb}",
+          "log_archives_removed": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.log_archives_removed}",
+          "volume_size_after_gb": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.volume_size_after_gb}",
+          "volume_size_before_gb": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.volume_size_before_gb}",
+          "disk_use_percent_after": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.disk_use_percent_after}",
+          "disk_use_percent_before": "${activity_ee976dab_737f_4a8f_a6ba_e774897e84e8.artifacts.disk_use_percent_before}"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Notify Chatroom",
+        "organization_name": "Default"
+      },
+      "position": {
+        "x": 1464.0014749511304,
+        "y": 38.9649680018897
+      }
+    },
+    {
+      "id": "logic_1782494738426_1w91rqm1wjs35e",
+      "type": "switch",
+      "name": "Switch on disk_tier",
+      "parameters": {
+        "cases": [
+          {
+            "port": "case_0",
+            "label": "ok",
+            "condition": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_tier} == 'ok'"
+          },
+          {
+            "port": "case_1",
+            "label": "warn",
+            "condition": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_tier} == 'warn'"
+          },
+          {
+            "port": "case_2",
+            "label": "critical",
+            "condition": "${activity_61ac9127_f147_4fa8_9c04_189097e753e9.artifacts.disk_tier} == 'critical'"
+          }
+        ],
+        "default_port": "default"
+      },
+      "position": {
+        "x": 720,
+        "y": 396.5
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "activity_61ac9127_f147_4fa8_9c04_189097e753e9",
+      "to": "logic_1782494738426_1w91rqm1wjs35e"
+    },
+    {
+      "from": "logic_1782494738426_1w91rqm1wjs35e",
+      "to": "activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59",
+      "from_port": "case_1"
+    },
+    {
+      "from": "trigger_manual",
+      "to": "activity_61ac9127_f147_4fa8_9c04_189097e753e9"
+    },
+    {
+      "from": "logic_1782494738426_1w91rqm1wjs35e",
+      "to": "activity_ee976dab_737f_4a8f_a6ba_e774897e84e8",
+      "from_port": "case_0"
+    },
+    {
+      "from": "activity_ee976dab_737f_4a8f_a6ba_e774897e84e8",
+      "to": "activity_5a271a41_50fc_4b58_a670_64fd613f0356"
+    },
+    {
+      "from": "activity_5f6d0c2e_a677_4517_b013_ab2a9f8c2d59",
+      "to": "activity_b1aa86c0_001a_4240_b7fb_99f2d0b4ba2d"
+    },
+    {
+      "from": "logic_1782494738426_1w91rqm1wjs35e",
+      "to": "activity_e18d67ef_1f99_4553_9807_81710484a424",
+      "from_port": "case_2"
+    },
+    {
+      "from": "activity_e18d67ef_1f99_4553_9807_81710484a424",
+      "to": "activity_e31726ba_d2bc_41c2_96e0_3d00c4a175cf"
+    },
+    {
+      "from": "logic_1782494738426_1w91rqm1wjs35e",
+      "to": "activity_595ded69_fca6_4ffd_95f4_bb345237efa6",
+      "from_port": "default"
+    },
+    {
+      "from": "activity_595ded69_fca6_4ffd_95f4_bb345237efa6",
+      "to": "activity_162ebe75_5846_4640_a309_61d516aac9eb"
+    }
+  ]
+}

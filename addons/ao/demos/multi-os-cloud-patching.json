@@ -1,0 +1,307 @@
+{
+  "schema_version": "2.0.0",
+  "name": "Multi-OS Cloud Patching",
+  "description": "Snapshot EC2 instances, patch RHEL and Windows in parallel, restore from snapshot on failure, and publish a compliance report. Playbooks run from ansible/product-demos cloud job templates.",
+  "triggers": [
+    {
+      "id": "trigger_manual",
+      "type": "manual_trigger",
+      "name": "Trigger",
+      "parameters": {
+        "input_schema": {
+          "type": "object",
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "required": [
+            "_hosts",
+            "_hosts_windows",
+            "_report_server",
+            "aws_region"
+          ],
+          "properties": {
+            "_hosts": {
+              "type": "string"
+            },
+            "aws_region": {
+              "type": "string"
+            },
+            "_hosts_windows": {
+              "type": "string"
+            },
+            "_report_server": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "position": {
+        "x": 0,
+        "y": 545
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "activity_restore_rhel",
+      "type": "aap_job_template",
+      "name": "Restore RHEL Snapshots",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "_hosts": "aws_rhel8:aws_rhel9",
+          "_hosts_windows": "aws-dc:aws_win1"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Restore EC2 from Snapshot",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 1800,
+        "y": 934
+      }
+    },
+    {
+      "id": "activity_restore_windows",
+      "type": "aap_job_template",
+      "name": "Restore Windows Snapshots",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "_hosts": "aws_rhel8:aws_rhel9",
+          "_hosts_windows": "aws-dc:aws_win1"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Restore EC2 from Snapshot",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 1800,
+        "y": 288
+      }
+    },
+    {
+      "id": "activity_postcheck_windows",
+      "type": "aap_job_template",
+      "name": "Post-check Windows",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Patch Post-check Windows",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 1800,
+        "y": 35
+      }
+    },
+    {
+      "id": "activity_postcheck_rhel",
+      "type": "aap_job_template",
+      "name": "Post-check RHEL",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Patch Post-check RHEL",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 1800,
+        "y": 681
+      }
+    },
+    {
+      "id": "activity_snapshot",
+      "type": "aap_job_template",
+      "name": "Create EC2 Snapshot",
+      "parameters": {
+        "diff_mode": false,
+        "extra_vars": {
+          "_hosts": "aws_rhel8:aws_rhel9",
+          "aws_region": "us-east-1",
+          "_hosts_windows": "aws-dc:aws_win1",
+          "_report_server": "reports"
+        },
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Snapshot EC2",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 366,
+        "y": 483
+      }
+    },
+    {
+      "id": "activity_precheck_windows",
+      "type": "aap_job_template",
+      "name": "Pre-check Windows",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Patch Pre-check Windows",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 720,
+        "y": 161
+      }
+    },
+    {
+      "id": "activity_patch_windows",
+      "type": "aap_job_template",
+      "name": "Patch Windows",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Patch Windows",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 1080,
+        "y": 147
+      }
+    },
+    {
+      "id": "activity_precheck_rhel",
+      "type": "aap_job_template",
+      "name": "Pre-check RHEL",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Patch Pre-check RHEL",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 720,
+        "y": 807
+      }
+    },
+    {
+      "id": "activity_patch_rhel",
+      "type": "aap_job_template",
+      "name": "Patch RHEL",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Patch RHEL",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 1080,
+        "y": 816
+      }
+    },
+    {
+      "id": "logic_patch_rhel_success",
+      "type": "condition",
+      "name": "Did patch succeed? (RHEL)",
+      "parameters": {
+        "condition": "${activity_patch_rhel.job_status} == \"successful\""
+      },
+      "position": {
+        "x": 1440,
+        "y": 819
+      }
+    },
+    {
+      "id": "logic_patch_windows_success",
+      "type": "condition",
+      "name": "Did patch succeed? (Windows)",
+      "parameters": {
+        "condition": "${activity_patch_windows.job_status} == \"successful\""
+      },
+      "position": {
+        "x": 1440,
+        "y": 173
+      }
+    },
+    {
+      "id": "logic_converge",
+      "type": "converge",
+      "name": "Converge",
+      "parameters": {
+        "strategy": "all"
+      },
+      "position": {
+        "x": 2225,
+        "y": 590
+      }
+    },
+    {
+      "id": "activity_compliance_report",
+      "type": "aap_job_template",
+      "name": "Compliance Report",
+      "parameters": {
+        "diff_mode": false,
+        "credential_id": "YOUR_AAP_CREDENTIAL_ID",
+        "job_template_name": "Cloud | AWS | Patch Compliance Report",
+        "organization_name": "Ansible Product Demos (APD)"
+      },
+      "position": {
+        "x": 2627,
+        "y": 567
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "activity_precheck_rhel",
+      "to": "activity_patch_rhel"
+    },
+    {
+      "from": "activity_patch_rhel",
+      "to": "logic_patch_rhel_success"
+    },
+    {
+      "from": "activity_precheck_windows",
+      "to": "activity_patch_windows"
+    },
+    {
+      "from": "activity_patch_windows",
+      "to": "logic_patch_windows_success"
+    },
+    {
+      "from": "logic_patch_rhel_success",
+      "to": "activity_postcheck_rhel",
+      "from_port": "true"
+    },
+    {
+      "from": "logic_patch_windows_success",
+      "to": "activity_postcheck_windows",
+      "from_port": "true"
+    },
+    {
+      "from": "activity_postcheck_rhel",
+      "to": "logic_converge"
+    },
+    {
+      "from": "activity_postcheck_windows",
+      "to": "logic_converge"
+    },
+    {
+      "from": "logic_patch_windows_success",
+      "to": "activity_restore_windows",
+      "from_port": "false"
+    },
+    {
+      "from": "logic_patch_rhel_success",
+      "to": "activity_restore_rhel",
+      "from_port": "false"
+    },
+    {
+      "from": "logic_converge",
+      "to": "activity_compliance_report"
+    },
+    {
+      "from": "trigger_manual",
+      "to": "activity_snapshot"
+    },
+    {
+      "from": "activity_snapshot",
+      "to": "activity_precheck_windows"
+    },
+    {
+      "from": "activity_snapshot",
+      "to": "activity_precheck_rhel"
+    }
+  ]
+}

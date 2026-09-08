@@ -1,0 +1,108 @@
+{
+  "name": "Cert Demo 101 - Webhook Reactive Renewal",
+  "description": "Splunk webhook triggers cert renewal. AI agent analyzes the alert, queries AAP to discover the correct job template, plans the remediation. Operator approves, AAP renews and validates.",
+  "schema_version": "2.0.0",
+  "triggers": [
+    {
+      "id": "trigger_webhook",
+      "name": "Splunk Cert Alert",
+      "type": "webhook_trigger",
+      "position": { "x": 0, "y": 188 },
+      "parameters": {
+        "webhook_path": "splunk-cert-alert"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "plan_renewal",
+      "name": "Plan Renewal",
+      "type": "agentic",
+      "position": { "x": 360, "y": 136 },
+      "parameters": {
+        "model": "claude-sonnet-4-6",
+        "credential_id": "REPLACE_WITH_AI_CREDENTIAL_ID",
+        "prompt": "You are a certificate lifecycle automation agent for Ansible Automation Platform.\n\nA Splunk monitoring alert has fired with these details:\n${trigger_webhook.payload}\n\nExtract the certificate details from the payload (look for orig_host, cert_cn, service, port, days_remaining, status, cert_type fields).\n\nUsing the available AAP tools, list the job templates, check the inventory for the target host (inspect the host variables for cert_services mapping), and review past job runs.\n\nSelect the correct job template for this specific certificate type. Pay attention to the cert_type field and the cert_services host variable mapping.\n\nDo not launch the job template. Only plan the remediation.",
+        "response_schema": {
+          "type": "object",
+          "required": ["selected_template", "confidence", "risk_level", "service_port", "analysis", "recommendation"],
+          "properties": {
+            "selected_template": {
+              "type": "string",
+              "description": "Exact AAP job template name to execute"
+            },
+            "confidence": {
+              "type": "integer",
+              "description": "Confidence percentage 0-100 that this will succeed"
+            },
+            "risk_level": {
+              "type": "string",
+              "description": "low, medium, or high"
+            },
+            "service_port": {
+              "type": "string",
+              "description": "The port number of the affected service from the Splunk alert (e.g., 443 or 8443)"
+            },
+            "analysis": {
+              "type": "string",
+              "description": "Summary: cert details from Splunk, job templates found, inventory check, past run results"
+            },
+            "recommendation": {
+              "type": "string",
+              "description": "One sentence recommendation for the operator"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "approve_renewal",
+      "name": "Approve Renewal",
+      "type": "approval",
+      "position": { "x": 840, "y": 133 },
+      "parameters": {}
+    },
+    {
+      "id": "run_renewal",
+      "name": "Run Renewal Job",
+      "type": "aap_job_template",
+      "position": { "x": 1200, "y": -9 },
+      "parameters": {
+        "credential_id": "REPLACE_WITH_AAP_CREDENTIAL_ID",
+        "job_template_name": "${plan_renewal.result.content.selected_template}",
+        "organization_name": "Default"
+      }
+    },
+    {
+      "id": "validate_renewal",
+      "name": "Validate Renewal",
+      "type": "aap_job_template",
+      "position": { "x": 1553, "y": 0 },
+      "parameters": {
+        "credential_id": "REPLACE_WITH_AAP_CREDENTIAL_ID",
+        "job_template_name": "Validate Cert Renewal",
+        "organization_name": "Default",
+        "extra_vars": {
+          "validate_port": "${plan_renewal.result.content.service_port}"
+        }
+      }
+    },
+    {
+      "id": "notify_rejected",
+      "name": "Renewal Rejected",
+      "type": "script",
+      "position": { "x": 1211, "y": 391 },
+      "parameters": {
+        "language": "python",
+        "code": "print('Renewal was rejected by operator. Certificate remains expired.')"
+      }
+    }
+  ],
+  "edges": [
+    { "from": "trigger_webhook", "to": "plan_renewal" },
+    { "from": "plan_renewal", "to": "approve_renewal" },
+    { "from": "approve_renewal", "to": "run_renewal", "from_port": "approved" },
+    { "from": "approve_renewal", "to": "notify_rejected", "from_port": "rejected" },
+    { "from": "run_renewal", "to": "validate_renewal" }
+  ]
+}
