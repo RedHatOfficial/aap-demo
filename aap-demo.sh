@@ -2821,12 +2821,11 @@ cmd_enable() {
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
   fi
   if [ "$addon" = "ao" ]; then
-    if ! _aap_demo_run_addon_wire true; then
-      echo ""
-      echo "  Automation Orchestrator is installed but integration wiring failed."
-      echo "  Re-run: aap-demo wire"
-      return 1
-    fi
+    # The AO addon performs wiring before provisioning AAP templates and
+    # importing workflows. A second login here can fail when AO's initial
+    # password secret is stale after the instance has already been initialized.
+    # `aap-demo wire` remains available for an explicit retry.
+    :
   else
     _aap_demo_run_addon_wire false
   fi
