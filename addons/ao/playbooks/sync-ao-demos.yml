@@ -37,6 +37,9 @@
       register: __ao_projects
       no_log: true
       failed_when: false
+      until: __ao_projects.status | default(0) == 200
+      retries: 30
+      delay: 5
 
     - name: Validate AO project lookup
       ansible.builtin.assert:
