@@ -649,9 +649,12 @@ sync_ao_demos() {
   _import_args=(
     --route "$_route"
     --token "$_token"
-    --source-dir "${SCRIPT_DIR}/demos"
     --aap-credential-id "$_aap_credential"
     --aap-integration-id "$_aap_integration"
+  )
+  _import_args+=(
+    --repository "${AO_DEMOS_REPOSITORY:-https://github.com/ansible-tmm/aap-orchestrator-demos}"
+    --ref "${AO_DEMOS_REF:-abcc1a1482a}"
   )
   if [ -n "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
     _import_args+=(--agent-credential-id "$AO_AGENT_CREDENTIAL_ID")

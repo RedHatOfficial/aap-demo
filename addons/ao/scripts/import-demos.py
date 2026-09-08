@@ -13,10 +13,17 @@ import json
 import os
 import ssl
 import sys
+import tarfile
+import tempfile
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+
+UPSTREAM_REPOSITORY = "https://github.com/ansible-tmm/aap-orchestrator-demos"
+UPSTREAM_REF = "abcc1a1482a"
 
 
 def request(base: str, token: str, method: str, path: str, body: Any = None) -> Any:
@@ -46,6 +53,37 @@ def items(payload: Any) -> list[dict[str, Any]]:
         value = payload.get("resources", payload.get("results", []))
         return value if isinstance(value, list) else []
     return []
+
+
+@contextmanager
+def workflow_sources(source_dir: str | None, repository: str, ref: str):
+    """Yield upstream workflows without storing exports in this repository."""
+    if source_dir:
+        yield Path(source_dir)
+        return
+
+    archive_url = f"{repository.rstrip('/')}/archive/{ref}.tar.gz"
+    with tempfile.TemporaryDirectory(prefix="aap-demo-ao-demos-") as temp_dir:
+        archive_path = Path(temp_dir) / "demos.tar.gz"
+        try:
+            with urllib.request.urlopen(archive_url, timeout=60) as response:
+                archive_path.write_bytes(response.read())
+            extract_dir = Path(temp_dir) / "source"
+            extract_dir.mkdir()
+            with tarfile.open(archive_path, "r:gz") as archive:
+                root = Path(temp_dir).resolve()
+                for member in archive.getmembers():
+                    target = (root / member.name).resolve()
+                    if target != root and root not in target.parents:
+                        raise RuntimeError("upstream demo archive contains an unsafe path")
+                archive.extractall(extract_dir)
+        except (OSError, tarfile.TarError, urllib.error.URLError) as exc:
+            raise RuntimeError(f"unable to download upstream demos from {archive_url}: {exc}") from exc
+
+        roots = [path for path in extract_dir.iterdir() if path.is_dir()]
+        if len(roots) != 1 or not (roots[0] / "demos").is_dir():
+            raise RuntimeError(f"upstream demo archive does not contain a demos directory: {archive_url}")
+        yield roots[0]
 
 
 def normalize(
@@ -112,52 +150,55 @@ def import_workflows(args: argparse.Namespace) -> int:
         for w in existing
         if w.get("labels", {}).get("source_file")
     }
-    sources = sorted(Path(args.source_dir).glob("*.json"))
-    raw_names = []
-    for source in sources:
-        raw_names.append(json.loads(source.read_text()).get("name") or source.stem)
-    name_counts = {name: raw_names.count(name) for name in set(raw_names)}
-    imported = 0
-    for source, raw_name in zip(sources, raw_names):
-        document = json.loads(source.read_text())
-        workflow = normalize(
-            document,
-            args.aap_credential_id,
-            args.aap_integration_id,
-            source.stem,
-            args.agent_credential_id,
-        )
-        name = workflow.get("name") or source.stem
-        if name_counts.get(raw_name, 0) > 1 and source.stem.endswith("-legacy"):
-            name = f"{name} (legacy)"
-        workflow["name"] = name
-        payload = {
-            "name": name,
-            "description": workflow.get("description"),
-            "labels": {
-                "aap-demo": "true",
-                "source": "ansible-tmm/aap-orchestrator-demos",
-                "source_file": source.name,
-            },
-            "workflow_definition": workflow,
-            "project_id": project_id,
-        }
-        current = existing_by_source.get(source.name) or existing_by_name.get(name)
-        if current:
-            request(base, args.token, "PATCH", f"/workflows/{current['id']}", {
-                "description": payload["description"],
-                "labels": payload["labels"],
+    with workflow_sources(args.source_dir, args.repository, args.ref) as source_dir:
+        sources = sorted(source_dir.glob("*.json") if args.source_dir else source_dir.rglob("ao/*.json"))
+        if not sources:
+            raise RuntimeError(f"no workflow exports found in {source_dir}")
+        raw_names = []
+        for source in sources:
+            raw_names.append(json.loads(source.read_text()).get("name") or source.stem)
+        name_counts = {name: raw_names.count(name) for name in set(raw_names)}
+        imported = 0
+        for source, raw_name in zip(sources, raw_names):
+            document = json.loads(source.read_text())
+            workflow = normalize(
+                document,
+                args.aap_credential_id,
+                args.aap_integration_id,
+                source.stem,
+                args.agent_credential_id,
+            )
+            name = workflow.get("name") or source.stem
+            if name_counts.get(raw_name, 0) > 1 and source.stem.endswith("-legacy"):
+                name = f"{name} (legacy)"
+            workflow["name"] = name
+            payload = {
+                "name": name,
+                "description": workflow.get("description"),
+                "labels": {
+                    "aap-demo": "true",
+                    "source": "ansible-tmm/aap-orchestrator-demos",
+                    "source_file": source.name,
+                },
                 "workflow_definition": workflow,
-                "change_description": "Synchronized from aap-orchestrator-demos by aap-demo",
-            })
-            action = "updated"
-        else:
-            created = request(base, args.token, "POST", "/workflows", payload)
-            existing_by_name[name] = created
-            existing_by_source[source.name] = created
-            action = "imported"
-        print(f"  ✓ {action}: {name}")
-        imported += 1
+                "project_id": project_id,
+            }
+            current = existing_by_source.get(source.name) or existing_by_name.get(name)
+            if current:
+                request(base, args.token, "PATCH", f"/workflows/{current['id']}", {
+                    "description": payload["description"],
+                    "labels": payload["labels"],
+                    "workflow_definition": workflow,
+                    "change_description": "Synchronized from aap-orchestrator-demos by aap-demo",
+                })
+                action = "updated"
+            else:
+                created = request(base, args.token, "POST", "/workflows", payload)
+                existing_by_name[name] = created
+                existing_by_source[source.name] = created
+                action = "imported"
+            print(f"  ✓ {action}: {name}")
+            imported += 1
     print(f"✓ AO demos synchronized ({imported} workflows, project {project_id})")
     return 0
 
@@ -166,7 +207,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--route", required=True, help="AO route hostname")
     parser.add_argument("--token", required=True)
-    parser.add_argument("--source-dir", required=True)
+    parser.add_argument("--source-dir", help="Local workflow directory (testing override)")
+    parser.add_argument("--repository", default=UPSTREAM_REPOSITORY)
+    parser.add_argument("--ref", default=UPSTREAM_REF)
     parser.add_argument("--aap-credential-id", required=True)
     parser.add_argument("--aap-integration-id")
     parser.add_argument("--agent-credential-id")

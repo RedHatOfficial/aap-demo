@@ -1,10 +1,11 @@
 # Automation Orchestrator demos
 
-These workflow exports are vendored from
+These workflow exports are downloaded at enable time from
 [ansible-tmm/aap-orchestrator-demos](https://github.com/ansible-tmm/aap-orchestrator-demos),
-commit `a1cc1a1482a42a94488a3f9c36aeb31eea9e36a1`.
+commit `abcc1a1482a` (resolves to the immutable upstream commit).
 
-`aap-demo enable ao` synchronizes every JSON file in this directory after the AO,
+`aap-demo enable ao` downloads and synchronizes every JSON file from the upstream
+`demos/` directory after the AO,
 AAP, and MCP integrations are ready. Synchronization is idempotent and updates an
 existing workflow by name. At import time, AAP job-template nodes receive the
 auto-wired AAP credential and `aap-demo AAP` integration, old `config` exports are

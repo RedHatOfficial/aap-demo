@@ -129,7 +129,9 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_CATALOG_TIMEOUT` | `600` | Seconds to wait for AO CatalogSource READY (index pull can be slow) |
 | `AO_DISABLE_INDEX_FALLBACK` | unset | Set to `1` to disable automatic fallback index |
 | `AAP_OCP_VERSION` | auto-detected | OCP version for default index tag |
-| `AO_IMPORT_DEMOS` | `1` | Synchronize vendored upstream AO workflow exports after wiring |
+| `AO_IMPORT_DEMOS` | `1` | Download and synchronize upstream AO workflow exports after wiring |
+| `AO_DEMOS_REPOSITORY` | `https://github.com/ansible-tmm/aap-orchestrator-demos` | Upstream AO workflow repository |
+| `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
 
 ### Operator channel
 
