@@ -713,7 +713,8 @@ provision_aap_demos() {
   )
   if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
     _provision_args+=(
-      --ao-api-url "${AO_SYNC_API_URL:-http://automation-orchestrator-backend.automation-orchestrator.svc.cluster.local:8000/api/v1}"
+      --ao-api-url "${AO_SYNC_API_URL:-https://router-internal-default.openshift-ingress.svc.cluster.local/api/v1}"
+      --ao-api-host "$_route"
       --ao-token "$_ao_token"
       --ao-credential-id "$_ao_credential"
       --ao-integration-id "$_ao_integration"

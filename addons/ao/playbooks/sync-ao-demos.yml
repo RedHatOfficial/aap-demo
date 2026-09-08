@@ -4,6 +4,7 @@
   gather_facts: false
   vars:
     ao_api_url: "http://automation-orchestrator-backend.automation-orchestrator.svc.cluster.local:8000/api/v1"
+    ao_api_host: ""
     ao_demo_repository: "https://github.com/ansible-tmm/aap-orchestrator-demos"
     ao_demo_ref: "abcc1a1482a"
     ao_demo_source: "{{ ao_demo_repository.rstrip('/') }}/archive/{{ ao_demo_ref }}.tar.gz"
@@ -16,11 +17,13 @@
       ansible.builtin.assert:
         that:
           - ao_api_token | length > 0
+          - ao_api_host | length > 0
           - ao_aap_credential_id | length > 0
           - ao_aap_integration_id | length > 0
         fail_msg: >-
-          ao_api_token, ao_aap_credential_id, and ao_aap_integration_id are
-          required. Pass them as AAP extra variables or through a credential.
+          ao_api_token, ao_api_host, ao_aap_credential_id, and
+          ao_aap_integration_id are required. Pass them as AAP extra variables
+          or through a credential.
       no_log: true
 
     - name: Find the AO project for imported workflows

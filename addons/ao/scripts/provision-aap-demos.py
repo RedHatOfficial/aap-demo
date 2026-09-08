@@ -73,6 +73,7 @@ def main() -> int:
     parser.add_argument("--route", required=True)
     parser.add_argument("--token", required=True)
     parser.add_argument("--ao-api-url")
+    parser.add_argument("--ao-api-host", default="")
     parser.add_argument("--ao-token")
     parser.add_argument("--ao-credential-id", default="")
     parser.add_argument("--ao-integration-id", default="")
@@ -180,6 +181,7 @@ def main() -> int:
             {
                 "extra_vars": {
                     "ao_api_url": args.ao_api_url,
+                    "ao_api_host": args.ao_api_host,
                     "ao_api_token": args.ao_token,
                     "ao_demo_ref": args.ao_demo_ref,
                     "ao_aap_credential_id": args.ao_credential_id,

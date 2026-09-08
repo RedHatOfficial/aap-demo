@@ -134,7 +134,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
 | `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
-| `AO_SYNC_API_URL` | cluster-local AO backend URL | AO API URL passed to the AAP sync job |
+| `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |
 
 When AO and AAP are wired, the addon creates the `AAP Demo Control Plane` AAP project
 and `Sync AO Workflows from TMM` job template. The job downloads the pinned workflow

@@ -86,6 +86,7 @@
     method: GET
     headers:
       Authorization: "Bearer {{ ao_api_token }}"
+      Host: "{{ ao_api_host }}"
     validate_certs: false
     return_content: true
   register: __ao_existing_workflows
@@ -106,6 +107,7 @@
     headers:
       Authorization: "Bearer {{ ao_api_token }}"
       Content-Type: application/json
+      Host: "{{ ao_api_host }}"
     body_format: json
     body: "{{ __ao_payload }}"
     status_code: [200, 201]
@@ -120,6 +122,7 @@
     headers:
       Authorization: "Bearer {{ ao_api_token }}"
       Content-Type: application/json
+      Host: "{{ ao_api_host }}"
     body_format: json
     body:
       description: "{{ __ao_payload.description }}"
