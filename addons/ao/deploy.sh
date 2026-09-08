@@ -693,9 +693,10 @@ sync_ao_demos() {
 AO_AAP_SYNC_RAN=0
 
 provision_aap_demos() {
-  local _aap_route _aap_token _ao_namespace _ao_token _ao_credential _ao_integration
+  local _aap_route _ao_route _aap_token _ao_namespace _ao_token _ao_credential _ao_integration
   local -a _provision_args
   _aap_route=$(aap_gateway_route_host)
+  _ao_route=$(wire_ao_route_host 2>/dev/null || true)
   _ao_token=$(wire_ao_login_token 2>/dev/null || true)
   _ao_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
   _ao_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
@@ -714,7 +715,7 @@ provision_aap_demos() {
   if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
     _provision_args+=(
       --ao-api-url "${AO_SYNC_API_URL:-https://router-internal-default.openshift-ingress.svc.cluster.local/api/v1}"
-      --ao-api-host "$_route"
+      --ao-api-host "$_ao_route"
       --ao-token "$_ao_token"
       --ao-credential-id "$_ao_credential"
       --ao-integration-id "$_ao_integration"
