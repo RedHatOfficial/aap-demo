@@ -732,6 +732,47 @@ postgres_database_exists() {
     "SELECT 1 FROM pg_database WHERE datname='${_db}'" 2>/dev/null | grep -qx 1
 }
 
+reset_ao_postgres_storage() {
+  local _pod _pods _i
+
+  kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
+  kubectl wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" \
+    --timeout=180s 2>/dev/null || true
+
+  # CNPG can leave the old primary terminating while its PVC is being
+  # released. Do not recreate the cluster until every old pod is gone.
+  _pods=$(kubectl get pods -n "$NAMESPACE" \
+    -l cnpg.io/cluster=orchestrator-postgres -o name 2>/dev/null || true)
+  for _pod in $_pods; do
+    kubectl delete "$_pod" -n "$NAMESPACE" --wait=false 2>/dev/null || true
+  done
+  for _i in $(seq 1 90); do
+    if ! kubectl get pods -n "$NAMESPACE" \
+      -l cnpg.io/cluster=orchestrator-postgres --no-headers 2>/dev/null \
+      | grep -q .; then
+      break
+    fi
+    sleep 2
+  done
+  _pods=$(kubectl get pods -n "$NAMESPACE" \
+    -l cnpg.io/cluster=orchestrator-postgres -o name 2>/dev/null || true)
+  for _pod in $_pods; do
+    echo "  Force-removing stale PostgreSQL pod ${_pod#pod/}..."
+    kubectl delete "$_pod" -n "$NAMESPACE" --grace-period=0 --force \
+      2>/dev/null || true
+  done
+
+  if kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
+    kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" \
+      --wait=false 2>/dev/null || true
+    if ! kubectl wait --for=delete pvc/orchestrator-postgres-1 \
+      -n "$NAMESPACE" --timeout=180s 2>/dev/null; then
+      echo "ERROR: PostgreSQL PVC did not finish deleting; refusing to recreate AO." >&2
+      exit 1
+    fi
+  fi
+}
+
 ensure_postgres_database() {
   local _db="$1"
   local _pod
@@ -1025,9 +1066,7 @@ if [ -n "$FORCE" ] || [ -n "$_legacy_secret" ]; then
   if kubectl get cluster orchestrator-postgres -n "$NAMESPACE" &>/dev/null \
     || kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
     echo "  Resetting postgres cluster for fresh init..."
-    kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
-    kubectl wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || true
-    kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
+    reset_ao_postgres_storage
   fi
 fi
 
