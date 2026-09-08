@@ -854,8 +854,16 @@ link_ao_pull_secrets_to_operator() {
 }
 
 deploy_ao_instance() {
-  kubectl delete secret automation-orchestrator-initial-admin-password \
-    -n "$NAMESPACE" 2>/dev/null || true
+  # The initial admin Secret is only consumed during first database
+  # initialization. Keep it in place when PostgreSQL is reused, otherwise a
+  # normal re-enable would publish a new password that does not match AO's
+  # existing admin record. A forced reinstall resets PostgreSQL above, so it
+  # must remove the old bootstrap Secret and let the operator generate a new
+  # one for the fresh database.
+  if [ -n "$FORCE" ]; then
+    kubectl delete secret automation-orchestrator-initial-admin-password \
+      -n "$NAMESPACE" 2>/dev/null || true
+  fi
 
   echo "Creating AutomationOrchestrator instance (aapctl GitOps CR)..."
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
