@@ -51,6 +51,7 @@ def items(payload: Any) -> list[dict[str, Any]]:
 def normalize(
     document: dict[str, Any],
     aap_credential_id: str,
+    aap_integration_id: str | None = None,
     fallback_name: str | None = None,
     agent_credential_id: str | None = None,
 ) -> dict[str, Any]:
@@ -85,6 +86,11 @@ def normalize(
             # Always bind AAP nodes to the credential created by aap-demo. The
             # upstream exports may contain a valid-looking UUID from another AO.
             parameters["credential_id"] = aap_credential_id
+            if aap_integration_id:
+                # AO keeps the runtime credential and the selected AAP
+                # integration as separate fields. Set both so the workflow
+                # builder opens with the aap-demo AAP integration selected.
+                parameters["integration_id"] = aap_integration_id
             if isinstance(parameters.get("job_template_id"), str) and parameters["job_template_id"].startswith(("YOUR_", "REPLACE_WITH_")):
                 parameters.pop("job_template_id")
 
@@ -114,7 +120,13 @@ def import_workflows(args: argparse.Namespace) -> int:
     imported = 0
     for source, raw_name in zip(sources, raw_names):
         document = json.loads(source.read_text())
-        workflow = normalize(document, args.aap_credential_id, source.stem, args.agent_credential_id)
+        workflow = normalize(
+            document,
+            args.aap_credential_id,
+            args.aap_integration_id,
+            source.stem,
+            args.agent_credential_id,
+        )
         name = workflow.get("name") or source.stem
         if name_counts.get(raw_name, 0) > 1 and source.stem.endswith("-legacy"):
             name = f"{name} (legacy)"
@@ -156,6 +168,7 @@ def main() -> int:
     parser.add_argument("--token", required=True)
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--aap-credential-id", required=True)
+    parser.add_argument("--aap-integration-id")
     parser.add_argument("--agent-credential-id")
     parser.add_argument("--project-id")
     args = parser.parse_args()

@@ -626,7 +626,7 @@ show_access_info() {
 }
 
 sync_ao_demos() {
-  local _route _token _aap_credential _project _ao_namespace
+  local _route _token _aap_credential _aap_integration _project _ao_namespace
   local -a _import_args
   _route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
   [ -n "$_route" ] || return 0
@@ -639,8 +639,9 @@ sync_ao_demos() {
   source "${REPO_ROOT}/includes/addon-wire.sh"
   _token=$(wire_ao_login_token 2>/dev/null || true)
   _aap_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _aap_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
   _project=$(wire_ao_default_project_id 2>/dev/null || true)
-  if [ -z "$_token" ] || [ -z "$_aap_credential" ]; then
+  if [ -z "$_token" ] || [ -z "$_aap_credential" ] || [ -z "$_aap_integration" ]; then
     echo "  ⚠ AO demo synchronization deferred (AO credentials not ready)"
     return 0
   fi
@@ -650,6 +651,7 @@ sync_ao_demos() {
     --token "$_token"
     --source-dir "${SCRIPT_DIR}/demos"
     --aap-credential-id "$_aap_credential"
+    --aap-integration-id "$_aap_integration"
   )
   if [ -n "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
     _import_args+=(--agent-credential-id "$AO_AGENT_CREDENTIAL_ID")

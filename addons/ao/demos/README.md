@@ -7,7 +7,8 @@ commit `a1cc1a1482a42a94488a3f9c36aeb31eea9e36a1`.
 `aap-demo enable ao` synchronizes every JSON file in this directory after the AO,
 AAP, and MCP integrations are ready. Synchronization is idempotent and updates an
 existing workflow by name. At import time, AAP job-template nodes receive the
-auto-wired AAP credential, old `config` exports are upgraded to `parameters`, and
+auto-wired AAP credential and `aap-demo AAP` integration, old `config` exports are
+upgraded to `parameters`, and
 agent nodes with empty tool selections use all tools from the auto-wired MCP
 integration.
 
