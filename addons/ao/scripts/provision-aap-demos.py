@@ -162,6 +162,10 @@ def main() -> int:
             "playbook": CONTROL_PLAYBOOK,
             "ask_variables_on_launch": True,
         }
+        if inventory_id:
+            control_template_payload["inventory"] = inventory_id
+        else:
+            control_template_payload["ask_inventory_on_launch"] = True
         if control_template:
             control_template_id = control_template["id"]
             api.request(f"/job_templates/{control_template_id}/", "PATCH", control_template_payload)
