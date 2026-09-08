@@ -594,6 +594,31 @@ print(json.dumps({
   echo "✓ AO SSRF allowlist includes ${_aap_host}"
 }
 
+allow_aap_to_ao_backend() {
+  kubectl apply -f - <<EOF >/dev/null
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: automation-orchestrator-allow-aap
+  namespace: ${NAMESPACE}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: automation-orchestrator
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ${AAP_NAMESPACE}
+      ports:
+        - protocol: TCP
+          port: 8000
+EOF
+}
+
 show_access_info() {
   local AO_ROUTE PASS_SECRET AO_PASSWORD
   AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
@@ -1017,6 +1042,7 @@ if [ -z "$FORCE" ]; then
     echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
     echo ""
     configure_ao_local_aap_access
+    allow_aap_to_ao_backend
     show_access_info
     if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
       # shellcheck source=../../includes/addon-wire.sh
@@ -1365,6 +1391,7 @@ if [ -z "${_ao_route:-}" ]; then
 fi
 echo ""
 configure_ao_local_aap_access
+allow_aap_to_ao_backend
 show_access_info
 
 # Wire AO ↔ AAP and MCP when deploy.sh is invoked directly (not via aap-demo enable).
