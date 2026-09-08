@@ -44,18 +44,25 @@ It does not install APME with Helm, an OpenShift Template, or a custom gateway m
 
 ### Integration with the portal
 
-The portal is an independent deployment. When it is colocated in the `apme` namespace, its APME
-client uses the operator-managed gateway service:
+The portal is an independent deployment in its own namespace. The supported multi-namespace
+layout is:
 
-`http://apme-gateway:8080`
+- Portal namespace: `redhat-rhaap-portal`
+- APME namespace: `apme`
+- APME operator namespace: `apme-operator-system`
+
+The portal APME client uses the namespace-qualified operator-managed gateway service:
+
+`http://apme-gateway.apme.svc:8080`
 
 The portal deployment also registers the repository scaffolder template from the repository in
 the Backstage catalog. The template is mounted through the `apme-scaffolder-templates` ConfigMap
 and configured as a file catalog location with an allow rule for the `Template` kind.
 
-Colocating the portal and APME is the default because the APME NetworkPolicy permits gateway
-traffic from workloads in the same namespace. A cross-namespace deployment requires an explicit
-network-policy change and a namespace-qualified service address.
+This layout keeps the portal and APME lifecycles independent while allowing the portal to consume
+the APME gateway over cluster DNS. The deployment must permit ingress from the portal namespace to
+the APME gateway; when a NetworkPolicy restricts ingress, an explicit policy allowing traffic from
+`redhat-rhaap-portal` is required.
 
 ### Requirements
 
@@ -69,6 +76,9 @@ The operator-only path requires:
 
 The portal integration additionally requires the portal prerequisites, AAP access, and
 `mikefarah/yq` for catalog configuration.
+
+Multi-namespace connectivity additionally requires cluster DNS resolution for
+`apme-gateway.apme.svc` and network-policy permission from `redhat-rhaap-portal` to `apme`.
 
 ### Validation and cleanup
 
@@ -100,7 +110,7 @@ such as `redhat-rhaap-portal-redhat-rhaap-portal.<domain>`.
 - The operator release URL tracks the upstream latest release unless explicitly pinned later
 - The upstream sample is fetched at deployment time, so GitHub availability is required
 - Route host customization is required because the upstream sample leaves the host unset
-- Portal and APME must share a namespace by default because of the APME NetworkPolicy
+- Cross-namespace network policy must be maintained between the portal and APME namespaces
 - Existing stale installations can produce misleading status output or route conflicts
 
 ### Neutral
