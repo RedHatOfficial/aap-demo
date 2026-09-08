@@ -55,6 +55,13 @@ implemented by the upstream Ansible playbooks running under AAP governance. The
 importer supplies the local AAP credential and upgrades older export formats. Set
 `AO_IMPORT_DEMOS=0` to deploy AO without importing the demos.
 
+As part of the same step, AAP is configured with an `AAP Orchestrator Demos`
+project pointing at the upstream demo repository and 17 idempotent job templates
+for its certificate, disk, CVE, ServiceNow, and ticket-enrichment playbooks. The
+templates use SCM update-on-launch, so the playbooks are synchronized and executed
+by AAP. The multi-OS cloud workflow continues to use the existing `ansible/product-demos`
+cloud templates when the product-demos addon is enabled.
+
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
 Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
 the CoreDNS route rewrite if MicroShift's DNS operator has dropped it.

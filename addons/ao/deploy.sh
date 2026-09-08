@@ -660,6 +660,22 @@ sync_ao_demos() {
   python3 "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" || true
 }
 
+provision_aap_demos() {
+  local _aap_route _aap_token _ao_namespace
+  _aap_route=$(aap_gateway_route_host)
+  _ao_namespace="$NAMESPACE"
+  NAMESPACE="$AAP_NAMESPACE"
+  _aap_token=$(wire_aap_gateway_token "aap-demo AO template provisioning" write 2>/dev/null || true)
+  NAMESPACE="$_ao_namespace"
+  if [ -z "$_aap_route" ] || [ -z "$_aap_token" ]; then
+    echo "  ⚠ AAP demo template provisioning deferred (AAP credentials not ready)"
+    return 0
+  fi
+  python3 "${SCRIPT_DIR}/scripts/provision-aap-demos.py" \
+    --route "$_aap_route" \
+    --token "$_aap_token" || true
+}
+
 AO_PULL_SECRET_NAME="${AO_PULL_SECRET_NAME:-automation-orchestrator-pull-secret}"
 
 cnpg_database_crd_available() {
@@ -930,6 +946,7 @@ if [ -z "$FORCE" ]; then
       NAMESPACE="$AO_NAMESPACE"
     fi
     if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
+      provision_aap_demos
       sync_ao_demos
     fi
     exit 0
@@ -1283,5 +1300,6 @@ fi
 # workflow nodes launch AAP job templates, so playbooks remain executed and
 # governed by AAP rather than being run directly by this addon.
 if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
+  provision_aap_demos
   sync_ao_demos
 fi
