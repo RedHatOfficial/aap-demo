@@ -48,7 +48,12 @@ def items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def normalize(document: dict[str, Any], aap_credential_id: str, fallback_name: str | None = None) -> dict[str, Any]:
+def normalize(
+    document: dict[str, Any],
+    aap_credential_id: str,
+    fallback_name: str | None = None,
+    agent_credential_id: str | None = None,
+) -> dict[str, Any]:
     workflow = dict(document)
     workflow.setdefault("schema_version", "2.0.0")
     if fallback_name:
@@ -70,10 +75,16 @@ def normalize(document: dict[str, Any], aap_credential_id: str, fallback_name: s
                 parameters.pop("tool_selections", None)
             elif "tool_selection_strategy" not in parameters:
                 parameters["tool_selection_strategy"] = "ALL"
+            # Upstream exports contain environment-specific LLM credential IDs.
+            # AO validates those strings but rejects unknown IDs on create.
+            if agent_credential_id:
+                parameters["credential_id"] = agent_credential_id
+            else:
+                parameters.pop("credential_id", None)
         elif node.get("type") == "aap_job_template":
-            credential = parameters.get("credential_id")
-            if not credential or (isinstance(credential, str) and credential.startswith(("YOUR_", "REPLACE_WITH_"))):
-                parameters["credential_id"] = aap_credential_id
+            # Always bind AAP nodes to the credential created by aap-demo. The
+            # upstream exports may contain a valid-looking UUID from another AO.
+            parameters["credential_id"] = aap_credential_id
             if isinstance(parameters.get("job_template_id"), str) and parameters["job_template_id"].startswith(("YOUR_", "REPLACE_WITH_")):
                 parameters.pop("job_template_id")
 
@@ -88,12 +99,26 @@ def import_workflows(args: argparse.Namespace) -> int:
     if not project_id:
         raise RuntimeError("Automation Orchestrator has no project to receive demo workflows")
 
-    existing = {w.get("name"): w for w in items(request(base, args.token, "GET", "/workflows?limit=100"))}
+    existing = items(request(base, args.token, "GET", "/workflows?limit=100"))
+    existing_by_name = {w.get("name"): w for w in existing}
+    existing_by_source = {
+        w.get("labels", {}).get("source_file"): w
+        for w in existing
+        if w.get("labels", {}).get("source_file")
+    }
+    sources = sorted(Path(args.source_dir).glob("*.json"))
+    raw_names = []
+    for source in sources:
+        raw_names.append(json.loads(source.read_text()).get("name") or source.stem)
+    name_counts = {name: raw_names.count(name) for name in set(raw_names)}
     imported = 0
-    for source in sorted(Path(args.source_dir).glob("*.json")):
+    for source, raw_name in zip(sources, raw_names):
         document = json.loads(source.read_text())
-        workflow = normalize(document, args.aap_credential_id, source.stem)
+        workflow = normalize(document, args.aap_credential_id, source.stem, args.agent_credential_id)
         name = workflow.get("name") or source.stem
+        if name_counts.get(raw_name, 0) > 1 and source.stem.endswith("-legacy"):
+            name = f"{name} (legacy)"
+        workflow["name"] = name
         payload = {
             "name": name,
             "description": workflow.get("description"),
@@ -105,7 +130,7 @@ def import_workflows(args: argparse.Namespace) -> int:
             "workflow_definition": workflow,
             "project_id": project_id,
         }
-        current = existing.get(name)
+        current = existing_by_source.get(source.name) or existing_by_name.get(name)
         if current:
             request(base, args.token, "PATCH", f"/workflows/{current['id']}", {
                 "description": payload["description"],
@@ -116,7 +141,8 @@ def import_workflows(args: argparse.Namespace) -> int:
             action = "updated"
         else:
             created = request(base, args.token, "POST", "/workflows", payload)
-            existing[name] = created
+            existing_by_name[name] = created
+            existing_by_source[source.name] = created
             action = "imported"
         print(f"  ✓ {action}: {name}")
         imported += 1
@@ -130,6 +156,7 @@ def main() -> int:
     parser.add_argument("--token", required=True)
     parser.add_argument("--source-dir", required=True)
     parser.add_argument("--aap-credential-id", required=True)
+    parser.add_argument("--agent-credential-id")
     parser.add_argument("--project-id")
     args = parser.parse_args()
     try:

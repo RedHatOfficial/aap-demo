@@ -651,6 +651,9 @@ sync_ao_demos() {
     --source-dir "${SCRIPT_DIR}/demos"
     --aap-credential-id "$_aap_credential"
   )
+  if [ -n "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
+    _import_args+=(--agent-credential-id "$AO_AGENT_CREDENTIAL_ID")
+  fi
   if [ -n "$_project" ]; then
     _import_args+=(--project-id "$_project")
   fi

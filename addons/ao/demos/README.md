@@ -12,6 +12,8 @@ agent nodes with empty tool selections use all tools from the auto-wired MCP
 integration.
 
 The upstream demos that call ServiceNow, Lightspeed, or an LLM still require those
-external integrations and credentials to be configured in AO. The AAP and MCP
-configuration used by the demos is created automatically from the local `aap-demo`
-deployment; no token is stored in this directory.
+external integrations and credentials to be configured in AO. Environment-specific
+LLM credential IDs are omitted unless `AO_AGENT_CREDENTIAL_ID` is set; this avoids
+importing stale IDs from another AO instance. The AAP and MCP configuration used by
+the demos is created automatically from the local `aap-demo` deployment; no token is
+stored in this directory.
