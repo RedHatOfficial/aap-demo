@@ -36,6 +36,15 @@
         return_content: true
       register: __ao_projects
       no_log: true
+      failed_when: false
+
+    - name: Validate AO project lookup
+      ansible.builtin.assert:
+        that:
+          - __ao_projects.status | default(0) == 200
+        fail_msg: >-
+          AO project lookup failed from AAP (status={{ __ao_projects.status | default('unreachable') }};
+          error={{ __ao_projects.msg | default('unknown error') }}).
 
     - name: Select the target AO project
       ansible.builtin.set_fact:
