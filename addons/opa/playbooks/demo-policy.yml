@@ -1,0 +1,99 @@
+---
+- name: Demo OPA Policy Enforcement
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
+    aap_host: "{{ lookup('env', 'CONTROLLER_HOST') }}"
+    aap_username: "{{ lookup('env', 'CONTROLLER_USERNAME') }}"
+    aap_password: "{{ lookup('env', 'CONTROLLER_PASSWORD') }}"
+    policy_to_demo: "{{ policy_name | default('') }}"
+    target_organization: "{{ organization_name | default('Policy as Code') }}"
+
+  tasks:
+    - name: Get list of loaded policies from OPA
+      ansible.builtin.uri:
+        url: "{{ opa_server }}/v1/policies"
+        method: GET
+        validate_certs: false
+      register: loaded_policies
+
+    - name: Display available policies
+      ansible.builtin.debug:
+        msg: "Available policies: {{ loaded_policies.json.result | map(attribute='id') | list }}"
+
+    - name: Validate policy selection
+      ansible.builtin.fail:
+        msg: "Policy '{{ policy_to_demo }}' is not loaded in OPA. Available: {{ loaded_policies.json.result | map(attribute='id') | list }}"
+      when:
+        - policy_to_demo != ''
+        - policy_to_demo not in (loaded_policies.json.result | map(attribute='id') | list)
+
+    - name: Create test job template based on selected policy
+      block:
+        - name: Create test job template for superuser policy
+          awx.awx.job_template:
+            name: "POLICY TEST - {{ policy_to_demo }}"
+            description: "Test job template to demonstrate '{{ policy_to_demo }}' policy enforcement"
+            job_type: run
+            organization: "{{ target_organization }}"
+            inventory: "OPA Localhost"
+            project: "Policy as Code - Playbooks"
+            playbook: "addons/opa/playbooks/test-policies.yml"
+            state: present
+            controller_host: "{{ aap_host }}"
+            controller_username: "{{ aap_username }}"
+            controller_password: "{{ aap_password }}"
+            validate_certs: false
+          when: policy_to_demo == 'superuser_allowed_false'
+
+        - name: Create test job template for naming validation
+          awx.awx.job_template:
+            name: "InvalidName_{{ 999 | random }}"
+            description: "This job template name violates the jt_naming_validation policy"
+            job_type: run
+            organization: "{{ target_organization }}"
+            inventory: "OPA Localhost"
+            project: "Policy as Code - Playbooks"
+            playbook: "addons/opa/playbooks/test-policies.yml"
+            state: present
+            controller_host: "{{ aap_host }}"
+            controller_username: "{{ aap_username }}"
+            controller_password: "{{ aap_password }}"
+            validate_certs: false
+          when: policy_to_demo == 'jt_naming_validation'
+          register: naming_test
+          ignore_errors: true
+
+        - name: Display policy enforcement result
+          ansible.builtin.debug:
+            msg: |
+              Policy Demo: {{ policy_to_demo }}
+
+              Result: {{ 'DENIED by OPA policy' if naming_test.failed | default(false) else 'ALLOWED (or policy not triggered)' }}
+
+              This demonstrates how OPA policies enforce rules on AAP resources.
+          when: policy_to_demo == 'jt_naming_validation'
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          Policy Demo Complete!
+
+          Policy tested: {{ policy_to_demo }}
+          OPA Server: {{ opa_server }}
+          Target Organization: {{ target_organization }}
+
+          Check AAP UI for created test resources and policy enforcement results.
+      when: policy_to_demo != ''
+
+    - name: No policy selected
+      ansible.builtin.debug:
+        msg: |
+          No policy selected for demo.
+
+          Available policies in OPA:
+          {{ loaded_policies.json.result | map(attribute='id') | list | to_nice_yaml }}
+
+          Run this template again and select a policy to demonstrate.
+      when: policy_to_demo == ''
