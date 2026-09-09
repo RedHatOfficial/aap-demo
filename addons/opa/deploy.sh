@@ -424,6 +424,9 @@ create_policy_demo_survey() {
     choices_json='["superuser_allowed_false","jt_naming_validation","github_repo_validation","maintenance_window","extra_vars_validation","extra_vars_allowlist","restrict_inv_use_to_org","project_scm_branch","global_credential_allowed_false","team_based_extra_vars_restriction","allowed_false","mismatch_prefix_allowed_false"]'
   fi
 
+  # Add "REMOVE" option to allow users to clear the policy from the organization
+  choices_json=$(echo "$choices_json" | jq '. + ["REMOVE"]')
+
   # Create survey specification with dynamic choices
   local survey_spec
   survey_spec=$(jq -n \
@@ -459,11 +462,11 @@ create_policy_demo_survey() {
       ]
     }')
 
-  # Enable survey on the template
+  # Enable survey on the template (disable extra vars prompt)
   curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     -X PATCH \
     -H "Content-Type: application/json" \
-    -d '{"survey_enabled": true, "ask_variables_on_launch": true}' \
+    -d '{"survey_enabled": true, "ask_variables_on_launch": false}' \
     "${AAP_API}/job_templates/${template_id}/" \
     >/dev/null 2>&1
 

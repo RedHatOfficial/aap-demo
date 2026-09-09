@@ -27,64 +27,96 @@
         msg: "Policy '{{ policy_to_demo }}' is not loaded in OPA. Available: {{ loaded_policies.json.result | map(attribute='id') | list }}"
       when:
         - policy_to_demo != ''
+        - policy_to_demo != 'REMOVE'
         - policy_to_demo not in (loaded_policies.json.result | map(attribute='id') | list)
 
-    - name: Create test job template based on selected policy
-      block:
-        - name: Create test job template for superuser policy
-          awx.awx.job_template:
-            name: "POLICY TEST - {{ policy_to_demo }}"
-            description: "Test job template to demonstrate '{{ policy_to_demo }}' policy enforcement"
-            job_type: run
-            organization: "{{ target_organization }}"
-            inventory: "OPA Localhost"
-            project: "Policy as Code - Playbooks"
-            playbook: "addons/opa/playbooks/test-policies.yml"
-            state: present
-            controller_host: "{{ aap_host }}"
-            controller_username: "{{ aap_username }}"
-            controller_password: "{{ aap_password }}"
-            validate_certs: false
-          when: policy_to_demo == 'superuser_allowed_false'
+    - name: Get organization details
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/organizations/?name={{ target_organization | urlencode }}"
+        method: GET
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: false
+      register: org_lookup
+      when: policy_to_demo != ''
 
-        - name: Create test job template for naming validation
-          awx.awx.job_template:
-            name: "InvalidName_{{ 999 | random }}"
-            description: "This job template name violates the jt_naming_validation policy"
-            job_type: run
-            organization: "{{ target_organization }}"
-            inventory: "OPA Localhost"
-            project: "Policy as Code - Playbooks"
-            playbook: "addons/opa/playbooks/test-policies.yml"
-            state: present
-            controller_host: "{{ aap_host }}"
-            controller_username: "{{ aap_username }}"
-            controller_password: "{{ aap_password }}"
-            validate_certs: false
-          when: policy_to_demo == 'jt_naming_validation'
-          register: naming_test
-          ignore_errors: true
+    - name: Extract organization ID
+      ansible.builtin.set_fact:
+        org_id: "{{ org_lookup.json.results[0].id }}"
+      when:
+        - policy_to_demo != ''
+        - org_lookup.json.results | length > 0
 
-        - name: Display policy enforcement result
-          ansible.builtin.debug:
-            msg: |
-              Policy Demo: {{ policy_to_demo }}
+    - name: Apply policy to organization
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
+        method: PATCH
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          opa_query_path: "aap_policy_examples/{{ policy_to_demo }}"
+        validate_certs: false
+      register: policy_applied
+      when: policy_to_demo != ''
 
-              Result: {{ 'DENIED by OPA policy' if naming_test.failed | default(false) else 'ALLOWED (or policy not triggered)' }}
+    - name: Display policy activation result
+      ansible.builtin.debug:
+        msg: |
+          ✓ Policy Applied to Organization!
 
-              This demonstrates how OPA policies enforce rules on AAP resources.
-          when: policy_to_demo == 'jt_naming_validation'
+          Organization: {{ target_organization }}
+          Policy: {{ policy_to_demo }}
+          OPA Query Path: aap_policy_examples/{{ policy_to_demo }}
+
+          This policy is now enforcing on ALL resources in the organization.
+          Try creating or modifying resources in '{{ target_organization }}' to see policy enforcement.
+
+          To remove the policy, set the policy_name survey field to 'REMOVE' and run this template again.
+      when:
+        - policy_to_demo != ''
+        - policy_to_demo != 'REMOVE'
+
+    - name: Remove policy from organization
+      ansible.builtin.uri:
+        url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
+        method: PATCH
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          opa_query_path: ""
+        validate_certs: false
+      register: policy_removed
+      when: policy_to_demo == 'REMOVE'
+
+    - name: Display policy removal result
+      ansible.builtin.debug:
+        msg: |
+          ✓ Policy Removed from Organization!
+
+          Organization: {{ target_organization }}
+
+          No OPA policies are now enforcing on this organization.
+      when: policy_to_demo == 'REMOVE'
 
     - name: Summary
       ansible.builtin.debug:
         msg: |
           Policy Demo Complete!
 
-          Policy tested: {{ policy_to_demo }}
+          {% if policy_to_demo == 'REMOVE' %}
+          Removed all OPA policies from organization: {{ target_organization }}
+          {% else %}
+          Applied policy: {{ policy_to_demo }}
+          Organization: {{ target_organization }}
           OPA Server: {{ opa_server }}
-          Target Organization: {{ target_organization }}
 
-          Check AAP UI for created test resources and policy enforcement results.
+          The policy is now enforcing. Try creating/modifying resources in this organization!
+          {% endif %}
       when: policy_to_demo != ''
 
     - name: No policy selected
