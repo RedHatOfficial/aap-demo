@@ -163,8 +163,8 @@ kubectl exec -n aap-operator $OPA_POD -- \
 Customize OPA deployment with environment variables:
 
 ```bash
-# Use specific OPA version (default: latest)
-OPA_VERSION=0.70.0-static aap-demo enable opa
+# Use specific OPA version (default: 1.20.2)
+OPA_VERSION=1.20.2 aap-demo enable opa
 
 # Use different upstream OPA examples repository
 OPA_REPO=https://github.com/myorg/custom-opa-policies aap-demo enable opa
@@ -182,7 +182,7 @@ AAP_DEMO_BRANCH=my-feature-branch aap-demo enable opa
 NAMESPACE=my-namespace aap-demo enable opa
 ```
 
-**Note:** The playbooks are stored in the aap-demo repository at `addons/opa/playbooks/`. During development, the addon uses the `feat/opa-examples` branch. This will be changed to `main` when the feature is merged.
+**Note:** The playbooks are stored in the aap-demo repository at `addons/opa/playbooks/`. The addon defaults to the `main` branch. Use `AAP_DEMO_BRANCH=feature-branch` to test development branches.
 
 ## Verification
 
