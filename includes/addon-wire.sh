@@ -117,7 +117,10 @@ wire_aap_url_for_ao() {
 
 wire_mcp_in_cluster_url() {
   local svc="${1:-aap-mcp-server}"
-  printf 'http://%s.%s.svc.cluster.local/mcp' "$svc" "$NAMESPACE"
+  local port
+  port=$(kubectl get svc "$svc" -n "$NAMESPACE" \
+    -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || echo 8086)
+  printf 'http://%s.%s.svc.cluster.local:%s/mcp' "$svc" "$NAMESPACE" "$port"
 }
 
 wire_mcp_route_host() {
@@ -267,7 +270,15 @@ wire_restore_coredns_route_rewrite() {
   corefile=$(kubectl get configmap dns-default -n openshift-dns \
     -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
   if echo "$corefile" | grep -q "router-internal-default"; then
-    return 0
+    # A crc.testing-only rewrite still leaves *.nip.io resolving to 127.0.0.1.
+    if kubectl get route -A -o jsonpath='{range .items[*]}{.spec.host}{"\n"}{end}' 2>/dev/null \
+      | grep -q 'nip.io'; then
+      if echo "$corefile" | grep -q "nip.io"; then
+        return 0
+      fi
+    else
+      return 0
+    fi
   fi
   if [ ! -f "${REPO_ROOT}/includes/crc-create.sh" ]; then
     wire_warn "CoreDNS rewrite missing and crc-create.sh was not found"
