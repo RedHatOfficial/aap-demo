@@ -648,7 +648,18 @@ create_job_templates() {
     "$org_id" \
     "$extra_vars"
 
-  # Template 4: Demo Policy Enforcement
+  # Template 4: Demo Policy Enforcement (requires AAP API credentials)
+  local aap_route
+  aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
+  local demo_extra_vars
+  demo_extra_vars=$(jq -n \
+    --arg opa_url "$opa_server_url" \
+    --arg namespace "$NAMESPACE" \
+    --arg aap_host "https://${aap_route}" \
+    --arg aap_user "${AAP_USERNAME}" \
+    --arg aap_pass "${AAP_PASSWORD}" \
+    '{opa_server: $opa_url, namespace: $namespace, aap_host: $aap_host, aap_username: $aap_user, aap_password: $aap_pass}' | jq -c '.')
+
   local demo_template_id
   demo_template_id=$(create_job_template \
     "OPA | Demo Policy" \
@@ -657,7 +668,7 @@ create_job_templates() {
     "$project_id" \
     "$inventory_id" \
     "$org_id" \
-    "$extra_vars")
+    "$demo_extra_vars")
 
   # Add survey to demo template
   if [ -n "$demo_template_id" ]; then
@@ -833,17 +844,23 @@ print_post_deploy_instructions() {
   echo ""
   echo "OPA is now configured and ready to use!"
   echo ""
-  echo "Next steps:"
+  echo "Getting Started:"
   echo ""
-  echo "1. Load example policies (via AAP UI):"
-  echo "   • Navigate to: Resources → Templates"
-  echo "   • Run job template: 'OPA | Load Example Policies'"
-  echo "   • This will load example policies from upstream repository"
+  echo "1. Load example policies:"
+  echo "   • AAP UI → Resources → Templates"
+  echo "   • Run: 'OPA | Load Example Policies'"
+  echo "   • Loads 12 example policies from: ${OPA_REPO}"
   echo ""
-  echo "2. Review policy examples and documentation:"
-  echo "   • ${OPA_REPO}"
-  echo "   • Policy examples in: aap_policy_examples/"
-  echo "   • Tests in: test_aap_policy_examples/"
+  echo "2. Demonstrate policy enforcement:"
+  echo "   • Run: 'OPA | Demo Policy'"
+  echo "   • Select a policy from the survey (dynamically populated from OPA)"
+  echo "   • The selected policy will be attached to the 'Policy as Code' organization"
+  echo "   • All resources in that organization will be subject to policy enforcement"
+  echo "   • Select 'REMOVE' to clear the policy from the organization"
+  echo ""
+  echo "3. Test policies:"
+  echo "   • Run: 'OPA | Test Policies' to list currently loaded policies"
+  echo "   • Run: 'OPA | Clear Policies' to remove all policies and reset OPA"
   echo ""
   echo "OPA Server Endpoints:"
   echo "   • External route: http://${opa_route}"
@@ -851,12 +868,15 @@ print_post_deploy_instructions() {
   echo "   • Health check: ${opa_service}/health"
   echo ""
   echo "Job Templates Created:"
-  echo "   • OPA | Load Example Policies - Load policies from upstream"
-  echo "   • OPA | Test Policies - Run policy test suite"
+  echo "   • OPA | Load Example Policies - Load 12 policies from upstream"
+  echo "   • OPA | Demo Policy - Interactive policy demonstration with survey"
+  echo "   • OPA | Test Policies - List loaded policies"
   echo "   • OPA | Clear Policies - Remove all policies"
   echo ""
-  echo "Note: The upstream repository may not include playbooks yet. You may need to"
-  echo "      create custom playbooks or load policies manually via OPA API."
+  echo "Policy Examples Documentation:"
+  echo "   • ${OPA_REPO}"
+  echo "   • Policy examples in: aap_policy_examples/"
+  echo "   • Tests in: test_aap_policy_examples/"
   echo ""
   echo "══════════════════════════════════════════════════════════════════════════════"
 }
