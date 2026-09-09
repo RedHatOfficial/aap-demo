@@ -15,7 +15,7 @@
 #   OPA_REPO           - Upstream OPA examples repo (default: ansible/example-opa-policy-for-aap)
 #   OPA_BRANCH         - Branch of upstream repo (default: main)
 #   AAP_DEMO_REPO      - AAP Demo repo containing playbooks (default: RedHatOfficial/aap-demo)
-#   AAP_DEMO_BRANCH    - Branch with playbooks (default: feat/opa-examples, change to main before PR)
+#   AAP_DEMO_BRANCH    - Branch with playbooks (default: main)
 #
 # Usage:
 #   ./deploy.sh          # Deploy OPA server and create job templates
@@ -37,8 +37,7 @@ OPA_STABLE_REF="${OPA_STABLE_REF:-main}"  # Fallback to known-good commit if nee
 
 # AAP Demo repository configuration (contains our playbooks)
 AAP_DEMO_REPO="${AAP_DEMO_REPO:-https://github.com/RedHatOfficial/aap-demo.git}"
-# TODO: Change to 'main' before merging PR - currently using feature branch for testing
-AAP_DEMO_BRANCH="${AAP_DEMO_BRANCH:-feat/opa-examples}"
+AAP_DEMO_BRANCH="${AAP_DEMO_BRANCH:-main}"
 
 # AAP API configuration (populated by init_aap_connection)
 AAP_ROUTE=""
