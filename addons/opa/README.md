@@ -1,10 +1,12 @@
 # OPA (Open Policy Agent) Addon for AAP Demo
 
-This addon enables **Policy as Code** functionality in Ansible Automation Platform (AAP) 2.5+ by deploying an Open Policy Agent (OPA) server and creating job templates for managing policy examples.
+This addon enables **Policy as Code** functionality in Ansible Automation Platform (AAP) 2.5+ by deploying an
+Open Policy Agent (OPA) server and creating job templates for managing policy examples.
 
 ## Overview
 
-Policy as Code allows AAP administrators to enforce policies on job executions using OPA and Rego policy language. Example use cases include:
+Policy as Code allows AAP administrators to enforce policies on job executions using OPA and Rego policy language.
+Example use cases include:
 
 - Enforcing maintenance windows for job execution
 - Restricting credentials to specific organizations
@@ -28,6 +30,7 @@ aap-demo enable opa
 ```
 
 This will:
+
 1. ✅ Enable `FEATURE_POLICY_AS_CODE_ENABLED` feature flag in AAP
 2. ✅ Deploy OPA server to the cluster (same namespace as AAP)
 3. ✅ Create Service and Route for OPA access
@@ -39,6 +42,7 @@ This will:
 **Good news!** The OPA server is automatically configured in AAP when you enable the addon. No manual configuration needed!
 
 The addon automatically sets:
+
 - **OPA server hostname**: `opa.aap-operator.svc.cluster.local`
 - **OPA server port**: `8181`
 - **SSL**: Disabled
@@ -78,15 +82,18 @@ The addon creates job templates for managing OPA policies from the upstream exam
 This job template downloads policy examples from:
 https://github.com/ansible/example-opa-policy-for-aap
 
-**Note:** Currently 10 of 12 example policies load successfully. The 2 failures (`maintenance_window.rego` and `mismatch_prefix_allowed_false.rego`) are due to missing `import rego.v1` or `import future.keywords` statements in the upstream repository. The upstream policies use newer Rego syntax (`if` keyword and `some x in y`) but don't include the required imports. The 10 working policies are fully functional for testing AAP Policy as Code!
+**Note:** Currently 10 of 12 example policies load successfully. The 2 failures (`maintenance_window.rego` and
+`mismatch_prefix_allowed_false.rego`) are due to missing `import rego.v1` or `import future.keywords` statements
+in the upstream repository. The upstream policies use newer Rego syntax (`if` keyword and `some x in y`) but don't
+include the required imports. The 10 working policies are fully functional for testing AAP Policy as Code!
 
 ### Job Templates Created
 
 | Template Name | Purpose |
 |---------------|---------|
-| **OPA | Load Example Policies** | Download and load example policies from upstream |
-| **OPA | Test Policies** | Run OPA policy test suite |
-| **OPA | Clear Policies** | Remove all loaded policies (reset) |
+| **OPA \| Load Example Policies** | Download and load example policies from upstream |
+| **OPA \| Test Policies** | Run OPA policy test suite |
+| **OPA \| Clear Policies** | Remove all loaded policies (reset) |
 
 ## Example Policies
 
@@ -182,7 +189,8 @@ AAP_DEMO_BRANCH=my-feature-branch aap-demo enable opa
 NAMESPACE=my-namespace aap-demo enable opa
 ```
 
-**Note:** The playbooks are stored in the aap-demo repository at `addons/opa/playbooks/`. The addon defaults to the `main` branch. Use `AAP_DEMO_BRANCH=feature-branch` to test development branches.
+**Note:** The playbooks are stored in the aap-demo repository at `addons/opa/playbooks/`. The addon defaults to the
+`main` branch. Use `AAP_DEMO_BRANCH=feature-branch` to test development branches.
 
 ## Verification
 
@@ -234,6 +242,7 @@ curl -sk "https://${AAP_ROUTE}/api/controller/v2/feature_flags_state/" | \
 ### OPA Pod Not Starting
 
 **Check pod status and logs:**
+
 ```bash
 kubectl get pods -n aap-operator -l app=opa
 kubectl logs -n aap-operator -l app=opa
@@ -241,23 +250,27 @@ kubectl describe pod -n aap-operator -l app=opa
 ```
 
 **Common issues:**
+
 - Image pull failures: Check pull secrets and network connectivity
 - Resource constraints: Check node capacity with `kubectl describe nodes`
 
 ### AAP Cannot Connect to OPA
 
 **Verify OPA service:**
+
 ```bash
 kubectl get svc opa -n aap-operator
 ```
 
 **Test connectivity from within cluster:**
+
 ```bash
 kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
   curl http://opa.aap-operator.svc.cluster.local:8181/health
 ```
 
 **Check AAP Settings:**
+
 - Ensure hostname is `opa.aap-operator.svc.cluster.local` (not external route)
 - Port should be `8181`
 - Use internal service URL for reliability
@@ -267,6 +280,7 @@ kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
 The upstream repository may not include playbooks yet. If job templates fail:
 
 1. **Check upstream repository:**
+
    ```bash
    # View repository structure
    curl -s https://api.github.com/repos/ansible/example-opa-policy-for-aap/contents/playbooks | jq '.[].name'
@@ -282,6 +296,7 @@ The upstream repository may not include playbooks yet. If job templates fail:
 ### Feature Flag Not Working
 
 **Verify AAP version supports Policy as Code:**
+
 ```bash
 kubectl get csv -n aap-operator -o jsonpath='{.items[0].spec.version}'
 ```
@@ -289,6 +304,7 @@ kubectl get csv -n aap-operator -o jsonpath='{.items[0].spec.version}'
 Policy as Code requires AAP 2.5 or later.
 
 **Restart AAP pods after enabling flag:**
+
 ```bash
 kubectl delete pod -n aap-operator -l app.kubernetes.io/component=gateway
 ```
@@ -302,6 +318,7 @@ aap-demo disable opa
 ```
 
 This will:
+
 1. Delete OPA deployment, service, and route
 2. Remove job templates and project
 3. Disable `FEATURE_POLICY_AS_CODE_ENABLED` feature flag in AAP
@@ -355,12 +372,14 @@ This will:
 
 ## License
 
-This addon deploys resources from the upstream repository which is released under **The Unlicense** (public domain). You are free to use, modify, and distribute the policies and examples.
+This addon deploys resources from the upstream repository which is released under **The Unlicense** (public domain).
+You are free to use, modify, and distribute the policies and examples.
 
 ## Support
 
 For issues with:
+
 - **aap-demo OPA addon**: Open issue in aap-demo repository
-- **OPA policy examples**: Open issue in https://github.com/ansible/example-opa-policy-for-aap
+- **OPA policy examples**: Open issue in <https://github.com/ansible/example-opa-policy-for-aap>
 - **OPA server**: Consult OPA documentation
 - **AAP Policy as Code feature**: Contact Red Hat support
