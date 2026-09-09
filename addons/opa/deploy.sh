@@ -26,6 +26,11 @@ OPA_REPO="${OPA_REPO:-https://github.com/ansible/example-opa-policy-for-aap}"
 OPA_BRANCH="${OPA_BRANCH:-main}"
 OPA_STABLE_REF="${OPA_STABLE_REF:-main}"  # Fallback to known-good commit if needed
 
+# AAP Demo repository configuration (contains our playbooks)
+AAP_DEMO_REPO="${AAP_DEMO_REPO:-https://github.com/RedHatOfficial/aap-demo.git}"
+# TODO: Change to 'main' before merging PR - currently using feature branch for testing
+AAP_DEMO_BRANCH="${AAP_DEMO_BRANCH:-feat/opa-examples}"
+
 # AAP API configuration (populated by init_aap_connection)
 AAP_ROUTE=""
 AAP_PASSWORD=""
@@ -268,8 +273,8 @@ create_opa_project() {
   local project_payload
   project_payload=$(jq -n \
     --arg name "$project_name" \
-    --arg url "https://github.com/RedHatOfficial/aap-demo.git" \
-    --arg branch "main" \
+    --arg url "$AAP_DEMO_REPO" \
+    --arg branch "$AAP_DEMO_BRANCH" \
     --argjson org_id "$org_id" \
     '{
       name: $name,
