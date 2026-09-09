@@ -80,6 +80,15 @@ AAP_SWAP_SIZE_GB=24 ./scripts/enable-temp-swap.sh
 ./scripts/enable-temp-swap.sh disable
 ```
 
+### `test-temp-swap-flow.sh`
+
+End-to-end host test (requires sudo): disable → enable → `aap-demo create` with
+`AAP_ENABLE_TEMP_SWAP`. Run in an interactive terminal:
+
+```bash
+./scripts/test-temp-swap-flow.sh
+```
+
 ## Deployment checks
 
 ### `preflight-checks.sh`
