@@ -59,9 +59,17 @@ fi
 
 echo "Deploying AAP MCP Server..."
 
-# Apply the CR with namespace and hostname substitution
-MCP_ROUTE="aap-mcp-${NAMESPACE}.apps.127.0.0.1.nip.io"
-AAP_ROUTE="aap-${NAMESPACE}.apps.127.0.0.1.nip.io"
+# Match the live AAP route domain (apps.crc.testing on current CRC, nip.io on older
+# clusters). Hardcoding nip.io leaves AO pods resolving MCP to 127.0.0.1.
+_aap_host=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)
+if [ -n "$_aap_host" ]; then
+  CLUSTER_DOMAIN="${_aap_host#*.}"
+  AAP_ROUTE="$_aap_host"
+else
+  CLUSTER_DOMAIN="apps.127.0.0.1.nip.io"
+  AAP_ROUTE="aap-${NAMESPACE}.${CLUSTER_DOMAIN}"
+fi
+MCP_ROUTE="aap-mcp-${NAMESPACE}.${CLUSTER_DOMAIN}"
 
 # MCP server validates bearer tokens by calling back to AAP. On MicroShift, pods
 # cannot reach external nip.io routes (they resolve to 127.0.0.1). Use the
@@ -75,8 +83,8 @@ else
 fi
 
 sed -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
-  -e "s|aap-mcp-aap-operator\.apps|aap-mcp-${NAMESPACE}.apps|g" \
-  -e "s|aap-aap-operator\.apps|aap-${NAMESPACE}.apps|g" \
+  -e "s|aap-mcp-aap-operator\.apps.127.0.0.1.nip.io|${MCP_ROUTE}|g" \
+  -e "s|aap-aap-operator\.apps.127.0.0.1.nip.io|${AAP_ROUTE}|g" \
   -e "s|public_base_url: .*|public_base_url: '${AAP_PUBLIC_BASE_URL}'|" \
   "${SCRIPT_DIR}/mcp-server.yaml" | kubectl apply -f -
 
