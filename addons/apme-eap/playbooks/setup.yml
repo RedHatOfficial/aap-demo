@@ -16,4 +16,4 @@
         msg: >-
           playbooks/setup.yml is deprecated. Host-side Ansible is not used for apme-eap deploy.
           Run: aap-demo enable apme-eap
-          See addons/apme-eap/README.md and docs/adr/023-apme-openshift-template.md
+          See addons/apme-eap/README.md and docs/adr/024-apme-openshift-template.md

@@ -6,7 +6,7 @@ This guide is for anyone validating the fix for
 portal OAuth login failing on default CRC/MicroShift (`*.apps.crc.testing`).
 
 **Branch under test:** `feat/apme-openshift-template`
-**Related ADR:** [ADR-023: APME OpenShift Template Deployment](../../docs/adr/023-apme-openshift-template.md)
+**Related ADR:** [ADR-024: APME OpenShift Template Deployment](../../docs/adr/024-apme-openshift-template.md)
 
 ---
 

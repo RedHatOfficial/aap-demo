@@ -1,5 +1,5 @@
 <!-- markdownlint-disable MD013 MD024 -->
-# ADR-023: APME OpenShift Template Deployment
+# ADR-024: APME OpenShift Template Deployment
 
 **Status:** Accepted
 

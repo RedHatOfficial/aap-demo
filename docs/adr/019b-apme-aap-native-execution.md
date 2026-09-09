@@ -6,7 +6,7 @@
 **Author:** Chad Ferman
 **Supersedes:** Local venv execution in ADR-019 for deploy orchestration
 
-**See also:** [ADR-023](023-apme-openshift-template.md) — deploy mechanism changed from Helm charts to OpenShift Template processing while keeping AAP job orchestration.
+**See also:** [ADR-024](024-apme-openshift-template.md) — deploy mechanism changed from Helm charts to OpenShift Template processing while keeping AAP job orchestration.
 
 ## Context
 
@@ -64,7 +64,7 @@ The implementation uses **Git SCM** for project source and **Ansible playbooks**
 **Modified:** `addons/apme-eap/deploy.sh`
 
 - AAP REST API orchestration via `lib.sh` (project, EE, job template, launch)
-- Host does not run `ansible-playbook` or create a local venv (see ADR-023 follow-up cleanup)
+- Host does not run `ansible-playbook` or create a local venv (see ADR-024 follow-up cleanup)
 - Removed dependency on `lib/aap-api.sh` (bash+curl approach)
 
 **Key Implementation Details:**

@@ -31,7 +31,7 @@ oc process -f addons/apme-eap/deploy.yaml --param-file=~/.aap-demo/apme-eap-para
 
 `aap-demo enable apme-eap` generates the param file and runs the same flow via an AAP job.
 
-See [ADR-023](../../docs/adr/023-apme-openshift-template.md) for the full decision record.
+See [ADR-024](../../docs/adr/024-apme-openshift-template.md) for the full decision record.
 
 ### Optional Route TLS
 
