@@ -572,48 +572,85 @@ create_job_templates() {
   echo "✓ Job templates created successfully"
 }
 
-delete_job_templates() {
-  echo "Removing OPA job templates and resources..."
+delete_aap_resources() {
+  echo "Removing Policy as Code organization and all resources from AAP..."
 
   init_aap_connection
 
-  # Find and delete job templates
-  local template_ids
+  # Find the organization
+  local org_name="Policy as Code"
+  local org_id
+  org_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/organizations/?name=$(jq -rn --arg n "$org_name" '$n|@uri')" 2>/dev/null \
+    | jq -r '.results[0].id // empty' 2>/dev/null || echo "")
+
+  if [ -z "$org_id" ]; then
+    echo "  No organization found: $org_name"
+    echo "✓ Nothing to clean up in AAP"
+    return 0
+  fi
+
+  echo "  Found organization: $org_name (ID: $org_id)"
+
+  # Delete job templates first
+  echo "  Deleting job templates..."
+  local template_ids template_count=0
   template_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/job_templates/?name__startswith=OPA%20%7C" 2>/dev/null \
+    "${AAP_API}/organizations/${org_id}/job_templates/" 2>/dev/null \
     | jq -r '.results[].id' 2>/dev/null || echo "")
 
   for template_id in $template_ids; do
     curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
       -X DELETE "${AAP_API}/job_templates/${template_id}/" \
-      >/dev/null 2>&1 || true
+      >/dev/null 2>&1 && ((template_count++)) || true
   done
+  [ "$template_count" -gt 0 ] && echo "    ✓ Deleted $template_count job template(s)"
 
-  # Find and delete project
-  local project_id
-  project_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/projects/?name=$(jq -rn --arg n 'OPA Example Policies' '$n|@uri')" 2>/dev/null \
-    | jq -r '.results[0].id // empty' 2>/dev/null || echo "")
+  # Delete projects
+  echo "  Deleting projects..."
+  local project_ids project_count=0
+  project_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/organizations/${org_id}/projects/" 2>/dev/null \
+    | jq -r '.results[].id' 2>/dev/null || echo "")
 
-  if [ -n "$project_id" ]; then
+  for project_id in $project_ids; do
     curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
       -X DELETE "${AAP_API}/projects/${project_id}/" \
-      >/dev/null 2>&1 || true
-  fi
+      >/dev/null 2>&1 && ((project_count++)) || true
+  done
+  [ "$project_count" -gt 0 ] && echo "    ✓ Deleted $project_count project(s)"
 
-  # Find and delete inventory
-  local inv_id
-  inv_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/inventories/?name=$(jq -rn --arg n 'OPA Localhost' '$n|@uri')" 2>/dev/null \
-    | jq -r '.results[0].id // empty' 2>/dev/null || echo "")
+  # Delete inventories
+  echo "  Deleting inventories..."
+  local inventory_ids inventory_count=0
+  inventory_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/organizations/${org_id}/inventories/" 2>/dev/null \
+    | jq -r '.results[].id' 2>/dev/null || echo "")
 
-  if [ -n "$inv_id" ]; then
+  for inventory_id in $inventory_ids; do
     curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-      -X DELETE "${AAP_API}/inventories/${inv_id}/" \
-      >/dev/null 2>&1 || true
+      -X DELETE "${AAP_API}/inventories/${inventory_id}/" \
+      >/dev/null 2>&1 && ((inventory_count++)) || true
+  done
+  [ "$inventory_count" -gt 0 ] && echo "    ✓ Deleted $inventory_count inventor(y|ies)"
+
+  # Now delete the organization itself
+  echo "  Deleting organization..."
+  local delete_result
+  delete_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X DELETE \
+    -w "%{http_code}" \
+    -o /dev/null \
+    "${AAP_API}/organizations/${org_id}/" 2>/dev/null)
+
+  if [ "$delete_result" = "204" ] || [ "$delete_result" = "202" ]; then
+    echo "    ✓ Deleted organization: $org_name"
+  else
+    echo "    ⚠ Failed to delete organization (HTTP $delete_result)"
+    echo "    Organization may need manual deletion via AAP UI"
   fi
 
-  echo "✓ Job templates and resources removed"
+  echo "✓ AAP resources cleanup completed"
 }
 
 configure_opa_settings() {
@@ -735,7 +772,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo ""
 
   clear_opa_settings
-  delete_job_templates
+  delete_aap_resources
   delete_opa_server
   disable_feature_flag
 

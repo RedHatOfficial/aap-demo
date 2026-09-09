@@ -78,6 +78,8 @@ The addon creates job templates for managing OPA policies from the upstream exam
 This job template downloads policy examples from:
 https://github.com/ansible/example-opa-policy-for-aap
 
+**Note:** Some example policies may fail to load due to OPA version compatibility (newer Rego syntax). This is expected and does not affect the addon functionality. The playbook will load all compatible policies and report which ones succeeded.
+
 ### Job Templates Created
 
 | Template Name | Purpose |
