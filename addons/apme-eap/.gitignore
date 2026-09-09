@@ -1,5 +1,6 @@
 # Generated/rendered files (created by playbooks)
 .rendered/
+apme-portal-deployment-*.md
 
 # Temp build context for pre-baked plugins image (build-plugins-image.sh)
 .build/

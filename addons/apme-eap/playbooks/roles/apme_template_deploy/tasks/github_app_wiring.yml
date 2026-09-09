@@ -1,0 +1,61 @@
+---
+# Optional GitHub App — patch portal for secrets-scm env vars
+
+- name: Patch portal Deployment for GitHub App env vars  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backstage-backend
+                env:
+                  - name: GITHUB_APP_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: secrets-scm
+                        key: github-app-id
+                        optional: true
+                  - name: GITHUB_APP_CLIENT_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: secrets-scm
+                        key: github-app-client-id
+                        optional: true
+                  - name: GITHUB_APP_CLIENT_SECRET
+                    valueFrom:
+                      secretKeyRef:
+                        name: secrets-scm
+                        key: github-app-client-secret
+                        optional: true
+                  - name: GITHUB_APP_PRIVATE_KEY
+                    valueFrom:
+                      secretKeyRef:
+                        name: secrets-scm
+                        key: github-app-private-key
+                        optional: true
+
+- name: Restart portal after GitHub App wiring  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              apme.eap.welcome.pack/githubAppWiredAt: "{{ ansible_date_time.iso8601 }}"

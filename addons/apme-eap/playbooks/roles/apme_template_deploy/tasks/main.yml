@@ -1,0 +1,108 @@
+---
+# Process deploy.yaml and apply portal + APME engine manifests
+
+- name: Validate template file exists  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_template_file }}"
+  register: apme_template_stat
+
+- name: Fail when deploy template is missing  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: "OpenShift template not found: {{ apme_template_file }}"
+  when: not apme_template_stat.stat.exists
+
+- name: Build OpenShift template parameter map  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_template_parameters:
+      NAMESPACE: "{{ openshift_project_name }}"
+      CLUSTER_ROUTER_BASE: "{{ openshift_cluster_domain }}"
+      RHAAP_URL: "{{ aap_host_url_normalized | default(aap_host_url | default(aap_host)) | regex_replace('/$', '') }}"
+      RHAAP_OAUTH_CLIENT_ID: "{{ oauth_client_id }}"
+      RHAAP_OAUTH_CLIENT_SECRET: "{{ oauth_client_secret }}"
+      RHAAP_TOKEN: "{{ aap_api_token }}"
+      PORTAL_IMAGE: "{{ portal_hub_image }}"
+      GITHUB_TOKEN: "{{ github_token | default('') }}"
+      GITHUB_OAUTH_CLIENT_ID: "{{ github_oauth_client_id | default('') }}"
+      GITHUB_OAUTH_CLIENT_SECRET: "{{ github_oauth_client_secret | default('') }}"
+      PORTAL_DB_PASSWORD: "{{ apme_portal_db_password }}"
+      PORTAL_SESSION_SECRET: "{{ apme_portal_session_secret }}"
+      ABBENAY_TOKEN: "{{ apme_abbenay_token }}"
+  no_log: true
+
+- name: Write temporary param file for oc process --local  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.copy:
+    dest: "{{ ansible_env.TMPDIR | default('/tmp') }}/apme-template-params.env"
+    mode: "0600"
+    content: |
+      {% for key, value in apme_template_parameters.items() %}
+      {{ key }}={{ value }}
+      {% endfor %}
+  no_log: true
+  register: apme_template_param_file
+
+- name: Process OpenShift template locally (MicroShift lacks Template API)  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    cmd: >-
+      oc process --local -f {{ apme_template_file }}
+      --param-file={{ apme_template_param_file.dest }}
+      -o json
+  register: apme_template_process_raw
+  changed_when: false
+  no_log: true
+
+- name: Parse processed template objects  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_template_objects: "{{ (apme_template_process_raw.stdout | from_json)['items'] }}"
+  no_log: true
+
+- name: Apply processed template objects  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+  loop: "{{ apme_template_objects }}"
+  loop_control:
+    label: "{{ item.kind }}/{{ item.metadata.name | default('cluster') }}"
+  register: apme_template_apply
+
+- name: Display template apply result  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: >-
+      Applied {{ apme_template_objects | length }} objects from template eap-portal-apme
+
+- name: Roll portal deployment to load template secrets  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    kind: Deployment
+    api_version: apps/v1
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        template:
+          metadata:
+            annotations:
+              apme.eap.welcome.pack/restartedAt: "{{ ansible_date_time.iso8601 }}"
+  when: apme_skip_openshift_secret_creation | default(true) | bool
+
+- name: Configure MicroShift portal networking  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: microshift_networking.yml
+
+- name: Apply optional Route TLS certificates  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: route_tls.yml
+  when: apme_route_tls_enabled | default(false) | bool
+
+- name: Wait for portal deployment rollout  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    cmd: >-
+      oc rollout status deployment/{{ apme_template_release_name }}
+      -n {{ openshift_project_name }} --timeout=600s
+  register: apme_portal_rollout
+  changed_when: false
+  failed_when: apme_portal_rollout.rc != 0
+  when: apme_skip_openshift_secret_creation | default(true) | bool

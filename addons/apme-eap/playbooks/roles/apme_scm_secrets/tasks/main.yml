@@ -6,7 +6,7 @@
     that:
       - github_token is defined and github_token | length > 0
     fail_msg: >-
-      configure_github_secrets is true but github_token is missing.
+      configure_github_app_secrets is true but github_token is missing.
       Provide GITHUB_TOKEN environment variable or edit {{ lookup('env', 'HOME') }}/.aap-demo/apme-eap-vars.yml
 
 - name: Check if full GitHub OAuth/App configuration is provided  # noqa: var-naming[no-role-prefix]
@@ -17,7 +17,8 @@
       (github_app_id is defined and github_app_id | length > 0) and
       (github_app_client_id is defined and github_app_client_id | length > 0) and
       (github_app_client_secret is defined and github_app_client_secret | length > 0) and
-      (github_app_private_key_path is defined and github_app_private_key_path | length > 0)
+      ((github_app_private_key_content is defined and github_app_private_key_content | length > 0) or
+        (github_app_private_key_path is defined and github_app_private_key_path | length > 0))
     }}"
 
 - name: Warn if using token-only mode  # noqa: var-naming[no-role-prefix]
@@ -28,12 +29,24 @@
       See docs/apme-eap.md for full GitHub integration setup.
   when: not github_full_config | bool
 
-- name: Read GitHub App private key (full config mode)  # noqa: var-naming[no-role-prefix]
+- name: Read GitHub App private key from host path (local execution)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.slurp:
     src: "{{ github_app_private_key_path }}"
   register: github_app_private_key_file
   no_log: true
-  when: github_full_config | bool
+  when:
+    - github_full_config | bool
+    - github_app_private_key_content is not defined or github_app_private_key_content | length == 0
+    - github_app_private_key_path is defined
+    - github_app_private_key_path | length > 0
+
+- name: Set inline private key from file slurp  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    github_app_private_key_content: "{{ github_app_private_key_file.content | b64decode }}"
+  no_log: true
+  when:
+    - github_app_private_key_file is defined
+    - github_app_private_key_file is not skipped
 
 - name: Create or update secrets-scm (token-only mode)  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
@@ -74,7 +87,7 @@
         github-app-id: "{{ github_app_id }}"
         github-app-client-id: "{{ github_app_client_id }}"
         github-app-client-secret: "{{ github_app_client_secret }}"
-        github-app-private-key: "{{ github_app_private_key_file.content | b64decode }}"
+        github-app-private-key: "{{ github_app_private_key_content }}"
         github-token: "{{ github_token }}"
   no_log: true
   when: github_full_config | bool

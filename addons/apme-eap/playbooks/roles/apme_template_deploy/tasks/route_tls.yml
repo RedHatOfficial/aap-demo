@@ -1,0 +1,35 @@
+---
+# Optional custom TLS on portal Route
+
+- name: Validate Route TLS certificate and key are present  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - apme_route_tls_certificate | length > 0
+      - apme_route_tls_key | length > 0
+    fail_msg: apme_route_tls_enabled is true but certificate or key is missing
+
+- name: Build Route TLS patch  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_route_tls_spec:
+      termination: "{{ apme_route_tls_termination | default('edge') }}"
+      certificate: "{{ apme_route_tls_certificate }}"
+      key: "{{ apme_route_tls_key }}"
+      insecureEdgeTerminationPolicy: Redirect
+      caCertificate: "{{ apme_route_tls_ca_certificate | default('') }}"
+      destinationCACertificate: "{{ apme_route_tls_destination_ca_certificate | default('') }}"
+  no_log: true
+
+- name: Patch portal Route with custom TLS  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: patched
+    api_version: route.openshift.io/v1
+    kind: Route
+    name: "{{ apme_template_release_name }}"
+    namespace: "{{ openshift_project_name }}"
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_token }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
+    definition:
+      spec:
+        tls: "{{ apme_route_tls_spec }}"
+  no_log: true
