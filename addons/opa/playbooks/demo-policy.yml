@@ -11,6 +11,24 @@
     target_organization: "{{ organization_name | default('Policy as Code') }}"
 
   tasks:
+    - name: Validate required AAP connection variables
+      ansible.builtin.fail:
+        msg: |
+          Missing required variable: {{ item }}
+
+          This playbook requires AAP API credentials to be set.
+          These should be automatically configured in the job template's extra_vars.
+
+          If you're running this manually, provide:
+            -e aap_host=https://your-aap-route.com
+            -e aap_username=admin
+            -e aap_password=your-password
+      when: (vars[item] is undefined) or (vars[item] == '')
+      loop:
+        - aap_host
+        - aap_username
+        - aap_password
+
     - name: Get list of loaded policies from OPA
       ansible.builtin.uri:
         url: "{{ opa_server }}/v1/policies"

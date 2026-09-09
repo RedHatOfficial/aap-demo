@@ -2,7 +2,7 @@
 # Deploy OPA (Open Policy Agent) for AAP Policy as Code
 # ADDON_REQUIRES_AAP=true
 #
-# Deploys an OPA server to enable Policy as Code functionality in AAP 2.5+.
+# Deploys an OPA server to enable Policy as Code functionality in AAP 2.7+.
 # Downloads deployment manifests from upstream GitHub repository and creates
 # job templates for managing policy examples.
 #
@@ -84,32 +84,7 @@ check_prerequisites() {
   echo "✓ Prerequisites satisfied"
 }
 
-enable_feature_flag() {
-  echo "Enabling Policy as Code feature flag in AAP..."
-
-  # Check if flag is already enabled
-  local current_flag
-  current_flag=$(kubectl get aap aap -n "$NAMESPACE" -o jsonpath='{.spec.feature_flags.FEATURE_POLICY_AS_CODE_ENABLED}' 2>/dev/null || echo "")
-
-  if [ "$current_flag" = "true" ]; then
-    echo "  Feature flag already enabled"
-    return 0
-  fi
-
-  # Patch AAP CR to enable feature flag
-  kubectl patch aap aap -n "$NAMESPACE" --type=merge -p '{"spec":{"feature_flags":{"FEATURE_POLICY_AS_CODE_ENABLED":true}}}' >/dev/null 2>&1
-
-  echo "✓ Feature flag enabled: FEATURE_POLICY_AS_CODE_ENABLED=true"
-}
-
-disable_feature_flag() {
-  echo "Disabling Policy as Code feature flag in AAP..."
-
-  # Remove the feature flag by setting it to null
-  kubectl patch aap aap -n "$NAMESPACE" --type=merge -p '{"spec":{"feature_flags":{"FEATURE_POLICY_AS_CODE_ENABLED":null}}}' >/dev/null 2>&1 || true
-
-  echo "✓ Feature flag disabled"
-}
+# Feature flag functions removed - no longer required in AAP 2.7+
 
 deploy_opa_server() {
   echo "Downloading OPA deployment manifest from upstream..."
@@ -889,7 +864,6 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   clear_opa_settings
   delete_aap_resources
   delete_opa_server
-  disable_feature_flag
 
   echo ""
   echo "✓ OPA addon disabled successfully"
@@ -901,7 +875,6 @@ echo "Enabling OPA addon..."
 echo ""
 
 check_prerequisites
-enable_feature_flag
 deploy_opa_server
 create_job_templates
 configure_opa_settings

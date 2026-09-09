@@ -17,7 +17,7 @@ Example use cases include:
 
 ## Prerequisites
 
-- AAP 2.5+ deployed (`aap-demo deploy`)
+- AAP 2.7+ deployed (`aap-demo deploy`)
 - OpenShift/MicroShift cluster running
 - `kubectl`, `curl`, `jq`, `base64` commands available
 
@@ -31,11 +31,10 @@ aap-demo enable opa
 
 This will:
 
-1. ✅ Enable `FEATURE_POLICY_AS_CODE_ENABLED` feature flag in AAP
-2. ✅ Deploy OPA server to the cluster (same namespace as AAP)
-3. ✅ Create Service and Route for OPA access
-4. ✅ Create job templates for policy management
-5. ✅ **Automatically configure OPA connection in AAP Settings**
+1. ✅ Deploy OPA server to the cluster (same namespace as AAP)
+2. ✅ Create Service and Route for OPA access
+3. ✅ Create job templates for policy management
+4. ✅ **Automatically configure OPA connection in AAP Settings**
 
 ## Configuration
 
