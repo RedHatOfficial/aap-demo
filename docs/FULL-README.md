@@ -43,19 +43,31 @@ The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384`
 CRC defaults to 16–24 GB of VM RAM. On a 32 GB workstation, image pulls and operator
 reconciliation can exhaust host memory even with Fedora's built-in zram swap.
 
-Before the first deploy, run the host prep script (pull secret, libvirt group, CRC setup,
-and optional temp swap):
+During interactive `aap-demo create`, you are prompted to add a temporary swap file
+before CPU and memory allocation (default yes on hosts with 36 GB RAM or less):
+
+```text
+Resource allocation for CRC VM:
+  Host: 16 CPUs, 30GB RAM (8GB swap)
+
+  Create temp swap file for deploy? [Y/n]:
+  Temp swap size in GB [16]:
+  CPUs [8]:
+  Memory in GB [16]:
+```
+
+Host prep for pull secret, libvirt, and CRC setup:
 
 ```bash
 ./scripts/local-prereq.sh
 ```
 
-Or enable swap only:
+Manual swap management (non-interactive or after deploy):
 
 ```bash
-./scripts/enable-temp-swap.sh              # 16 GB temp swap file (default)
-AAP_SWAP_SIZE_GB=24 ./scripts/enable-temp-swap.sh
-./scripts/enable-temp-swap.sh disable    # remove after deploy
+./scripts/enable-temp-swap.sh                              # 16 GB temp swap file
+AAP_ENABLE_TEMP_SWAP=true AAP_SWAP_SIZE_GB=24 aap-demo create   # scripted create
+./scripts/enable-temp-swap.sh disable                      # remove after deploy
 ```
 
 The swap file is not added to `/etc/fstab` and is safe to remove once deploy completes.

@@ -1,29 +1,24 @@
 #!/usr/bin/env bash
 # One-time host prep for local aap-demo deploy (Fedora/Linux + CRC).
 #
-# Prepares a memory-constrained Linux workstation before the first deploy:
-#   1. Optional temp swap (see scripts/enable-temp-swap.sh)
-#   2. Red Hat pull secret in ~/.aap-demo/
-#   3. libvirt group membership for CRC
-#   4. crc setup (admin helper + bundle download)
+# Prepares a Linux workstation before the first deploy:
+#   1. Red Hat pull secret in ~/.aap-demo/
+#   2. libvirt group membership for CRC
+#   3. crc setup (admin helper + bundle download)
+#
+# Temp swap is offered interactively during `aap-demo create` (alongside CPU/RAM).
+# To enable swap manually: ./scripts/enable-temp-swap.sh
 #
 # Usage:
 #   ./scripts/local-prereq.sh
-#   SKIP_TEMP_SWAP=true ./scripts/local-prereq.sh   # skip swap step
-#   AAP_SWAP_SIZE_GB=24 ./scripts/local-prereq.sh  # larger temp swap
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PATH="${HOME}/.local/bin:${PATH}"
 
 echo "=== aap-demo local prerequisites ==="
 echo ""
 
-# 1. Temporary swap for deploy bursts (optional; skip with SKIP_TEMP_SWAP=true)
-"${SCRIPT_DIR}/enable-temp-swap.sh" enable
-echo ""
-
-# 2. Pull secret
+# 1. Pull secret
 if [[ ! -f "${HOME}/.aap-demo/pull-secret.txt" ]]; then
   echo "ERROR: Missing Red Hat pull secret at ~/.aap-demo/pull-secret.txt"
   echo "  Download: https://console.redhat.com/openshift/install/pull-secret"
@@ -32,7 +27,7 @@ if [[ ! -f "${HOME}/.aap-demo/pull-secret.txt" ]]; then
 fi
 echo "✓ Pull secret found"
 
-# 3. libvirt group (needed for CRC VM)
+# 2. libvirt group (needed for CRC VM)
 if ! groups | grep -q libvirt; then
   echo "Adding ${USER} to libvirt group (requires sudo)..."
   sudo usermod -aG libvirt "${USER}"
@@ -42,7 +37,7 @@ else
   echo "✓ User is in libvirt group"
 fi
 
-# 4. CRC setup (installs crc-admin-helper, downloads bundle)
+# 3. CRC setup (installs crc-admin-helper, downloads bundle)
 if ! command -v crc &>/dev/null; then
   echo "ERROR: crc not in PATH. Install to ~/.local/bin first."
   exit 1
@@ -63,5 +58,5 @@ else
   echo "  aap-demo deploy"
 fi
 echo ""
-echo "After deploy, remove temp swap with:"
-echo "  ${SCRIPT_DIR}/enable-temp-swap.sh disable"
+echo "Temp swap is offered during aap-demo create. Manage manually with:"
+echo "  ./scripts/enable-temp-swap.sh"
