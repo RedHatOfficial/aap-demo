@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Temporary file-backed swap for aap-demo deploy bursts on memory-constrained Linux hosts.
+# Temporary swap helpers for aap-demo deploy bursts on memory-constrained hosts.
+#
+# Linux (Fedora/RHEL): creates a swap file and runs swapon.
+# macOS: reserves disk space so dynamic_pager can grow kernel swap during deploy.
 #
 # During interactive aap-demo create, you are prompted to enable temp swap alongside
 # CPU and memory allocation. Use this script to manage swap manually.
@@ -12,7 +15,7 @@
 #
 # Environment:
 #   AAP_SWAP_SIZE_GB  - swap file size in GB (default: 16)
-#   AAP_SWAP_FILE     - path to swap file (default: /swapfile-aap-demo)
+#   AAP_SWAP_FILE     - Linux: /swapfile-aap-demo; macOS: ~/.aap-demo/aap-swap-reserve
 #   SKIP_TEMP_SWAP    - set to true to skip enable
 set -euo pipefail
 

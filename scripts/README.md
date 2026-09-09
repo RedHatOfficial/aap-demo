@@ -3,23 +3,39 @@
 Utility scripts used during development and local deployment. These are not invoked
 automatically by `aap-demo` unless noted below.
 
-## Host preparation (Linux + CRC)
+## Host preparation (Linux + macOS + CRC)
 
 ### Interactive temp swap (`aap-demo create`)
 
-On Linux, the first interactive cluster create prompts for a temporary swap file
-before CPU and RAM allocation. This helps memory-constrained hosts (32 GB RAM or less)
-survive CRC image pulls and AAP operator reconciliation.
+On **Linux (Fedora/RHEL)** and **macOS**, the first interactive cluster create prompts
+for temporary swap before CPU and RAM allocation.
 
 ```text
 Resource allocation for CRC VM:
   Host: 16 CPUs, 30GB RAM (8GB swap)
 
-  Create temp swap file for deploy? [Y/n]:
+  Create temp swap for deploy? [Y/n]:
   Temp swap size in GB [16]:
   CPUs [8]:
   Memory in GB [16]:
 ```
+
+| Platform | What it does | Default path |
+|----------|--------------|--------------|
+| Fedora/RHEL (Linux) | `mkswap` + `swapon` file-backed swap | `/swapfile-aap-demo` |
+| macOS | Reserves disk for `dynamic_pager` kernel swap | `~/.aap-demo/aap-swap-reserve` |
+
+**Linux filesystem notes**
+
+- **btrfs** (Fedora default): uses `chattr +C` + `dd` (not `fallocate`)
+- **xfs/ext4** (common on RHEL): uses `fallocate`, falls back to `dd`
+- **SELinux** (RHEL): applies `swapfile_t` context when enforcing
+
+**macOS notes**
+
+macOS does not expose Linux-style `swapon`. The script reserves disk space so the
+kernel can grow swap files under memory pressure during deploy. Remove the reserve
+file after deploy to reclaim space.
 
 Non-interactive create (CI or scripted):
 
@@ -30,8 +46,8 @@ SKIP_TEMP_SWAP=true aap-demo create   # never enable swap
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AAP_SWAP_SIZE_GB` | `16` | Swap file size when enabled |
-| `AAP_SWAP_FILE` | `/swapfile-aap-demo` | Path to the swap file |
+| `AAP_SWAP_SIZE_GB` | `16` | Swap/reserve size when enabled |
+| `AAP_SWAP_FILE` | platform default (see table) | Override swap/reserve path |
 | `AAP_ENABLE_TEMP_SWAP` | `false` | Enable swap during non-interactive create |
 | `SKIP_TEMP_SWAP` | `false` | Skip swap prompt and enable |
 
@@ -63,10 +79,6 @@ AAP_SWAP_SIZE_GB=24 ./scripts/enable-temp-swap.sh
 ./scripts/enable-temp-swap.sh status
 ./scripts/enable-temp-swap.sh disable
 ```
-
-**btrfs hosts:** Fedora's default btrfs root with compression cannot use `fallocate`
-for swap files. The shared logic in `includes/temp-swap.sh` disables copy-on-write
-(`chattr +C`) and writes the file with `dd` instead.
 
 ## Deployment checks
 

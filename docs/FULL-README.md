@@ -38,13 +38,18 @@ The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384`
 - On Windows: Hyper-V enabled (OpenShift Local requirement)
 - Obtain a **Pull Secret** from the [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret)
 
-#### Linux host prep (memory-constrained systems)
+#### Host prep for memory-constrained systems (Linux + macOS)
 
 CRC defaults to 16–24 GB of VM RAM. On a 32 GB workstation, image pulls and operator
-reconciliation can exhaust host memory even with Fedora's built-in zram swap.
+reconciliation can exhaust host memory.
 
-During interactive `aap-demo create`, you are prompted to add a temporary swap file
-before CPU and memory allocation (default yes on hosts with 36 GB RAM or less):
+During interactive `aap-demo create`, you are prompted for temporary swap before CPU
+and memory allocation (default yes on hosts with 36 GB RAM or less):
+
+- **Fedora/RHEL**: creates a `swapon` file (`/swapfile-aap-demo` by default). Handles
+  btrfs (Fedora), xfs/ext4 (RHEL), and SELinux `swapfile_t`.
+- **macOS**: reserves disk at `~/.aap-demo/aap-swap-reserve` so `dynamic_pager` can
+  grow kernel swap during deploy (macOS has no Linux-style `swapon`).
 
 ```text
 Resource allocation for CRC VM:
@@ -70,9 +75,9 @@ AAP_ENABLE_TEMP_SWAP=true AAP_SWAP_SIZE_GB=24 aap-demo create   # scripted creat
 ./scripts/enable-temp-swap.sh disable                      # remove after deploy
 ```
 
-The swap file is not added to `/etc/fstab` and is safe to remove once deploy completes.
-On btrfs (Fedora default), the script handles copy-on-write and compression constraints
-automatically. See [scripts/README.md](../scripts/README.md) for details.
+Linux swap files are not added to `/etc/fstab`. macOS reserves are plain files in
+`~/.aap-demo/`. Remove both after deploy with `./scripts/enable-temp-swap.sh disable`.
+See [scripts/README.md](../scripts/README.md) for platform details.
 
 ### macOS / Linux
 
