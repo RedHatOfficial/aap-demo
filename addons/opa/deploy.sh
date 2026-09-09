@@ -33,7 +33,7 @@ ACTION="${1:-deploy}"
 OPA_VERSION="${OPA_VERSION:-1.20.2}"
 OPA_REPO="${OPA_REPO:-https://github.com/ansible/example-opa-policy-for-aap}"
 OPA_BRANCH="${OPA_BRANCH:-main}"
-OPA_STABLE_REF="${OPA_STABLE_REF:-main}"  # Fallback to known-good commit if needed
+OPA_STABLE_REF="${OPA_STABLE_REF:-main}" # Fallback to known-good commit if needed
 
 # AAP Demo repository configuration (contains our playbooks)
 AAP_DEMO_REPO="${AAP_DEMO_REPO:-https://github.com/RedHatOfficial/aap-demo.git}"
@@ -132,10 +132,10 @@ deploy_opa_server() {
   echo "Deploying OPA server (version $OPA_VERSION)..."
 
   # Apply manifest with namespace and image version substitution
-  echo "$manifest" | \
-    sed -e "s|namespace: .*|namespace: $NAMESPACE|g" \
-        -e "s|openpolicyagent/opa:.*|openpolicyagent/opa:${OPA_VERSION}|g" | \
-    kubectl apply -n "$NAMESPACE" -f - >/dev/null 2>&1
+  echo "$manifest" \
+    | sed -e "s|namespace: .*|namespace: $NAMESPACE|g" \
+      -e "s|openpolicyagent/opa:.*|openpolicyagent/opa:${OPA_VERSION}|g" \
+    | kubectl apply -n "$NAMESPACE" -f - >/dev/null 2>&1
 
   echo "  Waiting for OPA deployment to be ready..."
 
