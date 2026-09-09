@@ -11,7 +11,7 @@
 #   - kubectl, curl, jq, base64 available
 #
 # Environment Variables:
-#   OPA_VERSION        - OPA container image version (default: 0.70.0-static)
+#   OPA_VERSION        - OPA container image version (default: 1.20.2)
 #   OPA_REPO           - Upstream OPA examples repo (default: ansible/example-opa-policy-for-aap)
 #   OPA_BRANCH         - Branch of upstream repo (default: main)
 #   AAP_DEMO_REPO      - AAP Demo repo containing playbooks (default: RedHatOfficial/aap-demo)
@@ -28,7 +28,9 @@ NAMESPACE="${NAMESPACE:-aap-operator}"
 ACTION="${1:-deploy}"
 
 # Configuration
-OPA_VERSION="${OPA_VERSION:-0.70.0-static}"
+# Note: Using latest stable OPA. Some upstream example policies fail due to
+# missing 'import rego.v1' statements (upstream issue, not version problem).
+OPA_VERSION="${OPA_VERSION:-1.20.2}"
 OPA_REPO="${OPA_REPO:-https://github.com/ansible/example-opa-policy-for-aap}"
 OPA_BRANCH="${OPA_BRANCH:-main}"
 OPA_STABLE_REF="${OPA_STABLE_REF:-main}"  # Fallback to known-good commit if needed

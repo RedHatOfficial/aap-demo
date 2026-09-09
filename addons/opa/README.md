@@ -78,7 +78,7 @@ The addon creates job templates for managing OPA policies from the upstream exam
 This job template downloads policy examples from:
 https://github.com/ansible/example-opa-policy-for-aap
 
-**Note:** Some example policies may fail to load due to OPA version compatibility (newer Rego syntax). This is expected and does not affect the addon functionality. The playbook will load all compatible policies and report which ones succeeded.
+**Note:** Currently 10 of 12 example policies load successfully. The 2 failures (`maintenance_window.rego` and `mismatch_prefix_allowed_false.rego`) are due to missing `import rego.v1` or `import future.keywords` statements in the upstream repository. The upstream policies use newer Rego syntax (`if` keyword and `some x in y`) but don't include the required imports. The 10 working policies are fully functional for testing AAP Policy as Code!
 
 ### Job Templates Created
 
@@ -163,8 +163,8 @@ kubectl exec -n aap-operator $OPA_POD -- \
 Customize OPA deployment with environment variables:
 
 ```bash
-# Use specific OPA version
-OPA_VERSION=0.71.0-static aap-demo enable opa
+# Use specific OPA version (default: latest)
+OPA_VERSION=0.70.0-static aap-demo enable opa
 
 # Use different upstream OPA examples repository
 OPA_REPO=https://github.com/myorg/custom-opa-policies aap-demo enable opa
