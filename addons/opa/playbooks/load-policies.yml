@@ -45,7 +45,26 @@
       loop_control:
         label: "{{ item.path | basename }}"
       register: load_results
+      ignore_errors: true
+
+    - name: Count successful loads
+      ansible.builtin.set_fact:
+        successful_count: "{{ load_results.results | selectattr('failed', 'undefined') | list | length }}"
+        failed_count: "{{ load_results.results | selectattr('failed', 'defined') | selectattr('failed', 'equalto', true) | list | length }}"
+
+    - name: Display failed policies
+      ansible.builtin.debug:
+        msg: "Failed to load: {{ item.item.path | basename }} - {{ item.json.message | default('Unknown error') }}"
+      loop: "{{ load_results.results }}"
+      loop_control:
+        label: "{{ item.item.path | basename }}"
+      when: item.failed | default(false)
 
     - name: Summary
       ansible.builtin.debug:
-        msg: "Successfully loaded {{ load_results.results | length }} policies to OPA server at {{ opa_server }}"
+        msg: |
+          Successfully loaded {{ successful_count }} of {{ load_results.results | length }} policies to OPA server.
+          {% if failed_count | int > 0 %}
+          {{ failed_count }} policies failed to load (likely due to OPA version compatibility).
+          {% endif %}
+          OPA server: {{ opa_server }}
