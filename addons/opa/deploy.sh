@@ -403,6 +403,81 @@ create_localhost_inventory() {
   printf '%s\n' "$inv_id"
 }
 
+create_policy_demo_survey() {
+  local template_id="$1"
+
+  echo "  Adding survey to demo template..." >&2
+
+  # Query OPA for loaded policies
+  local opa_server_url="http://opa.${NAMESPACE}.svc.cluster.local:8181"
+  local loaded_policies
+  loaded_policies=$(curl -sk "${opa_server_url}/v1/policies" 2>/dev/null | jq -r '.result[].id' 2>/dev/null || echo "")
+
+  # Build choices array from loaded policies
+  local choices_json="[]"
+  if [ -n "$loaded_policies" ]; then
+    choices_json=$(echo "$loaded_policies" | jq -R -s 'split("\n") | map(select(length > 0))')
+    echo "    Found $(echo "$loaded_policies" | wc -w | tr -d ' ') policies in OPA" >&2
+  else
+    echo "    ⚠ Could not query OPA, using default policy list" >&2
+    # Fallback to known policies
+    choices_json='["superuser_allowed_false","jt_naming_validation","github_repo_validation","maintenance_window","extra_vars_validation","extra_vars_allowlist","restrict_inv_use_to_org","project_scm_branch","global_credential_allowed_false","team_based_extra_vars_restriction","allowed_false","mismatch_prefix_allowed_false"]'
+  fi
+
+  # Create survey specification with dynamic choices
+  local survey_spec
+  survey_spec=$(jq -n \
+    --argjson choices "$choices_json" \
+    '{
+      "name": "Policy Demo Survey",
+      "description": "Select a policy to demonstrate (dynamically populated from OPA)",
+      "spec": [
+        {
+          "question_name": "Policy to Demonstrate",
+          "question_description": "Choose which OPA policy you want to test",
+          "required": true,
+          "type": "multiplechoice",
+          "variable": "policy_name",
+          "min": null,
+          "max": null,
+          "default": "",
+          "choices": $choices,
+          "new_question": true
+        },
+    {
+      "question_name": "Target Organization",
+      "question_description": "Organization to test policy against",
+      "required": false,
+      "type": "text",
+      "variable": "organization_name",
+      "min": null,
+      "max": 100,
+      "default": "Policy as Code",
+      "choices": "",
+      "new_question": true
+        }
+      ]
+    }')
+
+  # Enable survey on the template
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d '{"survey_enabled": true, "ask_variables_on_launch": true}' \
+    "${AAP_API}/job_templates/${template_id}/" \
+    >/dev/null 2>&1
+
+  # Add the survey spec
+  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "$survey_spec" \
+    "${AAP_API}/job_templates/${template_id}/survey_spec/" \
+    >/dev/null 2>&1
+
+  echo "    ✓ Survey added with policy selection" >&2
+}
+
 create_job_template() {
   local name="$1"
   local description="$2"
@@ -569,6 +644,22 @@ create_job_templates() {
     "$inventory_id" \
     "$org_id" \
     "$extra_vars"
+
+  # Template 4: Demo Policy Enforcement
+  local demo_template_id
+  demo_template_id=$(create_job_template \
+    "OPA | Demo Policy" \
+    "Demonstrate OPA policy enforcement with interactive examples" \
+    "addons/opa/playbooks/demo-policy.yml" \
+    "$project_id" \
+    "$inventory_id" \
+    "$org_id" \
+    "$extra_vars")
+
+  # Add survey to demo template
+  if [ -n "$demo_template_id" ]; then
+    create_policy_demo_survey "$demo_template_id"
+  fi
 
   echo ""
   echo "✓ Job templates created successfully"
