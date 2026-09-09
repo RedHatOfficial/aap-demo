@@ -70,8 +70,10 @@ Temp swap is handled by `aap-demo create` (see above), not this script.
 
 ### `enable-temp-swap.sh`
 
-Manual swap management when you are not running interactive create, or to remove
-swap after deploy:
+`aap-demo destroy` also removes temp swap on Linux and macOS (requires sudo on
+Linux for `swapoff`).
+
+Manual swap management when you are not running interactive create:
 
 ```bash
 ./scripts/enable-temp-swap.sh

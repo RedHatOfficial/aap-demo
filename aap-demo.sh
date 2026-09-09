@@ -1927,6 +1927,28 @@ cmd_redeploy-all() {
   cmd_deploy
 }
 
+_remove_temp_swap() {
+  case "$(uname -s)" in
+    Linux | Darwin) ;;
+    *) return 0 ;;
+  esac
+
+  if [ ! -f "${SCRIPT_DIR}/includes/temp-swap.sh" ]; then
+    return 0
+  fi
+
+  # shellcheck source=includes/temp-swap.sh
+  source "${SCRIPT_DIR}/includes/temp-swap.sh"
+  echo ""
+  echo "Removing temp swap..."
+  if aap_demo_temp_swap_disable; then
+    return 0
+  fi
+  echo "  ⚠ Temp swap removal failed (sudo may be required)"
+  echo "    Run: ${SCRIPT_DIR}/scripts/enable-temp-swap.sh disable"
+  return 1
+}
+
 cmd_destroy() {
   echo ""
   printf "\033[1maap-demo destroy\033[0m - Deleting CRC cluster...\n"
@@ -1936,6 +1958,7 @@ cmd_destroy() {
   echo "  • All cluster data will be PERMANENTLY DESTROYED"
   echo "  • All PVC storage will be LOST"
   echo "  • All deployed applications will be removed"
+  echo "  • Temp swap file/reserve (if any) will be removed"
   echo "  • You will need to redeploy AAP from scratch"
   echo ""
   if [ "${QUIET:-false}" != "true" ]; then
@@ -1955,6 +1978,7 @@ cmd_destroy() {
   else
     echo "✗ CRC delete failed — config preserved"
   fi
+  _remove_temp_swap || true
 }
 
 cmd_stop() {
