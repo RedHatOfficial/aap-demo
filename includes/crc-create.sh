@@ -85,13 +85,14 @@ configure_coredns() {
   escaped_nipio=$(echo "$nipio_domain" | sed 's/\./\\./g')
   nipio_rewrite=""
   if [ "$route_domain" != "$nipio_domain" ]; then
-    nipio_rewrite=$(cat <<NIPIO_EOF
+    nipio_rewrite=$(
+      cat <<NIPIO_EOF
     rewrite stop {
         name regex (.*)\.${escaped_nipio} router-internal-default.openshift-ingress.svc.cluster.local
         answer auto
     }
 NIPIO_EOF
-)
+    )
   fi
 
   current_corefile=$(kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")

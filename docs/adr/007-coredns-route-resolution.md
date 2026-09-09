@@ -45,7 +45,7 @@ rewrite stop {
 }
 ```
 
-5. Re-apply on `aap-demo start` — router ClusterIP can change after CRC restarts
+1. Re-apply on `aap-demo start` — router ClusterIP can change after CRC restarts
 
 ### Why not static manifests?
 
