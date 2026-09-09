@@ -34,7 +34,9 @@ route hostnames to the ingress router Service** using the CoreDNS `rewrite` plug
 
 1. Wait for `router-internal-default` Service in `openshift-ingress`
 2. Detect route domain from MicroShift config (`apps.crc.testing` or custom)
-3. Patch CoreDNS Corefile with:
+3. Also rewrite `*.apps.127.0.0.1.nip.io` when that is not the cluster domain — leftover
+   MCP/addon routes still use nip.io and otherwise resolve to `127.0.0.1` inside pods
+4. Patch CoreDNS Corefile with a `rewrite` rule per domain:
 
 ```text
 rewrite stop {
@@ -43,7 +45,7 @@ rewrite stop {
 }
 ```
 
-1. Re-apply on `aap-demo start` — router ClusterIP can change after CRC restarts
+5. Re-apply on `aap-demo start` — router ClusterIP can change after CRC restarts
 
 ### Why not static manifests?
 
