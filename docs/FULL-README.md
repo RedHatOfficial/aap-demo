@@ -38,6 +38,30 @@ The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384`
 - On Windows: Hyper-V enabled (OpenShift Local requirement)
 - Obtain a **Pull Secret** from the [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret)
 
+#### Linux host prep (memory-constrained systems)
+
+CRC defaults to 16–24 GB of VM RAM. On a 32 GB workstation, image pulls and operator
+reconciliation can exhaust host memory even with Fedora's built-in zram swap.
+
+Before the first deploy, run the host prep script (pull secret, libvirt group, CRC setup,
+and optional temp swap):
+
+```bash
+./scripts/local-prereq.sh
+```
+
+Or enable swap only:
+
+```bash
+./scripts/enable-temp-swap.sh              # 16 GB temp swap file (default)
+AAP_SWAP_SIZE_GB=24 ./scripts/enable-temp-swap.sh
+./scripts/enable-temp-swap.sh disable    # remove after deploy
+```
+
+The swap file is not added to `/etc/fstab` and is safe to remove once deploy completes.
+On btrfs (Fedora default), the script handles copy-on-write and compression constraints
+automatically. See [scripts/README.md](../scripts/README.md) for details.
+
 ### macOS / Linux
 
 #### Download your pull secret from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret) and save it
