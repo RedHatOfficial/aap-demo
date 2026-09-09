@@ -88,4 +88,39 @@ kubectl get pods -n openshift-devspaces
 kubectl get csv -n openshift-devspaces
 ```
 
+`deploy.sh` dumps full diagnostics automatically (describe, current + previous container
+logs, container exit codes, CSV conditions and unmet requirements, OperatorGroups, and
+namespace events) whenever an operator CSV fails to reach `Succeeded` or the CheCluster
+never becomes `Active`. It also exits non-zero instead of continuing past a broken
+dependency.
+
+### `devworkspace-controller-manager` CrashLoopBackOff with an *empty* log
+
+MicroShift enables only two OpenShift API groups: `route.openshift.io` and
+`security.openshift.io` (see [openshift/microshift `enabled_apis.md`][microshift-apis]).
+The DevWorkspace Operator treats "has `route.openshift.io` but not `config.openshift.io`"
+as an **unsupported** cluster and calls `os.Exit(1)` from `init()` — which runs *before*
+`ctrl.SetLogger()`, so the error is written to a logger with no sink and nothing is
+printed. The symptom is a container that exits 1 with zero log output, no termination
+message, and an OLM CSV stuck in `Installing` until "deployment exceeded its progress
+deadline".
+
+`deploy.sh` works around this by registering minimal `config.openshift.io` CRDs
+(`proxies`, `consoles`, `authentications`) from `openshift-config-shim.yaml` before
+installing the operators. Verify the shim is in place with:
+
+```bash
+kubectl api-resources --api-group=config.openshift.io
+kubectl get crd -l aap-demo.redhat.com/shim=openshift-config
+```
+
+These shim CRDs are deliberately **not** removed by `aap-demo disable devspaces`. Remove
+them explicitly if you want to:
+
+```bash
+kubectl delete crd -l aap-demo.redhat.com/shim=openshift-config
+```
+
+[microshift-apis]: https://github.com/openshift/microshift/blob/main/docs/contributor/enabled_apis.md
+
 [oauth-doc]: https://docs.redhat.com/en/documentation/red_hat_openshift_dev_spaces/3.27/html/administration_guide/assembly_configuring-oauth-for-git-providers_administration_guide#proc_setting-up-the-github-oauth-app_administration_guide
