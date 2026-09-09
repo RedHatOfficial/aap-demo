@@ -4,9 +4,6 @@
   gather_facts: false
   vars:
     opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
-    aap_host: "{{ aap_host }}"
-    aap_username: "{{ aap_username }}"
-    aap_password: "{{ aap_password }}"
     policy_to_demo: "{{ policy_name | default('') }}"
     target_organization: "{{ organization_name | default('Policy as Code') }}"
 
