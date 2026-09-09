@@ -1,0 +1,51 @@
+---
+- name: Load OPA Example Policies
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
+    opa_repo: "https://github.com/ansible/example-opa-policy-for-aap.git"
+    opa_branch: "main"
+    repo_dir: "/tmp/opa-policies"
+
+  tasks:
+    - name: Remove old policy directory if exists
+      ansible.builtin.file:
+        path: "{{ repo_dir }}"
+        state: absent
+
+    - name: Clone OPA example policies repository
+      ansible.builtin.git:
+        repo: "{{ opa_repo }}"
+        dest: "{{ repo_dir }}"
+        version: "{{ opa_branch }}"
+        depth: 1
+
+    - name: Find all .rego policy files
+      ansible.builtin.find:
+        paths: "{{ repo_dir }}/aap_policy_examples"
+        patterns: "*.rego"
+        recurse: true
+      register: policy_files
+
+    - name: Display found policies
+      ansible.builtin.debug:
+        msg: "Found {{ policy_files.files | length }} policy files"
+
+    - name: Load each policy to OPA server
+      ansible.builtin.uri:
+        url: "{{ opa_server }}/v1/policies/{{ item.path | basename | regex_replace('\\.rego$', '') }}"
+        method: PUT
+        body: "{{ lookup('file', item.path) }}"
+        headers:
+          Content-Type: "text/plain"
+        status_code: [200, 201]
+        validate_certs: false
+      loop: "{{ policy_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      register: load_results
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: "Successfully loaded {{ load_results.results | length }} policies to OPA server at {{ opa_server }}"
