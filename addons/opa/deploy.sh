@@ -10,6 +10,13 @@
 #   - AAP deployed (aap-demo deploy)
 #   - kubectl, curl, jq, base64 available
 #
+# Environment Variables:
+#   OPA_VERSION        - OPA container image version (default: 0.70.0-static)
+#   OPA_REPO           - Upstream OPA examples repo (default: ansible/example-opa-policy-for-aap)
+#   OPA_BRANCH         - Branch of upstream repo (default: main)
+#   AAP_DEMO_REPO      - AAP Demo repo containing playbooks (default: RedHatOfficial/aap-demo)
+#   AAP_DEMO_BRANCH    - Branch with playbooks (default: feat/opa-examples, change to main before PR)
+#
 # Usage:
 #   ./deploy.sh          # Deploy OPA server and create job templates
 #   ./deploy.sh --delete # Remove OPA server and job templates

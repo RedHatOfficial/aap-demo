@@ -164,15 +164,23 @@ Customize OPA deployment with environment variables:
 # Use specific OPA version
 OPA_VERSION=0.71.0-static aap-demo enable opa
 
-# Use different upstream repository
+# Use different upstream OPA examples repository
 OPA_REPO=https://github.com/myorg/custom-opa-policies aap-demo enable opa
 
-# Use specific branch or tag
+# Use specific branch of upstream OPA examples
 OPA_BRANCH=v1.0.0 aap-demo enable opa
+
+# Use different aap-demo repository (for playbooks)
+AAP_DEMO_REPO=https://github.com/myorg/aap-demo.git aap-demo enable opa
+
+# Use specific branch of aap-demo (for testing feature branches)
+AAP_DEMO_BRANCH=my-feature-branch aap-demo enable opa
 
 # Deploy to different namespace
 NAMESPACE=my-namespace aap-demo enable opa
 ```
+
+**Note:** The playbooks are stored in the aap-demo repository at `addons/opa/playbooks/`. During development, the addon uses the `feat/opa-examples` branch. This will be changed to `main` when the feature is merged.
 
 ## Verification
 
