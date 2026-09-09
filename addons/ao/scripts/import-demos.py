@@ -92,6 +92,7 @@ def normalize(
     aap_integration_id: str | None = None,
     fallback_name: str | None = None,
     agent_credential_id: str | None = None,
+    webhook_service_account_id: str | None = None,
 ) -> dict[str, Any]:
     workflow = dict(document)
     workflow.setdefault("schema_version", "2.0.0")
@@ -103,7 +104,15 @@ def normalize(
         if "parameters" not in node and "config" in node:
             node["parameters"] = node.pop("config")
         parameters = node.setdefault("parameters", {})
-        if node.get("type") == "agentic":
+        if node.get("type") == "webhook_trigger":
+            # AO 2026.9 requires at least one authorized service account.
+            # Older exports predate the field, so preserve explicit allowlists
+            # and bind otherwise-unrestricted demo webhooks to our local caller.
+            if webhook_service_account_id:
+                parameters.setdefault(
+                    "authorized_service_account_ids", [webhook_service_account_id]
+                )
+        elif node.get("type") == "agentic":
             if "response_schema" in parameters and "responseSchema" not in parameters:
                 parameters["responseSchema"] = parameters.pop("response_schema")
             # SELECTED with an empty list is rejected by AO.  The demo MCP server
@@ -143,6 +152,34 @@ def import_workflows(args: argparse.Namespace) -> int:
     if not project_id:
         raise RuntimeError("Automation Orchestrator has no project to receive demo workflows")
 
+    service_account_name = "aap-demo webhook caller"
+    service_accounts = items(request(base, args.token, "GET", "/service_accounts?limit=100"))
+    webhook_service_account = next(
+        (
+            account
+            for account in service_accounts
+            if account.get("name") == service_account_name
+            and account.get("project_id") == project_id
+        ),
+        None,
+    )
+    if not webhook_service_account:
+        webhook_service_account = request(
+            base,
+            args.token,
+            "POST",
+            "/service_accounts",
+            {
+                "name": service_account_name,
+                "description": "Authorizes webhook-triggered workflows synchronized by aap-demo",
+                "project_id": project_id,
+            },
+        )
+        print(f"  ✓ AO service account created: {service_account_name}")
+    webhook_service_account_id = webhook_service_account.get("id")
+    if not webhook_service_account_id:
+        raise RuntimeError("AO webhook service account did not return an id")
+
     existing = items(request(base, args.token, "GET", "/workflows?limit=100"))
     existing_by_name = {w.get("name"): w for w in existing}
     existing_by_source = {
@@ -167,6 +204,7 @@ def import_workflows(args: argparse.Namespace) -> int:
                 args.aap_integration_id,
                 source.stem,
                 args.agent_credential_id,
+                webhook_service_account_id,
             )
             name = workflow.get("name") or source.stem
             if name_counts.get(raw_name, 0) > 1 and source.stem.endswith("-legacy"):
