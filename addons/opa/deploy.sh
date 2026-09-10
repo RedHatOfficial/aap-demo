@@ -512,14 +512,14 @@ create_policy_demo_survey() {
     --argjson choices "$choices_json" \
     '{
       "name": "Policy Demo Survey",
-      "description": "Select policies to apply (dynamically populated from OPA repository)",
+      "description": "Select a policy to apply (dynamically populated from OPA repository)",
       "spec": [
         {
-          "question_name": "Policies to Apply",
-          "question_description": "Select one or more policies to apply (idempotent - rerunning adds policies). Select REMOVE to clear all policies.",
+          "question_name": "Policy to Apply",
+          "question_description": "Select a policy to apply to the organization. Select REMOVE to clear the policy. (Idempotent - rerunning with same policy is safe)",
           "required": true,
-          "type": "multiselect",
-          "variable": "policy_names",
+          "type": "multiplechoice",
+          "variable": "policy_name",
           "min": null,
           "max": null,
           "default": "",

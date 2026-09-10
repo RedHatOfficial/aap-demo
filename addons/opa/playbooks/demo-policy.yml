@@ -5,6 +5,7 @@
   vars:
     opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
     target_organization: "{{ organization_name | default('Policy as Code') }}"
+    selected_policy: "{{ policy_name | default('') }}"
 
   tasks:
     - name: Set AAP connection variables from credential or extra_vars
@@ -13,10 +14,6 @@
         aap_username: "{{ aap_username | default(lookup('env', 'CONTROLLER_USERNAME')) }}"
         aap_password: "{{ aap_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
         aap_validate_certs: "{{ aap_validate_certs | default(lookup('env', 'CONTROLLER_VERIFY_SSL') | bool if lookup('env', 'CONTROLLER_VERIFY_SSL') else false) }}"
-
-    - name: Parse policy selection (multiselect returns a list)
-      ansible.builtin.set_fact:
-        selected_policies: "{{ policy_names | default([]) if policy_names is iterable and policy_names is not string else ([policy_names] if policy_names is defined and policy_names != '' else []) }}"
 
     - name: Validate required AAP connection variables
       ansible.builtin.fail:
@@ -36,34 +33,30 @@
         - aap_username
         - aap_password
 
-    - name: Check for REMOVE action
-      ansible.builtin.set_fact:
-        remove_policies: "{{ 'REMOVE' in selected_policies }}"
-
-    - name: Filter out REMOVE from policy list (for validation)
-      ansible.builtin.set_fact:
-        policies_to_add: "{{ selected_policies | reject('equalto', 'REMOVE') | list }}"
-
     - name: Get list of loaded policies from OPA
       ansible.builtin.uri:
         url: "{{ opa_server }}/v1/policies"
         method: GET
         validate_certs: false
       register: loaded_policies
-      when: policies_to_add | length > 0
+      when:
+        - selected_policy != ''
+        - selected_policy != 'REMOVE'
 
     - name: Display available policies
       ansible.builtin.debug:
         msg: "Available policies in OPA: {{ loaded_policies.json.result | map(attribute='id') | list }}"
-      when: policies_to_add | length > 0
-
-    - name: Validate policy selections
-      ansible.builtin.fail:
-        msg: "Policy '{{ item }}' is not loaded in OPA. Available: {{ loaded_policies.json.result | map(attribute='id') | list }}"
       when:
-        - policies_to_add | length > 0
-        - item not in (loaded_policies.json.result | map(attribute='id') | list)
-      loop: "{{ policies_to_add }}"
+        - selected_policy != ''
+        - selected_policy != 'REMOVE'
+
+    - name: Validate policy selection
+      ansible.builtin.fail:
+        msg: "Policy '{{ selected_policy }}' is not loaded in OPA. Available: {{ loaded_policies.json.result | map(attribute='id') | list }}"
+      when:
+        - selected_policy != ''
+        - selected_policy != 'REMOVE'
+        - selected_policy not in (loaded_policies.json.result | map(attribute='id') | list)
 
     - name: Get organization details
       ansible.builtin.uri:
@@ -74,11 +67,14 @@
         force_basic_auth: true
         validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: org_lookup
+      when: selected_policy != ''
 
     - name: Extract organization ID
       ansible.builtin.set_fact:
         org_id: "{{ org_lookup.json.results[0].id }}"
-      when: org_lookup.json.results | length > 0
+      when:
+        - selected_policy != ''
+        - org_lookup.json.results | length > 0
 
     - name: Fail if organization not found
       ansible.builtin.fail:
@@ -92,7 +88,9 @@
             {{ org_lookup.json.results | default([]) | map(attribute='name') | list | join(', ') if org_lookup.json.results | default([]) | length > 0 else 'None found (check API permissions)' }}
 
           To create the organization, use the AAP UI or API.
-      when: org_id is not defined
+      when:
+        - selected_policy != ''
+        - org_id is not defined
 
     - name: Validate organization is in allowlist (authorization boundary)
       ansible.builtin.fail:
@@ -113,9 +111,11 @@
       vars:
         org_allowlist:
           - "Policy as Code"
-      when: target_organization not in org_allowlist
+      when:
+        - selected_policy != ''
+        - target_organization not in org_allowlist
 
-    - name: Get current organization details including existing policies
+    - name: Get current organization details
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
         method: GET
@@ -124,27 +124,17 @@
         force_basic_auth: true
         validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: org_details
+      when: selected_policy != ''
 
-    - name: Parse existing policies
+    - name: Set current policy path
       ansible.builtin.set_fact:
-        existing_policies: "{{ (org_details.json.opa_query_path | default('') | split(',') | map('trim') | select('string') | list) if org_details.json.opa_query_path else [] }}"
+        current_policy: "{{ org_details.json.opa_query_path | default('') }}"
+        new_policy_path: "aap_policy_examples/{{ selected_policy }}"
+      when:
+        - selected_policy != ''
+        - selected_policy != 'REMOVE'
 
-    - name: Build new policy paths to add
-      ansible.builtin.set_fact:
-        new_policy_paths: "{{ policies_to_add | map('regex_replace', '^(.*)$', 'aap_policy_examples/\\1') | list }}"
-      when: policies_to_add | length > 0
-
-    - name: Build updated policy list (idempotent - merge existing + new)
-      ansible.builtin.set_fact:
-        updated_policies: "{{ (existing_policies + new_policy_paths) | unique | list }}"
-      when: policies_to_add | length > 0
-
-    - name: Build policy string (comma-separated with URL encoding)
-      ansible.builtin.set_fact:
-        policy_string: "{{ updated_policies | map('urlencode') | join(',') }}"
-      when: policies_to_add | length > 0
-
-    - name: Apply updated policies to organization
+    - name: Apply policy to organization (if different from current)
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
         method: PATCH
@@ -153,49 +143,45 @@
         force_basic_auth: true
         body_format: json
         body:
-          opa_query_path: "{{ policy_string }}"
+          opa_query_path: "{{ new_policy_path }}"
         validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: policy_applied
       when:
-        - not remove_policies
-        - policies_to_add | length > 0
-
-    - name: Determine which policies were newly added
-      ansible.builtin.set_fact:
-        newly_added: "{{ new_policy_paths | difference(existing_policies) }}"
-      when:
-        - not remove_policies
-        - policies_to_add | length > 0
+        - selected_policy != ''
+        - selected_policy != 'REMOVE'
+        - current_policy != new_policy_path
 
     - name: Display policy activation result
       ansible.builtin.debug:
         msg: |
-          ✓ Policies Applied to Organization!
+          {% if current_policy == new_policy_path %}
+          ✓ Policy Already Active (No Change)
 
           Organization: {{ target_organization }}
+          Policy: {{ selected_policy }}
+          OPA Query Path: {{ new_policy_path }}
 
-          {% if newly_added | length > 0 %}
-          Newly Added ({{ newly_added | length }}):
-          {{ newly_added | map('regex_replace', '^aap_policy_examples/', '  ✓ ') | join('\n') }}
+          This policy was already active on the organization. No changes made.
+          {% else %}
+          ✓ Policy Applied to Organization!
+
+          Organization: {{ target_organization }}
+          Policy: {{ selected_policy }}
+          OPA Query Path: {{ new_policy_path }}
+          {% if current_policy != '' %}
+          Previous Policy: {{ current_policy }}
           {% endif %}
 
-          {% if (new_policy_paths | intersect(existing_policies)) | length > 0 %}
-          Already Active ({{ (new_policy_paths | intersect(existing_policies)) | length }}):
-          {{ (new_policy_paths | intersect(existing_policies)) | map('regex_replace', '^aap_policy_examples/', '  • ') | join('\n') }}
+          This policy is now enforcing on ALL resources in the organization.
+          Try creating or modifying resources in '{{ target_organization }}' to see policy enforcement.
           {% endif %}
 
-          All Active Policies ({{ updated_policies | length }}):
-          {{ updated_policies | map('regex_replace', '^aap_policy_examples/', '  - ') | join('\n') }}
-
-          All policies above are now enforcing on resources in this organization.
-          Try creating or modifying resources in '{{ target_organization }}' to see enforcement.
-
-          To remove all policies, select 'REMOVE' and run this template again.
+          To remove the policy, select 'REMOVE' and run this template again.
       when:
-        - not remove_policies
-        - policies_to_add | length > 0
+        - selected_policy != ''
+        - selected_policy != 'REMOVE'
 
-    - name: Remove all policies from organization
+    - name: Remove policy from organization
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
         method: PATCH
@@ -207,55 +193,31 @@
           opa_query_path: ""
         validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: policy_removed
-      when: remove_policies
+      when: selected_policy == 'REMOVE'
 
     - name: Display policy removal result
       ansible.builtin.debug:
         msg: |
-          ✓ All Policies Removed from Organization
+          ✓ Policy Removed from Organization
 
           Organization: {{ target_organization }}
-
-          {% if existing_policies | length > 0 %}
-          Previously Active ({{ existing_policies | length }}):
-          {{ existing_policies | map('regex_replace', '^aap_policy_examples/', '  ✗ ') | join('\n') }}
+          {% if org_details.json.opa_query_path | default('') != '' %}
+          Previous Policy: {{ org_details.json.opa_query_path }}
           {% else %}
-          (no policies were active)
+          (no policy was active)
           {% endif %}
 
           OPA Query Path: (cleared)
 
-          All OPA policies have been removed from this organization.
+          OPA policy enforcement has been removed from this organization.
           Resources in '{{ target_organization }}' will no longer be subject to OPA policy enforcement.
-      when: remove_policies
-
-    - name: Summary
-      ansible.builtin.debug:
-        msg: |
-          Policy Demo Complete!
-
-          {% if remove_policies %}
-          ✓ Removed all OPA policies from organization: {{ target_organization }}
-          {% elif policies_to_add | length > 0 %}
-          ✓ Applied {{ policies_to_add | length }} policies to: {{ target_organization }}
-          {% if newly_added | length > 0 %}
-          ✓ {{ newly_added | length }} newly added
-          {% endif %}
-          {% if (new_policy_paths | intersect(existing_policies)) | length > 0 %}
-          • {{ (new_policy_paths | intersect(existing_policies)) | length }} already active
-          {% endif %}
-
-          OPA Server: {{ opa_server }}
-
-          Policies are now enforcing. Try creating/modifying resources in this organization!
-          {% endif %}
-      when: selected_policies | length > 0
+      when: selected_policy == 'REMOVE'
 
     - name: No policy selected
       ansible.builtin.debug:
         msg: |
-          No policies selected for demo.
+          No policy selected for demo.
 
-          Run this template again and select one or more policies to apply.
-          This playbook is idempotent - you can run it multiple times to add different policies.
-      when: selected_policies | length == 0
+          Run this template again and select a policy to apply.
+          This playbook is idempotent - rerunning with the same policy is safe.
+      when: selected_policy == ''
