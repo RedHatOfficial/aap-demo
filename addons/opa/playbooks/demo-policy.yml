@@ -63,6 +63,29 @@
         - policy_to_demo != ''
         - org_lookup.json.results | length > 0
 
+    - name: Validate organization is in allowlist (authorization boundary)
+      ansible.builtin.fail:
+        msg: |
+          ❌ Organization '{{ target_organization }}' is not in the allowlist.
+
+          This playbook is restricted to modifying only specific organizations
+          to prevent accidental modification of production resources.
+
+          Allowed organizations:
+            - Policy as Code (default demo organization)
+
+          If you need to demo policies on another organization, add it to the
+          allowlist in this playbook (org_allowlist variable).
+
+          This authorization boundary is a security best practice, even in
+          demo environments, to model proper least-privilege patterns.
+      vars:
+        org_allowlist:
+          - "Policy as Code"
+      when:
+        - policy_to_demo != ''
+        - target_organization not in org_allowlist
+
     - name: Apply policy to organization
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
@@ -75,7 +98,9 @@
           opa_query_path: "aap_policy_examples/{{ policy_to_demo }}"
         validate_certs: false
       register: policy_applied
-      when: policy_to_demo != ''
+      when:
+        - policy_to_demo != ''
+        - policy_to_demo != 'REMOVE'
 
     - name: Display policy activation result
       ansible.builtin.debug:

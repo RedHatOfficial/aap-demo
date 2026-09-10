@@ -529,7 +529,7 @@ create_policy_demo_survey() {
         },
     {
       "question_name": "Target Organization",
-      "question_description": "Organization to test policy against",
+      "question_description": "Organization to test policy against (restricted to allowlist for safety)",
       "required": false,
       "type": "text",
       "variable": "organization_name",
