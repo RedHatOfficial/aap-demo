@@ -377,6 +377,112 @@ create_localhost_inventory() {
   printf '%s\n' "$inv_id"
 }
 
+create_aap_credential() {
+  local org_id="$1"
+  local credential_name="$2"
+  local aap_host="$3"
+  local aap_username="$4"
+  local aap_password="$5"
+  local credential_id
+
+  # Validate parameters
+  if [ -z "$org_id" ] || [ -z "$credential_name" ] || [ -z "$aap_host" ] || [ -z "$aap_username" ] || [ -z "$aap_password" ]; then
+    echo "❌ ERROR: Missing required parameters for credential creation" >&2
+    return 1
+  fi
+
+  echo "Creating AAP credential: $credential_name..." >&2
+
+  # Get the credential type ID for "Red Hat Ansible Automation Platform"
+  local credential_type_id
+  credential_type_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/credential_types/?name=Red%20Hat%20Ansible%20Automation%20Platform" 2>/dev/null \
+    | jq -r '.results[0].id // empty' 2>/dev/null || echo "")
+
+  if [ -z "$credential_type_id" ]; then
+    echo "❌ ERROR: Could not find credential type 'Red Hat Ansible Automation Platform'" >&2
+    return 1
+  fi
+
+  # Check if credential already exists
+  local encoded_name
+  encoded_name=$(jq -rn --arg n "$credential_name" '$n|@uri')
+  credential_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/credentials/?name=${encoded_name}" 2>/dev/null \
+    | jq -r ".results[] | select(.summary_fields.organization.id == $org_id) | .id // empty" 2>/dev/null | head -1)
+
+  if [ -n "$credential_id" ]; then
+    echo "  Credential already exists (ID: $credential_id)" >&2
+
+    # Update existing credential
+    local update_payload
+    update_payload=$(jq -n \
+      --argjson credential_type_id "$credential_type_id" \
+      --arg host "$aap_host" \
+      --arg username "$aap_username" \
+      --arg password "$aap_password" \
+      '{
+        credential_type: $credential_type_id,
+        inputs: {
+          host: $host,
+          username: $username,
+          password: $password,
+          verify_ssl: false
+        }
+      }')
+
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X PATCH \
+      -H "Content-Type: application/json" \
+      -d "$update_payload" \
+      "${AAP_API}/credentials/${credential_id}/" \
+      >/dev/null 2>&1 || true
+
+    printf '%s\n' "$credential_id"
+    return 0
+  fi
+
+  # Create new credential
+  local credential_payload
+  credential_payload=$(jq -n \
+    --arg name "$credential_name" \
+    --argjson org_id "$org_id" \
+    --argjson credential_type_id "$credential_type_id" \
+    --arg host "$aap_host" \
+    --arg username "$aap_username" \
+    --arg password "$aap_password" \
+    '{
+      name: $name,
+      description: "AAP credential for Policy as Code automation (least privilege)",
+      organization: $org_id,
+      credential_type: $credential_type_id,
+      inputs: {
+        host: $host,
+        username: $username,
+        password: $password,
+        verify_ssl: false
+      }
+    }')
+
+  local result
+  result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "$credential_payload" \
+    "${AAP_API}/credentials/" 2>/dev/null)
+
+  credential_id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null)
+
+  if [ -z "$credential_id" ]; then
+    echo "❌ ERROR: Failed to create credential" >&2
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
+  fi
+
+  echo "✓ Credential created (ID: $credential_id)" >&2
+  printf '%s\n' "$credential_id"
+}
+
 create_policy_demo_survey() {
   local template_id="$1"
 
@@ -463,6 +569,7 @@ create_job_template() {
   local inventory_id="$5"
   local org_id="$6"
   local extra_vars="${7:-}"
+  local credential_ids="${8:-}"  # Space-separated credential IDs
 
   # Validate required IDs
   if [ -z "$project_id" ] || [ -z "$inventory_id" ] || [ -z "$org_id" ]; then
@@ -506,6 +613,20 @@ create_job_template() {
       "${AAP_API}/job_templates/${template_id}/" \
       >/dev/null 2>&1 || true
 
+    # Attach credentials if provided
+    if [ -n "$credential_ids" ]; then
+      echo "  Attaching credentials to template..." >&2
+      for credential_id in $credential_ids; do
+        curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"id\": $credential_id}" \
+          "${AAP_API}/job_templates/${template_id}/credentials/" \
+          >/dev/null 2>&1 || true
+      done
+      echo "  ✓ Credentials attached" >&2
+    fi
+
     printf '%s\n' "$template_id"
     return 0
   fi
@@ -548,6 +669,21 @@ create_job_template() {
   fi
 
   echo "✓ Job template created: $name (ID: $template_id)" >&2
+
+  # Attach credentials if provided
+  if [ -n "$credential_ids" ]; then
+    echo "  Attaching credentials to template..." >&2
+    for credential_id in $credential_ids; do
+      curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"id\": $credential_id}" \
+        "${AAP_API}/job_templates/${template_id}/credentials/" \
+        >/dev/null 2>&1 || true
+    done
+    echo "  ✓ Credentials attached" >&2
+  fi
+
   printf '%s\n' "$template_id"
 }
 
@@ -583,6 +719,22 @@ create_job_templates() {
     return 1
   fi
   echo "  Inventory ID: $inventory_id"
+
+  # Create AAP credential for demo template (least privilege)
+  local aap_route
+  aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
+  local credential_id
+  credential_id=$(create_aap_credential \
+    "$org_id" \
+    "Policy as Code - AAP Credential" \
+    "https://${aap_route}" \
+    "${AAP_USERNAME}" \
+    "${AAP_PASSWORD}")
+  if [ -z "$credential_id" ]; then
+    echo "❌ ERROR: Failed to create AAP credential"
+    return 1
+  fi
+  echo "  Credential ID: $credential_id"
 
   # Define extra vars with OPA server URL
   local opa_server_url="http://opa.${NAMESPACE}.svc.cluster.local:8181"
@@ -622,17 +774,12 @@ create_job_templates() {
     "$org_id" \
     "$extra_vars"
 
-  # Template 4: Demo Policy Enforcement (requires AAP API credentials)
-  local aap_route
-  aap_route=$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)
+  # Template 4: Demo Policy Enforcement (uses AAP credential for authentication)
   local demo_extra_vars
   demo_extra_vars=$(jq -n \
     --arg opa_url "$opa_server_url" \
     --arg namespace "$NAMESPACE" \
-    --arg aap_host "https://${aap_route}" \
-    --arg aap_user "${AAP_USERNAME}" \
-    --arg aap_pass "${AAP_PASSWORD}" \
-    '{opa_server: $opa_url, namespace: $namespace, aap_host: $aap_host, aap_username: $aap_user, aap_password: $aap_pass}' | jq -c '.')
+    '{opa_server: $opa_url, namespace: $namespace}' | jq -c '.')
 
   local demo_template_id
   demo_template_id=$(create_job_template \
@@ -642,7 +789,8 @@ create_job_templates() {
     "$project_id" \
     "$inventory_id" \
     "$org_id" \
-    "$demo_extra_vars")
+    "$demo_extra_vars" \
+    "$credential_id")
 
   # Add survey to demo template
   if [ -n "$demo_template_id" ]; then
@@ -714,6 +862,20 @@ delete_aap_resources() {
       >/dev/null 2>&1 && ((inventory_count++)) || true
   done
   [ "$inventory_count" -gt 0 ] && echo "    ✓ Deleted $inventory_count inventor(y|ies)"
+
+  # Delete credentials
+  echo "  Deleting credentials..."
+  local credential_ids credential_count=0
+  credential_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/organizations/${org_id}/credentials/" 2>/dev/null \
+    | jq -r '.results[].id' 2>/dev/null || echo "")
+
+  for credential_id in $credential_ids; do
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X DELETE "${AAP_API}/credentials/${credential_id}/" \
+      >/dev/null 2>&1 && ((credential_count++)) || true
+  done
+  [ "$credential_count" -gt 0 ] && echo "    ✓ Deleted $credential_count credential(s)"
 
   # Now delete the organization itself
   echo "  Deleting organization..."
