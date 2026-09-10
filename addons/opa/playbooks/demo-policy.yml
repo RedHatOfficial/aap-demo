@@ -6,6 +6,11 @@
     opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
     policy_to_demo: "{{ policy_name | default('') }}"
     target_organization: "{{ organization_name | default('Policy as Code') }}"
+    # AAP credentials inject CONTROLLER_* environment variables
+    aap_host: "{{ aap_host | default(lookup('env', 'CONTROLLER_HOST')) }}"
+    aap_username: "{{ aap_username | default(lookup('env', 'CONTROLLER_USERNAME')) }}"
+    aap_password: "{{ aap_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
+    aap_validate_certs: "{{ aap_validate_certs | default(lookup('env', 'CONTROLLER_VERIFY_SSL') | bool | default(false)) }}"
 
   tasks:
     - name: Validate required AAP connection variables
@@ -14,13 +19,13 @@
           Missing required variable: {{ item }}
 
           This playbook requires AAP API credentials to be set.
-          These should be automatically configured in the job template's extra_vars.
+          Ensure the 'Policy as Code - AAP Credential' is attached to this job template.
 
           If you're running this manually, provide:
             -e aap_host=https://your-aap-route.com
             -e aap_username=admin
             -e aap_password=your-password
-      when: (vars[item] is undefined) or (vars[item] == '')
+      when: (vars[item] is undefined) or (vars[item] == '') or (vars[item] == None)
       loop:
         - aap_host
         - aap_username
