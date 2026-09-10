@@ -26,6 +26,14 @@ Force a clean reinstall (resets Postgres if secret names or passwords drifted):
 FORCE=1 aap-demo enable ao
 ```
 
+Disabling AO preserves its bootstrap admin password under `~/.aap-demo/ao/` so
+a retained PostgreSQL database remains accessible after re-enable. To explicitly
+remove both the AO database and saved credential instead, run:
+
+```bash
+aap-demo disable ao --purge-data
+```
+
 Remove:
 
 ```bash

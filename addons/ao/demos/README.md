@@ -11,7 +11,8 @@ existing workflow by name. At import time, AAP job-template nodes receive the
 auto-wired AAP credential and `aap-demo AAP` integration, old `config` exports are
 upgraded to `parameters`, and
 agent nodes with empty tool selections use all tools from the auto-wired MCP
-integration.
+integration. Legacy webhook triggers are authorized with the local AO service
+account required by current AO releases.
 
 The upstream demos that call ServiceNow, Lightspeed, or an LLM still require those
 external integrations and credentials to be configured in AO. Environment-specific
