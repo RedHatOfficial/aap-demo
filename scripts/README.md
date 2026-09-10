@@ -22,7 +22,7 @@ Resource allocation for CRC VM:
 
 Default swap file: `/swapfile-aap-demo` via `mkswap` + `swapon`.
 
-**Filesystem notes**
+#### Filesystem notes
 
 - **btrfs** (Fedora): uses `chattr +C` + `dd` (not `fallocate`)
 - **xfs/ext4** (RHEL): uses `fallocate`, falls back to `dd`
