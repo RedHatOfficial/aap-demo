@@ -32,7 +32,7 @@ ACTION="${1:-deploy}"
 # missing 'import rego.v1' statements (upstream issue, not version problem).
 OPA_VERSION="${OPA_VERSION:-1.20.2}"
 OPA_REPO="${OPA_REPO:-https://github.com/ansible/example-opa-policy-for-aap}"
-OPA_MANIFEST_REF="${OPA_MANIFEST_REF:-59d83e0689}" # Pinned commit SHA for supply chain security
+OPA_MANIFEST_REF="${OPA_MANIFEST_REF:-8dad3022d5}" # Pinned commit SHA for supply chain security
 
 # AAP Demo repository configuration (contains our playbooks)
 AAP_DEMO_REPO="${AAP_DEMO_REPO:-https://github.com/RedHatOfficial/aap-demo.git}"
