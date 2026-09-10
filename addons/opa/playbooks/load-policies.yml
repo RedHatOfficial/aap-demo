@@ -5,7 +5,7 @@
   vars:
     opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
     opa_repo: "https://github.com/ansible/example-opa-policy-for-aap.git"
-    opa_branch: "main"
+    opa_branch: "{{ opa_branch | default('59d83e0689') }}"
     repo_dir: "/tmp/opa-policies"
 
   tasks:

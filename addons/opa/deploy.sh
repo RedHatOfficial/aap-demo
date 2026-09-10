@@ -732,13 +732,14 @@ create_job_templates() {
   fi
   echo "  Credential ID: $credential_id"
 
-  # Define extra vars with OPA server URL
+  # Define extra vars with OPA server URL and pinned policy reference
   local opa_server_url="http://opa.${NAMESPACE}.svc.cluster.local:8181"
   local extra_vars
   extra_vars=$(jq -n \
     --arg opa_url "$opa_server_url" \
     --arg namespace "$NAMESPACE" \
-    '{opa_server: $opa_url, namespace: $namespace}' | jq -c '.')
+    --arg opa_ref "$OPA_MANIFEST_REF" \
+    '{opa_server: $opa_url, namespace: $namespace, opa_branch: $opa_ref}' | jq -c '.')
 
   # Template 1: Load Example Policies
   create_job_template \
