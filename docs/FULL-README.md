@@ -38,6 +38,44 @@ The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384`
 - On Windows: Hyper-V enabled (OpenShift Local requirement)
 - Obtain a **Pull Secret** from the [Red Hat Console](https://console.redhat.com/openshift/install/pull-secret)
 
+#### Host prep for memory-constrained systems (Linux)
+
+CRC defaults to 16–24 GB of VM RAM. On a 32 GB workstation, image pulls and operator
+reconciliation can exhaust host memory.
+
+During interactive `aap-demo create` on **Linux**, you are prompted for temporary swap
+before CPU and memory allocation (default yes on hosts with 36 GB RAM or less). The
+script creates a `swapon` file at `/swapfile-aap-demo` by default and handles btrfs
+(Fedora), xfs/ext4 (RHEL), and SELinux `swapfile_t`.
+
+```text
+Resource allocation for CRC VM:
+  Host: 16 CPUs, 30GB RAM (8GB swap)
+
+  Create temp swap for deploy? [Y/n]:
+  Temp swap size in GB [16]:
+  CPUs [8]:
+  Memory in GB [16]:
+```
+
+Host prep for pull secret, libvirt, and CRC setup:
+
+```bash
+./scripts/local-prereq.sh
+```
+
+Manual swap management (non-interactive or after deploy):
+
+```bash
+./scripts/enable-temp-swap.sh                              # 16 GB temp swap file
+AAP_ENABLE_TEMP_SWAP=true AAP_SWAP_SIZE_GB=24 aap-demo create   # scripted create
+./scripts/enable-temp-swap.sh disable                      # remove after deploy
+```
+
+Swap files are not added to `/etc/fstab`. Remove after deploy with
+`./scripts/enable-temp-swap.sh disable` or `aap-demo destroy`.
+See [scripts/README.md](../scripts/README.md) for Linux-only details.
+
 ### macOS / Linux
 
 #### Download your pull secret from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret) and save it

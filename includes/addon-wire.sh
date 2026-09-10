@@ -117,7 +117,10 @@ wire_aap_url_for_ao() {
 
 wire_mcp_in_cluster_url() {
   local svc="${1:-aap-mcp-server}"
-  printf 'http://%s.%s.svc.cluster.local/mcp' "$svc" "$NAMESPACE"
+  local port
+  port=$(kubectl get svc "$svc" -n "$NAMESPACE" \
+    -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || echo 8086)
+  printf 'http://%s.%s.svc.cluster.local:%s/mcp' "$svc" "$NAMESPACE" "$port"
 }
 
 wire_mcp_route_host() {
@@ -267,7 +270,15 @@ wire_restore_coredns_route_rewrite() {
   corefile=$(kubectl get configmap dns-default -n openshift-dns \
     -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
   if echo "$corefile" | grep -q "router-internal-default"; then
-    return 0
+    # A crc.testing-only rewrite still leaves *.nip.io resolving to 127.0.0.1.
+    if kubectl get route -A -o jsonpath='{range .items[*]}{.spec.host}{"\n"}{end}' 2>/dev/null \
+      | grep -q 'nip.io'; then
+      if echo "$corefile" | grep -q "nip.io"; then
+        return 0
+      fi
+    else
+      return 0
+    fi
   fi
   if [ ! -f "${REPO_ROOT}/includes/crc-create.sh" ]; then
     wire_warn "CoreDNS rewrite missing and crc-create.sh was not found"
@@ -485,7 +496,10 @@ wire_ao_ensure_credential() {
     }')
 
   if [ -n "$cred_id" ]; then
-    result=$(wire_ao_api PATCH "/credentials/${cred_id}" \
+    # Project-scoped credential operations are required for managed/built-in
+    # credential types.  The global endpoint rejects these with
+    # BuiltinProtectionError (HTTP 403), even for an authenticated admin.
+    result=$(wire_ao_api PATCH "/projects/${project_id}/credentials/${cred_id}" \
       "$(jq -n \
         --arg name "$cred_name" \
         --arg desc "Auto-wired by aap-demo" \
@@ -497,7 +511,8 @@ wire_ao_ensure_credential() {
       return 1
     fi
   else
-    result=$(wire_ao_api POST "/credentials" "$payload" 2>/dev/null)
+    result=$(wire_ao_api POST "/projects/${project_id}/credentials" \
+      "$(echo "$payload" | jq 'del(.project_id)')" 2>/dev/null)
     cred_id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null)
   fi
 

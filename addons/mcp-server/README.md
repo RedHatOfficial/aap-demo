@@ -54,11 +54,27 @@ The addon automatically:
 
 The MCP server connects to your AAP deployment using:
 
-- **Endpoint**: `https://aap-mcp-aap-operator.apps.127.0.0.1.nip.io/mcp`
+- **Endpoint**: the MCP route on the same apps domain as AAP (for example
+  `https://aap-mcp-aap-operator.apps.crc.testing/mcp` or `*.apps.127.0.0.1.nip.io/mcp`)
 - **Authentication**: Bearer token (OAuth from AAP Gateway)
 - **TLS**: Trusts self-signed ingress CA via `NODE_EXTRA_CA_CERTS`
 
 See [ADR 011: MCP Server Addon](../../docs/adr/011-mcp-server-addon.md) for design details.
+
+## Troubleshooting
+
+### AO reports "No MCP tools discovered"
+
+On CRC, AAP/AO routes use `apps.crc.testing` while an older MCP route may still be
+`*.apps.127.0.0.1.nip.io`. CoreDNS only rewrote `crc.testing`, so AO pods resolved
+nip.io to `127.0.0.1` and could not reach MCP.
+
+`aap-demo start` / `aap-demo wire` now rewrite both domains to the ingress router.
+Then re-run:
+
+```bash
+aap-demo wire
+```
 
 ## Removal
 

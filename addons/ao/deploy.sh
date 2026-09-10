@@ -870,26 +870,46 @@ wait_for_ao_postgres_databases() {
   echo "✓ PostgreSQL databases ready (orchestrator, temporal, temporal_visibility)"
 }
 
+resolve_local_pull_secret_file() {
+  local path
+  for path in "${PULL_SECRET_PATH:-}" "$HOME/.aap-demo/pull-secret" \
+    "$HOME/.aap-demo/pull-secret.txt" "$HOME/.aap-demo/pull-secret.json"; do
+    if [ -n "$path" ] && [ -f "$path" ]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ao_pull_secret_is_dockerconfig() {
+  local _type
+  _type=$(kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" \
+    -o jsonpath='{.type}' 2>/dev/null || echo "")
+  [ "$_type" = "kubernetes.io/dockerconfigjson" ] || return 1
+  kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" \
+    -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | grep -q .
+}
+
+# AO operator requires spec.imagePullSecrets to be kubernetes.io/dockerconfigjson.
+# Do not copy redhat-operators-pull-secret: OLM may replace that name with an
+# Opaque placeholder ({operator: aap}) that fails ConfigurationValid.
 ensure_ao_pull_secret() {
-  local _src_ns="${CATALOG_NAMESPACE:-$AAP_NAMESPACE}"
-  if kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
+  local _pull_file
+  if ao_pull_secret_is_dockerconfig; then
     return 0
   fi
-  if ! kubectl get secret redhat-operators-pull-secret -n "$_src_ns" &>/dev/null; then
-    echo "WARNING: redhat-operators-pull-secret not found in ${_src_ns}"
+  if ! _pull_file=$(resolve_local_pull_secret_file); then
+    echo "WARNING: No local pull secret found (~/.aap-demo/pull-secret.txt)"
+    echo "  AO operator will reject Opaque catalog secrets as imagePullSecrets."
     return 1
   fi
-  echo "Copying pull secret into ${NAMESPACE}..."
-  kubectl get secret redhat-operators-pull-secret -n "$_src_ns" -o json \
-    | AO_PULL_SECRET_NAME="$AO_PULL_SECRET_NAME" NAMESPACE="$NAMESPACE" python3 -c "
-import json, os, sys
-secret = json.load(sys.stdin)
-secret['metadata'] = {
-    'name': os.environ['AO_PULL_SECRET_NAME'],
-    'namespace': os.environ['NAMESPACE'],
-}
-json.dump(secret, sys.stdout)
-" | kubectl apply -f -
+  echo "Creating image pull secret ${AO_PULL_SECRET_NAME} (kubernetes.io/dockerconfigjson)..."
+  kubectl delete secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" 2>/dev/null || true
+  kubectl create secret generic "$AO_PULL_SECRET_NAME" \
+    --from-file=.dockerconfigjson="$_pull_file" \
+    --type=kubernetes.io/dockerconfigjson \
+    -n "$NAMESPACE"
 }
 
 link_ao_pull_secrets_to_operator() {

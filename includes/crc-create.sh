@@ -57,7 +57,7 @@ _detect_host_resources() {
 
 configure_coredns() {
   local route_domain current_domain escaped_domain current_corefile corefile
-  local crc_ssh_key crc_ssh_opts
+  local crc_ssh_key crc_ssh_opts nipio_domain escaped_nipio nipio_rewrite
 
   # Re-detect SSH key now that cluster is running
   if crc_ssh_key="$(_detect_crc_ssh_key 2>/dev/null)"; then
@@ -78,9 +78,26 @@ configure_coredns() {
   fi
 
   escaped_domain=$(echo "$route_domain" | sed 's/\./\\./g')
+  # MCP (and older addons) still publish *.apps.127.0.0.1.nip.io routes after the
+  # cluster domain moved to apps.crc.testing. Rewrite both so in-cluster clients
+  # do not resolve nip.io to 127.0.0.1 (the pod loopback).
+  nipio_domain="apps.127.0.0.1.nip.io"
+  escaped_nipio=$(echo "$nipio_domain" | sed 's/\./\\./g')
+  nipio_rewrite=""
+  if [ "$route_domain" != "$nipio_domain" ]; then
+    nipio_rewrite=$(
+      cat <<NIPIO_EOF
+    rewrite stop {
+        name regex (.*)\.${escaped_nipio} router-internal-default.openshift-ingress.svc.cluster.local
+        answer auto
+    }
+NIPIO_EOF
+    )
+  fi
 
   current_corefile=$(kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
-  if echo "$current_corefile" | grep -q "router-internal-default"; then
+  if echo "$current_corefile" | grep -q "router-internal-default" \
+    && { [ "$route_domain" = "$nipio_domain" ] || echo "$current_corefile" | grep -q "nip.io"; }; then
     echo "  ✓ CoreDNS already configured for ${route_domain}"
     return 0
   fi
@@ -102,6 +119,7 @@ configure_coredns() {
         name regex (.*)\.${escaped_domain} router-internal-default.openshift-ingress.svc.cluster.local
         answer auto
     }
+${nipio_rewrite}
     kubernetes cluster.local in-addr.arpa ip6.arpa {
         pods insecure
         fallthrough in-addr.arpa ip6.arpa
@@ -234,9 +252,24 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
   echo ""
   printf "${_BOLD}Resource allocation for CRC VM:${_NC}\n"
   if [ "$HOST_CPUS" -gt 0 ]; then
-    printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM\n"
+    _host_swap_gb=0
+    if [ "$(uname -s)" = "Linux" ]; then
+      _host_swap_gb=$(awk '/SwapTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    fi
+    if [ "$_host_swap_gb" -gt 0 ]; then
+      printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM (${_host_swap_gb}GB swap)\n"
+    else
+      printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM\n"
+    fi
   fi
   echo ""
+
+  if [ "$(uname -s)" = "Linux" ]; then
+    # shellcheck source=includes/temp-swap.sh
+    source "${SCRIPT_DIR}/includes/temp-swap.sh"
+    aap_demo_prompt_temp_swap
+  fi
+
   printf "  CPUs [${_DEFAULT_CPUS}]: "
   read -r _input_cpus </dev/tty
   _input_cpus="${_input_cpus:-${_DEFAULT_CPUS}}"
@@ -265,6 +298,12 @@ else
   CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$((_DEFAULT_MEMORY_GB * 1024))}}"
   CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
   CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
+
+  if [ "$(uname -s)" = "Linux" ] && [ "${SKIP_TEMP_SWAP:-false}" != "true" ] && [ "${AAP_ENABLE_TEMP_SWAP:-false}" = "true" ]; then
+    # shellcheck source=includes/temp-swap.sh
+    source "${SCRIPT_DIR}/includes/temp-swap.sh"
+    aap_demo_temp_swap_enable || true
+  fi
 fi
 
 # Validate resource values are positive integers

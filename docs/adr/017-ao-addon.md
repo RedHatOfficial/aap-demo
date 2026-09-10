@@ -38,7 +38,7 @@ The addon applies **checked-in Kubernetes manifests** shaped like
 | PostgreSQL | CloudNativePG from upstream manifest (dev-only; not Red Hat supported) |
 | Instance | `AutomationOrchestrator` CR from [`manifests/automationorchestrator-cr.yaml`](../../addons/ao/manifests/automationorchestrator-cr.yaml) |
 | Database secrets | `orchestrator-postgres-secret`, `temporal-postgres-secret`, `temporal-visibility-postgres-secret` (created at install, not committed) |
-| Registry auth | Copy `redhat-operators-pull-secret` → `automation-orchestrator-pull-secret` |
+| Registry auth | `automation-orchestrator-pull-secret` from `~/.aap-demo/pull-secret.txt` (`kubernetes.io/dockerconfigjson`; do not copy the OLM catalog secret) |
 
 Manifest templates and apply order: [`addons/ao/manifests/README.md`](../../addons/ao/manifests/README.md).
 
