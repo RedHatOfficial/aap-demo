@@ -52,7 +52,7 @@ script creates a `swapon` file at `/swapfile-aap-demo` by default and handles bt
 Resource allocation for CRC VM:
   Host: 16 CPUs, 30GB RAM (8GB swap)
 
-  Create temp swap file for deploy? [Y/n]:
+  Create temp swap for deploy? [Y/n]:
   Temp swap size in GB [16]:
   CPUs [8]:
   Memory in GB [16]:
@@ -74,7 +74,7 @@ AAP_ENABLE_TEMP_SWAP=true AAP_SWAP_SIZE_GB=24 aap-demo create   # scripted creat
 
 Swap files are not added to `/etc/fstab`. Remove after deploy with
 `./scripts/enable-temp-swap.sh disable` or `aap-demo destroy`.
-See [scripts/README.md](../scripts/README.md) for platform details.
+See [scripts/README.md](../scripts/README.md) for Linux-only details.
 
 ### macOS / Linux
 

@@ -6,8 +6,8 @@
 #   2. libvirt group membership for CRC
 #   3. crc setup (admin helper + bundle download)
 #
-# Temp swap is offered interactively during `aap-demo create` (alongside CPU/RAM).
-# To enable swap manually: ./scripts/enable-temp-swap.sh
+# Temp swap is offered on Linux during interactive `aap-demo create` (alongside CPU/RAM).
+# To enable swap manually on Linux: ./scripts/enable-temp-swap.sh
 #
 # Usage:
 #   ./scripts/local-prereq.sh
@@ -58,5 +58,5 @@ else
   echo "  aap-demo deploy"
 fi
 echo ""
-echo "Temp swap is offered during aap-demo create. Manage manually with:"
+echo "On Linux, temp swap is offered during aap-demo create. Manage manually with:"
 echo "  ./scripts/enable-temp-swap.sh"

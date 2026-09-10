@@ -1955,7 +1955,9 @@ cmd_destroy() {
   echo "  • All cluster data will be PERMANENTLY DESTROYED"
   echo "  • All PVC storage will be LOST"
   echo "  • All deployed applications will be removed"
-  echo "  • Temp swap file/reserve (if any) will be removed"
+  if [ "$(uname -s)" = "Linux" ]; then
+    echo "  • Temp swap file (if any) will be removed"
+  fi
   echo "  • You will need to redeploy AAP from scratch"
   echo ""
   if [ "${QUIET:-false}" != "true" ]; then
