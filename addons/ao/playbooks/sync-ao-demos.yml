@@ -32,6 +32,7 @@
         method: GET
         headers:
           Authorization: "Bearer {{ ao_api_token }}"
+          Host: "{{ ao_api_host }}"
         validate_certs: false
         use_proxy: false
         return_content: true
@@ -47,7 +48,9 @@
         that:
           - __ao_projects.status | default(0) == 200
         fail_msg: >-
-          AO project lookup failed from AAP (status={{ __ao_projects.status | default('unreachable') }};
+          AO project lookup failed from AAP (url={{ ao_api_url }};
+          host={{ ao_api_host }};
+          status={{ __ao_projects.status | default('unreachable') }};
           error={{ __ao_projects.msg | default('unknown error') }}).
 
     - name: Select the target AO project
