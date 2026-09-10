@@ -496,7 +496,10 @@ wire_ao_ensure_credential() {
     }')
 
   if [ -n "$cred_id" ]; then
-    result=$(wire_ao_api PATCH "/credentials/${cred_id}" \
+    # Project-scoped credential operations are required for managed/built-in
+    # credential types.  The global endpoint rejects these with
+    # BuiltinProtectionError (HTTP 403), even for an authenticated admin.
+    result=$(wire_ao_api PATCH "/projects/${project_id}/credentials/${cred_id}" \
       "$(jq -n \
         --arg name "$cred_name" \
         --arg desc "Auto-wired by aap-demo" \
@@ -508,7 +511,8 @@ wire_ao_ensure_credential() {
       return 1
     fi
   else
-    result=$(wire_ao_api POST "/credentials" "$payload" 2>/dev/null)
+    result=$(wire_ao_api POST "/projects/${project_id}/credentials" \
+      "$(echo "$payload" | jq 'del(.project_id)')" 2>/dev/null)
     cred_id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null)
   fi
 
