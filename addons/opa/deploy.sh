@@ -484,20 +484,23 @@ create_policy_demo_survey() {
 
   echo "  Adding survey to demo template..." >&2
 
-  # Query OPA for loaded policies
-  local opa_server_url="http://opa.${NAMESPACE}.svc.cluster.local:8181"
-  local loaded_policies
-  loaded_policies=$(curl -sk "${opa_server_url}/v1/policies" 2>/dev/null | jq -r '.result[].id' 2>/dev/null || echo "")
+  # Query GitHub API for policy files at pinned commit (OPA has no policies yet at survey creation time)
+  # This keeps the list in sync with OPA_MANIFEST_REF automatically
+  local repo_path="${OPA_REPO#https://github.com/}"
+  repo_path="${repo_path%.git}"
+  local github_api_url="https://api.github.com/repos/${repo_path}/contents/aap_policy_examples?ref=${OPA_MANIFEST_REF}"
+  local policy_list
+  policy_list=$(curl -fsSL "$github_api_url" 2>/dev/null \
+    | jq -r '.[] | select(.name | endswith(".rego")) | .name | sub("\\.rego$"; "")' 2>/dev/null || echo "")
 
-  # Build choices array from loaded policies
+  # Build choices array from GitHub API
   local choices_json="[]"
-  if [ -n "$loaded_policies" ]; then
-    choices_json=$(echo "$loaded_policies" | jq -R -s 'split("\n") | map(select(length > 0))')
-    echo "    Found $(echo "$loaded_policies" | wc -w | tr -d ' ') policies in OPA" >&2
+  if [ -n "$policy_list" ]; then
+    choices_json=$(echo "$policy_list" | jq -R -s 'split("\n") | map(select(length > 0))')
+    echo "    Found $(echo "$policy_list" | wc -l | tr -d ' ') policies from ${OPA_REPO} @ ${OPA_MANIFEST_REF:0:7}" >&2
   else
-    echo "    ⚠ Could not query OPA, using default policy list" >&2
-    # Fallback to known policies
-    choices_json='["superuser_allowed_false","jt_naming_validation","github_repo_validation","maintenance_window","extra_vars_validation","extra_vars_allowlist","restrict_inv_use_to_org","project_scm_branch","global_credential_allowed_false","team_based_extra_vars_restriction","allowed_false","mismatch_prefix_allowed_false"]'
+    echo "    ⚠ Could not query GitHub API, survey will have REMOVE option only" >&2
+    choices_json='[]'
   fi
 
   # Add "REMOVE" option to allow users to clear the policy from the organization
