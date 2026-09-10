@@ -1928,10 +1928,7 @@ cmd_redeploy-all() {
 }
 
 _remove_temp_swap() {
-  case "$(uname -s)" in
-    Linux | Darwin) ;;
-    *) return 0 ;;
-  esac
+  [ "$(uname -s)" = "Linux" ] || return 0
 
   if [ ! -f "${SCRIPT_DIR}/includes/temp-swap.sh" ]; then
     return 0

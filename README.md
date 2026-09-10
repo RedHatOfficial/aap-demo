@@ -9,7 +9,7 @@ Deploy AAP to a local MicroShift cluster in minutes.
 ## Prerequisites
 
 - **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
-- **16 GB RAM minimum** — default VM allocation is 16 GB (override with `CRC_MEMORY=24576 aap-demo create` for 24 GB). On Linux and macOS, `aap-demo create` prompts for optional temp swap on memory-constrained hosts (see [scripts/README.md](scripts/README.md))
+- **16 GB RAM minimum** — default VM allocation is 16 GB (override with `CRC_MEMORY=24576 aap-demo create` for 24 GB). On Linux, `aap-demo create` prompts for optional temp swap on memory-constrained hosts (see [scripts/README.md](scripts/README.md))
 - **Pull secret** — download from the
   [Red Hat console](https://console.redhat.com/openshift/install/pull-secret),
   then run:

@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Temporary swap helpers for aap-demo deploy bursts on memory-constrained hosts.
+# Temporary file-backed swap for aap-demo deploy bursts on Linux hosts.
 #
-# Linux (Fedora/RHEL): creates a swap file and runs swapon.
-# macOS: reserves disk space so dynamic_pager can grow kernel swap during deploy.
-#
-# During interactive aap-demo create, you are prompted to enable temp swap alongside
-# CPU and memory allocation. Use this script to manage swap manually.
+# During interactive aap-demo create on Linux, you are prompted to enable temp swap
+# before CPU and memory allocation. Use this script to manage swap manually.
 #
 # Usage:
 #   ./scripts/enable-temp-swap.sh              # enable default 16 GB swap
@@ -15,7 +12,7 @@
 #
 # Environment:
 #   AAP_SWAP_SIZE_GB  - swap file size in GB (default: 16)
-#   AAP_SWAP_FILE     - Linux: /swapfile-aap-demo; macOS: ~/.aap-demo/aap-swap-reserve
+#   AAP_SWAP_FILE     - path to swap file (default: /swapfile-aap-demo)
 #   SKIP_TEMP_SWAP    - set to true to skip enable
 set -euo pipefail
 
@@ -24,6 +21,11 @@ ACTION="${1:-enable}"
 
 # shellcheck source=includes/temp-swap.sh
 source "${SCRIPT_DIR}/includes/temp-swap.sh"
+
+if ! aap_demo_temp_swap_is_linux; then
+  echo "Temp swap is only supported on Linux (Fedora/RHEL)." >&2
+  exit 1
+fi
 
 case "${ACTION}" in
   enable)
@@ -42,7 +44,7 @@ case "${ACTION}" in
     aap_demo_temp_swap_show_status
     ;;
   -h | --help | help)
-    sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '2,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     ;;
   *)
     echo "ERROR: Unknown action: ${ACTION}" >&2

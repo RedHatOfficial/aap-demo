@@ -3,12 +3,12 @@
 Utility scripts used during development and local deployment. These are not invoked
 automatically by `aap-demo` unless noted below.
 
-## Host preparation (Linux + macOS + CRC)
+## Host preparation (Linux + CRC)
 
 ### Interactive temp swap (`aap-demo create`)
 
-On **Linux (Fedora/RHEL)** and **macOS**, the first interactive cluster create prompts
-for temporary swap before CPU and RAM allocation.
+On **Linux (Fedora/RHEL)**, the first interactive cluster create prompts for a
+temporary swap file before CPU and RAM allocation.
 
 ```text
 Resource allocation for CRC VM:
@@ -20,22 +20,13 @@ Resource allocation for CRC VM:
   Memory in GB [16]:
 ```
 
-| Platform | What it does | Default path |
-|----------|--------------|--------------|
-| Fedora/RHEL (Linux) | `mkswap` + `swapon` file-backed swap | `/swapfile-aap-demo` |
-| macOS | Reserves disk for `dynamic_pager` kernel swap | `~/.aap-demo/aap-swap-reserve` |
+Default swap file: `/swapfile-aap-demo` via `mkswap` + `swapon`.
 
-**Linux filesystem notes**
+**Filesystem notes**
 
-- **btrfs** (Fedora default): uses `chattr +C` + `dd` (not `fallocate`)
-- **xfs/ext4** (common on RHEL): uses `fallocate`, falls back to `dd`
+- **btrfs** (Fedora): uses `chattr +C` + `dd` (not `fallocate`)
+- **xfs/ext4** (RHEL): uses `fallocate`, falls back to `dd`
 - **SELinux** (RHEL): applies `swapfile_t` context when enforcing
-
-**macOS notes**
-
-macOS does not expose Linux-style `swapon`. The script reserves disk space so the
-kernel can grow swap files under memory pressure during deploy. Remove the reserve
-file after deploy to reclaim space.
 
 Non-interactive create (CI or scripted):
 
@@ -46,8 +37,8 @@ SKIP_TEMP_SWAP=true aap-demo create   # never enable swap
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AAP_SWAP_SIZE_GB` | `16` | Swap/reserve size when enabled |
-| `AAP_SWAP_FILE` | platform default (see table) | Override swap/reserve path |
+| `AAP_SWAP_SIZE_GB` | `16` | Swap file size when enabled |
+| `AAP_SWAP_FILE` | `/swapfile-aap-demo` | Path to the swap file |
 | `AAP_ENABLE_TEMP_SWAP` | `false` | Enable swap during non-interactive create |
 | `SKIP_TEMP_SWAP` | `false` | Skip swap prompt and enable |
 
@@ -66,14 +57,11 @@ Steps performed:
 2. Add the current user to the `libvirt` group (if needed)
 3. Run `crc setup` with the MicroShift preset
 
-Temp swap is handled by `aap-demo create` (see above), not this script.
+Temp swap is handled by `aap-demo create` on Linux (see above), not this script.
 
 ### `enable-temp-swap.sh`
 
-`aap-demo destroy` also removes temp swap on Linux and macOS (requires sudo on
-Linux for `swapoff`).
-
-Manual swap management when you are not running interactive create:
+Manual swap management on Linux when you are not running interactive create:
 
 ```bash
 ./scripts/enable-temp-swap.sh
@@ -81,6 +69,8 @@ AAP_SWAP_SIZE_GB=24 ./scripts/enable-temp-swap.sh
 ./scripts/enable-temp-swap.sh status
 ./scripts/enable-temp-swap.sh disable
 ```
+
+`aap-demo destroy` also removes temp swap on Linux (requires sudo for `swapoff`).
 
 ### `test-temp-swap-flow.sh`
 

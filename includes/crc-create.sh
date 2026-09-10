@@ -253,17 +253,9 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
   printf "${_BOLD}Resource allocation for CRC VM:${_NC}\n"
   if [ "$HOST_CPUS" -gt 0 ]; then
     _host_swap_gb=0
-    case "$(uname -s)" in
-      Linux)
-        _host_swap_gb=$(awk '/SwapTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo "0")
-        ;;
-      Darwin)
-        _host_swap_mb=$(sysctl -n vm.swapusage 2>/dev/null | sed -E 's/.*total = ([0-9.]+)M.*/\1/' || echo "0")
-        if [[ "${_host_swap_mb}" =~ ^[0-9.]+$ ]]; then
-          _host_swap_gb=$(awk -v m="${_host_swap_mb}" 'BEGIN {printf "%d", m/1024}')
-        fi
-        ;;
-    esac
+    if [ "$(uname -s)" = "Linux" ]; then
+      _host_swap_gb=$(awk '/SwapTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    fi
     if [ "$_host_swap_gb" -gt 0 ]; then
       printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM (${_host_swap_gb}GB swap)\n"
     else
@@ -272,9 +264,11 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
   fi
   echo ""
 
-  # shellcheck source=includes/temp-swap.sh
-  source "${SCRIPT_DIR}/includes/temp-swap.sh"
-  aap_demo_prompt_temp_swap
+  if [ "$(uname -s)" = "Linux" ]; then
+    # shellcheck source=includes/temp-swap.sh
+    source "${SCRIPT_DIR}/includes/temp-swap.sh"
+    aap_demo_prompt_temp_swap
+  fi
 
   printf "  CPUs [${_DEFAULT_CPUS}]: "
   read -r _input_cpus </dev/tty
@@ -305,14 +299,10 @@ else
   CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
   CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
 
-  if [ "${SKIP_TEMP_SWAP:-false}" != "true" ] && [ "${AAP_ENABLE_TEMP_SWAP:-false}" = "true" ]; then
-    case "$(uname -s)" in
-      Linux | Darwin)
-        # shellcheck source=includes/temp-swap.sh
-        source "${SCRIPT_DIR}/includes/temp-swap.sh"
-        aap_demo_temp_swap_enable || true
-        ;;
-    esac
+  if [ "$(uname -s)" = "Linux" ] && [ "${SKIP_TEMP_SWAP:-false}" != "true" ] && [ "${AAP_ENABLE_TEMP_SWAP:-false}" = "true" ]; then
+    # shellcheck source=includes/temp-swap.sh
+    source "${SCRIPT_DIR}/includes/temp-swap.sh"
+    aap_demo_temp_swap_enable || true
   fi
 fi
 
