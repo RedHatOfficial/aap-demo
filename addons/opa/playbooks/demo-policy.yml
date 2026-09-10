@@ -139,6 +139,11 @@
         updated_policies: "{{ (existing_policies + new_policy_paths) | unique | list }}"
       when: policies_to_add | length > 0
 
+    - name: Build policy string (comma-separated with URL encoding)
+      ansible.builtin.set_fact:
+        policy_string: "{{ updated_policies | map('urlencode') | join(',') }}"
+      when: policies_to_add | length > 0
+
     - name: Apply updated policies to organization
       ansible.builtin.uri:
         url: "{{ aap_host }}/api/controller/v2/organizations/{{ org_id }}/"
@@ -148,7 +153,7 @@
         force_basic_auth: true
         body_format: json
         body:
-          opa_query_path: "{{ updated_policies | join(',') }}"
+          opa_query_path: "{{ policy_string }}"
         validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: policy_applied
       when:
