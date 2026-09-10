@@ -32,8 +32,7 @@ ACTION="${1:-deploy}"
 # missing 'import rego.v1' statements (upstream issue, not version problem).
 OPA_VERSION="${OPA_VERSION:-1.20.2}"
 OPA_REPO="${OPA_REPO:-https://github.com/ansible/example-opa-policy-for-aap}"
-OPA_BRANCH="${OPA_BRANCH:-main}"
-OPA_STABLE_REF="${OPA_STABLE_REF:-main}" # Fallback to known-good commit if needed
+OPA_MANIFEST_REF="${OPA_MANIFEST_REF:-59d83e0689}" # Pinned commit SHA for supply chain security
 
 # AAP Demo repository configuration (contains our playbooks)
 AAP_DEMO_REPO="${AAP_DEMO_REPO:-https://github.com/RedHatOfficial/aap-demo.git}"
@@ -89,18 +88,15 @@ check_prerequisites() {
 deploy_opa_server() {
   echo "Downloading OPA deployment manifest from upstream..."
 
-  local manifest_url="https://raw.githubusercontent.com/ansible/example-opa-policy-for-aap/${OPA_BRANCH}/openshift/opa-deployment.yaml"
+  local manifest_url="https://raw.githubusercontent.com/ansible/example-opa-policy-for-aap/${OPA_MANIFEST_REF}/openshift/opa-deployment.yaml"
   local manifest
 
-  # Download manifest with fallback to stable ref
+  # Download pinned manifest
   if ! manifest=$(curl -fsSL "$manifest_url" 2>/dev/null); then
-    echo "  WARNING: Failed to download from $OPA_BRANCH, trying stable ref..."
-    manifest_url="https://raw.githubusercontent.com/ansible/example-opa-policy-for-aap/${OPA_STABLE_REF}/openshift/opa-deployment.yaml"
-    if ! manifest=$(curl -fsSL "$manifest_url" 2>/dev/null); then
-      echo "❌ ERROR: Failed to download OPA deployment manifest"
-      echo "  URL: $manifest_url"
-      exit 1
-    fi
+    echo "❌ ERROR: Failed to download OPA deployment manifest"
+    echo "  URL: $manifest_url"
+    echo "  Ref: ${OPA_MANIFEST_REF}"
+    exit 1
   fi
 
   echo "✓ Downloaded manifest from: $manifest_url"

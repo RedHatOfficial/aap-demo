@@ -52,7 +52,7 @@
         user: "{{ aap_username }}"
         password: "{{ aap_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: org_lookup
       when: policy_to_demo != ''
 
@@ -96,7 +96,7 @@
         body_format: json
         body:
           opa_query_path: "aap_policy_examples/{{ policy_to_demo }}"
-        validate_certs: false
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: policy_applied
       when:
         - policy_to_demo != ''
@@ -129,7 +129,7 @@
         body_format: json
         body:
           opa_query_path: ""
-        validate_certs: false
+        validate_certs: "{{ aap_validate_certs | default(false) }}"
       register: policy_removed
       when: policy_to_demo == 'REMOVE'
 

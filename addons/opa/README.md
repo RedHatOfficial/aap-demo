@@ -175,8 +175,8 @@ OPA_VERSION=1.20.2 aap-demo enable opa
 # Use different upstream OPA examples repository
 OPA_REPO=https://github.com/myorg/custom-opa-policies aap-demo enable opa
 
-# Use specific branch of upstream OPA examples
-OPA_BRANCH=v1.0.0 aap-demo enable opa
+# Use specific commit/branch for OPA deployment manifest (default: pinned commit SHA)
+OPA_MANIFEST_REF=main aap-demo enable opa
 
 # Use different aap-demo repository (for playbooks)
 AAP_DEMO_REPO=https://github.com/myorg/aap-demo.git aap-demo enable opa
