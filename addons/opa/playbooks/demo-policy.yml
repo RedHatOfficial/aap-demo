@@ -6,13 +6,15 @@
     opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
     policy_to_demo: "{{ policy_name | default('') }}"
     target_organization: "{{ organization_name | default('Policy as Code') }}"
-    # AAP credentials inject CONTROLLER_* environment variables
-    aap_host: "{{ aap_host | default(lookup('env', 'CONTROLLER_HOST')) }}"
-    aap_username: "{{ aap_username | default(lookup('env', 'CONTROLLER_USERNAME')) }}"
-    aap_password: "{{ aap_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
-    aap_validate_certs: "{{ aap_validate_certs | default(lookup('env', 'CONTROLLER_VERIFY_SSL') | bool | default(false)) }}"
 
   tasks:
+    - name: Set AAP connection variables from credential or extra_vars
+      ansible.builtin.set_fact:
+        aap_host: "{{ aap_host | default(lookup('env', 'CONTROLLER_HOST')) }}"
+        aap_username: "{{ aap_username | default(lookup('env', 'CONTROLLER_USERNAME')) }}"
+        aap_password: "{{ aap_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
+        aap_validate_certs: "{{ aap_validate_certs | default(lookup('env', 'CONTROLLER_VERIFY_SSL') | bool if lookup('env', 'CONTROLLER_VERIFY_SSL') else false) }}"
+
     - name: Validate required AAP connection variables
       ansible.builtin.fail:
         msg: |
