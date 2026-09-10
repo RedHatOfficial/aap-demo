@@ -67,6 +67,31 @@ class AAP:
         result = self.request(f"/{endpoint}/?name={urllib.parse.quote(name)}")
         return next(iter(result.get("results", [])), None)
 
+    def wait_for_project_sync(self, project_id: int, timeout: int = 180) -> None:
+        """Wait until git SCM has playbooks; create job templates fails before that."""
+        try:
+            self.request(f"/projects/{project_id}/update/", "POST")
+        except RuntimeError as exc:
+            if "HTTP 400" not in str(exc):
+                raise
+        deadline = time.time() + timeout
+        last_status = "unknown"
+        while time.time() < deadline:
+            project = self.request(f"/projects/{project_id}/")
+            last_status = str(project.get("status") or "unknown")
+            if last_status == "successful":
+                playbooks = self.request(f"/projects/{project_id}/playbooks/")
+                if isinstance(playbooks, dict):
+                    playbooks = playbooks.get("results") or playbooks.get("playbooks") or []
+                if playbooks:
+                    return
+            if last_status in {"failed", "error", "canceled"}:
+                raise RuntimeError(f"AAP project {project_id} sync ended with status {last_status}")
+            time.sleep(5)
+        raise RuntimeError(
+            f"AAP project {project_id} did not publish playbooks within {timeout}s (status={last_status})"
+        )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -108,6 +133,8 @@ def main() -> int:
         print(f"  ✓ AAP project created: {PROJECT_NAME}")
 
     print("  ✓ AAP project configured for SCM update on launch")
+    api.wait_for_project_sync(project_id)
+    print("  ✓ AAP project playbooks synced")
 
     existing = {item["name"]: item for item in api.request("/job_templates/?page_size=200").get("results", [])}
     inventories = api.request(f"/inventories/?organization={organization['id']}&page_size=1").get("results", [])
@@ -152,6 +179,8 @@ def main() -> int:
         else:
             control_project_id = api.request("/projects/", "POST", control_payload)["id"]
             print(f"  ✓ AAP control project created: {CONTROL_PROJECT_NAME}")
+        api.wait_for_project_sync(control_project_id)
+        print("  ✓ AAP control project playbooks synced")
 
         control_template = api.find("job_templates", CONTROL_TEMPLATE_NAME)
         control_template_payload = {

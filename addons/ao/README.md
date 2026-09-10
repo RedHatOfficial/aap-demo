@@ -253,6 +253,25 @@ If the catalog pod was restarted mid-pull, force a clean retry:
 AO_REFRESH_CATALOG=1 FORCE=1 aap-demo enable ao
 ```
 
+### Instance not ready / `SecretTypeInvalid`
+
+The AO operator requires `spec.imagePullSecrets` to be type `kubernetes.io/dockerconfigjson`.
+Copying `redhat-operators-pull-secret` can yield an OLM `Opaque` placeholder (`operator: aap`),
+which leaves the CR on `ConfigurationValid=False` and no UI/backend pods:
+
+```text
+Image pull secret "automation-orchestrator-pull-secret" must be of type
+kubernetes.io/dockerconfigjson, got Opaque
+```
+
+`aap-demo enable ao` now creates `automation-orchestrator-pull-secret` from
+`~/.aap-demo/pull-secret.txt`. To repair a stuck instance without a full reinstall:
+
+```bash
+kubectl delete secret automation-orchestrator-pull-secret -n automation-orchestrator
+aap-demo enable ao
+```
+
 ### `constraints not satisfiable` / operator not in catalog
 
 Check packagemanifest in the **AO namespace**:
