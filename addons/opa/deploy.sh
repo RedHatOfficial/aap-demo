@@ -568,7 +568,7 @@ create_job_template() {
   local inventory_id="$5"
   local org_id="$6"
   local extra_vars="${7:-}"
-  local credential_ids="${8:-}"  # Space-separated credential IDs
+  local credential_ids="${8:-}" # Space-separated credential IDs
 
   # Validate required IDs
   if [ -z "$project_id" ] || [ -z "$inventory_id" ] || [ -z "$org_id" ]; then
