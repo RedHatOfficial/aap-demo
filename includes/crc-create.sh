@@ -252,9 +252,24 @@ if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
   echo ""
   printf "${_BOLD}Resource allocation for CRC VM:${_NC}\n"
   if [ "$HOST_CPUS" -gt 0 ]; then
-    printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM\n"
+    _host_swap_gb=0
+    if [ "$(uname -s)" = "Linux" ]; then
+      _host_swap_gb=$(awk '/SwapTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo "0")
+    fi
+    if [ "$_host_swap_gb" -gt 0 ]; then
+      printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM (${_host_swap_gb}GB swap)\n"
+    else
+      printf "  Host: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM\n"
+    fi
   fi
   echo ""
+
+  if [ "$(uname -s)" = "Linux" ]; then
+    # shellcheck source=includes/temp-swap.sh
+    source "${SCRIPT_DIR}/includes/temp-swap.sh"
+    aap_demo_prompt_temp_swap
+  fi
+
   printf "  CPUs [${_DEFAULT_CPUS}]: "
   read -r _input_cpus </dev/tty
   _input_cpus="${_input_cpus:-${_DEFAULT_CPUS}}"
@@ -283,6 +298,12 @@ else
   CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$((_DEFAULT_MEMORY_GB * 1024))}}"
   CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
   CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
+
+  if [ "$(uname -s)" = "Linux" ] && [ "${SKIP_TEMP_SWAP:-false}" != "true" ] && [ "${AAP_ENABLE_TEMP_SWAP:-false}" = "true" ]; then
+    # shellcheck source=includes/temp-swap.sh
+    source "${SCRIPT_DIR}/includes/temp-swap.sh"
+    aap_demo_temp_swap_enable || true
+  fi
 fi
 
 # Validate resource values are positive integers
