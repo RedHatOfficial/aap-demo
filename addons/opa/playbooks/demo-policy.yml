@@ -63,6 +63,22 @@
         - policy_to_demo != ''
         - org_lookup.json.results | length > 0
 
+    - name: Fail if organization not found
+      ansible.builtin.fail:
+        msg: |
+          ❌ Organization '{{ target_organization }}' does not exist in AAP.
+
+          The organization lookup returned no results. Ensure the organization
+          exists before running this playbook.
+
+          Available organizations:
+            {{ org_lookup.json.results | default([]) | map(attribute='name') | list | join(', ') if org_lookup.json.results | default([]) | length > 0 else 'None found (check API permissions)' }}
+
+          To create the organization, use the AAP UI or API.
+      when:
+        - policy_to_demo != ''
+        - org_id is not defined
+
     - name: Validate organization is in allowlist (authorization boundary)
       ansible.builtin.fail:
         msg: |
