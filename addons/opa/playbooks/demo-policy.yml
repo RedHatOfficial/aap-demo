@@ -14,9 +14,9 @@
         aap_password: "{{ aap_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
         aap_validate_certs: "{{ aap_validate_certs | default(lookup('env', 'CONTROLLER_VERIFY_SSL') | bool if lookup('env', 'CONTROLLER_VERIFY_SSL') else false) }}"
 
-    - name: Parse policy selection (multiselect comes as newline-separated string)
+    - name: Parse policy selection (multiselect returns a list)
       ansible.builtin.set_fact:
-        selected_policies: "{{ (policy_names | default('') | split('\n') | map('trim') | select('string') | list) if policy_names is defined else [] }}"
+        selected_policies: "{{ policy_names | default([]) if policy_names is iterable and policy_names is not string else ([policy_names] if policy_names is defined and policy_names != '' else []) }}"
 
     - name: Validate required AAP connection variables
       ansible.builtin.fail:
