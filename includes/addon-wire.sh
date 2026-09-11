@@ -816,13 +816,18 @@ wire_ao_ollama() {
 
   if [ -n "$integration_id" ]; then
     wire_log "  Updating existing Ollama integration..."
-    wire_ao_api PATCH "/integrations/${integration_id}" \
+    result=$(wire_ao_api PATCH "/integrations/${integration_id}" \
       "$(jq -n \
           --arg name "$name" \
           --argjson config "$config_json" \
           --arg cred "$cred_id" \
-          '{name: $name, configuration: $config, management_credential_id: $cred}'
-      )" >/dev/null 2>&1 || true
+          '{name: $name, description: "Auto-wired by aap-demo", configuration: $config, management_credential_id: $cred, enabled: true, scope: "global"}'
+      )" 2>/dev/null)
+    if wire_ao_response_is_error "$result"; then
+      wire_warn "Failed to update AO integration: ${name}"
+      echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+      return 1
+    fi
   else
     wire_log "  Creating Ollama integration..."
     result=$(wire_ao_api POST "/integrations" \
@@ -830,21 +835,30 @@ wire_ao_ollama() {
           --arg name "$name" \
           --argjson config "$config_json" \
           --arg cred "$cred_id" \
-          '{name: $name, integration_type: "llm_provider", configuration: $config, management_credential_id: $cred}'
+          '{name: $name, description: "Auto-wired by aap-demo", integration_type: "llm_provider", configuration: $config, management_credential_id: $cred, enabled: true, scope: "global"}'
       )" 2>/dev/null)
+    if wire_ao_response_is_error "$result"; then
+      wire_warn "Failed to create AO integration: ${name}"
+      echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+      return 1
+    fi
     integration_id=$(printf '%s' "$result" | jq -r '.id // empty' 2>/dev/null)
+  fi
+
+  if [ -z "$integration_id" ]; then
+    wire_warn "Failed to create/update AO integration: ${name}"
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
   fi
 
   # Validate with provider_hint — wire_ao_validate_integration uses
   # wire_ao_integration_config_json which omits provider_hint, so call directly.
-  if [ -n "$integration_id" ]; then
-    wire_ao_api POST "/integrations/${integration_id}/validate" \
-      "$(jq -n \
-          --argjson config "$config_json" \
-          --arg cred "$cred_id" \
-          '{integration_type: "llm_provider", configuration: $config, credential_id: $cred}'
-      )" >/dev/null 2>&1 || true
-  fi
+  wire_ao_api POST "/integrations/${integration_id}/validate" \
+    "$(jq -n \
+        --argjson config "$config_json" \
+        --arg cred "$cred_id" \
+        '{integration_type: "llm_provider", configuration: $config, credential_id: $cred}'
+    )" >/dev/null 2>&1 || true
 
   wire_log "  ✓ Ollama wired as LLM provider"
 }
