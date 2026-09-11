@@ -411,6 +411,7 @@ Addons:
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator (enables mcp-server automatically)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
+  enable ollama   Deploy Ollama LLM server with phi4-mini (wires into AO as llm_provider)
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -455,7 +456,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, local-cache)
+    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, ao, local-cache, ollama)
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
@@ -2668,7 +2669,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite ollama"
 
 _normalize_addon_name() {
   case "$1" in
