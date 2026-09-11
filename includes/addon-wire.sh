@@ -778,7 +778,7 @@ wire_ao_mcp() {
 }
 
 wire_ao_ollama() {
-  local ollama_url cred_id config_json
+  local ollama_url ollama_model cred_id config_json
 
   if ! wire_ollama_deployed || ! wire_ao_deployed; then
     return 0
@@ -789,6 +789,7 @@ wire_ao_ollama() {
     wire_warn "Could not determine Ollama route URL for AO integration"
     return 1
   fi
+  ollama_model="${OLLAMA_MODEL:-phi4-mini}"
 
   wire_log "Wiring Automation Orchestrator → Ollama LLM provider..."
 
@@ -803,10 +804,12 @@ wire_ao_ollama() {
   # using wire_ao_integration_config_json which doesn't know about this field.
   config_json=$(jq -n \
     --arg url "$ollama_url" \
+    --arg model "$ollama_model" \
     '{
       integration_type: "llm_provider",
       provider_hint: "custom",
       base_url: $url,
+      model: $model,
       allow_http: true,
       insecure_skip_tls_verify: true
     }')
@@ -863,6 +866,15 @@ wire_ao_ollama() {
         --arg cred "$cred_id" \
         '{integration_type: "llm_provider", configuration: $config, credential_id: $cred}'
     )" >/dev/null 2>&1 || true
+
+  # Validation alone does not persist the models discovered from the provider.
+  # Refresh explicitly so phi4-mini appears as an AO model resource immediately.
+  result=$(wire_ao_api POST "/integrations/${integration_id}/refresh" '{}' 2>/dev/null)
+  if wire_ao_response_is_error "$result"; then
+    wire_warn "Failed to refresh Ollama models in AO"
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
+  fi
 
   wire_log "  ✓ Ollama wired as LLM provider"
 }
