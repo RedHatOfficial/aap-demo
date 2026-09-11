@@ -13,15 +13,17 @@
         aap_host: "{{ aap_host | default(lookup('env', 'CONTROLLER_HOST')) }}"
         aap_username: "{{ aap_username | default(lookup('env', 'CONTROLLER_USERNAME')) }}"
         aap_password: "{{ aap_password | default(lookup('env', 'CONTROLLER_PASSWORD')) }}"
-        aap_validate_certs: "{{ aap_validate_certs | default(lookup('env', 'CONTROLLER_VERIFY_SSL') | bool if lookup('env', 'CONTROLLER_VERIFY_SSL') else false) }}"
+        aap_validate_certs: >-
+          {{ aap_validate_certs | default(lookup('env', 'CONTROLLER_VERIFY_SSL') | bool
+          if lookup('env', 'CONTROLLER_VERIFY_SSL') else false) }}
 
     - name: Validate required AAP connection variables
       ansible.builtin.fail:
-        msg: |
+        msg: |  # pragma: allowlist secret
           Missing required variable: {{ item }}
 
-          This playbook requires AAP API credentials to be set.
-          Ensure the 'Policy as Code - AAP Credential' is attached to this job template.
+          This playbook requires AAP API authentication variables to be set.
+          Ensure the Policy as Code AAP authentication configuration is attached to this job template.
 
           If you're running this manually, provide:
             -e aap_host=https://your-aap-route.com
@@ -52,7 +54,9 @@
 
     - name: Validate policy selection
       ansible.builtin.fail:
-        msg: "Policy '{{ selected_policy }}' is not loaded in OPA. Available: {{ loaded_policies.json.result | map(attribute='id') | list }}"
+        msg: >-
+          Policy '{{ selected_policy }}' is not loaded in OPA. Available:
+          {{ loaded_policies.json.result | map(attribute='id') | list }}
       when:
         - selected_policy != ''
         - selected_policy != 'REMOVE'
@@ -85,7 +89,9 @@
           exists before running this playbook.
 
           Available organizations:
-            {{ org_lookup.json.results | default([]) | map(attribute='name') | list | join(', ') if org_lookup.json.results | default([]) | length > 0 else 'None found (check API permissions)' }}
+            {{ org_lookup.json.results | default([]) | map(attribute='name') | list
+            | join(', ') if org_lookup.json.results | default([]) | length > 0
+            else 'None found (check API permissions)' }}
 
           To create the organization, use the AAP UI or API.
       when:
