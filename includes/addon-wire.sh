@@ -260,6 +260,76 @@ wire_ao_wait_for_workload_rollout() {
   done
 }
 
+wire_ingress_router_ip() {
+  kubectl get svc router-internal-default -n openshift-ingress \
+    -o jsonpath='{.spec.clusterIP}' 2>/dev/null
+}
+
+# Route hostnames only (never *.svc.cluster.local — those must keep kube-dns).
+wire_ao_route_hosts_json() {
+  local h
+  {
+    h=$(wire_aap_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
+    h=$(wire_ao_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
+    h=$(wire_mcp_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
+  } | awk 'NF && !seen[$0]++' | jq -R . | jq -s -c .
+}
+
+wire_ao_host_aliases_current() {
+  local deployment="$1"
+  local expected_ip="$2"
+  local expected_hosts="$3"
+  local current
+  current=$(kubectl get deployment "$deployment" -n "$AO_NAMESPACE" \
+    -o json 2>/dev/null | jq -c '.spec.template.spec.hostAliases // []')
+  [ "$(echo "$current" | jq -c '.[0].ip // empty')" = "$expected_ip" ] \
+    && [ "$(echo "$current" | jq -c '.[0].hostnames // [] | sort')" = "$(echo "$expected_hosts" | jq -c 'sort')" ]
+}
+
+# MicroShift's DNS operator regularly wipes the CoreDNS route rewrite. AO SSRF then
+# fails with "base_url is not permitted" because the AAP route hostname does not
+# resolve. Pin route hostnames to the ingress router in /etc/hosts so AO workers
+# do not depend on that rewrite (same pattern as the portal addon).
+wire_ao_route_host_aliases() {
+  local router_ip hosts_json dep patched=0 patch
+
+  if ! wire_ao_deployed; then
+    return 0
+  fi
+  router_ip=$(wire_ingress_router_ip)
+  if [ -z "$router_ip" ]; then
+    wire_warn "ingress router ClusterIP not found; skip AO hostAliases"
+    return 1
+  fi
+  hosts_json=$(wire_ao_route_hosts_json)
+  if [ -z "$hosts_json" ] || [ "$hosts_json" = "[]" ]; then
+    wire_warn "Could not collect AO route hostnames for hostAliases"
+    return 1
+  fi
+
+  for dep in automation-orchestrator-backend automation-orchestrator-worker \
+    automation-orchestrator-background-worker; do
+    kubectl get deployment "$dep" -n "$AO_NAMESPACE" >/dev/null 2>&1 || continue
+    if wire_ao_host_aliases_current "$dep" "$router_ip" "$hosts_json"; then
+      continue
+    fi
+    patch=$(jq -n --arg ip "$router_ip" --argjson hosts "$hosts_json" \
+      '{spec: {template: {spec: {hostAliases: [{ip: $ip, hostnames: $hosts}]}}}}')
+    kubectl patch deployment "$dep" -n "$AO_NAMESPACE" --type=strategic \
+      -p "$patch" >/dev/null 2>&1 || {
+      wire_warn "Could not patch hostAliases on ${dep}"
+      continue
+    }
+    patched=1
+  done
+
+  if [ "$patched" -eq 1 ]; then
+    wire_log "  Restarting AO backend/worker so route hostAliases take effect..."
+    wire_ao_wait_for_workload_rollout
+  fi
+  wire_log "  ✓ AO pods resolve route hosts via hostAliases (${router_ip})"
+}
+
 # MicroShift's DNS operator overwrites dns-default; without the rewrite, AO pods
 # cannot resolve AAP/MCP route hostnames and proxy APIs return AAP_NOT_CONFIGURED.
 wire_restore_coredns_route_rewrite() {
@@ -308,6 +378,10 @@ wire_ao_network_access() {
     wire_warn "Could not build AO integration allow-list hostnames"
     return 1
   fi
+
+  # Independent of the allow-list env: CoreDNS rewrite is wiped by MicroShift
+  # even when APP_INTEGRATION_URL_ALLOWED_HOSTS is already correct.
+  wire_ao_route_host_aliases || true
 
   if wire_ao_network_access_current "$allowed_json"; then
     wire_log "  ✓ AO integration allow-list already configured"

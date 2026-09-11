@@ -51,6 +51,7 @@ aap_demo_wire (automatic)
   ├─ APD: OpenShift Credential (SA token + API host)
   ├─ APD: Galaxy credentials (if ~/.aap-demo/galaxy-token exists)
   ├─ AO:  restore CoreDNS route rewrite if missing (MicroShift DNS operator overwrites it)
+  ├─ AO:  hostAliases for AAP/AO/MCP route hostnames → ingress router (SSRF DNS independence)
   ├─ AO:  APP_INTEGRATION_URL_ALLOWED_HOSTS + APP_OIDC_ALLOW_PRIVATE_NETWORKS (backend patch)
   ├─ AO:  Integration "aap-demo AAP" (route URL + gateway OAuth token)
   └─ AO:  Integration "aap-demo MCP Server" (route /mcp URL + bearer token; tools enabled)
@@ -66,6 +67,11 @@ Before creating integrations, `wire_ao_network_access()` patches AO backend depl
 
 This mirrors upstream APD `network-access.yml` intent so co-located AAP/MCP URLs pass AO SSRF
 validation on MicroShift.
+
+`wire_ao_route_host_aliases()` also writes those **route** hostnames (not `*.svc.cluster.local`)
+into AO backend/worker `hostAliases` pointing at `router-internal-default`. AO SSRF resolves
+the integration `base_url` at request time; when CoreDNS has been reset, a failed lookup is
+treated as blocked even if the hostname is allow-listed. `/etc/hosts` in the pod survives that.
 
 ### AO ↔ AAP and MCP integrations
 
@@ -120,7 +126,12 @@ content but requires Infrastructure category registration and a manual or custom
 Rejected as the default path; logic inlined into `wire_ao_network_access()`.
 
 **In-cluster `.svc` URLs only for AO integrations**: Fails AO SSRF checks without allow-list and
-does not match workflow proxy expectations for route hostnames. Rejected.
+does not match workflow proxy expectations for route hostnames. AO also treats
+`*.svc.cluster.local` as Kubernetes internal DNS. Rejected.
+
+**Rely only on the CoreDNS route rewrite**: The MicroShift DNS operator overwrites `dns-default`,
+so allow-listed AAP route hosts stop resolving and Launch AAP fails SSRF. Rejected as the
+durable path; CoreDNS is still restored when possible, and AO pods get `hostAliases`.
 
 **Ansible playbook executed inside AO backend pod**: Implemented experimentally as
 `addons/ao/playbooks/wire_ao_aap_incluster.yml` but rejected for the default path — shell module

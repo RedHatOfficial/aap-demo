@@ -52,6 +52,10 @@ integrations (no separate wiring step):
   `APP_INTEGRATION_URL_ALLOWED_HOSTS` and `APP_OIDC_ALLOW_PRIVATE_NETWORKS` (same intent as
   upstream APD `infrastructure/ao/network-access.yml`) so co-located AAP/MCP base URLs that
   resolve to private addresses on MicroShift pass AO SSRF validation
+- **Route hostAliases** — maps AAP/AO/MCP route hostnames to the ingress router ClusterIP
+  inside AO backend/worker pods. MicroShift's DNS operator overwrites the CoreDNS rewrite;
+  without `/etc/hosts` entries AO reports `base_url is not permitted by SSRF policy` whenever
+  the AAP route hostname fails to resolve
 - **AAP integration** (`aap-demo AAP`) → AAP route URL (fallback: in-cluster service) with a
   write-scoped gateway token stored as an AO credential
 - **MCP integration** (`aap-demo MCP Server`) — **required**; `mcp-server` is enabled automatically
@@ -72,7 +76,8 @@ cloud templates when the product-demos addon is enabled.
 
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
 Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
-the CoreDNS route rewrite if MicroShift's DNS operator has dropped it.
+the CoreDNS route rewrite if MicroShift's DNS operator has dropped it, and reapplies
+AO pod `hostAliases` for AAP/AO/MCP route hostnames.
 
 **Workflow builder note:** Configuration → Integrations may show **Available** while the workflow
 UI still reports “AAP credential not configured” until you select **aap-demo AAP** and
@@ -190,27 +195,34 @@ Username: **admin**
 
 Connecting AAP (Settings → Automation Orchestrator credential) uses the gateway
 route hostname. On CRC/MicroShift that hostname is private; wiring allowlists it
-(see [Auto-wiring](#auto-wiring-aap--mcp)), and `aap-demo enable ao` restores the
-CoreDNS route rewrite so AO pods can resolve it.
+(see [Auto-wiring](#auto-wiring-aap--mcp)), pins it in AO pod `hostAliases`, and
+restores the CoreDNS route rewrite when possible.
 
 ## Troubleshooting
 
-### `base_url must not resolve to a private, reserved, or cloud metadata address`
+### `base_url is not permitted by SSRF policy`
 
-AO SSRF protection blocks the AAP URL from the generated credential. On aap-demo
+AO SSRF re-resolves the AAP integration hostname at request time. On CRC/MicroShift
 the gateway host (`aap-<ns>.apps.crc.testing` or `*.nip.io`) is private, and
-without a CoreDNS rewrite it may not resolve inside AO pods at all.
+MicroShift's DNS operator often wipes the CoreDNS rewrite so the name does not
+resolve inside AO pods. A failed lookup is reported as SSRF even when the host is
+already on `APP_INTEGRATION_URL_ALLOWED_HOSTS`. Using `*.svc.cluster.local` as
+`base_url` is separately blocked as Kubernetes internal DNS.
 
-Re-run the addon (does not reinstall AO):
+Older AO builds may say `base_url must not resolve to a private, reserved, or
+cloud metadata address` for the same class of failure.
+
+Re-run wiring (does not reinstall AO):
 
 ```bash
-aap-demo enable ao
+aap-demo wire
 ```
 
-That restores the CoreDNS route rewrite if missing (so the hostname resolves
-inside AO pods), allowlists it, and restarts AO backend/worker pods. Then retry
-the credential in AO. `aap-demo wire` restores the rewrite and reapplies the
-integration allow-list without reinstalling AO.
+Or `aap-demo enable ao` on the skip path. That pins route hostnames on AO
+backend/worker `hostAliases` (ingress router ClusterIP), restores the CoreDNS
+rewrite if missing, and reapplies the allow-list. Then retry the AAP integration
+or Launch AAP node. `hostAliases` survive the next DNS-operator reconcile;
+re-run `aap-demo wire` after CRC stop/start if the router ClusterIP changed.
 
 ### Catalog not READY / `TRANSIENT_FAILURE`
 
