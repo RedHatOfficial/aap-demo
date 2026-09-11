@@ -1,0 +1,75 @@
+---
+- name: Load OPA Example Policies
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
+    opa_repo: "https://github.com/ansible/example-opa-policy-for-aap.git"
+    opa_branch: "{{ opa_branch | default('59d83e0689') }}"
+    repo_dir: "/tmp/opa-policies"
+
+  tasks:
+    - name: Remove old policy directory if exists
+      ansible.builtin.file:
+        path: "{{ repo_dir }}"
+        state: absent
+
+    - name: Clone OPA example policies repository
+      ansible.builtin.git:
+        repo: "{{ opa_repo }}"
+        dest: "{{ repo_dir }}"
+        version: "{{ opa_branch }}"
+        depth: 1
+
+    - name: Find all .rego policy files
+      ansible.builtin.find:
+        paths: "{{ repo_dir }}/aap_policy_examples"
+        patterns: "*.rego"
+        recurse: true
+      register: policy_files
+
+    - name: Display found policies
+      ansible.builtin.debug:
+        msg: "Found {{ policy_files.files | length }} policy files"
+
+    - name: Load each policy to OPA server
+      ansible.builtin.uri:
+        url: "{{ opa_server }}/v1/policies/{{ item.path | basename | regex_replace('\\.rego$', '') }}"
+        method: PUT
+        body: "{{ lookup('file', item.path) }}"
+        headers:
+          Content-Type: "text/plain"
+        status_code: [200, 201]
+        validate_certs: false
+      loop: "{{ policy_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+      register: load_results
+      ignore_errors: true
+
+    - name: Count results
+      ansible.builtin.set_fact:
+        failed_policies: "{{ load_results.results | selectattr('failed', 'defined') | selectattr('failed') | list }}"
+        total_count: "{{ load_results.results | length }}"
+
+    - name: Calculate successful count
+      ansible.builtin.set_fact:
+        failed_count: "{{ failed_policies | length }}"
+        successful_count: "{{ total_count | int - (failed_policies | length | int) }}"
+
+    - name: Display failed policies
+      ansible.builtin.debug:
+        msg: "Failed to load: {{ item.item.path | basename }} - {{ item.json.message | default('Unknown error') }}"
+      loop: "{{ failed_policies }}"
+      loop_control:
+        label: "{{ item.item.path | basename }}"
+      when: failed_policies | length > 0
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: |
+          Successfully loaded {{ successful_count }} of {{ total_count }} policies to OPA server.
+          {% if failed_count | int > 0 %}
+          {{ failed_count }} policies failed to load (likely due to OPA version compatibility).
+          {% endif %}
+          OPA server: {{ opa_server }}
