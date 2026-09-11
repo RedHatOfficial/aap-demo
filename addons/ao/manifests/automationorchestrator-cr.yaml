@@ -15,6 +15,11 @@ metadata:
 spec:
   imagePullSecrets:
     - name: __PULL_SECRET_NAME__
+  secrets:
+    # Explicit reference lets aap-demo restore the bootstrap password before
+    # the CR exists without conflicting with operator-owned generated secrets.
+    initialAdminPasswordSecretRef:
+      name: automation-orchestrator-initial-admin-password
   ingress:
     host: __INGRESS_HOST__
     type: Route

@@ -2870,6 +2870,7 @@ cmd_disable() {
     echo "Available addons: $AVAILABLE_ADDONS"
     echo ""
     echo "Addon options:"
+    echo "  ao:       --purge-data  Remove the AO database and saved admin credential"
     echo "  apme-eap: --purge-creds   Remove saved GitHub credentials and private key"
     return 0
   fi
