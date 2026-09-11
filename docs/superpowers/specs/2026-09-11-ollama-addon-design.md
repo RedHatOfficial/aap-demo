@@ -1,14 +1,16 @@
 # Ollama Addon Design
 
-**Date:** 2026-09-11  
-**Branch:** feature/ollama-addon  
+**Date:** 2026-09-11
+**Branch:** feature/ollama-addon
 **Status:** Approved
 
 ## Overview
 
-Add an `ollama` addon that deploys Ollama (CPU-only) to a dedicated namespace on MicroShift/CRC, pre-pulls the `phi4-mini` model, and wires it into Automation Orchestrator as an `llm_provider` integration.
+Add an `ollama` addon that deploys Ollama (CPU-only) to a dedicated namespace on
+MicroShift/CRC, pre-pulls the `phi4-mini` model, and wires it into Automation
+Orchestrator as an `llm_provider` integration.
 
-Enabled via: `aap-demo enable ollama`  
+Enabled via: `aap-demo enable ollama`
 Removed via: `aap-demo disable ollama`
 
 ## Files
@@ -20,6 +22,7 @@ addons/ollama/
 ```
 
 Two existing files get small additions:
+
 - `includes/addon-wire.sh` — new `wire_ollama_*` helpers + updated allowed-hosts list + updated `aap_demo_wire`
 - `aap-demo.sh` — `ollama` added to `AVAILABLE_ADDONS` and help text
 
@@ -47,7 +50,8 @@ resources:
     memory: 8Gi
 ```
 
-`phi4-mini` fits comfortably within 8Gi for CPU inference. Limits are generous enough that the model won't OOM but conserve headroom for AAP.
+`phi4-mini` fits comfortably within 8Gi for CPU inference. Limits are generous enough
+that the model won't OOM but conserve headroom for AAP.
 
 ### Readiness probe
 
@@ -67,15 +71,22 @@ readinessProbe:
 1. Validate `kubectl cluster-info`
 2. `kubectl apply -f ollama.yaml`
 3. `kubectl rollout status deployment/ollama -n aap-demo-ollama --timeout=120s`
-4. Pull `phi4-mini` model — POST to in-cluster service URL (`http://$(kubectl get svc ollama -n aap-demo-ollama -o jsonpath='{.spec.clusterIP}'):11434/api/pull`) using `curl` with a streaming response poll loop. Print progress dots; timeout after 5 minutes.
+4. Pull `phi4-mini` model — POST to the in-cluster service URL
+   (`http://$(kubectl get svc ollama -n aap-demo-ollama -o jsonpath='{.spec.clusterIP}'):11434/api/pull`)
+   using `curl` with a streaming response poll loop. Print progress dots; timeout
+   after 5 minutes.
 5. Print the route URL, in-cluster service URL, and example `curl` usage.
-6. If AO is deployed (checked via `wire_ao_deployed`), source `addon-wire.sh` and call `aap_demo_wire` to wire the integration (same pattern as `mcp-server/deploy.sh`).
+6. If AO is deployed (checked via `wire_ao_deployed`), source `addon-wire.sh` and
+   call `aap_demo_wire` to wire the integration (same pattern as
+   `mcp-server/deploy.sh`).
 
 ### Delete (`--delete`)
 
 1. `kubectl delete namespace aap-demo-ollama` (removes all namespaced resources)
 2. `kubectl delete clusterrolebinding aap-demo-ollama-anyuid`
-3. Print confirmation. AO credential/integration are left in place — they become invalid automatically when the route disappears and can be cleaned up from the AO UI.
+3. Print confirmation. AO credential/integration are left in place — they become
+   invalid automatically when the route disappears and can be cleaned up from the AO
+   UI.
 
 ## AO Wiring (`addon-wire.sh` additions)
 
@@ -91,7 +102,9 @@ wire_ollama_url_for_ao()    # https://<route-host>/v1  (Ollama's OpenAI-compatib
 
 1. Return early if AO or Ollama is not deployed.
 2. Resolve the route URL via `wire_ollama_url_for_ao`.
-3. Create (or update) an "LLM Provider" credential named `"aap-demo Ollama"` with `api_key: "ollama"` (Ollama has no authentication; placeholder satisfies AO's required field).
+3. Create (or update) an "LLM Provider" credential named `"aap-demo Ollama"` with
+   `api_key: "ollama"` (Ollama has no authentication; placeholder satisfies AO's
+   required field).
 4. Create (or update) an `llm_provider` integration named `"aap-demo Ollama"` with:
    - `provider_hint: "custom"`
    - `base_url`: the route URL
@@ -107,7 +120,9 @@ Add one line to emit the Ollama route host alongside the existing AAP, AO, and M
 h=$(wire_ollama_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
 ```
 
-This ensures AO's `APP_INTEGRATION_URL_ALLOWED_HOSTS` allow-list includes the Ollama route before the integration is created (AO rejects private IPs; route hostnames pass the check).
+This ensures AO's `APP_INTEGRATION_URL_ALLOWED_HOSTS` allow-list includes the Ollama
+route before the integration is created (AO rejects private IPs; route hostnames pass
+the check).
 
 ### `aap_demo_wire()` update
 
@@ -124,12 +139,19 @@ wire_ao_ollama || wire_warn "Ollama integration skipped"
 
 ## Cluster domain detection
 
-The route hostname follows the same pattern as the `mcp-server` addon: read the existing AAP route host to derive the cluster apps domain, then construct `ollama.<domain>`. Falls back to `ollama.apps.127.0.0.1.nip.io` if AAP is not yet deployed.
+The route hostname follows the same pattern as the `mcp-server` addon: read the
+existing AAP route host to derive the cluster apps domain, then construct
+`ollama.<domain>`. Falls back to `ollama.apps.127.0.0.1.nip.io` if AAP is not yet
+deployed.
 
 ## Constraints and assumptions
 
 - **CPU-only**: MicroShift VMs have no GPU. Ollama runs fine in CPU mode; phi4-mini inference is slow but functional.
-- **No auth on Ollama**: Ollama does not support API key auth natively. The `api_key: "ollama"` placeholder satisfies AO's required field; actual requests are unauthenticated.
+- **No auth on Ollama**: Ollama does not support API key auth natively. The
+  `api_key: "ollama"` placeholder satisfies AO's required field; actual requests are
+  unauthenticated.
 - **20Gi PVC**: phi4-mini is ~2.5GB; 20Gi leaves room for additional model pulls without redeploying.
-- **AO wiring is optional**: If AO is not installed the addon still deploys and prints the endpoint; wiring is skipped silently.
-- **Idempotent**: Re-running `aap-demo enable ollama` is safe — `kubectl apply` is idempotent and `wire_ao_ensure_*` upserts credentials and integrations.
+- **AO wiring is optional**: If AO is not installed the addon still deploys and prints
+  the endpoint; wiring is skipped silently.
+- **Idempotent**: Re-running `aap-demo enable ollama` is safe — `kubectl apply` is
+  idempotent and `wire_ao_ensure_*` upserts credentials and integrations.

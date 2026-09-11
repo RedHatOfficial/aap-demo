@@ -1,10 +1,17 @@
 # Ollama Addon Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
+> (recommended) or superpowers:executing-plans to implement this plan task-by-task.
+> Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an `ollama` addon that deploys Ollama with phi4-mini on MicroShift and wires it into Automation Orchestrator as an `llm_provider` integration.
+**Goal:** Add an `ollama` addon that deploys Ollama with phi4-mini on MicroShift and
+wires it into Automation Orchestrator as an `llm_provider` integration.
 
-**Architecture:** A self-contained addon directory (`addons/ollama/`) containing a YAML manifest and deploy script, following the exact same pattern as `addons/registry/`. Two existing files are extended: `includes/addon-wire.sh` gets Ollama-aware helpers and is updated to wire the integration when AO is present; `aap-demo.sh` registers the addon name.
+**Architecture:** A self-contained addon directory (`addons/ollama/`) containing a YAML
+manifest and deploy script, following the exact same pattern as `addons/registry/`.
+Two existing files are extended: `includes/addon-wire.sh` gets Ollama-aware helpers
+and is updated to wire the integration when AO is present; `aap-demo.sh` registers the
+addon name.
 
 **Tech Stack:** Bash, kubectl, curl, `ollama/ollama` container image, OpenShift Routes, MicroShift/CRC.
 
@@ -40,10 +47,13 @@
 ## Task 1: Kubernetes manifests
 
 **Files:**
+
 - Create: `addons/ollama/ollama.yaml`
 
 **Interfaces:**
-- Produces: namespace `aap-demo-ollama`, deployment `ollama`, service `ollama` (port 11434), route `ollama` (spec.host = `ollama.<apps-domain>`)
+
+- Produces: namespace `aap-demo-ollama`, deployment `ollama`, service `ollama`
+  (port 11434), route `ollama` (spec.host = `ollama.<apps-domain>`)
 
 - [ ] **Step 1: Create `addons/ollama/ollama.yaml`**
 
@@ -224,9 +234,11 @@ git commit -m "feat(ollama): add Kubernetes manifests for Ollama deployment"
 ## Task 2: deploy.sh — deploy action
 
 **Files:**
+
 - Create: `addons/ollama/deploy.sh`
 
 **Interfaces:**
+
 - Consumes: `addons/ollama/ollama.yaml`, `includes/infra-crc.sh` (optional, sourced with `|| true`), `includes/addon-wire.sh`
 - Produces: running Ollama with phi4-mini pulled; prints route URL and OpenAI-compatible base URL
 
@@ -366,6 +378,7 @@ Expected: no output (syntax OK)
 ```
 
 Expected:
+
 - "✓ Ollama deployed!" printed
 - "✓ Model phi4-mini ready" printed (or pull-in-progress dots for a few minutes)
 
@@ -398,9 +411,11 @@ git commit -m "feat(ollama): add deploy.sh with model pull and route detection"
 ## Task 3: deploy.sh — delete action verification
 
 **Files:**
+
 - Modify: `addons/ollama/deploy.sh` (already written — just verify the delete path)
 
 **Interfaces:**
+
 - Consumes: running `aap-demo-ollama` namespace
 - Produces: namespace and ClusterRoleBinding deleted
 
@@ -420,7 +435,8 @@ Expected: both print "Removed OK"
 ./addons/ollama/deploy.sh
 ```
 
-Expected: clean redeploy, "✓ Ollama deployed!" with phi4-mini pulled again (it will pull from Ollama registry since the PVC was deleted with the namespace)
+Expected: clean redeploy, "✓ Ollama deployed!" with phi4-mini pulled again. It will
+pull from Ollama registry since the PVC was deleted with the namespace.
 
 - [ ] **Step 3: Commit (no code changes, this was verification only)**
 
@@ -431,9 +447,11 @@ No commit needed — Task 2 commit covered the delete implementation.
 ## Task 4: AO wiring helpers in addon-wire.sh
 
 **Files:**
+
 - Modify: `includes/addon-wire.sh`
 
 **Interfaces:**
+
 - Consumes: `wire_ao_deployed`, `wire_ao_ensure_credential`, `wire_ao_ensure_integration` (all already defined in `addon-wire.sh`)
 - Produces:
   - `wire_ollama_deployed()` → 0/1 exit code
@@ -445,7 +463,9 @@ No commit needed — Task 2 commit covered the delete implementation.
 
 - [ ] **Step 1: Add Ollama detection helpers to `addon-wire.sh`**
 
-Find the block containing `wire_mcp_deployed()` (around line 77). Add the following block immediately after `wire_mcp_deployed()` and its related helpers. Use the same style — one blank line between functions, no extra comments beyond the function name.
+Find the block containing `wire_mcp_deployed()` (around line 77). Add the following
+block immediately after `wire_mcp_deployed()` and its related helpers. Use the same
+style — one blank line between functions, no extra comments beyond the function name.
 
 ```bash
 wire_ollama_deployed() {
@@ -474,6 +494,7 @@ wire_ollama_url_for_ao
 ```
 
 Expected:
+
 ```
 deployed
 ollama.apps.127.0.0.1.nip.io
@@ -529,7 +550,9 @@ wire_ao_ollama() {
 }
 ```
 
-**Note:** `wire_ao_ensure_integration` takes 5 positional arguments as currently defined. Check the existing signature at `wire_ao_ensure_integration()` in `addon-wire.sh` — it is:
+**Note:** `wire_ao_ensure_integration` takes 5 positional arguments as currently
+defined. Check the existing signature at `wire_ao_ensure_integration()` in
+`addon-wire.sh` — it is:
 
 ```bash
 wire_ao_ensure_integration() {
@@ -540,7 +563,12 @@ wire_ao_ensure_integration() {
   local discover_tools="${5:-false}"
 ```
 
-The `provider_hint` is part of the integration configuration, not a positional parameter to `wire_ao_ensure_integration`. We need to override the configuration payload for `llm_provider` integrations. The existing `wire_ao_integration_config_json` produces the config body. For `llm_provider`, AO requires an additional `provider_hint` field. Patch this by overriding `wire_ao_integration_config_json` output inline in `wire_ao_ollama`:
+The `provider_hint` is part of the integration configuration, not a positional
+parameter to `wire_ao_ensure_integration`. We need to override the configuration
+payload for `llm_provider` integrations. The existing
+`wire_ao_integration_config_json` produces the config body. For `llm_provider`, AO
+requires an additional `provider_hint` field. Patch this by overriding
+`wire_ao_integration_config_json` output inline in `wire_ao_ollama`:
 
 ```bash
 wire_ao_ollama() {
@@ -642,6 +670,7 @@ bash -c 'source includes/addon-wire.sh && aap_demo_wire'
 ```
 
 Expected output includes:
+
 ```
 Wiring Automation Orchestrator → Ollama LLM provider...
   ✓ Ollama wired as LLM provider
@@ -682,9 +711,11 @@ git commit -m "feat(ollama): add AO wiring helpers and llm_provider integration"
 ## Task 5: Register addon in aap-demo.sh
 
 **Files:**
+
 - Modify: `aap-demo.sh`
 
 **Interfaces:**
+
 - Produces: `ollama` recognized by `aap-demo enable`, `aap-demo disable`, `aap-demo status`
 
 - [ ] **Step 1: Add `ollama` to `AVAILABLE_ADDONS`**
@@ -801,6 +832,7 @@ git commit -m "feat(ollama): register ollama addon in AVAILABLE_ADDONS and help 
 ## Task 6: README
 
 **Files:**
+
 - Create: `addons/ollama/README.md`
 
 **Interfaces:** None (documentation only)
@@ -863,6 +895,7 @@ Re-running `aap-demo enable ollama` with a different `OLLAMA_MODEL` is safe — 
 kubectl get deployment,pvc -n aap-demo-ollama
 kubectl logs -n aap-demo-ollama -l app=ollama --tail=20
 ```
+
 ```
 
 - [ ] **Step 2: Commit**
