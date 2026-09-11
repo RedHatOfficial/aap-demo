@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
+# shellcheck source=lib/admin-password.sh
+source "${SCRIPT_DIR}/lib/admin-password.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -27,6 +29,7 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 # Usage:
 #   ./deploy.sh                    # Install Automation Orchestrator
 #   ./deploy.sh --delete           # Remove Automation Orchestrator
+#   ./deploy.sh --delete --purge-data # Also remove its database and saved password
 #   ./deploy.sh --force            # Reinstall even if already running
 #   ./deploy.sh --refresh-catalog  # Re-pull redhat-operator-index before install
 #   AO_REFRESH_CATALOG=1 ./deploy.sh
@@ -64,10 +67,12 @@ fi
 ACTION="${1:-deploy}"
 FORCE="${FORCE:-}"
 REFRESH_CATALOG="${AO_REFRESH_CATALOG:-}"
+PURGE_DATA="${AO_PURGE_DATA:-}"
 for _arg in "$@"; do
   case "$_arg" in
     --force) FORCE=1 ;;
     --refresh-catalog) REFRESH_CATALOG=1 ;;
+    --purge-data) PURGE_DATA=1 ;;
   esac
 done
 
@@ -928,15 +933,11 @@ link_ao_pull_secrets_to_operator() {
 }
 
 deploy_ao_instance() {
-  # The initial admin Secret is only consumed during first database
-  # initialization. Keep it in place when PostgreSQL is reused, otherwise a
-  # normal re-enable would publish a new password that does not match AO's
-  # existing admin record. A forced reinstall resets PostgreSQL above, so it
-  # must remove the old bootstrap Secret and let the operator generate a new
-  # one for the fresh database.
+  # The explicitly referenced initial-admin Secret is consumed during first
+  # database initialization. A forced reinstall resets PostgreSQL above, so it
+  # also needs a fresh referenced password for the new admin record.
   if [ -n "$FORCE" ]; then
-    kubectl delete secret automation-orchestrator-initial-admin-password \
-      -n "$NAMESPACE" 2>/dev/null || true
+    ao_admin_password_generate "$NAMESPACE"
   fi
 
   echo "Creating AutomationOrchestrator instance (aapctl GitOps CR)..."
@@ -957,6 +958,14 @@ cleanup_legacy_ea_resources() {
 # --- Delete ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing Automation Orchestrator..."
+
+  if [ -n "$PURGE_DATA" ]; then
+    echo "  Purging retained AO database and credentials..."
+    ao_admin_password_forget
+    reset_ao_postgres_storage
+  else
+    ao_admin_password_save "$NAMESPACE"
+  fi
 
   if command -v aapctl >/dev/null 2>&1; then
     aapctl uninstall automation-orchestrator --force --yes 2>/dev/null || true
@@ -1089,6 +1098,10 @@ echo "Creating namespace and SCC grants..."
 kubectl create namespace "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
+if [ -z "$FORCE" ]; then
+  ao_admin_password_require_for_retained_database "$NAMESPACE"
+fi
+ao_admin_password_restore "$NAMESPACE"
 echo "✓ Namespace ready"
 
 # --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---
