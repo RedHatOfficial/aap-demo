@@ -86,7 +86,9 @@ CoreDNS fixes general in-cluster DNS; OAuth-specific workarounds address TLS and
 
 ### /etc/hosts in every pod
 
-Rejected: not maintainable; breaks on route changes.
+Rejected as a cluster-wide substitute for CoreDNS. Targeted `hostAliases` on AO
+backend/worker pods (route hostnames → ingress router ClusterIP) are still required
+because the DNS operator wipes `dns-default`; see ADR-017 / ADR-023.
 
 ### Use in-cluster Service DNS only
 

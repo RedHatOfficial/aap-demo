@@ -529,6 +529,48 @@ ensure_coredns_route_rewrite() {
   }
 }
 
+# Pin AAP/AO/MCP route hostnames to the ingress router in AO pods. MicroShift's
+# DNS operator wipes the CoreDNS rewrite, which makes AO SSRF reject the AAP
+# integration URL even when the hostname is on APP_INTEGRATION_URL_ALLOWED_HOSTS.
+ao_pod_route_host_aliases() {
+  local _router_ip _hosts_json _dep _patch _current
+  _router_ip=$(kubectl get svc router-internal-default -n openshift-ingress \
+    -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+  if [ -z "$_router_ip" ]; then
+    echo "  ⚠ ingress router ClusterIP not found — skip AO hostAliases"
+    return 1
+  fi
+  _hosts_json=$(
+    {
+      kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true
+      echo
+      kubectl get route automation-orchestrator -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true
+      echo
+      kubectl get route -n "$AAP_NAMESPACE" -o jsonpath='{range .items[*]}{.spec.host}{"\n"}{end}' 2>/dev/null \
+        | grep -E 'mcp|aap-mcp' || true
+    } | awk 'NF && !seen[$0]++' | jq -R . | jq -s -c .
+  )
+  if [ -z "$_hosts_json" ] || [ "$_hosts_json" = "[]" ]; then
+    echo "  ⚠ no route hostnames for AO hostAliases"
+    return 1
+  fi
+  _patch=$(jq -nc --arg ip "$_router_ip" --argjson hosts "$_hosts_json" \
+    '{spec: {template: {spec: {hostAliases: [{ip: $ip, hostnames: $hosts}]}}}}')
+  for _dep in automation-orchestrator-backend automation-orchestrator-worker \
+    automation-orchestrator-background-worker; do
+    kubectl get deployment "$_dep" -n "$NAMESPACE" >/dev/null 2>&1 || continue
+    _current=$(kubectl get deployment "$_dep" -n "$NAMESPACE" -o json \
+      | jq -c '.spec.template.spec.hostAliases // []')
+    if [ "$(echo "$_current" | jq -c '.[0].ip // empty')" = "$_router_ip" ] \
+      && [ "$(echo "$_current" | jq -c '.[0].hostnames // [] | sort')" = "$(echo "$_hosts_json" | jq -c 'sort')" ]; then
+      continue
+    fi
+    kubectl patch deployment "$_dep" -n "$NAMESPACE" --type=strategic -p "$_patch" >/dev/null
+    echo "  patched hostAliases on ${_dep}"
+  done
+  echo "✓ AO pods resolve route hosts via hostAliases (${_router_ip})"
+}
+
 configure_ao_local_aap_access() {
   local _aap_host _hosts_json _cm_current _cr_current _changed=""
   _aap_host=$(aap_gateway_route_host)
@@ -544,6 +586,7 @@ configure_ao_local_aap_access() {
 
   echo "Configuring AO to reach local AAP (${_aap_host})..."
   ensure_coredns_route_rewrite || true
+  ao_pod_route_host_aliases || true
 
   _hosts_json=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$_aap_host")
   _cm_current=$(kubectl get configmap automation-orchestrator-admin-settings -n "$NAMESPACE" \
