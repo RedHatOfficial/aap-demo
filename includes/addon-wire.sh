@@ -529,7 +529,8 @@ wire_ao_ensure_credential() {
   local cred_name="$1"
   local type_name="$2"
   local inputs_json="$3"
-  local project_id type_id cred_id cred_record existing_type_id payload result
+  local project_id type_id cred_id cred_record existing_type_id payload result scoped_record
+  local integration_id integrations
 
   project_id=$(wire_ao_default_project_id)
   if [ -z "$project_id" ]; then
@@ -553,6 +554,37 @@ wire_ao_ensure_credential() {
   if [ -n "$cred_id" ] && [ -n "$existing_type_id" ] && [ "$existing_type_id" != "$type_id" ]; then
     wire_ao_api DELETE "/credentials/${cred_id}" >/dev/null 2>&1 || true
     cred_id=""
+  fi
+
+  # Credentials can survive an AO reinstall while the encryption key does not.
+  # Such records cannot be read or patched; replace this auto-managed credential
+  # through the project-scoped endpoint using the freshly minted token below.
+  if [ -n "$cred_id" ]; then
+    scoped_record=$(wire_ao_api GET "/projects/${project_id}/credentials/${cred_id}" 2>/dev/null)
+    if echo "$scoped_record" | jq -e \
+      'select(.code == "CREDENTIAL_DECRYPTION_ERROR")' >/dev/null 2>&1; then
+      # AO will not detach a required management credential. Remove only
+      # integrations previously created by this script; the caller recreates
+      # the relevant integration immediately after the credential.
+      integrations=$(wire_ao_api GET "/integrations?limit=${WIRE_AO_LIST_LIMIT}" 2>/dev/null)
+      while read -r integration_id; do
+        [ -n "$integration_id" ] || continue
+        wire_ao_api DELETE "/integrations/${integration_id}" >/dev/null 2>&1 || true
+      done < <(echo "$integrations" | wire_ao_list_items | jq -r --arg cred "$cred_id" '
+        .[] | select(
+          .management_credential_id == $cred and
+          .description == "Auto-wired by aap-demo"
+        ) | .id' 2>/dev/null)
+
+      result=$(wire_ao_api DELETE "/projects/${project_id}/credentials/${cred_id}" 2>/dev/null)
+      # A successful DELETE returns HTTP 204 with an empty response body.
+      if [ -n "$result" ] && wire_ao_response_is_error "$result"; then
+        wire_warn "Failed to replace undecryptable AO credential: ${cred_name}"
+        echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+        return 1
+      fi
+      cred_id=""
+    fi
   fi
 
   payload=$(jq -n \
