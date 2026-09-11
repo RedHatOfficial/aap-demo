@@ -53,40 +53,22 @@ sed "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
 echo "  Waiting for Ollama deployment to be ready..."
 kubectl rollout status deployment/ollama -n aap-demo-ollama --timeout=120s
 
-# Pull model via in-cluster ClusterIP (avoids nip.io resolution issues in scripts)
-OLLAMA_SVC_IP=$(kubectl get svc ollama -n aap-demo-ollama \
-  -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+echo "  Pulling model: ${OLLAMA_MODEL}..."
+echo "  (This may take several minutes — model is ~2.5GB)"
 
-if [ -n "$OLLAMA_SVC_IP" ]; then
-  echo "  Pulling model: ${OLLAMA_MODEL}..."
-  echo "  (This may take several minutes — model is ~2.5GB)"
+# Pull model inside the pod — avoids ClusterIP routing issues on the CRC host
+OLLAMA_POD=$(kubectl get pod -n aap-demo-ollama -l app=ollama \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 
-  _pull_done=false
-  for _i in $(seq 1 60); do
-    _resp=$(curl -s --max-time 10 -X POST \
-      "http://${OLLAMA_SVC_IP}:11434/api/pull" \
-      -H "Content-Type: application/json" \
-      -d "{\"name\":\"${OLLAMA_MODEL}\",\"stream\":false}" 2>/dev/null || true)
-    if echo "$_resp" | grep -q '"status":"success"'; then
-      _pull_done=true
-      echo "  ✓ Model ${OLLAMA_MODEL} ready"
-      break
-    elif echo "$_resp" | grep -q '"error"'; then
-      echo "  ⚠ Pull error: $(echo "$_resp" | grep -o '"error":"[^"]*"' | head -1)"
-      break
-    fi
-    printf "."
-    sleep 5
-  done
-  echo ""
-  if [ "$_pull_done" = false ]; then
-    echo "  ⚠ Model pull did not complete within 5 minutes"
-    echo "  Pull manually: curl -X POST http://${OLLAMA_SVC_IP}:11434/api/pull"
-    echo "    -d '{\"name\":\"${OLLAMA_MODEL}\",\"stream\":false}'"
+if [ -n "$OLLAMA_POD" ]; then
+  if kubectl exec -n aap-demo-ollama "$OLLAMA_POD" -- ollama pull "${OLLAMA_MODEL}"; then
+    echo "  ✓ Model ${OLLAMA_MODEL} ready"
+  else
+    echo "  ⚠ Model pull failed — retry:"
+    echo "    kubectl exec -n aap-demo-ollama $OLLAMA_POD -- ollama pull ${OLLAMA_MODEL}"
   fi
 else
-  echo "  ⚠ Could not determine service ClusterIP — skipping model pull"
-  echo "  Pull manually after deploy: aap-demo enable ollama  (re-run is safe)"
+  echo "  ⚠ Could not find Ollama pod — retry: aap-demo enable ollama  (re-run is safe)"
 fi
 
 echo ""
@@ -105,6 +87,8 @@ echo "  List models:   curl https://${OLLAMA_ROUTE}/api/tags"
 echo ""
 echo "  Pull additional model:"
 echo "    OLLAMA_MODEL=mistral:7b aap-demo enable ollama"
+echo "    # or directly:"
+echo "    kubectl exec -n aap-demo-ollama \$(kubectl get pod -n aap-demo-ollama -l app=ollama -o jsonpath='{.items[0].metadata.name}') -- ollama pull mistral:7b"
 echo ""
 
 # Wire into AO if present
