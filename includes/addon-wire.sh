@@ -792,10 +792,11 @@ wire_ao_ollama() {
 
   wire_log "Wiring Automation Orchestrator → Ollama LLM provider..."
 
-  cred_id=$(wire_ao_ensure_credential \
-    "aap-demo Ollama" \
-    "LLM Provider" \
-    "$(jq -n '{api_key: "ollama"}')" \
+  cred_id=$(
+    wire_ao_ensure_credential \
+      "aap-demo Ollama" \
+      "LLM Provider" \
+      "$(jq -n '{api_key: "ollama"}')"
   ) || return 1
 
   # llm_provider requires provider_hint — build config directly instead of
@@ -817,7 +818,8 @@ wire_ao_ollama() {
   if [ -n "$integration_id" ]; then
     wire_log "  Updating existing Ollama integration..."
     result=$(wire_ao_api PATCH "/integrations/${integration_id}" \
-      "$(jq -n \
+      "$(
+        jq -n \
           --arg name "$name" \
           --argjson config "$config_json" \
           --arg cred "$cred_id" \
@@ -831,7 +833,8 @@ wire_ao_ollama() {
   else
     wire_log "  Creating Ollama integration..."
     result=$(wire_ao_api POST "/integrations" \
-      "$(jq -n \
+      "$(
+        jq -n \
           --arg name "$name" \
           --argjson config "$config_json" \
           --arg cred "$cred_id" \
@@ -854,7 +857,8 @@ wire_ao_ollama() {
   # Validate with provider_hint — wire_ao_validate_integration uses
   # wire_ao_integration_config_json which omits provider_hint, so call directly.
   wire_ao_api POST "/integrations/${integration_id}/validate" \
-    "$(jq -n \
+    "$(
+      jq -n \
         --argjson config "$config_json" \
         --arg cred "$cred_id" \
         '{integration_type: "llm_provider", configuration: $config, credential_id: $cred}'
