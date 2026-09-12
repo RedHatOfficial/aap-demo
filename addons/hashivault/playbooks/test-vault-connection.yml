@@ -1,0 +1,32 @@
+---
+- name: Test HashiCorp Vault Connection
+  hosts: localhost
+  gather_facts: false
+  vars:
+    vault_url: "{{ vault_url | default('http://vault.aap-operator.svc.cluster.local:8200') }}"
+
+  tasks:
+    - name: Check Vault health endpoint
+      ansible.builtin.uri:
+        url: "{{ vault_url }}/v1/sys/health"
+        method: GET
+        status_code: [200, 429, 473, 501, 503]
+        validate_certs: false
+      register: health_check
+
+    - name: Display Vault status
+      ansible.builtin.debug:
+        msg: |
+          ✓ Vault Connection Successful
+
+          Vault URL: {{ vault_url }}
+          Initialized: {{ health_check.json.initialized }}
+          Sealed: {{ health_check.json.sealed }}
+          Standby: {{ health_check.json.standby | default(false) }}
+          Version: {{ health_check.json.version }}
+
+          {% if health_check.json.sealed %}
+          ⚠ WARNING: Vault is sealed! Unseal required before use.
+          {% else %}
+          ✓ Vault is unsealed and ready
+          {% endif %}

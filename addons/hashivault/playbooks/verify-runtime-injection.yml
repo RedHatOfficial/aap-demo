@@ -1,0 +1,56 @@
+---
+- name: Verify Runtime Injection (Re-read Secret)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    secret_path: "{{ secret_path | default('secret/data/demo') }}"
+    vault_addr: "{{ lookup('env', 'VAULT_ADDR') }}"
+    vault_token: "{{ lookup('env', 'VAULT_TOKEN') }}"
+
+  tasks:
+    - name: Verify Vault credentials are injected
+      ansible.builtin.assert:
+        that:
+          - vault_addr != ''
+          - vault_token != ''
+        fail_msg: "Vault credentials not configured"
+
+    - name: Read secret from Vault
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/{{ secret_path }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ vault_token }}"
+        validate_certs: false
+        status_code: 200
+      register: vault_response
+      no_log: false  # Show output for demo purposes
+
+    - name: Parse secret data
+      ansible.builtin.set_fact:
+        secret_data: "{{ vault_response.json.data.data }}"
+
+    - name: Display retrieved secrets
+      ansible.builtin.debug:
+        msg: |
+          ✓ Secret Retrieved Successfully (After Update)
+
+          Vault URL: {{ vault_addr }}
+          Path: {{ secret_path }}
+          Version: {{ vault_response.json.data.metadata.version }}
+          Modified: {{ vault_response.json.data.metadata.created_time }}
+
+          Current Secret Values:
+          {% for key, value in secret_data.items() %}
+            - {{ key }}: {{ value }}
+          {% endfor %}
+
+          💡 If you ran 'Update Secret' before this, you should see the NEW values above.
+          This proves secrets are injected at RUNTIME, not baked into the execution environment!
+
+          🔐 For OIDC credentials:
+          • AAP generated a NEW short-lived JWT for THIS specific job run
+          • AAP exchanged the JWT for a Vault token automatically
+          • No static credentials stored in AAP database
+          • Token expires after the job completes
+          • Each job run gets its own unique token!
