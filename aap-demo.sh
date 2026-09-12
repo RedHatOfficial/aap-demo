@@ -410,6 +410,7 @@ Addons:
   enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator (enables mcp-server automatically)
+  enable hashivault Deploy HashiCorp Vault for secret management demo
   enable local-cache Cache container images locally (~30GB) to speed up deploys
 
 Examples:
@@ -2668,7 +2669,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa hashivault"
 
 _normalize_addon_name() {
   case "$1" in
