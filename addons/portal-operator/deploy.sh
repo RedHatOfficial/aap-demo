@@ -186,6 +186,28 @@ EOF
   fi
 }
 
+configure_rhdh_subscription() {
+  local rhdh_catalog_namespace="openshift-marketplace"
+  if [ "$OPERATOR_SOURCE_NAMESPACE" != openshift-marketplace ]; then
+    rhdh_catalog_namespace="openshift-operators"
+  fi
+
+  # The portal operator creates this Subscription only after the
+  # AutomationPortal CR exists. Wait for that first reconciliation so a
+  # namespace-scoped catalog can be selected on the initial deployment.
+  for _ in $(seq 1 60); do
+    if kubectl get subscription rhdh -n openshift-operators >/dev/null 2>&1; then
+      kubectl patch subscription rhdh -n openshift-operators --type=merge \
+        -p "{\"spec\":{\"source\":\"${OPERATOR_SOURCE}\",\"sourceNamespace\":\"${rhdh_catalog_namespace}\"}}" \
+        >/dev/null
+      return
+    fi
+    sleep 2
+  done
+  echo "❌ RHDH Operator Subscription was not created" >&2
+  exit 1
+}
+
 install_operator() {
   if kubectl get crd automationportals.automationportal.aap.redhat.com >/dev/null 2>&1; then
     echo "✓ Automation Portal Operator CRD already installed"
@@ -311,7 +333,7 @@ create_credentials() {
   mkdir -p "$PORTAL_OPERATOR_DIR"
   chmod 700 "$PORTAL_OPERATOR_DIR"
   create_oauth_app
-  local token_response api_token
+  local token_response api_token ca_path
   token_response=$(curl -ksu "admin:$ADMIN_PASS" -X POST \
     "https://$AAP_ROUTE/api/gateway/v1/tokens/" -H 'Content-Type: application/json' \
     -d "$(jq -n --arg description 'Portal operator catalog access' '{description:$description,scope:"write"}')")
@@ -326,6 +348,16 @@ create_credentials() {
     --from-literal=oauth-client-id="$CLIENT_ID" \
     --from-literal=oauth-client-secret="$CLIENT_SECRET" \
     --from-literal=aap-token="$api_token" --dry-run=client -o yaml | kubectl apply -f -
+
+  if [ "${PORTAL_CHECK_SSL:-true}" = true ]; then
+    ca_path="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"
+    [ -s "$ca_path" ] || {
+      echo "❌ Ingress CA not found at $ca_path; export it or set PORTAL_CHECK_SSL=false" >&2
+      exit 1
+    }
+    kubectl create secret generic portal-ingress-ca -n "$PORTAL_OPERATOR_NAMESPACE" \
+      --from-file=ca-bundle.crt="$ca_path" --dry-run=client -o yaml | kubectl apply -f -
+  fi
 
   load_github_credentials
   if [ "${PORTAL_GITHUB_ENABLED:-false}" = true ]; then
@@ -367,6 +399,12 @@ apply_portal() {
   local git_contents="${PORTAL_GIT_CONTENTS_ENABLED:-false}"
   local collections="${PORTAL_COLLECTIONS_ENABLED:-false}"
   local devtools="${PORTAL_DEVTOOLS_ENABLED:-true}"
+  local apps_domain="${AAP_ROUTE#*.}"
+  local portal_route_host="${PORTAL_ROUTE_HOST:-backstage-${PORTAL_NAME}-backstage-${PORTAL_OPERATOR_NAMESPACE}.${apps_domain}}"
+  local ca_block=""
+  if [ "$check_ssl" = true ]; then
+    ca_block="    caCertificates:\n      secretRef: portal-ingress-ca"
+  fi
   local integration_block=""
   if [ "$github_enabled" = true ]; then
     integration_block="  scm:\n    credentials:\n      secretRef: secrets-scm\n    github:\n      enabled: true\n      host: ${PORTAL_GITHUB_HOST:-github.com}\n      authType: ${auth_type}\n  auth:\n    providers:\n      github:\n        enabled: true\n        credentials:\n          secretRef: secrets-scm"
@@ -383,6 +421,11 @@ spec:
     credentials:
       secretRef: secrets-rhaap-portal
 $(printf '%b\n' "$integration_block")
+  backstage:
+$(printf '%b\n' "$ca_block")
+    route:
+      enabled: true
+      host: ${portal_route_host}
   plugins:
     registry: ${PORTAL_PLUGIN_REGISTRY:-registry.redhat.io}
     catalog:
@@ -443,6 +486,7 @@ main() {
   select_organization
   create_credentials
   apply_portal
+  configure_rhdh_subscription
   wait_for_portal
   echo "✓ Portal operator addon enabled"
   echo "Portal URL: https://$PORTAL_ROUTE"
