@@ -15,6 +15,8 @@ The addon follows the Red Hat AAP 2.7 operator configuration reference:
   code application and `/api/auth/rhaap/handler/frame` callback.
 - `portal-registry-auth` is created from the existing AAP pull secret when it
   is available.
+- `portal-ingress-ca` mounts the aap-demo ingress CA into Backstage so AAP API
+  and OAuth token requests keep TLS verification enabled on local clusters.
 - On clusters where the Red Hat catalog is namespace-scoped instead of being
   in `openshift-marketplace`, the addon copies the catalog into each OLM
   consumer namespace so the portal and RHDH operators can resolve it.
