@@ -2,7 +2,8 @@
 
 Deploys the AAP 2.7 Automation Portal Operator and an `AutomationPortal`
 custom resource. This is a separate deployment path from the existing Helm
-`portal` addon and uses the namespace `automation-portal` by default.
+`portal` addon, uses the namespace `automation-portal` by default, and supports
+AMD64 clusters only.
 
 The addon follows the Red Hat AAP 2.7 operator configuration reference:
 
