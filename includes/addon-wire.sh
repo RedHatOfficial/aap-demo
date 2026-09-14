@@ -33,6 +33,7 @@ WIRE_AAP_CREDENTIAL_NAME="${WIRE_AAP_CREDENTIAL_NAME:-aap-demo AAP Token}"
 WIRE_MCP_CREDENTIAL_NAME="${WIRE_MCP_CREDENTIAL_NAME:-aap-demo MCP Token}"
 WIRE_AAP_OAUTH_APP_NAME="${WIRE_AAP_OAUTH_APP_NAME:-Automation Orchestrator (aap-demo)}"
 WIRE_AO_LIST_LIMIT="${WIRE_AO_LIST_LIMIT:-100}"
+WIRE_OLLAMA_MODEL="${WIRE_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen2.5:3b}}"
 
 export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")}"
 
@@ -883,6 +884,26 @@ wire_ao_mcp() {
     "mcp_server" "$mcp_url" "$cred_id" true || return 1
 }
 
+wire_ao_set_default_ollama_model() {
+  local integration_id="$1"
+  local preferred_model="$2"
+  local models model_id
+
+  models=$(wire_ao_api GET "/integrations/${integration_id}/models?limit=50" 2>/dev/null)
+  model_id=$(echo "$models" | wire_ao_list_items \
+    | jq -r --arg m "$preferred_model" \
+      '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null)
+
+  if [ -z "$model_id" ]; then
+    wire_warn "Model ${preferred_model} not found in AO after refresh"
+    return 0
+  fi
+
+  wire_ao_api PATCH "/integrations/${integration_id}/models/${model_id}" \
+    '{"is_default": true}' >/dev/null 2>&1 || true
+  wire_log "  ✓ Default AO model set: ${preferred_model}"
+}
+
 wire_ao_ollama() {
   local ollama_url cred_id config_json
 
@@ -971,7 +992,7 @@ wire_ao_ollama() {
     )" >/dev/null 2>&1 || true
 
   # Validation alone does not persist the models discovered from the provider.
-  # Refresh explicitly so phi4-mini appears as an AO model resource immediately.
+  # Refresh explicitly so the model appears as an AO model resource immediately.
   result=$(wire_ao_api POST "/integrations/${integration_id}/refresh" '{}' 2>/dev/null)
   if wire_ao_response_is_error "$result"; then
     wire_warn "Failed to refresh Ollama models in AO"
@@ -979,6 +1000,7 @@ wire_ao_ollama() {
     return 1
   fi
 
+  wire_ao_set_default_ollama_model "$integration_id" "$WIRE_OLLAMA_MODEL"
   wire_log "  ✓ Ollama wired as LLM provider"
 }
 

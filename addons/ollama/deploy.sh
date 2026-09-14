@@ -14,7 +14,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OLLAMA_MODEL="${OLLAMA_MODEL:-phi4-mini}"
+OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
 
 # shellcheck source=../../includes/infra-crc.sh
 source "${SCRIPT_DIR}/../../includes/infra-crc.sh" 2>/dev/null || true
