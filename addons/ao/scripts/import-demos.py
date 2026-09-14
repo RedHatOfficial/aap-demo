@@ -92,6 +92,9 @@ def normalize(
     aap_integration_id: str | None = None,
     fallback_name: str | None = None,
     agent_credential_id: str | None = None,
+    agent_model_id: str | None = None,
+    mcp_integration_id: str | None = None,
+    mcp_credential_id: str | None = None,
     webhook_service_account_id: str | None = None,
 ) -> dict[str, Any]:
     workflow = dict(document)
@@ -123,12 +126,26 @@ def normalize(
                 parameters.pop("tool_selections", None)
             elif "tool_selection_strategy" not in parameters:
                 parameters["tool_selection_strategy"] = "ALL"
-            # Upstream exports contain environment-specific LLM credential IDs.
-            # AO validates those strings but rejects unknown IDs on create.
+            # Upstream exports contain environment-specific LLM credential IDs and
+            # model names (e.g. "claude-sonnet-4-6") that AO rejects when the local
+            # provider is Ollama.  Clear stale fields and re-bind using the correct
+            # AO schema: credential_id + llm_model_id (UUID of the LLMModel record).
+            parameters.pop("model", None)
             if agent_credential_id:
                 parameters["credential_id"] = agent_credential_id
+                if agent_model_id:
+                    parameters["llm_model_id"] = agent_model_id
+                else:
+                    parameters.pop("llm_model_id", None)
             else:
                 parameters.pop("credential_id", None)
+                parameters.pop("llm_model_id", None)
+            # Bind the MCP server credential via integration_connections so the
+            # "Connections" panel in the workflow builder is pre-populated.
+            if mcp_integration_id and mcp_credential_id and parameters.get("tool_selection_strategy"):
+                parameters["integration_connections"] = [
+                    {"integration_id": mcp_integration_id, "credential_id": mcp_credential_id}
+                ]
         elif node.get("type") == "aap_job_template":
             # Always bind AAP nodes to the credential created by aap-demo. The
             # upstream exports may contain a valid-looking UUID from another AO.
@@ -204,6 +221,9 @@ def import_workflows(args: argparse.Namespace) -> int:
                 args.aap_integration_id,
                 source.stem,
                 args.agent_credential_id,
+                args.agent_model_id,
+                args.mcp_integration_id,
+                args.mcp_credential_id,
                 webhook_service_account_id,
             )
             name = workflow.get("name") or source.stem
@@ -251,6 +271,9 @@ def main() -> int:
     parser.add_argument("--aap-credential-id", required=True)
     parser.add_argument("--aap-integration-id")
     parser.add_argument("--agent-credential-id")
+    parser.add_argument("--agent-model-id", help="AO LLMModel UUID to set as llm_model_id on agentic nodes")
+    parser.add_argument("--mcp-integration-id", help="AO MCP integration ID for tool connection credentials")
+    parser.add_argument("--mcp-credential-id", help="AO MCP credential ID for tool connection credentials")
     parser.add_argument("--project-id")
     args = parser.parse_args()
     try:
