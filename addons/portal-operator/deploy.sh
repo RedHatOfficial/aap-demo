@@ -11,6 +11,7 @@ AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
 PORTAL_OPERATOR_NAMESPACE="${PORTAL_OPERATOR_NAMESPACE:-automation-portal}"
 PORTAL_OPERATOR_DIR="${HOME}/.aap-demo/portal-operator"
 PORTAL_NAME="${PORTAL_NAME:-portal}"
+OAUTH_APP_NAME="${OAUTH_APP_NAME:-automation-portal}"
 ACTION="${1:-deploy}"
 
 OPERATOR_PACKAGE="${PORTAL_OPERATOR_PACKAGE:-automation-portal-operator}"
@@ -28,8 +29,72 @@ require_tools() {
   done
 }
 
+cleanup_aap_credentials() {
+  local aap_route admin_pass app_id token_id encoded response id
+  command -v kubectl >/dev/null 2>&1 || return
+  command -v curl >/dev/null 2>&1 || return
+  command -v jq >/dev/null 2>&1 || return
+  aap_route=$(kubectl get route aap -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.spec.host}' 2>/dev/null || true)
+  admin_pass=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+  [ -n "$aap_route" ] && [ -n "$admin_pass" ] || return
+
+  if [ -f "$PORTAL_OPERATOR_DIR/oauth_credentials.json" ]; then
+    app_id=$(jq -r '.oauth_app_id // empty' "$PORTAL_OPERATOR_DIR/oauth_credentials.json")
+    token_id=$(jq -r '.api_token_id // empty' "$PORTAL_OPERATOR_DIR/oauth_credentials.json")
+    [ -z "$token_id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/tokens/$token_id/" >/dev/null || true
+    [ -z "$app_id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/applications/$app_id/" >/dev/null || true
+  fi
+
+  # Revoke credentials left by releases that did not persist token IDs.
+  response=$(curl -ksu "admin:$admin_pass" \
+    "https://$aap_route/api/gateway/v1/tokens/?page_size=200" 2>/dev/null || true)
+  while read -r id; do
+    [ -z "$id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/tokens/$id/" >/dev/null || true
+  done < <(echo "$response" | jq -r '.results[]? | select(.description == "Portal operator catalog access") | .id')
+
+  encoded=$(jq -rn --arg name "$OAUTH_APP_NAME" '$name|@uri')
+  response=$(curl -ksu "admin:$admin_pass" \
+    "https://$aap_route/api/gateway/v1/applications/?name=$encoded" 2>/dev/null || true)
+  while read -r id; do
+    [ -z "$id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/applications/$id/" >/dev/null || true
+  done < <(echo "$response" | jq -r '.results[]?.id')
+}
+
+remove_operator_sccs_for_namespace() {
+  local namespace="$1"
+  if command -v oc >/dev/null 2>&1; then
+    oc adm policy remove-scc-from-user privileged \
+      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-user privileged \
+      -z default -n "$namespace" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-user anyuid \
+      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-user nonroot-v2 \
+      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-user nonroot-v2 \
+      -z default -n "$namespace" >/dev/null 2>&1 || true
+    return
+  fi
+  kubectl delete clusterrolebinding \
+    "system:openshift:scc:privileged:${namespace}-redhat-operators" \
+    "system:openshift:scc:privileged:${namespace}-default" \
+    "system:openshift:scc:anyuid:${namespace}-redhat-operators" \
+    "system:openshift:scc:nonroot-v2:${namespace}-redhat-operators" \
+    "system:openshift:scc:nonroot-v2:${namespace}-default" \
+    --ignore-not-found >/dev/null 2>&1 || true
+}
+
 cleanup() {
   echo "Disabling portal-operator addon..."
+  cleanup_aap_credentials
+  remove_operator_sccs_for_namespace "$PORTAL_OPERATOR_NAMESPACE"
+  remove_operator_sccs_for_namespace openshift-operators
   kubectl delete automationportal "$PORTAL_NAME" -n "$PORTAL_OPERATOR_NAMESPACE" \
     --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete subscription "$OPERATOR_PACKAGE" -n "$PORTAL_OPERATOR_NAMESPACE" \
@@ -63,33 +128,46 @@ check_aap() {
 setup_namespace() {
   kubectl create namespace "$PORTAL_OPERATOR_NAMESPACE" 2>/dev/null || true
   kubectl label namespace "$PORTAL_OPERATOR_NAMESPACE" \
-    pod-security.kubernetes.io/enforce=privileged \
-    pod-security.kubernetes.io/audit=privileged \
-    pod-security.kubernetes.io/warn=privileged --overwrite >/dev/null 2>&1 || true
+    pod-security.kubernetes.io/enforce=restricted \
+    pod-security.kubernetes.io/audit=restricted \
+    pod-security.kubernetes.io/warn=restricted --overwrite >/dev/null 2>&1 || true
   grant_operator_sccs_for_namespace "$PORTAL_OPERATOR_NAMESPACE"
 }
 
 grant_operator_sccs_for_namespace() {
   local namespace="$1"
   if [ "${PORTAL_OPERATOR_GRANT_SCC:-false}" != true ]; then
-    echo "⚠️  CatalogSource may require SCC access in $namespace; set PORTAL_OPERATOR_GRANT_SCC=true to grant privileged SCC to its dedicated service accounts"
+    echo "⚠️  OLM may require SCC access in $namespace; set PORTAL_OPERATOR_GRANT_SCC=true to grant nonroot-v2 SCC to its catalog and bundle service accounts"
     return
   fi
   if command -v oc >/dev/null 2>&1; then
-    oc adm policy add-scc-to-user privileged \
+    oc adm policy remove-scc-from-user privileged \
       -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy add-scc-to-user privileged \
+    oc adm policy remove-scc-from-user privileged \
       -z default -n "$namespace" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-user anyuid \
+      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
+    oc adm policy add-scc-to-user nonroot-v2 \
+      -z redhat-operators -n "$namespace" >/dev/null
+    oc adm policy add-scc-to-user nonroot-v2 \
+      -z default -n "$namespace" >/dev/null
     return
   fi
-  kubectl create clusterrolebinding \
+  kubectl delete clusterrolebinding \
     "system:openshift:scc:privileged:${namespace}-redhat-operators" \
-    --clusterrole=system:openshift:scc:privileged \
-    --serviceaccount="${namespace}:redhat-operators" >/dev/null 2>&1 || true
-  kubectl create clusterrolebinding \
     "system:openshift:scc:privileged:${namespace}-default" \
-    --clusterrole=system:openshift:scc:privileged \
-    --serviceaccount="${namespace}:default" >/dev/null 2>&1 || true
+    "system:openshift:scc:anyuid:${namespace}-redhat-operators" \
+    "system:openshift:scc:nonroot-v2:${namespace}-redhat-operators" \
+    "system:openshift:scc:nonroot-v2:${namespace}-default" \
+    --ignore-not-found >/dev/null 2>&1 || true
+  kubectl create clusterrolebinding \
+    "system:openshift:scc:nonroot-v2:${namespace}-redhat-operators" \
+    --clusterrole=system:openshift:scc:nonroot-v2 \
+    --serviceaccount="${namespace}:redhat-operators" >/dev/null
+  kubectl create clusterrolebinding \
+    "system:openshift:scc:nonroot-v2:${namespace}-default" \
+    --clusterrole=system:openshift:scc:nonroot-v2 \
+    --serviceaccount="${namespace}:default" >/dev/null
 }
 
 require_amd64_cluster() {
@@ -302,7 +380,7 @@ load_github_credentials() {
 }
 
 create_oauth_app() {
-  local name="${OAUTH_APP_NAME:-automation-portal}"
+  local name="$OAUTH_APP_NAME"
   local encoded existing count response
   encoded=$(jq -rn --arg name "$name" '$name|@uri')
   existing=$(curl -ksu "admin:$ADMIN_PASS" \
@@ -343,15 +421,21 @@ create_credentials() {
   mkdir -p "$PORTAL_OPERATOR_DIR"
   chmod 700 "$PORTAL_OPERATOR_DIR"
   create_oauth_app
-  local token_response api_token ca_path
+  local token_response api_token api_token_id ca_path credentials_tmp
   token_response=$(curl -ksu "admin:$ADMIN_PASS" -X POST \
     "https://$AAP_ROUTE/api/gateway/v1/tokens/" -H 'Content-Type: application/json' \
     -d "$(jq -n --arg description 'Portal operator catalog access' '{description:$description,scope:"write"}')")
   api_token=$(echo "$token_response" | jq -r '.token // empty')
-  [ -n "$api_token" ] || {
+  api_token_id=$(echo "$token_response" | jq -r '.id // empty')
+  [ -n "$api_token" ] && [ -n "$api_token_id" ] || {
     echo "❌ Failed to generate AAP API token" >&2
     exit 1
   }
+  credentials_tmp="$PORTAL_OPERATOR_DIR/oauth_credentials.json.tmp"
+  jq --arg api_token_id "$api_token_id" '.api_token_id=$api_token_id' \
+    "$PORTAL_OPERATOR_DIR/oauth_credentials.json" >"$credentials_tmp"
+  mv "$credentials_tmp" "$PORTAL_OPERATOR_DIR/oauth_credentials.json"
+  chmod 600 "$PORTAL_OPERATOR_DIR/oauth_credentials.json"
 
   kubectl create secret generic secrets-rhaap-portal -n "$PORTAL_OPERATOR_NAMESPACE" \
     --from-literal=aap-host-url="https://$AAP_ROUTE" \
