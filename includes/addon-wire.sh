@@ -884,7 +884,7 @@ wire_ao_mcp() {
 }
 
 wire_ao_ollama() {
-  local ollama_url ollama_model cred_id config_json
+  local ollama_url cred_id config_json
 
   if ! wire_ollama_deployed || ! wire_ao_deployed; then
     return 0
@@ -895,7 +895,6 @@ wire_ao_ollama() {
     wire_warn "Could not determine Ollama route URL for AO integration"
     return 1
   fi
-  ollama_model="${OLLAMA_MODEL:-phi4-mini}"
 
   wire_log "Wiring Automation Orchestrator → Ollama LLM provider..."
 
@@ -910,12 +909,10 @@ wire_ao_ollama() {
   # using wire_ao_integration_config_json which doesn't know about this field.
   config_json=$(jq -n \
     --arg url "$ollama_url" \
-    --arg model "$ollama_model" \
     '{
       integration_type: "llm_provider",
       provider_hint: "custom",
       base_url: $url,
-      model: $model,
       allow_http: true,
       insecure_skip_tls_verify: true
     }')
