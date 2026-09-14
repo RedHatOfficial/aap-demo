@@ -56,7 +56,7 @@ The addon:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VAULT_CHART_VERSION` | `0.28.0` | HashiCorp Vault Helm chart version |
+| `VAULT_CHART_VERSION` | `0.34.1` | HashiCorp Vault Helm chart version |
 | `VAULT_VERSION` | `1.17.2` | Vault container image version |
 | `AAP_DEMO_REPO` | `https://github.com/RedHatOfficial/aap-demo.git` | Playbook repository |
 | `AAP_DEMO_BRANCH` | `main` | Playbook branch |

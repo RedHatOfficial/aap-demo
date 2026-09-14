@@ -16,7 +16,7 @@
 #   ./deploy.sh --force            # Force reinstall
 #
 # Environment Variables:
-#   VAULT_CHART_VERSION    - Helm chart version (default: 0.28.0)
+#   VAULT_CHART_VERSION    - Helm chart version (default: 0.34.1)
 #   VAULT_VERSION          - Vault image version (default: 1.17.2)
 #   AAP_DEMO_REPO          - Playbook repository (default: RedHatOfficial/aap-demo)
 #   AAP_DEMO_BRANCH        - Playbook branch (default: main)
@@ -42,7 +42,7 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 # Configuration
 NAMESPACE="${NAMESPACE:-aap-operator}"
 VAULT_HELM_CHART="hashicorp/vault"
-VAULT_CHART_VERSION="${VAULT_CHART_VERSION:-0.28.0}"
+VAULT_CHART_VERSION="${VAULT_CHART_VERSION:-0.34.1}"
 VAULT_VERSION="${VAULT_VERSION:-1.17.2}"
 VAULT_STATE_DIR="${VAULT_STATE_DIR:-$HOME/.aap-demo/hashivault}"
 VAULT_ROOT_TOKEN_FILE="${VAULT_STATE_DIR}/root-token"
@@ -73,6 +73,72 @@ done
 
 # ── Utility Functions ─────────────────────────────────────────────────────────
 
+_helm_version_ok() {
+  local helm_version helm_major helm_minor
+  helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
+  [ -n "$helm_version" ] || return 1
+  helm_major=$(echo "$helm_version" | cut -d. -f1)
+  helm_minor=$(echo "$helm_version" | cut -d. -f2)
+  # Require helm >= 3.10 (v4+ is also OK)
+  if [ "$helm_major" -gt 3 ]; then
+    return 0
+  fi
+  if [ "$helm_major" -eq 3 ] && [ "$helm_minor" -ge 10 ]; then
+    return 0
+  fi
+  return 1
+}
+
+_ensure_helm() {
+  # Homebrew (macOS) and common install paths
+  export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+
+  if command -v helm &>/dev/null && _helm_version_ok; then
+    echo "✓ helm found: $(command -v helm) ($(helm version --short 2>/dev/null || echo 'unknown version'))"
+    return 0
+  fi
+
+  if command -v helm &>/dev/null; then
+    echo "❌ ERROR: Helm 3.10+ required (found: $(helm version --short 2>/dev/null || echo 'unknown'))"
+    echo "  Upgrade from https://helm.sh/docs/intro/install/"
+    exit 1
+  fi
+
+  echo "helm not found — installing (required for Vault Helm chart deployment)..."
+  case "$(uname -s)" in
+    Darwin)
+      if command -v brew &>/dev/null; then
+        brew install helm
+      else
+        echo "❌ ERROR: helm not found. Install Homebrew, then: brew install helm"
+        exit 1
+      fi
+      ;;
+    Linux)
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y helm
+      else
+        echo "❌ ERROR: helm not found and cannot auto-install. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+        exit 1
+      fi
+      ;;
+    *)
+      echo "❌ ERROR: helm not found. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+      exit 1
+      ;;
+  esac
+
+  if ! command -v helm &>/dev/null; then
+    echo "❌ ERROR: helm install completed but helm is still not on PATH"
+    exit 1
+  fi
+  if ! _helm_version_ok; then
+    echo "❌ ERROR: Helm 3.10+ required after install (found: $(helm version --short 2>/dev/null || echo 'unknown'))"
+    exit 1
+  fi
+  echo "✓ helm installed: $(command -v helm) ($(helm version --short 2>/dev/null || echo 'unknown version'))"
+}
+
 check_prerequisites() {
   echo "Checking prerequisites..."
 
@@ -100,13 +166,16 @@ check_prerequisites() {
     exit 1
   fi
 
-  # Check required commands
-  for cmd in kubectl helm jq curl base64; do
+  # Check required commands (helm checked separately via _ensure_helm)
+  for cmd in kubectl jq curl base64; do
     if ! command -v "$cmd" &>/dev/null; then
       echo "❌ ERROR: Required command not found: $cmd"
       exit 1
     fi
   done
+
+  # Ensure Helm 3.10+ is installed (validates version and auto-installs if needed)
+  _ensure_helm
 
   echo "✓ Prerequisites satisfied"
 }
@@ -190,8 +259,17 @@ deploy_vault_helm() {
   if helm list -n "$NAMESPACE" 2>/dev/null | grep -q "^vault"; then
     if [ "$FORCE" = "1" ]; then
       echo "  Vault already deployed. Force flag set, uninstalling..."
-      helm uninstall vault -n "$NAMESPACE" >/dev/null 2>&1 || true
-      kubectl delete pod vault-0 -n "$NAMESPACE" --force --grace-period=0 >/dev/null 2>&1 || true
+      if helm uninstall vault -n "$NAMESPACE" 2>&1; then
+        echo "  ✓ Helm release uninstalled"
+      else
+        echo "  ⚠ Helm uninstall had issues (continuing anyway)"
+      fi
+      # Clean up any stuck pods
+      if kubectl get pod vault-0 -n "$NAMESPACE" &>/dev/null; then
+        echo "  Deleting vault-0 pod..."
+        kubectl delete pod vault-0 -n "$NAMESPACE" --force --grace-period=0 2>&1 || true
+      fi
+      echo "  Waiting 5 seconds for cleanup..."
       sleep 5
     else
       echo "✓ Vault already deployed (use FORCE=1 to reinstall)"
@@ -202,12 +280,16 @@ deploy_vault_helm() {
   # Create values file for dev mode
   local values_file
   values_file=$(mktemp)
-  cat > "$values_file" <<'EOF'
+  cat > "$values_file" <<EOF
 global:
   enabled: true
   tlsDisable: true
 
 server:
+  image:
+    repository: docker.io/hashicorp/vault
+    tag: "${VAULT_VERSION}"
+
   dev:
     enabled: true
     devRootToken: "root"
@@ -235,17 +317,34 @@ EOF
 
   # Deploy vault
   echo "  Installing Vault chart (version ${VAULT_CHART_VERSION})..."
+  echo "  Using Helm values from: $values_file"
+
+  local helm_output
+  helm_output=$(mktemp)
+
   if ! helm install vault "$VAULT_HELM_CHART" \
     --version "$VAULT_CHART_VERSION" \
     --namespace "$NAMESPACE" \
     --values "$values_file" \
-    --wait --timeout=5m >/dev/null 2>&1; then
+    --wait --timeout=5m 2>&1 | tee "$helm_output"; then
+    echo ""
     echo "❌ ERROR: Helm install failed"
-    rm -f "$values_file"
+    echo ""
+    echo "Helm output:"
+    cat "$helm_output"
+    echo ""
+    echo "Helm values used:"
+    cat "$values_file"
+    echo ""
+    echo "Chart details:"
+    echo "  Chart: $VAULT_HELM_CHART"
+    echo "  Version: $VAULT_CHART_VERSION"
+    echo "  Namespace: $NAMESPACE"
+    rm -f "$helm_output"
     exit 1
   fi
 
-  rm -f "$values_file"
+  rm -f "$values_file" "$helm_output"
   echo "✓ Vault chart deployed (version ${VAULT_CHART_VERSION})"
 }
 
