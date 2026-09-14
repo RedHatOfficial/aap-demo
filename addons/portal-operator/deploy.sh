@@ -208,8 +208,18 @@ configure_rhdh_subscription() {
   exit 1
 }
 
+portal_operator_ready() {
+  local csv
+  kubectl get crd automationportals.automationportal.aap.redhat.com >/dev/null 2>&1 || return 1
+  csv=$(kubectl get subscription "$OPERATOR_PACKAGE" -n "$PORTAL_OPERATOR_NAMESPACE" \
+    -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)
+  [ -n "$csv" ] || return 1
+  [ "$(kubectl get csv "$csv" -n "$PORTAL_OPERATOR_NAMESPACE" \
+    -o jsonpath='{.status.phase}' 2>/dev/null || true)" = Succeeded ]
+}
+
 install_operator() {
-  if kubectl get crd automationportals.automationportal.aap.redhat.com >/dev/null 2>&1; then
+  if portal_operator_ready; then
     echo "✓ Automation Portal Operator CRD already installed"
     return
   fi
@@ -243,7 +253,7 @@ spec:
 EOF
 
   for _ in $(seq 1 60); do
-    kubectl get crd automationportals.automationportal.aap.redhat.com >/dev/null 2>&1 && {
+    portal_operator_ready && {
       echo "✓ Automation Portal Operator installed"
       return
     }
