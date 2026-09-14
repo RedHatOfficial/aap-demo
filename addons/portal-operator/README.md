@@ -58,6 +58,8 @@ For a PAT-based integration use `PORTAL_GITHUB_AUTH_TYPE=token` and
 2.7; it is not recommended for production service-level workloads.
 
 `PORTAL_OPERATOR_GRANT_SCC=true` is only needed on local or custom OLM setups
-where catalog and bundle pods run with a fixed UID that the restricted SCC
-does not allow. It grants the privileged SCC only to the `redhat-operators`
-and `default` service accounts in the relevant consumer namespaces.
+where OLM pods run with a fixed UID that the restricted SCC does not allow. It
+grants the restricted `nonroot-v2` SCC to OLM's `redhat-operators` catalog
+service account and its hardcoded `default` bundle-unpack service account in
+the relevant consumer namespaces. Disable removes the SCC grants and revokes
+the AAP OAuth application and catalog API tokens.
