@@ -117,7 +117,7 @@ aap-demo repair        # Fix after sleep/wake issues
 
 ```bash
 aap-demo diagnose      # Quick health check — finds common issues
-aap-demo diagnose --ai # AI-powered analysis (requires claude CLI)
+aap-demo diagnose --ai # AI analysis (Cursor Agent, Cursor CLI, or Claude CLI)
 aap-demo must-gather   # Collect full diagnostics for support
 ```
 
