@@ -6,7 +6,19 @@ function Invoke-AapDemoDiagnose {
   )
 
   if ($Ai) {
-    throw 'diagnose --ai is not available in the native PowerShell CLI. Use aap-demo diagnose without --ai.'
+    $bashScript = Join-Path $Script:AapDemoRepoRoot 'aap-demo.sh'
+    $bash = Get-Command bash -ErrorAction SilentlyContinue
+    if (-not $bash) {
+      throw 'diagnose --ai requires bash (Git Bash or WSL). Install Git for Windows or use Linux/macOS.'
+    }
+    if ($Namespace) {
+      $env:NAMESPACE = $Namespace
+    }
+    & $bash.Source $bashScript diagnose --ai
+    if ($LASTEXITCODE -ne 0) {
+      throw "diagnose --ai failed (exit code: $LASTEXITCODE)"
+    }
+    return
   }
 
   $counts = @{ Issues = 0; Warnings = 0 }

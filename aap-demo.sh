@@ -394,7 +394,7 @@ Commands:
   deploy          Deploy AAP 2.7
   status          Show cluster and AAP status
   idle [true|false] Scale down/up AAP to save resources
-  diagnose [--ai] Check environment health (--ai for Claude analysis)
+  diagnose [--ai] Check environment health (--ai for AI analysis)
   must-gather      Collect diagnostic info (AAP + cluster)
   clean           Remove AAP deployment
 
@@ -447,7 +447,8 @@ COMMANDS (all infrastructure types):
                     false:  scale up all components
     diagnose [--ai] Check environment health and identify common issues
                     Checks: cluster, storage, SCCs, pods, PVCs, DNS
-                    --ai: analyze issues with Claude AI (requires 'claude' CLI)
+                    --ai: AI analysis (Cursor Agent, Cursor CLI, or Claude CLI)
+                    AAP_DIAGNOSE_AI_BACKEND=embedded|cursor|claude|auto (default)
     test [markers]  Run ATF test suite against deployed AAP
                     Default markers: interop (comma-separate for multiple)
                     NAMESPACE=<ns>: target a specific namespace
@@ -528,6 +529,16 @@ cmd_repair() {
   verify_coredns
 
   install_ingress_ca_trust
+
+  local _gw_deploy _gw_name
+  _gw_deploy=$(kubectl get deployment -n "$NAMESPACE" -o name 2>/dev/null | grep gateway | grep -v operator | head -1 || true)
+  if [ -n "$_gw_deploy" ]; then
+    _gw_name="${_gw_deploy#deployment.apps/}"
+    echo "Gateway deployment:"
+    _patch_gateway_net_bind_service "$_gw_name"
+    _patch_gateway_supplemental_groups "$_gw_name"
+    echo ""
+  fi
 
   local _problem_pods
   _problem_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "CrashLoopBackOff|Error|ImagePullBackOff" | awk '{print $1}' || true)
@@ -1009,6 +1020,196 @@ cmd_must_gather() {
   echo "To share: tar czf must-gather.tar.gz ${dest_dir}"
 }
 
+# Prompt shared by diagnose --ai backends (Cursor Agent, Cursor CLI, Claude CLI)
+_DIAGNOSE_AI_PROMPT='You are an AAP Demo troubleshooting assistant. Analyze the diagnostic output below and:
+1. Identify the root cause of any issues
+2. Provide specific fix commands the user can run
+3. If the issue appears to be a bug in aap-demo itself, suggest filing a GitHub issue at https://github.com/RedHatOfficial/aap-demo/issues
+
+Be concise and actionable. Focus on what the user needs to do next.'
+
+_diagnose_ai_resolve_backend() {
+  local backend="${AAP_DIAGNOSE_AI_BACKEND:-auto}"
+  case "$backend" in
+    embedded | cursor | claude)
+      echo "$backend"
+      return 0
+      ;;
+    auto)
+      if [ "${CURSOR_AGENT:-}" = "1" ]; then
+        echo embedded
+      elif command -v cursor &>/dev/null; then
+        echo cursor
+      elif command -v claude &>/dev/null; then
+        echo claude
+      else
+        echo none
+      fi
+      ;;
+    *)
+      echo none
+      ;;
+  esac
+}
+
+_build_diagnose_ai_context() {
+  local issues="$1" warnings="$2"
+  local pod_output problem_pod_names problem_pod_logs
+
+  pod_output=$(kubectl get pods -n "$NAMESPACE" -o wide --no-headers 2>/dev/null || echo "No pods")
+  problem_pod_names=$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" | awk '{print $1}' || true)
+  problem_pod_logs=""
+  if [ -n "$problem_pod_names" ]; then
+    while IFS= read -r pod; do
+      problem_pod_logs="${problem_pod_logs}--- ${pod} ---
+$(kubectl logs "$pod" -n "$NAMESPACE" --tail=20 2>/dev/null || true)
+"
+    done <<<"$problem_pod_names"
+  fi
+
+  cat <<EOF
+AAP Demo Diagnose Results:
+Issues: $issues, Warnings: $warnings
+Infra: OpenShift Local (CRC)
+Namespace: $NAMESPACE
+
+Cluster State:
+$pod_output
+
+PVC State:
+$(kubectl get pvc -n "$NAMESPACE" 2>/dev/null || echo "No PVCs")
+
+Storage Classes:
+$(kubectl get sc 2>/dev/null || echo "No storage classes")
+
+AAP CR Status:
+$(kubectl get aap -n "$NAMESPACE" -o yaml 2>/dev/null | grep -A20 "status:" || echo "No AAP CR")
+
+Recent Events:
+$(kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events")
+
+Problem Pods:
+$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" || echo "None")
+
+Problem Pod Logs:
+${problem_pod_logs:-None}
+EOF
+}
+
+_run_diagnose_ai_claude() {
+  local context="$1"
+  echo "$context" | claude -p "${_DIAGNOSE_AI_PROMPT}
+
+Diagnostic data:"
+}
+
+_run_diagnose_ai_analysis() {
+  local issues="$1" warnings="$2"
+  local backend context context_file
+
+  backend=$(_diagnose_ai_resolve_backend)
+  context=$(_build_diagnose_ai_context "$issues" "$warnings")
+
+  echo ""
+  echo "─────────────────────────────────────"
+
+  case "$backend" in
+    embedded)
+      printf "\033[1mAI Analysis\033[0m (Cursor Agent)\n"
+      echo ""
+      echo "Diagnostic context for the active Cursor agent:"
+      echo ""
+      printf '%s\n' "$context"
+      echo ""
+      echo "$_DIAGNOSE_AI_PROMPT"
+      context_file="${AAP_DEMO_HOME:-$HOME/.aap-demo}/diagnose-ai-context.txt"
+      mkdir -p "$(dirname "$context_file")"
+      printf '%s\n' "$context" >"$context_file"
+      echo ""
+      echo "Context saved to: $context_file"
+      ;;
+    cursor)
+      printf "\033[1mAI Analysis\033[0m (powered by Cursor)\n"
+      echo ""
+      echo "(Diagnostic data is sent to Cursor for analysis)"
+      echo ""
+      if cursor agent --print --mode ask "${_DIAGNOSE_AI_PROMPT}
+
+${context}" 2>&1; then
+        return 0
+      fi
+      echo ""
+      echo "⚠ Cursor agent failed. Try: cursor agent login"
+      if command -v claude &>/dev/null; then
+        echo "  Falling back to Claude CLI..."
+        _run_diagnose_ai_claude "$context" || true
+      else
+        echo "  Showing diagnostic context for manual analysis:"
+        echo ""
+        printf '%s\n' "$context"
+      fi
+      ;;
+    claude)
+      printf "\033[1mAI Analysis\033[0m (powered by Claude)\n"
+      echo ""
+      echo "(Diagnostic data is sent to the Claude API for analysis)"
+      echo ""
+      _run_diagnose_ai_claude "$context" || {
+        echo ""
+        echo "⚠ AI analysis failed. The diagnostic data above should help with manual troubleshooting."
+      }
+      ;;
+    none)
+      echo "✗ No AI backend available for diagnose --ai"
+      echo ""
+      echo "  Options:"
+      echo "    • Run from Cursor Agent (CURSOR_AGENT=1) for embedded analysis"
+      echo "    • Install Cursor CLI: cursor agent login"
+      echo "    • Install Claude CLI: https://docs.anthropic.com/en/docs/claude-code"
+      echo "    • Set AAP_DIAGNOSE_AI_BACKEND=embedded|cursor|claude"
+      return 1
+      ;;
+  esac
+}
+
+_patch_gateway_net_bind_service() {
+  local deploy_name="$1"
+  local existing_caps
+
+  existing_caps=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}' 2>/dev/null || echo "")
+  if [[ "$existing_caps" == *"NET_BIND_SERVICE"* ]]; then
+    echo "  ✓ Gateway already has NET_BIND_SERVICE capability"
+    return 0
+  fi
+
+  echo "  Patching gateway with NET_BIND_SERVICE capability..."
+  if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=strategic \
+    -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
+    echo "  ✓ Gateway patched — NET_BIND_SERVICE"
+  else
+    echo "  ⚠ Gateway capability patch failed — may need manual fix if gateway crashes"
+  fi
+}
+
+_patch_gateway_supplemental_groups() {
+  local deploy_name="$1"
+  local existing_sg
+
+  existing_sg=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.securityContext.supplementalGroups}' 2>/dev/null || echo "")
+  if [ "$existing_sg" = "[0]" ]; then
+    echo "  ✓ Gateway already has supplementalGroups: [0]"
+    return 0
+  fi
+
+  echo "  Patching gateway with supplementalGroups: [0]..."
+  if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=json \
+    -p '[{"op":"add","path":"/spec/template/spec/securityContext/supplementalGroups","value":[0]}]' &>/dev/null; then
+    echo "  ✓ Gateway patched — supplementalGroups: [0]"
+  else
+    echo "  ⚠ Gateway supplementalGroups patch failed — supervisord may crash with EACCES"
+  fi
+}
+
 cmd_diagnose() {
   echo ""
   printf "\033[1maap-demo diagnose\033[0m - Checking environment health...\n"
@@ -1282,74 +1483,7 @@ cmd_diagnose() {
 
   # AI analysis mode
   if [ "${_DIAGNOSE_AI:-false}" = "true" ]; then
-    echo ""
-
-    if ! command -v claude &>/dev/null; then
-      echo "✗ 'claude' CLI not found"
-      echo "  Install: https://docs.anthropic.com/en/docs/claude-code"
-      return 1
-    fi
-
-    echo "─────────────────────────────────────"
-    printf "\033[1mAI Analysis\033[0m (powered by Claude)\n"
-    echo ""
-
-    echo "(Diagnostic data is sent to the Claude API for analysis)"
-    echo ""
-
-    # Collect additional context for AI — cache pod list to avoid duplicate kubectl calls
-    local pod_output
-    pod_output=$(kubectl get pods -n "$NAMESPACE" -o wide --no-headers 2>/dev/null || echo "No pods")
-    local problem_pod_names
-    problem_pod_names=$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" | awk '{print $1}' || true)
-    local problem_pod_logs=""
-    if [ -n "$problem_pod_names" ]; then
-      while IFS= read -r pod; do
-        problem_pod_logs="${problem_pod_logs}--- ${pod} ---
-$(kubectl logs "$pod" -n "$NAMESPACE" --tail=20 2>/dev/null || true)
-"
-      done <<<"$problem_pod_names"
-    fi
-
-    local ai_context
-    ai_context="AAP Demo Diagnose Results:
-Issues: $issues, Warnings: $warnings
-Infra: OpenShift Local (CRC)
-Namespace: $NAMESPACE
-
-Cluster State:
-$pod_output
-
-PVC State:
-$(kubectl get pvc -n "$NAMESPACE" 2>/dev/null || echo "No PVCs")
-
-Storage Classes:
-$(kubectl get sc 2>/dev/null || echo "No storage classes")
-
-AAP CR Status:
-$(kubectl get aap -n "$NAMESPACE" -o yaml 2>/dev/null | grep -A20 "status:" || echo "No AAP CR")
-
-Recent Events:
-$(kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events")
-
-Problem Pods:
-$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" || echo "None")
-
-Problem Pod Logs:
-${problem_pod_logs:-None}"
-
-    echo "$ai_context" | claude -p \
-      "You are an AAP Demo troubleshooting assistant. Analyze the diagnostic output below and:
-1. Identify the root cause of any issues
-2. Provide specific fix commands the user can run
-3. If the issue appears to be a bug in aap-demo itself, suggest filing a GitHub issue at https://github.com/RedHatOfficial/aap-demo/issues
-
-Be concise and actionable. Focus on what the user needs to do next.
-
-Diagnostic data:" 2>&1 || {
-      echo ""
-      echo "⚠ AI analysis failed. The diagnostic data above should help with manual troubleshooting."
-    }
+    _run_diagnose_ai_analysis "$issues" "$warnings"
   fi
 }
 
@@ -2531,21 +2665,8 @@ _patch_gateway_capability() {
     fi
   fi
 
-  # Check if already patched
-  local existing_caps
-  existing_caps=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}' 2>/dev/null || echo "")
-  if [[ "$existing_caps" == *"NET_BIND_SERVICE"* ]]; then
-    echo "  ✓ Gateway already has NET_BIND_SERVICE capability"
-    return 0
-  fi
-
-  echo "  Patching gateway with NET_BIND_SERVICE capability..."
-  if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=strategic \
-    -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
-    echo "  ✓ Gateway patched — pod will restart with correct capabilities"
-  else
-    echo "  ⚠ Gateway patch failed — may need manual fix if gateway crashes"
-  fi
+  _patch_gateway_net_bind_service "$deploy_name"
+  _patch_gateway_supplemental_groups "$deploy_name"
 }
 
 watch_aap() {

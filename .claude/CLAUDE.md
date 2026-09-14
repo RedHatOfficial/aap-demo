@@ -11,7 +11,7 @@ aap-demo create          # Create local MicroShift cluster
 aap-demo deploy          # Deploy AAP 2.7
 aap-demo status          # Show cluster status, routes, credentials
 aap-demo diagnose        # Quick health check (cluster, storage, SCCs, pods)
-aap-demo diagnose --ai   # Health check + AI-powered root cause analysis (requires claude CLI)
+aap-demo diagnose --ai   # Health check + AI analysis (Cursor Agent, Cursor CLI, or Claude CLI)
 aap-demo must-gather     # Collect full diagnostics for troubleshooting
 aap-demo idle true       # Scale down AAP to save resources (operator deploys only)
 aap-demo idle false      # Scale back up
