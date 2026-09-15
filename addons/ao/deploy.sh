@@ -711,6 +711,8 @@ sync_ao_demos() {
   # shellcheck source=../../includes/addon-wire.sh
   source "${REPO_ROOT}/includes/addon-wire.sh"
   _token=$(wire_ao_login_token 2>/dev/null || true)
+  # Reuse the login token for subsequent wire_ao_api calls in this function.
+  AO_ACCESS_TOKEN="$_token"
   _aap_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
   _aap_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
   _project=$(wire_ao_default_project_id 2>/dev/null || true)
@@ -729,8 +731,33 @@ sync_ao_demos() {
     --repository "${AO_DEMOS_REPOSITORY:-https://github.com/ansible-tmm/aap-orchestrator-demos}"
     --ref "${AO_DEMOS_REF:-abcc1a1482a}"
   )
-  if [ -n "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-    _import_args+=(--agent-credential-id "$AO_AGENT_CREDENTIAL_ID")
+  local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+  if [ -z "$_agent_cred" ] && wire_ollama_deployed; then
+    _agent_cred=$(wire_ao_find_credential_by_name "aap-demo Ollama" 2>/dev/null || true)
+  fi
+  if [ -n "$_agent_cred" ]; then
+    _import_args+=(--agent-credential-id "$_agent_cred")
+    if wire_ollama_deployed && [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
+      local _ollama_integration _ollama_model_id
+      _ollama_integration=$(wire_ao_find_integration_by_name "aap-demo Ollama" 2>/dev/null || true)
+      if [ -n "$_ollama_integration" ]; then
+        _ollama_model_id=$(wire_ao_api GET \
+          "/integrations/${_ollama_integration}/models?limit=50" 2>/dev/null \
+          | wire_ao_list_items \
+          | jq -r --arg m "${WIRE_OLLAMA_MODEL:-qwen2.5:3b}" \
+            '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true)
+      fi
+      if [ -n "${_ollama_model_id:-}" ]; then
+        _import_args+=(--agent-model-id "$_ollama_model_id")
+      fi
+    fi
+  fi
+
+  local _mcp_credential _mcp_integration
+  _mcp_credential=$(wire_ao_find_credential_by_name "$WIRE_MCP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _mcp_integration=$(wire_ao_find_integration_by_name "$WIRE_MCP_INTEGRATION_NAME" 2>/dev/null || true)
+  if [ -n "$_mcp_credential" ] && [ -n "$_mcp_integration" ]; then
+    _import_args+=(--mcp-credential-id "$_mcp_credential" --mcp-integration-id "$_mcp_integration")
   fi
   if [ -n "$_project" ]; then
     _import_args+=(--project-id "$_project")

@@ -33,6 +33,7 @@ WIRE_AAP_CREDENTIAL_NAME="${WIRE_AAP_CREDENTIAL_NAME:-aap-demo AAP Token}"
 WIRE_MCP_CREDENTIAL_NAME="${WIRE_MCP_CREDENTIAL_NAME:-aap-demo MCP Token}"
 WIRE_AAP_OAUTH_APP_NAME="${WIRE_AAP_OAUTH_APP_NAME:-Automation Orchestrator (aap-demo)}"
 WIRE_AO_LIST_LIMIT="${WIRE_AO_LIST_LIMIT:-100}"
+WIRE_OLLAMA_MODEL="${WIRE_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen2.5:3b}}"
 
 export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")}"
 
@@ -77,6 +78,21 @@ wire_ao_deployed() {
 wire_mcp_deployed() {
   kubectl get ansiblemcpserver aap-mcp-server -n "$NAMESPACE" >/dev/null 2>&1 \
     || kubectl get deployment aap-mcp-server -n "$NAMESPACE" >/dev/null 2>&1
+}
+
+wire_ollama_deployed() {
+  kubectl get deployment ollama -n aap-demo-ollama &>/dev/null 2>&1
+}
+
+wire_ollama_route_host() {
+  kubectl get route ollama -n aap-demo-ollama \
+    -o jsonpath='{.spec.host}' 2>/dev/null
+}
+
+wire_ollama_url_for_ao() {
+  local route
+  route=$(wire_ollama_route_host)
+  [ -n "$route" ] && printf 'https://%s/v1\n' "$route"
 }
 
 wire_apd_installed() {
@@ -201,6 +217,7 @@ wire_ao_integration_allowed_hosts_json() {
     printf 'aap.%s.svc.cluster.local\n' "$NAMESPACE"
     printf 'aap-mcp-server.%s.svc.cluster.local\n' "$NAMESPACE"
     h=$(wire_mcp_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
+    h=$(wire_ollama_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
   } | awk 'NF && !seen[$0]++' | jq -R . | jq -s -c .
 }
 
@@ -867,6 +884,126 @@ wire_ao_mcp() {
     "mcp_server" "$mcp_url" "$cred_id" true || return 1
 }
 
+wire_ao_set_default_ollama_model() {
+  local integration_id="$1"
+  local preferred_model="$2"
+  local models model_id
+
+  models=$(wire_ao_api GET "/integrations/${integration_id}/models?limit=50" 2>/dev/null)
+  model_id=$(echo "$models" | wire_ao_list_items \
+    | jq -r --arg m "$preferred_model" \
+      '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null)
+
+  if [ -z "$model_id" ]; then
+    wire_warn "Model ${preferred_model} not found in AO after refresh"
+    return 0
+  fi
+
+  wire_ao_api PATCH "/integrations/${integration_id}/models/${model_id}" \
+    '{"is_default": true}' >/dev/null 2>&1 || true
+  wire_log "  ✓ Default AO model set: ${preferred_model}"
+}
+
+wire_ao_ollama() {
+  local ollama_url cred_id config_json
+
+  if ! wire_ollama_deployed || ! wire_ao_deployed; then
+    return 0
+  fi
+
+  ollama_url=$(wire_ollama_url_for_ao)
+  if [ -z "$ollama_url" ]; then
+    wire_warn "Could not determine Ollama route URL for AO integration"
+    return 1
+  fi
+
+  wire_log "Wiring Automation Orchestrator → Ollama LLM provider..."
+
+  cred_id=$(
+    wire_ao_ensure_credential \
+      "aap-demo Ollama" \
+      "LLM Provider" \
+      "$(jq -n '{api_key: "ollama"}')"
+  ) || return 1
+
+  # llm_provider requires provider_hint — build config directly instead of
+  # using wire_ao_integration_config_json which doesn't know about this field.
+  config_json=$(jq -n \
+    --arg url "$ollama_url" \
+    '{
+      integration_type: "llm_provider",
+      provider_hint: "custom",
+      base_url: $url,
+      allow_http: true,
+      insecure_skip_tls_verify: true
+    }')
+
+  local name="aap-demo Ollama"
+  local integration_id result
+  integration_id=$(wire_ao_find_integration_by_name "$name")
+
+  if [ -n "$integration_id" ]; then
+    wire_log "  Updating existing Ollama integration..."
+    result=$(wire_ao_api PATCH "/integrations/${integration_id}" \
+      "$(
+        jq -n \
+          --arg name "$name" \
+          --argjson config "$config_json" \
+          --arg cred "$cred_id" \
+          '{name: $name, description: "Auto-wired by aap-demo", configuration: $config, management_credential_id: $cred, enabled: true, scope: "global"}'
+      )" 2>/dev/null)
+    if wire_ao_response_is_error "$result"; then
+      wire_warn "Failed to update AO integration: ${name}"
+      echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+      return 1
+    fi
+  else
+    wire_log "  Creating Ollama integration..."
+    result=$(wire_ao_api POST "/integrations" \
+      "$(
+        jq -n \
+          --arg name "$name" \
+          --argjson config "$config_json" \
+          --arg cred "$cred_id" \
+          '{name: $name, description: "Auto-wired by aap-demo", integration_type: "llm_provider", configuration: $config, management_credential_id: $cred, enabled: true, scope: "global"}'
+      )" 2>/dev/null)
+    if wire_ao_response_is_error "$result"; then
+      wire_warn "Failed to create AO integration: ${name}"
+      echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+      return 1
+    fi
+    integration_id=$(printf '%s' "$result" | jq -r '.id // empty' 2>/dev/null)
+  fi
+
+  if [ -z "$integration_id" ]; then
+    wire_warn "Failed to create/update AO integration: ${name}"
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
+  fi
+
+  # Validate with provider_hint — wire_ao_validate_integration uses
+  # wire_ao_integration_config_json which omits provider_hint, so call directly.
+  wire_ao_api POST "/integrations/${integration_id}/validate" \
+    "$(
+      jq -n \
+        --argjson config "$config_json" \
+        --arg cred "$cred_id" \
+        '{integration_type: "llm_provider", configuration: $config, credential_id: $cred}'
+    )" >/dev/null 2>&1 || true
+
+  # Validation alone does not persist the models discovered from the provider.
+  # Refresh explicitly so the model appears as an AO model resource immediately.
+  result=$(wire_ao_api POST "/integrations/${integration_id}/refresh" '{}' 2>/dev/null)
+  if wire_ao_response_is_error "$result"; then
+    wire_warn "Failed to refresh Ollama models in AO"
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
+  fi
+
+  wire_ao_set_default_ollama_model "$integration_id" "$WIRE_OLLAMA_MODEL"
+  wire_log "  ✓ Ollama wired as LLM provider"
+}
+
 aap_demo_wire() {
   wire_require_tools || return 1
   if ! wire_cluster_ready; then
@@ -887,6 +1024,7 @@ aap_demo_wire() {
     wire_ao_wait_for_route || return 1
     wire_ao_aap || return 1
     wire_ao_mcp || return 1
+    wire_ao_ollama || wire_warn "Ollama AO wiring skipped"
   fi
 
   wire_log ""

@@ -139,7 +139,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa)
+    mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -409,8 +409,9 @@ Addons:
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
   enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao       Install Automation Orchestrator (enables mcp-server automatically)
+  enable ao       Install Automation Orchestrator (enables mcp-server and ollama automatically)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
+  enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -455,7 +456,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, setup-pah, product-demos, local-cache)
+    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, setup-pah, product-demos, local-cache, ollama)
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
@@ -2668,7 +2669,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
 
 _normalize_addon_name() {
   case "$1" in
@@ -2827,6 +2828,11 @@ cmd_enable() {
   fi
   if [ "$addon" = "ao" ] && [ "$_skip_addon_save" != true ]; then
     _ensure_addon_dependency mcp-server "$@" || return 1
+    _ensure_addon_dependency ollama "$@" || return 1
+  fi
+  local _addon_was_enabled=false
+  if echo "$(_addons_list)" | grep -qw "$addon"; then
+    _addon_was_enabled=true
   fi
   if [ "$_skip_addon_save" != true ]; then
     _addons_add "$addon"
@@ -2838,7 +2844,15 @@ cmd_enable() {
   else
     export AAP_DEMO_WIRE_AFTER_DEPLOY=0
   fi
-  bash "$addon_dir/deploy.sh" "$@"
+  if ! bash "$addon_dir/deploy.sh" "$@"; then
+    # Do not leave a first-time failed deployment marked as enabled. Otherwise
+    # dependency checks skip it on the next run even though setup is incomplete.
+    if [ "$_skip_addon_save" != true ] && [ "$_addon_was_enabled" = false ]; then
+      _addons_remove "$addon"
+    fi
+    unset AAP_DEMO_WIRE_AFTER_DEPLOY
+    return 1
+  fi
   unset AAP_DEMO_WIRE_AFTER_DEPLOY
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
