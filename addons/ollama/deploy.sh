@@ -15,6 +15,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
+OLLAMA_ROLLOUT_TIMEOUT="${OLLAMA_ROLLOUT_TIMEOUT:-15m}"
 
 # shellcheck source=../../includes/infra-crc.sh
 source "${SCRIPT_DIR}/../../includes/infra-crc.sh" 2>/dev/null || true
@@ -51,7 +52,8 @@ sed "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
   "${SCRIPT_DIR}/ollama.yaml" | kubectl apply -f -
 
 echo "  Waiting for Ollama deployment to be ready..."
-kubectl rollout status deployment/ollama -n aap-demo-ollama --timeout=120s
+kubectl rollout status deployment/ollama -n aap-demo-ollama \
+  --timeout="${OLLAMA_ROLLOUT_TIMEOUT}"
 
 echo "  Pulling model: ${OLLAMA_MODEL}..."
 echo "  (This may take several minutes — model is ~2.5GB)"
@@ -64,11 +66,13 @@ if [ -n "$OLLAMA_POD" ]; then
   if kubectl exec -n aap-demo-ollama "$OLLAMA_POD" -- ollama pull "${OLLAMA_MODEL}"; then
     echo "  ✓ Model ${OLLAMA_MODEL} ready"
   else
-    echo "  ⚠ Model pull failed — retry:"
+    echo "  ERROR: Model pull failed — retry:" >&2
     echo "    kubectl exec -n aap-demo-ollama $OLLAMA_POD -- ollama pull ${OLLAMA_MODEL}"
+    exit 1
   fi
 else
-  echo "  ⚠ Could not find Ollama pod — retry: aap-demo enable ollama  (re-run is safe)"
+  echo "  ERROR: Could not find Ollama pod — retry: aap-demo enable ollama" >&2
+  exit 1
 fi
 
 echo ""

@@ -27,7 +27,7 @@ case "$*" in
   "apply -f -")
     cat >"${MOCK_APPLY_FILE}"
     ;;
-  rollout\ status\ deployment/ollama\ -n\ aap-demo-ollama\ --timeout=120s)
+  rollout\ status\ deployment/ollama\ -n\ aap-demo-ollama\ --timeout=15m)
     exit 0
     ;;
   "get pod -n aap-demo-ollama -l app=ollama -o jsonpath={.items[0].metadata.name}")
@@ -92,6 +92,13 @@ if grep -q 'Model qwen2.5:3b ready' <<<"$output"; then
   pass "deployment_pulls_configured_model"
 else
   fail "deployment_pulls_configured_model"
+fi
+
+if grep -q 'OLLAMA_ROLLOUT_TIMEOUT:-15m' "$OLLAMA_DEPLOY" \
+  && grep -q 'exit 1' "$OLLAMA_DEPLOY"; then
+  pass "deployment_allows_slow_image_pull_and_fails_incomplete_setup"
+else
+  fail "deployment_allows_slow_image_pull_and_fails_incomplete_setup"
 fi
 
 echo "Passed: $PASSED  Failed: $FAILED"

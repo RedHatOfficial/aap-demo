@@ -2830,6 +2830,10 @@ cmd_enable() {
     _ensure_addon_dependency mcp-server "$@" || return 1
     _ensure_addon_dependency ollama "$@" || return 1
   fi
+  local _addon_was_enabled=false
+  if echo "$(_addons_list)" | grep -qw "$addon"; then
+    _addon_was_enabled=true
+  fi
   if [ "$_skip_addon_save" != true ]; then
     _addons_add "$addon"
   fi
@@ -2840,7 +2844,15 @@ cmd_enable() {
   else
     export AAP_DEMO_WIRE_AFTER_DEPLOY=0
   fi
-  bash "$addon_dir/deploy.sh" "$@"
+  if ! bash "$addon_dir/deploy.sh" "$@"; then
+    # Do not leave a first-time failed deployment marked as enabled. Otherwise
+    # dependency checks skip it on the next run even though setup is incomplete.
+    if [ "$_skip_addon_save" != true ] && [ "$_addon_was_enabled" = false ]; then
+      _addons_remove "$addon"
+    fi
+    unset AAP_DEMO_WIRE_AFTER_DEPLOY
+    return 1
+  fi
   unset AAP_DEMO_WIRE_AFTER_DEPLOY
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
