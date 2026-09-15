@@ -69,24 +69,15 @@ cleanup_aap_credentials() {
 remove_operator_sccs_for_namespace() {
   local namespace="$1"
   if command -v oc >/dev/null 2>&1; then
-    oc adm policy remove-scc-from-user privileged \
-      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy remove-scc-from-user privileged \
-      -z default -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy remove-scc-from-user anyuid \
-      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy remove-scc-from-user nonroot-v2 \
-      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy remove-scc-from-user nonroot-v2 \
-      -z default -n "$namespace" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-group anyuid \
+      "system:serviceaccounts:${namespace}" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-group privileged \
+      "system:serviceaccounts:${namespace}" >/dev/null 2>&1 || true
     return
   fi
   kubectl delete clusterrolebinding \
-    "system:openshift:scc:privileged:${namespace}-redhat-operators" \
-    "system:openshift:scc:privileged:${namespace}-default" \
-    "system:openshift:scc:anyuid:${namespace}-redhat-operators" \
-    "system:openshift:scc:nonroot-v2:${namespace}-redhat-operators" \
-    "system:openshift:scc:nonroot-v2:${namespace}-default" \
+    "system:openshift:scc:anyuid:${namespace}" \
+    "system:openshift:scc:privileged:${namespace}" \
     --ignore-not-found >/dev/null 2>&1 || true
 }
 
@@ -137,37 +128,24 @@ setup_namespace() {
 grant_operator_sccs_for_namespace() {
   local namespace="$1"
   if [ "${PORTAL_OPERATOR_GRANT_SCC:-false}" != true ]; then
-    echo "⚠️  OLM may require SCC access in $namespace; set PORTAL_OPERATOR_GRANT_SCC=true to grant nonroot-v2 SCC to its catalog and bundle service accounts"
+    echo "⚠️  OLM may require SCC access in $namespace; set PORTAL_OPERATOR_GRANT_SCC=true to grant anyuid and privileged SCCs to its service accounts"
     return
   fi
   if command -v oc >/dev/null 2>&1; then
-    oc adm policy remove-scc-from-user privileged \
-      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy remove-scc-from-user privileged \
-      -z default -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy remove-scc-from-user anyuid \
-      -z redhat-operators -n "$namespace" >/dev/null 2>&1 || true
-    oc adm policy add-scc-to-user nonroot-v2 \
-      -z redhat-operators -n "$namespace" >/dev/null
-    oc adm policy add-scc-to-user nonroot-v2 \
-      -z default -n "$namespace" >/dev/null
+    oc adm policy add-scc-to-group anyuid \
+      "system:serviceaccounts:${namespace}" >/dev/null
+    oc adm policy add-scc-to-group privileged \
+      "system:serviceaccounts:${namespace}" >/dev/null
     return
   fi
-  kubectl delete clusterrolebinding \
-    "system:openshift:scc:privileged:${namespace}-redhat-operators" \
-    "system:openshift:scc:privileged:${namespace}-default" \
-    "system:openshift:scc:anyuid:${namespace}-redhat-operators" \
-    "system:openshift:scc:nonroot-v2:${namespace}-redhat-operators" \
-    "system:openshift:scc:nonroot-v2:${namespace}-default" \
-    --ignore-not-found >/dev/null 2>&1 || true
   kubectl create clusterrolebinding \
-    "system:openshift:scc:nonroot-v2:${namespace}-redhat-operators" \
-    --clusterrole=system:openshift:scc:nonroot-v2 \
-    --serviceaccount="${namespace}:redhat-operators" >/dev/null
+    "system:openshift:scc:anyuid:${namespace}" \
+    --clusterrole=system:openshift:scc:anyuid \
+    --group="system:serviceaccounts:${namespace}" >/dev/null 2>/dev/null || true
   kubectl create clusterrolebinding \
-    "system:openshift:scc:nonroot-v2:${namespace}-default" \
-    --clusterrole=system:openshift:scc:nonroot-v2 \
-    --serviceaccount="${namespace}:default" >/dev/null
+    "system:openshift:scc:privileged:${namespace}" \
+    --clusterrole=system:openshift:scc:privileged \
+    --group="system:serviceaccounts:${namespace}" >/dev/null 2>/dev/null || true
 }
 
 require_amd64_cluster() {
