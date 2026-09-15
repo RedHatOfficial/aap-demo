@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Deploy Ollama LLM server for aap-demo
 #
-# Deploys Ollama (CPU-only) with phi4-mini model pre-pulled.
+# Deploys Ollama (CPU-only) with qwen2.5:3b model pre-pulled.
 # Accessible via:
 #   - Route: https://ollama.apps.<cluster-domain>
 #   - OpenAI-compatible: https://ollama.apps.<cluster-domain>/v1
 #   - In-cluster: http://ollama.aap-demo-ollama.svc.cluster.local:11434
 #
 # Usage:
-#   ./deploy.sh          # Deploy Ollama and pull phi4-mini
+#   ./deploy.sh          # Deploy Ollama and pull qwen2.5:3b
 #   ./deploy.sh --delete # Remove Ollama
 
 set -e

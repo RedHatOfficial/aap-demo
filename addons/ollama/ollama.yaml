@@ -1,5 +1,5 @@
 # Ollama LLM server for aap-demo
-# CPU-only deployment with phi4-mini model (~2.5GB)
+# CPU-only deployment with qwen2.5:3b model (~2GB)
 #
 # Endpoint: https://ollama.apps.127.0.0.1.nip.io
 # OpenAI-compatible: https://ollama.apps.127.0.0.1.nip.io/v1
