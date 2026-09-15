@@ -411,6 +411,7 @@ Addons:
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator (enables mcp-server and ollama automatically)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
+  enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
