@@ -144,24 +144,35 @@
   no_log: true
 
 - name: Update AO workflow {{ __ao_payload.name }}
-  ansible.builtin.uri:
-    url: "{{ ao_api_url }}/workflows/{{ __ao_existing.id }}"
-    method: PATCH
-    headers:
-      Authorization: "Bearer {{ ao_api_token }}"
-      Content-Type: application/json
-      Host: "{{ ao_api_host }}"
-    body_format: json
-    body:
-      description: "{{ __ao_payload.description }}"
-      labels: "{{ __ao_payload.labels }}"
-      workflow_definition: "{{ __ao_payload.workflow_definition }}"
-      change_description: "Synchronized from aap-orchestrator-demos by AAP"
-    status_code: [200, 202]
-    validate_certs: false
-    use_proxy: false
   when: __ao_existing | length > 0
-  no_log: true
+  block:
+    - name: Send AO workflow update
+      ansible.builtin.uri:
+        url: "{{ ao_api_url }}/workflows/{{ __ao_existing.id }}"
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ ao_api_token }}"
+          Content-Type: application/json
+          Host: "{{ ao_api_host }}"
+        body_format: json
+        body:
+          description: "{{ __ao_payload.description }}"
+          labels: "{{ __ao_payload.labels }}"
+          workflow_definition: "{{ __ao_payload.workflow_definition }}"
+          change_description: "Synchronized from aap-orchestrator-demos by AAP"
+        status_code: [200, 202]
+        validate_certs: false
+        use_proxy: false
+      register: __ao_update_result
+      no_log: true
+  rescue:
+    - name: Report AO workflow update validation error
+      ansible.builtin.fail:
+        msg: >-
+          AO rejected workflow {{ __ao_payload.name }} update
+          (status={{ __ao_update_result.status | default('unknown') }};
+          detail={{ (__ao_update_result.json | default({})).detail
+                    | default(__ao_update_result.msg | default('unknown')) }}).
 
 - name: Report synchronized workflow
   ansible.builtin.debug:
