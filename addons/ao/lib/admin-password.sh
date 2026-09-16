@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 
 AO_ADMIN_PASSWORD_SECRET="${AO_ADMIN_PASSWORD_SECRET:-automation-orchestrator-initial-admin-password}"
 AO_STATE_DIR="${AO_STATE_DIR:-${AAP_DEMO_DIR:-${HOME}/.aap-demo}/ao}"
@@ -50,6 +50,35 @@ ao_admin_password_generate() {
   chmod 600 "$AO_ADMIN_PASSWORD_FILE"
   ao_admin_password_restore "$namespace" >/dev/null
   echo "  ✓ Fresh AO admin password generated"
+}
+
+ao_admin_password_ensure() {
+  local namespace="$1"
+
+  # A saved password belongs to the retained database and must take
+  # precedence over any Secret left by a partial reinstall.
+  if [ -s "$AO_ADMIN_PASSWORD_FILE" ]; then
+    ao_admin_password_restore "$namespace"
+    return 0
+  fi
+
+  # A Secret can outlive a namespace purge on some local clusters. Only trust
+  # it when retained PostgreSQL data also exists; in that case preserve it so
+  # a later re-enable can restore the same credential.
+  if kubectl get cluster orchestrator-postgres -n "$namespace" &>/dev/null \
+    || kubectl get pvc orchestrator-postgres-1 -n "$namespace" &>/dev/null; then
+    if kubectl get secret "$AO_ADMIN_PASSWORD_SECRET" -n "$namespace" &>/dev/null; then
+      ao_admin_password_save "$namespace"
+      return 0
+    fi
+    ao_admin_password_require_for_retained_database "$namespace"
+    return
+  fi
+
+  # A fresh database always needs a fresh Secret before the CR is applied.
+  # Replacing a stale Secret prevents an old credential from being reused
+  # after --purge-data.
+  ao_admin_password_generate "$namespace"
 }
 
 ao_admin_password_require_for_retained_database() {

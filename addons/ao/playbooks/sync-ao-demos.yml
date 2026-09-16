@@ -1,4 +1,4 @@
-- name: Synchronize TMM workflows into Automation Orchestrator
+- name: Prepare TMM workflow synchronization
   hosts: localhost
   connection: local
   gather_facts: false
@@ -12,6 +12,9 @@
     ao_aap_credential_id: ""
     ao_aap_integration_id: ""
     ao_agent_credential_id: ""
+    ao_agent_model_id: ""
+    ao_mcp_integration_id: ""
+    ao_mcp_credential_id: ""
   pre_tasks:
     - name: Validate required AO variables
       ansible.builtin.assert:
@@ -99,7 +102,7 @@
       ansible.builtin.set_fact:
         __ao_sources: >-
           {{ __ao_workflow_files.files
-             | selectattr('path', 'search', '/ao/[^/]+\\.json$')
+             | selectattr('path', 'search', '/ao/')
              | sort(attribute='path')
              | list }}
 
@@ -109,18 +112,61 @@
           - __ao_sources | length > 0
         fail_msg: "No AO workflow JSON files were found in the upstream archive."
 
+    - name: Read upstream workflow names
+      ansible.builtin.set_fact:
+        __ao_source_names: >-
+          {{ __ao_source_names | default([])
+             + [__ao_name_document.name | default(__ao_name_source.path | basename | splitext | first)] }}
+      loop: "{{ __ao_sources }}"
+      loop_control:
+        loop_var: __ao_name_source
+      vars:
+        __ao_name_document: "{{ lookup('file', __ao_name_source.path) | from_json }}"
+
   tasks:
-    - name: Synchronize upstream AO workflows
-      block:
-        - name: Synchronize each AO workflow export
-          ansible.builtin.include_tasks: tasks/sync_workflow.yml
-          loop: "{{ __ao_sources }}"
-          loop_control:
-            loop_var: __ao_source
-            label: "{{ __ao_source.path | basename }}"
-      always:
-        - name: Remove temporary source directory
-          ansible.builtin.file:
-            path: "{{ __ao_temp_dir.path | default('') }}"
-            state: absent
-          when: __ao_temp_dir is defined
+    - name: Add one isolated worker host per AO workflow export
+      ansible.builtin.add_host:
+        name: "ao_workflow_worker_{{ __ao_worker_index }}"
+        groups: ao_workflow_workers
+        ansible_connection: local
+        ao_sync_source: "{{ __ao_worker_source }}"
+        ao_sync_source_names: "{{ __ao_source_names }}"
+        ao_api_url: "{{ ao_api_url }}"
+        ao_api_host: "{{ ao_api_host }}"
+        ao_api_token: "{{ ao_api_token }}"
+        ao_demo_project_id: "{{ ao_demo_project_id }}"
+        ao_aap_credential_id: "{{ ao_aap_credential_id }}"
+        ao_aap_integration_id: "{{ ao_aap_integration_id }}"
+        ao_agent_credential_id: "{{ ao_agent_credential_id }}"
+        ao_agent_model_id: "{{ ao_agent_model_id }}"
+        ao_mcp_integration_id: "{{ ao_mcp_integration_id }}"
+        ao_mcp_credential_id: "{{ ao_mcp_credential_id }}"
+      loop: "{{ __ao_sources }}"
+      loop_control:
+        loop_var: __ao_worker_source
+        index_var: __ao_worker_index
+        label: "{{ __ao_worker_source.path | basename }}"
+      no_log: true
+
+- name: Synchronize AO workflows concurrently
+  hosts: ao_workflow_workers
+  connection: local
+  gather_facts: false
+  strategy: free
+  tasks:
+    - name: Synchronize this AO workflow export
+      ansible.builtin.include_tasks: tasks/sync_workflow.yml
+      vars:
+        __ao_source: "{{ ao_sync_source }}"
+        __ao_source_names: "{{ ao_sync_source_names }}"
+
+- name: Remove temporary AO workflow source directory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Remove temporary source directory
+      ansible.builtin.file:
+        path: "{{ hostvars['localhost']['__ao_temp_dir'].path | default('') }}"
+        state: absent
+      when: hostvars['localhost']['__ao_temp_dir'] is defined

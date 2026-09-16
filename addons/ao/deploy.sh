@@ -410,10 +410,16 @@ apply_operator_olm_manifests() {
     -e "s|__CATALOG_NAMESPACE__|${CATALOG_NAMESPACE}|g" \
     -e "s|__OPERATOR_CHANNEL__|${OPERATOR_CHANNEL}|g" \
     "${MANIFESTS_DIR}/operator-subscription.yaml" | kubectl apply -f -
+  sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+    "${MANIFESTS_DIR}/operator-rbac.yaml" | kubectl apply -f -
 }
 
 cleanup_ao_olm_state() {
   local _ns
+  kubectl delete clusterrolebinding automation-orchestrator-operator-cluster-rolebinding \
+    --ignore-not-found --wait=false 2>/dev/null || true
+  kubectl delete clusterrole automation-orchestrator-operator-cluster-role \
+    --ignore-not-found --wait=false 2>/dev/null || true
   for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE" "$AAP_NAMESPACE"; do
     [ -z "$_ns" ] && continue
     kubectl delete subscription automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true
@@ -801,12 +807,18 @@ provision_aap_demos() {
   else
     echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
   fi
+  local _provision_rc
   if python3 "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
     if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
       AO_AAP_SYNC_RAN=1
     fi
   else
-    echo "  ⚠ AAP demo provisioning or AO sync job failed"
+    _provision_rc=$?
+    if [ "$_provision_rc" -eq 2 ]; then
+      echo "  Continuing with direct AO workflow import."
+    else
+      echo "  ⚠ AAP demo provisioning or AO sync job failed"
+    fi
   fi
 }
 
@@ -1032,6 +1044,8 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   if [ -n "$PURGE_DATA" ]; then
     echo "  Purging retained AO database and credentials..."
     ao_admin_password_forget
+    kubectl delete secret "$AO_ADMIN_PASSWORD_SECRET" -n "$NAMESPACE" \
+      --ignore-not-found >/dev/null
     reset_ao_postgres_storage
   else
     ao_admin_password_save "$NAMESPACE"
@@ -1069,8 +1083,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     fi
     if [ "$_i" -eq 60 ]; then
       echo ""
-      echo "  ⚠ Namespace still terminating after 5 minutes — continuing anyway"
+      echo "ERROR: Namespace still terminating after 5 minutes" >&2
       echo "  Check: kubectl get namespace $NAMESPACE"
+      exit 1
     fi
     sleep 5
   done
@@ -1169,9 +1184,8 @@ kubectl create namespace "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 if [ -z "$FORCE" ]; then
-  ao_admin_password_require_for_retained_database "$NAMESPACE"
+  ao_admin_password_ensure "$NAMESPACE"
 fi
-ao_admin_password_restore "$NAMESPACE"
 echo "✓ Namespace ready"
 
 # --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---

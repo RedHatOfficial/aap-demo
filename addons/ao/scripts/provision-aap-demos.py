@@ -19,6 +19,8 @@ CONTROL_PROJECT_NAME = "AAP Demo Control Plane"
 CONTROL_PROJECT_URL = "https://github.com/RedHatOfficial/aap-demo.git"
 CONTROL_TEMPLATE_NAME = "Sync AO Workflows from TMM"
 CONTROL_PLAYBOOK = "addons/ao/playbooks/sync-ao-demos.yml"
+CONTROL_FORKS = 10
+EXIT_LICENSE_REQUIRED = 2
 
 TEMPLATES = [
     ("Renew Certificate", "cert-lifecycle/playbooks/renew_certificate.yml"),
@@ -39,6 +41,12 @@ TEMPLATES = [
     ("Incidents | Capacity - Disk Cleanup", "ticket-enrichment/playbooks/remediate_disk_cleanup.yml"),
     ("Incidents | High CPU - Process Cleanup", "ticket-enrichment/playbooks/remediate_process_cleanup.yml"),
 ]
+
+
+def report_missing_license(route: str) -> None:
+    """Tell the user how to register AAP before retrying the sync job."""
+    print("WARNING: AAP does not have a registered subscription.")
+    print(f"  Please log into AAP at https://{route} and register a subscription.")
 
 
 class AAP:
@@ -69,13 +77,24 @@ class AAP:
 
     def wait_for_project_sync(self, project_id: int, timeout: int = 180) -> None:
         """Wait until git SCM has playbooks; create job templates fails before that."""
+        # Reusing an already-synced project is common on re-enable and avoids
+        # starting another potentially slow SCM update just to discover that
+        # the required playbooks are already available.
+        project = self.request(f"/projects/{project_id}/")
+        last_status = str(project.get("status") or "unknown")
+        if last_status == "successful":
+            playbooks = self.request(f"/projects/{project_id}/playbooks/")
+            if isinstance(playbooks, dict):
+                playbooks = playbooks.get("results") or playbooks.get("playbooks") or []
+            if playbooks:
+                return
+
         try:
             self.request(f"/projects/{project_id}/update/", "POST")
         except RuntimeError as exc:
             if "HTTP 400" not in str(exc):
                 raise
         deadline = time.time() + timeout
-        last_status = "unknown"
         while time.time() < deadline:
             project = self.request(f"/projects/{project_id}/")
             last_status = str(project.get("status") or "unknown")
@@ -190,6 +209,7 @@ def main() -> int:
             "organization": organization["id"],
             "project": control_project_id,
             "playbook": CONTROL_PLAYBOOK,
+            "forks": CONTROL_FORKS,
             "ask_variables_on_launch": True,
         }
         if inventory_id:
@@ -204,20 +224,26 @@ def main() -> int:
             control_template_id = api.request("/job_templates/", "POST", control_template_payload)["id"]
             print(f"  ✓ AAP control job template created: {CONTROL_TEMPLATE_NAME}")
 
-        launch = api.request(
-            f"/job_templates/{control_template_id}/launch/",
-            "POST",
-            {
-                "extra_vars": {
-                    "ao_api_url": args.ao_api_url,
-                    "ao_api_host": args.ao_api_host,
-                    "ao_api_token": args.ao_token,
-                    "ao_demo_ref": args.ao_demo_ref,
-                    "ao_aap_credential_id": args.ao_credential_id,
-                    "ao_aap_integration_id": args.ao_integration_id,
-                }
-            },
-        )
+        try:
+            launch = api.request(
+                f"/job_templates/{control_template_id}/launch/",
+                "POST",
+                {
+                    "extra_vars": {
+                        "ao_api_url": args.ao_api_url,
+                        "ao_api_host": args.ao_api_host,
+                        "ao_api_token": args.ao_token,
+                        "ao_demo_ref": args.ao_demo_ref,
+                        "ao_aap_credential_id": args.ao_credential_id,
+                        "ao_aap_integration_id": args.ao_integration_id,
+                    }
+                },
+            )
+        except RuntimeError as exc:
+            if "HTTP 403" in str(exc) and "License is missing" in str(exc):
+                report_missing_license(args.route)
+                return EXIT_LICENSE_REQUIRED
+            raise
         job_id = launch.get("job")
         if not job_id:
             raise RuntimeError(f"AAP did not return a job id for {CONTROL_TEMPLATE_NAME}")
