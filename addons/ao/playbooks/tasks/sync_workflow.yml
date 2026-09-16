@@ -27,9 +27,10 @@
     __ao_node_parameters: "{{ __ao_node_item.parameters | default(__ao_node_item.config | default({})) }}"
     __ao_node_drop: >-
       {{ ['config', 'parameters']
-         + (['credential_id', 'response_schema', 'responseSchema', 'tool_selection_strategy', 'tool_selections']
+         + (['credential_id', 'llm_model_id', 'model', 'response_schema', 'responseSchema',
+             'tool_selection_strategy', 'tool_selections', 'integration_connections']
             if __ao_node_item.type == 'agentic' else [])
-         + (['credential_id', 'integration_id']
+         + (['credential_id', 'integration_id', 'job_template_id']
             if __ao_node_item.type == 'aap_job_template' else []) }}
     __ao_node_base: >-
       {{ __ao_node_item
@@ -57,7 +58,18 @@
                         or (__ao_node_parameters.tool_selection_strategy == 'SELECTED'
                             and (__ao_node_parameters.tool_selections | default([]) | length == 0))
                         else __ao_node_parameters.tool_selection_strategy)}
-                      if __ao_node_item.type == 'agentic' else {})))) }}
+                      if __ao_node_item.type == 'agentic' else {})
+                 | combine(
+                     ({'llm_model_id': ao_agent_model_id}
+                      if __ao_node_item.type == 'agentic' and ao_agent_model_id | length > 0 else {})
+                 | combine(
+                     ({'integration_connections': [
+                         {'integration_id': ao_mcp_integration_id,
+                          'credential_id': ao_mcp_credential_id}
+                       ]}
+                      if __ao_node_item.type == 'agentic'
+                         and ao_mcp_integration_id | length > 0
+                         and ao_mcp_credential_id | length > 0 else {})))))) }}
     __ao_parameters: >-
       {{ __ao_agent_parameters
          | combine(
