@@ -19,6 +19,7 @@ CONTROL_PROJECT_NAME = "AAP Demo Control Plane"
 CONTROL_PROJECT_URL = "https://github.com/RedHatOfficial/aap-demo.git"
 CONTROL_TEMPLATE_NAME = "Sync AO Workflows from TMM"
 CONTROL_PLAYBOOK = "addons/ao/playbooks/sync-ao-demos.yml"
+CONTROL_FORKS = 10
 EXIT_LICENSE_REQUIRED = 2
 
 TEMPLATES = [
@@ -208,6 +209,7 @@ def main() -> int:
             "organization": organization["id"],
             "project": control_project_id,
             "playbook": CONTROL_PLAYBOOK,
+            "forks": CONTROL_FORKS,
             "ask_variables_on_launch": True,
         }
         if inventory_id:
