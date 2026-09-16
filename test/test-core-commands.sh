@@ -124,6 +124,15 @@ else
   _fail "create_calls_script - crc-create.sh not referenced in create function"
 fi
 
+# Test 9: addon purge options are accepted and forwarded
+echo "Test 9: disable forwards addon purge options"
+if grep -q -- '--purge-data' "$AAP_DEMO_SH" \
+  && grep -q 'bash "\$addon_dir/deploy.sh" --delete "\$@"' "$AAP_DEMO_SH"; then
+  _pass "disable_forwards_purge_data"
+else
+  _fail "disable_forwards_purge_data - purge option parsing or forwarding is missing"
+fi
+
 # Test 8: create command - verify OLM addon is enabled after cluster creation
 echo "Test 8: create enables OLM addon"
 # Verify create function calls OLM deploy

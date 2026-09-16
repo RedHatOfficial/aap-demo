@@ -135,7 +135,7 @@ for arg in "$@"; do
         *) COMMAND="$arg" ;;
       esac
       ;;
-    --ai | --reset | --force | --refresh-catalog)
+    --ai | --reset | --force | --refresh-catalog | --purge-data | --purge-creds)
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
