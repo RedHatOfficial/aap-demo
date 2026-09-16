@@ -1169,9 +1169,8 @@ kubectl create namespace "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 if [ -z "$FORCE" ]; then
-  ao_admin_password_require_for_retained_database "$NAMESPACE"
+  ao_admin_password_ensure "$NAMESPACE"
 fi
-ao_admin_password_restore "$NAMESPACE"
 echo "✓ Namespace ready"
 
 # --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---
