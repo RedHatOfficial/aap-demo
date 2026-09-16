@@ -20,6 +20,9 @@ Comprehensive test script validating all aap-demo commands.
 
 # Combined
 ./test/test-aap-demo.sh --quick --verbose
+
+# AAP provisioning fast-path test
+python3 ./test/test-provision-aap-demos.py
 ```
 
 ### Coverage
