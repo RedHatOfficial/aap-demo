@@ -99,7 +99,7 @@
       ansible.builtin.set_fact:
         __ao_sources: >-
           {{ __ao_workflow_files.files
-             | selectattr('path', 'search', '/ao/[^/]+\\.json$')
+             | selectattr('path', 'search', '/ao/')
              | sort(attribute='path')
              | list }}
 
