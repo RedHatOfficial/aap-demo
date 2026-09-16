@@ -28,6 +28,7 @@ kubectl() {
   fi
   if [ "$1 $2 $3" = "create secret generic" ]; then
     local arg
+    KUBE_SECRET_EXISTS=true
     for arg in "$@"; do
       case "$arg" in
         --from-file=password=*) CREATE_PASSWORD=$(<"${arg#--from-file=password=}") ;;
@@ -44,6 +45,19 @@ kubectl() {
 
 # shellcheck source=addons/ao/lib/admin-password.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/addons/ao/lib/admin-password.sh"
+
+# Clean-install scenario: there is no cached password, no Secret, and no
+# retained database. The bootstrap Secret must be created before the AO CR is
+# applied so the operator can initialize the admin account.
+KUBE_SECRET_EXISTS=false
+KUBE_DATABASE_EXISTS=false
+CREATE_PASSWORD=""
+ao_admin_password_forget
+ao_admin_password_ensure automation-orchestrator >/dev/null
+[ "$KUBE_SECRET_EXISTS" = true ]
+[ -n "$CREATE_PASSWORD" ]
+[ "${#CREATE_PASSWORD}" -eq 32 ]
+[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
 
 KUBE_SECRET_EXISTS=true
 EXPECTED_VALUE="fixture-value"
