@@ -11,6 +11,7 @@ Checked-in Kubernetes templates applied by [`../deploy.sh`](../deploy.sh). Shape
 | File | Stage | Contents |
 |------|-------|----------|
 | [`operator-subscription.yaml`](operator-subscription.yaml) | 2 — OLM | `OperatorGroup` (AllNamespaces) + `Subscription` |
+| [`operator-rbac.yaml`](operator-rbac.yaml) | 2 — OLM compatibility | Explicit cluster permissions for the operator service account on MicroShift |
 | [`postgres-cluster.yaml`](postgres-cluster.yaml) | 3 — data | CNPG `Cluster` + `Database` CRs (`orchestrator`, `temporal`, `temporal_visibility`) |
 | [`automationorchestrator-cr.yaml`](automationorchestrator-cr.yaml) | 3 — instance | `AutomationOrchestrator` CR |
 

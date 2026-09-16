@@ -410,10 +410,16 @@ apply_operator_olm_manifests() {
     -e "s|__CATALOG_NAMESPACE__|${CATALOG_NAMESPACE}|g" \
     -e "s|__OPERATOR_CHANNEL__|${OPERATOR_CHANNEL}|g" \
     "${MANIFESTS_DIR}/operator-subscription.yaml" | kubectl apply -f -
+  sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+    "${MANIFESTS_DIR}/operator-rbac.yaml" | kubectl apply -f -
 }
 
 cleanup_ao_olm_state() {
   local _ns
+  kubectl delete clusterrolebinding automation-orchestrator-operator-cluster-rolebinding \
+    --ignore-not-found --wait=false 2>/dev/null || true
+  kubectl delete clusterrole automation-orchestrator-operator-cluster-role \
+    --ignore-not-found --wait=false 2>/dev/null || true
   for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE" "$AAP_NAMESPACE"; do
     [ -z "$_ns" ] && continue
     kubectl delete subscription automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true

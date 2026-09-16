@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+
 AO_ADMIN_PASSWORD_SECRET="${AO_ADMIN_PASSWORD_SECRET:-automation-orchestrator-initial-admin-password}"
 AO_STATE_DIR="${AO_STATE_DIR:-${AAP_DEMO_DIR:-${HOME}/.aap-demo}/ao}"
 AO_ADMIN_PASSWORD_FILE="${AO_ADMIN_PASSWORD_FILE:-${AO_STATE_DIR}/initial-admin-password}"
