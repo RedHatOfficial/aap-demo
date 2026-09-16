@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import ssl
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -24,6 +25,45 @@ from typing import Any
 
 UPSTREAM_REPOSITORY = "https://github.com/ansible-tmm/aap-orchestrator-demos"
 UPSTREAM_REF = "abcc1a1482a"
+
+
+def download_archive(url: str, destination: Path) -> None:
+    """Download a public archive using the host's native TLS trust."""
+    download_env = os.environ.copy()
+    # The local ingress CA is valid only for the MicroShift route. If it was
+    # exported as a standalone bundle, passing it to curl replaces the host's
+    # public/corporate roots and makes GitHub certificate validation fail.
+    for variable in ("CURL_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        value = download_env.get(variable)
+        if value and Path(value).name == "crc-ingress-ca.crt":
+            download_env.pop(variable)
+    try:
+        subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--retry",
+                "3",
+                "--output",
+                str(destination),
+                url,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=download_env,
+        )
+    except FileNotFoundError:
+        # curl is part of the aap-demo prerequisites, but retain a portable
+        # fallback for minimal Python-only test environments.
+        with urllib.request.urlopen(url, timeout=60) as response:
+            destination.write_bytes(response.read())
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip() or f"curl exited with status {exc.returncode}"
+        raise RuntimeError(detail) from exc
 
 
 def request(base: str, token: str, method: str, path: str, body: Any = None) -> Any:
@@ -66,8 +106,7 @@ def workflow_sources(source_dir: str | None, repository: str, ref: str):
     with tempfile.TemporaryDirectory(prefix="aap-demo-ao-demos-") as temp_dir:
         archive_path = Path(temp_dir) / "demos.tar.gz"
         try:
-            with urllib.request.urlopen(archive_url, timeout=60) as response:
-                archive_path.write_bytes(response.read())
+            download_archive(archive_url, archive_path)
             extract_dir = Path(temp_dir) / "source"
             extract_dir.mkdir()
             with tarfile.open(archive_path, "r:gz") as archive:
@@ -77,7 +116,7 @@ def workflow_sources(source_dir: str | None, repository: str, ref: str):
                     if target != root and root not in target.parents:
                         raise RuntimeError("upstream demo archive contains an unsafe path")
                 archive.extractall(extract_dir)
-        except (OSError, tarfile.TarError, urllib.error.URLError) as exc:
+        except (OSError, RuntimeError, tarfile.TarError, urllib.error.URLError) as exc:
             raise RuntimeError(f"unable to download upstream demos from {archive_url}: {exc}") from exc
 
         roots = [path for path in extract_dir.iterdir() if path.is_dir()]
