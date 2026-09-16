@@ -74,6 +74,13 @@ ao_admin_password_generate test >/dev/null
 [ "${#CREATE_PASSWORD}" -eq 32 ]
 [ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
 
+KUBE_SECRET_EXISTS=false
+CREATE_PASSWORD=""
+ao_admin_password_forget
+ao_admin_password_ensure test >/dev/null
+[ "${#CREATE_PASSWORD}" -eq 32 ]
+[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
+
 MANIFEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/addons/ao/manifests/automationorchestrator-cr.yaml"
 grep -q 'initialAdminPasswordSecretRef:' "$MANIFEST"
 grep -q 'name: automation-orchestrator-initial-admin-password' "$MANIFEST"

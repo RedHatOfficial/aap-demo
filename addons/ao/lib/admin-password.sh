@@ -1,5 +1,3 @@
-#!/usr/bin/env bash
-
 AO_ADMIN_PASSWORD_SECRET="${AO_ADMIN_PASSWORD_SECRET:-automation-orchestrator-initial-admin-password}"
 AO_STATE_DIR="${AO_STATE_DIR:-${AAP_DEMO_DIR:-${HOME}/.aap-demo}/ao}"
 AO_ADMIN_PASSWORD_FILE="${AO_ADMIN_PASSWORD_FILE:-${AO_STATE_DIR}/initial-admin-password}"
@@ -50,6 +48,32 @@ ao_admin_password_generate() {
   chmod 600 "$AO_ADMIN_PASSWORD_FILE"
   ao_admin_password_restore "$namespace" >/dev/null
   echo "  ✓ Fresh AO admin password generated"
+}
+
+ao_admin_password_ensure() {
+  local namespace="$1"
+
+  # A saved password belongs to the retained database and must take
+  # precedence over any Secret left by a partial reinstall.
+  if [ -s "$AO_ADMIN_PASSWORD_FILE" ]; then
+    ao_admin_password_restore "$namespace"
+    return 0
+  fi
+
+  # Keep an already-created Secret stable. This is the normal idempotent path
+  # after the instance has been initialized.
+  if kubectl get secret "$AO_ADMIN_PASSWORD_SECRET" -n "$namespace" &>/dev/null; then
+    return 0
+  fi
+
+  # Never invent a new password for a retained database: it would not match
+  # the existing admin record. The caller must restore the saved credential or
+  # explicitly force a data reset.
+  ao_admin_password_require_for_retained_database "$namespace"
+
+  # A fresh database needs the Secret before the CR is applied because the
+  # operator consumes it during initial admin bootstrap.
+  ao_admin_password_generate "$namespace"
 }
 
 ao_admin_password_require_for_retained_database() {
