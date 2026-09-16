@@ -60,19 +60,22 @@ ao_admin_password_ensure() {
     return 0
   fi
 
-  # Keep an already-created Secret stable. This is the normal idempotent path
-  # after the instance has been initialized.
-  if kubectl get secret "$AO_ADMIN_PASSWORD_SECRET" -n "$namespace" &>/dev/null; then
-    return 0
+  # A Secret can outlive a namespace purge on some local clusters. Only trust
+  # it when retained PostgreSQL data also exists; in that case preserve it so
+  # a later re-enable can restore the same credential.
+  if kubectl get cluster orchestrator-postgres -n "$namespace" &>/dev/null \
+    || kubectl get pvc orchestrator-postgres-1 -n "$namespace" &>/dev/null; then
+    if kubectl get secret "$AO_ADMIN_PASSWORD_SECRET" -n "$namespace" &>/dev/null; then
+      ao_admin_password_save "$namespace"
+      return 0
+    fi
+    ao_admin_password_require_for_retained_database "$namespace"
+    return
   fi
 
-  # Never invent a new password for a retained database: it would not match
-  # the existing admin record. The caller must restore the saved credential or
-  # explicitly force a data reset.
-  ao_admin_password_require_for_retained_database "$namespace"
-
-  # A fresh database needs the Secret before the CR is applied because the
-  # operator consumes it during initial admin bootstrap.
+  # A fresh database always needs a fresh Secret before the CR is applied.
+  # Replacing a stale Secret prevents an old credential from being reused
+  # after --purge-data.
   ao_admin_password_generate "$namespace"
 }
 

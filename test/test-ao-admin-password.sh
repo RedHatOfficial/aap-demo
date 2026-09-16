@@ -38,6 +38,7 @@ kubectl() {
   fi
   if [ "$1 $2" = "delete secret" ]; then
     DELETE_CALLED=true
+    KUBE_SECRET_EXISTS=false
     return 0
   fi
   return 1
@@ -56,6 +57,19 @@ ao_admin_password_forget
 ao_admin_password_ensure automation-orchestrator >/dev/null
 [ "$KUBE_SECRET_EXISTS" = true ]
 [ -n "$CREATE_PASSWORD" ]
+[ "${#CREATE_PASSWORD}" -eq 32 ]
+[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
+
+# A Secret left behind after a data purge must not be reused when PostgreSQL
+# is absent. Replace it and cache the newly generated bootstrap password.
+KUBE_SECRET_EXISTS=true
+KUBE_SECRET_B64=$(printf '%s' "stale-password" | base64)
+KUBE_DATABASE_EXISTS=false
+CREATE_PASSWORD=""
+ao_admin_password_forget
+ao_admin_password_ensure automation-orchestrator >/dev/null
+[ "$DELETE_CALLED" = true ]
+[ "$CREATE_PASSWORD" != "stale-password" ]
 [ "${#CREATE_PASSWORD}" -eq 32 ]
 [ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
 

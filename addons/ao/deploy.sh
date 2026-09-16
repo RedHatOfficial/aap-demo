@@ -1032,6 +1032,8 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   if [ -n "$PURGE_DATA" ]; then
     echo "  Purging retained AO database and credentials..."
     ao_admin_password_forget
+    kubectl delete secret "$AO_ADMIN_PASSWORD_SECRET" -n "$NAMESPACE" \
+      --ignore-not-found >/dev/null
     reset_ao_postgres_storage
   else
     ao_admin_password_save "$NAMESPACE"
@@ -1069,8 +1071,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     fi
     if [ "$_i" -eq 60 ]; then
       echo ""
-      echo "  ⚠ Namespace still terminating after 5 minutes — continuing anyway"
+      echo "ERROR: Namespace still terminating after 5 minutes" >&2
       echo "  Check: kubectl get namespace $NAMESPACE"
+      exit 1
     fi
     sleep 5
   done
