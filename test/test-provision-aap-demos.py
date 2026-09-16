@@ -1,6 +1,8 @@
 """Tests for the AAP demo provisioning fast paths."""
 
+from contextlib import redirect_stdout
 import importlib.util
+import io
 from pathlib import Path
 
 
@@ -32,6 +34,19 @@ def test_reuses_successfully_synced_project():
     ]
 
 
+def test_missing_license_message_includes_aap_address():
+    output = io.StringIO()
+    with redirect_stdout(output):
+        MODULE.report_missing_license("aap.example.test")
+
+    assert output.getvalue().splitlines() == [
+        "WARNING: AAP does not have a registered subscription.",
+        "  Please log into AAP at https://aap.example.test and register a subscription.",
+    ]
+    assert MODULE.EXIT_LICENSE_REQUIRED == 2
+
+
 if __name__ == "__main__":
     test_reuses_successfully_synced_project()
+    test_missing_license_message_includes_aap_address()
     print("AAP provisioning tests passed")
