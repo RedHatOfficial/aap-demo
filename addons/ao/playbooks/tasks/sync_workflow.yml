@@ -2,6 +2,11 @@
   ansible.builtin.set_fact:
     __ao_workflow: "{{ lookup('file', __ao_source.path) | from_json }}"
 
+- name: Reset per-workflow normalized collections
+  ansible.builtin.set_fact:
+    __ao_triggers: []
+    __ao_nodes: []
+
 - name: Select a unique workflow name
   ansible.builtin.set_fact:
     __ao_workflow_name: >-
