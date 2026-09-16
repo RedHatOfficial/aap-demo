@@ -106,7 +106,8 @@
         source_file: "{{ __ao_source.path | basename }}"
       workflow_definition: >-
         {{ __ao_workflow
-           | combine({'name': __ao_workflow_name,
+           | combine({'schema_version': __ao_workflow.schema_version | default('2.0.0'),
+                      'name': __ao_workflow_name,
                       'triggers': __ao_triggers | default([]),
                       'nodes': __ao_nodes | default([])}) }}
       project_id: "{{ ao_demo_project_id }}"
