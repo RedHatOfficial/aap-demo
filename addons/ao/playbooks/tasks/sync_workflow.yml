@@ -2,6 +2,18 @@
   ansible.builtin.set_fact:
     __ao_workflow: "{{ lookup('file', __ao_source.path) | from_json }}"
 
+- name: Select a unique workflow name
+  ansible.builtin.set_fact:
+    __ao_workflow_name: >-
+      {{ __ao_workflow_raw_name ~ ' (legacy)'
+         if __ao_workflow_name_count | int > 1
+            and (__ao_source.path | basename).endswith('-legacy.json')
+         else __ao_workflow_raw_name }}
+  vars:
+    __ao_workflow_raw_name: "{{ __ao_workflow.name | default(__ao_source.path | basename | splitext | first) }}"
+    __ao_workflow_name_count: >-
+      {{ __ao_source_names | select('equalto', __ao_workflow_raw_name) | list | length }}
+
 - name: Normalize workflow triggers
   ansible.builtin.set_fact:
     __ao_triggers: "{{ __ao_triggers | default([]) + [__ao_trigger] }}"
@@ -81,7 +93,7 @@
 - name: Build normalized workflow payload
   ansible.builtin.set_fact:
     __ao_payload:
-      name: "{{ __ao_workflow.name | default(__ao_source.path | basename | splitext | first) }}"
+      name: "{{ __ao_workflow_name }}"
       description: "{{ __ao_workflow.description | default('') }}"
       labels:
         aap-demo: "true"
@@ -89,7 +101,9 @@
         source_file: "{{ __ao_source.path | basename }}"
       workflow_definition: >-
         {{ __ao_workflow
-           | combine({'triggers': __ao_triggers | default([]), 'nodes': __ao_nodes | default([])}) }}
+           | combine({'name': __ao_workflow_name,
+                      'triggers': __ao_triggers | default([]),
+                      'nodes': __ao_nodes | default([])}) }}
       project_id: "{{ ao_demo_project_id }}"
 
 - name: Find an existing AO workflow by source file

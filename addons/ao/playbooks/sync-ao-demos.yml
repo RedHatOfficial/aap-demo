@@ -112,6 +112,17 @@
           - __ao_sources | length > 0
         fail_msg: "No AO workflow JSON files were found in the upstream archive."
 
+    - name: Read upstream workflow names
+      ansible.builtin.set_fact:
+        __ao_source_names: >-
+          {{ __ao_source_names | default([])
+             + [__ao_name_document.name | default(__ao_name_source.path | basename | splitext | first)] }}
+      loop: "{{ __ao_sources }}"
+      loop_control:
+        loop_var: __ao_name_source
+      vars:
+        __ao_name_document: "{{ lookup('file', __ao_name_source.path) | from_json }}"
+
   tasks:
     - name: Synchronize upstream AO workflows
       block:
