@@ -69,13 +69,24 @@ class AAP:
 
     def wait_for_project_sync(self, project_id: int, timeout: int = 180) -> None:
         """Wait until git SCM has playbooks; create job templates fails before that."""
+        # Reusing an already-synced project is common on re-enable and avoids
+        # starting another potentially slow SCM update just to discover that
+        # the required playbooks are already available.
+        project = self.request(f"/projects/{project_id}/")
+        last_status = str(project.get("status") or "unknown")
+        if last_status == "successful":
+            playbooks = self.request(f"/projects/{project_id}/playbooks/")
+            if isinstance(playbooks, dict):
+                playbooks = playbooks.get("results") or playbooks.get("playbooks") or []
+            if playbooks:
+                return
+
         try:
             self.request(f"/projects/{project_id}/update/", "POST")
         except RuntimeError as exc:
             if "HTTP 400" not in str(exc):
                 raise
         deadline = time.time() + timeout
-        last_status = "unknown"
         while time.time() < deadline:
             project = self.request(f"/projects/{project_id}/")
             last_status = str(project.get("status") or "unknown")
