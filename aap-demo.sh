@@ -199,7 +199,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -586,6 +586,7 @@ Addons:
   enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator (prompts for LLM or no LLM)
+  enable ao-pr-testing Install PR validation workflow and read-only OpenShift MCP (requires ao)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
   enable keycloak  Deploy Keycloak OIDC provider for local AAP/AO authentication tests
@@ -642,7 +643,7 @@ COMMANDS (all infrastructure types):
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
-    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
+    enable [addon]  Enable an addon (ao, ao-pr-testing, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
                     portal-operator is Technology Preview and AMD64 only
     keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
                     Configure Keycloak OIDC consumers; dry-run unless --apply
@@ -3118,7 +3119,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
 
 _normalize_addon_name() {
   case "$1" in
