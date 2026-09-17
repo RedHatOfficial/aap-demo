@@ -71,19 +71,23 @@ the latest source. The AAP Job Template also has a 900-second timeout by
 default; override it with `AO_PR_TESTING_JOB_TIMEOUT` when testing a slower
 model or source revision.
 
-To publish the review findings back to the PR, the addon reuses the existing
-`github_token` from `~/.aap-demo/apme-eap-github-creds.yml`. A different token
-can be supplied explicitly with permission to write issue comments:
+To publish review findings back to the PR, the addon uses the dedicated
+`~/.aap-demo/ao-pr-testing-github-creds.yml` file. On an interactive enable,
+the addon prompts for a fine-grained PAT when that file and the environment
+variable below are absent. Create the token for `RedHatOfficial/aap-demo` with
+`Issues: Read and write`, `Pull requests: Read and write`, and `Metadata:
+Read-only`. The token is stored with mode 600. A different token can be
+supplied explicitly:
 
     AO_PR_TESTING_GITHUB_TOKEN='github_pat_...' aap-demo enable ao-pr-testing
 
-The addon stores the reused or explicitly supplied value only in an addon-owned
-AAP custom credential and injects it into the ephemeral review EE as
-`GITHUB_TOKEN`; it
-is not passed through AO workflow variables. Without the variable (or an
-existing `aap-demo GitHub PR Comment Token` credential), comments and stale-
-finding issues are skipped while the AAP artifacts remain available. Reruns
-update the marked comment and issue instead of creating duplicates.
+The addon stores the prompted value only in the local mode-600 file and in an
+addon-owned AAP custom credential, then injects it into the ephemeral review EE
+as `GITHUB_TOKEN`; it is not passed through AO workflow variables. In
+non-interactive runs, set `AO_PR_TESTING_GITHUB_TOKEN` or pre-create the
+credential file. Without a token, comments and stale-finding issues are
+skipped while the AAP artifacts remain available. Reruns update the marked
+comment and issue instead of creating duplicates.
 
 The default review model is `qwen2.5:3b` through the local Ollama service.
 This dev addon deliberately runs plaibook sandboxless inside the ephemeral AAP
