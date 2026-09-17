@@ -9,8 +9,8 @@ The addon:
 - registers the public `quay.io/cferman/plaibook-ee:latest` execution
   environment in AAP as `plaibook-ee` so PR checks can use the shared image
   without a local build or registry credential;
-- creates or updates an AAP Project and Job Template for the public
-  `aknochow/ansible-plaibook` repository;
+- creates or updates an AAP Project and Job Template for the local
+  plaibook-result bridge;
 - installs the official OpenShift MCP server in its own
   openshift-mcp-server namespace;
 - binds the MCP server to the read-only view ClusterRole and disables
@@ -18,10 +18,9 @@ The addon:
 - registers the MCP endpoint as a separate AO integration;
 - creates or updates the aap-demo PR Validation workflow;
 - provides both a GitHub webhook trigger and a manual PR-input trigger;
-- runs the PR checkout, diff, and review in the AAP-managed plaibook Job
-  Template, keeping GitHub access and review logic out of the AO agent; and
-- uses small AO stages only to normalize plaibook's run-scoped result and
-  verify bounded AAP/OpenShift evidence; and
+- runs the public `aknochow/ansible-plaibook` source inside that bridge,
+  keeping GitHub access and review logic out of the AO agent; and
+- publishes the run-scoped review JSON through AAP `set_stats`; and
 - binds the read-only OpenShift MCP with a separate short-lived AO bearer
   credential backed by its service account.
 
@@ -48,10 +47,15 @@ build:
     AO_PR_TESTING_EE_IMAGE=quay.io/example/plaibook-ee:latest \\
     aap-demo enable ao-pr-testing
 
-The plaibook project and Job Template can also be overridden:
+The bridge project and Job Template can also be overridden. The bridge project
+contains the playbook that fetches plaibook; the source variables select the
+plaibook repository and branch:
 
     AO_PR_TESTING_PLAIBOOK_PROJECT_URL=https://github.com/example/review.git \\
     AO_PR_TESTING_PLAIBOOK_PROJECT_BRANCH=main \\
+    AO_PR_TESTING_PLAIBOOK_PLAYBOOK=addons/ao-pr-testing/playbooks/plaibook-review-bridge.yml \\
+    AO_PR_TESTING_PLAIBOOK_SOURCE_URL=https://github.com/aknochow/ansible-plaibook.git \\
+    AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH=main \\
     AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME='example | PR Review' \\
     aap-demo enable ao-pr-testing
 
@@ -62,17 +66,12 @@ use a separate production-oriented review deployment when per-review sandbox
 isolation is required.
 
 The optional plaibook exploration pass is disabled in this dev profile. The
-deterministic checklist and model-backed review lenses still run, while the
-bounded AO verification stage checks the resulting AAP job and live
-`aap-demo` evidence. A production profile can enable exploration with a model
-that reliably emits the required read-only tool calls.
-
-The public plaibook playbook currently persists its structured summary inside
-the ephemeral runner but does not publish it through Ansible `set_stats`, so
-the AO normalizer intentionally reports a missing run-scoped result as
-blocked. The remaining integration work is a deterministic result bridge and
-live smoke-test stage; the current agentic verifier is evidence-only and must
-not be treated as a replacement for those tests.
+deterministic checklist and model-backed review lenses still run. The bridge
+reads the run-scoped JSON that plaibook writes inside the ephemeral runner and
+publishes a compact structured result with Ansible `set_stats`, which AO
+exposes as the AAP node's `artifacts` output. There is no agentic normalizer or
+agentic verifier in the critical path, so an empty artifact is a hard bridge
+failure rather than a model interpretation problem.
 
 The addon warms the configured Ollama model before publishing. AO 2026.8 uses
 its platform Task Agent timeout; a model that cannot produce MCP tool calls
@@ -85,10 +84,9 @@ From the local shell—or from an LLM session with access to the workspace—run
 
 The helper exchanges the addon-owned AO service-account client credentials for
 a short-lived access token, then submits repository, pull request number, and
-head SHA to the workflow. The agent uses GitHub MCP to read the PR and changed
-head SHA to the workflow. AO launches the plaibook AAP Job Template with the
-repository and PR number, then summarizes the run-scoped result and checks
-local deployment evidence.
+head SHA to the workflow. AO launches the bridge AAP Job Template with the
+repository and PR number. The terminal AAP node exposes the plaibook verdict,
+scores, findings, and run status directly in its `artifacts` output.
 
 ## Make the OpenShift MCP available to Codex
 
