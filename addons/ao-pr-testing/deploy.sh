@@ -185,7 +185,7 @@ ensure_aap_execution_environment() {
 
 ensure_plaibook_job_template() {
   local aap_route ao_route aap_token extra_vars ee_id ee_name_encoded
-  local credential_args=()
+  local -a credential_args=()
 
   aap_route=$(wire_aap_route_host)
   ao_route=$(wire_ao_route_host)
