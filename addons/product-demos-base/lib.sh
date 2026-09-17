@@ -18,10 +18,60 @@ apd_common_extra_vars_yaml() {
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
+apd_wait_for_controller_api() {
+  local attempts="${APD_API_WAIT_ATTEMPTS:-60}"
+  local delay="${APD_API_WAIT_DELAY:-5}"
+  local i response preview
+
+  echo "Waiting for AAP controller API at ${AAP_API}..."
+  for i in $(seq 1 "$attempts"); do
+    response=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      --connect-timeout 10 --max-time 30 \
+      "${AAP_API}/organizations/?name=Default" 2>/dev/null || true)
+    if echo "$response" | jq -e '.results[0].id' >/dev/null 2>&1; then
+      echo "✓ AAP controller API is ready"
+      return 0
+    fi
+    if [ "$i" -eq 1 ] || [ $((i % 6)) -eq 0 ]; then
+      preview=$(printf '%s' "$response" | tr '\n' ' ' | cut -c1-120)
+      echo "  Attempt ${i}/${attempts}: API not ready (${preview:-empty or non-JSON})"
+    fi
+    sleep "$delay"
+  done
+
+  echo "❌ ERROR: AAP controller API is not ready at ${AAP_API}" >&2
+  echo "  AAP may still be deploying. Check: aap-demo status" >&2
+  preview=$(printf '%s' "$response" | tr '\n' ' ' | cut -c1-300)
+  echo "  Last response: ${preview:-<empty>}" >&2
+  return 1
+}
+
 apd_default_org_id() {
-  curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
-    "${AAP_API}/organizations/?name=Default" 2>&1 \
-    | jq -r '.results[0].id // empty'
+  local response
+  response=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    --connect-timeout 10 --max-time 30 \
+    "${AAP_API}/organizations/?name=Default" 2>/dev/null || true)
+  echo "$response" | jq -r '.results[0].id // empty' 2>/dev/null
+}
+
+apd_require_subscription() {
+  local config valid_key license_type
+  config=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    --connect-timeout 10 --max-time 30 \
+    "${AAP_API}/config/" 2>/dev/null || true)
+  valid_key=$(echo "$config" | jq -r '.license_info.valid_key // false' 2>/dev/null)
+  license_type=$(echo "$config" | jq -r '.license_info.license_type // empty' 2>/dev/null)
+
+  if [ "$valid_key" = "true" ] && [ "$license_type" != "UNLICENSED" ]; then
+    return 0
+  fi
+
+  echo "❌ ERROR: AAP does not have a registered subscription."
+  echo "  Product demos cannot launch jobs until a license is attached."
+  echo "  Log into AAP at ${AAP_UI_URL:-the AAP UI} and register a subscription"
+  echo "  (Settings → Subscription), then re-run:"
+  echo "    aap-demo enable product-demos"
+  return 1
 }
 
 apd_default_bootstrap_project_id() {
@@ -488,6 +538,8 @@ apd_init_aap_connection() {
   fi
 
   export AAP_UI_URL AAP_API AAP_USERNAME AAP_PASSWORD NAMESPACE
+  apd_wait_for_controller_api || return 1
+  apd_require_subscription || return 1
 }
 
 apd_resolve_domain_install_ids() {

@@ -132,6 +132,36 @@ templates — they do **not** run `setup_demo.yml` locally. The Product Demos EE
 
 ## Troubleshooting
 
+### jq parse error while enabling product-demos
+
+On a fresh deploy the controller API can still be coming up after pods look healthy. The addon used
+to pipe that non-JSON body (`OK` or HTML) into `jq`, which failed with
+`parse error: Invalid numeric literal`.
+
+Enable now waits for `/api/controller/v2/organizations/` to return JSON (override with
+`APD_API_WAIT_ATTEMPTS` / `APD_API_WAIT_DELAY`). If the wait still times out:
+
+```bash
+aap-demo status
+aap-demo diagnose
+```
+
+Wait until AAP finishes reconciling, then re-run `aap-demo enable product-demos`.
+
+### License is missing / cannot launch installer jobs
+
+AAP will not launch jobs until a subscription is attached. A destroy/redeploy clears the previous
+license. Log into the AAP UI (`aap-demo status` prints the URL and admin password), open
+**Settings → Subscription**, and register a developer/trial subscription or upload a manifest.
+Then re-run:
+
+```bash
+aap-demo enable product-demos
+```
+
+Bootstrap resources created before the license check can be reused; the retry launches the install
+job once the subscription is valid.
+
 ### Job template creation fails (`Playbook not found for project`)
 
 AAP 2.7 validates job template playbooks against the project's SCM playbook index
