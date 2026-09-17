@@ -67,6 +67,14 @@
         path: "{{ bridge_root }}/.cache/ansible-plaibook/last_run.{{ review_run_id }}.json"
       register: plaibook_summary_stat
 
+    - name: Find any structured summaries written by the nested run
+      ansible.builtin.find:
+        paths: "{{ bridge_root }}"
+        patterns: "last_run*.json"
+        recurse: true
+        file_type: file
+      register: plaibook_summary_candidates
+
     - name: Read this run's structured plaibook summary
       when: plaibook_summary_stat.stat.exists | bool
       ansible.builtin.slurp:
@@ -88,9 +96,10 @@
     - name: Build a bounded redacted bridge diagnostic
       ansible.builtin.set_fact:
         bridge_diagnostic: >-
-          {{ (plaibook_process.stderr | default('') | string
+          {{ (((plaibook_process.stderr | default('') | string) ~ '\\n'
+              ~ (plaibook_process.stdout | default('') | string))
               | regex_replace('(?i)(api[_-]?key|password|token|secret)[^\\n]*', '\\1=REDACTED')
-              | regex_replace('https?://[^\\s]+', 'URL_REDACTED'))[-2000:] }}
+              | regex_replace('https?://[^\\s]+', 'URL_REDACTED'))[-3000:] }}
 
     # AAP exposes set_stats data through the AAP Job Template node's
     # `artifacts` output. Keep the payload compact enough for AO expressions,
@@ -104,6 +113,7 @@
           plaibook_review_target: "{{ plaibook_result.targets[0] | default({}) }}"
           plaibook_review_return_code: "{{ plaibook_process.rc | default(1) | int }}"
           plaibook_bridge_diagnostic: "{{ bridge_diagnostic }}"
+          plaibook_summary_candidates: "{{ plaibook_summary_candidates.files | map(attribute='path') | list }}"
 
     # These checks deliberately exercise the running deployment from inside
     # the same ephemeral AAP EE that ran the review. They are route-level
