@@ -44,7 +44,9 @@ class AAP:
         result = self.request(f"/{endpoint}/?name={encoded}&page_size=200")
         return next(iter(result.get("results", [])), None)
 
-    def wait_for_project_sync(self, project_id: int, timeout: int = 300) -> None:
+    def wait_for_project_sync(
+        self, project_id: int, playbook: str, timeout: int = 300
+    ) -> None:
         try:
             self.request(f"/projects/{project_id}/update/", "POST")
         except RuntimeError as exc:
@@ -61,7 +63,11 @@ class AAP:
                 if isinstance(playbooks, dict):
                     playbooks = playbooks.get("results") or playbooks.get("playbooks") or []
                 if any(
-                    (item == "review.yml" if isinstance(item, str) else item.get("name") == "review.yml")
+                    (
+                        item == playbook
+                        if isinstance(item, str)
+                        else item.get("name") == playbook
+                    )
                     for item in playbooks or []
                 ):
                     return
@@ -69,7 +75,7 @@ class AAP:
                 raise RuntimeError(f"plaibook project sync ended with status {last_status}")
             time.sleep(5)
         raise RuntimeError(
-            f"plaibook project did not publish review.yml within {timeout}s "
+            f"plaibook project did not publish {playbook} within {timeout}s "
             f"(status={last_status})"
         )
 
@@ -83,6 +89,7 @@ def main() -> int:
     parser.add_argument("--project-branch", required=True)
     parser.add_argument("--inventory-name", required=True)
     parser.add_argument("--job-template-name", required=True)
+    parser.add_argument("--playbook", default="review.yml")
     parser.add_argument("--execution-environment-id", required=True, type=int)
     parser.add_argument("--extra-vars-json", required=True)
     args = parser.parse_args()
@@ -115,7 +122,7 @@ def main() -> int:
     else:
         project_id = api.request("/projects/", "POST", project_payload)["id"]
         print(f"  AAP plaibook project created: {args.project_name}", file=sys.stderr)
-    api.wait_for_project_sync(project_id)
+    api.wait_for_project_sync(project_id, args.playbook)
     print("  AAP plaibook project synchronized", file=sys.stderr)
 
     inventory = api.find("inventories", args.inventory_name)
@@ -139,7 +146,7 @@ def main() -> int:
         "job_type": "run",
         "organization": organization_id,
         "project": project_id,
-        "playbook": "review.yml",
+        "playbook": args.playbook,
         "inventory": inventory_id,
         "execution_environment": args.execution_environment_id,
         "ask_variables_on_launch": True,
