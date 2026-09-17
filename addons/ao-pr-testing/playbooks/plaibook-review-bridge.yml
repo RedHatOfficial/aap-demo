@@ -11,6 +11,7 @@
     bridge_source_branch: "{{ plaibook_source_branch | default('main') }}"
     bridge_aap_route_host: "{{ aap_route_host | default('') }}"
     bridge_ao_route_host: "{{ ao_route_host | default('') }}"
+    bridge_prepare_publication: "{{ review_prepare_publication | default(true) | bool }}"
     review_input_vars:
       review_type: "{{ review_type | default('pr') }}"
       review_targets_raw: "{{ review_targets_raw | default('') }}"
@@ -136,7 +137,7 @@
       failed_when: false
       no_log: true
       when:
-        - review_comment_enabled | bool
+        - (review_comment_enabled | bool) or (bridge_prepare_publication | bool)
         - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
         - github_pull_request_number | default('') | string is match('^[0-9]+$')
@@ -211,6 +212,7 @@
       failed_when: false
       no_log: true
       when:
+        - review_comment_enabled | bool
         - review_stale_findings | length > 0
         - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
@@ -249,6 +251,7 @@
       when:
         - github_stale_issue_id | default(0) | int > 0
         - stale_findings_issue_body is defined
+        - review_comment_enabled | bool
 
     - name: Create the stale-findings issue
       ansible.builtin.uri:
@@ -271,6 +274,7 @@
       when:
         - github_stale_issue_id | default(0) | int == 0
         - stale_findings_issue_body is defined
+        - review_comment_enabled | bool
         - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 
@@ -307,6 +311,24 @@
 
           _Posted by the aap-demo `ao-pr-testing` workflow._
       when: plaibook_result.targets | default([]) | length > 0
+
+    - name: Publish the review payload for a separate GitHub publication step
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          review_publication_payload: >-
+            {{ {
+                 'repository': github_repository | default(''),
+                 'pull_request_number': github_pull_request_number | default('') | string,
+                 'verdict': (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN'),
+                 'score': (plaibook_result.targets | default([]) | first).score | default('n/a'),
+                 'commit': (plaibook_result.targets | default([]) | first).commit | default('n/a'),
+                 'current_findings': review_current_findings | default([]),
+                 'stale_findings': review_stale_findings | default([])
+               } | to_json }}
+      when:
+        - bridge_prepare_publication | bool
+        - plaibook_result.targets | default([]) | length > 0
 
     - name: Find the existing marked PR review comment
       ansible.builtin.uri:

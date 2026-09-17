@@ -28,20 +28,22 @@ The addon owns:
    credential; the MCP server uses its bound ServiceAccount. The workflow
    keeps a separate short-lived AO bearer credential minted from that
    ServiceAccount for explicit operator-led MCP inspection.
-3. An AAP Project and Job Template for the local plaibook-result bridge,
-   synchronized on launch and executed with the shared
+3. An AAP Project and two Job Templates: one local plaibook-result bridge and
+   one publication-only template, synchronized on launch and executed with the shared
    `quay.io/cferman/plaibook-ee:latest` image. The bridge fetches the public
    `https://github.com/aknochow/ansible-plaibook.git` source at runtime from a
    tested immutable revision by default,
    invokes its `review.yml`, reads the run-scoped JSON summary, and publishes
-   the result through Ansible `set_stats`. The review receives
+   the review and publication payload through Ansible `set_stats`. The review receives
    `review_type=pr`, `post_results=false`, and a runtime `review_targets_raw`
    value of `https://github.com/owner/repository/pull/pull_request_number`.
 4. An AO workflow named `aap-demo PR Validation` with:
    - a webhook trigger at `aap-demo-pr-validation`;
    - a manual PR-input trigger;
-   - one terminal AAP Job Template node that launches the bridge and exposes
-     deterministic `artifacts` for the review and live smoke test.
+   - one AAP Job Template node that launches the bridge and exposes
+     deterministic `artifacts` for the review and live smoke test; and
+   - a separate publication node that consumes the bridge's `artifacts` and
+     retries GitHub delivery without rerunning the model review.
 5. A public AAP execution environment registration for
    `quay.io/cferman/plaibook-ee:latest`, managed idempotently by the addon so
    PR-related AAP job templates can use the shared image without a registry
@@ -63,10 +65,14 @@ sandbox boundary.
 
 The optional plaibook exploration pass is disabled in this dev profile. The
 deterministic checklist and model-backed review lenses remain enabled. The
-bridge publishes both the run-scoped review JSON and route-level smoke checks
-for the live AAP and Automation Orchestrator endpoints through `set_stats`.
-The terminal AO node therefore has a deterministic `artifacts` contract; it
-does not rely on an agentic normalizer or verifier to reinterpret AAP output.
+bridge publishes both the run-scoped review JSON and a publication payload,
+as well as route-level smoke checks for the live AAP and Automation
+Orchestrator endpoints, through `set_stats`. AO passes that payload from the
+review node's `artifacts` output to the separate publication node. The
+publication node has bounded retries and fails on GitHub write errors, so it
+can be retried without paying for another model review. The terminal AO node
+therefore has a deterministic `artifacts` contract; it does not rely on an
+agentic normalizer or verifier to reinterpret AAP output.
 The read-only OpenShift MCP remains available for operator-led inspection and
 diagnosis, but it is not used as a flaky model-mediated pass/fail gate.
 
@@ -126,7 +132,7 @@ The plaibook source defaults to commit
 `b6cf163c427749074c56ea3e3850688a06c70274`, which was the last revision
 verified by the successful PR 137 run. The source ref remains overrideable for
 deliberate upstream testing, but mutable `main` is not the default. The bridge
-Job Template defaults to a 900-second timeout so a hung upstream review fails
+Job Template defaults to a 1800-second timeout so a hung upstream review fails
 boundedly instead of holding an AAP worker indefinitely.
 
 ### GitHub PAT bootstrap
@@ -162,6 +168,7 @@ flowchart LR
     AO[Automation Orchestrator<br/>aap-demo PR Validation]
     PLAIBOOK[AAP Job Template<br/>plaibook bridge]
     BRIDGE[Run plaibook bridge<br/>publish set_stats]
+    PUBLISH[AAP Job Template<br/>publication retry]
     GITHUB[GitHub API<br/>PR comment + stale issue]
     AAP[AAP controller<br/>native AAP integration]
     OCP[OpenShift MCP<br/>mcp_server read-only]
@@ -172,9 +179,9 @@ flowchart LR
     WEBHOOK --> AO
     MANUAL --> AO
     AO --> PLAIBOOK --> BRIDGE
+    BRIDGE -- review_publication_payload --> PUBLISH --> GITHUB
     BRIDGE --> AAP
     BRIDGE --> LLM
-    BRIDGE --> GITHUB
     OCP --> CLUSTER
     BRIDGE -. operator diagnosis .-> OCP
     OCP --> CLUSTER
