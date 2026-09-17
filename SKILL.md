@@ -180,6 +180,41 @@ See `docs/collection-authentication.md` for detailed guidance on:
 - Token-based authentication
 - Certificate verification options
 
+## AO pull-request testing
+
+When the user asks to validate an aap-demo pull request from the local LLM
+session, use the standalone ao-pr-testing addon. It requires AO but is not
+part of the core AO addon:
+
+```bash
+aap-demo enable ao-pr-testing
+addons/ao-pr-testing/run-pr.sh owner/repository <pull-request-number> [head-sha]
+addons/ao-pr-testing/register-codex.sh
+```
+
+The addon-owned workflow uses the official GitHub MCP read-only endpoint to
+fetch the requested PR metadata and changed files when the portal/APME GitHub
+credentials file at ~/.aap-demo/apme-eap-github-creds.yml is available. The
+workflow uses MCP tools directly and contains no direct GitHub REST/HTTP nodes;
+enable fails if MCP authentication or discovery is unavailable. It also
+supports a latest-open-PR manual trigger and a signed
+GitHub webhook at
+/api/v1/webhooks/aap-demo-pr-validation.
+
+When the local LLM session needs direct read-only deployment inspection, register
+the addon-owned OpenShift MCP endpoint with Codex using
+`addons/ao-pr-testing/register-codex.sh`, then start a new Codex task/session so
+the MCP server is loaded. Keep the route local-only; do not expose it through a
+public tunnel without authentication.
+
+The workflow must account for every changed or directly affected component. It
+uses AAP MCP and read-only OpenShift MCP evidence, and reports missing diff,
+checkout, test runner, or permissions as blocked; do not substitute the
+unrelated disk-percentage workflow or invoke kubectl from the workflow.
+
+For architecture and lifecycle decisions, see
+docs/adr/024-ao-pr-testing-addon.md.
+
 ## Troubleshooting
 
 ### Quick diagnostics
