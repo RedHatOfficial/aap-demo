@@ -30,7 +30,9 @@ MCP_NAMESPACE=$(env_value AO_PR_TESTING_MCP_NAMESPACE openshift-mcp-server)
 MCP_RELEASE=$(env_value AO_PR_TESTING_MCP_RELEASE ao-pr-testing-openshift-mcp)
 MCP_INTEGRATION_NAME=$(env_value AO_PR_TESTING_MCP_INTEGRATION_NAME 'aap-demo OpenShift MCP')
 OPENSHIFT_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_OPENSHIFT_CREDENTIAL_NAME 'aap-demo OpenShift MCP Access')
-GITHUB_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_NAME 'aap-demo GitHub Token')
+GITHUB_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_NAME 'aap-demo GitHub PR Comment Token')
+GITHUB_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_TYPE_NAME 'aap-demo GitHub PR Comment Token')
+GITHUB_TOKEN=$(env_value AO_PR_TESTING_GITHUB_TOKEN '')
 WORKFLOW_NAME=$(env_value AO_PR_TESTING_WORKFLOW_NAME 'aap-demo PR Validation')
 EXECUTION_ENVIRONMENT_NAME=$(env_value AO_PR_TESTING_EE_NAME plaibook-ee)
 EXECUTION_ENVIRONMENT_IMAGE=$(env_value AO_PR_TESTING_EE_IMAGE quay.io/cferman/plaibook-ee:latest)
@@ -47,9 +49,27 @@ PLAIBOOK_OPENAI_BASE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL 'htt
 PLAIBOOK_OPENAI_API_KEY=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY ollama)
 WEBHOOK_PATH=$(env_value AO_PR_TESTING_WEBHOOK_PATH aap-demo-pr-validation)
 HOME_DIR=$(env_value HOME "$PWD")
+GITHUB_CREDENTIALS_FILE=$(env_value AO_PR_TESTING_GITHUB_CREDENTIALS_FILE "$HOME_DIR/.aap-demo/apme-eap-github-creds.yml")
+if [ -z "$GITHUB_TOKEN" ] && [ -r "$GITHUB_CREDENTIALS_FILE" ]; then
+  GITHUB_TOKEN=$(
+    python3 - "$GITHUB_CREDENTIALS_FILE" <<'PY'
+from pathlib import Path
+import sys
+
+for line in Path(sys.argv[1]).read_text().splitlines():
+    if line.lstrip().startswith("github_token:"):
+        value = line.split(":", 1)[1].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        print(value)
+        break
+PY
+  )
+fi
 STATE_DIR=$(env_value AO_PR_TESTING_STATE_DIR "$HOME_DIR/.aap-demo/ao-pr-testing")
 CHART=$(env_value AO_PR_TESTING_CHART openshift-helm-charts/redhat-openshift-mcp-server)
 OPENSHIFT_CREDENTIAL_ID=
+GITHUB_CREDENTIAL_ID=
 PLAIBOOK_JOB_TEMPLATE_ID=
 ACTION=deploy
 [ "$#" -gt 0 ] && ACTION=$1
@@ -120,6 +140,7 @@ ensure_aap_execution_environment() {
 
 ensure_plaibook_job_template() {
   local aap_route ao_route aap_token extra_vars ee_id ee_name_encoded
+  local credential_args=()
 
   aap_route=$(wire_aap_route_host)
   ao_route=$(wire_ao_route_host)
@@ -142,13 +163,19 @@ ensure_plaibook_job_template() {
     --arg source_branch "$PLAIBOOK_SOURCE_BRANCH" \
     --arg aap_route "$aap_route" \
     --arg ao_route "$ao_route" \
-    '{review_type:"pr",post_results:false,agent_family:"openai",openai_base_url:$base_url,
+    --argjson comment_enabled "$([ -n "$GITHUB_CREDENTIAL_ID" ] && printf true || printf false)" \
+    '{review_type:"pr",post_results:false,review_comment_enabled:$comment_enabled,
+      agent_family:"openai",openai_base_url:$base_url,
       openai_api_key:$api_key,review_openai_model:$model,use_sandbox:false,
       review_explore_enabled:false,
       review_run_ledger_host:"aap-plaibook",
       plaibook_source_url:$source_url,plaibook_source_branch:$source_branch,
       aap_route_host:$aap_route,ao_route_host:$ao_route}
     ')
+
+  if [ -n "$GITHUB_CREDENTIAL_ID" ]; then
+    credential_args=(--credential-id "$GITHUB_CREDENTIAL_ID")
+  fi
 
   PLAIBOOK_JOB_TEMPLATE_ID=$(python3 "$SCRIPT_DIR/provision-plaibook.py" \
     --route "$aap_route" \
@@ -160,11 +187,88 @@ ensure_plaibook_job_template() {
     --job-template-name "$PLAIBOOK_JOB_TEMPLATE_NAME" \
     --playbook "$PLAIBOOK_PLAYBOOK" \
     --execution-environment-id "$ee_id" \
+    "${credential_args[@]}" \
     --extra-vars-json "$extra_vars") \
     || die 'Could not provision the ansible-plaibook AAP job template'
   [ -n "$PLAIBOOK_JOB_TEMPLATE_ID" ] || die 'AAP did not return the plaibook job template ID'
   printf '  Plaibook AAP job template ready: %s (ID: %s)\n' "$PLAIBOOK_JOB_TEMPLATE_NAME" "$PLAIBOOK_JOB_TEMPLATE_ID"
   unset aap_token extra_vars ee_id
+}
+
+ensure_github_credential() {
+  local aap_route aap_password aap_api encoded_name credential_type_id organization_id
+  local existing credential_id payload result
+
+  aap_route=$(wire_aap_route_host)
+  aap_password=$(wire_aap_admin_password)
+  [ -n "$aap_route" ] && [ -n "$aap_password" ] || return 0
+  aap_api="https://${aap_route}/api/controller/v2"
+  encoded_name=$(jq -rn --arg name "$GITHUB_CREDENTIAL_NAME" '$name|@uri')
+
+  organization_id=$(curl -sk -u "admin:${aap_password}" \
+    "${aap_api}/organizations/?name=Default&page_size=10" \
+    | jq -r '.results[0].id // empty')
+  credential_type_id=$(curl -sk -u "admin:${aap_password}" \
+    "${aap_api}/credential_types/?name=$(jq -rn --arg name "$GITHUB_CREDENTIAL_TYPE_NAME" '$name|@uri')&page_size=10" \
+    | jq -r '.results[0].id // empty')
+  if [ -z "$organization_id" ]; then
+    warn 'AAP Default organization is unavailable; PR comments disabled'
+    unset aap_password
+    return 0
+  fi
+  if [ -z "$credential_type_id" ]; then
+    payload=$(jq -n \
+      --arg name "$GITHUB_CREDENTIAL_TYPE_NAME" \
+      --arg description 'Addon-owned GitHub token injector for PR review comments.' \
+      '{name:$name,description:$description,kind:"cloud",inputs:{fields:[{id:"token",label:"GitHub token",type:"string",secret:true}],required:["token"]},injectors:{env:{GITHUB_TOKEN:"{{ token }}"}}}')
+    result=$(curl -sk -u "admin:${aap_password}" -X POST \
+      -H 'Content-Type: application/json' -d "$payload" \
+      "${aap_api}/credential_types/")
+    credential_type_id=$(printf '%s' "$result" | jq -r '.id // empty')
+  fi
+  if [ -z "$credential_type_id" ]; then
+    warn 'Could not provision the addon GitHub credential type; PR comments disabled'
+    unset aap_password payload result
+    return 0
+  fi
+
+  existing=$(curl -sk -u "admin:${aap_password}" \
+    "${aap_api}/credentials/?name=${encoded_name}&page_size=10")
+  credential_id=$(printf '%s' "$existing" | jq -r '.results[0].id // empty')
+  if [ -z "$GITHUB_TOKEN" ] && [ -n "$credential_id" ]; then
+    GITHUB_CREDENTIAL_ID=$credential_id
+    unset aap_password
+    return 0
+  fi
+  if [ -z "$GITHUB_TOKEN" ]; then
+    unset aap_password
+    return 0
+  fi
+
+  payload=$(jq -n \
+    --arg name "$GITHUB_CREDENTIAL_NAME" \
+    --arg description 'Managed by the ao-pr-testing addon; used only to update the review comment on the target PR.' \
+    --argjson credential_type "$credential_type_id" \
+    --argjson organization "$organization_id" \
+    --arg token "$GITHUB_TOKEN" \
+    '{name:$name,description:$description,credential_type:$credential_type,organization:$organization,inputs:{token:$token}}')
+  if [ -n "$credential_id" ]; then
+    result=$(curl -sk -u "admin:${aap_password}" -X PATCH \
+      -H 'Content-Type: application/json' -d "$payload" \
+      "${aap_api}/credentials/${credential_id}/")
+  else
+    result=$(curl -sk -u "admin:${aap_password}" -X POST \
+      -H 'Content-Type: application/json' -d "$payload" \
+      "${aap_api}/credentials/")
+    credential_id=$(printf '%s' "$result" | jq -r '.id // empty')
+  fi
+  if [ -z "$credential_id" ]; then
+    warn 'Could not provision the AAP GitHub credential; PR comments disabled'
+    unset aap_password GITHUB_TOKEN payload result
+    return 0
+  fi
+  GITHUB_CREDENTIAL_ID=$credential_id
+  unset aap_password GITHUB_TOKEN payload result
 }
 
 copy_pull_secret() {
@@ -394,7 +498,7 @@ build_workflow_definition() {
     --argjson job_template "$PLAIBOOK_JOB_TEMPLATE_ID" \
     --arg trigger_repo "$dollar{trigger.repository}" \
     --arg trigger_number "$dollar{trigger.pull_request_number}" \
-    '{schema_version:"2.0.0",name:$name,description:$description,triggers:[{id:"trigger_github_pr",name:"GitHub pull request webhook",type:"webhook_trigger",parameters:{webhook_path:$webhook,authorized_service_account_ids:[$sa]}},{id:"trigger_manual_pr",name:"Run PR validation manually",type:"manual_trigger",parameters:{input_schema:{type:"object",required:["repository","pull_request_number","head_sha"],properties:{repository:{type:"string",description:"GitHub owner/repository"},pull_request_number:{type:"integer"},pull_request_url:{type:"string"},head_sha:{type:"string"},base_ref:{type:"string"}}}}}],nodes:[{id:"run_plaibook_review",name:"Run deterministic plaibook PR review",type:"aap_job_template",parameters:{job_template_id:$job_template,extra_vars:{review_type:"pr",post_results:false,review_targets_raw:("https://github.com/" + $trigger_repo + "/pull/" + $trigger_number)}}}],edges:[{from:"trigger_github_pr",to:"run_plaibook_review"},{from:"trigger_manual_pr",to:"run_plaibook_review"}]}')
+    '{schema_version:"2.0.0",name:$name,description:$description,triggers:[{id:"trigger_github_pr",name:"GitHub pull request webhook",type:"webhook_trigger",parameters:{webhook_path:$webhook,authorized_service_account_ids:[$sa]}},{id:"trigger_manual_pr",name:"Run PR validation manually",type:"manual_trigger",parameters:{input_schema:{type:"object",required:["repository","pull_request_number","head_sha"],properties:{repository:{type:"string",description:"GitHub owner/repository"},pull_request_number:{type:"integer"},pull_request_url:{type:"string"},head_sha:{type:"string"},base_ref:{type:"string"}}}}}],nodes:[{id:"run_plaibook_review",name:"Run deterministic plaibook PR review",type:"aap_job_template",parameters:{job_template_id:$job_template,extra_vars:{review_type:"pr",post_results:false,github_repository:$trigger_repo,github_pull_request_number:$trigger_number,review_targets_raw:("https://github.com/" + $trigger_repo + "/pull/" + $trigger_number)}}}],edges:[{from:"trigger_github_pr",to:"run_plaibook_review"},{from:"trigger_manual_pr",to:"run_plaibook_review"}]}')
 
   [ -n "$PLAIBOOK_JOB_TEMPLATE_ID" ] || die 'Plaibook AAP job template is not available for the PR workflow'
   [ -n "$aap_integration" ] && [ -n "$aap_credential" ] \
@@ -501,6 +605,7 @@ fi
 kubectl cluster-info >/dev/null 2>&1 || die 'Cannot connect to the OpenShift cluster'
 ao_is_ready || die 'Automation Orchestrator is not ready; enable the ao addon first'
 ensure_aap_execution_environment
+ensure_github_credential
 ensure_plaibook_job_template
 deploy_openshift_mcp
 grant_dev_read_access
