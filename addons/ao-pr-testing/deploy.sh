@@ -185,7 +185,7 @@ ensure_aap_execution_environment() {
 
 ensure_plaibook_job_template() {
   local aap_route ao_route aap_token extra_vars ee_id ee_name_encoded
-  local -a credential_args=()
+  local -a provision_args
 
   aap_route=$(wire_aap_route_host)
   ao_route=$(wire_ao_route_host)
@@ -218,23 +218,25 @@ ensure_plaibook_job_template() {
       aap_route_host:$aap_route,ao_route_host:$ao_route}
     ')
 
+  provision_args=(
+    --route "$aap_route"
+    --token "$aap_token"
+    --project-name "$PLAIBOOK_PROJECT_NAME"
+    --project-url "$PLAIBOOK_PROJECT_URL"
+    --project-branch "$PLAIBOOK_PROJECT_BRANCH"
+    --inventory-name "$PLAIBOOK_INVENTORY_NAME"
+    --job-template-name "$PLAIBOOK_JOB_TEMPLATE_NAME"
+    --playbook "$PLAIBOOK_PLAYBOOK"
+    --execution-environment-id "$ee_id"
+    --job-timeout "$PLAIBOOK_JOB_TIMEOUT"
+  )
   if [ -n "$GITHUB_CREDENTIAL_ID" ]; then
-    credential_args=(--credential-id "$GITHUB_CREDENTIAL_ID")
+    provision_args+=(--credential-id "$GITHUB_CREDENTIAL_ID")
   fi
+  provision_args+=(--extra-vars-json "$extra_vars")
 
   PLAIBOOK_JOB_TEMPLATE_ID=$(python3 "$SCRIPT_DIR/provision-plaibook.py" \
-    --route "$aap_route" \
-    --token "$aap_token" \
-    --project-name "$PLAIBOOK_PROJECT_NAME" \
-    --project-url "$PLAIBOOK_PROJECT_URL" \
-    --project-branch "$PLAIBOOK_PROJECT_BRANCH" \
-    --inventory-name "$PLAIBOOK_INVENTORY_NAME" \
-    --job-template-name "$PLAIBOOK_JOB_TEMPLATE_NAME" \
-    --playbook "$PLAIBOOK_PLAYBOOK" \
-    --execution-environment-id "$ee_id" \
-    --job-timeout "$PLAIBOOK_JOB_TIMEOUT" \
-    "${credential_args[@]}" \
-    --extra-vars-json "$extra_vars") \
+    "${provision_args[@]}") \
     || die 'Could not provision the ansible-plaibook AAP job template'
   [ -n "$PLAIBOOK_JOB_TEMPLATE_ID" ] || die 'AAP did not return the plaibook job template ID'
   printf '  Plaibook AAP job template ready: %s (ID: %s)\n' "$PLAIBOOK_JOB_TEMPLATE_NAME" "$PLAIBOOK_JOB_TEMPLATE_ID"
