@@ -52,6 +52,21 @@ is not deployed, configured, or exposed as an addon option. A separate
 production-oriented review deployment must provide the stronger per-review
 sandbox boundary.
 
+The optional plaibook exploration pass is disabled in this dev profile. The
+deterministic checklist and model-backed review lenses remain enabled, while
+AO performs a bounded verification of the AAP job and the live `aap-demo`
+deployment. Exploration can be enabled in a separate profile after selecting
+and validating a model that reliably emits plaibook's read-only tool calls.
+
+The current public plaibook playbook writes its structured summary into the
+ephemeral runner but does not expose it through Ansible `set_stats`. Because
+the AAP job-template node therefore returns `artifacts: {}`, AO must report a
+missing run-scoped review result as `blocked`. Direct read-only OpenShift MCP
+checks can confirm that the running AAP/AO deployment is healthy, but the
+agentic verifier is not a deterministic live test. A follow-up implementation
+must add either an upstream `set_stats` handoff or a small AAP/REST bridge,
+then add a deterministic smoke-test stage against the running deployment.
+
 Public PR retrieval is performed by plaibook from the AAP Job Template, so the
 addon does not provision a GitHub MCP integration or copy a local GitHub token
 into AO. Private-repository credentials are an explicit future configuration
@@ -159,6 +174,13 @@ mounted into the cluster.
 - The addon warms the configured Ollama model before execution. AO controls
   the Task Agent timeout at the platform level, so a larger or faster local
   model may still be required for reliable tool calling.
+- The dev profile skips plaibook exploration because the small local model can
+  emit malformed search tool calls; plaibook correctly fails closed when that
+  happens. The deterministic checklist, review lenses, and live deployment
+  verification remain in the workflow.
+- Until the result bridge and deterministic smoke-test stage are added, a
+  successful plaibook job is evidence that review execution completed, not a
+  complete end-to-end validation of the running deployment.
 - The OpenShift MCP server is a preview technology and adds another image and
   namespace to the local cluster.
 
