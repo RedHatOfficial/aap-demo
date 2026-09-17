@@ -61,6 +61,19 @@ execution environment. OpenShell is not deployed or configured by this addon;
 use a separate production-oriented review deployment when per-review sandbox
 isolation is required.
 
+The optional plaibook exploration pass is disabled in this dev profile. The
+deterministic checklist and model-backed review lenses still run, while the
+bounded AO verification stage checks the resulting AAP job and live
+`aap-demo` evidence. A production profile can enable exploration with a model
+that reliably emits the required read-only tool calls.
+
+The public plaibook playbook currently persists its structured summary inside
+the ephemeral runner but does not publish it through Ansible `set_stats`, so
+the AO normalizer intentionally reports a missing run-scoped result as
+blocked. The remaining integration work is a deterministic result bridge and
+live smoke-test stage; the current agentic verifier is evidence-only and must
+not be treated as a replacement for those tests.
+
 The addon warms the configured Ollama model before publishing. AO 2026.8 uses
 its platform Task Agent timeout; a model that cannot produce MCP tool calls
 within that limit is reported as a failed validation, not a successful PR
