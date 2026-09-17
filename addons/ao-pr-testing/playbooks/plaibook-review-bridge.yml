@@ -49,6 +49,10 @@
         argv:
           - ansible-playbook
           - "{{ bridge_root }}/source/review.yml"
+          - --inventory
+          - localhost,
+          - --connection
+          - local
           - --extra-vars
           - "{{ review_input_vars | to_json }}"
       environment:
