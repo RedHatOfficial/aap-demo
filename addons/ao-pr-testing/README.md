@@ -21,6 +21,10 @@ The addon:
 - runs the public `aknochow/ansible-plaibook` source inside that bridge,
   keeping GitHub access and review logic out of the AO agent; and
 - publishes the run-scoped review JSON through AAP `set_stats`; and
+- updates one marked GitHub PR comment with the review report when an AAP
+  GitHub Personal Access Token credential is configured; and
+- quarantines findings whose files are absent from the current PR diff in one
+  marked GitHub issue; and
 - binds the read-only OpenShift MCP with a separate short-lived AO bearer
   credential backed by its service account.
 
@@ -59,6 +63,20 @@ plaibook repository and branch:
     AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME='example | PR Review' \\
     aap-demo enable ao-pr-testing
 
+To publish the review findings back to the PR, the addon reuses the existing
+`github_token` from `~/.aap-demo/apme-eap-github-creds.yml`. A different token
+can be supplied explicitly with permission to write issue comments:
+
+    AO_PR_TESTING_GITHUB_TOKEN='github_pat_...' aap-demo enable ao-pr-testing
+
+The addon stores the reused or explicitly supplied value only in an addon-owned
+AAP custom credential and injects it into the ephemeral review EE as
+`GITHUB_TOKEN`; it
+is not passed through AO workflow variables. Without the variable (or an
+existing `aap-demo GitHub PR Comment Token` credential), comments and stale-
+finding issues are skipped while the AAP artifacts remain available. Reruns
+update the marked comment and issue instead of creating duplicates.
+
 The default review model is `qwen2.5:3b` through the local Ollama service.
 This dev addon deliberately runs plaibook sandboxless inside the ephemeral AAP
 execution environment. OpenShell is not deployed or configured by this addon;
@@ -86,7 +104,8 @@ The helper exchanges the addon-owned AO service-account client credentials for
 a short-lived access token, then submits repository, pull request number, and
 head SHA to the workflow. AO launches the bridge AAP Job Template with the
 repository and PR number. The terminal AAP node exposes the plaibook verdict,
-scores, findings, and run status directly in its `artifacts` output.
+ scores, findings, comment status, and run status directly in its `artifacts`
+ output.
 
 ## Make the OpenShift MCP available to Codex
 

@@ -79,6 +79,17 @@ class AAP:
             f"(status={last_status})"
         )
 
+    def ensure_job_template_credential(self, template_id: int, credential_id: int) -> None:
+        current = self.request(f"/job_templates/{template_id}/credentials/")
+        credentials = current.get("results", []) if isinstance(current, dict) else []
+        if any(item.get("id") == credential_id for item in credentials):
+            return
+        self.request(
+            f"/job_templates/{template_id}/credentials/",
+            "POST",
+            {"id": credential_id},
+        )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -91,6 +102,7 @@ def main() -> int:
     parser.add_argument("--job-template-name", required=True)
     parser.add_argument("--playbook", default="review.yml")
     parser.add_argument("--execution-environment-id", required=True, type=int)
+    parser.add_argument("--credential-id", type=int)
     parser.add_argument("--extra-vars-json", required=True)
     args = parser.parse_args()
 
@@ -160,6 +172,9 @@ def main() -> int:
     else:
         template_id = api.request("/job_templates/", "POST", template_payload)["id"]
         print(f"  AAP plaibook job template created: {args.job_template_name}", file=sys.stderr)
+
+    if args.credential_id:
+        api.ensure_job_template_credential(template_id, args.credential_id)
 
     print(template_id)
     return 0

@@ -46,6 +46,13 @@ The addon owns:
    PR-related AAP job templates can use the shared image without a registry
    credential. The image name and EE name are overrideable through
    `AO_PR_TESTING_EE_IMAGE` and `AO_PR_TESTING_EE_NAME`.
+6. An optional addon-owned AAP custom GitHub token credential. When present,
+   the bridge injects it as `GITHUB_TOKEN` and creates or updates one marked
+   review comment on the target PR. Findings whose files are not in the
+   current PR changed-file list are excluded from that comment and are instead
+   created or updated in one marked triage issue. The token is never sent as an
+   AO workflow variable. When absent, external posting is skipped and the
+   structured AAP result remains authoritative.
 
 The plaibook AAP Job Template deliberately runs sandboxless in this dev
 profile. Each run uses the ephemeral AAP execution environment, and OpenShell
@@ -64,8 +71,9 @@ diagnosis, but it is not used as a flaky model-mediated pass/fail gate.
 
 Public PR retrieval is performed by plaibook from the AAP Job Template, so the
 addon does not provision a GitHub MCP integration or copy a local GitHub token
-into AO. Private-repository credentials are an explicit future configuration
-concern.
+into AO. If `AO_PR_TESTING_GITHUB_TOKEN` is supplied, the addon stores it in
+the AAP GitHub credential and uses it only for the marked review comment.
+Private-repository credentials remain an explicit future configuration concern.
 
 The OpenShift MCP server is configured with the core toolset, read-only
 behavior, destructive-operation protection, denied Secret/ConfigMap/RBAC
