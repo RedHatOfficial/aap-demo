@@ -31,7 +31,8 @@ The addon owns:
 3. An AAP Project and Job Template for the local plaibook-result bridge,
    synchronized on launch and executed with the shared
    `quay.io/cferman/plaibook-ee:latest` image. The bridge fetches the public
-   `https://github.com/aknochow/ansible-plaibook.git` source at runtime,
+   `https://github.com/aknochow/ansible-plaibook.git` source at runtime from a
+   tested immutable revision by default,
    invokes its `review.yml`, reads the run-scoped JSON summary, and publishes
    the result through Ansible `set_stats`. The review receives
    `review_type=pr`, `post_results=false`, and a runtime `review_targets_raw`
@@ -117,6 +118,13 @@ The dev profile intentionally runs without an OpenShell sandbox. Missing
 checkout, runner, permission, or run-scoped result remains blocked; the AAP EE
 is the execution boundary for this local-only workflow.
 
+The plaibook source defaults to commit
+`b6cf163c427749074c56ea3e3850688a06c70274`, which was the last revision
+verified by the successful PR 137 run. The source ref remains overrideable for
+deliberate upstream testing, but mutable `main` is not the default. The bridge
+Job Template defaults to a 900-second timeout so a hung upstream review fails
+boundedly instead of holding an AAP worker indefinitely.
+
 ## Architecture
 
 ```mermaid
@@ -128,6 +136,7 @@ flowchart LR
     AO[Automation Orchestrator<br/>aap-demo PR Validation]
     PLAIBOOK[AAP Job Template<br/>plaibook bridge]
     BRIDGE[Run plaibook bridge<br/>publish set_stats]
+    GITHUB[GitHub API<br/>PR comment + stale issue]
     AAP[AAP controller<br/>native AAP integration]
     OCP[OpenShift MCP<br/>mcp_server read-only]
     CLUSTER[Local aap-demo deployment]
@@ -139,6 +148,7 @@ flowchart LR
     AO --> PLAIBOOK --> BRIDGE
     BRIDGE --> AAP
     BRIDGE --> LLM
+    BRIDGE --> GITHUB
     OCP --> CLUSTER
     BRIDGE -. operator diagnosis .-> OCP
     OCP --> CLUSTER
