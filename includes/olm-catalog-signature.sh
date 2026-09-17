@@ -172,6 +172,43 @@ catalog_pod_wait_reason() {
     2>/dev/null | head -3
 }
 
+catalog_pod_has_scc_admission_failure() {
+  local _catalog_ns="$1"
+  local _pod _pod_detail _events
+  _pod=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  _pod_detail=$(catalog_pod_wait_reason "$_catalog_ns")
+  if [ -n "$_pod" ]; then
+    _events=$(kubectl get events -n "$_catalog_ns" \
+      --field-selector "involvedObject.name=${_pod}" \
+      --sort-by=.lastTimestamp 2>/dev/null || echo "")
+  else
+    _events=$(kubectl get events -n "$_catalog_ns" \
+      --sort-by=.lastTimestamp 2>/dev/null || echo "")
+  fi
+  printf '%s\n%s\n' "$_pod_detail" "$_events" \
+    | grep -Eiq 'security.?context.?constraint|scc admission|forbidden.*(runAsUser|serviceaccount)|unable to validate against any.*constraint'
+}
+
+report_catalog_scc_failure() {
+  local _catalog_ns="$1"
+  local _pod _service_account _detail
+  _pod=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  _service_account=$(kubectl get pod "$_pod" -n "$_catalog_ns" \
+    -o jsonpath='{.spec.serviceAccountName}' 2>/dev/null || echo "")
+  _detail=$(catalog_pod_wait_reason "$_catalog_ns")
+  echo "ERROR: CatalogSource pod was rejected by SCC admission." >&2
+  echo "  Namespace: ${_catalog_ns}" >&2
+  echo "  ServiceAccount: ${_service_account:-unknown}" >&2
+  if [ -n "$_detail" ]; then
+    echo "  Pod detail:" >&2
+    echo "$_detail" | sed 's/^/    /' >&2
+  fi
+  echo "  Grant the required SCC to this ServiceAccount, then retry:" >&2
+  echo "    oc adm policy add-scc-to-user anyuid -z ${_service_account:-default} -n ${_catalog_ns}" >&2
+}
+
 maybe_recover_catalog_pull() {
   local _catalog_ns="$1"
   local _fix_signature="${2:-0}"
@@ -227,6 +264,12 @@ wait_for_catalog_ready() {
     fi
     _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
       -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+    if catalog_pod_has_scc_admission_failure "$_catalog_ns"; then
+      echo ""
+      report_catalog_scc_failure "$_catalog_ns"
+      return 1
+    fi
+
     # Pod phase stays Pending while the container reports ImagePullBackOff.
     if catalog_pod_has_image_pull_backoff "$_catalog_ns"; then
       if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then

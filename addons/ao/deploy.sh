@@ -107,6 +107,10 @@ find_catalog_namespace() {
 report_catalog_failure() {
   local _catalog_ns="$1"
   local _status _pod_status _reason
+  if catalog_pod_has_scc_admission_failure "$_catalog_ns"; then
+    report_catalog_scc_failure "$_catalog_ns"
+    return 1
+  fi
   _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
   _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
@@ -853,13 +857,29 @@ ensure_cnpg_operator() {
   fi
   mkdir -p "$(dirname "$AO_STATE_FILE")"
   echo "CNPG_VERSION=${CNPG_VERSION}" >"$AO_STATE_FILE"
-  oc adm policy add-scc-to-group anyuid "system:serviceaccounts:cnpg-system" 2>/dev/null || true
-  oc adm policy add-scc-to-group privileged "system:serviceaccounts:cnpg-system" 2>/dev/null || true
-
+  if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-controller-manager}" cnpg-system; then
+    return 1
+  fi
+  if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-controller-manager}" cnpg-system; then
+    return 1
+  fi
   echo "Waiting for CloudNativePG operator..."
   kubectl rollout status deployment/cnpg-controller-manager \
     -n cnpg-system --timeout=5m
   echo "✓ CloudNativePG operator running"
+}
+
+grant_scc_to_serviceaccount() {
+  local _scc="$1"
+  local _service_account="$2"
+  local _namespace="$3"
+  if oc adm policy add-scc-to-user "$_scc" -z "$_service_account" -n "$_namespace"; then
+    return 0
+  fi
+  echo "ERROR: Failed to grant SCC '${_scc}' to ServiceAccount '${_service_account}' in namespace '${_namespace}'." >&2
+  echo "  The current user must be allowed to modify SecurityContextConstraints." >&2
+  echo "  Retry with: oc adm policy add-scc-to-user ${_scc} -z ${_service_account} -n ${_namespace}" >&2
+  return 1
 }
 
 postgres_primary_pod() {
@@ -1181,8 +1201,12 @@ fi
 # --- Namespace + SCCs ---
 echo "Creating namespace and SCC grants..."
 kubectl create namespace "$NAMESPACE" 2>/dev/null || true
-oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
-oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
+if ! grant_scc_to_serviceaccount anyuid default "$NAMESPACE"; then
+  exit 1
+fi
+if ! grant_scc_to_serviceaccount privileged default "$NAMESPACE"; then
+  exit 1
+fi
 if [ -z "$FORCE" ]; then
   ao_admin_password_ensure "$NAMESPACE"
 fi
