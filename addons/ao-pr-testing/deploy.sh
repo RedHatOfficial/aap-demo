@@ -41,9 +41,13 @@ PLAIBOOK_PROJECT_URL=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_URL https://gith
 PLAIBOOK_PROJECT_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_BRANCH main)
 PLAIBOOK_PLAYBOOK=$(env_value AO_PR_TESTING_PLAIBOOK_PLAYBOOK addons/ao-pr-testing/playbooks/plaibook-review-bridge.yml)
 PLAIBOOK_SOURCE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_URL https://github.com/aknochow/ansible-plaibook.git)
-PLAIBOOK_SOURCE_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH main)
+# Pin mutable upstream source to the last revision verified in this dev
+# workflow. Set AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH=main explicitly when
+# testing newer plaibook changes.
+PLAIBOOK_SOURCE_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH b6cf163c427749074c56ea3e3850688a06c70274)
 PLAIBOOK_INVENTORY_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_INVENTORY_NAME 'aap-demo Plaibook Review Inventory')
 PLAIBOOK_JOB_TEMPLATE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME 'aap-demo | Plaibook PR Review')
+PLAIBOOK_JOB_TIMEOUT=$(env_value AO_PR_TESTING_JOB_TIMEOUT 900)
 PLAIBOOK_MODEL=$(env_value AO_PR_TESTING_PLAIBOOK_MODEL qwen2.5:3b)
 PLAIBOOK_OPENAI_BASE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL 'http://ollama.aap-demo-ollama.svc.cluster.local:11434/v1')
 PLAIBOOK_OPENAI_API_KEY=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY ollama)
@@ -187,6 +191,7 @@ ensure_plaibook_job_template() {
     --job-template-name "$PLAIBOOK_JOB_TEMPLATE_NAME" \
     --playbook "$PLAIBOOK_PLAYBOOK" \
     --execution-environment-id "$ee_id" \
+    --job-timeout "$PLAIBOOK_JOB_TIMEOUT" \
     "${credential_args[@]}" \
     --extra-vars-json "$extra_vars") \
     || die 'Could not provision the ansible-plaibook AAP job template'

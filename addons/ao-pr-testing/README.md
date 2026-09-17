@@ -59,9 +59,17 @@ plaibook repository and branch:
     AO_PR_TESTING_PLAIBOOK_PROJECT_BRANCH=main \\
     AO_PR_TESTING_PLAIBOOK_PLAYBOOK=addons/ao-pr-testing/playbooks/plaibook-review-bridge.yml \\
     AO_PR_TESTING_PLAIBOOK_SOURCE_URL=https://github.com/aknochow/ansible-plaibook.git \\
-    AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH=main \\
+    AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH=b6cf163c427749074c56ea3e3850688a06c70274 \\
     AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME='example | PR Review' \\
     aap-demo enable ao-pr-testing
+
+The plaibook source defaults to the tested commit
+`b6cf163c427749074c56ea3e3850688a06c70274` rather than mutable `main`. This
+prevents an upstream change from silently changing or stalling the local
+workflow. Set `AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH=main` to deliberately test
+the latest source. The AAP Job Template also has a 900-second timeout by
+default; override it with `AO_PR_TESTING_JOB_TIMEOUT` when testing a slower
+model or source revision.
 
 To publish the review findings back to the PR, the addon reuses the existing
 `github_token` from `~/.aap-demo/apme-eap-github-creds.yml`. A different token
