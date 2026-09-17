@@ -53,7 +53,7 @@ PLAIBOOK_OPENAI_BASE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL 'htt
 PLAIBOOK_OPENAI_API_KEY=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY ollama)
 WEBHOOK_PATH=$(env_value AO_PR_TESTING_WEBHOOK_PATH aap-demo-pr-validation)
 HOME_DIR=$(env_value HOME "$PWD")
-GITHUB_CREDENTIALS_FILE=$(env_value AO_PR_TESTING_GITHUB_CREDENTIALS_FILE "$HOME_DIR/.aap-demo/apme-eap-github-creds.yml")
+GITHUB_CREDENTIALS_FILE=$(env_value AO_PR_TESTING_GITHUB_CREDENTIALS_FILE "$HOME_DIR/.aap-demo/ao-pr-testing-github-creds.yml")
 if [ -z "$GITHUB_TOKEN" ] && [ -r "$GITHUB_CREDENTIALS_FILE" ]; then
   GITHUB_TOKEN=$(
     python3 - "$GITHUB_CREDENTIALS_FILE" <<'PY'
@@ -88,6 +88,47 @@ die() {
 
 warn() {
   printf 'WARNING: %s\n' "$*" >&2
+}
+
+prompt_github_token() {
+  if [ -n "$GITHUB_TOKEN" ]; then
+    return 0
+  fi
+
+  if [ ! -t 0 ]; then
+    warn "GitHub PR comments disabled; provide AO_PR_TESTING_GITHUB_TOKEN or run interactively to configure a PAT"
+    return 0
+  fi
+
+  printf '\n'
+  printf 'A GitHub fine-grained PAT is required to post the plaibook comment and stale-finding issue.\n'
+  printf 'Create one at https://github.com/settings/personal-access-tokens/new with:\n'
+  printf '  Resource owner: RedHatOfficial\n'
+  printf '  Repository access: aap-demo\n'
+  printf '  Issues: Read and write\n'
+  printf '  Pull requests: Read and write\n'
+  printf '  Metadata: Read-only\n'
+  printf 'The token will be stored with mode 600 at %s.\n' "$GITHUB_CREDENTIALS_FILE"
+  printf 'Leave it blank to continue without GitHub posting.\n\n'
+
+  local github_token_input original_umask
+  read -r -s -p 'GitHub PAT (hidden): ' github_token_input
+  printf '\n'
+  if [ -z "$github_token_input" ]; then
+    warn 'No GitHub PAT supplied; PR comments and stale-finding issues are disabled'
+    return 0
+  fi
+
+  GITHUB_TOKEN=$github_token_input
+  unset github_token_input
+  mkdir -p "$(dirname "$GITHUB_CREDENTIALS_FILE")"
+  original_umask=$(umask)
+  umask 077
+  printf '%s\n' '---' '# GitHub PAT for AO PR-testing comments' \
+    "github_token: \"$GITHUB_TOKEN\"" >"$GITHUB_CREDENTIALS_FILE"
+  umask "$original_umask"
+  chmod 600 "$GITHUB_CREDENTIALS_FILE"
+  printf '  Saved GitHub PAT to %s\n' "$GITHUB_CREDENTIALS_FILE"
 }
 
 require_tools() {
@@ -609,6 +650,7 @@ fi
 
 kubectl cluster-info >/dev/null 2>&1 || die 'Cannot connect to the OpenShift cluster'
 ao_is_ready || die 'Automation Orchestrator is not ready; enable the ao addon first'
+prompt_github_token
 ensure_aap_execution_environment
 ensure_github_credential
 ensure_plaibook_job_template

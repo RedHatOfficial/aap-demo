@@ -72,9 +72,13 @@ diagnosis, but it is not used as a flaky model-mediated pass/fail gate.
 
 Public PR retrieval is performed by plaibook from the AAP Job Template, so the
 addon does not provision a GitHub MCP integration or copy a local GitHub token
-into AO. If `AO_PR_TESTING_GITHUB_TOKEN` is supplied, the addon stores it in
-the AAP GitHub credential and uses it only for the marked review comment.
-Private-repository credentials remain an explicit future configuration concern.
+into AO. On an interactive enable, the addon prompts for a dedicated
+fine-grained PAT when `AO_PR_TESTING_GITHUB_TOKEN` and
+`~/.aap-demo/ao-pr-testing-github-creds.yml` are absent. The PAT must grant
+`Issues: Read and write` and `Pull requests: Read and write` for the target
+repository. The local file is mode 600; AAP receives the value only through
+the addon-owned credential injector. Private-repository credentials remain an
+explicit future configuration concern.
 
 The OpenShift MCP server is configured with the core toolset, read-only
 behavior, destructive-operation protection, denied Secret/ConfigMap/RBAC
