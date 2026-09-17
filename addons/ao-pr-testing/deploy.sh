@@ -281,12 +281,12 @@ ensure_github_credential() {
   existing=$(curl -sk -u "admin:${aap_password}" \
     "${aap_api}/credentials/?name=${encoded_name}&page_size=10")
   credential_id=$(printf '%s' "$existing" | jq -r '.results[0].id // empty')
-  if [ -z "$GITHUB_TOKEN" ] && [ -n "$credential_id" ]; then
-    GITHUB_CREDENTIAL_ID=$credential_id
-    unset aap_password
-    return 0
-  fi
   if [ -z "$GITHUB_TOKEN" ]; then
+    if [ -n "$credential_id" ]; then
+      curl -sk -u "admin:${aap_password}" -X DELETE \
+        "${aap_api}/credentials/${credential_id}/" >/dev/null 2>&1 || true
+      printf '  Removed stale AAP GitHub credential; PR comments disabled until a PAT is configured\n'
+    fi
     unset aap_password
     return 0
   fi
