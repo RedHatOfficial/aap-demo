@@ -10,8 +10,6 @@
     bridge_source_branch: "{{ plaibook_source_branch | default('main') }}"
     bridge_aap_route_host: "{{ aap_route_host | default('') }}"
     bridge_ao_route_host: "{{ ao_route_host | default('') }}"
-    review_run_id: >-
-      {{ last_run_id | default('ao-' ~ (lookup('pipe', 'date +%s') | string) ~ '-' ~ (999999 | random)) }}
     review_input_vars:
       review_type: "{{ review_type | default('pr') }}"
       review_targets_raw: "{{ review_targets_raw | default('') }}"
@@ -24,7 +22,7 @@
       review_explore_enabled: "{{ review_explore_enabled | default(false) | bool }}"
       review_run_ledger_host: "{{ review_run_ledger_host | default('aap-plaibook') }}"
       review_write_artifact: "{{ review_write_artifact | default(true) | bool }}"
-      last_run_id: "{{ review_run_id }}"
+      last_run_id: "{{ bridge_run_id }}"
 
   tasks:
     - name: Create the bridge working directory
@@ -32,6 +30,11 @@
         path: "{{ bridge_root }}"
         state: directory
         mode: "0700"
+
+    - name: Freeze the nested plaibook run ID
+      ansible.builtin.set_fact:
+        bridge_run_id: >-
+          {{ last_run_id | default('ao-' ~ (lookup('pipe', 'date +%s') | string) ~ '-' ~ (999999 | random)) }}
 
     - name: Fetch the configured plaibook source
       ansible.builtin.git:
@@ -64,7 +67,7 @@
 
     - name: Check for this run's structured plaibook summary
       ansible.builtin.stat:
-        path: "{{ bridge_root }}/.cache/ansible-plaibook/last_run.{{ review_run_id }}.json"
+        path: "{{ bridge_root }}/.cache/ansible-plaibook/last_run.{{ bridge_run_id }}.json"
       register: plaibook_summary_stat
 
     - name: Find any structured summaries written by the nested run
@@ -78,7 +81,7 @@
     - name: Read this run's structured plaibook summary
       when: plaibook_summary_stat.stat.exists | bool
       ansible.builtin.slurp:
-        src: "{{ bridge_root }}/.cache/ansible-plaibook/last_run.{{ review_run_id }}.json"
+        src: "{{ bridge_root }}/.cache/ansible-plaibook/last_run.{{ bridge_run_id }}.json"
       register: plaibook_summary_file
 
     - name: Normalize the structured plaibook result
