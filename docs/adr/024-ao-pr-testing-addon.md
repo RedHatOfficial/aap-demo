@@ -35,7 +35,7 @@ The addon owns:
    invokes its `review.yml`, reads the run-scoped JSON summary, and publishes
    the result through Ansible `set_stats`. The review receives
    `review_type=pr`, `post_results=false`, and a runtime `review_targets_raw`
-   value of `owner/repository#pull_request_number`.
+   value of `https://github.com/owner/repository/pull/pull_request_number`.
 4. An AO workflow named `aap-demo PR Validation` with:
    - a webhook trigger at `aap-demo-pr-validation`;
    - a manual PR-input trigger;
