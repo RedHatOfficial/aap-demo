@@ -42,23 +42,12 @@ PLAIBOOK_JOB_TEMPLATE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME 
 PLAIBOOK_MODEL=$(env_value AO_PR_TESTING_PLAIBOOK_MODEL qwen2.5:3b)
 PLAIBOOK_OPENAI_BASE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL 'http://ollama.aap-demo-ollama.svc.cluster.local:11434/v1')
 PLAIBOOK_OPENAI_API_KEY=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY ollama)
-PLAIBOOK_USE_SANDBOX=$(env_value AO_PR_TESTING_PLAIBOOK_USE_SANDBOX true)
-PLAIBOOK_SANDBOX_GATEWAY=$(env_value AO_PR_TESTING_PLAIBOOK_SANDBOX_GATEWAY '')
-PLAIBOOK_SANDBOX_TLS_SOURCE=$(env_value AO_PR_TESTING_PLAIBOOK_SANDBOX_TLS_SOURCE k8s_secret)
-PLAIBOOK_SANDBOX_SECRET_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_SANDBOX_SECRET_NAME openshell-client-tls)
-PLAIBOOK_SANDBOX_SECRET_NAMESPACE=$(env_value AO_PR_TESTING_PLAIBOOK_SANDBOX_SECRET_NAMESPACE ogo)
-PLAIBOOK_SANDBOX_AUTH_BRIDGE_ROUTE=$(env_value AO_PR_TESTING_PLAIBOOK_SANDBOX_AUTH_BRIDGE_ROUTE '')
-PLAIBOOK_K8S_SERVICE_ACCOUNT=$(env_value AO_PR_TESTING_PLAIBOOK_K8S_SERVICE_ACCOUNT plaibook-review)
-PLAIBOOK_K8S_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_K8S_CREDENTIAL_TYPE_NAME 'aap-demo Plaibook Kubernetes API')
-PLAIBOOK_K8S_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_K8S_CREDENTIAL_NAME 'aap-demo Plaibook TLS Secret Access')
-PLAIBOOK_K8S_API_HOST=$(env_value AO_PR_TESTING_PLAIBOOK_K8S_API_HOST https://kubernetes.default.svc)
 WEBHOOK_PATH=$(env_value AO_PR_TESTING_WEBHOOK_PATH aap-demo-pr-validation)
 HOME_DIR=$(env_value HOME "$PWD")
 STATE_DIR=$(env_value AO_PR_TESTING_STATE_DIR "$HOME_DIR/.aap-demo/ao-pr-testing")
 CHART=$(env_value AO_PR_TESTING_CHART openshift-helm-charts/redhat-openshift-mcp-server)
 OPENSHIFT_CREDENTIAL_ID=
 PLAIBOOK_JOB_TEMPLATE_ID=
-PLAIBOOK_K8S_CREDENTIAL_ID=
 ACTION=deploy
 [ "$#" -gt 0 ] && ACTION=$1
 
@@ -126,122 +115,6 @@ ensure_aap_execution_environment() {
   unset aap_password
 }
 
-ensure_plaibook_k8s_access() {
-  local token_secret aap_route aap_password aap_api org_id encoded_type encoded_credential
-  local type_id credential_id type_payload credential_payload result
-
-  kubectl get namespace "$PLAIBOOK_SANDBOX_SECRET_NAMESPACE" >/dev/null 2>&1 \
-    || die "Plaibook sandbox namespace is missing: $PLAIBOOK_SANDBOX_SECRET_NAMESPACE; deploy OpenShell first or set AO_PR_TESTING_PLAIBOOK_SANDBOX_SECRET_NAMESPACE"
-  kubectl get secret "$PLAIBOOK_SANDBOX_SECRET_NAME" -n "$PLAIBOOK_SANDBOX_SECRET_NAMESPACE" >/dev/null 2>&1 \
-    || die "Plaibook sandbox TLS secret is missing: $PLAIBOOK_SANDBOX_SECRET_NAMESPACE/$PLAIBOOK_SANDBOX_SECRET_NAME; deploy OpenShell first or set AO_PR_TESTING_PLAIBOOK_SANDBOX_SECRET_NAME"
-
-  token_secret="${PLAIBOOK_K8S_SERVICE_ACCOUNT}-token"
-  kubectl create serviceaccount "$PLAIBOOK_K8S_SERVICE_ACCOUNT" -n "$AAP_NAMESPACE" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl apply -f - >/dev/null <<EOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: ${PLAIBOOK_K8S_SERVICE_ACCOUNT}-tls-reader
-  namespace: ${PLAIBOOK_SANDBOX_SECRET_NAMESPACE}
-rules:
-- apiGroups: [""]
-  resources: ["secrets"]
-  resourceNames: ["${PLAIBOOK_SANDBOX_SECRET_NAME}"]
-  verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: ${PLAIBOOK_K8S_SERVICE_ACCOUNT}-tls-reader
-  namespace: ${PLAIBOOK_SANDBOX_SECRET_NAMESPACE}
-subjects:
-- kind: ServiceAccount
-  name: ${PLAIBOOK_K8S_SERVICE_ACCOUNT}
-  namespace: ${AAP_NAMESPACE}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: ${PLAIBOOK_K8S_SERVICE_ACCOUNT}-tls-reader
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ${token_secret}
-  namespace: ${AAP_NAMESPACE}
-  annotations:
-    kubernetes.io/service-account.name: ${PLAIBOOK_K8S_SERVICE_ACCOUNT}
-type: kubernetes.io/service-account-token
-EOF
-
-  token=
-  for _ in $(seq 1 30); do
-    token=$(kubectl get secret "$token_secret" -n "$AAP_NAMESPACE" \
-      -o jsonpath='{.data.token}' 2>/dev/null | base64 --decode 2>/dev/null || true)
-    [ -n "$token" ] && break
-    sleep 1
-  done
-  [ -n "$token" ] || die 'Could not obtain the plaibook Kubernetes service-account token'
-
-  aap_route=$(wire_aap_route_host)
-  aap_password=$(wire_aap_admin_password)
-  aap_api="https://${aap_route}/api/controller/v2"
-  org_id=$(curl -sk -u "admin:${aap_password}" \
-    "${aap_api}/organizations/?name=Default&page_size=10" \
-    | jq -r '.results[0].id // empty')
-  [ -n "$org_id" ] || die 'AAP Default organization is missing for plaibook credentials'
-
-  encoded_type=$(jq -rn --arg name "$PLAIBOOK_K8S_CREDENTIAL_TYPE_NAME" '$name|@uri')
-  type_id=$(curl -sk -u "admin:${aap_password}" \
-    "${aap_api}/credential_types/?name=${encoded_type}&page_size=100" \
-    | jq -r '.results[0].id // empty')
-  type_payload=$(jq -n \
-    --arg name "$PLAIBOOK_K8S_CREDENTIAL_TYPE_NAME" \
-    '{name:$name,description:"Read-only Kubernetes API access for plaibook sandbox TLS lookup",kind:"cloud",
-      inputs:{fields:[{id:"host",label:"Kubernetes API endpoint",type:"string"},{id:"bearer_token",label:"Kubernetes API bearer token",type:"string",secret:true}],required:["host","bearer_token"]},
-      injectors:{env:{K8S_AUTH_HOST:"{{ host }}",K8S_AUTH_API_KEY:"{{ bearer_token }}",K8S_AUTH_VERIFY_SSL:"false"}}}')
-  if [ -n "$type_id" ]; then
-    result=$(curl -sk -u "admin:${aap_password}" -X PATCH \
-      -H 'Content-Type: application/json' -d "$type_payload" "${aap_api}/credential_types/${type_id}/")
-    if printf '%s' "$result" | jq -e '.detail or .error or .errors' >/dev/null 2>&1; then
-      printf '%s\n' "$result" | jq '.' >&2
-      die "Could not update AAP credential type ${PLAIBOOK_K8S_CREDENTIAL_TYPE_NAME}"
-    fi
-  else
-    result=$(curl -sk -u "admin:${aap_password}" -X POST \
-      -H 'Content-Type: application/json' -d "$type_payload" "${aap_api}/credential_types/")
-    type_id=$(printf '%s' "$result" | jq -r '.id // empty')
-    [ -n "$type_id" ] || die 'Could not create the AAP plaibook Kubernetes credential type'
-  fi
-
-  encoded_credential=$(jq -rn --arg name "$PLAIBOOK_K8S_CREDENTIAL_NAME" '$name|@uri')
-  credential_id=$(curl -sk -u "admin:${aap_password}" \
-    "${aap_api}/credentials/?name=${encoded_credential}&page_size=100" \
-    | jq -r --argjson type "$type_id" '.results[] | select(.credential_type == $type) | .id' | head -1)
-  credential_payload=$(jq -n \
-    --arg name "$PLAIBOOK_K8S_CREDENTIAL_NAME" \
-    --arg host "$PLAIBOOK_K8S_API_HOST" \
-    --arg token "$token" \
-    --argjson type "$type_id" \
-    --argjson org "$org_id" \
-    '{name:$name,description:"Least-privilege access to the plaibook sandbox TLS Secret",credential_type:$type,organization:$org,inputs:{host:$host,bearer_token:$token}}')
-  if [ -n "$credential_id" ]; then
-    result=$(curl -sk -u "admin:${aap_password}" -X PATCH \
-      -H 'Content-Type: application/json' -d "$credential_payload" "${aap_api}/credentials/${credential_id}/")
-  else
-    result=$(curl -sk -u "admin:${aap_password}" -X POST \
-      -H 'Content-Type: application/json' -d "$credential_payload" "${aap_api}/credentials/")
-    credential_id=$(printf '%s' "$result" | jq -r '.id // empty')
-  fi
-  if printf '%s' "$result" | jq -e '.detail or .error or .errors' >/dev/null 2>&1 || [ -z "$credential_id" ]; then
-    printf '%s\n' "$result" | jq '.' >&2 || printf '%s\n' "$result" >&2
-    die "Could not provision AAP credential ${PLAIBOOK_K8S_CREDENTIAL_NAME}"
-  fi
-  PLAIBOOK_K8S_CREDENTIAL_ID=$credential_id
-  unset token aap_password
-  printf '  Plaibook Kubernetes access ready: %s\n' "$PLAIBOOK_K8S_CREDENTIAL_NAME"
-}
-
 ensure_plaibook_job_template() {
   local aap_route aap_token extra_vars ee_id ee_name_encoded
 
@@ -260,19 +133,10 @@ ensure_plaibook_job_template() {
     --arg base_url "$PLAIBOOK_OPENAI_BASE_URL" \
     --arg api_key "$PLAIBOOK_OPENAI_API_KEY" \
     --arg model "$PLAIBOOK_MODEL" \
-    --arg use_sandbox "$PLAIBOOK_USE_SANDBOX" \
-    --arg sandbox_gateway "$PLAIBOOK_SANDBOX_GATEWAY" \
-    --arg tls_source "$PLAIBOOK_SANDBOX_TLS_SOURCE" \
-    --arg secret_name "$PLAIBOOK_SANDBOX_SECRET_NAME" \
-    --arg secret_namespace "$PLAIBOOK_SANDBOX_SECRET_NAMESPACE" \
-    --arg auth_bridge "$PLAIBOOK_SANDBOX_AUTH_BRIDGE_ROUTE" \
     '{review_type:"pr",post_results:false,agent_family:"openai",openai_base_url:$base_url,
-      openai_api_key:$api_key,review_openai_model:$model,use_sandbox:($use_sandbox == "true"),
-      ssh_proxy_script:"/opt/openshell/ssh_proxy.py",sandbox_tls_source:$tls_source,
-      sandbox_secret_name:$secret_name,sandbox_secret_namespace:$secret_namespace,
+      openai_api_key:$api_key,review_openai_model:$model,use_sandbox:false,
       review_run_ledger_host:"aap-plaibook"}
-     + (if $sandbox_gateway != "" then {sandbox_gateway:$sandbox_gateway} else {} end)
-     + (if $auth_bridge != "" then {sandbox_auth_bridge_route:$auth_bridge} else {} end)')
+    ')
 
   PLAIBOOK_JOB_TEMPLATE_ID=$(python3 "$SCRIPT_DIR/provision-plaibook.py" \
     --route "$aap_route" \
@@ -283,7 +147,6 @@ ensure_plaibook_job_template() {
     --inventory-name "$PLAIBOOK_INVENTORY_NAME" \
     --job-template-name "$PLAIBOOK_JOB_TEMPLATE_NAME" \
     --execution-environment-id "$ee_id" \
-    --kubernetes-credential-id "$PLAIBOOK_K8S_CREDENTIAL_ID" \
     --extra-vars-json "$extra_vars") \
     || die 'Could not provision the ansible-plaibook AAP job template'
   [ -n "$PLAIBOOK_JOB_TEMPLATE_ID" ] || die 'AAP did not return the plaibook job template ID'
@@ -651,7 +514,6 @@ fi
 
 kubectl cluster-info >/dev/null 2>&1 || die 'Cannot connect to the OpenShift cluster'
 ao_is_ready || die 'Automation Orchestrator is not ready; enable the ao addon first'
-ensure_plaibook_k8s_access
 ensure_aap_execution_environment
 ensure_plaibook_job_template
 deploy_openshift_mcp
