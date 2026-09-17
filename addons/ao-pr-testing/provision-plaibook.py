@@ -84,6 +84,7 @@ def main() -> int:
     parser.add_argument("--inventory-name", required=True)
     parser.add_argument("--job-template-name", required=True)
     parser.add_argument("--execution-environment-id", required=True, type=int)
+    parser.add_argument("--kubernetes-credential-id", type=int)
     parser.add_argument("--extra-vars-json", required=True)
     args = parser.parse_args()
 
@@ -145,6 +146,8 @@ def main() -> int:
         "ask_variables_on_launch": True,
         "extra_vars": json.dumps(extra_vars, sort_keys=True),
     }
+    if args.kubernetes_credential_id:
+        template_payload["credentials"] = [args.kubernetes_credential_id]
     template = api.find("job_templates", args.job_template_name)
     if template:
         template_id = template["id"]

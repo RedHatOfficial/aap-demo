@@ -59,8 +59,10 @@ The default review model is `qwen2.5:3b` through the local Ollama service.
 Plaibook sandboxing remains enabled by default. Configure the OpenShell
 gateway and its TLS/auth-bridge settings with the
 `AO_PR_TESTING_PLAIBOOK_SANDBOX_*` variables before expecting a review to run;
-without a usable sandbox, the workflow should report `blocked` rather than
-silently weakening isolation.
+the sandbox namespace and TLS Secret must already exist. The addon creates a
+dedicated AAP service account and credential with `get` access limited to that
+single TLS Secret; it does not grant plaibook general cluster access. Without
+a usable sandbox, deployment stops rather than silently weakening isolation.
 
 The addon warms the configured Ollama model before publishing. AO 2026.8 uses
 its platform Task Agent timeout; a model that cannot produce MCP tool calls

@@ -46,6 +46,13 @@ The addon owns:
    credential. The image name and EE name are overrideable through
    `AO_PR_TESTING_EE_IMAGE` and `AO_PR_TESTING_EE_NAME`.
 
+The plaibook AAP Job Template receives a dedicated custom AAP credential whose
+service account can only `get` the configured OpenShell TLS Secret. This direct
+Kubernetes API path is limited to sandbox bootstrap; AO agentic stages still
+use the read-only OpenShift MCP integration for deployment evidence. The addon
+requires the OpenShell namespace and TLS Secret to exist before deployment and
+does not weaken sandboxing when they are absent.
+
 Public PR retrieval is performed by plaibook from the AAP Job Template, so the
 addon does not provision a GitHub MCP integration or copy a local GitHub token
 into AO. Private-repository credentials are an explicit future configuration
@@ -90,7 +97,8 @@ EE is pushed and the run-scoped plaibook result is available.
 
 Sandboxing remains enabled by default. A missing OpenShell gateway, TLS
 secret, auth bridge, checkout, or run-scoped result is a blocked validation,
-not a reason to disable isolation.
+not a reason to disable isolation. Deployment also fails early when the
+configured OpenShell namespace or TLS Secret is absent.
 
 ## Architecture
 
