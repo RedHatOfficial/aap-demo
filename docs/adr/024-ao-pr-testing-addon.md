@@ -26,20 +26,21 @@ The addon owns:
    namespace.
 2. An AO integration for that MCP endpoint with no external management
    credential; the MCP server uses its bound ServiceAccount. The workflow
-   receives a separate short-lived AO bearer credential minted from that
-   ServiceAccount so AO can bind the integration to agentic nodes.
-3. An AAP Project and Job Template for
-   `https://github.com/aknochow/ansible-plaibook.git`, synchronized on launch
-   and executed with the shared `quay.io/cferman/plaibook-ee:latest` image.
-   The playbook receives `review_type=pr`, `post_results=false`, and a runtime
-   `review_targets_raw` value of `owner/repository#pull_request_number`.
+   keeps a separate short-lived AO bearer credential minted from that
+   ServiceAccount for explicit operator-led MCP inspection.
+3. An AAP Project and Job Template for the local plaibook-result bridge,
+   synchronized on launch and executed with the shared
+   `quay.io/cferman/plaibook-ee:latest` image. The bridge fetches the public
+   `https://github.com/aknochow/ansible-plaibook.git` source at runtime,
+   invokes its `review.yml`, reads the run-scoped JSON summary, and publishes
+   the result through Ansible `set_stats`. The review receives
+   `review_type=pr`, `post_results=false`, and a runtime `review_targets_raw`
+   value of `owner/repository#pull_request_number`.
 4. An AO workflow named `aap-demo PR Validation` with:
    - a webhook trigger at `aap-demo-pr-validation`;
    - a manual PR-input trigger;
-   - an AAP Job Template node that launches plaibook's `review.yml`;
-   - a small result-normalization stage; and
-   - an AAP/OpenShift-only verification stage that checks only evidence
-     supported by the local deployment.
+   - one terminal AAP Job Template node that launches the bridge and exposes
+     deterministic `artifacts` for the review and live smoke test.
 5. A public AAP execution environment registration for
    `quay.io/cferman/plaibook-ee:latest`, managed idempotently by the addon so
    PR-related AAP job templates can use the shared image without a registry
@@ -53,19 +54,13 @@ production-oriented review deployment must provide the stronger per-review
 sandbox boundary.
 
 The optional plaibook exploration pass is disabled in this dev profile. The
-deterministic checklist and model-backed review lenses remain enabled, while
-AO performs a bounded verification of the AAP job and the live `aap-demo`
-deployment. Exploration can be enabled in a separate profile after selecting
-and validating a model that reliably emits plaibook's read-only tool calls.
-
-The current public plaibook playbook writes its structured summary into the
-ephemeral runner but does not expose it through Ansible `set_stats`. Because
-the AAP job-template node therefore returns `artifacts: {}`, AO must report a
-missing run-scoped review result as `blocked`. Direct read-only OpenShift MCP
-checks can confirm that the running AAP/AO deployment is healthy, but the
-agentic verifier is not a deterministic live test. A follow-up implementation
-must add either an upstream `set_stats` handoff or a small AAP/REST bridge,
-then add a deterministic smoke-test stage against the running deployment.
+deterministic checklist and model-backed review lenses remain enabled. The
+bridge publishes both the run-scoped review JSON and route-level smoke checks
+for the live AAP and Automation Orchestrator endpoints through `set_stats`.
+The terminal AO node therefore has a deterministic `artifacts` contract; it
+does not rely on an agentic normalizer or verifier to reinterpret AAP output.
+The read-only OpenShift MCP remains available for operator-led inspection and
+diagnosis, but it is not used as a flaky model-mediated pass/fail gate.
 
 Public PR retrieval is performed by plaibook from the AAP Job Template, so the
 addon does not provision a GitHub MCP integration or copy a local GitHub token
@@ -87,22 +82,23 @@ The implementation provisions the following AAP resources idempotently:
 
 - execution environment `plaibook-ee`, using the public
   `quay.io/cferman/plaibook-ee:latest` image;
-- project `aap-demo Plaibook Review`, synchronized from the plaibook
+- project `aap-demo Plaibook Review`, synchronized from the aap-demo bridge
   repository; and
-- Job Template `aap-demo | Plaibook PR Review` running `review.yml`.
+- Job Template `aap-demo | Plaibook PR Review` running
+  `addons/ao-pr-testing/playbooks/plaibook-review-bridge.yml`.
 
 The native `aap_job_template` node must receive the
 `ansible_automation_platform` integration (`aap-demo AAP`) and its credential.
-The later agentic nodes must receive only `mcp_server` integrations: the AAP
-MCP integration (`aap-demo MCP Server`) and the read-only OpenShift MCP
-integration. AO's workflow validator does not catch a missing or mistyped
-native-node binding, so the addon publishes only after these bindings are
-present in the generated definition.
+There are no downstream agentic nodes in the critical path. AO's workflow
+validator does not catch a missing or mistyped native-node binding, so the
+addon publishes only after this binding is present in the generated
+definition.
 
 The first end-to-end PR 137 test reached AO but exposed these wiring issues in
 sequence: the native node initially had no AAP binding, then it was given the
 MCP integration type, and finally the agentic nodes were given the AAP
-integration type. These were corrected before the current test iteration.
+integration type. These were corrected before replacing the agentic stages
+with the bridge's deterministic artifact handoff.
 The first AAP job then reached `review.yml` and failed because the EE omitted
 `aknochow.cursor`, which supplies `aknochow.cursor.bridge`; that collection is
 now included in the EE build alongside the OpenAI, Claude, OpenShell, and
@@ -122,11 +118,9 @@ flowchart LR
     MANUAL[AO manual trigger<br/>repository + PR number]
 
     AO[Automation Orchestrator<br/>aap-demo PR Validation]
-    PLAIBOOK[AAP Job Template<br/>plaibook review.yml]
-    NORMALIZE[Normalize run-scoped<br/>review result]
-    VERIFY[Verify bounded<br/>deployment evidence]
+    PLAIBOOK[AAP Job Template<br/>plaibook bridge]
+    BRIDGE[Run plaibook bridge<br/>publish set_stats]
     AAP[AAP controller<br/>native AAP integration]
-    AAP_MCP[AAP MCP<br/>mcp_server integration]
     OCP[OpenShift MCP<br/>mcp_server read-only]
     CLUSTER[Local aap-demo deployment]
     LLM[Local Ollama model]
@@ -134,22 +128,19 @@ flowchart LR
     PR --> WEBHOOK
     WEBHOOK --> AO
     MANUAL --> AO
-    AO --> PLAIBOOK --> NORMALIZE --> VERIFY
-    PLAIBOOK --> AAP
-    NORMALIZE --> LLM
-    NORMALIZE --> AAP_MCP
-    NORMALIZE --> OCP
-    VERIFY --> AAP_MCP
-    VERIFY --> OCP
+    AO --> PLAIBOOK --> BRIDGE
+    BRIDGE --> AAP
+    BRIDGE --> LLM
+    OCP --> CLUSTER
+    BRIDGE -. operator diagnosis .-> OCP
     OCP --> CLUSTER
 ```
 
-The expensive and source-sensitive work is owned by the AAP plaibook Job
-Template. AO agentic nodes receive only the run-scoped result and the small
-AAP/read-only OpenShift tool set needed for normalization and verification.
-This keeps the local model context bounded and makes the AAP job the governed
-checkout/review boundary. The original portal/APME credential file is not
-mounted into the cluster.
+The expensive and source-sensitive work is owned by the AAP plaibook bridge
+Job Template. It keeps the local model context and GitHub checkout inside the
+governed AAP EE, then exposes a small structured result to AO through
+`artifacts`. The original portal/APME credential file is not mounted into the
+cluster. The OpenShift MCP remains a separate, read-only diagnostic surface.
 
 ## Consequences
 
@@ -176,11 +167,11 @@ mounted into the cluster.
   model may still be required for reliable tool calling.
 - The dev profile skips plaibook exploration because the small local model can
   emit malformed search tool calls; plaibook correctly fails closed when that
-  happens. The deterministic checklist, review lenses, and live deployment
-  verification remain in the workflow.
-- Until the result bridge and deterministic smoke-test stage are added, a
-  successful plaibook job is evidence that review execution completed, not a
-  complete end-to-end validation of the running deployment.
+  happens. The deterministic checklist, review lenses, and live route smoke
+  checks remain in the workflow.
+- The bridge smoke test is intentionally route-level: it proves that the live
+  AAP and AO entry points respond from the review EE, while deeper cluster
+  inspection remains an explicit OpenShift MCP operation.
 - The OpenShift MCP server is a preview technology and adds another image and
   namespace to the local cluster.
 

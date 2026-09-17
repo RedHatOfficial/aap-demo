@@ -1,0 +1,137 @@
+---
+- name: Run plaibook and publish a structured AAP result
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    bridge_root: "{{ lookup('ansible.builtin.env', 'HOME') }}/.cache/aap-demo-plaibook"
+    bridge_source_url: "{{ plaibook_source_url | default('https://github.com/aknochow/ansible-plaibook.git') }}"
+    bridge_source_branch: "{{ plaibook_source_branch | default('main') }}"
+    bridge_aap_route_host: "{{ aap_route_host | default('') }}"
+    bridge_ao_route_host: "{{ ao_route_host | default('') }}"
+    review_run_id: >-
+      {{ last_run_id | default('ao-' ~ (lookup('pipe', 'date +%s') | string) ~ '-' ~ (999999 | random)) }}
+    review_input_vars:
+      review_type: "{{ review_type | default('pr') }}"
+      review_targets_raw: "{{ review_targets_raw | default('') }}"
+      post_results: "{{ post_results | default(false) | bool }}"
+      agent_family: "{{ agent_family | default('openai') }}"
+      openai_base_url: "{{ openai_base_url | default('') }}"
+      openai_api_key: "{{ openai_api_key | default('') }}"
+      review_openai_model: "{{ review_openai_model | default('') }}"
+      use_sandbox: "{{ use_sandbox | default(false) | bool }}"
+      review_explore_enabled: "{{ review_explore_enabled | default(false) | bool }}"
+      review_run_ledger_host: "{{ review_run_ledger_host | default('aap-plaibook') }}"
+      review_write_artifact: "{{ review_write_artifact | default(true) | bool }}"
+      last_run_id: "{{ review_run_id }}"
+
+  tasks:
+    - name: Create the bridge working directory
+      ansible.builtin.file:
+        path: "{{ bridge_root }}"
+        state: directory
+        mode: "0700"
+
+    - name: Fetch the configured plaibook source
+      ansible.builtin.git:
+        repo: "{{ bridge_source_url }}"
+        version: "{{ bridge_source_branch }}"
+        dest: "{{ bridge_root }}/source"
+        depth: 1
+        force: true
+
+    # The nested invocation is intentionally hidden because the extra-vars
+    # JSON contains the LLM API key. The structured result below is the only
+    # output exposed to downstream AAP/AO consumers.
+    - name: Run the upstream plaibook review
+      ansible.builtin.command:
+        argv:
+          - ansible-playbook
+          - "{{ bridge_root }}/source/review.yml"
+          - --extra-vars
+          - "{{ review_input_vars | to_json }}"
+      environment:
+        HOME: "{{ bridge_root }}"
+      register: plaibook_process
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Check for this run's structured plaibook summary
+      ansible.builtin.stat:
+        path: "{{ bridge_root }}/.cache/ansible-plaibook/last_run.{{ review_run_id }}.json"
+      register: plaibook_summary_stat
+
+    - name: Read this run's structured plaibook summary
+      when: plaibook_summary_stat.stat.exists | bool
+      ansible.builtin.slurp:
+        src: "{{ bridge_root }}/.cache/ansible-plaibook/last_run.{{ review_run_id }}.json"
+      register: plaibook_summary_file
+
+    - name: Normalize the structured plaibook result
+      ansible.builtin.set_fact:
+        plaibook_result: >-
+          {{ (plaibook_summary_file.content | b64decode | from_json)
+             if (plaibook_summary_stat.stat.exists | bool)
+             else {
+               'status': 'failed',
+               'error': 'The plaibook run did not publish its run-scoped summary',
+               'return_code': plaibook_process.rc | default(1) | int,
+               'targets': []
+             } }}
+
+    # AAP exposes set_stats data through the AAP Job Template node's
+    # `artifacts` output. Keep the payload compact enough for AO expressions,
+    # while retaining verdict, score, counts, and the complete finding objects.
+    - name: Publish the deterministic plaibook result to AAP artifacts
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          plaibook_review: "{{ plaibook_result }}"
+          plaibook_review_status: "{{ plaibook_result.status | default('failed') }}"
+          plaibook_review_target: "{{ plaibook_result.targets[0] | default({}) }}"
+          plaibook_review_return_code: "{{ plaibook_process.rc | default(1) | int }}"
+
+    # These checks deliberately exercise the running deployment from inside
+    # the same ephemeral AAP EE that ran the review. They are route-level
+    # smoke checks, not a substitute for the read-only OpenShift MCP used by
+    # operators for deeper inspection.
+    - name: Check the live AAP controller route
+      when: bridge_aap_route_host | length > 0
+      ansible.builtin.uri:
+        url: "https://{{ bridge_aap_route_host }}/api/controller/v2/ping/"
+        method: GET
+        validate_certs: false
+        status_code: [200]
+        return_content: false
+      register: live_aap_check
+      failed_when: false
+
+    - name: Check the live Automation Orchestrator route
+      when: bridge_ao_route_host | length > 0
+      ansible.builtin.uri:
+        url: "https://{{ bridge_ao_route_host }}/api/v1/"
+        method: GET
+        validate_certs: false
+        follow_redirects: none
+        status_code: [200, 307]
+        return_content: false
+      register: live_ao_check
+      failed_when: false
+
+    - name: Publish live aap-demo smoke-test evidence to AAP artifacts
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          aap_demo_live_smoke:
+            status: >-
+              {{ 'passed'
+                 if (live_aap_check.status | default(0) | int == 200)
+                 and (live_ao_check.status | default(0) | int in [200, 307])
+                 else 'failed' }}
+            checks:
+              aap_controller_route:
+                status_code: "{{ live_aap_check.status | default(0) | int }}"
+              automation_orchestrator_route:
+                status_code: "{{ live_ao_check.status | default(0) | int }}"
