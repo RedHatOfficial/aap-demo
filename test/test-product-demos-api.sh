@@ -17,7 +17,7 @@ fi
 source "$LIB_SH"
 
 export AAP_USERNAME="admin"
-export AAP_PASSWORD="test-password"
+export AAP_PASSWORD=""
 export AAP_API="https://aap.example.test/api/controller/v2"
 export AAP_UI_URL="https://aap.example.test"
 export APD_API_WAIT_ATTEMPTS=2
@@ -66,6 +66,7 @@ fail() {
 ORG_JSON='{"count":1,"results":[{"id":1,"name":"Default"}]}'
 LICENSE_JSON='{"license_info":{"valid_key":true,"license_type":"enterprise"}}'
 NO_LICENSE_JSON='{"license_info":{}}'
+UNLICENSED_JSON='{"license_info":{"valid_key":false,"license_type":"UNLICENSED"}}'
 
 ORGS_CALLS=0
 MOCK_ORGS_BODY="$ORG_JSON"
@@ -120,8 +121,8 @@ if output=$(apd_require_subscription 2>&1); then
   fail "require_subscription_rejects_missing_license"
   echo "$output" >&2
 else
-  if [[ "$output" == *"does not have a registered subscription"* ]] &&
-    [[ "$output" == *"https://aap.example.test"* ]]; then
+  if [[ "$output" == *"does not have a registered subscription"* ]] \
+    && [[ "$output" == *"https://aap.example.test"* ]]; then
     pass "require_subscription_rejects_missing_license"
   else
     fail "require_subscription_rejects_missing_license"
@@ -129,15 +130,28 @@ else
   fi
 fi
 
-if grep -q 'apd_wait_for_controller_api || exit 1' "$DEPLOY_SH" &&
-  grep -q 'apd_require_subscription || exit 1' "$DEPLOY_SH"; then
+MOCK_CONFIG_BODY="$UNLICENSED_JSON"
+if output=$(apd_require_subscription 2>&1); then
+  fail "require_subscription_rejects_unlicensed_response"
+  echo "$output" >&2
+else
+  if [[ "$output" == *"does not have a registered subscription"* ]]; then
+    pass "require_subscription_rejects_unlicensed_response"
+  else
+    fail "require_subscription_rejects_unlicensed_response"
+    echo "$output" >&2
+  fi
+fi
+
+if grep -q 'apd_wait_for_controller_api || exit 1' "$DEPLOY_SH" \
+  && grep -q 'apd_require_subscription || exit 1' "$DEPLOY_SH"; then
   pass "deploy_waits_and_requires_subscription"
 else
   fail "deploy_waits_and_requires_subscription"
 fi
 
-if grep -q 'apd_wait_for_controller_api || return 1' "$LIB_SH" &&
-  grep -q 'apd_require_subscription || return 1' "$LIB_SH"; then
+if grep -q 'apd_wait_for_controller_api || return 1' "$LIB_SH" \
+  && grep -q 'apd_require_subscription || return 1' "$LIB_SH"; then
   pass "init_connection_waits_and_requires_subscription"
 else
   fail "init_connection_waits_and_requires_subscription"

@@ -62,7 +62,7 @@ apd_require_subscription() {
   valid_key=$(echo "$config" | jq -r '.license_info.valid_key // false' 2>/dev/null)
   license_type=$(echo "$config" | jq -r '.license_info.license_type // empty' 2>/dev/null)
 
-  if [ "$valid_key" = "true" ] || [ -n "$license_type" ]; then
+  if [ "$valid_key" = "true" ] && [ "$license_type" != "UNLICENSED" ]; then
     return 0
   fi
 
