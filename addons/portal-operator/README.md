@@ -43,7 +43,7 @@ export GITHUB_APP_ID=12345
 export GITHUB_APP_CLIENT_ID=Iv1.example
 export GITHUB_APP_CLIENT_SECRET=...
 export GITHUB_APP_PRIVATE_KEY_PATH="$HOME/.aap-demo/github-app.pem"
-PORTAL_OPERATOR_GRANT_SCC=true aap-demo enable portal-operator
+aap-demo enable portal-operator
 ```
 
 Inspect the operator-managed resource directly when troubleshooting:
@@ -57,9 +57,16 @@ For a PAT-based integration use `PORTAL_GITHUB_AUTH_TYPE=token` and
 `GITHUB_TOKEN`. The operator is a Red Hat Technology Preview feature in AAP
 2.7; it is not recommended for production service-level workloads.
 
-`PORTAL_OPERATOR_GRANT_SCC=true` is only needed on local or custom OLM setups
-where OLM pods run with a fixed UID that the restricted SCC does not allow. It
-grants the restricted `nonroot-v2` SCC to OLM's `redhat-operators` catalog
-service account and its hardcoded `default` bundle-unpack service account in
-the relevant consumer namespaces. Disable removes the SCC grants and revokes
-the AAP OAuth application and catalog API tokens.
+### SCC and PodSecurity configuration
+
+On MicroShift, OLM catalog pods and the RHDH operator run with a fixed UID
+that falls outside the default restricted PodSecurity Admission range. The
+addon automatically:
+
+- Sets `pod-security.kubernetes.io/enforce=privileged` on `automation-portal`
+  and `openshift-operators`.
+- Grants `anyuid` and `privileged` SCCs to all service accounts in both
+  namespaces.
+
+`disable` removes the SCC grants, strips the PSA labels, and revokes the AAP
+OAuth application and catalog API tokens.
