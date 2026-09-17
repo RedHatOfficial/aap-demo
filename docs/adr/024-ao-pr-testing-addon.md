@@ -46,12 +46,11 @@ The addon owns:
    credential. The image name and EE name are overrideable through
    `AO_PR_TESTING_EE_IMAGE` and `AO_PR_TESTING_EE_NAME`.
 
-The plaibook AAP Job Template receives a dedicated custom AAP credential whose
-service account can only `get` the configured OpenShell TLS Secret. This direct
-Kubernetes API path is limited to sandbox bootstrap; AO agentic stages still
-use the read-only OpenShift MCP integration for deployment evidence. The addon
-requires the OpenShell namespace and TLS Secret to exist before deployment and
-does not weaken sandboxing when they are absent.
+The plaibook AAP Job Template deliberately runs sandboxless in this dev
+profile. Each run uses the ephemeral AAP execution environment, and OpenShell
+is not deployed, configured, or exposed as an addon option. A separate
+production-oriented review deployment must provide the stronger per-review
+sandbox boundary.
 
 Public PR retrieval is performed by plaibook from the AAP Job Template, so the
 addon does not provision a GitHub MCP integration or copy a local GitHub token
@@ -95,10 +94,9 @@ now included in the EE build alongside the OpenAI, Claude, OpenShell, and
 Kubernetes collections. A PR test is not considered complete until the rebuilt
 EE is pushed and the run-scoped plaibook result is available.
 
-Sandboxing remains enabled by default. A missing OpenShell gateway, TLS
-secret, auth bridge, checkout, or run-scoped result is a blocked validation,
-not a reason to disable isolation. Deployment also fails early when the
-configured OpenShell namespace or TLS Secret is absent.
+The dev profile intentionally runs without an OpenShell sandbox. Missing
+checkout, runner, permission, or run-scoped result remains blocked; the AAP EE
+is the execution boundary for this local-only workflow.
 
 ## Architecture
 
@@ -155,9 +153,9 @@ mounted into the cluster.
 - The addon requires AO, Ollama, Helm, AAP, and a reachable local OpenShift
   route.
 - A GitHub-hosted webhook needs a tunnel or relay to reach a local deployment.
-- Complete PR execution still requires a usable plaibook sandbox and
-  PR-specific test runner; until those are available, the workflow must return
-  blocked for unavailable checks.
+- The dev workflow uses the ephemeral AAP EE instead of a per-review sandbox;
+  this is suitable for local testing but not for a shared or production review
+  service.
 - The addon warms the configured Ollama model before execution. AO controls
   the Task Agent timeout at the platform level, so a larger or faster local
   model may still be required for reliable tool calling.
@@ -165,6 +163,15 @@ mounted into the cluster.
   namespace to the local cluster.
 
 ## Alternatives considered
+
+### Run plaibook sandboxless in the dev EE
+
+Accepted for this addon’s local development profile. AAP gives each run an
+ephemeral execution environment, so the workflow can be tested without adding
+the Agent Sandbox/OpenShell stack. OpenShell is intentionally outside this
+addon rather than an optional branch. This mode is not a substitute for
+OpenShell in a shared or production review service because the EE boundary is
+not a per-review sandbox.
 
 ### Add PR testing to `ao`
 
