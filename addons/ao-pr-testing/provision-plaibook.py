@@ -102,6 +102,7 @@ def main() -> int:
     parser.add_argument("--job-template-name", required=True)
     parser.add_argument("--playbook", default="review.yml")
     parser.add_argument("--execution-environment-id", required=True, type=int)
+    parser.add_argument("--job-timeout", default=900, type=int)
     parser.add_argument("--credential-id", type=int)
     parser.add_argument("--extra-vars-json", required=True)
     args = parser.parse_args()
@@ -161,6 +162,7 @@ def main() -> int:
         "playbook": args.playbook,
         "inventory": inventory_id,
         "execution_environment": args.execution_environment_id,
+        "timeout": args.job_timeout,
         "ask_variables_on_launch": True,
         "extra_vars": json.dumps(extra_vars, sort_keys=True),
     }
