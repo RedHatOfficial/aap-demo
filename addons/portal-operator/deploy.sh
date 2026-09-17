@@ -68,6 +68,10 @@ cleanup_aap_credentials() {
 
 remove_operator_sccs_for_namespace() {
   local namespace="$1"
+  kubectl label namespace "$namespace" \
+    pod-security.kubernetes.io/enforce- \
+    pod-security.kubernetes.io/audit- \
+    pod-security.kubernetes.io/warn- >/dev/null 2>&1 || true
   if command -v oc >/dev/null 2>&1; then
     oc adm policy remove-scc-from-group anyuid \
       "system:serviceaccounts:${namespace}" >/dev/null 2>&1 || true
@@ -118,19 +122,18 @@ check_aap() {
 
 setup_namespace() {
   kubectl create namespace "$PORTAL_OPERATOR_NAMESPACE" 2>/dev/null || true
+  # OLM catalog pods run with a fixed UID (e.g. 1001) that falls outside the
+  # restricted PSA range on MicroShift.  Set privileged to allow them; SCCs
+  # still govern what the pods can actually do at runtime.
   kubectl label namespace "$PORTAL_OPERATOR_NAMESPACE" \
-    pod-security.kubernetes.io/enforce=restricted \
-    pod-security.kubernetes.io/audit=restricted \
-    pod-security.kubernetes.io/warn=restricted --overwrite >/dev/null 2>&1 || true
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged --overwrite >/dev/null 2>&1 || true
   grant_operator_sccs_for_namespace "$PORTAL_OPERATOR_NAMESPACE"
 }
 
 grant_operator_sccs_for_namespace() {
   local namespace="$1"
-  if [ "${PORTAL_OPERATOR_GRANT_SCC:-false}" != true ]; then
-    echo "⚠️  OLM may require SCC access in $namespace; set PORTAL_OPERATOR_GRANT_SCC=true to grant anyuid and privileged SCCs to its service accounts"
-    return
-  fi
   if command -v oc >/dev/null 2>&1; then
     oc adm policy add-scc-to-group anyuid \
       "system:serviceaccounts:${namespace}" >/dev/null
@@ -223,6 +226,13 @@ prepare_catalog_source() {
 prepare_rhdh_namespace() {
   local rhdh_catalog_namespace="openshift-marketplace"
   kubectl create namespace openshift-operators 2>/dev/null || true
+  # RHDH operator pods also require privileged PSA + anyuid/privileged SCCs on
+  # MicroShift for the same reason as the portal operator catalog pods.
+  kubectl label namespace openshift-operators \
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged --overwrite >/dev/null 2>&1 || true
+  grant_operator_sccs_for_namespace openshift-operators
   kubectl apply -f - <<'EOF'
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
