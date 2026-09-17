@@ -35,8 +35,11 @@ WORKFLOW_NAME=$(env_value AO_PR_TESTING_WORKFLOW_NAME 'aap-demo PR Validation')
 EXECUTION_ENVIRONMENT_NAME=$(env_value AO_PR_TESTING_EE_NAME plaibook-ee)
 EXECUTION_ENVIRONMENT_IMAGE=$(env_value AO_PR_TESTING_EE_IMAGE quay.io/cferman/plaibook-ee:latest)
 PLAIBOOK_PROJECT_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_NAME 'aap-demo Plaibook Review')
-PLAIBOOK_PROJECT_URL=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_URL https://github.com/aknochow/ansible-plaibook.git)
+PLAIBOOK_PROJECT_URL=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_URL https://github.com/RedHatOfficial/aap-demo.git)
 PLAIBOOK_PROJECT_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_BRANCH main)
+PLAIBOOK_PLAYBOOK=$(env_value AO_PR_TESTING_PLAIBOOK_PLAYBOOK addons/ao-pr-testing/playbooks/plaibook-review-bridge.yml)
+PLAIBOOK_SOURCE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_URL https://github.com/aknochow/ansible-plaibook.git)
+PLAIBOOK_SOURCE_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH main)
 PLAIBOOK_INVENTORY_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_INVENTORY_NAME 'aap-demo Plaibook Review Inventory')
 PLAIBOOK_JOB_TEMPLATE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME 'aap-demo | Plaibook PR Review')
 PLAIBOOK_MODEL=$(env_value AO_PR_TESTING_PLAIBOOK_MODEL qwen2.5:3b)
@@ -116,11 +119,13 @@ ensure_aap_execution_environment() {
 }
 
 ensure_plaibook_job_template() {
-  local aap_route aap_token extra_vars ee_id ee_name_encoded
+  local aap_route ao_route aap_token extra_vars ee_id ee_name_encoded
 
   aap_route=$(wire_aap_route_host)
+  ao_route=$(wire_ao_route_host)
   aap_token=$(wire_aap_gateway_token 'aap-demo plaibook provisioning' write)
   [ -n "$aap_route" ] || die 'AAP route is missing; cannot provision the plaibook job'
+  [ -n "$ao_route" ] || die 'Automation Orchestrator route is missing; cannot provision the plaibook job'
   [ -n "$aap_token" ] || die 'Could not mint an AAP token for plaibook provisioning'
 
   ee_name_encoded=$(jq -rn --arg name "$EXECUTION_ENVIRONMENT_NAME" '$name|@uri')
@@ -133,10 +138,16 @@ ensure_plaibook_job_template() {
     --arg base_url "$PLAIBOOK_OPENAI_BASE_URL" \
     --arg api_key "$PLAIBOOK_OPENAI_API_KEY" \
     --arg model "$PLAIBOOK_MODEL" \
+    --arg source_url "$PLAIBOOK_SOURCE_URL" \
+    --arg source_branch "$PLAIBOOK_SOURCE_BRANCH" \
+    --arg aap_route "$aap_route" \
+    --arg ao_route "$ao_route" \
     '{review_type:"pr",post_results:false,agent_family:"openai",openai_base_url:$base_url,
       openai_api_key:$api_key,review_openai_model:$model,use_sandbox:false,
       review_explore_enabled:false,
-      review_run_ledger_host:"aap-plaibook"}
+      review_run_ledger_host:"aap-plaibook",
+      plaibook_source_url:$source_url,plaibook_source_branch:$source_branch,
+      aap_route_host:$aap_route,ao_route_host:$ao_route}
     ')
 
   PLAIBOOK_JOB_TEMPLATE_ID=$(python3 "$SCRIPT_DIR/provision-plaibook.py" \
@@ -147,6 +158,7 @@ ensure_plaibook_job_template() {
     --project-branch "$PLAIBOOK_PROJECT_BRANCH" \
     --inventory-name "$PLAIBOOK_INVENTORY_NAME" \
     --job-template-name "$PLAIBOOK_JOB_TEMPLATE_NAME" \
+    --playbook "$PLAIBOOK_PLAYBOOK" \
     --execution-environment-id "$ee_id" \
     --extra-vars-json "$extra_vars") \
     || die 'Could not provision the ansible-plaibook AAP job template'
@@ -369,57 +381,30 @@ ensure_webhook_credential() {
 }
 
 build_workflow_definition() {
-  local review_prompt verification_prompt response_schema dollar verification_tool_selections
-  local aap_tool_selections openshift_tool_selections
-  local aap_integration aap_credential mcp_integration mcp_credential
+  local dollar aap_integration aap_credential
   dollar='$'
   aap_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME")
   aap_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME")
-  mcp_integration=$(wire_ao_find_integration_by_name "$WIRE_MCP_INTEGRATION_NAME")
-  mcp_credential=$(wire_ao_find_credential_by_name "$WIRE_MCP_CREDENTIAL_NAME")
-  review_prompt="Return compact JSON matching the requested result schema. The plaibook AAP job ID is $dollar{run_plaibook_review.job_id}, its status is $dollar{run_plaibook_review.job_status}, and its structured artifacts are $dollar{run_plaibook_review.artifacts}. Do not call tools or redo the review. If artifacts are empty or the job is not successful, return status blocked with the missing run-scoped review result in gaps; otherwise preserve the plaibook verdict, score, findings, and metadata in evidence."
-  verification_prompt="You are the final deployment verification stage. The plaibook AAP job ID is $dollar{run_plaibook_review.job_id} and must be passed to jobs_retrieve as an integer. The job status is $dollar{run_plaibook_review.job_status}; its artifacts are $dollar{run_plaibook_review.artifacts}; and the normalized review summary is $dollar{summarize_review.result}. Call jobs_retrieve exactly once with id $dollar{run_plaibook_review.job_id}. Call resources_list exactly once with apiVersion apps/v1, kind Deployment, and namespace automation-orchestrator. Do not call any other tool, do not use a repository name as a job ID, and do not redo the PR review, fetch GitHub data, run kubectl, fetch node or pod metrics, retrieve logs, or perform destructive operations. The running aap-demo environment is evidenced by the returned Deployment list. Missing review artifacts remain blocked, not passed. Return ONLY compact JSON matching the requested result schema with repository RedHatOfficial/aap-demo, pull_request_number 137, head_sha unknown, affected_components [running aap-demo], tests_selected [plaibook AAP review, live deployment lookup], status, evidence, and gaps."
-  response_schema=$(jq -n '{type:"object",required:["repository","pull_request_number","head_sha","affected_components","tests_selected","status","evidence","gaps"],properties:{repository:{type:"string"},pull_request_number:{type:"integer"},head_sha:{type:"string"},affected_components:{type:"array",items:{type:"string"}},tests_selected:{type:"array",items:{type:"string"}},status:{type:"string",enum:["planned","passed","failed","blocked"]},evidence:{type:"array",items:{type:"string"}},gaps:{type:"array",items:{type:"string"}}}}')
-  aap_tool_selections=$(wire_ao_api GET "/integrations/$mcp_integration/tools?limit=100" | wire_ao_list_items | jq -c '[.[] | select(.name == "jobs_retrieve") | .id]')
-  openshift_tool_selections=$(wire_ao_api GET "/integrations/$OPENSHIFT_INTEGRATION_ID/tools?limit=100" | wire_ao_list_items | jq -c '[.[] | select(.name == "resources_list") | .id]')
-  verification_tool_selections=$(jq -n --argjson aap "$aap_tool_selections" --argjson openshift "$openshift_tool_selections" '$aap + $openshift')
-  [ "$(printf '%s' "$verification_tool_selections" | jq 'length')" -gt 0 ] || die 'No selected MCP tool IDs were discovered for the PR workflow'
 
   WORKFLOW_DEFINITION=$(jq -n \
     --arg name "$WORKFLOW_NAME" \
-    --arg description 'PR-driven validation using ansible-plaibook in AAP, followed by bounded AAP and read-only OpenShift verification.' \
+    --arg description 'PR-driven validation using a deterministic plaibook AAP bridge that publishes structured review artifacts.' \
     --arg webhook "$WEBHOOK_PATH" \
     --arg sa "$WEBHOOK_SERVICE_ACCOUNT_ID" \
-    --arg review_prompt "$review_prompt" \
-    --arg verification "$verification_prompt" \
-    --argjson schema "$response_schema" \
-    --arg model "$OLLAMA_MODEL_ID" \
-    --arg credential "$OLLAMA_CREDENTIAL_ID" \
     --argjson job_template "$PLAIBOOK_JOB_TEMPLATE_ID" \
-    --argjson verification_tools "$verification_tool_selections" \
     --arg trigger_repo "$dollar{trigger.repository}" \
     --arg trigger_number "$dollar{trigger.pull_request_number}" \
-    '{schema_version:"2.0.0",name:$name,description:$description,triggers:[{id:"trigger_github_pr",name:"GitHub pull request webhook",type:"webhook_trigger",parameters:{webhook_path:$webhook,authorized_service_account_ids:[$sa]}},{id:"trigger_manual_pr",name:"Run PR validation manually",type:"manual_trigger",parameters:{input_schema:{type:"object",required:["repository","pull_request_number","head_sha"],properties:{repository:{type:"string",description:"GitHub owner/repository"},pull_request_number:{type:"integer"},pull_request_url:{type:"string"},head_sha:{type:"string"},base_ref:{type:"string"}}}}}],nodes:[{id:"run_plaibook_review",name:"Run ansible-plaibook PR review",type:"aap_job_template",parameters:{job_template_id:$job_template,extra_vars:{review_type:"pr",post_results:false,review_targets_raw:($trigger_repo + "#" + $trigger_number)} }},{id:"summarize_review",name:"Normalize plaibook review result",type:"agentic",settings:{timeout:300},parameters:{prompt:$review_prompt,credential_id:$credential,llm_model_id:$model,response_schema:$schema,tool_selection_strategy:"NONE",tool_selections:[]}},{id:"verify_pr",name:"Verify local deployment evidence",type:"agentic",settings:{timeout:300},parameters:{prompt:$verification,credential_id:$credential,llm_model_id:$model,response_schema:$schema,tool_selection_strategy:"SELECTED",tool_selections:$verification_tools}}],edges:[{from:"trigger_github_pr",to:"run_plaibook_review"},{from:"trigger_manual_pr",to:"run_plaibook_review"},{from:"run_plaibook_review",to:"summarize_review"},{from:"summarize_review",to:"verify_pr"}]}')
+    '{schema_version:"2.0.0",name:$name,description:$description,triggers:[{id:"trigger_github_pr",name:"GitHub pull request webhook",type:"webhook_trigger",parameters:{webhook_path:$webhook,authorized_service_account_ids:[$sa]}},{id:"trigger_manual_pr",name:"Run PR validation manually",type:"manual_trigger",parameters:{input_schema:{type:"object",required:["repository","pull_request_number","head_sha"],properties:{repository:{type:"string",description:"GitHub owner/repository"},pull_request_number:{type:"integer"},pull_request_url:{type:"string"},head_sha:{type:"string"},base_ref:{type:"string"}}}}}],nodes:[{id:"run_plaibook_review",name:"Run deterministic plaibook PR review",type:"aap_job_template",parameters:{job_template_id:$job_template,extra_vars:{review_type:"pr",post_results:false,review_targets_raw:($trigger_repo + "#" + $trigger_number)}}}],edges:[{from:"trigger_github_pr",to:"run_plaibook_review"},{from:"trigger_manual_pr",to:"run_plaibook_review"}]}')
 
   [ -n "$PLAIBOOK_JOB_TEMPLATE_ID" ] || die 'Plaibook AAP job template is not available for the PR workflow'
   [ -n "$aap_integration" ] && [ -n "$aap_credential" ] \
     || die 'AAP connection is not available for the PR workflow'
-  [ -n "$mcp_integration" ] && [ -n "$mcp_credential" ] \
-    || die 'AO MCP connection is not available for the PR workflow'
-  [ -n "$OPENSHIFT_INTEGRATION_ID" ] && [ -n "$OPENSHIFT_CREDENTIAL_ID" ] \
-    || die 'OpenShift MCP connection is not available for the PR workflow'
   WORKFLOW_DEFINITION=$(printf '%s' "$WORKFLOW_DEFINITION" | jq \
     --arg aap_integration "$aap_integration" \
     --arg aap_credential "$aap_credential" \
-    --arg mcp_integration "$mcp_integration" \
-    --arg mcp_credential "$mcp_credential" \
-    --arg openshift_integration "$OPENSHIFT_INTEGRATION_ID" \
-    --arg openshift_credential "$OPENSHIFT_CREDENTIAL_ID" \
     '.nodes |= map(
        if .id == "run_plaibook_review" then
          .parameters += {integration_id:$aap_integration,credential_id:$aap_credential}
-       elif .id == "summarize_review" or .id == "verify_pr" then
-         .parameters.integration_connections = [{integration_id:$mcp_integration,credential_id:$mcp_credential},{integration_id:$openshift_integration,credential_id:$openshift_credential}]
        else . end
      )')
 
