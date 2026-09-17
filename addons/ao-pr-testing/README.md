@@ -11,6 +11,8 @@ The addon:
   without a local build or registry credential;
 - creates or updates an AAP Project and Job Template for the local
   plaibook-result bridge;
+- creates a separate AAP publication Job Template so GitHub delivery can be
+  retried without rerunning the model review;
 - installs the official OpenShift MCP server in its own
   openshift-mcp-server namespace;
 - binds the MCP server to the read-only view ClusterRole and disables
@@ -20,9 +22,11 @@ The addon:
 - provides both a GitHub webhook trigger and a manual PR-input trigger;
 - runs the public `aknochow/ansible-plaibook` source inside that bridge,
   keeping GitHub access and review logic out of the AO agent; and
-- publishes the run-scoped review JSON through AAP `set_stats`; and
-- updates one marked GitHub PR comment with the review report when an AAP
-  GitHub Personal Access Token credential is configured; and
+- publishes the run-scoped review JSON and publication payload through AAP
+  `set_stats`; and
+- updates one marked GitHub PR comment with the review report in the separate
+  publication step when an AAP GitHub Personal Access Token credential is
+  configured; and
 - quarantines findings whose files are absent from the current PR diff in one
   marked GitHub issue; and
 - binds the read-only OpenShift MCP with a separate short-lived AO bearer
@@ -67,9 +71,9 @@ The plaibook source defaults to the tested commit
 `b6cf163c427749074c56ea3e3850688a06c70274` rather than mutable `main`. This
 prevents an upstream change from silently changing or stalling the local
 workflow. Set `AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH=main` to deliberately test
-the latest source. The AAP Job Template also has a 900-second timeout by
-default; override it with `AO_PR_TESTING_JOB_TIMEOUT` when testing a slower
-model or source revision.
+the latest source. The AAP Job Template has a 1800-second timeout by default;
+override it with `AO_PR_TESTING_JOB_TIMEOUT` when testing a slower model or
+source revision.
 
 To publish review findings back to the PR, the addon uses the dedicated
 `~/.aap-demo/ao-pr-testing-github-creds.yml` file. On an interactive enable,
@@ -98,10 +102,12 @@ isolation is required.
 The optional plaibook exploration pass is disabled in this dev profile. The
 deterministic checklist and model-backed review lenses still run. The bridge
 reads the run-scoped JSON that plaibook writes inside the ephemeral runner and
-publishes a compact structured result with Ansible `set_stats`, which AO
-exposes as the AAP node's `artifacts` output. There is no agentic normalizer or
-agentic verifier in the critical path, so an empty artifact is a hard bridge
-failure rather than a model interpretation problem.
+publishes a compact structured review payload with Ansible `set_stats`, which
+AO exposes as the AAP node's `artifacts` output. A separate publication node
+consumes that payload and has its own retry policy, so a GitHub permission or
+transient API failure does not rerun the model review. There is no agentic
+normalizer or agentic verifier in the critical path, so an empty artifact is a
+hard bridge failure rather than a model interpretation problem.
 
 The addon warms the configured Ollama model before publishing. AO 2026.8 uses
 its platform Task Agent timeout; a model that cannot produce MCP tool calls
