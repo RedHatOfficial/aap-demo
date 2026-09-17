@@ -47,7 +47,9 @@ PLAIBOOK_SOURCE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_URL https://github
 PLAIBOOK_SOURCE_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_BRANCH b6cf163c427749074c56ea3e3850688a06c70274)
 PLAIBOOK_INVENTORY_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_INVENTORY_NAME 'aap-demo Plaibook Review Inventory')
 PLAIBOOK_JOB_TEMPLATE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME 'aap-demo | Plaibook PR Review')
-PLAIBOOK_JOB_TIMEOUT=$(env_value AO_PR_TESTING_JOB_TIMEOUT 900)
+PLAIBOOK_PUBLISH_JOB_TEMPLATE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_PUBLISH_JOB_TEMPLATE_NAME 'aap-demo | Publish Plaibook PR Review')
+PLAIBOOK_PUBLISH_PLAYBOOK=$(env_value AO_PR_TESTING_PLAIBOOK_PUBLISH_PLAYBOOK addons/ao-pr-testing/playbooks/publish-plaibook-result.yml)
+PLAIBOOK_JOB_TIMEOUT=$(env_value AO_PR_TESTING_JOB_TIMEOUT 1800)
 PLAIBOOK_MODEL=$(env_value AO_PR_TESTING_PLAIBOOK_MODEL qwen2.5:3b)
 PLAIBOOK_OPENAI_BASE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL 'http://ollama.aap-demo-ollama.svc.cluster.local:11434/v1')
 PLAIBOOK_OPENAI_API_KEY=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY ollama)
@@ -183,8 +185,9 @@ ensure_aap_execution_environment() {
   unset aap_password
 }
 
-ensure_plaibook_job_template() {
-  local aap_route ao_route aap_token extra_vars ee_id ee_name_encoded
+provision_plaibook_job_template() {
+  local job_template_name=$1 playbook=$2 extra_vars=$3
+  local aap_route ao_route aap_token ee_id ee_name_encoded
   local -a provision_args
 
   aap_route=$(wire_aap_route_host)
@@ -200,24 +203,6 @@ ensure_plaibook_job_template() {
     | jq -r '.results[0].id // empty')
   [ -n "$ee_id" ] || die "AAP execution environment is missing: $EXECUTION_ENVIRONMENT_NAME"
 
-  extra_vars=$(jq -n \
-    --arg base_url "$PLAIBOOK_OPENAI_BASE_URL" \
-    --arg api_key "$PLAIBOOK_OPENAI_API_KEY" \
-    --arg model "$PLAIBOOK_MODEL" \
-    --arg source_url "$PLAIBOOK_SOURCE_URL" \
-    --arg source_branch "$PLAIBOOK_SOURCE_BRANCH" \
-    --arg aap_route "$aap_route" \
-    --arg ao_route "$ao_route" \
-    --argjson comment_enabled "$([ -n "$GITHUB_CREDENTIAL_ID" ] && printf true || printf false)" \
-    '{review_type:"pr",post_results:false,review_comment_enabled:$comment_enabled,
-      agent_family:"openai",openai_base_url:$base_url,
-      openai_api_key:$api_key,review_openai_model:$model,use_sandbox:false,
-      review_explore_enabled:false,
-      review_run_ledger_host:"aap-plaibook",
-      plaibook_source_url:$source_url,plaibook_source_branch:$source_branch,
-      aap_route_host:$aap_route,ao_route_host:$ao_route}
-    ')
-
   provision_args=(
     --route "$aap_route"
     --token "$aap_token"
@@ -225,8 +210,8 @@ ensure_plaibook_job_template() {
     --project-url "$PLAIBOOK_PROJECT_URL"
     --project-branch "$PLAIBOOK_PROJECT_BRANCH"
     --inventory-name "$PLAIBOOK_INVENTORY_NAME"
-    --job-template-name "$PLAIBOOK_JOB_TEMPLATE_NAME"
-    --playbook "$PLAIBOOK_PLAYBOOK"
+    --job-template-name "$job_template_name"
+    --playbook "$playbook"
     --execution-environment-id "$ee_id"
     --job-timeout "$PLAIBOOK_JOB_TIMEOUT"
   )
@@ -235,12 +220,42 @@ ensure_plaibook_job_template() {
   fi
   provision_args+=(--extra-vars-json "$extra_vars")
 
-  PLAIBOOK_JOB_TEMPLATE_ID=$(python3 "$SCRIPT_DIR/provision-plaibook.py" \
-    "${provision_args[@]}") \
-    || die 'Could not provision the ansible-plaibook AAP job template'
+  python3 "$SCRIPT_DIR/provision-plaibook.py" \
+    "${provision_args[@]}" \
+    || die "Could not provision the ansible-plaibook AAP job template: $job_template_name"
+  unset aap_token extra_vars ee_id
+}
+
+ensure_plaibook_job_template() {
+  local aap_route ao_route review_extra_vars
+
+  aap_route=$(wire_aap_route_host)
+  ao_route=$(wire_ao_route_host)
+  review_extra_vars=$(jq -n \
+    --arg base_url "$PLAIBOOK_OPENAI_BASE_URL" \
+    --arg api_key "$PLAIBOOK_OPENAI_API_KEY" \
+    --arg model "$PLAIBOOK_MODEL" \
+    --arg source_url "$PLAIBOOK_SOURCE_URL" \
+    --arg source_branch "$PLAIBOOK_SOURCE_BRANCH" \
+    --arg aap_route "$aap_route" \
+    --arg ao_route "$ao_route" \
+    '{review_type:"pr",post_results:false,review_comment_enabled:true,
+      agent_family:"openai",openai_base_url:$base_url,
+      openai_api_key:$api_key,review_openai_model:$model,use_sandbox:false,
+      review_explore_enabled:false,
+      review_run_ledger_host:"aap-plaibook",
+      plaibook_source_url:$source_url,plaibook_source_branch:$source_branch,
+      aap_route_host:$aap_route,ao_route_host:$ao_route}')
+
+  PLAIBOOK_JOB_TEMPLATE_ID=$(provision_plaibook_job_template \
+    "$PLAIBOOK_JOB_TEMPLATE_NAME" "$PLAIBOOK_PLAYBOOK" "$review_extra_vars")
   [ -n "$PLAIBOOK_JOB_TEMPLATE_ID" ] || die 'AAP did not return the plaibook job template ID'
   printf '  Plaibook AAP job template ready: %s (ID: %s)\n' "$PLAIBOOK_JOB_TEMPLATE_NAME" "$PLAIBOOK_JOB_TEMPLATE_ID"
-  unset aap_token extra_vars ee_id
+
+  PLAIBOOK_PUBLISH_JOB_TEMPLATE_ID=$(provision_plaibook_job_template \
+    "$PLAIBOOK_PUBLISH_JOB_TEMPLATE_NAME" "$PLAIBOOK_PUBLISH_PLAYBOOK" '{}')
+  [ -n "$PLAIBOOK_PUBLISH_JOB_TEMPLATE_ID" ] || die 'AAP did not return the plaibook publication job template ID'
+  printf '  Plaibook publication AAP job template ready: %s (ID: %s)\n' "$PLAIBOOK_PUBLISH_JOB_TEMPLATE_NAME" "$PLAIBOOK_PUBLISH_JOB_TEMPLATE_ID"
 }
 
 ensure_github_credential() {
@@ -544,18 +559,21 @@ build_workflow_definition() {
     --arg webhook "$WEBHOOK_PATH" \
     --arg sa "$WEBHOOK_SERVICE_ACCOUNT_ID" \
     --argjson job_template "$PLAIBOOK_JOB_TEMPLATE_ID" \
+    --argjson publish_job_template "$PLAIBOOK_PUBLISH_JOB_TEMPLATE_ID" \
     --arg trigger_repo "$dollar{trigger.repository}" \
     --arg trigger_number "$dollar{trigger.pull_request_number}" \
-    '{schema_version:"2.0.0",name:$name,description:$description,triggers:[{id:"trigger_github_pr",name:"GitHub pull request webhook",type:"webhook_trigger",parameters:{webhook_path:$webhook,authorized_service_account_ids:[$sa]}},{id:"trigger_manual_pr",name:"Run PR validation manually",type:"manual_trigger",parameters:{input_schema:{type:"object",required:["repository","pull_request_number","head_sha"],properties:{repository:{type:"string",description:"GitHub owner/repository"},pull_request_number:{type:"integer"},pull_request_url:{type:"string"},head_sha:{type:"string"},base_ref:{type:"string"}}}}}],nodes:[{id:"run_plaibook_review",name:"Run deterministic plaibook PR review",type:"aap_job_template",parameters:{job_template_id:$job_template,extra_vars:{review_type:"pr",post_results:false,github_repository:$trigger_repo,github_pull_request_number:$trigger_number,review_targets_raw:("https://github.com/" + $trigger_repo + "/pull/" + $trigger_number)}}}],edges:[{from:"trigger_github_pr",to:"run_plaibook_review"},{from:"trigger_manual_pr",to:"run_plaibook_review"}]}')
+    --arg publication_payload "$dollar{run_plaibook_review.artifacts.review_publication_payload}" \
+    '{schema_version:"2.0.0",name:$name,description:$description,triggers:[{id:"trigger_github_pr",name:"GitHub pull request webhook",type:"webhook_trigger",parameters:{webhook_path:$webhook,authorized_service_account_ids:[$sa]}},{id:"trigger_manual_pr",name:"Run PR validation manually",type:"manual_trigger",parameters:{input_schema:{type:"object",required:["repository","pull_request_number","head_sha"],properties:{repository:{type:"string",description:"GitHub owner/repository"},pull_request_number:{type:"integer"},pull_request_url:{type:"string"},head_sha:{type:"string"},base_ref:{type:"string"}}}}}],nodes:[{id:"run_plaibook_review",name:"Run deterministic plaibook PR review",type:"aap_job_template",parameters:{job_template_id:$job_template,extra_vars:{review_type:"pr",post_results:false,review_comment_enabled:false,review_prepare_publication:true,github_repository:$trigger_repo,github_pull_request_number:$trigger_number,review_targets_raw:("https://github.com/" + $trigger_repo + "/pull/" + $trigger_number)}}},{id:"publish_plaibook_result",name:"Publish plaibook result to GitHub",type:"aap_job_template",parameters:{job_template_id:$publish_job_template,retry_policy:{max_retries:2,initial_interval:10,max_interval:60,backoff_coefficient:2},extra_vars:{github_repository:$trigger_repo,github_pull_request_number:$trigger_number,review_publication_payload:$publication_payload}}}],edges:[{from:"trigger_github_pr",to:"run_plaibook_review"},{from:"trigger_manual_pr",to:"run_plaibook_review"},{from:"run_plaibook_review",to:"publish_plaibook_result"}]}')
 
   [ -n "$PLAIBOOK_JOB_TEMPLATE_ID" ] || die 'Plaibook AAP job template is not available for the PR workflow'
+  [ -n "$PLAIBOOK_PUBLISH_JOB_TEMPLATE_ID" ] || die 'Plaibook publication AAP job template is not available for the PR workflow'
   [ -n "$aap_integration" ] && [ -n "$aap_credential" ] \
     || die 'AAP connection is not available for the PR workflow'
   WORKFLOW_DEFINITION=$(printf '%s' "$WORKFLOW_DEFINITION" | jq \
     --arg aap_integration "$aap_integration" \
     --arg aap_credential "$aap_credential" \
     '.nodes |= map(
-       if .id == "run_plaibook_review" then
+       if (.id == "run_plaibook_review" or .id == "publish_plaibook_result") then
          .parameters += {integration_id:$aap_integration,credential_id:$aap_credential}
        else . end
      )')
