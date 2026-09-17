@@ -129,6 +129,28 @@ deliberate upstream testing, but mutable `main` is not the default. The bridge
 Job Template defaults to a 900-second timeout so a hung upstream review fails
 boundedly instead of holding an AAP worker indefinitely.
 
+### GitHub PAT bootstrap
+
+GitHub posting is configured during `aap-demo enable ao-pr-testing`, not by the
+AO workflow at review time. The credential resolution order is:
+
+1. `AO_PR_TESTING_GITHUB_TOKEN`, for non-interactive or explicitly managed
+   deployments.
+2. `~/.aap-demo/ao-pr-testing-github-creds.yml`, if it already exists.
+3. An interactive hidden prompt for a fine-grained PAT.
+
+The prompt directs the operator to create a token scoped to
+`RedHatOfficial/aap-demo` with `Issues: Read and write`, `Pull requests: Read
+and write`, and `Metadata: Read-only`. Prompted tokens are written with file
+mode 600. The existing APME GitHub credential file is deliberately not reused,
+because repository read access alone does not grant permission to create or
+update PR comments and issues.
+
+If no token is available in a non-interactive run, the addon removes its stale
+AAP GitHub credential and leaves PR posting disabled. This prevents a previous
+read-only token from being silently reused after a 403 response. The review
+continues and its structured AAP artifacts remain available.
+
 ## Architecture
 
 ```mermaid
