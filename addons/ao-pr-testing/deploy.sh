@@ -96,7 +96,7 @@ ensure_aap_execution_environment() {
   payload=$(jq -n \
     --arg name "$EXECUTION_ENVIRONMENT_NAME" \
     --arg image "$EXECUTION_ENVIRONMENT_IMAGE" \
-    '{name:$name,description:"Managed by the ao-pr-testing addon",image:$image,pull:"missing"}')
+    '{name:$name,description:"Managed by the ao-pr-testing addon",image:$image,pull:"always"}')
 
   if [ -n "$ee_id" ]; then
     result=$(curl -sk -u "admin:${aap_password}" \
