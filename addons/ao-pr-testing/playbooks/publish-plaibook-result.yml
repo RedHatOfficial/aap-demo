@@ -260,11 +260,13 @@
       ansible.builtin.assert:
         that:
           - >-
-            {{ github_review_comment_write is not defined or
-               github_review_comment_write.status | default(0) | int in [200, 201] }}
+              {{ github_review_comment_write is not defined or
+                 github_review_comment_write.skipped | default(false) | bool or
+                 github_review_comment_write.status | default(0) | int in [200, 201] }}
           - >-
-            {{ github_stale_issue_write is not defined or
-               github_stale_issue_write.status | default(0) | int in [200, 201] }}
+              {{ github_stale_issue_write is not defined or
+                 github_stale_issue_write.skipped | default(false) | bool or
+                 github_stale_issue_write.status | default(0) | int in [200, 201] }}
         fail_msg: >-
           GitHub publication failed; retry this publication-only node after
           correcting the credential or repository permissions.
