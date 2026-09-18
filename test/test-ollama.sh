@@ -101,5 +101,12 @@ else
   fail "deployment_allows_slow_image_pull_and_fails_incomplete_setup"
 fi
 
+WIRE_SH="${REPO_ROOT}/includes/addon-wire.sh"
+if awk '/^wire_ao_route_hosts_json\(\)/,/^}/' "$WIRE_SH" | grep -q 'wire_ollama_route_host'; then
+  pass "ao_host_aliases_include_ollama_route"
+else
+  fail "ao_host_aliases_include_ollama_route"
+fi
+
 echo "Passed: $PASSED  Failed: $FAILED"
 [ "$FAILED" -eq 0 ]

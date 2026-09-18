@@ -66,3 +66,30 @@ The new model will be set as the AO default on re-wire.
 kubectl get deployment,pvc -n aap-demo-ollama
 kubectl logs -n aap-demo-ollama -l app=ollama --tail=20
 ```
+
+## Troubleshooting
+
+### AO agent: `Failed to connect to LLM provider`
+
+Ollama is allow-listed for AO SSRF, but MicroShift's DNS operator regularly wipes the CoreDNS
+route rewrite. AAP and MCP stay reachable because those hostnames are pinned in AO pod
+`hostAliases`; the Ollama route must be in that list too.
+
+```bash
+aap-demo diagnose   # restores CoreDNS rewrite when missing
+aap-demo wire       # refreshes AO hostAliases + Ollama integration
+```
+
+Confirm the worker can reach the OpenAI-compatible endpoint:
+
+```bash
+WORKER=$(kubectl get pod -n automation-orchestrator \
+  -l app.kubernetes.io/name=automation-orchestrator-worker \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n automation-orchestrator "$WORKER" -- cat /etc/hosts
+kubectl exec -n automation-orchestrator "$WORKER" -- \
+  curl -sk https://ollama.apps.127.0.0.1.nip.io/v1/models
+```
+
+`/etc/hosts` should map `ollama.apps.127.0.0.1.nip.io` to the ingress router ClusterIP, and
+`/v1/models` should list `qwen2.5:3b`.
