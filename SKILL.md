@@ -188,7 +188,7 @@ See `docs/collection-authentication.md` for detailed guidance on:
 # Run automated health checks
 aap-demo diagnose
 
-# AI-powered root cause analysis (requires claude CLI)
+# AI-powered root cause analysis (Cursor Agent, Cursor CLI, or Claude CLI)
 aap-demo diagnose --ai
 
 # Full diagnostic bundle for complex issues

@@ -284,7 +284,7 @@ QUIET=true                   # Suppress disclaimer
 
 ```bash
 aap-demo diagnose              # Quick health check — identifies common issues
-aap-demo diagnose --ai         # Health check + AI-powered analysis (requires claude CLI)
+aap-demo diagnose --ai         # Health check + AI analysis (Cursor Agent, Cursor CLI, or Claude CLI)
 aap-demo must-gather           # Collect full diagnostics for support
 aap-demo status                # Check cluster and AAP status
 aap-demo ssh                   # SSH into cluster node for debugging
@@ -296,10 +296,12 @@ aap-demo destroy && aap-demo create && aap-demo deploy   # Full rebuild
 labels, AAP CR status, pod health, PVC binding, and DNS. It provides actionable fix
 suggestions for any issues found.
 
-`aap-demo diagnose --ai` runs the same checks, then sends the results plus pod logs
-and events to [Claude](https://claude.ai) for AI-powered root cause analysis and fix
-suggestions. Requires the `claude` CLI
-([Claude Code](https://docs.anthropic.com/en/docs/claude-code)).
+`aap-demo diagnose --ai` runs the same checks, then analyzes the results plus pod logs
+and events with AI. Backend selection (`AAP_DIAGNOSE_AI_BACKEND=auto` by default):
+
+- **Cursor Agent** (`embedded`) — when run inside Cursor (`CURSOR_AGENT=1`); prints context for the active agent
+- **Cursor CLI** — `cursor agent --print --mode ask` (requires `cursor agent login`)
+- **Claude CLI** — fallback via `claude -p` ([Claude Code](https://docs.anthropic.com/en/docs/claude-code))
 
 `aap-demo must-gather` collects aap-demo config, CRC status, storage/PVC/pod/event
 data, and runs the official [AAP must-gather](https://github.com/ansible/aap-must-gather)

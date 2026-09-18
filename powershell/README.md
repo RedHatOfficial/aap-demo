@@ -93,7 +93,7 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo update`              | `git pull` and reinstall launcher                                  |
 | `aap-demo help`                | Show command help                                                  |
 
-`aap-demo diagnose --ai` delegates to Git Bash for Claude-assisted analysis.
+`aap-demo diagnose --ai` delegates to Git Bash for AI-assisted analysis (Cursor Agent, Cursor CLI, or Claude CLI).
 
 ## Environment variables
 
