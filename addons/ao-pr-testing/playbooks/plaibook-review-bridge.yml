@@ -317,24 +317,6 @@
           _Posted by the aap-demo `ao-pr-testing` workflow._
       when: plaibook_result.targets | default([]) | length > 0
 
-    - name: Publish the review payload for a separate GitHub publication step
-      ansible.builtin.set_stats:
-        per_host: false
-        data:
-          review_publication_payload: >-
-            {{ {
-                 'repository': github_repository | default(''),
-                 'pull_request_number': github_pull_request_number | default('') | string,
-                 'verdict': (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN'),
-                 'score': (plaibook_result.targets | default([]) | first).score | default('n/a'),
-                 'commit': (plaibook_result.targets | default([]) | first).commit | default('n/a'),
-                 'current_findings': review_current_findings | default([]),
-                 'stale_findings': review_stale_findings | default([])
-               } | to_json }}
-      when:
-        - bridge_prepare_publication | bool
-        - plaibook_result.targets | default([]) | length > 0
-
     - name: Find the existing marked PR review comment
       ansible.builtin.uri:
         url: >-
@@ -492,3 +474,55 @@
                 status_code: "{{ live_aap_check.status | default(0) | int }}"
               automation_orchestrator_route:
                 status_code: "{{ live_ao_check.status | default(0) | int }}"
+
+    # Keep the publication payload rich enough for the GitHub comment to show
+    # current-diff findings and live smoke evidence. Stale findings remain in
+    # their dedicated issue and are deliberately not copied into the comment.
+    - name: Publish the complete review payload for a separate GitHub publication step
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          review_publication_payload: >-
+            {{ {
+                 'repository': github_repository | default(''),
+                 'pull_request_number': github_pull_request_number | default('') | string,
+                 'verdict': (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN'),
+                 'score': (plaibook_result.targets | default([]) | first).score | default('n/a'),
+                 'commit': (plaibook_result.targets | default([]) | first).commit | default('n/a'),
+                 'current_findings': review_current_findings | default([]),
+                 'stale_findings': review_stale_findings | default([]),
+                 'review_metadata': {
+                   'status': plaibook_result.status | default('failed'),
+                   'return_code': plaibook_process.rc | default(1) | int,
+                   'run_id': plaibook_result.run_id | default(''),
+                   'branch': plaibook_result.branch | default(''),
+                   'host': plaibook_result.host | default(''),
+                   'duration_seconds': plaibook_result.duration_seconds | default(0),
+                   'agents_dispatched': plaibook_result.agents_dispatched | default(0),
+                   'phase_durations_seconds': plaibook_result.phase_durations_seconds | default({}),
+                   'guardian_scan_available': plaibook_result.guardian_scan_available | default(false),
+                   'target': (plaibook_result.targets | default([]) | first).target | default(''),
+                   'target_status': (plaibook_result.targets | default([]) | first).status | default(''),
+                   'target_verdict': (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN'),
+                   'target_score': (plaibook_result.targets | default([]) | first).score | default('n/a')
+                 },
+                 'live_smoke': {
+                   'status': (
+                     'passed'
+                     if (live_aap_check.status | default(0) | int == 200)
+                     and (live_ao_check.status | default(0) | int in [200, 307])
+                     else 'failed'
+                   ),
+                   'checks': {
+                     'aap_controller_route': {
+                       'status_code': live_aap_check.status | default(0) | int
+                     },
+                     'automation_orchestrator_route': {
+                       'status_code': live_ao_check.status | default(0) | int
+                     }
+                   }
+                 }
+               } | to_json }}
+      when:
+        - bridge_prepare_publication | bool
+        - plaibook_result.targets | default([]) | length > 0

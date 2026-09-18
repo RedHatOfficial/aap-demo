@@ -159,6 +159,26 @@
           Stale findings were quarantined in [this issue]({{ github_stale_issue_url }}).
           {% endif %}
 
+          ### Live smoke checks
+
+          **Status:** {{ publication_payload.live_smoke.status | default('not reported') }}
+
+          {% for check_name, check in (publication_payload.live_smoke.checks | default({})).items() %}
+          - `{{ check_name }}`: HTTP {{ check.status_code | default('n/a') }}
+          {% endfor %}
+
+          <details>
+          <summary>Detailed current-diff findings</summary>
+
+          <pre>{{ publication_payload.current_findings | default([]) | to_nice_json }}</pre>
+          </details>
+
+          <details>
+          <summary>Review execution metadata</summary>
+
+          <pre>{{ publication_payload.review_metadata | default({}) | to_nice_json }}</pre>
+          </details>
+
           _Posted by the aap-demo `ao-pr-testing` workflow._
       when:
         - publication_token | length > 0
