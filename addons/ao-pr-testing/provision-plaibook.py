@@ -104,6 +104,7 @@ def main() -> int:
     parser.add_argument("--execution-environment-id", required=True, type=int)
     parser.add_argument("--job-timeout", default=900, type=int)
     parser.add_argument("--credential-id", type=int)
+    parser.add_argument("--project-credential-id", type=int)
     parser.add_argument("--extra-vars-json", required=True)
     args = parser.parse_args()
 
@@ -127,6 +128,8 @@ def main() -> int:
         "scm_update_on_launch": True,
         "scm_delete_on_update": False,
     }
+    if args.project_credential_id:
+        project_payload["credential"] = args.project_credential_id
     project = api.find("projects", args.project_name)
     if project:
         project_id = project["id"]

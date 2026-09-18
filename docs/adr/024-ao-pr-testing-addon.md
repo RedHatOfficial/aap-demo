@@ -154,7 +154,10 @@ HTTP 422 before creating anything when the token has write authorization. A
 401/403 rejects the stored token and causes an interactive enable to prompt
 again. The existing APME GitHub credential file is deliberately not reused,
 because repository read access alone does not grant permission to create or
-update PR comments and issues.
+update PR comments and issues. When the plaibook project points to a fork or
+private repository, the same PAT is additionally stored in AAP's built-in
+GitHub Personal Access Token credential type and attached to the project so
+the controller can clone the source branch.
 
 If no token is available in a non-interactive run, the addon removes its stale
 AAP GitHub credential and leaves PR posting disabled. This prevents a previous
