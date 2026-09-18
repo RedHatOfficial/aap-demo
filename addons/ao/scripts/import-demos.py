@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import ssl
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -24,6 +25,45 @@ from typing import Any
 
 UPSTREAM_REPOSITORY = "https://github.com/ansible-tmm/aap-orchestrator-demos"
 UPSTREAM_REF = "abcc1a1482a"
+
+
+def download_archive(url: str, destination: Path) -> None:
+    """Download a public archive using the host's native TLS trust."""
+    download_env = os.environ.copy()
+    # The local ingress CA is valid only for the MicroShift route. If it was
+    # exported as a standalone bundle, passing it to curl replaces the host's
+    # public/corporate roots and makes GitHub certificate validation fail.
+    for variable in ("CURL_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+        value = download_env.get(variable)
+        if value and Path(value).name == "crc-ingress-ca.crt":
+            download_env.pop(variable)
+    try:
+        subprocess.run(
+            [
+                "curl",
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--retry",
+                "3",
+                "--output",
+                str(destination),
+                url,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            env=download_env,
+        )
+    except FileNotFoundError:
+        # curl is part of the aap-demo prerequisites, but retain a portable
+        # fallback for minimal Python-only test environments.
+        with urllib.request.urlopen(url, timeout=60) as response:
+            destination.write_bytes(response.read())
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip() or f"curl exited with status {exc.returncode}"
+        raise RuntimeError(detail) from exc
 
 
 def request(base: str, token: str, method: str, path: str, body: Any = None) -> Any:
@@ -66,8 +106,7 @@ def workflow_sources(source_dir: str | None, repository: str, ref: str):
     with tempfile.TemporaryDirectory(prefix="aap-demo-ao-demos-") as temp_dir:
         archive_path = Path(temp_dir) / "demos.tar.gz"
         try:
-            with urllib.request.urlopen(archive_url, timeout=60) as response:
-                archive_path.write_bytes(response.read())
+            download_archive(archive_url, archive_path)
             extract_dir = Path(temp_dir) / "source"
             extract_dir.mkdir()
             with tarfile.open(archive_path, "r:gz") as archive:
@@ -77,7 +116,7 @@ def workflow_sources(source_dir: str | None, repository: str, ref: str):
                     if target != root and root not in target.parents:
                         raise RuntimeError("upstream demo archive contains an unsafe path")
                 archive.extractall(extract_dir)
-        except (OSError, tarfile.TarError, urllib.error.URLError) as exc:
+        except (OSError, RuntimeError, tarfile.TarError, urllib.error.URLError) as exc:
             raise RuntimeError(f"unable to download upstream demos from {archive_url}: {exc}") from exc
 
         roots = [path for path in extract_dir.iterdir() if path.is_dir()]
@@ -92,6 +131,9 @@ def normalize(
     aap_integration_id: str | None = None,
     fallback_name: str | None = None,
     agent_credential_id: str | None = None,
+    agent_model_id: str | None = None,
+    mcp_integration_id: str | None = None,
+    mcp_credential_id: str | None = None,
     webhook_service_account_id: str | None = None,
 ) -> dict[str, Any]:
     workflow = dict(document)
@@ -123,12 +165,26 @@ def normalize(
                 parameters.pop("tool_selections", None)
             elif "tool_selection_strategy" not in parameters:
                 parameters["tool_selection_strategy"] = "ALL"
-            # Upstream exports contain environment-specific LLM credential IDs.
-            # AO validates those strings but rejects unknown IDs on create.
+            # Upstream exports contain environment-specific LLM credential IDs and
+            # model names (e.g. "claude-sonnet-4-6") that AO rejects when the local
+            # provider is Ollama.  Clear stale fields and re-bind using the correct
+            # AO schema: credential_id + llm_model_id (UUID of the LLMModel record).
+            parameters.pop("model", None)
             if agent_credential_id:
                 parameters["credential_id"] = agent_credential_id
+                if agent_model_id:
+                    parameters["llm_model_id"] = agent_model_id
+                else:
+                    parameters.pop("llm_model_id", None)
             else:
                 parameters.pop("credential_id", None)
+                parameters.pop("llm_model_id", None)
+            # Bind the MCP server credential via integration_connections so the
+            # "Connections" panel in the workflow builder is pre-populated.
+            if mcp_integration_id and mcp_credential_id and parameters.get("tool_selection_strategy"):
+                parameters["integration_connections"] = [
+                    {"integration_id": mcp_integration_id, "credential_id": mcp_credential_id}
+                ]
         elif node.get("type") == "aap_job_template":
             # Always bind AAP nodes to the credential created by aap-demo. The
             # upstream exports may contain a valid-looking UUID from another AO.
@@ -204,6 +260,9 @@ def import_workflows(args: argparse.Namespace) -> int:
                 args.aap_integration_id,
                 source.stem,
                 args.agent_credential_id,
+                args.agent_model_id,
+                args.mcp_integration_id,
+                args.mcp_credential_id,
                 webhook_service_account_id,
             )
             name = workflow.get("name") or source.stem
@@ -251,6 +310,9 @@ def main() -> int:
     parser.add_argument("--aap-credential-id", required=True)
     parser.add_argument("--aap-integration-id")
     parser.add_argument("--agent-credential-id")
+    parser.add_argument("--agent-model-id", help="AO LLMModel UUID to set as llm_model_id on agentic nodes")
+    parser.add_argument("--mcp-integration-id", help="AO MCP integration ID for tool connection credentials")
+    parser.add_argument("--mcp-credential-id", help="AO MCP credential ID for tool connection credentials")
     parser.add_argument("--project-id")
     args = parser.parse_args()
     try:

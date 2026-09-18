@@ -41,6 +41,12 @@ jobs:
       - name: Run core command tests
         run: ./test/test-core-commands.sh
 
+      - name: Run Ollama addon tests
+        run: ./test/test-ollama.sh
+
+      - name: Run product-demos API readiness tests
+        run: ./test/test-product-demos-api.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

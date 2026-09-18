@@ -410,10 +410,16 @@ apply_operator_olm_manifests() {
     -e "s|__CATALOG_NAMESPACE__|${CATALOG_NAMESPACE}|g" \
     -e "s|__OPERATOR_CHANNEL__|${OPERATOR_CHANNEL}|g" \
     "${MANIFESTS_DIR}/operator-subscription.yaml" | kubectl apply -f -
+  sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+    "${MANIFESTS_DIR}/operator-rbac.yaml" | kubectl apply -f -
 }
 
 cleanup_ao_olm_state() {
   local _ns
+  kubectl delete clusterrolebinding automation-orchestrator-operator-cluster-rolebinding \
+    --ignore-not-found --wait=false 2>/dev/null || true
+  kubectl delete clusterrole automation-orchestrator-operator-cluster-role \
+    --ignore-not-found --wait=false 2>/dev/null || true
   for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE" "$AAP_NAMESPACE"; do
     [ -z "$_ns" ] && continue
     kubectl delete subscription automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true
@@ -711,6 +717,8 @@ sync_ao_demos() {
   # shellcheck source=../../includes/addon-wire.sh
   source "${REPO_ROOT}/includes/addon-wire.sh"
   _token=$(wire_ao_login_token 2>/dev/null || true)
+  # Reuse the login token for subsequent wire_ao_api calls in this function.
+  AO_ACCESS_TOKEN="$_token"
   _aap_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
   _aap_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
   _project=$(wire_ao_default_project_id 2>/dev/null || true)
@@ -729,8 +737,33 @@ sync_ao_demos() {
     --repository "${AO_DEMOS_REPOSITORY:-https://github.com/ansible-tmm/aap-orchestrator-demos}"
     --ref "${AO_DEMOS_REF:-abcc1a1482a}"
   )
-  if [ -n "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-    _import_args+=(--agent-credential-id "$AO_AGENT_CREDENTIAL_ID")
+  local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+  if [ -z "$_agent_cred" ] && wire_ollama_deployed; then
+    _agent_cred=$(wire_ao_find_credential_by_name "aap-demo Ollama" 2>/dev/null || true)
+  fi
+  if [ -n "$_agent_cred" ]; then
+    _import_args+=(--agent-credential-id "$_agent_cred")
+    if wire_ollama_deployed && [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
+      local _ollama_integration _ollama_model_id
+      _ollama_integration=$(wire_ao_find_integration_by_name "aap-demo Ollama" 2>/dev/null || true)
+      if [ -n "$_ollama_integration" ]; then
+        _ollama_model_id=$(wire_ao_api GET \
+          "/integrations/${_ollama_integration}/models?limit=50" 2>/dev/null \
+          | wire_ao_list_items \
+          | jq -r --arg m "${WIRE_OLLAMA_MODEL:-qwen2.5:3b}" \
+            '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true)
+      fi
+      if [ -n "${_ollama_model_id:-}" ]; then
+        _import_args+=(--agent-model-id "$_ollama_model_id")
+      fi
+    fi
+  fi
+
+  local _mcp_credential _mcp_integration
+  _mcp_credential=$(wire_ao_find_credential_by_name "$WIRE_MCP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _mcp_integration=$(wire_ao_find_integration_by_name "$WIRE_MCP_INTEGRATION_NAME" 2>/dev/null || true)
+  if [ -n "$_mcp_credential" ] && [ -n "$_mcp_integration" ]; then
+    _import_args+=(--mcp-credential-id "$_mcp_credential" --mcp-integration-id "$_mcp_integration")
   fi
   if [ -n "$_project" ]; then
     _import_args+=(--project-id "$_project")
@@ -774,12 +807,18 @@ provision_aap_demos() {
   else
     echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
   fi
+  local _provision_rc
   if python3 "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
     if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
       AO_AAP_SYNC_RAN=1
     fi
   else
-    echo "  ⚠ AAP demo provisioning or AO sync job failed"
+    _provision_rc=$?
+    if [ "$_provision_rc" -eq 2 ]; then
+      echo "  Continuing with direct AO workflow import."
+    else
+      echo "  ⚠ AAP demo provisioning or AO sync job failed"
+    fi
   fi
 }
 
@@ -1005,6 +1044,8 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   if [ -n "$PURGE_DATA" ]; then
     echo "  Purging retained AO database and credentials..."
     ao_admin_password_forget
+    kubectl delete secret "$AO_ADMIN_PASSWORD_SECRET" -n "$NAMESPACE" \
+      --ignore-not-found >/dev/null
     reset_ao_postgres_storage
   else
     ao_admin_password_save "$NAMESPACE"
@@ -1042,8 +1083,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     fi
     if [ "$_i" -eq 60 ]; then
       echo ""
-      echo "  ⚠ Namespace still terminating after 5 minutes — continuing anyway"
+      echo "ERROR: Namespace still terminating after 5 minutes" >&2
       echo "  Check: kubectl get namespace $NAMESPACE"
+      exit 1
     fi
     sleep 5
   done
@@ -1142,9 +1184,8 @@ kubectl create namespace "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
 if [ -z "$FORCE" ]; then
-  ao_admin_password_require_for_retained_database "$NAMESPACE"
+  ao_admin_password_ensure "$NAMESPACE"
 fi
-ao_admin_password_restore "$NAMESPACE"
 echo "✓ Namespace ready"
 
 # --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---

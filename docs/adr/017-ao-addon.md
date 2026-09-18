@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-07-15 (updated 2026-08-21)
+**Date**: 2026-07-15 (updated 2026-09-16)
 
 **Authors**: Chad Ferman
 
@@ -75,6 +75,18 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
   **AAP** and **MCP Server** integrations automatically after enable and deploy (see ADR-023).
   **`mcp-server` is a hard dependency of `ao`** — `aap-demo enable ao` enables MCP first.
 
+### Concurrent workflow synchronization (2026-09-16)
+
+The AAP control job synchronizes the pinned AO workflow exports concurrently. The preparation
+play creates one isolated local worker host per export; a second play runs the existing
+per-workflow normalization and AO API upsert tasks with Ansible's `free` strategy. The control
+job template is configured for ten forks, matching the current ten-export bundle.
+
+This keeps normalization facts isolated to one workflow, prevents one export's triggers or nodes
+from leaking into another, and avoids unnecessary one-by-one API waits. Completion order is
+intentionally nondeterministic, and effective concurrency remains bounded by the AAP fork limit
+and AO API capacity.
+
 ## Consequences
 
 ### Positive
@@ -139,3 +151,4 @@ See [ADR-023](023-addon-auto-wiring.md) for the full auto-wiring design.
 | 2026-08-26 | `mcp-server` is a required dependency of `ao`; enable ao installs MCP and wire fails if MCP integration is missing |
 | 2026-09-01 | Local AAP integration: restore CoreDNS route rewrite when missing so allowlisted gateway hosts actually resolve inside AO pods |
 | 2026-09-11 | AO pod `hostAliases` for AAP/AO/MCP route hosts → ingress router, so Launch AAP SSRF does not depend on CoreDNS surviving the DNS operator |
+| 2026-09-16 | AAP control-job workflow synchronization uses isolated worker hosts, Ansible `free` strategy, and ten forks for concurrent AO upserts |
