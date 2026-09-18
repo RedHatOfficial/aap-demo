@@ -616,7 +616,8 @@ cpu_preflight() {
     fi
     case "$(echo "${scale_confirm:-n}" | tr '[:upper:]' '[:lower:]')" in
       y | yes)
-        kubectl scale deployment/ollama -n aap-demo-ollama --replicas=0
+        kubectl scale deployment/ollama -n aap-demo-ollama --replicas=0 \
+          || { echo "⚠  Ollama scale-down failed; continuing anyway"; }
         echo "✓ Ollama scaled to 0 (freeing ~1000m)"
         requested_m=$(kubectl get pods -A -o json 2>/dev/null \
           | jq '[.items[] | select(.status.phase == "Running")
