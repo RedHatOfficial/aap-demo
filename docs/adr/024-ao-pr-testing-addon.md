@@ -148,7 +148,11 @@ AO workflow at review time. The credential resolution order is:
 The prompt directs the operator to create a token scoped to
 `RedHatOfficial/aap-demo` with `Issues: Read and write`, `Pull requests: Read
 and write`, and `Metadata: Read-only`. Prompted tokens are written with file
-mode 600. The existing APME GitHub credential file is deliberately not reused,
+mode 600. During enable, the addon validates the token against GitHub's issue
+write endpoint using an intentionally invalid empty payload; GitHub returns
+HTTP 422 before creating anything when the token has write authorization. A
+401/403 rejects the stored token and causes an interactive enable to prompt
+again. The existing APME GitHub credential file is deliberately not reused,
 because repository read access alone does not grant permission to create or
 update PR comments and issues.
 

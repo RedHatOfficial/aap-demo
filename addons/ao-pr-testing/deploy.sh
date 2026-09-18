@@ -33,12 +33,15 @@ OPENSHIFT_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_OPENSHIFT_CREDENTIAL_NAME 'a
 GITHUB_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_NAME 'aap-demo GitHub PR Comment Token')
 GITHUB_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_TYPE_NAME 'aap-demo GitHub PR Comment Token')
 GITHUB_TOKEN=$(env_value AO_PR_TESTING_GITHUB_TOKEN '')
+GITHUB_REPOSITORY=$(env_value AO_PR_TESTING_GITHUB_REPOSITORY 'RedHatOfficial/aap-demo')
 WORKFLOW_NAME=$(env_value AO_PR_TESTING_WORKFLOW_NAME 'aap-demo PR Validation')
 EXECUTION_ENVIRONMENT_NAME=$(env_value AO_PR_TESTING_EE_NAME plaibook-ee)
 EXECUTION_ENVIRONMENT_IMAGE=$(env_value AO_PR_TESTING_EE_IMAGE quay.io/cferman/plaibook-ee:latest)
 PLAIBOOK_PROJECT_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_NAME 'aap-demo Plaibook Review')
 PLAIBOOK_PROJECT_URL=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_URL https://github.com/RedHatOfficial/aap-demo.git)
-PLAIBOOK_PROJECT_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_BRANCH main)
+LOCAL_PROJECT_BRANCH=$(git -C "$REPO_ROOT" branch --show-current 2>/dev/null || true)
+[ -n "$LOCAL_PROJECT_BRANCH" ] || LOCAL_PROJECT_BRANCH=main
+PLAIBOOK_PROJECT_BRANCH=$(env_value AO_PR_TESTING_PLAIBOOK_PROJECT_BRANCH "$LOCAL_PROJECT_BRANCH")
 PLAIBOOK_PLAYBOOK=$(env_value AO_PR_TESTING_PLAIBOOK_PLAYBOOK addons/ao-pr-testing/playbooks/plaibook-review-bridge.yml)
 PLAIBOOK_SOURCE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_SOURCE_URL https://github.com/aknochow/ansible-plaibook.git)
 # Pin mutable upstream source to the last revision verified in this dev
@@ -92,9 +95,35 @@ warn() {
   printf 'WARNING: %s\n' "$*" >&2
 }
 
+github_token_can_write() {
+  local response_status
+
+  [ -n "$GITHUB_TOKEN" ] || return 1
+
+  # GitHub has no permission-only endpoint for fine-grained PATs. Posting an
+  # empty issue payload exercises the same Issues: write authorization needed
+  # for stale-finding issues and PR comments, but GitHub rejects it before any
+  # resource is created with HTTP 422. A 401/403 means the token is invalid or
+  # lacks the required repository write permission.
+  response_status=$(jq -n '{}' | curl -sk -o /dev/null -w '%{http_code}' \
+    -X POST \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    -H 'Content-Type: application/json' \
+    --data-binary @- \
+    "https://api.github.com/repos/${GITHUB_REPOSITORY}/issues")
+
+  [ "$response_status" = 422 ]
+}
+
 prompt_github_token() {
   if [ -n "$GITHUB_TOKEN" ]; then
-    return 0
+    if github_token_can_write; then
+      return 0
+    fi
+    warn "The configured GitHub PAT cannot write issues or PR comments for ${GITHUB_REPOSITORY}"
+    GITHUB_TOKEN=
   fi
 
   if [ ! -t 0 ]; then
@@ -114,23 +143,31 @@ prompt_github_token() {
   printf 'Leave it blank to continue without GitHub posting.\n\n'
 
   local github_token_input original_umask
-  read -r -s -p 'GitHub PAT (hidden): ' github_token_input
-  printf '\n'
-  if [ -z "$github_token_input" ]; then
-    warn 'No GitHub PAT supplied; PR comments and stale-finding issues are disabled'
-    return 0
-  fi
+  while true; do
+    read -r -s -p 'GitHub PAT (hidden): ' github_token_input
+    printf '\n'
+    if [ -z "$github_token_input" ]; then
+      warn 'No GitHub PAT supplied; PR comments and stale-finding issues are disabled'
+      return 0
+    fi
 
-  GITHUB_TOKEN=$github_token_input
-  unset github_token_input
-  mkdir -p "$(dirname "$GITHUB_CREDENTIALS_FILE")"
-  original_umask=$(umask)
-  umask 077
-  printf '%s\n' '---' '# GitHub PAT for AO PR-testing comments' \
-    "github_token: \"$GITHUB_TOKEN\"" >"$GITHUB_CREDENTIALS_FILE"
-  umask "$original_umask"
-  chmod 600 "$GITHUB_CREDENTIALS_FILE"
-  printf '  Saved GitHub PAT to %s\n' "$GITHUB_CREDENTIALS_FILE"
+    GITHUB_TOKEN=$github_token_input
+    unset github_token_input
+    if github_token_can_write; then
+      mkdir -p "$(dirname "$GITHUB_CREDENTIALS_FILE")"
+      original_umask=$(umask)
+      umask 077
+      printf '%s\n' '---' '# GitHub PAT for AO PR-testing comments' \
+        "github_token: \"$GITHUB_TOKEN\"" >"$GITHUB_CREDENTIALS_FILE"
+      umask "$original_umask"
+      chmod 600 "$GITHUB_CREDENTIALS_FILE"
+      printf '  Saved GitHub PAT to %s\n' "$GITHUB_CREDENTIALS_FILE"
+      return 0
+    fi
+
+    warn "That PAT cannot write issues or PR comments for ${GITHUB_REPOSITORY}; create a fine-grained PAT with Issues and Pull requests read/write access"
+    GITHUB_TOKEN=
+  done
 }
 
 require_tools() {

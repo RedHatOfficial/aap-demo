@@ -89,9 +89,11 @@ The addon stores the prompted value only in the local mode-600 file and in an
 addon-owned AAP custom credential, then injects it into the ephemeral review EE
 as `GITHUB_TOKEN`; it is not passed through AO workflow variables. In
 non-interactive runs, set `AO_PR_TESTING_GITHUB_TOKEN` or pre-create the
-credential file. Without a token, comments and stale-finding issues are
-skipped while the AAP artifacts remain available. Reruns update the marked
-comment and issue instead of creating duplicates.
+credential file. During enable, the addon performs a no-side-effect GitHub
+write-permission check; a stored token that receives a permission failure is
+rejected and the interactive prompt is shown again. Without a token, comments
+and stale-finding issues are skipped while the AAP artifacts remain available.
+Reruns update the marked comment and issue instead of creating duplicates.
 
 The default review model is `qwen2.5:3b` through the local Ollama service.
 This dev addon deliberately runs plaibook sandboxless inside the ephemeral AAP
@@ -120,10 +122,8 @@ From the local shell—or from an LLM session with access to the workspace—run
 
 The helper exchanges the addon-owned AO service-account client credentials for
 a short-lived access token, then submits repository, pull request number, and
-head SHA to the workflow. AO launches the bridge AAP Job Template with the
-repository and PR number. The terminal AAP node exposes the plaibook verdict,
- scores, findings, comment status, and run status directly in its `artifacts`
- output.
+head SHA to the PR validation workflow. AO launches the deterministic AAP
+bridge, and the publication node posts the structured result to GitHub.
 
 ## Make the OpenShift MCP available to Codex
 
