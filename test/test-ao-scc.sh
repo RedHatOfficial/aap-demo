@@ -16,9 +16,9 @@ cat >"$TMP_DIR/kubectl" <<'MOCK'
 case "$*" in
   *"get pods"*"metadata.name"*) echo "redhat-operators-1" ;;
   *"get pods"*"status.phase"*) echo "Pending" ;;
-  *"get pods"*"PodScheduled"*) echo "Failed: pods redhat-operators-1 is forbidden: unable to validate against any security context constraint" ;;
-  *"get pod redhat-operators-1"*"serviceAccountName"*) echo "default" ;;
-  *"get events"*) echo "FailedCreate: unable to validate against any security context constraint" ;;
+  *"get pods"*"PodScheduled"*) if [ "${MOCK_MODE:-}" = "image-pull" ]; then echo ""; else echo "Failed: pods redhat-operators-1 is forbidden: unable to validate against any security context constraint"; fi ;;
+  *"get pod redhat-operators-1"*"serviceAccountName"*) echo "redhat-operators" ;;
+  *"get events"*) if [ "${MOCK_MODE:-}" = "image-pull" ]; then echo "BackOff: Back-off pulling image"; else echo "FailedCreate: unable to validate against any security context constraint"; fi ;;
   *) exit 0 ;;
 esac
 MOCK
@@ -47,11 +47,18 @@ else
 fi
 
 output=$(report_catalog_scc_failure automation-orchestrator 2>&1)
-if echo "$output" | grep -q "ServiceAccount: default" \
-  && echo "$output" | grep -q "oc adm policy add-scc-to-user anyuid -z default"; then
+if echo "$output" | grep -q "ServiceAccount: redhat-operators" \
+  && echo "$output" | grep -q "oc adm policy add-scc-to-user anyuid -z redhat-operators"; then
   echo "✓ reports ServiceAccount and remediation"
 else
   echo "✗ missing ServiceAccount or remediation in SCC failure report"
   echo "$output"
   exit 1
+fi
+export MOCK_MODE=image-pull
+if catalog_pod_has_scc_admission_failure automation-orchestrator; then
+  echo "✗ misclassified image-pull failure as SCC admission failure"
+  exit 1
+else
+  echo "✓ does not misclassify image-pull failure"
 fi

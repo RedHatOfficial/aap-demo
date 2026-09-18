@@ -206,7 +206,7 @@ report_catalog_scc_failure() {
     echo "$_detail" | sed 's/^/    /' >&2
   fi
   echo "  Grant the required SCC to this ServiceAccount, then retry:" >&2
-  echo "    oc adm policy add-scc-to-user anyuid -z ${_service_account:-default} -n ${_catalog_ns}" >&2
+  echo "    oc adm policy add-scc-to-user anyuid -z ${_service_account:-${AO_CATALOG_SERVICE_ACCOUNT:-redhat-operators}} -n ${_catalog_ns}" >&2
 }
 
 maybe_recover_catalog_pull() {
