@@ -151,21 +151,6 @@ grant_operator_sccs_for_namespace() {
     --group="system:serviceaccounts:${namespace}" >/dev/null 2>/dev/null || true
 }
 
-require_amd64_cluster() {
-  local cluster_arch
-  cluster_arch="$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true)"
-  if [ -z "$cluster_arch" ]; then
-    echo "❌ Could not detect cluster architecture; Automation Portal Operator requires amd64" >&2
-    exit 1
-  fi
-  echo "✓ Cluster architecture: $cluster_arch"
-  [ "$cluster_arch" = amd64 ] || {
-    echo "❌ Automation Portal Operator currently supports amd64 only; detected $cluster_arch" >&2
-    echo "   Use 'aap-demo enable portal' for the ARM64-compatible Helm portal path." >&2
-    exit 1
-  }
-}
-
 copy_catalog_source() {
   local target_namespace="$1"
   local catalog_image catalog_secret
@@ -553,6 +538,32 @@ wait_for_portal() {
     -d "{\"redirect_uris\":\"https://$PORTAL_ROUTE/api/auth/rhaap/handler/frame\"}" >/dev/null
 }
 
+# Convert a Kubernetes CPU quantity string to an integer number of millicores.
+# Handles "8" (cores) and "500m" (millicores) forms.
+_parse_cpu_m() {
+  local val="$1"
+  if [[ "$val" == *m ]]; then
+    echo "${val%m}"
+  else
+    echo $((val * 1000))
+  fi
+}
+
+require_amd64_cluster() {
+  local cluster_arch
+  cluster_arch="$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true)"
+  if [ -z "$cluster_arch" ]; then
+    echo "❌ Could not detect cluster architecture; Automation Portal Operator requires amd64" >&2
+    exit 1
+  fi
+  echo "✓ Cluster architecture: $cluster_arch"
+  [ "$cluster_arch" = amd64 ] || {
+    echo "❌ Automation Portal Operator currently supports amd64 only; detected $cluster_arch" >&2
+    echo "   Use 'aap-demo enable portal' for the ARM64-compatible Helm portal path." >&2
+    exit 1
+  }
+}
+
 main() {
   require_tools
   kubectl cluster-info >/dev/null 2>&1 || {
@@ -575,4 +586,6 @@ main() {
   echo "AAP is the OIDC/OAuth provider; redirect URI updated for the deployed route."
 }
 
-main
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main
+fi
