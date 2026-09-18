@@ -101,5 +101,5 @@ Pre-commit helper that verifies a tool exists before executing it.
 ### `check-version-bump.sh`
 
 CI helper that enforces `VERSION` bumps on pull requests. The pre-commit hook invokes it with
-`--fix`, which automatically increments the patch version and stages `VERSION` when a bump is
-needed and the current version has not changed.
+`--fix`, which automatically sets and stages `VERSION` to exactly one patch above the selected
+base version.
