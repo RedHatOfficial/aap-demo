@@ -1971,6 +1971,29 @@ _remove_temp_swap() {
   echo "    Run: ${SCRIPT_DIR}/scripts/enable-temp-swap.sh disable"
   return 1
 }
+_maybe_save_local_cache_before_destroy() {
+  # Cache saving is intentionally opt-in: a full AAP image cache can use tens
+  # of gigabytes and may take a while to create.
+  if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
+    return 0
+  fi
+
+  printf "Cache container images locally before destroying the cluster? [y/N]: "
+  local _cache_choice=""
+  read -r _cache_choice </dev/tty || _cache_choice=""
+  case "${_cache_choice:-n}" in
+    [yY]*)
+      echo ""
+      echo "Saving container images for the next deployment..."
+      if ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" save; then
+        echo "⚠ Could not save the local image cache; continuing with cluster deletion"
+      fi
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
 
 cmd_destroy() {
   echo ""
@@ -1992,6 +2015,7 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
+  _maybe_save_local_cache_before_destroy
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
@@ -2081,6 +2105,11 @@ cmd_deploy() {
     echo "Cluster is stopped. Starting..."
     _start_crc_cluster
   fi
+
+  # Restore any cache left by a previous destroy before OLM and AAP begin
+  # pulling images. This is independent of the local-cache addon setting so a
+  # destroy/create cycle does not require re-enabling the addon first.
+  _load_local_cache
 
   install_ingress_ca_trust
 
@@ -2265,9 +2294,6 @@ deploy_latest() {
   echo "Waiting for CSV to reach Succeeded phase..."
   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded csv/"$CSV_NAME" -n "$NAMESPACE" --timeout=600s || true
 
-  # Load cached container images if available (saves 10-15min of registry pulls)
-  _load_local_cache
-
   create_aap_instance
 
   # Watch deployment
@@ -2438,13 +2464,8 @@ deploy_operator_sdk() {
 }
 
 _load_local_cache() {
-  # Only auto-load when local-cache addon is enabled or explicitly requested
-  if [ "${AAP_DEMO_LOAD_CACHE:-}" != "1" ]; then
-    if ! echo "$(_addons_list)" | grep -qw "local-cache"; then
-      return 0
-    fi
-  fi
-
+  # Loading is safe and quiet when no cache exists. Always check so a
+  # destroy/create cycle can reuse a cache even though destroy clears addons.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
 }
 
