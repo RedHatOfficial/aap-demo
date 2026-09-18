@@ -370,11 +370,11 @@ ensure_github_credential() {
   fi
   if [ -z "$credential_id" ]; then
     warn 'Could not provision the AAP GitHub credential; PR comments disabled'
-    unset aap_password GITHUB_TOKEN payload result
+    unset aap_password payload result
     return 0
   fi
   GITHUB_CREDENTIAL_ID=$credential_id
-  unset aap_password GITHUB_TOKEN payload result
+  unset aap_password payload result
 }
 
 ensure_github_scm_credential() {
