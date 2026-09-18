@@ -549,6 +549,102 @@ _parse_cpu_m() {
   fi
 }
 
+cpu_preflight() {
+  local portal_min_m=1600
+  local portal_rollout_m=2850
+
+  if [ "${SKIP_CPU_PREFLIGHT:-0}" = "1" ]; then
+    return 0
+  fi
+
+  echo "Checking CPU headroom for portal-operator..."
+
+  local alloc_raw alloc_m requested_m headroom_m pct
+  alloc_raw=$(kubectl get node \
+    -o jsonpath='{.items[0].status.allocatable.cpu}' 2>/dev/null || echo "0")
+  alloc_m=$(_parse_cpu_m "$alloc_raw")
+
+  if [ "$alloc_m" -eq 0 ]; then
+    echo "⚠  Could not read node allocatable CPU; skipping preflight"
+    return 0
+  fi
+
+  requested_m=$(kubectl get pods -A -o json 2>/dev/null \
+    | jq '[.items[] | select(.status.phase == "Running")
+           | .spec.containers[].resources.requests.cpu // "0"]
+          | map(if test("m$") then gsub("m$"; "") | tonumber
+                else tonumber * 1000 end)
+          | add // 0' 2>/dev/null || echo "0")
+
+  headroom_m=$((alloc_m - requested_m))
+  pct=$((requested_m * 100 / alloc_m))
+
+  printf "  Node allocatable:    %sm\n" "$alloc_m"
+  printf "  Currently requested: %sm (%s%%)\n" "$requested_m" "$pct"
+  printf "  Available headroom:  %sm\n" "$headroom_m"
+  printf "  Portal requires (minimum):      %sm\n" "$portal_min_m"
+  printf "  Portal recommends (rollout):    %sm\n" "$portal_rollout_m"
+  echo ""
+
+  if [ "$headroom_m" -ge "$portal_rollout_m" ]; then
+    echo "✓ Sufficient CPU headroom for portal-operator"
+    return 0
+  fi
+
+  if [ "$headroom_m" -lt "$portal_min_m" ]; then
+    echo "❌ Headroom (${headroom_m}m) is below the portal minimum (${portal_min_m}m)."
+    echo "   PostgreSQL is likely to fail scheduling."
+  else
+    echo "⚠  Headroom (${headroom_m}m) is below the recommended rollout threshold (${portal_rollout_m}m)."
+    echo "   Initial install should succeed but a Backstage rollout may stall."
+  fi
+
+  local ollama_replicas=0
+  if kubectl get namespace aap-demo-ollama >/dev/null 2>&1; then
+    ollama_replicas=$(kubectl get deployment ollama -n aap-demo-ollama \
+      -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+  fi
+
+  if [ "${ollama_replicas:-0}" -gt 0 ]; then
+    echo ""
+    echo "   Largest optional reservations:"
+    echo "     aap-demo-ollama / ollama    ~1000m"
+    echo ""
+    local scale_confirm
+    if [ -t 0 ]; then
+      read -r -p "   Scale Ollama to 0 to free ~1000m CPU for the portal? [y/N]: " scale_confirm
+    fi
+    case "$(echo "${scale_confirm:-n}" | tr '[:upper:]' '[:lower:]')" in
+      y | yes)
+        kubectl scale deployment/ollama -n aap-demo-ollama --replicas=0
+        echo "✓ Ollama scaled to 0 (freeing ~1000m)"
+        requested_m=$(kubectl get pods -A -o json 2>/dev/null \
+          | jq '[.items[] | select(.status.phase == "Running")
+                 | .spec.containers[].resources.requests.cpu // "0"]
+                | map(if test("m$") then gsub("m$"; "") | tonumber
+                      else tonumber * 1000 end)
+                | add // 0' 2>/dev/null || echo "0")
+        headroom_m=$((alloc_m - requested_m))
+        printf "  New headroom: %sm\n" "$headroom_m"
+        if [ "$headroom_m" -ge "$portal_rollout_m" ]; then
+          echo "✓ Headroom now sufficient for portal-operator"
+        elif [ "$headroom_m" -ge "$portal_min_m" ]; then
+          echo "⚠  Headroom sufficient for initial install; rollout may still be slow"
+        else
+          echo "⚠  Headroom still below minimum; install may stall — proceeding anyway"
+        fi
+        ;;
+      *)
+        echo "   Skipping Ollama scale-down; install may stall if CPU is exhausted"
+        ;;
+    esac
+  else
+    echo "   (Ollama is not running; no obvious optional workload to scale)"
+    echo "   Proceeding anyway — install may stall if CPU is exhausted"
+  fi
+  echo ""
+}
+
 require_amd64_cluster() {
   local cluster_arch
   cluster_arch="$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true)"
@@ -572,6 +668,7 @@ main() {
   }
   check_aap
   require_amd64_cluster
+  cpu_preflight
   setup_namespace
   [ -n "$OPERATOR_SOURCE_NAMESPACE" ] || prepare_catalog_source
   install_operator
