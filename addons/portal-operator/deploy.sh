@@ -19,6 +19,17 @@ OPERATOR_CHANNEL="${PORTAL_OPERATOR_CHANNEL:-fast}"
 OPERATOR_SOURCE="${PORTAL_OPERATOR_SOURCE:-redhat-operators}"
 OPERATOR_SOURCE_NAMESPACE="${PORTAL_OPERATOR_SOURCE_NAMESPACE:-}"
 
+# Cleanup ownership is captured before the addon creates any resources. This
+# prevents disable from deleting pre-existing shared operator resources.
+# Conservative defaults protect shared resources when disabling an older
+# install that predates the ownership state file.
+PORTAL_OPERATOR_NAMESPACE_PREEXISTED=1
+OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=1
+AUTOMATION_PORTAL_CRD_PREEXISTED=1
+BACKSTAGES_CRD_PREEXISTED=1
+RHDH_SUBSCRIPTION_PREEXISTED=1
+CLEANUP_BASELINE_CAPTURED=0
+
 require_tools() {
   local tool
   for tool in kubectl curl jq; do
@@ -94,13 +105,86 @@ cleanup() {
     --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete subscription "$OPERATOR_PACKAGE" -n "$PORTAL_OPERATOR_NAMESPACE" \
     --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete namespace "$PORTAL_OPERATOR_NAMESPACE" --timeout=120s \
-    --ignore-not-found >/dev/null 2>&1 || true
+  if [ "$PORTAL_OPERATOR_NAMESPACE_PREEXISTED" -eq 0 ]; then
+    kubectl delete namespace "$PORTAL_OPERATOR_NAMESPACE" --timeout=120s \
+      --ignore-not-found >/dev/null 2>&1 || true
+  fi
+
+  # OLM intentionally leaves CRDs and generated ClusterRoles behind when a
+  # CSV is removed. Remove only artifacts that were absent before this addon
+  # ran, and only after all namespaced resources have been deleted.
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$AUTOMATION_PORTAL_CRD_PREEXISTED" -eq 0 ]; then
+    kubectl delete crd automationportals.automationportal.aap.redhat.com \
+      --ignore-not-found >/dev/null 2>&1 || true
+  fi
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$BACKSTAGES_CRD_PREEXISTED" -eq 0 ]; then
+    kubectl delete crd backstages.rhdh.redhat.com --ignore-not-found \
+      >/dev/null 2>&1 || true
+  fi
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && { [ "$AUTOMATION_PORTAL_CRD_PREEXISTED" -eq 0 ] \
+      || [ "$BACKSTAGES_CRD_PREEXISTED" -eq 0 ]; }; then
+    while read -r role; do
+      [ -z "$role" ] || kubectl delete "$role" --ignore-not-found \
+        >/dev/null 2>&1 || true
+    done < <(kubectl get clusterrole -o name 2>/dev/null \
+      | grep -E '/(automationportals\.automationportal\.aap\.redhat\.com-|backstages\.rhdh\.redhat\.com-|rhdh-backstage-|rhdh-metrics-reader$)' || true)
+  fi
+
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED" -eq 0 ]; then
+    kubectl delete namespace openshift-operators --timeout=120s \
+      --ignore-not-found >/dev/null 2>&1 || true
+  elif [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$RHDH_SUBSCRIPTION_PREEXISTED" -eq 0 ]; then
+    kubectl delete subscription rhdh -n openshift-operators \
+      --ignore-not-found >/dev/null 2>&1 || true
+  fi
   rm -rf "$PORTAL_OPERATOR_DIR"
   echo "Portal operator addon disabled"
 }
 
+capture_cleanup_baseline() {
+  PORTAL_OPERATOR_NAMESPACE_PREEXISTED=0
+  OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=0
+  AUTOMATION_PORTAL_CRD_PREEXISTED=0
+  BACKSTAGES_CRD_PREEXISTED=0
+  RHDH_SUBSCRIPTION_PREEXISTED=0
+  kubectl get namespace "$PORTAL_OPERATOR_NAMESPACE" >/dev/null 2>&1 \
+    && PORTAL_OPERATOR_NAMESPACE_PREEXISTED=1 || true
+  kubectl get namespace openshift-operators >/dev/null 2>&1 \
+    && OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=1 || true
+  kubectl get crd automationportals.automationportal.aap.redhat.com \
+    >/dev/null 2>&1 && AUTOMATION_PORTAL_CRD_PREEXISTED=1 || true
+  kubectl get crd backstages.rhdh.redhat.com >/dev/null 2>&1 \
+    && BACKSTAGES_CRD_PREEXISTED=1 || true
+  kubectl get subscription rhdh -n openshift-operators >/dev/null 2>&1 \
+    && RHDH_SUBSCRIPTION_PREEXISTED=1 || true
+  mkdir -p "$PORTAL_OPERATOR_DIR"
+  chmod 700 "$PORTAL_OPERATOR_DIR"
+  printf '%s\n' \
+    "PORTAL_OPERATOR_NAMESPACE_PREEXISTED=$PORTAL_OPERATOR_NAMESPACE_PREEXISTED" \
+    "OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=$OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED" \
+    "AUTOMATION_PORTAL_CRD_PREEXISTED=$AUTOMATION_PORTAL_CRD_PREEXISTED" \
+    "BACKSTAGES_CRD_PREEXISTED=$BACKSTAGES_CRD_PREEXISTED" \
+    "RHDH_SUBSCRIPTION_PREEXISTED=$RHDH_SUBSCRIPTION_PREEXISTED" \
+    >"$PORTAL_OPERATOR_DIR/cleanup-baseline.env"
+  CLEANUP_BASELINE_CAPTURED=1
+}
+
+load_cleanup_baseline() {
+  local state_file="$PORTAL_OPERATOR_DIR/cleanup-baseline.env"
+  if [ -f "$state_file" ]; then
+    # shellcheck disable=SC1090
+    source "$state_file"
+    CLEANUP_BASELINE_CAPTURED=1
+  fi
+}
+
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
+  load_cleanup_baseline
   cleanup
   exit 0
 fi
@@ -511,6 +595,7 @@ EOF
 }
 
 wait_for_portal() {
+  local phase image_pull_retries=0
   echo "Waiting for AutomationPortal/$PORTAL_NAME to become Running..."
   for _ in $(seq 1 120); do
     phase=$(kubectl get automationportal "$PORTAL_NAME" -n "$PORTAL_OPERATOR_NAMESPACE" \
@@ -520,6 +605,28 @@ wait_for_portal() {
       kubectl describe automationportal "$PORTAL_NAME" -n "$PORTAL_OPERATOR_NAMESPACE"
       exit 1
     }
+    if [ "$image_pull_retries" -lt 5 ]; then
+      local backstage_pod image_pull_reason
+      backstage_pod=$(kubectl get pod -n "$PORTAL_OPERATOR_NAMESPACE" \
+        -l "rhdh.redhat.com/app=backstage-${PORTAL_NAME}-backstage" \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+      if [ -n "$backstage_pod" ]; then
+        image_pull_reason=$(kubectl get pod "$backstage_pod" \
+          -n "$PORTAL_OPERATOR_NAMESPACE" -o json 2>/dev/null \
+          | jq -r '[.status.initContainerStatuses[]?, .status.containerStatuses[]?]
+            | map(select(.state.waiting.reason == "ErrImagePull" or
+              .state.waiting.reason == "ImagePullBackOff"))
+            | .[0].state.waiting.reason // empty' 2>/dev/null || true)
+        if [ -n "$image_pull_reason" ]; then
+          echo "⚠️  Backstage image pull failed (${image_pull_reason}); retrying pod" >&2
+          kubectl delete pod "$backstage_pod" -n "$PORTAL_OPERATOR_NAMESPACE" \
+            --wait=false >/dev/null 2>&1 || true
+          image_pull_retries=$((image_pull_retries + 1))
+          sleep 5
+          continue
+        fi
+      fi
+    fi
     sleep 5
   done
   [ "${phase:-}" = Running ] || {
@@ -669,6 +776,7 @@ main() {
   }
   check_aap
   require_amd64_cluster
+  capture_cleanup_baseline
   cpu_preflight
   setup_namespace
   [ -n "$OPERATOR_SOURCE_NAMESPACE" ] || prepare_catalog_source
