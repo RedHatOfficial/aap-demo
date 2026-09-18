@@ -51,7 +51,7 @@ aap_demo_wire (automatic)
   ├─ APD: OpenShift Credential (SA token + API host)
   ├─ APD: Galaxy credentials (if ~/.aap-demo/galaxy-token exists)
   ├─ AO:  restore CoreDNS route rewrite if missing (MicroShift DNS operator overwrites it)
-  ├─ AO:  hostAliases for AAP/AO/MCP route hostnames → ingress router (SSRF DNS independence)
+  ├─ AO:  hostAliases for AAP/AO/MCP/Ollama route hostnames → ingress router (SSRF DNS independence)
   ├─ AO:  APP_INTEGRATION_URL_ALLOWED_HOSTS + APP_OIDC_ALLOW_PRIVATE_NETWORKS (backend patch)
   ├─ AO:  Integration "aap-demo AAP" (route URL + gateway OAuth token)
   └─ AO:  Integration "aap-demo MCP Server" (route /mcp URL + bearer token; tools enabled)
@@ -62,7 +62,7 @@ aap_demo_wire (automatic)
 Before creating integrations, `wire_ao_network_access()` patches AO backend deployments with:
 
 - `APP_INTEGRATION_URL_ALLOWED_HOSTS` — JSON array of AAP route hostname, AO route hostname,
-  `aap.<namespace>.svc.cluster.local`, and MCP route hostname when deployed
+  `aap.<namespace>.svc.cluster.local`, MCP route hostname, and Ollama route hostname when deployed
 - `APP_OIDC_ALLOW_PRIVATE_NETWORKS=true`
 
 This mirrors upstream APD `network-access.yml` intent so co-located AAP/MCP URLs pass AO SSRF
