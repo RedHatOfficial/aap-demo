@@ -86,8 +86,9 @@ supplied explicitly:
     AO_PR_TESTING_GITHUB_TOKEN='github_pat_...' aap-demo enable ao-pr-testing
 
 The addon stores the prompted value only in the local mode-600 file and in an
-addon-owned AAP custom credential, then injects it into the ephemeral review EE
-as `GITHUB_TOKEN`; it is not passed through AO workflow variables. In
+addon-owned AAP custom credential, then passes it to the playbook as the
+`github_token` extra variable. It is not injected into the runner environment,
+and it is not passed through AO workflow variables. In
 non-interactive runs, set `AO_PR_TESTING_GITHUB_TOKEN` or pre-create the
 credential file. During enable, the addon performs a no-side-effect GitHub
 write-permission check; a stored token that receives a permission failure is
