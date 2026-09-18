@@ -106,6 +106,14 @@ if [ "$ACTION" = "load" ]; then
 
   echo ""
   echo "✓ Loaded ${loaded} images, ${skipped} already present (${failed} failed)"
+  if [ "$failed" -gt 0 ]; then
+    echo "⚠ ${failed} cached image(s) could not be loaded" >&2
+    if [ "${AAP_DEMO_LOCAL_CACHE_QUIET:-}" = "1" ]; then
+      echo "  Continuing because cache loading is running as an optional deploy optimization" >&2
+      exit 0
+    fi
+    exit 1
+  fi
   exit 0
 fi
 
