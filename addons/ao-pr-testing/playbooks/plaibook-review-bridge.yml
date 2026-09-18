@@ -117,7 +117,7 @@
       ansible.builtin.set_fact:
         plaibook_detail: >-
           {{ (plaibook_detail_file.content | b64decode | from_json)
-             if (plaibook_detail_file is defined)
+             if (plaibook_detail_file.content | default('') | length > 0)
              else {} }}
 
     - name: Fetch the current PR changed files
