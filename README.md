@@ -94,7 +94,11 @@ aap-demo enable product-demo-satellite  # Satellite demos (requires a Satellite 
 aap-demo disable addon_name  # Disables addon
 ```
 
-After `aap-demo destroy`, reload cached images with:
+When destroying a running cluster, `aap-demo destroy` asks whether to save the
+container images locally. Existing cached images are loaded automatically at
+the start of the next `aap-demo deploy`.
+
+To manage the cache manually:
 
 ```bash
 aap-demo enable local-cache load   # one-shot reload into fresh VM
