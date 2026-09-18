@@ -839,6 +839,19 @@ ensure_cnpg_operator() {
   if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
     && cnpg_database_crd_available; then
     echo "✓ CloudNativePG operator ready"
+    kubectl create serviceaccount "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" \
+      -n cnpg-system 2>/dev/null || true
+    if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
+      return 1
+    fi
+    if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
+      return 1
+    fi
+    kubectl rollout restart deployment/cnpg-controller-manager -n cnpg-system >/dev/null 2>&1 || true
+    echo "Waiting for CloudNativePG operator..."
+    kubectl rollout status deployment/cnpg-controller-manager \
+      -n cnpg-system --timeout=5m
+    echo "✓ CloudNativePG operator running"
     mkdir -p "$(dirname "$AO_STATE_FILE")"
     grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null \
       || echo "CNPG_VERSION=${CNPG_VERSION}" >>"$AO_STATE_FILE"
@@ -857,10 +870,12 @@ ensure_cnpg_operator() {
   fi
   mkdir -p "$(dirname "$AO_STATE_FILE")"
   echo "CNPG_VERSION=${CNPG_VERSION}" >"$AO_STATE_FILE"
-  if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-controller-manager}" cnpg-system; then
+  kubectl create serviceaccount "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" \
+    -n cnpg-system 2>/dev/null || true
+  if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
     return 1
   fi
-  if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-controller-manager}" cnpg-system; then
+  if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
     return 1
   fi
   echo "Waiting for CloudNativePG operator..."
@@ -870,15 +885,17 @@ ensure_cnpg_operator() {
 }
 
 grant_scc_to_serviceaccount() {
-  local _scc="$1"
-  local _service_account="$2"
-  local _namespace="$3"
-  if oc adm policy add-scc-to-user "$_scc" -z "$_service_account" -n "$_namespace"; then
+  local _scc="$1" _service_account="$2" _namespace="$3"
+  local _binding_name="aap-demo-scc-${_scc}-${_namespace}-${_service_account}"
+  if kubectl create clusterrolebinding "$_binding_name" \
+    --clusterrole="system:openshift:scc:${_scc}" \
+    --serviceaccount="${_namespace}:${_service_account}" \
+    --dry-run=client -o yaml \
+    | kubectl apply -f - >/dev/null; then
     return 0
   fi
   echo "ERROR: Failed to grant SCC '${_scc}' to ServiceAccount '${_service_account}' in namespace '${_namespace}'." >&2
-  echo "  The current user must be allowed to modify SecurityContextConstraints." >&2
-  echo "  Retry with: oc adm policy add-scc-to-user ${_scc} -z ${_service_account} -n ${_namespace}" >&2
+  echo "  The current user must be allowed to create the SCC binding '${_binding_name}'." >&2
   return 1
 }
 
@@ -1205,6 +1222,17 @@ if ! grant_scc_to_serviceaccount anyuid default "$NAMESPACE"; then
   exit 1
 fi
 if ! grant_scc_to_serviceaccount privileged default "$NAMESPACE"; then
+  exit 1
+fi
+# OLM creates the local CatalogSource pod with a CatalogSource-named service
+# account. Grant it explicitly before creating the CatalogSource; granting the
+# namespace default service account does not cover this pod on MicroShift.
+kubectl create serviceaccount "${AO_CATALOG_SERVICE_ACCOUNT:-redhat-operators}" \
+  -n "$NAMESPACE" 2>/dev/null || true
+if ! grant_scc_to_serviceaccount anyuid "${AO_CATALOG_SERVICE_ACCOUNT:-redhat-operators}" "$NAMESPACE"; then
+  exit 1
+fi
+if ! grant_scc_to_serviceaccount privileged "${AO_CATALOG_SERVICE_ACCOUNT:-redhat-operators}" "$NAMESPACE"; then
   exit 1
 fi
 if [ -z "$FORCE" ]; then
