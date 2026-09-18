@@ -326,11 +326,20 @@ ensure_github_credential() {
     payload=$(jq -n \
       --arg name "$GITHUB_CREDENTIAL_TYPE_NAME" \
       --arg description 'Addon-owned GitHub token injector for PR review comments.' \
-      '{name:$name,description:$description,kind:"cloud",inputs:{fields:[{id:"token",label:"GitHub token",type:"string",secret:true}],required:["token"]},injectors:{env:{GITHUB_TOKEN:"{{ token }}"}}}')
+      '{name:$name,description:$description,kind:"cloud",inputs:{fields:[{id:"token",label:"GitHub token",type:"string",secret:true}],required:["token"]},injectors:{extra_vars:{github_token:"{{ token }}"}}}')
     result=$(curl -sk -u "admin:${aap_password}" -X POST \
       -H 'Content-Type: application/json' -d "$payload" \
       "${aap_api}/credential_types/")
     credential_type_id=$(printf '%s' "$result" | jq -r '.id // empty')
+  else
+    # Do not inject the PAT into the runner environment. AAP includes the
+    # environment in its runner-start event, which would expose the token.
+    payload=$(jq -n \
+      --arg description 'Addon-owned GitHub token injector for PR review comments.' \
+      '{description:$description,injectors:{extra_vars:{github_token:"{{ token }}"}}}')
+    curl -sk -u "admin:${aap_password}" -X PATCH \
+      -H 'Content-Type: application/json' -d "$payload" \
+      "${aap_api}/credential_types/${credential_type_id}/" >/dev/null
   fi
   if [ -z "$credential_type_id" ]; then
     warn 'Could not provision the addon GitHub credential type; PR comments disabled'
@@ -628,16 +637,54 @@ warm_ollama_model() {
 }
 
 find_webhook_service_account() {
-  WEBHOOK_SERVICE_ACCOUNT_ID=$(wire_ao_api GET /service_accounts?limit=100 \
+  local accounts project_id payload result
+  accounts=$(wire_ao_api GET /service_accounts?limit=100)
+  WEBHOOK_SERVICE_ACCOUNT_ID=$(printf '%s' "$accounts" \
     | wire_ao_list_items | jq -r '[.[] | select(.name == "aap-demo webhook caller")] | .[0].id // empty')
-  [ -n "$WEBHOOK_SERVICE_ACCOUNT_ID" ] || die 'AO webhook service account is missing; enable AO first'
+  if [ -n "$WEBHOOK_SERVICE_ACCOUNT_ID" ]; then
+    return 0
+  fi
+
+  project_id=$(wire_ao_default_project_id)
+  [ -n "$project_id" ] || die 'AO has no project for the webhook service account'
+  payload=$(jq -n \
+    --arg name 'aap-demo webhook caller' \
+    --arg description 'Authorizes webhook-triggered workflows managed by aap-demo' \
+    --arg project_id "$project_id" \
+    '{name:$name,description:$description,project_id:$project_id}')
+  result=$(wire_ao_api POST /service_accounts "$payload")
+  if wire_ao_response_is_error "$result"; then
+    printf '%s\n' "$result" | jq '.' 2>/dev/null || printf '%s\n' "$result" >&2
+    die 'Could not create the AO webhook service account'
+  fi
+  WEBHOOK_SERVICE_ACCOUNT_ID=$(printf '%s' "$result" | jq -r '.id // empty')
+  [ -n "$WEBHOOK_SERVICE_ACCOUNT_ID" ] \
+    || die 'AO webhook service account creation returned no id'
+  printf '  AO webhook service account ready: aap-demo webhook caller\n'
 }
 
 ensure_webhook_credential() {
-  local response client_id client_secret credential_id
+  local response client_id client_secret credential_id route cached_token
   mkdir -p "$STATE_DIR"
   if [ -s "$STATE_DIR/webhook-client-id" ] && [ -s "$STATE_DIR/webhook-client-secret" ]; then
-    return 0
+    route=$(wire_ao_route_host 2>/dev/null || true)
+    if [ -n "$route" ]; then
+      client_id=$(<"$STATE_DIR/webhook-client-id")
+      client_secret=$(<"$STATE_DIR/webhook-client-secret")
+      cached_token=$(curl -sk -X POST "https://${route}/api/v1/auth/token" \
+        -H 'Content-Type: application/x-www-form-urlencoded' \
+        --data-urlencode grant_type=client_credentials \
+        --data-urlencode "client_id=${client_id}" \
+        --data-urlencode "client_secret=${client_secret}" \
+        | jq -r '.access_token // empty')
+      unset client_secret
+      if [ -n "$cached_token" ]; then
+        unset cached_token
+        return 0
+      fi
+      unset cached_token
+      printf '  Existing AO webhook credential expired; rotating it\n'
+    fi
   fi
 
   response=$(wire_ao_api POST "/service_accounts/$WEBHOOK_SERVICE_ACCOUNT_ID/credentials" \

@@ -70,6 +70,60 @@
           - ao_demo_project_id | length > 0
         fail_msg: "AO has no default project and ao_demo_project_id was not provided."
 
+    - name: Find the aap-demo webhook service account
+      ansible.builtin.uri:
+        url: "{{ ao_api_url }}/service_accounts?limit=100"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ao_api_token }}"
+          Host: "{{ ao_api_host }}"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: __ao_service_accounts
+      no_log: true
+
+    - name: Select the aap-demo webhook service account
+      ansible.builtin.set_fact:
+        ao_webhook_service_account_id: >-
+          {{ (__ao_service_accounts.json.resources
+              | default(__ao_service_accounts.json.results | default([])))
+             | selectattr('name', 'equalto', 'aap-demo webhook caller')
+             | selectattr('project_id', 'equalto', ao_demo_project_id)
+             | map(attribute='id') | first | default('') }}
+
+    - name: Create the aap-demo webhook service account
+      ansible.builtin.uri:
+        url: "{{ ao_api_url }}/service_accounts"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ ao_api_token }}"
+          Content-Type: application/json
+          Host: "{{ ao_api_host }}"
+        body_format: json
+        body:
+          name: aap-demo webhook caller
+          description: Authorizes webhook-triggered workflows synchronized by aap-demo
+          project_id: "{{ ao_demo_project_id }}"
+        status_code: [200, 201]
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: __ao_created_service_account
+      when: ao_webhook_service_account_id | length == 0
+      no_log: true
+
+    - name: Store the created aap-demo webhook service account id
+      ansible.builtin.set_fact:
+        ao_webhook_service_account_id: "{{ __ao_created_service_account.json.id }}"
+      when: ao_webhook_service_account_id | length == 0
+
+    - name: Require the aap-demo webhook service account
+      ansible.builtin.assert:
+        that:
+          - ao_webhook_service_account_id | length > 0
+        fail_msg: "AO webhook service account could not be found or created."
+
     - name: Create temporary source directory
       ansible.builtin.tempfile:
         state: directory
@@ -141,6 +195,7 @@
         ao_agent_model_id: "{{ ao_agent_model_id }}"
         ao_mcp_integration_id: "{{ ao_mcp_integration_id }}"
         ao_mcp_credential_id: "{{ ao_mcp_credential_id }}"
+        ao_webhook_service_account_id: "{{ ao_webhook_service_account_id }}"
       loop: "{{ __ao_sources }}"
       loop_control:
         loop_var: __ao_worker_source

@@ -72,7 +72,7 @@
         ANSIBLE_ASYNC_DIR: "{{ bridge_root }}/.ansible_async"
         GIT_CONFIG_COUNT: "1"
         GIT_CONFIG_KEY_0: >-
-          url.https://x-access-token:{{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}@github.com/.insteadOf
+          url.https://x-access-token:{{ github_token | default('', true) }}@github.com/.insteadOf
         GIT_CONFIG_VALUE_0: "https://github.com/"
       register: plaibook_process
       changed_when: false
@@ -132,7 +132,7 @@
         method: GET
         headers:
           Accept: application/vnd.github+json
-          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+          Authorization: "Bearer {{ github_token | default('', true) }}"
           X-GitHub-Api-Version: "2022-11-28"
         return_content: true
         status_code: 200
@@ -143,7 +143,7 @@
       no_log: true
       when:
         - (review_comment_enabled | bool) or (bridge_prepare_publication | bool)
-        - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
+        - github_token | default('', true) | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
         - github_pull_request_number | default('') | string is match('^[0-9]+$')
         - plaibook_detail.findings | default([]) | length > 0
@@ -207,7 +207,7 @@
         method: GET
         headers:
           Accept: application/vnd.github+json
-          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+          Authorization: "Bearer {{ github_token | default('', true) }}"
           X-GitHub-Api-Version: "2022-11-28"
         return_content: true
         status_code: 200
@@ -219,7 +219,7 @@
       when:
         - review_comment_enabled | bool
         - review_stale_findings | length > 0
-        - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
+        - github_token | default('', true) | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 
     - name: Select the existing stale-findings issue
@@ -240,7 +240,7 @@
         method: PATCH
         headers:
           Accept: application/vnd.github+json
-          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+          Authorization: "Bearer {{ github_token | default('', true) }}"
           X-GitHub-Api-Version: "2022-11-28"
         body_format: json
         body:
@@ -264,7 +264,7 @@
         method: POST
         headers:
           Accept: application/vnd.github+json
-          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+          Authorization: "Bearer {{ github_token | default('', true) }}"
           X-GitHub-Api-Version: "2022-11-28"
         body_format: json
         body:
@@ -280,7 +280,7 @@
         - github_stale_issue_id | default(0) | int == 0
         - stale_findings_issue_body is defined
         - review_comment_enabled | bool
-        - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
+        - github_token | default('', true) | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 
     - name: Capture stale-findings issue URL
@@ -342,7 +342,7 @@
         method: GET
         headers:
           Accept: application/vnd.github+json
-          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+          Authorization: "Bearer {{ github_token | default('', true) }}"
           X-GitHub-Api-Version: "2022-11-28"
         return_content: true
         status_code: 200
@@ -353,7 +353,7 @@
       no_log: true
       when:
         - review_comment_enabled | bool
-        - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
+        - github_token | default('', true) | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
         - github_pull_request_number | default('') | string is match('^[0-9]+$')
         - plaibook_result.targets | default([]) | length > 0
@@ -374,7 +374,7 @@
         method: PATCH
         headers:
           Accept: application/vnd.github+json
-          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+          Authorization: "Bearer {{ github_token | default('', true) }}"
           X-GitHub-Api-Version: "2022-11-28"
         body_format: json
         body:
@@ -396,7 +396,7 @@
         method: POST
         headers:
           Accept: application/vnd.github+json
-          Authorization: "Bearer {{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+          Authorization: "Bearer {{ github_token | default('', true) }}"
           X-GitHub-Api-Version: "2022-11-28"
         body_format: json
         body:
@@ -411,7 +411,7 @@
         - github_review_comment_id | default(0) | int == 0
         - review_comment_body is defined
         - review_comment_enabled | bool
-        - lookup('ansible.builtin.env', 'GITHUB_TOKEN') | length > 0
+        - github_token | default('', true) | length > 0
         - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
         - github_pull_request_number | default('') | string is match('^[0-9]+$')
         - review_classification_ready | bool

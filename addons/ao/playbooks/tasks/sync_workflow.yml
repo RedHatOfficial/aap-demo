@@ -32,7 +32,14 @@
          | rejectattr('key', 'equalto', 'config')
          | list
          | items2dict
-         | combine({'parameters': __ao_trigger_item.parameters | default(__ao_trigger_item.config | default({}))}) }}"
+         | combine({'parameters': __ao_trigger_parameters}) }}"
+    __ao_trigger_parameters: >-
+      {{ (__ao_trigger_item.parameters | default(__ao_trigger_item.config | default({})))
+         | combine(
+             ({'authorized_service_account_ids':
+               (__ao_trigger_item.parameters.authorized_service_account_ids
+                | default([ao_webhook_service_account_id]))}
+              if __ao_trigger_item.type == 'webhook_trigger' else {})) }}
 
 - name: Normalize workflow nodes
   ansible.builtin.set_fact:
