@@ -16,6 +16,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
 OLLAMA_ROLLOUT_TIMEOUT="${OLLAMA_ROLLOUT_TIMEOUT:-15m}"
+OLLAMA_STORAGE_CLASS="${OLLAMA_STORAGE_CLASS:-}"
 
 # shellcheck source=../../includes/infra-crc.sh
 source "${SCRIPT_DIR}/../../includes/infra-crc.sh" 2>/dev/null || true
@@ -37,6 +38,20 @@ fi
 
 echo "Deploying Ollama (CPU-only)..."
 
+# Detect StorageClass: explicit override > topolvm-provisioner > standard
+if [ -n "$OLLAMA_STORAGE_CLASS" ]; then
+  _ollama_sc="$OLLAMA_STORAGE_CLASS"
+elif kubectl get sc topolvm-provisioner >/dev/null 2>&1; then
+  _ollama_sc="topolvm-provisioner"
+elif kubectl get sc standard >/dev/null 2>&1; then
+  _ollama_sc="standard"
+else
+  echo "ERROR: No suitable StorageClass found (expected topolvm-provisioner or standard)." >&2
+  echo "  Set OLLAMA_STORAGE_CLASS=<name> to use a different class, or run 'aap-demo create'." >&2
+  exit 1
+fi
+echo "  StorageClass: ${_ollama_sc}"
+
 # Detect cluster apps domain from existing AAP route, fall back to nip.io default
 _aap_host=$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" \
   -o jsonpath='{.spec.host}' 2>/dev/null || true)
@@ -47,13 +62,20 @@ else
 fi
 OLLAMA_ROUTE="ollama.${CLUSTER_DOMAIN}"
 
-# Patch the route hostname if cluster domain differs from the nip.io default in the manifest
-sed "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
+# Patch the route hostname and StorageClass from their manifest placeholders
+sed -e "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
+  -e "s|storageClassName: __STORAGE_CLASS__|storageClassName: ${_ollama_sc}|" \
   "${SCRIPT_DIR}/ollama.yaml" | kubectl apply -f -
 
 echo "  Waiting for Ollama deployment to be ready..."
-kubectl rollout status deployment/ollama -n aap-demo-ollama \
-  --timeout="${OLLAMA_ROLLOUT_TIMEOUT}"
+if ! kubectl rollout status deployment/ollama -n aap-demo-ollama \
+  --timeout="${OLLAMA_ROLLOUT_TIMEOUT}"; then
+  echo "ERROR: Ollama rollout failed — diagnostics:" >&2
+  kubectl get deployment,pod,pvc -n aap-demo-ollama >&2 || true
+  kubectl describe pod -n aap-demo-ollama -l app=ollama >&2 || true
+  kubectl get events -n aap-demo-ollama --sort-by=.lastTimestamp >&2 || true
+  exit 1
+fi
 
 echo "  Pulling model: ${OLLAMA_MODEL}..."
 echo "  (This may take several minutes — model is ~2.5GB)"
