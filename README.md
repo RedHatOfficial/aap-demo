@@ -85,6 +85,7 @@ aap-demo enable portal       # Installs Automation Portal
 aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
+aap-demo enable ao-pr-testing  # PR validation workflow and read-only OpenShift MCP (requires AO)
 aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 

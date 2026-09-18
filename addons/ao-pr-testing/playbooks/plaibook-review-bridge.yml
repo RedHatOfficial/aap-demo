@@ -1,0 +1,528 @@
+---
+- name: Run plaibook and publish a structured AAP result
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    bridge_home: "{{ lookup('ansible.builtin.env', 'HOME') }}"
+    bridge_root: "{{ bridge_home }}/.cache/aap-demo-plaibook"
+    bridge_source_url: "{{ plaibook_source_url | default('https://github.com/aknochow/ansible-plaibook.git') }}"
+    bridge_source_branch: "{{ plaibook_source_branch | default('main') }}"
+    bridge_aap_route_host: "{{ aap_route_host | default('') }}"
+    bridge_ao_route_host: "{{ ao_route_host | default('') }}"
+    bridge_prepare_publication: "{{ review_prepare_publication | default(true) | bool }}"
+    review_input_vars:
+      review_type: "{{ review_type | default('pr') }}"
+      review_targets_raw: "{{ review_targets_raw | default('') }}"
+      post_results: "{{ post_results | default(false) | bool }}"
+      agent_family: "{{ agent_family | default('openai') }}"
+      openai_base_url: "{{ openai_base_url | default('') }}"
+      openai_api_key: "{{ openai_api_key | default('') }}"
+      review_openai_model: "{{ review_openai_model | default('') }}"
+      use_sandbox: "{{ use_sandbox | default(false) | bool }}"
+      review_explore_enabled: "{{ review_explore_enabled | default(false) | bool }}"
+      review_require_ci_passing: "{{ review_require_ci_passing | default(true) | bool }}"
+      review_run_ledger_host: "{{ review_run_ledger_host | default('aap-plaibook') }}"
+      review_write_artifact: "{{ review_write_artifact | default(true) | bool }}"
+      last_run_id: "{{ bridge_run_id }}"
+
+  tasks:
+    - name: Create the bridge working directory
+      ansible.builtin.file:
+        path: "{{ bridge_root }}"
+        state: directory
+        mode: "0700"
+
+    - name: Freeze the nested plaibook run ID
+      ansible.builtin.set_fact:
+        bridge_run_id: >-
+          {{ last_run_id | default('ao-' ~ (lookup('pipe', 'date +%s') | string) ~ '-' ~ (999999 | random)) }}
+
+    - name: Create the nested Ansible async directory
+      ansible.builtin.file:
+        path: "{{ bridge_root }}/.ansible_async"
+        state: directory
+        mode: "0700"
+
+    - name: Fetch the configured plaibook source
+      ansible.builtin.git:
+        repo: "{{ bridge_source_url }}"
+        version: "{{ bridge_source_branch }}"
+        dest: "{{ bridge_root }}/source"
+        depth: 1
+        force: true
+
+    # The nested invocation is intentionally hidden because the extra-vars
+    # JSON contains the LLM API key. The structured result below is the only
+    # output exposed to downstream AAP/AO consumers.
+    - name: Run the upstream plaibook review
+      ansible.builtin.command:
+        argv:
+          - ansible-playbook
+          - "{{ bridge_root }}/source/review.yml"
+          - --inventory
+          - localhost,
+          - --connection
+          - local
+          - --extra-vars
+          - "{{ review_input_vars | to_json }}"
+      environment:
+        HOME: "{{ bridge_home }}"
+        ANSIBLE_ASYNC_DIR: "{{ bridge_root }}/.ansible_async"
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: >-
+          url.https://x-access-token:{{ github_token | default('', true) }}@github.com/.insteadOf
+        GIT_CONFIG_VALUE_0: "https://github.com/"
+      register: plaibook_process
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Check for this run's structured plaibook summary
+      ansible.builtin.stat:
+        path: "{{ bridge_home }}/.cache/ansible-plaibook/last_run.{{ bridge_run_id }}.json"
+      register: plaibook_summary_stat
+
+    - name: Read this run's structured plaibook summary
+      when: plaibook_summary_stat.stat.exists | bool
+      ansible.builtin.slurp:
+        src: "{{ bridge_home }}/.cache/ansible-plaibook/last_run.{{ bridge_run_id }}.json"
+      register: plaibook_summary_file
+
+    - name: Normalize the structured plaibook result
+      ansible.builtin.set_fact:
+        plaibook_result: >-
+          {{ (plaibook_summary_file.content | b64decode | from_json)
+             if (plaibook_summary_stat.stat.exists | bool)
+             else {
+               'status': 'failed',
+               'error': 'The plaibook run did not publish its run-scoped summary',
+               'return_code': plaibook_process.rc | default(1) | int,
+               'targets': []
+             } }}
+
+    - name: Locate the detailed plaibook summary
+      ansible.builtin.stat:
+        path: "{{ (plaibook_result.targets | first).summary_path }}"
+      register: plaibook_detail_stat
+      when:
+        - plaibook_result.targets | default([]) | length > 0
+        - (plaibook_result.targets | first).summary_path | default('') | length > 0
+
+    - name: Read the detailed plaibook summary
+      ansible.builtin.slurp:
+        src: "{{ (plaibook_result.targets | first).summary_path }}"
+      register: plaibook_detail_file
+      when:
+        - plaibook_detail_stat is defined
+        - plaibook_detail_stat.stat.exists | default(false) | bool
+
+    - name: Normalize detailed plaibook findings
+      ansible.builtin.set_fact:
+        plaibook_detail: >-
+          {{ (plaibook_detail_file.content | b64decode | from_json)
+             if (plaibook_detail_file.content | default('') | length > 0)
+             else {} }}
+
+    - name: Fetch the current PR changed files
+      ansible.builtin.uri:
+        url: >-
+          https://api.github.com/repos/{{ github_repository }}/pulls/{{ github_pull_request_number }}/files?per_page=100
+        method: GET
+        headers:
+          Accept: application/vnd.github+json
+          Authorization: "Bearer {{ github_token | default('', true) }}"
+          X-GitHub-Api-Version: "2022-11-28"
+        return_content: true
+        status_code: 200
+        validate_certs: true
+      register: github_pr_files
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - (review_comment_enabled | bool) or (bridge_prepare_publication | bool)
+        - github_token | default('', true) | length > 0
+        - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+        - github_pull_request_number | default('') | string is match('^[0-9]+$')
+        - plaibook_detail.findings | default([]) | length > 0
+
+    - name: Initialize finding routing lists
+      ansible.builtin.set_fact:
+        review_current_findings: []
+        review_stale_findings: []
+        review_classification_ready: >-
+          {{ (plaibook_detail.findings is defined)
+             and ((plaibook_detail.findings | length == 0)
+                  or (github_pr_files.status | default(0) | int == 200)) }}
+        review_changed_files: >-
+          {{ (github_pr_files.json | default([]) | map(attribute='filename') | list)
+             if (github_pr_files.status | default(0) | int == 200)
+             else [] }}
+
+    - name: Route findings that belong to the current PR
+      ansible.builtin.set_fact:
+        review_current_findings: "{{ review_current_findings + [item] }}"
+      loop: "{{ plaibook_detail.findings | default([]) }}"
+      when:
+        - github_pr_files.status | default(0) | int == 200
+        - item.file | default(item.path | default(''), true) | regex_replace('^\\./', '') in review_changed_files
+
+    - name: Route stale or unlocated findings to the issue queue
+      ansible.builtin.set_fact:
+        review_stale_findings: "{{ review_stale_findings + [item] }}"
+      loop: "{{ plaibook_detail.findings | default([]) }}"
+      when:
+        - github_pr_files.status | default(0) | int == 200
+        - item.file | default(item.path | default(''), true) | regex_replace('^\\./', '') not in review_changed_files
+
+    - name: Build the stale-findings issue body
+      ansible.builtin.set_fact:
+        stale_findings_issue_body: |-
+          <!-- aap-demo-plaibook-stale-findings -->
+          ## Stale plaibook findings for PR #{{ github_pull_request_number }}
+
+          These findings were emitted while reviewing PR #{{ github_pull_request_number }}
+          (https://github.com/{{ github_repository }}/pull/{{ github_pull_request_number }}),
+          but their file paths are not present in the PR's current changed-file list.
+          They are quarantined here for triage and are not presented as actionable PR
+          feedback.
+
+          {% for finding in review_stale_findings %}
+          {% set finding_file = finding.file | default(finding.path | default('unknown'), true) %}
+          {% set finding_location = finding_file ~ (':' ~ finding.line if finding.line is defined else '') %}
+          - **{{ finding.severity | default('unknown') | upper }}** `{{ finding_location }}`
+            — {{ finding.description | default('No description provided.') }}
+            - Evidence: {{ finding.evidence | default('n/a') }}
+            - Suggested fix: {{ finding.fix | default('n/a') }}
+          {% endfor %}
+
+          _Generated by the aap-demo `ao-pr-testing` workflow._
+      when: review_stale_findings | length > 0
+
+    - name: Find the existing stale-findings issue
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ github_repository }}/issues?state=open&per_page=100"
+        method: GET
+        headers:
+          Accept: application/vnd.github+json
+          Authorization: "Bearer {{ github_token | default('', true) }}"
+          X-GitHub-Api-Version: "2022-11-28"
+        return_content: true
+        status_code: 200
+        validate_certs: true
+      register: github_open_issues
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - review_comment_enabled | bool
+        - review_stale_findings | length > 0
+        - github_token | default('', true) | length > 0
+        - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+
+    - name: Select the existing stale-findings issue
+      ansible.builtin.set_fact:
+        github_stale_issue_id: >-
+          {{ (github_open_issues.json | default([])
+              | selectattr('body', 'defined')
+              | selectattr('body', 'search', '<!-- aap-demo-plaibook-stale-findings -->')
+              | selectattr('body', 'search',
+                  'https://github.com/' ~ github_repository ~ '/pull/'
+                  ~ (github_pull_request_number | string))
+              | map(attribute='number') | list | first) | default(0) | int }}
+      when: github_open_issues is defined
+
+    - name: Update the stale-findings issue
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ github_repository }}/issues/{{ github_stale_issue_id }}"
+        method: PATCH
+        headers:
+          Accept: application/vnd.github+json
+          Authorization: "Bearer {{ github_token | default('', true) }}"
+          X-GitHub-Api-Version: "2022-11-28"
+        body_format: json
+        body:
+          title: "[aap-demo] Stale plaibook findings for PR #{{ github_pull_request_number }}"
+          body: "{{ stale_findings_issue_body }}"
+          state: open
+        status_code: 200
+        validate_certs: true
+      register: github_stale_issue_write
+      changed_when: true
+      failed_when: false
+      no_log: true
+      when:
+        - github_stale_issue_id | default(0) | int > 0
+        - stale_findings_issue_body is defined
+        - review_comment_enabled | bool
+
+    - name: Create the stale-findings issue
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ github_repository }}/issues"
+        method: POST
+        headers:
+          Accept: application/vnd.github+json
+          Authorization: "Bearer {{ github_token | default('', true) }}"
+          X-GitHub-Api-Version: "2022-11-28"
+        body_format: json
+        body:
+          title: "[aap-demo] Stale plaibook findings for PR #{{ github_pull_request_number }}"
+          body: "{{ stale_findings_issue_body }}"
+        status_code: 201
+        validate_certs: true
+      register: github_stale_issue_write
+      changed_when: true
+      failed_when: false
+      no_log: true
+      when:
+        - github_stale_issue_id | default(0) | int == 0
+        - stale_findings_issue_body is defined
+        - review_comment_enabled | bool
+        - github_token | default('', true) | length > 0
+        - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+
+    - name: Capture stale-findings issue URL
+      ansible.builtin.set_fact:
+        github_stale_issue_url: "{{ github_stale_issue_write.json.html_url | default('') }}"
+      when: github_stale_issue_write is defined
+
+    - name: Build the marked PR review comment
+      ansible.builtin.set_fact:
+        review_comment_body: |-
+          <!-- aap-demo-plaibook-review -->
+          ## Plaibook review: {{ (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN') }}
+
+          **Score:** {{ (plaibook_result.targets | default([]) | first).score | default('n/a') }}
+          **Commit:** {{ (plaibook_result.targets | default([]) | first).commit | default('n/a') }}
+
+          **Actionable findings in this PR:** {{ review_current_findings | length }}
+
+          {% for finding in review_current_findings %}
+          {% set finding_file = finding.file | default(finding.path | default('unknown'), true) %}
+          {% set finding_location = finding_file ~ (':' ~ finding.line if finding.line is defined else '') %}
+          - **{{ finding.severity | default('unknown') | upper }}** `{{ finding_location }}`
+            — {{ finding.description | default('No description provided.') }}
+            - Evidence: {{ finding.evidence | default('n/a') }}
+            - Suggested fix: {{ finding.fix | default('n/a') }}
+          {% else %}
+          No findings matched the PR's current changed files.
+          {% endfor %}
+
+          {% if github_stale_issue_url is defined and github_stale_issue_url | length > 0 %}
+          Stale findings were quarantined in [this issue]({{ github_stale_issue_url }}).
+          {% endif %}
+
+          _Posted by the aap-demo `ao-pr-testing` workflow._
+      when: plaibook_result.targets | default([]) | length > 0
+
+    - name: Find the existing marked PR review comment
+      ansible.builtin.uri:
+        url: >-
+          https://api.github.com/repos/{{ github_repository }}/issues/{{ github_pull_request_number }}/comments
+        method: GET
+        headers:
+          Accept: application/vnd.github+json
+          Authorization: "Bearer {{ github_token | default('', true) }}"
+          X-GitHub-Api-Version: "2022-11-28"
+        return_content: true
+        status_code: 200
+        validate_certs: true
+      register: github_review_comments
+      changed_when: false
+      failed_when: false
+      no_log: true
+      when:
+        - review_comment_enabled | bool
+        - github_token | default('', true) | length > 0
+        - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+        - github_pull_request_number | default('') | string is match('^[0-9]+$')
+        - plaibook_result.targets | default([]) | length > 0
+        - review_classification_ready | bool
+
+    - name: Select the existing marked PR review comment
+      ansible.builtin.set_fact:
+        github_review_comment_id: >-
+          {{ (github_review_comments.json | default([])
+              | selectattr('body', 'defined')
+              | selectattr('body', 'search', '<!-- aap-demo-plaibook-review -->')
+              | map(attribute='id') | list | first) | default(0) | int }}
+      when: github_review_comments is defined
+
+    - name: Update the marked PR review comment
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ github_repository }}/issues/comments/{{ github_review_comment_id }}"
+        method: PATCH
+        headers:
+          Accept: application/vnd.github+json
+          Authorization: "Bearer {{ github_token | default('', true) }}"
+          X-GitHub-Api-Version: "2022-11-28"
+        body_format: json
+        body:
+          body: "{{ review_comment_body }}"
+        status_code: 200
+        validate_certs: true
+      register: github_review_comment_write
+      changed_when: true
+      failed_when: false
+      no_log: true
+      when:
+        - github_review_comment_id | default(0) | int > 0
+        - review_comment_body is defined
+        - review_classification_ready | bool
+
+    - name: Create the marked PR review comment
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/{{ github_repository }}/issues/{{ github_pull_request_number }}/comments"
+        method: POST
+        headers:
+          Accept: application/vnd.github+json
+          Authorization: "Bearer {{ github_token | default('', true) }}"
+          X-GitHub-Api-Version: "2022-11-28"
+        body_format: json
+        body:
+          body: "{{ review_comment_body }}"
+        status_code: 201
+        validate_certs: true
+      register: github_review_comment_write
+      changed_when: true
+      failed_when: false
+      no_log: true
+      when:
+        - github_review_comment_id | default(0) | int == 0
+        - review_comment_body is defined
+        - review_comment_enabled | bool
+        - github_token | default('', true) | length > 0
+        - github_repository | default('') is match('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+        - github_pull_request_number | default('') | string is match('^[0-9]+$')
+        - review_classification_ready | bool
+
+    - name: Publish PR comment status to AAP artifacts
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          github_pr_comment:
+            status: >-
+              {{ 'posted' if (github_review_comment_write is defined
+                              and github_review_comment_write.status | default(0) | int in [200, 201])
+                 else 'skipped' }}
+            operation: >-
+              {{ 'updated' if github_review_comment_id | default(0) | int > 0
+                 else ('created' if github_review_comment_write is defined else 'skipped') }}
+            repository: "{{ github_repository | default('') }}"
+            pull_request_number: "{{ github_pull_request_number | default('') }}"
+            http_status: "{{ github_review_comment_write.status | default(0) | int }}"
+          github_stale_findings_issue:
+            status: >-
+              {{ 'posted' if (github_stale_issue_write is defined
+                              and github_stale_issue_write.status | default(0) | int in [200, 201])
+                 else ('not_needed' if review_stale_findings | length == 0 else 'skipped') }}
+            issue_url: "{{ github_stale_issue_url | default('') }}"
+            finding_count: "{{ review_stale_findings | length }}"
+
+    # AAP exposes set_stats data through the AAP Job Template node's
+    # `artifacts` output. Keep the payload compact enough for AO expressions,
+    # while retaining verdict, score, counts, and the complete finding objects.
+    - name: Publish the deterministic plaibook result to AAP artifacts
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          plaibook_review: "{{ plaibook_result }}"
+          plaibook_review_status: "{{ plaibook_result.status | default('failed') }}"
+          plaibook_review_return_code: "{{ plaibook_process.rc | default(1) | int }}"
+
+    # These checks deliberately exercise the running deployment from inside
+    # the same ephemeral AAP EE that ran the review. They are route-level
+    # smoke checks, not a substitute for the read-only OpenShift MCP used by
+    # operators for deeper inspection.
+    - name: Check the live AAP controller route
+      when: bridge_aap_route_host | length > 0
+      ansible.builtin.uri:
+        url: "https://{{ bridge_aap_route_host }}/api/controller/v2/ping/"
+        method: GET
+        validate_certs: false
+        status_code: [200]
+        return_content: false
+      register: live_aap_check
+      failed_when: false
+
+    - name: Check the live Automation Orchestrator route
+      when: bridge_ao_route_host | length > 0
+      ansible.builtin.uri:
+        url: "https://{{ bridge_ao_route_host }}/api/v1/"
+        method: GET
+        validate_certs: false
+        follow_redirects: none
+        status_code: [200, 307]
+        return_content: false
+      register: live_ao_check
+      failed_when: false
+
+    - name: Publish live aap-demo smoke-test evidence to AAP artifacts
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          aap_demo_live_smoke:
+            status: >-
+              {{ 'passed'
+                 if (live_aap_check.status | default(0) | int == 200)
+                 and (live_ao_check.status | default(0) | int in [200, 307])
+                 else 'failed' }}
+            checks:
+              aap_controller_route:
+                status_code: "{{ live_aap_check.status | default(0) | int }}"
+              automation_orchestrator_route:
+                status_code: "{{ live_ao_check.status | default(0) | int }}"
+
+    # Keep the publication payload rich enough for the GitHub comment to show
+    # current-diff findings and live smoke evidence. Stale findings remain in
+    # their dedicated issue and are deliberately not copied into the comment.
+    - name: Publish the complete review payload for a separate GitHub publication step
+      ansible.builtin.set_stats:
+        per_host: false
+        data:
+          review_publication_payload: >-
+            {{ {
+                 'repository': github_repository | default(''),
+                 'pull_request_number': github_pull_request_number | default('') | string,
+                 'verdict': (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN'),
+                 'score': (plaibook_result.targets | default([]) | first).score | default('n/a'),
+                 'commit': (plaibook_result.targets | default([]) | first).commit | default('n/a'),
+                 'current_findings': review_current_findings | default([]),
+                 'stale_findings': review_stale_findings | default([]),
+                 'review_metadata': {
+                   'status': plaibook_result.status | default('failed'),
+                   'return_code': plaibook_process.rc | default(1) | int,
+                   'run_id': plaibook_result.run_id | default(''),
+                   'branch': plaibook_result.branch | default(''),
+                   'host': plaibook_result.host | default(''),
+                   'duration_seconds': plaibook_result.duration_seconds | default(0),
+                   'agents_dispatched': plaibook_result.agents_dispatched | default(0),
+                   'phase_durations_seconds': plaibook_result.phase_durations_seconds | default({}),
+                   'guardian_scan_available': plaibook_result.guardian_scan_available | default(false),
+                   'target': (plaibook_result.targets | default([]) | first).target | default(''),
+                   'target_status': (plaibook_result.targets | default([]) | first).status | default(''),
+                   'target_verdict': (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN'),
+                   'target_score': (plaibook_result.targets | default([]) | first).score | default('n/a')
+                 },
+                 'live_smoke': {
+                   'status': (
+                     'passed'
+                     if (live_aap_check.status | default(0) | int == 200)
+                     and (live_ao_check.status | default(0) | int in [200, 307])
+                     else 'failed'
+                   ),
+                   'checks': {
+                     'aap_controller_route': {
+                       'status_code': live_aap_check.status | default(0) | int
+                     },
+                     'automation_orchestrator_route': {
+                       'status_code': live_ao_check.status | default(0) | int
+                     }
+                   }
+                 }
+               } | to_json }}
+      when:
+        - bridge_prepare_publication | bool
+        - plaibook_result.targets | default([]) | length > 0
