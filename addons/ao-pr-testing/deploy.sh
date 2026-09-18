@@ -33,7 +33,7 @@ OPENSHIFT_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_OPENSHIFT_CREDENTIAL_NAME 'a
 GITHUB_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_NAME 'aap-demo GitHub PR Comment Token')
 GITHUB_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_TYPE_NAME 'aap-demo GitHub PR Comment Token')
 GITHUB_SCM_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_GITHUB_SCM_CREDENTIAL_NAME 'aap-demo GitHub Source Control Token')
-GITHUB_SCM_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_GITHUB_SCM_CREDENTIAL_TYPE_NAME 'GitHub Personal Access Token')
+GITHUB_SCM_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_GITHUB_SCM_CREDENTIAL_TYPE_NAME 'Source Control')
 GITHUB_TOKEN=$(env_value AO_PR_TESTING_GITHUB_TOKEN '')
 GITHUB_REPOSITORY=$(env_value AO_PR_TESTING_GITHUB_REPOSITORY 'RedHatOfficial/aap-demo')
 WORKFLOW_NAME=$(env_value AO_PR_TESTING_WORKFLOW_NAME 'aap-demo PR Validation')
@@ -407,13 +407,19 @@ ensure_github_scm_credential() {
   existing=$(curl -sk -u "admin:${aap_password}" \
     "${aap_api}/credentials/?name=${encoded_name}&page_size=10")
   credential_id=$(printf '%s' "$existing" | jq -r '.results[0].id // empty')
+  if [ -n "$credential_id" ] && [ "$(printf '%s' "$existing" | jq -r '.results[0].credential_type // empty')" != "$credential_type_id" ]; then
+    curl -sk -u "admin:${aap_password}" -X DELETE \
+      "${aap_api}/credentials/${credential_id}/" >/dev/null 2>&1 || true
+    credential_id=
+  fi
   payload=$(jq -n \
     --arg name "$GITHUB_SCM_CREDENTIAL_NAME" \
     --arg description 'Managed by the ao-pr-testing addon; used for AAP project checkout.' \
     --argjson credential_type "$credential_type_id" \
     --argjson organization "$organization_id" \
-    --arg token "$GITHUB_TOKEN" \
-    '{name:$name,description:$description,credential_type:$credential_type,organization:$organization,inputs:{token:$token}}')
+    --arg username 'x-access-token' \
+    --arg password "$GITHUB_TOKEN" \
+    '{name:$name,description:$description,credential_type:$credential_type,organization:$organization,inputs:{username:$username,password:$password}}')
   if [ -n "$credential_id" ]; then
     result=$(curl -sk -u "admin:${aap_password}" -X PATCH \
       -H 'Content-Type: application/json' -d "$payload" \
