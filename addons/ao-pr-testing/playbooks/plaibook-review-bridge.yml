@@ -22,6 +22,7 @@
       review_openai_model: "{{ review_openai_model | default('') }}"
       use_sandbox: "{{ use_sandbox | default(false) | bool }}"
       review_explore_enabled: "{{ review_explore_enabled | default(false) | bool }}"
+      review_require_ci_passing: "{{ review_require_ci_passing | default(true) | bool }}"
       review_run_ledger_host: "{{ review_run_ledger_host | default('aap-plaibook') }}"
       review_write_artifact: "{{ review_write_artifact | default(true) | bool }}"
       last_run_id: "{{ bridge_run_id }}"
