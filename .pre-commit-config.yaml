@@ -112,6 +112,16 @@ repos:
         args: ['--baseline', '.secrets.baseline']
         exclude: ^(\.git/|\.github/|test/)
 
+  # VERSION bump check — mirrors .github/workflows/version-check.yaml
+  - repo: local
+    hooks:
+      - id: version-bump-check
+        name: version bump check
+        entry: scripts/check-version-bump.sh --fix
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+
 # Suggested workflow:
 # 1. Setup: ./scripts/setup-linting.sh (creates .venv-lint, installs all tools + hooks)
 # 2. Hooks auto-run on commit (uses .venv-lint automatically)

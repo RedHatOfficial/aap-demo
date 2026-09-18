@@ -11,19 +11,45 @@ jobs:
   version-bump:
     name: VERSION bump required
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Fetch base branch
         if: github.event_name == 'pull_request'
         run: git fetch origin "${{ github.base_ref }}"
 
-      - name: Verify VERSION bump (pull request)
+      - name: Auto-bump VERSION (pull request)
         if: github.event_name == 'pull_request'
-        run: ./scripts/check-version-bump.sh "origin/${{ github.base_ref }}"
+        run: ./scripts/check-version-bump.sh --fix "origin/${{ github.base_ref }}"
+
+      - name: Commit VERSION bump (same-repository pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if git diff --cached --quiet -- VERSION; then
+            if [ "$PR_HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+              echo "::warning::Cannot push an automatic VERSION bump to a fork PR; run the pre-commit hook locally."
+            fi
+            exit 0
+          fi
+
+          if [ "$PR_HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "::warning::VERSION was auto-bumped in CI but cannot be pushed to a fork PR."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: auto-bump VERSION [skip ci]"
+          git push origin "HEAD:${PR_HEAD_REF}"
 
       - name: Verify VERSION bump (push to main)
         if: github.event_name == 'push'

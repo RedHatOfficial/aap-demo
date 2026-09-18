@@ -142,8 +142,11 @@ aap-demo destroy       # Delete everything
 
 ### Versioning
 
-Every PR to `main` that changes files (other than `VERSION` itself) must **bump** the semver
-in [`VERSION`](VERSION). CI enforces this via [`.github/workflows/version-check.yaml`](.github/workflows/version-check.yaml).
+Every PR to `main` that changes files (other than `VERSION` itself) must set the semver in
+[`VERSION`](VERSION) to exactly one patch above the base branch. CI enforces this via
+[`.github/workflows/version-check.yaml`](.github/workflows/version-check.yaml). The pre-commit
+hook and pull-request CI automatically set and stage `VERSION` when they detect a required
+bump. CI commits the generated bump back to same-repository PR branches.
 
 ```bash
 aap-demo version              # show current version + git build info
