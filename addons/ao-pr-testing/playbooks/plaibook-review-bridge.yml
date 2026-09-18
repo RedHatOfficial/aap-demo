@@ -70,6 +70,10 @@
       environment:
         HOME: "{{ bridge_home }}"
         ANSIBLE_ASYNC_DIR: "{{ bridge_root }}/.ansible_async"
+        GIT_CONFIG_COUNT: "1"
+        GIT_CONFIG_KEY_0: >-
+          url.https://x-access-token:{{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}@github.com/.insteadOf
+        GIT_CONFIG_VALUE_0: "https://github.com/"
       register: plaibook_process
       changed_when: false
       failed_when: false
