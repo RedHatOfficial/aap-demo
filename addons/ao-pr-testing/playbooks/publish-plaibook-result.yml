@@ -13,7 +13,7 @@
     publication_repository: "{{ github_repository | default(publication_payload.repository | default('')) }}"
     publication_number: >-
       {{ github_pull_request_number | default(publication_payload.pull_request_number | default('')) }}
-    publication_token: "{{ lookup('ansible.builtin.env', 'GITHUB_TOKEN') }}"
+    publication_token: "{{ github_token | default('', true) }}"
 
   tasks:
     - name: Validate the saved publication payload
