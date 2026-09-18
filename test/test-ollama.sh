@@ -25,16 +25,18 @@ cat >"${MOCK_BIN}/kubectl" <<'EOF'
 set -euo pipefail
 case "$*" in
   "cluster-info") exit 0 ;;
+  "get sc topolvm-provisioner") exit "${SC_TOPOLVM_RC:-0}" ;;
+  "get sc standard") exit "${SC_STANDARD_RC:-0}" ;;
   "get route aap -n aap-operator -o jsonpath={.spec.host}")
     printf '%s' 'aap.apps.example.test' ;;
   "apply -f -") cat >"${MOCK_APPLY_FILE}" ;;
   rollout\ status\ deployment/ollama\ -n\ aap-demo-ollama\ --timeout=15m)
     exit "${ROLLOUT_RC:-0}" ;;
-  "get pod -n aap-demo-ollama -l app=ollama -o jsonpath={.items[0].metadata.name}")
-    printf '%s' 'ollama-test-pod' ;;
+  get\ pod\ -n\ aap-demo-ollama\ -l\ app=ollama\ --sort-by=.metadata.creationTimestamp\ -o\ jsonpath=*)
+    printf '%s\n' 'ollama-test-pod' ;;
+  wait\ --for=condition=ready\ pod/ollama-test-pod\ -n\ aap-demo-ollama\ --timeout=10s)
+    exit 0 ;;
   exec\ -n\ aap-demo-ollama\ ollama-test-pod\ --\ ollama\ pull\ qwen2.5:3b) exit 0 ;;
-  "get sc topolvm-provisioner") exit "${SC_TOPOLVM_RC:-0}" ;;
-  "get sc standard") exit "${SC_STANDARD_RC:-0}" ;;
   *) printf 'DIAGNOSTIC_OUTPUT for: %s\n' "$*" ;;
 esac
 EOF
