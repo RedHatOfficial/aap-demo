@@ -41,7 +41,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: topolvm-provisioner
+  storageClassName: __STORAGE_CLASS__
   resources:
     requests:
       storage: 20Gi
@@ -55,6 +55,7 @@ metadata:
     app: ollama
 spec:
   replicas: 1
+  progressDeadlineSeconds: 900
   selector:
     matchLabels:
       app: ollama
@@ -66,7 +67,7 @@ spec:
       serviceAccountName: ollama
       containers:
         - name: ollama
-          image: docker.io/ollama/ollama:latest
+          image: docker.io/ollama/ollama:0.6.5
           ports:
             - containerPort: 11434
               name: http
