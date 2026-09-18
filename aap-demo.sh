@@ -139,7 +139,7 @@ for arg in "$@"; do
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
+    mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -407,6 +407,8 @@ Cluster management:
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
                   Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
+  enable portal-operator
+                  Enable the AAP 2.7 Automation Portal Operator (Technology Preview; AMD64 only)
   enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator (enables mcp-server and ollama automatically)
@@ -456,7 +458,8 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, setup-pah, product-demos, local-cache, ollama)
+    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama)
+                    portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
@@ -1886,15 +1889,17 @@ cmd_status() {
   echo "-------"
   for a in $AVAILABLE_ADDONS; do
     local enabled=false
+    local note=""
+    [ "$a" = "portal-operator" ] && note=" (AMD64 only)"
     if echo "$saved_addons" | grep -qw "$a"; then
       enabled=true
     elif [ "$a" = "ao" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
       enabled=true
     fi
     if [ "$enabled" = true ]; then
-      printf "  %-15s enabled\n" "$a"
+      printf "  %-15s enabled%s\n" "$a" "$note"
     else
-      printf "  %-15s disabled\n" "$a"
+      printf "  %-15s disabled%s\n" "$a" "$note"
     fi
   done
   echo ""
@@ -2669,7 +2674,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
+AVAILABLE_ADDONS="mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
 
 _normalize_addon_name() {
   case "$1" in
@@ -2785,6 +2790,7 @@ cmd_enable() {
       elif [ ! -d "${SCRIPT_DIR}/addons/${a}" ]; then
         status="not found"
       fi
+      [ "$a" = "portal-operator" ] && status="${status}; AMD64 only"
       printf "  %-15s %s\n" "$a" "($status)"
     done
     return 0
