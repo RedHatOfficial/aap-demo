@@ -80,18 +80,26 @@ fi
 echo "  Pulling model: ${OLLAMA_MODEL}..."
 echo "  (This may take several minutes — model is ~2.5GB)"
 
-# Pull model inside the pod — avoids ClusterIP routing issues on the CRC host
-OLLAMA_POD=$(kubectl get pod -n aap-demo-ollama -l app=ollama \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+# Pull from a Ready pod. During a rollout, the first pod returned by the API
+# can still be the terminating old replica even after rollout status succeeds.
+OLLAMA_POD=""
+for _ollama_attempt in $(seq 1 30); do
+  while read -r _ollama_candidate; do
+    [ -n "$_ollama_candidate" ] || continue
+    if kubectl wait --for=condition=ready "pod/${_ollama_candidate}" \
+      -n aap-demo-ollama --timeout=10s >/dev/null 2>&1 \
+      && kubectl exec -n aap-demo-ollama "$_ollama_candidate" -- ollama pull "${OLLAMA_MODEL}"; then
+      OLLAMA_POD="$_ollama_candidate"
+      break 2
+    fi
+  done < <(kubectl get pod -n aap-demo-ollama -l app=ollama \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+  sleep 2
+done
 
 if [ -n "$OLLAMA_POD" ]; then
-  if kubectl exec -n aap-demo-ollama "$OLLAMA_POD" -- ollama pull "${OLLAMA_MODEL}"; then
-    echo "  ✓ Model ${OLLAMA_MODEL} ready"
-  else
-    echo "  ERROR: Model pull failed — retry:" >&2
-    echo "    kubectl exec -n aap-demo-ollama $OLLAMA_POD -- ollama pull ${OLLAMA_MODEL}"
-    exit 1
-  fi
+  echo "  ✓ Model ${OLLAMA_MODEL} ready"
 else
   echo "  ERROR: Could not find Ollama pod — retry: aap-demo enable ollama" >&2
   exit 1
