@@ -3,6 +3,7 @@
 #
 # Usage:
 #   ./scripts/check-version-bump.sh [base-ref]
+#   ./scripts/check-version-bump.sh --fix [base-ref]
 #
 # Default base-ref: origin/main
 #
@@ -12,13 +13,6 @@
 #   - VERSION-only changes are allowed (release prep PRs).
 set -euo pipefail
 
-BASE_REF="${1:-origin/main}"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION_FILE="${REPO_ROOT}/VERSION"
-
-# Paths that may change without requiring a VERSION bump.
-EXCLUDE_PATTERN='^(VERSION|\.secrets\.baseline)$'
-
 _err() {
   printf 'ERROR: %s\n' "$*" >&2
 }
@@ -26,6 +20,24 @@ _err() {
 _note() {
   printf 'check-version-bump: %s\n' "$*"
 }
+
+AUTO_FIX=0
+if [ "${1:-}" = "--fix" ]; then
+  AUTO_FIX=1
+  shift
+fi
+
+if [ "$#" -gt 1 ]; then
+  _err "Usage: $0 [--fix] [base-ref]"
+  exit 2
+fi
+
+BASE_REF="${1:-origin/main}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_FILE="${REPO_ROOT}/VERSION"
+
+# Paths that may change without requiring a VERSION bump.
+EXCLUDE_PATTERN='^(VERSION|\.secrets\.baseline)$'
 
 read_version() {
   local _file="$1"
@@ -46,6 +58,18 @@ semver_gt() {
     return 1
   fi
   [ "$(printf '%s\n' "$_old" "$_new" | sort -V | tail -1)" = "$_new" ]
+}
+
+bump_patch() {
+  local _version="$1"
+  if [[ "$_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+].*)?$ ]]; then
+    printf '%s.%s.%s\n' \
+      "${BASH_REMATCH[1]}" \
+      "${BASH_REMATCH[2]}" \
+      "$((10#${BASH_REMATCH[3]} + 1))"
+  else
+    return 1
+  fi
 }
 
 cd "$REPO_ROOT"
@@ -93,9 +117,34 @@ while IFS= read -r _path; do
   break
 done < <(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || true)
 
+# A pre-commit hook runs before the new commit exists, so include staged files
+# in addition to the committed branch diff.  --fix is used only by the local
+# hook; CI keeps validation-only behavior.
+if [ "$REQUIRES_BUMP" -eq 0 ]; then
+  while IFS= read -r _path; do
+    [ -z "$_path" ] && continue
+    if [[ "$_path" =~ $EXCLUDE_PATTERN ]]; then
+      continue
+    fi
+    REQUIRES_BUMP=1
+    break
+  done < <(git diff --cached --name-only 2>/dev/null || true)
+fi
+
 if [ "$REQUIRES_BUMP" -eq 0 ]; then
   _note "No user-facing changes (only VERSION/exclusions) — OK (${OLD_VERSION})"
   exit 0
+fi
+
+if [ "$OLD_VERSION" = "$NEW_VERSION" ] && [ "$AUTO_FIX" -eq 1 ]; then
+  NEXT_VERSION="$(bump_patch "$NEW_VERSION")" || {
+    _err "Cannot automatically bump VERSION: ${NEW_VERSION}"
+    exit 1
+  }
+  printf '%s\n' "$NEXT_VERSION" >"$VERSION_FILE"
+  git add -- "$VERSION_FILE"
+  NEW_VERSION="$NEXT_VERSION"
+  _note "Automatically bumped VERSION: ${OLD_VERSION} -> ${NEW_VERSION}"
 fi
 
 if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then

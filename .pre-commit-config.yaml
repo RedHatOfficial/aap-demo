@@ -117,7 +117,7 @@ repos:
     hooks:
       - id: version-bump-check
         name: version bump check
-        entry: scripts/check-version-bump.sh
+        entry: scripts/check-version-bump.sh --fix
         language: system
         pass_filenames: false
         stages: [pre-commit]
