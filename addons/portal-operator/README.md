@@ -70,3 +70,36 @@ addon automatically:
 
 `disable` removes the SCC grants, strips the PSA labels, and revokes the AAP
 OAuth application and catalog API tokens.
+
+### CPU requirements
+
+The portal operator requires significant CPU headroom on a single-node CRC/MicroShift
+cluster because the Kubernetes scheduler uses declared CPU **requests**, not live
+consumption, when placing pods.
+
+| Component | CPU request |
+|---|---:|
+| portal-operator controller | 100m |
+| PostgreSQL | 250m |
+| Backstage | 1250m |
+| Backstage (rollout duplicate) | 1250m (temporary) |
+| **Minimum headroom** | **1600m** |
+| **Recommended headroom (survives rollout)** | **2850m** |
+
+When AAP, Automation Orchestrator, and Ollama are all running, reserved CPU requests
+often exceed 7000m on an 8-CPU node, leaving less than 1000m free. Running
+`aap-demo enable portal-operator` triggers a preflight check that reports available
+headroom and offers to scale Ollama to zero (freeing ~1000m) before the install
+proceeds.
+
+**Recommended CRC configuration** when running AAP + AO + portal together:
+
+```bash
+crc config set cpus 10
+```
+
+To skip the CPU check (e.g. in CI or when headroom has already been managed manually):
+
+```bash
+SKIP_CPU_PREFLIGHT=1 aap-demo enable portal-operator
+```
