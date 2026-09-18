@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-  echo "Usage: $0 <owner/repository> <pull-request-number> [head-sha]" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 4 ]; then
+  echo "Usage: $0 <owner/repository> <pull-request-number> [head-sha] [webhook-path]" >&2
   exit 2
 fi
 
@@ -12,6 +12,8 @@ REPO=$1
 PR_NUMBER=$2
 HEAD_SHA=unknown
 [ "$#" -ge 3 ] && HEAD_SHA=$3
+WEBHOOK_PATH=${AO_PR_TESTING_WEBHOOK_PATH:-aap-demo-pr-validation}
+[ "$#" -ge 4 ] && WEBHOOK_PATH=$4
 STATE_DIR=$(printenv AO_PR_TESTING_STATE_DIR 2>/dev/null || true)
 [ -n "$STATE_DIR" ] || STATE_DIR="$HOME/.aap-demo/ao-pr-testing"
 CLIENT_ID_FILE=$STATE_DIR/webhook-client-id
@@ -50,7 +52,7 @@ payload=$(jq -n \
   --arg sha "$HEAD_SHA" \
   '{repository:$repository,pull_request_number:($number|tonumber),head_sha:$sha}')
 
-curl -sk -X POST "https://$AO_ROUTE/api/v1/webhooks/aap-demo-pr-validation" \
+curl -sk -X POST "https://$AO_ROUTE/api/v1/webhooks/$WEBHOOK_PATH" \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d "$payload"
