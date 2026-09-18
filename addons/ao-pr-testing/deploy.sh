@@ -32,6 +32,8 @@ MCP_INTEGRATION_NAME=$(env_value AO_PR_TESTING_MCP_INTEGRATION_NAME 'aap-demo Op
 OPENSHIFT_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_OPENSHIFT_CREDENTIAL_NAME 'aap-demo OpenShift MCP Access')
 GITHUB_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_NAME 'aap-demo GitHub PR Comment Token')
 GITHUB_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_GITHUB_CREDENTIAL_TYPE_NAME 'aap-demo GitHub PR Comment Token')
+GITHUB_SCM_CREDENTIAL_NAME=$(env_value AO_PR_TESTING_GITHUB_SCM_CREDENTIAL_NAME 'aap-demo GitHub Source Control Token')
+GITHUB_SCM_CREDENTIAL_TYPE_NAME=$(env_value AO_PR_TESTING_GITHUB_SCM_CREDENTIAL_TYPE_NAME 'GitHub Personal Access Token')
 GITHUB_TOKEN=$(env_value AO_PR_TESTING_GITHUB_TOKEN '')
 GITHUB_REPOSITORY=$(env_value AO_PR_TESTING_GITHUB_REPOSITORY 'RedHatOfficial/aap-demo')
 WORKFLOW_NAME=$(env_value AO_PR_TESTING_WORKFLOW_NAME 'aap-demo PR Validation')
@@ -79,6 +81,7 @@ STATE_DIR=$(env_value AO_PR_TESTING_STATE_DIR "$HOME_DIR/.aap-demo/ao-pr-testing
 CHART=$(env_value AO_PR_TESTING_CHART openshift-helm-charts/redhat-openshift-mcp-server)
 OPENSHIFT_CREDENTIAL_ID=
 GITHUB_CREDENTIAL_ID=
+GITHUB_SCM_CREDENTIAL_ID=
 PLAIBOOK_JOB_TEMPLATE_ID=
 ACTION=deploy
 [ "$#" -gt 0 ] && ACTION=$1
@@ -255,6 +258,9 @@ provision_plaibook_job_template() {
   if [ -n "$GITHUB_CREDENTIAL_ID" ]; then
     provision_args+=(--credential-id "$GITHUB_CREDENTIAL_ID")
   fi
+  if [ -n "$GITHUB_SCM_CREDENTIAL_ID" ]; then
+    provision_args+=(--project-credential-id "$GITHUB_SCM_CREDENTIAL_ID")
+  fi
   provision_args+=(--extra-vars-json "$extra_vars")
 
   python3 "$SCRIPT_DIR/provision-plaibook.py" \
@@ -369,6 +375,64 @@ ensure_github_credential() {
   fi
   GITHUB_CREDENTIAL_ID=$credential_id
   unset aap_password GITHUB_TOKEN payload result
+}
+
+ensure_github_scm_credential() {
+  local aap_route aap_password aap_api encoded_name credential_type_id organization_id
+  local existing credential_id payload result
+
+  aap_route=$(wire_aap_route_host)
+  aap_password=$(wire_aap_admin_password)
+  [ -n "$aap_route" ] && [ -n "$aap_password" ] || return 0
+  aap_api="https://${aap_route}/api/controller/v2"
+  encoded_name=$(jq -rn --arg name "$GITHUB_SCM_CREDENTIAL_NAME" '$name|@uri')
+
+  if [ -z "$GITHUB_TOKEN" ]; then
+    unset aap_password
+    return 0
+  fi
+
+  organization_id=$(curl -sk -u "admin:${aap_password}" \
+    "${aap_api}/organizations/?name=Default&page_size=10" \
+    | jq -r '.results[0].id // empty')
+  credential_type_id=$(curl -sk -u "admin:${aap_password}" \
+    "${aap_api}/credential_types/?name=$(jq -rn --arg name "$GITHUB_SCM_CREDENTIAL_TYPE_NAME" '$name|@uri')&page_size=10" \
+    | jq -r '.results[0].id // empty')
+  if [ -z "$organization_id" ] || [ -z "$credential_type_id" ]; then
+    warn 'AAP GitHub Personal Access Token credential type is unavailable; fork/private project checkout may fail'
+    unset aap_password
+    return 0
+  fi
+
+  existing=$(curl -sk -u "admin:${aap_password}" \
+    "${aap_api}/credentials/?name=${encoded_name}&page_size=10")
+  credential_id=$(printf '%s' "$existing" | jq -r '.results[0].id // empty')
+  payload=$(jq -n \
+    --arg name "$GITHUB_SCM_CREDENTIAL_NAME" \
+    --arg description 'Managed by the ao-pr-testing addon; used for AAP project checkout.' \
+    --argjson credential_type "$credential_type_id" \
+    --argjson organization "$organization_id" \
+    --arg token "$GITHUB_TOKEN" \
+    '{name:$name,description:$description,credential_type:$credential_type,organization:$organization,inputs:{token:$token}}')
+  if [ -n "$credential_id" ]; then
+    result=$(curl -sk -u "admin:${aap_password}" -X PATCH \
+      -H 'Content-Type: application/json' -d "$payload" \
+      "${aap_api}/credentials/${credential_id}/")
+  else
+    result=$(curl -sk -u "admin:${aap_password}" -X POST \
+      -H 'Content-Type: application/json' -d "$payload" \
+      "${aap_api}/credentials/")
+    credential_id=$(printf '%s' "$result" | jq -r '.id // empty')
+  fi
+  if [ -z "$credential_id" ]; then
+    warn 'Could not provision the AAP GitHub source-control credential; fork/private project checkout may fail'
+    unset aap_password payload result
+    return 0
+  fi
+  GITHUB_SCM_CREDENTIAL_ID=$credential_id
+  printf '  AAP GitHub source-control credential ready: %s (ID: %s)\n' \
+    "$GITHUB_SCM_CREDENTIAL_NAME" "$GITHUB_SCM_CREDENTIAL_ID"
+  unset aap_password payload result
 }
 
 copy_pull_secret() {
@@ -710,6 +774,7 @@ ao_is_ready || die 'Automation Orchestrator is not ready; enable the ao addon fi
 prompt_github_token
 ensure_aap_execution_environment
 ensure_github_credential
+ensure_github_scm_credential
 ensure_plaibook_job_template
 deploy_openshift_mcp
 grant_dev_read_access
