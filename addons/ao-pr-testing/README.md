@@ -95,8 +95,8 @@ rejected and the interactive prompt is shown again. Without a token, comments
 and stale-finding issues are skipped while the AAP artifacts remain available.
 Reruns update the marked comment and issue instead of creating duplicates.
 When `AO_PR_TESTING_PLAIBOOK_PROJECT_URL` points to a private repository or a
-fork, the same PAT is also stored in an AAP GitHub Personal Access Token
-credential and attached to the plaibook project for source checkout.
+fork, the same PAT is also stored in an AAP Source Control credential as the
+checkout password and attached to the plaibook project.
 
 The default review model is `qwen2.5:3b` through the local Ollama service.
 This dev addon deliberately runs plaibook sandboxless inside the ephemeral AAP
