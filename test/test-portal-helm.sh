@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Regression tests for the Portal addon's Helm detection and auto-install path.
+# shellcheck disable=SC2218  # helm helpers are loaded from the deployment script.
 
 set -uo pipefail
 
