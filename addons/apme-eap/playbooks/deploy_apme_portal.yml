@@ -20,6 +20,25 @@
           - "openshift_token length: {{ openshift_token | default('') | length }}"
           - "openshift_api_url: {{ openshift_api_url | default('NOT SET') }}"
 
+    - name: Create local directory for rendered registry artifacts
+      ansible.builtin.file:
+        path: "{{ collection_root }}/.rendered"
+        state: directory
+        mode: "0700"
+
+    - name: Write kubeconfig for OCI registry commands
+      ansible.builtin.template:
+        src: kubeconfig.j2
+        dest: "{{ collection_root }}/.rendered/kubeconfig"
+        mode: "0600"
+      no_log: true
+      when: openshift_token is defined and openshift_token | length > 0
+
+    - name: Set kubeconfig path for OCI registry tasks
+      ansible.builtin.set_fact:
+        apme_oci_kubeconfig: "{{ collection_root }}/.rendered/kubeconfig"
+      when: openshift_token is defined and openshift_token | length > 0
+
     - name: Derive OpenShift cluster domain from API URL if not specified
       ansible.builtin.set_fact:
         openshift_cluster_domain: >-
@@ -34,6 +53,9 @@
         portal_route_host: "redhat-rhaap-portal-{{ openshift_project_name }}.{{ openshift_cluster_domain }}"
         portal_url: "https://redhat-rhaap-portal-{{ openshift_project_name }}.{{ openshift_cluster_domain }}"
 
+    - name: Resolve bundled plugin pack and registry defaults
+      ansible.builtin.include_tasks: tasks/resolve_plugin_pack.yml
+
     - name: Display deployment info
       ansible.builtin.debug:
         msg:
@@ -41,7 +63,8 @@
           - "Target namespace: {{ openshift_project_name }}"
           - "Cluster domain: {{ openshift_cluster_domain }}"
           - "Portal URL (expected): {{ portal_url }}"
-          - "Portal hub image: {{ portal_hub_image }}"
+          - "Plugin SHA: {{ plugin_sha }}"
+          - "OCI registry: {{ oci_registry }}"
 
     - name: Verify required Ansible collections
       ansible.builtin.command:
@@ -64,6 +87,8 @@
     - role: openshift_apme_setup
     - role: apme_pah_integration
     - role: aap_apme_prerequisites
+    - role: apme_oci_push
+      when: not (skip_plugin_push | default(false) | bool)
     - role: apme_helm_values
     - role: apme_scm_secrets
       when: configure_github_secrets | default(false) | bool
@@ -101,7 +126,7 @@
           - ""
           - "Portal URL: {{ portal_url }}"
           - "Namespace: {{ openshift_project_name }}"
-          - "Portal hub: {{ portal_hub_image }}"
+          - "Plugin image: {{ oci_registry }}/apme-prototype-plugins:{{ plugin_sha }}"
           - ""
           - "Verify: oc get pods -n {{ openshift_project_name }}"
           - "Sign in via AAP OAuth, then open Quality tab after registering a repo."

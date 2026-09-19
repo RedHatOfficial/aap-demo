@@ -16,10 +16,10 @@ Deployment date: {{ ansible_date_time.iso8601 }}
 - **Redirect URI:** {{ portal_url }}/api/auth/rhaap/handler/frame
 - **GitHub OAuth callback:** {{ portal_url }}/api/auth/github/handler/frame (optional: confirm on github.com)
 
-## Portal hub
+## Dynamic plugins
 
-- **Image:** {{ portal_hub_image }}
-- **Plugins:** Baked into the container image (no OCI push or install-dynamic-plugins at deploy time)
+- **Plugin image:** {{ oci_registry }}/apme-prototype-plugins:{{ plugin_sha }}
+- **Delivery:** Helm chart `install-dynamic-plugins` init container
 
 ## Automation Hub (setup-pah)
 

@@ -1,0 +1,67 @@
+---
+# Push the prototype OCI pack to the local registry used by the portal chart.
+
+- name: Validate plugin SHA and registry
+  ansible.builtin.assert:
+    that:
+      - plugin_sha is defined and plugin_sha | length > 0
+      - oci_registry is defined and oci_registry | length > 0
+    fail_msg: "Set plugin_sha and oci_registry in the deployment variables."
+
+- name: Normalize OCI registry host
+  ansible.builtin.set_fact:
+    apme_oci_push_registry_normalized: "{{ oci_registry | regex_replace('/$', '') }}"
+
+- name: Use explicit OCI tarball when provided  # noqa var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ apme_oci_tar }}"
+  when:
+    - apme_oci_tar is defined
+    - apme_oci_tar | length > 0
+
+- name: Search for bundled OCI tarball
+  ansible.builtin.find:
+    paths: "{{ apme_oci_push_search_dirs }}"
+    patterns:
+      - "apme-prototype-plugins-{{ plugin_sha }}*.oci*.tar.gz"
+      - "early-access-plugins-prototype-apme-{{ plugin_sha }}*.oci*.tar.gz"
+    recurse: false
+  register: apme_oci_push_tar_find
+  when: apme_oci_tar_resolved is not defined
+
+- name: Set resolved OCI tarball from search  # noqa var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ apme_oci_push_tar_find.files | map(attribute='path') | first }}"
+  when:
+    - apme_oci_tar_resolved is not defined
+    - apme_oci_push_tar_find.files | default([]) | length > 0
+
+- name: Fail when OCI tarball is not found
+  ansible.builtin.fail:
+    msg: >-
+      OCI pack not found for plugin_sha={{ plugin_sha }}.
+      Download the EAP plugin pack or set apme_oci_tar.
+  when: apme_oci_tar_resolved is not defined or apme_oci_tar_resolved | length == 0
+
+- name: Set OCI image reference
+  ansible.builtin.set_fact:
+    apme_oci_push_image_reference: "{{ apme_oci_push_image_name }}:{{ plugin_sha }}"
+
+- name: Display OCI source and target
+  ansible.builtin.debug:
+    msg:
+      - "Loading: {{ apme_oci_tar_resolved }}"
+      - "Target: docker://{{ apme_oci_push_registry_normalized }}/{{ apme_oci_push_image_reference }}"
+
+- name: Push OCI archive to the local registry
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_oci_push_skopeo_binary }}"
+      - copy
+      - "docker-archive:{{ apme_oci_tar_resolved }}"
+      - "docker://{{ apme_oci_push_registry_normalized }}/{{ apme_oci_push_image_reference }}"
+      - --dest-tls-verify=false
+  register: apme_oci_push_result
+  changed_when: apme_oci_push_result.rc == 0
+  no_log: true
+  when: apme_oci_push_force | bool or not (apme_oci_skip_existing | default(false) | bool)
