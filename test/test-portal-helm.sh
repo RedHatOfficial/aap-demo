@@ -10,7 +10,7 @@ DEPLOY_SCRIPT="${REPO_ROOT}/addons/portal/deploy.sh"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "${TEST_DIR}"' EXIT
 
-MOCK_BIN="${TEST_DIR}/bin"
+MOCK_BIN="${TEST_DIR}/home/.local/bin"
 mkdir -p "${MOCK_BIN}" "${TEST_DIR}/home"
 export HOME="${TEST_DIR}/home"
 export PATH="${MOCK_BIN}:/usr/bin:/bin"
@@ -85,6 +85,27 @@ if ensure_helm >/dev/null 2>&1 \
   pass "auto_installs_when_helm_is_missing"
 else
   fail "auto_installs_when_helm_is_missing"
+fi
+
+rm -f "${MOCK_BIN}/helm"
+if (
+  source "${DEPLOY_SCRIPT}"
+  brew() {
+    if [ "${1:-}" = list ]; then
+      return 1
+    fi
+    if [ "${1:-}" = install ] && [ "${2:-}" = helm ]; then
+      write_mock_helm 'v4.0.0+g123456'
+      return 0
+    fi
+    return 1
+  }
+  uname() { printf '%s\n' Darwin; }
+  install_helm_binary >/dev/null 2>&1 && helm_version_ok
+); then
+  pass "installs_missing_helm_with_homebrew_on_macos"
+else
+  fail "installs_missing_helm_with_homebrew_on_macos"
 fi
 
 echo "Passed: ${PASSED}  Failed: ${FAILED}"
