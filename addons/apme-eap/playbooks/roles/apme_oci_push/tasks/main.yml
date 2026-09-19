@@ -53,6 +53,25 @@
       - "Loading: {{ apme_oci_tar_resolved }}"
       - "Target: docker://{{ apme_oci_push_registry_normalized }}/{{ apme_oci_push_image_reference }}"
 
+- name: Check whether the OCI plugin image already exists
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_oci_push_skopeo_binary }}"
+      - inspect
+      - --tls-verify=false
+      - "docker://{{ apme_oci_push_registry_normalized }}/{{ apme_oci_push_image_reference }}"
+  register: apme_oci_push_inspect_result
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: not (apme_oci_push_force | bool)
+
+- name: Set OCI push skip state
+  ansible.builtin.set_fact:
+    apme_oci_push_skip_existing: >-
+      {{ false if (apme_oci_push_force | bool) else
+         (apme_oci_push_inspect_result.rc | default(1) == 0) }}
+
 - name: Push OCI archive to the local registry
   ansible.builtin.command:
     argv:
@@ -64,4 +83,4 @@
   register: apme_oci_push_result
   changed_when: apme_oci_push_result.rc == 0
   no_log: true
-  when: apme_oci_push_force | bool or not (apme_oci_skip_existing | default(false) | bool)
+  when: apme_oci_push_force | bool or not (apme_oci_push_skip_existing | bool)

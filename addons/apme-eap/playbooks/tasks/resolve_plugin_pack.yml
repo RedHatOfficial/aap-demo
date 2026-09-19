@@ -12,13 +12,20 @@
   when:
     - plugin_sha is not defined or plugin_sha | length == 0
 
+- name: Use explicitly provided OCI tarball
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ apme_oci_tar }}"
+  when:
+    - apme_oci_tar is defined
+    - apme_oci_tar | length > 0
+
 - name: Set OCI tarball from manifest
   ansible.builtin.set_fact:
     apme_oci_tar_resolved: >-
       {{ collection_root }}/plugin_packs/{{
          (plugin_pack_manifest_file.content | b64decode | from_yaml).oci_pack_filename }}
   when:
-    - apme_oci_tar is not defined or apme_oci_tar | length == 0
+    - apme_oci_tar_resolved is not defined
 
 - name: Verify bundled OCI tarball exists
   ansible.builtin.stat:

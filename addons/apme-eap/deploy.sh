@@ -577,6 +577,23 @@ generate_vars_file() {
 
   mkdir -p "$(dirname "$VARS_FILE")"
 
+  # Preserve runtime OCI settings when the generated vars file is regenerated.
+  # This lets users opt into skip/re-push behavior without editing defaults.yml.
+  local skip_plugin_push_value=false
+  local apme_oci_push_force_value=false
+  if [ -f "$VARS_FILE" ]; then
+    skip_plugin_push_value=$(sed -n 's/^skip_plugin_push:[[:space:]]*//p' "$VARS_FILE" | tail -1)
+    apme_oci_push_force_value=$(sed -n 's/^apme_oci_push_force:[[:space:]]*//p' "$VARS_FILE" | tail -1)
+    case "$skip_plugin_push_value" in
+      true | false) ;;
+      *) skip_plugin_push_value=false ;;
+    esac
+    case "$apme_oci_push_force_value" in
+      true | false) ;;
+      *) apme_oci_push_force_value=false ;;
+    esac
+  fi
+
   # Extract token for API and registry authentication.
   # CRC kubeconfig uses client certificate auth (no token field), so fall back
   # to the active oc session token.
@@ -697,8 +714,8 @@ EOF
 # OCI registry configuration for chart-native runtime plugin installation
 oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
 oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
-skip_plugin_push: false
-apme_oci_push_force: false
+skip_plugin_push: ${skip_plugin_push_value}
+apme_oci_push_force: ${apme_oci_push_force_value}
 
 # setup-pah / Automation Hub (reads ~/.aap-demo/galaxy-token and pah-config.yml)
 apme_pah_run_setup_pah: true
