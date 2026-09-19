@@ -1,12 +1,17 @@
+---
 # APME gateway — EAP install (same namespace as portal)
-# Use latest SHA build for ARM64 support (released versions only support x86_64)
+# APME chart 0.1.8 / application release 2026.9.3.
 image:
-  tag: "sha-d1ac741"
+  registry: ghcr.io/ansible
+  tag: "2026.9.3"
+
+# OpenShift uses the restricted SCC to assign pod security settings.
+platform: openshift
 
 # Reduce resource requests for OpenShift Local / smaller clusters
 engine:
   resources:
-    primary:
+    engine:
       requests:
         cpu: 100m
         memory: 256Mi
@@ -71,6 +76,27 @@ persistence:
     size: 2Gi
   proxyCache:
     size: 2Gi
+  postgres:
+    size: 2Gi
+
+postgres:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+gateway:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 ui:
   enabled: false

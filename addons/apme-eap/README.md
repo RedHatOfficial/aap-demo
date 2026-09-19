@@ -32,9 +32,10 @@ authentication.
 - `helm` 3.10+ (portal Helm chart — auto-installed via brew/dnf when missing)
 - AAP deployed (`aap-demo deploy`)
 
-The addon deploys a **pre-built portal hub image** (`quay.io/cferman/portal-hub-eap:latest`)
-with APME plugins baked in at build time. Deploy does **not** push OCI plugin archives,
-run `install-dynamic-plugins`, or require `skopeo` or the in-cluster registry addon.
+The addon uses the portal Helm chart's standard RHDH image and delivers the APME plugins
+through the chart's runtime OCI plugin installer. The deploy bootstraps the local registry,
+pushes the bundled plugin archive with `skopeo`, and runs `install-dynamic-plugins` in the
+chart-provided init container.
 
 **Ansible installation** (auto-installed in venv):
 
@@ -82,7 +83,7 @@ This will:
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
 5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Run `playbooks/deploy_apme_portal.yml` with pre-built `portal-hub-eap` container image
+6. Push the bundled APME OCI plugin archive to the local registry and run the portal Helm chart
 7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
 
 **Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with
@@ -135,10 +136,11 @@ The addon uses these roles from the official APME welcome pack:
 1. **openshift_apme_setup** - Creates namespace and scaffolder ConfigMap
 2. **apme_pah_integration** - setup-pah remotes, PAH catalog sync flags, APME galaxy seeding
 3. **aap_apme_prerequisites** - Creates AAP OAuth app, generates API token
-4. **apme_helm_values** - Generates Helm values for the pre-built portal hub image
-5. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
-6. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
-7. **apme_gateway_helm** - Installs APME gateway Helm chart
+4. **apme_oci_push** - Publishes the bundled APME plugin archive to the local registry
+5. **apme_helm_values** - Generates Helm values for chart-native dynamic plugin installation
+6. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
+7. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
+8. **apme_gateway_helm** - Installs APME gateway Helm chart
 
 ### Deployment Flow
 
@@ -160,7 +162,7 @@ Roles execute in sequence:
   1. openshift_apme_setup
   2. apme_pah_integration (setup-pah + galaxy facts)
   3. aap_apme_prerequisites
-  4. apme_helm_values (portal-hub-eap image + PAH sync)
+  4. apme_helm_values (chart-defined portal image + runtime OCI plugins + PAH sync)
   5. apme_scm_secrets (if enabled)
   6. portal_helm_install
   7. apme_gateway_helm
@@ -215,7 +217,8 @@ For detailed GitHub setup instructions, see the [APME EAP welcome pack documenta
 
 Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 
-- **portal_hub_image** - Override pre-built portal hub image (default: `quay.io/cferman/portal-hub-eap:latest`)
+- **skip_plugin_push** - Skip the runtime OCI plugin push (default: `false`)
+- **apme_oci_push_force** - Re-push the bundled plugin archive (default: `false`)
 - **apme_pah_run_setup_pah** - Run `setup-pah` when `~/.aap-demo/galaxy-token` exists (default: `true`)
 - **apme_pah_seed_apme_galaxy_servers** - POST AAP/community galaxy servers to APME gateway (default: `true`)
 - **apme_pah_collections_enabled** - `auto` | `true` | `false` for portal PAH catalog sync (default: `auto`)
@@ -253,18 +256,18 @@ addons/apme-eap/
 │   ├── apme_scm_secrets/
 │   ├── portal_helm_install/
 │   └── apme_gateway_helm/
-└── plugin_packs/                 # Deprecated (reference OCI packs only)
+└── plugin_packs/                 # Bundled OCI plugin archive and manifest
 ```
 
-## Pre-built hub architecture
+## Runtime plugin architecture
 
-See **[ADR-022: APME Pre-Built Portal Hub Deployment](../../docs/adr/022-apme-prebuilt-portal-hub.md)**
-for the full decision record: init contract, plugin trees, API factory wiring, incident log, and
-verification checklist. Read this before changing hub image builds or `apme_helm_values` tasks.
+The standard portal chart image runs `install-dynamic-plugins` against the APME OCI image
+published to the local registry. The plugin archive is bundled under `plugin_packs/` and does
+not require a custom portal hub image.
 
 ## Troubleshooting
 
-Quick fixes below; root causes and anti-patterns are documented in ADR-022.
+Quick fixes below; root causes and anti-patterns are documented in the deployment history.
 
 ### Git Repositories catalog: blank page or `scrollWidth` TypeError
 
@@ -280,15 +283,15 @@ Quick fixes below; root causes and anti-patterns are documented in ADR-022.
    `/self-service/repositories/catalog`. Init patches served `dist-scalprum` bundles after
    install (not the full plugin source tree).
 
-**Pre-built hub plugin trees**:
+**Runtime plugin locations**:
 
 | Path | Role |
 | ---- | ---- |
-| `/opt/app-root/src/dynamic-plugins/dist/ansible-portal/` | Baked source packages (`install-dynamic-plugins` input) |
-| `/opt/app-root/src/dynamic-plugins-root/` | Writable volume; scalprum serves `dist-scalprum/static/` |
+| `registry.aap-demo-registry.svc.cluster.local:5000/apme` | In-cluster OCI registry |
+| `/opt/app-root/src/dynamic-plugins-root/` | Writable volume populated by the chart init container |
 
-**Solution**: Redeploy with current `apme-eap` playbooks (init runs `install-dynamic-plugins`
-from local baked paths). Hard-refresh the browser after redeploy so cached chunks are not reused.
+**Solution**: Redeploy with current `apme-eap` playbooks so the chart init container reruns
+`install-dynamic-plugins`. Hard-refresh the browser after redeploy so cached chunks are not reused.
 
 ### Git Repositories: `NotImplementedError: apiRef{plugin.apme.api}`
 
@@ -352,14 +355,14 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 # Verify password works by logging into AAP web UI
 ```
 
-### Portal hub image pull fails
+### Portal image or plugin pull fails
 
 **Symptom**: Portal pod stays in `ImagePullBackOff`
 
 **Solution**:
 
-1. Verify the image is reachable: `podman pull quay.io/cferman/portal-hub-eap:latest`
-2. Override in `~/.aap-demo/apme-eap-vars.yml`: `portal_hub_image: "your-registry/portal-hub-eap:tag"`
+1. Verify the local registry is running: `kubectl get pods -n aap-demo-registry`
+2. Re-push the bundled OCI archive by setting `apme_oci_push_force: true`
 3. Re-deploy: `aap-demo enable apme-eap`
 
 ### Helm not installed
@@ -449,14 +452,10 @@ Use AAP admin credentials (same as AAP web UI).
 
 ## Advanced Topics
 
-### Using a Custom Portal Hub Image
+### Using a Different Plugin Pack
 
-APME plugins are baked into the portal hub container at build time. To use a different build:
-
-1. Build and publish a `portal-hub-eap` image with APME plugins under `dynamic-plugins/dist/ansible-portal/`
-2. Optionally add `/pre-installed/dynamic-plugins-root/` for faster init staging
-3. Set `portal_hub_image` in `~/.aap-demo/apme-eap-vars.yml`
-4. Re-deploy: `aap-demo enable apme-eap`
+Replace the bundled OCI archive and update `plugin-pack.manifest.yml`, then set
+`apme_oci_push_force: true` for the next deployment.
 
 ### Debugging Playbook Execution
 

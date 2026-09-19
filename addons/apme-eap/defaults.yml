@@ -13,11 +13,14 @@ portal_helm_chart_version: 2.2.3
 portal_helm_release_name: redhat-rhaap-portal
 portal_helm_install_timeout: 1800
 
-# Helm chart configuration (APME gateway - x86 only)
+# Helm chart configuration (APME gateway)
 apme_helm_chart_repo: apme
 apme_helm_chart_repo_url: https://ansible.github.io/apme
 apme_helm_chart_name: apme
-apme_helm_chart_version: 0.1.2
+# Empty selects the repository's latest chart; the fallback is used if that
+# chart cannot be installed or does not become ready.
+apme_helm_chart_version: ""
+apme_helm_chart_fallback_version: 0.1.8
 apme_helm_release_name: apme
 
 # AAP organization (create or reuse)
@@ -27,8 +30,10 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 # GitHub secrets configuration
 configure_github_secrets: false
 
-# Portal hub image (APME plugins baked in at build time — no deploy-time plugin loading)
-portal_hub_image: "quay.io/cferman/portal-hub-eap:latest"
+# Runtime OCI plugin delivery
+skip_plugin_push: false
+apme_oci_push_force: false
+apme_oci_push_skopeo_binary: skopeo
 
 # setup-pah / Automation Hub integration (see ~/.aap-demo/galaxy-token and pah-config.yml)
 apme_pah_run_setup_pah: true

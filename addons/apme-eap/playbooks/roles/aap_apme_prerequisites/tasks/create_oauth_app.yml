@@ -33,7 +33,7 @@
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"
     force_basic_auth: "{{ aap_username is defined and aap_username | length > 0 }}"
-    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # noqa: yaml[line-length]
+    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # yamllint disable-line rule:line-length
     validate_certs: "{{ aap_apme_prerequisites_validate_certs }}"
     timeout: "{{ aap_apme_prerequisites_request_timeout }}"
     status_code: [200]
@@ -57,6 +57,30 @@
     - not (aap_apme_prerequisites_force_oauth_recreation | bool)
     - aap_oauth_client_id is defined and aap_oauth_client_id | length > 0
     - aap_oauth_client_secret is defined and aap_oauth_client_secret | length > 0
+  no_log: true
+
+- name: Reconcile OAuth application settings  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.uri:
+    url: "{{ aap_host_normalized }}/api/gateway/v1/applications/{{ existing_oauth_app.id }}/"
+    method: PATCH
+    user: "{{ aap_username | default(omit) }}"
+    password: "{{ aap_password | default(omit) }}"
+    force_basic_auth: "{{ aap_username is defined and aap_username | length > 0 }}"
+    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # yamllint disable-line rule:line-length
+    body_format: json
+    body:
+      authorization_grant_type: authorization-code
+      client_type: confidential
+      pkce_required: "{{ aap_apme_prerequisites_oauth_pkce_required | bool }}"
+      redirect_uris: "{{ aap_oauth_redirect_uri }}"
+      app_url: "{{ portal_url }}"
+    validate_certs: "{{ aap_apme_prerequisites_validate_certs }}"
+    timeout: "{{ aap_apme_prerequisites_request_timeout }}"
+    status_code: [200]
+  when:
+    - not (aap_apme_prerequisites_force_oauth_recreation | bool)
+    - existing_oauth_app.id is defined
+    - existing_oauth_app.id | string | length > 0
   no_log: true
 
 - name: Determine whether stored OAuth credentials are usable  # noqa: var-naming[no-role-prefix]
@@ -88,7 +112,7 @@
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"
     force_basic_auth: "{{ aap_username is defined and aap_username | length > 0 }}"
-    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # noqa: yaml[line-length]
+    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # yamllint disable-line rule:line-length
     validate_certs: "{{ aap_apme_prerequisites_validate_certs }}"
     timeout: "{{ aap_apme_prerequisites_request_timeout }}"
     status_code: [204, 404]
@@ -105,7 +129,7 @@
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"
     force_basic_auth: "{{ aap_username is defined and aap_username | length > 0 }}"
-    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # noqa: yaml[line-length]
+    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # yamllint disable-line rule:line-length
     validate_certs: "{{ aap_apme_prerequisites_validate_certs }}"
     timeout: "{{ aap_apme_prerequisites_request_timeout }}"
     status_code: [200]
@@ -128,7 +152,7 @@
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"
     force_basic_auth: "{{ aap_username is defined and aap_username | length > 0 }}"
-    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # noqa: yaml[line-length]
+    headers: "{{ {} if (aap_username is defined and aap_username | length > 0) else {'Authorization': 'Bearer ' + aap_token, 'Content-Type': 'application/json'} }}"  # yamllint disable-line rule:line-length
     body_format: json
     body:
       name: "{{ aap_apme_prerequisites_oauth_application_name }}"
@@ -136,6 +160,7 @@
       organization: "{{ aap_org_lookup.json.results[0].id }}"
       authorization_grant_type: authorization-code
       client_type: confidential
+      pkce_required: "{{ aap_apme_prerequisites_oauth_pkce_required | bool }}"
       redirect_uris: "{{ aap_oauth_redirect_uri }}"
       app_url: "{{ portal_url }}"
     validate_certs: "{{ aap_apme_prerequisites_validate_certs }}"
