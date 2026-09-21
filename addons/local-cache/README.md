@@ -9,7 +9,7 @@ Saves AAP container images from a running CRC VM to disk so you can reload them 
 # Save images from a running cluster (after aap-demo deploy)
 aap-demo enable local-cache
 
-# Load cached images into a fresh cluster (also runs automatically during deploy when enabled)
+# Load cached images manually (deploy auto-loads an existing cache after destroy)
 aap-demo enable local-cache load
 
 # Delete the on-disk cache
@@ -48,7 +48,14 @@ Each image is saved as `<md5>.tar` plus a `<md5>.ref` sidecar with the original 
 
 `destroy` removes the cluster and clears the enabled-addon list, but cached tarballs remain
 under `~/.aap-demo/local-cache/microshift/`. If you accepted the save prompt,
-`deploy` loads them automatically. To reuse them manually:
+the normal flow is:
+
+```bash
+aap-demo create
+aap-demo deploy       # automatically loads the saved cache
+```
+
+To load them manually instead:
 
 ```bash
 aap-demo create
