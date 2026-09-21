@@ -1947,6 +1947,20 @@ _remove_temp_swap() {
   return 1
 }
 
+_save_local_cache_before_destroy() {
+  # Saving can take several minutes and requires a running CRC VM, so only do
+  # it when the user has explicitly enabled the local-cache addon.
+  if ! echo "$(_addons_list)" | grep -qw "local-cache"; then
+    return 0
+  fi
+
+  echo ""
+  echo "Saving cached container images before destroying the cluster..."
+  if ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" save; then
+    echo "  ⚠ Container image cache could not be saved; continuing with destroy"
+  fi
+}
+
 cmd_destroy() {
   echo ""
   printf "\033[1maap-demo destroy\033[0m - Deleting CRC cluster...\n"
@@ -1967,6 +1981,7 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
+  _save_local_cache_before_destroy
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
