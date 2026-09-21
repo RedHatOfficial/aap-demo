@@ -97,8 +97,9 @@ aap-demo disable addon_name  # Disables addon
 ```
 
 When destroying a running cluster, `aap-demo destroy` asks whether to save the
-container images locally. Existing cached images are loaded automatically at
-the start of the next `aap-demo deploy`.
+container images locally. Confirming lets the next `aap-demo deploy` reuse the
+cached containers instead of downloading them again. Existing cached images are
+loaded automatically at the start of the next deploy.
 
 To manage the cache manually:
 
