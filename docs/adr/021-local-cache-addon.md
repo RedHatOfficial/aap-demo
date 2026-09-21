@@ -53,12 +53,20 @@ aap-demo disable local-cache         # alias for clear
 
 ### Auto-load during deploy
 
-The `_load_local_cache()` function in `aap-demo.sh` is called during `aap-demo deploy`
-after the operator CSV reaches `Succeeded` phase and before the AAP CR is created.
-It runs only when the `local-cache` addon is listed in `~/.aap-demo/config` (`ADDONS=...`)
-or when `AAP_DEMO_LOAD_CACHE=1` is set. When triggered, it loads cached images that are
-not already present in CRI-O (checked via `crictl inspecti`). This is silent when no
-cache exists or the addon is not enabled.
+The `_load_local_cache()` function in `aap-demo.sh` is called near the start of
+`aap-demo deploy`, before the operator and AAP resources begin pulling images. It always
+checks for an existing cache, so a destroy/recreate cycle does not require the
+`local-cache` addon to remain in `~/.aap-demo/config` (`ADDONS=...`). It loads cached
+images that are not already present in CRI-O (checked via `crictl inspecti`) and remains
+silent when no cache exists.
+
+### Save prompt during destroy
+
+Before `aap-demo destroy` displays its destructive warning, an interactive invocation
+asks whether to save the current AAP images to the local cache. The prompt is opt-in:
+answering `y` runs the save flow, while `n`, a timeout, or a non-interactive
+`QUIET=true` invocation skips it. A save failure is reported but does not prevent the
+cluster from being deleted.
 
 ### Preset isolation
 
@@ -95,7 +103,8 @@ additional presets are reintroduced later.
 - Subsequent deploys after `aap-demo destroy` skip ~10-15 minutes of image pulls when
   the on-disk cache is reloaded
 - Cache persists across VM lifecycles — only needs to be rebuilt when AAP version changes
-- Auto-load during deploy is transparent — no extra step required after initial save
+- Auto-load during deploy is transparent — after accepting the destroy save prompt,
+  the normal `create` then `deploy` flow needs no manual cache-load command
 
 ### Negative
 
@@ -108,9 +117,10 @@ additional presets are reintroduced later.
 
 - The addon is listed in `AVAILABLE_ADDONS` and visible in `aap-demo enable` output
 - `aap-demo destroy` clears `ADDONS=` from config but does not delete on-disk cache files.
-  After recreate, run `aap-demo enable local-cache load` then `aap-demo enable local-cache`
-  to reload images and restore auto-load on deploy. Use `aap-demo enable local-cache clear`
-  or `aap-demo disable local-cache` to reclaim disk space
+  If the save prompt was accepted, the next `deploy` loads the cache automatically.
+  `aap-demo enable local-cache load` remains available for manual loading, while
+  `aap-demo enable local-cache clear` or `aap-demo disable local-cache` reclaims disk
+  space.
 
 ## Alternatives Considered
 
