@@ -5,6 +5,7 @@ Deploys **Automation Orchestrator (GA)** on aap-demo MicroShift clusters.
 - **Command:** `aap-demo enable ao` (legacy alias: `ao-eap`)
 - **Namespace:** `automation-orchestrator`
 - **Requires:** `aap-demo deploy` (AAP + OLM + `redhat-operators` in `aap-operator`)
+- **Requires:** `mcp-server` addon (`aap-demo enable ao` installs it automatically)
 - **Does not require:** `aapctl`, Quay credentials, GitHub CLI, or a private operator index
 
 Manifests follow the
@@ -15,7 +16,7 @@ and are checked in under [`manifests/`](manifests/). `deploy.sh` applies them wi
 
 ```bash
 aap-demo deploy          # once: AAP + OLM + catalog
-aap-demo enable ao       # install Automation Orchestrator
+aap-demo enable ao       # mcp-server + Automation Orchestrator + wiring
 aap-demo status          # route URL + admin password when ready
 ```
 
@@ -23,6 +24,14 @@ Force a clean reinstall (resets Postgres if secret names or passwords drifted):
 
 ```bash
 FORCE=1 aap-demo enable ao
+```
+
+Disabling AO preserves its bootstrap admin password under `~/.aap-demo/ao/` so
+a retained PostgreSQL database remains accessible after re-enable. To explicitly
+remove both the AO database and saved credential instead, run:
+
+```bash
+aap-demo disable ao --purge-data
 ```
 
 Remove:
@@ -34,11 +43,53 @@ aap-demo disable ao
 This removes the `automation-orchestrator` namespace and AO OLM resources. The CloudNativePG
 operator in `cnpg-system` is **not** removed (it may be shared).
 
+### Auto-wiring (AAP + MCP)
+
+After the instance is ready, `aap-demo enable ao` automatically configures cluster-local
+integrations (no separate wiring step):
+
+- **Integration URL allow-list** — patches AO deployments with
+  `APP_INTEGRATION_URL_ALLOWED_HOSTS` and `APP_OIDC_ALLOW_PRIVATE_NETWORKS` (same intent as
+  upstream APD `infrastructure/ao/network-access.yml`) so co-located AAP/MCP base URLs that
+  resolve to private addresses on MicroShift pass AO SSRF validation
+- **Route hostAliases** — maps AAP/AO/MCP route hostnames to the ingress router ClusterIP
+  inside AO backend/worker pods. MicroShift's DNS operator overwrites the CoreDNS rewrite;
+  without `/etc/hosts` entries AO reports `base_url is not permitted by SSRF policy` whenever
+  the AAP route hostname fails to resolve
+- **AAP integration** (`aap-demo AAP`) → AAP route URL (fallback: in-cluster service) with a
+  write-scoped gateway token stored as an AO credential
+- **MCP integration** (`aap-demo MCP Server`) — **required**; `mcp-server` is enabled automatically
+  and wired to AO (route or in-cluster `/mcp` URL with tools enabled)
+
+The addon also imports the 10 AO workflow exports from [`demos/`](demos/). Their
+`aap_job_template` nodes launch job templates in AAP, so automation remains
+implemented by the upstream Ansible playbooks running under AAP governance. The
+importer supplies the local AAP credential and upgrades older export formats. Set
+`AO_IMPORT_DEMOS=0` to deploy AO without importing the demos.
+
+As part of the same step, AAP is configured with an `AAP Orchestrator Demos`
+project pointing at the upstream demo repository and 17 idempotent job templates
+for its certificate, disk, CVE, ServiceNow, and ticket-enrichment playbooks. The
+templates use SCM update-on-launch, so the playbooks are synchronized and executed
+by AAP. The multi-OS cloud workflow continues to use the existing `ansible/product-demos`
+cloud templates when the product-demos addon is enabled.
+
+Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
+Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
+the CoreDNS route rewrite if MicroShift's DNS operator has dropped it, and reapplies
+AO pod `hostAliases` for AAP/AO/MCP route hostnames.
+
+**Workflow builder note:** Configuration → Integrations may show **Available** while the workflow
+UI still reports “AAP credential not configured” until you select **aap-demo AAP** and
+**aap-demo AAP Token** on an AAP job-template node. AO proxy APIs require both `integration_id`
+and `credential_id`; that message is expected before both are chosen on the node.
+
 ## Prerequisites
 
 | Requirement | Notes |
 |-------------|-------|
 | `aap-demo deploy` | Installs OLM and `redhat-operators` CatalogSource in `aap-operator` |
+| `mcp-server` addon | Installed automatically by `aap-demo enable ao`; required for AO MCP integration wiring |
 | Pull secret | `registry.redhat.io` access (`~/.aap-demo/pull-secret.txt`) |
 | Operator in index | `automation-orchestrator-operator` in `redhat-operator-index` v4.18+; automatic fallback index if missing |
 | StorageClass | Auto-detected: `nfs-local-rwx` or `topolvm-provisioner` |
@@ -91,6 +142,18 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_CATALOG_TIMEOUT` | `600` | Seconds to wait for AO CatalogSource READY (index pull can be slow) |
 | `AO_DISABLE_INDEX_FALLBACK` | unset | Set to `1` to disable automatic fallback index |
 | `AAP_OCP_VERSION` | auto-detected | OCP version for default index tag |
+| `AO_IMPORT_DEMOS` | `1` | Download and synchronize upstream AO workflow exports after wiring |
+| `AO_DEMOS_REPOSITORY` | `https://github.com/ansible-tmm/aap-orchestrator-demos` | Upstream AO workflow repository |
+| `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
+| `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
+| `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
+| `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |
+
+When AO and AAP are wired, the addon creates the `AAP Demo Control Plane` AAP project
+and `Sync AO Workflows from TMM` job template. The job downloads the pinned workflow
+exports from the TMM repository and updates AO through its API. The addon launches this
+job through AAP; the local importer remains only as a bootstrap fallback when the AAP
+job cannot be launched yet.
 
 ### Operator channel
 
@@ -130,7 +193,36 @@ kubectl get secret -n automation-orchestrator automation-orchestrator-initial-ad
 
 Username: **admin**
 
+Connecting AAP (Settings → Automation Orchestrator credential) uses the gateway
+route hostname. On CRC/MicroShift that hostname is private; wiring allowlists it
+(see [Auto-wiring](#auto-wiring-aap--mcp)), pins it in AO pod `hostAliases`, and
+restores the CoreDNS route rewrite when possible.
+
 ## Troubleshooting
+
+### `base_url is not permitted by SSRF policy`
+
+AO SSRF re-resolves the AAP integration hostname at request time. On CRC/MicroShift
+the gateway host (`aap-<ns>.apps.crc.testing` or `*.nip.io`) is private, and
+MicroShift's DNS operator often wipes the CoreDNS rewrite so the name does not
+resolve inside AO pods. A failed lookup is reported as SSRF even when the host is
+already on `APP_INTEGRATION_URL_ALLOWED_HOSTS`. Using `*.svc.cluster.local` as
+`base_url` is separately blocked as Kubernetes internal DNS.
+
+Older AO builds may say `base_url must not resolve to a private, reserved, or
+cloud metadata address` for the same class of failure.
+
+Re-run wiring (does not reinstall AO):
+
+```bash
+aap-demo wire
+```
+
+Or `aap-demo enable ao` on the skip path. That pins route hostnames on AO
+backend/worker `hostAliases` (ingress router ClusterIP), restores the CoreDNS
+rewrite if missing, and reapplies the allow-list. Then retry the AAP integration
+or Launch AAP node. `hostAliases` survive the next DNS-operator reconcile;
+re-run `aap-demo wire` after CRC stop/start if the router ClusterIP changed.
 
 ### Catalog not READY / `TRANSIENT_FAILURE`
 
@@ -179,6 +271,25 @@ If the catalog pod was restarted mid-pull, force a clean retry:
 
 ```bash
 AO_REFRESH_CATALOG=1 FORCE=1 aap-demo enable ao
+```
+
+### Instance not ready / `SecretTypeInvalid`
+
+The AO operator requires `spec.imagePullSecrets` to be type `kubernetes.io/dockerconfigjson`.
+Copying `redhat-operators-pull-secret` can yield an OLM `Opaque` placeholder (`operator: aap`),
+which leaves the CR on `ConfigurationValid=False` and no UI/backend pods:
+
+```text
+Image pull secret "automation-orchestrator-pull-secret" must be of type
+kubernetes.io/dockerconfigjson, got Opaque
+```
+
+`aap-demo enable ao` now creates `automation-orchestrator-pull-secret` from
+`~/.aap-demo/pull-secret.txt`. To repair a stuck instance without a full reinstall:
+
+```bash
+kubectl delete secret automation-orchestrator-pull-secret -n automation-orchestrator
+aap-demo enable ao
 ```
 
 ### `constraints not satisfiable` / operator not in catalog
@@ -255,6 +366,7 @@ See [Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentat
 ## Related documentation
 
 - ADR: [`docs/adr/017-ao-addon.md`](../../docs/adr/017-ao-addon.md)
+- ADR: [`docs/adr/023-addon-auto-wiring.md`](../../docs/adr/023-addon-auto-wiring.md)
 - Manifest index: [`manifests/README.md`](manifests/README.md)
 - [Install the operator from the OpenShift CLI](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-install_the_operator_from_the_openshift_cli)
 - [Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)

@@ -189,7 +189,9 @@ PRODUCT_DEMOS_BRANCH=custom \
 ### Negative
 
 1. **Network Dependency** - AAP must reach github.com to sync project (acceptable for demo tool)
-2. **Credential Configuration** - Users still need to configure some credentials via AAP UI (Galaxy tokens, AWS keys, etc.)
+2. **Credential Configuration** - AWS, Satellite, machine SSH/WinRM, and Insights still require
+   manual UI updates; OpenShift, AAP callback, and Galaxy tokens are auto-wired by
+   [`includes/addon-wire.sh`](../../includes/addon-wire.sh) when the cluster or token file provides values
 3. **Deletion Complexity** - Removing APD resources requires manual AAP UI steps (no API-based deletion implemented)
 4. **Multiple Addons** - Seven addons instead of one (more to maintain)
 5. **API Complexity** - More complex than shell scripts; requires AAP API knowledge for troubleshooting
@@ -204,7 +206,14 @@ PRODUCT_DEMOS_BRANCH=custom \
 
 ### Known Issues
 
-**Credential Creation Failure**: The `install-apd.yml` playbook fails when creating the
+See [ADR-023](023-addon-auto-wiring.md) for APD credential auto-wiring (runs automatically).
+
+**Credential creation during install job**: If `install-apd.yml` fails to create the **AAP
+Credential**, re-run `aap-demo enable product-demos` after the APD organization exists, or
+`aap-demo wire` to force a wiring pass. Wiring creates or updates
+**AAP Credential**, **OpenShift Credential**, and Galaxy credentials using in-cluster URLs.
+
+Historical note (pre-wiring):
 "AAP Credential" object. This credential is used by demo job templates to call back into AAP
 APIs.
 

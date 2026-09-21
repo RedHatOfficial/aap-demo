@@ -11,6 +11,7 @@ Checked-in Kubernetes templates applied by [`../deploy.sh`](../deploy.sh). Shape
 | File | Stage | Contents |
 |------|-------|----------|
 | [`operator-subscription.yaml`](operator-subscription.yaml) | 2 — OLM | `OperatorGroup` (AllNamespaces) + `Subscription` |
+| [`operator-rbac.yaml`](operator-rbac.yaml) | 2 — OLM compatibility | Explicit cluster permissions for the operator service account on MicroShift |
 | [`postgres-cluster.yaml`](postgres-cluster.yaml) | 3 — data | CNPG `Cluster` + `Database` CRs (`orchestrator`, `temporal`, `temporal_visibility`) |
 | [`automationorchestrator-cr.yaml`](automationorchestrator-cr.yaml) | 3 — instance | `AutomationOrchestrator` CR |
 
@@ -28,6 +29,7 @@ committing; dry-run output uses one-time passwords.
 | `orchestrator-postgres-secret` | CNPG bootstrap + backend DB connection (`kubernetes.io/basic-auth`) |
 | `temporal-postgres-secret` | Temporal DB connection |
 | `temporal-visibility-postgres-secret` | Temporal visibility DB connection |
+| `automation-orchestrator-initial-admin-password` | Explicitly referenced bootstrap password, restored across re-enable |
 | `automation-orchestrator-pull-secret` | Copied from `redhat-operators-pull-secret` in `aap-operator` |
 
 CNPG also creates `orchestrator-postgres-ca`, referenced by the instance CR as `caCertSecretRef`.

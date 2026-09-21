@@ -1,0 +1,73 @@
+# OLM normally materializes these cluster permissions from the vendor CSV.
+# MicroShift can install the CSV successfully without creating its
+# ClusterRoleBinding, leaving the operator unable to watch the AO CR.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: automation-orchestrator-operator-cluster-role
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, services]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, list, watch]
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create, get, list, patch, update, watch]
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [aap.ansible.com]
+    resources: [automationorchestrators]
+    verbs: [get, list, update, watch]
+  - apiGroups: [aap.ansible.com]
+    resources: [automationorchestrators/finalizers]
+    verbs: [update]
+  - apiGroups: [aap.ansible.com]
+    resources: [automationorchestrators/status]
+    verbs: [get, patch, update]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [prometheusrules, servicemonitors]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses, networkpolicies]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [route.openshift.io]
+    resources: [routes]
+    verbs: [create, delete, get, list, patch, update, watch]
+  - apiGroups: [route.openshift.io]
+    resources: [routes/custom-host]
+    verbs: [create, patch, update]
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: automation-orchestrator-operator-cluster-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: automation-orchestrator-operator-cluster-role
+subjects:
+  - kind: ServiceAccount
+    name: automation-orchestrator-operator-controller-manager
+    namespace: __NAMESPACE__

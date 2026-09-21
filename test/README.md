@@ -20,6 +20,9 @@ Comprehensive test script validating all aap-demo commands.
 
 # Combined
 ./test/test-aap-demo.sh --quick --verbose
+
+# AAP provisioning fast-path test
+python3 ./test/test-provision-aap-demos.py
 ```
 
 ### Coverage
@@ -98,3 +101,32 @@ test_my_new_feature
 - Tests may behave differently when cluster exists vs. doesn't exist
 - Some commands (like `idle`, `status`) adapt to current cluster state
 - Interactive prompts skipped via `QUIET=true` env var
+
+## Live AO clean-install regression scenario
+
+Run this scenario on a disposable local `aap-demo` cluster to verify both the
+purge option and first-install admin-password bootstrap. It is intentionally
+not part of the default test suite because it deletes the AO database.
+
+```bash
+# Remove AO data, OLM resources, namespace, and saved bootstrap password.
+CI=true ./aap-demo.sh disable ao --purge-data
+
+# Confirm the local cached password is absent, then install normally.
+test ! -e "$HOME/.aap-demo/ao/initial-admin-password"
+CI=true ./aap-demo.sh enable ao
+```
+
+During the enable output, verify:
+
+- `✓ Fresh AO admin password generated` appears before the instance is applied.
+- `✓ Route ready` and `✓ Automation Orchestrator operator and instance applied`
+  appear.
+- The final instance has `READY=True` and `TLSREADY=True`:
+
+```bash
+kubectl get automationorchestrator automation-orchestrator \
+  -n automation-orchestrator
+kubectl get secret automation-orchestrator-initial-admin-password \
+  -n automation-orchestrator
+```

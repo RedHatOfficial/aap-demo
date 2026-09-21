@@ -46,6 +46,6 @@
       ansible.builtin.debug:
         msg:
           - "1. Edit vars/apme_portal.yml (OpenShift, AAP, GitHub)"
-          - "2. Set portal_hub_image to your pre-built portal hub container"
+          - "2. Verify the bundled OCI plugin archive and local registry settings"
           - "3. Run: ansible-playbook playbooks/deploy_apme_portal.yml -e @vars/apme_portal.yml"
           - "Full guide: docs/apme-portal-install-guide.md"

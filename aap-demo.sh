@@ -129,17 +129,17 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | test | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
       esac
       ;;
-    --ai | --reset | --force | --refresh-catalog)
+    --ai | --reset | --force | --refresh-catalog | --purge-data | --purge-creds)
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | x2ansible | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite)
+    mcp-server | portal | setup-pah | ao | ao-eap | apme-eap | local-cache | x2ansible | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -406,12 +406,13 @@ Cluster management:
 
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
-                  Requires: AAP 2.6+, Helm 3.10+, registry.redhat.io credentials
-  enable mcp-server Enable MCP server for AI assistants
+                   Requires: AAP 2.6+, registry.redhat.io credentials (Helm auto-installed if missing)
+  enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao       Install Automation Orchestrator
+  enable ao       Install Automation Orchestrator (enables mcp-server and ollama automatically)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
   enable x2ansible Install X2Ansible (RHDH + Conversion Hub)
+  enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
 
 Examples:
   aap-demo deploy                 # Deploy AAP 2.7
@@ -458,7 +459,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (mcp-server, portal, setup-pah, ao-eap, apme-eap, local-cache, x2ansible)
+    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, setup-pah, product-demos, local-cache, ollama, x2ansible, ao-eap, apme-eap)
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
@@ -1267,12 +1268,28 @@ cmd_diagnose() {
   # =========================================================================
   echo ""
   echo "DNS:"
-  local coredns_running
+  local coredns_running corefile
   coredns_running=$(kubectl get pods -n openshift-dns --no-headers 2>/dev/null | grep -c "Running" || echo "0")
   if [ "$coredns_running" -gt 0 ]; then
     _check_pass "CoreDNS running ($coredns_running pods)"
   else
     _check_warn "CoreDNS pods not found in openshift-dns"
+  fi
+  corefile=$(kubectl get configmap dns-default -n openshift-dns \
+    -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+  if echo "$corefile" | grep -q "router-internal-default"; then
+    _check_pass "CoreDNS route rewrite present"
+  elif [ -n "$corefile" ]; then
+    _check_fail "CoreDNS missing rewrite for apps.<domain> route hostnames"
+    _check_info "AO/portal/MCP cannot resolve AAP routes from inside the cluster"
+    verify_coredns
+    corefile=$(kubectl get configmap dns-default -n openshift-dns \
+      -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+    if echo "$corefile" | grep -q "router-internal-default"; then
+      _check_pass "CoreDNS route rewrite restored"
+    else
+      _check_info "Fix: aap-demo start   (or aap-demo wire / aap-demo enable ao)"
+    fi
   fi
   echo ""
 
@@ -1938,6 +1955,25 @@ cmd_redeploy-all() {
   cmd_deploy
 }
 
+_remove_temp_swap() {
+  [ "$(uname -s)" = "Linux" ] || return 0
+
+  if [ ! -f "${SCRIPT_DIR}/includes/temp-swap.sh" ]; then
+    return 0
+  fi
+
+  # shellcheck source=includes/temp-swap.sh
+  source "${SCRIPT_DIR}/includes/temp-swap.sh"
+  echo ""
+  echo "Removing temp swap..."
+  if aap_demo_temp_swap_disable; then
+    return 0
+  fi
+  echo "  ⚠ Temp swap removal failed (sudo may be required)"
+  echo "    Run: ${SCRIPT_DIR}/scripts/enable-temp-swap.sh disable"
+  return 1
+}
+
 cmd_destroy() {
   echo ""
   printf "\033[1maap-demo destroy\033[0m - Deleting CRC cluster...\n"
@@ -1947,6 +1983,9 @@ cmd_destroy() {
   echo "  • All cluster data will be PERMANENTLY DESTROYED"
   echo "  • All PVC storage will be LOST"
   echo "  • All deployed applications will be removed"
+  if [ "$(uname -s)" = "Linux" ]; then
+    echo "  • Temp swap file (if any) will be removed"
+  fi
   echo "  • You will need to redeploy AAP from scratch"
   echo ""
   if [ "${QUIET:-false}" != "true" ]; then
@@ -1966,6 +2005,7 @@ cmd_destroy() {
   else
     echo "✗ CRC delete failed — config preserved"
   fi
+  _remove_temp_swap || true
 }
 
 cmd_stop() {
@@ -2073,6 +2113,7 @@ cmd_deploy() {
       echo "  (Use FORCE=true to reinstall)"
       echo ""
       watch_aap
+      _aap_demo_run_addon_wire || true
       exit 0
     fi
   fi
@@ -2505,6 +2546,19 @@ _patch_gateway_capability() {
     sleep 5
   done
 
+  # Scale to 1 immediately — before capability patch — to prevent concurrent
+  # migration race when 2+ replicas spin up simultaneously on fast systems.
+  local current_replicas
+  current_replicas=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "")
+  if [ "$current_replicas" != "1" ]; then
+    echo "  Setting gateway replicas to 1 (prevents concurrent migration race condition)..."
+    if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=merge -p '{"spec":{"replicas":1}}' &>/dev/null; then
+      echo "  ✓ Gateway replicas set to 1"
+    else
+      echo "  ⚠ Gateway replica patch failed — migration race may occur"
+    fi
+  fi
+
   # Check if already patched
   local existing_caps
   existing_caps=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}' 2>/dev/null || echo "")
@@ -2622,6 +2676,7 @@ watch_aap() {
       fi
       echo ""
 
+      _aap_demo_run_addon_wire || true
       return 0
     fi
 
@@ -2641,7 +2696,7 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache x2ansible product-demos product-demo-satellite"
+AVAILABLE_ADDONS="mcp-server portal setup-pah ao apme-eap local-cache x2ansible product-demos product-demo-satellite opa ollama"
 
 _normalize_addon_name() {
   case "$1" in
@@ -2713,6 +2768,32 @@ _addons_remove() {
   _addons_save "$new"
 }
 
+_ensure_addon_dependency() {
+  local dep="$1"
+  shift 2>/dev/null || true
+  dep=$(_normalize_addon_name "$dep")
+  if echo "$(_addons_list)" | grep -qw "$dep"; then
+    return 0
+  fi
+  echo ""
+  echo "Required addon: ${dep}"
+  cmd_enable "$dep" "$@" || return 1
+}
+
+# Auto-wire enabled addons (APD credentials, AO integrations). Runs after enable,
+# deploy, and watch; idempotent and safe to call multiple times.
+_aap_demo_run_addon_wire() {
+  local strict="${1:-false}"
+  setup_kubeconfig
+  # shellcheck source=includes/addon-wire.sh
+  source "${SCRIPT_DIR}/includes/addon-wire.sh"
+  if [ "$strict" = true ]; then
+    aap_demo_wire
+  else
+    aap_demo_wire || true
+  fi
+}
+
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
@@ -2772,13 +2853,52 @@ cmd_enable() {
   if [ "$_skip_cluster_verify" != true ]; then
     _verify_cluster || return 1
   fi
+  if [ "$addon" = "ao" ] && [ "$_skip_addon_save" != true ]; then
+    _ensure_addon_dependency mcp-server "$@" || return 1
+    _ensure_addon_dependency ollama "$@" || return 1
+  fi
+  local _addon_was_enabled=false
+  if echo "$(_addons_list)" | grep -qw "$addon"; then
+    _addon_was_enabled=true
+  fi
   if [ "$_skip_addon_save" != true ]; then
     _addons_add "$addon"
   fi
-  bash "$addon_dir/deploy.sh" "$@"
+  # AO imports its workflows immediately after wiring because the importer needs
+  # the AAP credential created by addon-wire.sh. Keep deferred wiring for others.
+  if [ "$addon" = "ao" ]; then
+    export AAP_DEMO_WIRE_AFTER_DEPLOY=1
+  else
+    export AAP_DEMO_WIRE_AFTER_DEPLOY=0
+  fi
+  if ! bash "$addon_dir/deploy.sh" "$@"; then
+    # Do not leave a first-time failed deployment marked as enabled. Otherwise
+    # dependency checks skip it on the next run even though setup is incomplete.
+    if [ "$_skip_addon_save" != true ] && [ "$_addon_was_enabled" = false ]; then
+      _addons_remove "$addon"
+    fi
+    unset AAP_DEMO_WIRE_AFTER_DEPLOY
+    return 1
+  fi
+  unset AAP_DEMO_WIRE_AFTER_DEPLOY
   if [ "$_skip_addon_save" != true ]; then
     echo "  Saved to config: ADDONS=$(_addons_list | tr ' ' ',')"
   fi
+  if [ "$addon" = "ao" ]; then
+    # The AO addon performs wiring before provisioning AAP templates and
+    # importing workflows. A second login here can fail when AO's initial
+    # password secret is stale after the instance has already been initialized.
+    # `aap-demo wire` remains available for an explicit retry.
+    :
+  else
+    _aap_demo_run_addon_wire false
+  fi
+}
+
+cmd_wire() {
+  echo "Re-running addon wiring (also runs automatically after enable and deploy)..."
+  _verify_cluster || return 1
+  _aap_demo_run_addon_wire true
 }
 
 cmd_disable() {
@@ -2791,6 +2911,7 @@ cmd_disable() {
     echo "Available addons: $AVAILABLE_ADDONS"
     echo ""
     echo "Addon options:"
+    echo "  ao:       --purge-data  Remove the AO database and saved admin credential"
     echo "  apme-eap: --purge-creds   Remove saved GitHub credentials and private key"
     return 0
   fi
@@ -2979,6 +3100,9 @@ case "$COMMAND" in
     ;;
   enable)
     cmd_enable "${EXTRA_ARGS[@]}"
+    ;;
+  wire)
+    cmd_wire
     ;;
   disable)
     cmd_disable "${EXTRA_ARGS[@]}"

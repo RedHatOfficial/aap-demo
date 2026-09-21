@@ -1,0 +1,40 @@
+---
+- name: Clear OPA Policies
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
+
+  tasks:
+    - name: Get list of loaded policies
+      ansible.builtin.uri:
+        url: "{{ opa_server }}/v1/policies"
+        method: GET
+        validate_certs: false
+      register: loaded_policies
+
+    - name: Display policies to be removed
+      ansible.builtin.debug:
+        msg: "Found {{ loaded_policies.json.result | default([]) | length }} policies to remove"
+
+    - name: Remove each policy from OPA server
+      ansible.builtin.uri:
+        url: "{{ opa_server }}/v1/policies/{{ item.id }}"
+        method: DELETE
+        status_code: [200, 204, 404]
+        validate_certs: false
+      loop: "{{ loaded_policies.json.result | default([]) }}"
+      loop_control:
+        label: "{{ item.id }}"
+      when: loaded_policies.json.result is defined
+
+    - name: Verify policies cleared
+      ansible.builtin.uri:
+        url: "{{ opa_server }}/v1/policies"
+        method: GET
+        validate_certs: false
+      register: verify_policies
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: "OPA server now has {{ verify_policies.json.result | default([]) | length }} policies loaded"

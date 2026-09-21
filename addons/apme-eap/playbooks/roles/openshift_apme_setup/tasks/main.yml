@@ -62,3 +62,22 @@
         name: "{{ openshift_apme_setup_scaffolder_configmap_name }}"
       data:
         template.yaml: "{{ scaffolder_template_file.content | b64decode }}"
+
+- name: Create insecure local registry configuration for chart plugin installer  # noqa: var-naming[no-role-prefix]
+  kubernetes.core.k8s:
+    state: present
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_apme_setup_validate_certs }}"
+    namespace: "{{ openshift_project_name }}"
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: apme-oci-registry-config
+      data:
+        registries.conf: |
+          [[registry]]
+          location = "registry.aap-demo-registry.svc.cluster.local:5000"
+          insecure = true

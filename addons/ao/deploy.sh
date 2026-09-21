@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
+# shellcheck source=lib/admin-password.sh
+source "${SCRIPT_DIR}/lib/admin-password.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -18,7 +20,8 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 #
 # Prerequisites:
 #   1. aap-demo cluster with OLM (aap-demo deploy)
-#   2. Valid registry.redhat.io pull secret
+#   2. mcp-server addon (installed automatically by `aap-demo enable ao`)
+#   3. Valid registry.redhat.io pull secret
 #
 # aapctl is NOT required at install time (manifests are checked in under manifests/).
 # Optional: aapctl for disable cleanup and for scripts/generate-manifests.sh refresh.
@@ -26,6 +29,7 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 # Usage:
 #   ./deploy.sh                    # Install Automation Orchestrator
 #   ./deploy.sh --delete           # Remove Automation Orchestrator
+#   ./deploy.sh --delete --purge-data # Also remove its database and saved password
 #   ./deploy.sh --force            # Reinstall even if already running
 #   ./deploy.sh --refresh-catalog  # Re-pull redhat-operator-index before install
 #   AO_REFRESH_CATALOG=1 ./deploy.sh
@@ -63,10 +67,12 @@ fi
 ACTION="${1:-deploy}"
 FORCE="${FORCE:-}"
 REFRESH_CATALOG="${AO_REFRESH_CATALOG:-}"
+PURGE_DATA="${AO_PURGE_DATA:-}"
 for _arg in "$@"; do
   case "$_arg" in
     --force) FORCE=1 ;;
     --refresh-catalog) REFRESH_CATALOG=1 ;;
+    --purge-data) PURGE_DATA=1 ;;
   esac
 done
 
@@ -101,6 +107,10 @@ find_catalog_namespace() {
 report_catalog_failure() {
   local _catalog_ns="$1"
   local _status _pod_status _reason
+  if catalog_pod_has_scc_admission_failure "$_catalog_ns"; then
+    report_catalog_scc_failure "$_catalog_ns"
+    return 1
+  fi
   _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
   _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
@@ -404,10 +414,16 @@ apply_operator_olm_manifests() {
     -e "s|__CATALOG_NAMESPACE__|${CATALOG_NAMESPACE}|g" \
     -e "s|__OPERATOR_CHANNEL__|${OPERATOR_CHANNEL}|g" \
     "${MANIFESTS_DIR}/operator-subscription.yaml" | kubectl apply -f -
+  sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+    "${MANIFESTS_DIR}/operator-rbac.yaml" | kubectl apply -f -
 }
 
 cleanup_ao_olm_state() {
   local _ns
+  kubectl delete clusterrolebinding automation-orchestrator-operator-cluster-rolebinding \
+    --ignore-not-found --wait=false 2>/dev/null || true
+  kubectl delete clusterrole automation-orchestrator-operator-cluster-role \
+    --ignore-not-found --wait=false 2>/dev/null || true
   for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE" "$AAP_NAMESPACE"; do
     [ -z "$_ns" ] && continue
     kubectl delete subscription automation-orchestrator-operator -n "$_ns" --wait=false 2>/dev/null || true
@@ -484,6 +500,183 @@ report_operator_not_in_catalog() {
   echo "    AO_DISABLE_INDEX_FALLBACK=1 aap-demo enable ao"
 }
 
+aap_gateway_route_host() {
+  kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null \
+    || kubectl get route -n "$AAP_NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null \
+    || echo ""
+}
+
+is_local_aap_hostname() {
+  local _host="${1:-}"
+  [[ "$_host" == *".crc.testing" ]] \
+    || [[ "$_host" == *".nip.io" ]] \
+    || [[ "$_host" == *"127.0.0.1"* ]] \
+    || [[ "$_host" == *"localhost"* ]]
+}
+
+ensure_coredns_route_rewrite() {
+  local _corefile _repo_root
+  _corefile=$(kubectl get configmap dns-default -n openshift-dns \
+    -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
+  if echo "$_corefile" | grep -q "router-internal-default"; then
+    return 0
+  fi
+  _repo_root="$(cd "$REPO_ROOT" && pwd)"
+  if [ ! -f "${_repo_root}/includes/crc-create.sh" ]; then
+    echo "  ⚠ CoreDNS rewrite missing and crc-create.sh was not found"
+    echo "    Run: aap-demo start"
+    return 1
+  fi
+  echo "  CoreDNS missing rewrite for in-cluster route hostnames — configuring..."
+  bash -c "
+    AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
+    source '${_repo_root}/includes/crc-create.sh'
+    configure_coredns
+  " || {
+    echo "  ⚠ CoreDNS rewrite could not be applied"
+    echo "    Run: aap-demo start"
+    return 1
+  }
+}
+
+# Pin AAP/AO/MCP route hostnames to the ingress router in AO pods. MicroShift's
+# DNS operator wipes the CoreDNS rewrite, which makes AO SSRF reject the AAP
+# integration URL even when the hostname is on APP_INTEGRATION_URL_ALLOWED_HOSTS.
+ao_pod_route_host_aliases() {
+  local _router_ip _hosts_json _dep _patch _current
+  _router_ip=$(kubectl get svc router-internal-default -n openshift-ingress \
+    -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+  if [ -z "$_router_ip" ]; then
+    echo "  ⚠ ingress router ClusterIP not found — skip AO hostAliases"
+    return 1
+  fi
+  _hosts_json=$(
+    {
+      kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true
+      echo
+      kubectl get route automation-orchestrator -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true
+      echo
+      kubectl get route -n "$AAP_NAMESPACE" -o jsonpath='{range .items[*]}{.spec.host}{"\n"}{end}' 2>/dev/null \
+        | grep -E 'mcp|aap-mcp' || true
+    } | awk 'NF && !seen[$0]++' | jq -R . | jq -s -c .
+  )
+  if [ -z "$_hosts_json" ] || [ "$_hosts_json" = "[]" ]; then
+    echo "  ⚠ no route hostnames for AO hostAliases"
+    return 1
+  fi
+  _patch=$(jq -nc --arg ip "$_router_ip" --argjson hosts "$_hosts_json" \
+    '{spec: {template: {spec: {hostAliases: [{ip: $ip, hostnames: $hosts}]}}}}')
+  for _dep in automation-orchestrator-backend automation-orchestrator-worker \
+    automation-orchestrator-background-worker; do
+    kubectl get deployment "$_dep" -n "$NAMESPACE" >/dev/null 2>&1 || continue
+    _current=$(kubectl get deployment "$_dep" -n "$NAMESPACE" -o json \
+      | jq -c '.spec.template.spec.hostAliases // []')
+    if [ "$(echo "$_current" | jq -c '.[0].ip // empty')" = "$_router_ip" ] \
+      && [ "$(echo "$_current" | jq -c '.[0].hostnames // [] | sort')" = "$(echo "$_hosts_json" | jq -c 'sort')" ]; then
+      continue
+    fi
+    kubectl patch deployment "$_dep" -n "$NAMESPACE" --type=strategic -p "$_patch" >/dev/null
+    echo "  patched hostAliases on ${_dep}"
+  done
+  echo "✓ AO pods resolve route hosts via hostAliases (${_router_ip})"
+}
+
+configure_ao_local_aap_access() {
+  local _aap_host _hosts_json _cm_current _cr_current _changed=""
+  _aap_host=$(aap_gateway_route_host)
+  if [ -z "$_aap_host" ]; then
+    echo "  ⚠ AAP gateway route not found in ${AAP_NAMESPACE} — skip AO SSRF allowlist"
+    echo "    After AAP is up, re-run: aap-demo enable ao"
+    return 0
+  fi
+  if ! is_local_aap_hostname "$_aap_host"; then
+    echo "✓ AAP route ${_aap_host} is not a local/private hostname — SSRF allowlist not required"
+    return 0
+  fi
+
+  echo "Configuring AO to reach local AAP (${_aap_host})..."
+  ensure_coredns_route_rewrite || true
+  ao_pod_route_host_aliases || true
+
+  _hosts_json=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$_aap_host")
+  _cm_current=$(kubectl get configmap automation-orchestrator-admin-settings -n "$NAMESPACE" \
+    -o jsonpath='{.data.APP_INTEGRATION_URL_ALLOWED_HOSTS}' 2>/dev/null || echo "")
+  HOST="$_aap_host" NAMESPACE="$NAMESPACE" python3 -c '
+import json, os
+host = os.environ["HOST"]
+hosts = json.dumps([host])
+print(json.dumps({
+    "apiVersion": "v1",
+    "kind": "ConfigMap",
+    "metadata": {
+        "name": "automation-orchestrator-admin-settings",
+        "namespace": os.environ["NAMESPACE"],
+        "labels": {
+            "app.kubernetes.io/managed-by": "aap-demo",
+            "app.kubernetes.io/part-of": "automation-orchestrator",
+        },
+    },
+    "data": {
+        "APP_INTEGRATION_URL_ALLOWED_HOSTS": hosts,
+        "APP_WORKFLOW_HTTP_REQUEST_ALLOWED_HOSTS": hosts,
+    },
+}))
+' | kubectl apply -f - >/dev/null
+  if [ "$_cm_current" != "$_hosts_json" ]; then
+    _changed=1
+  fi
+
+  _cr_current=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+    -o jsonpath='{.spec.workflowHttpRequestAllowedHosts[0]}' 2>/dev/null || echo "")
+  if kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" &>/dev/null; then
+    kubectl patch automationorchestrator automation-orchestrator -n "$NAMESPACE" --type merge \
+      -p "{\"spec\":{\"workflowHttpRequestAllowedHosts\":[\"${_aap_host}\"]}}" >/dev/null
+    if [ "$_cr_current" != "$_aap_host" ]; then
+      _changed=1
+    fi
+  fi
+
+  if [ -n "$_changed" ]; then
+    echo "  Restarting AO backend/worker to load SSRF allowlist..."
+    kubectl rollout restart deployment/automation-orchestrator-backend \
+      deployment/automation-orchestrator-worker \
+      deployment/automation-orchestrator-background-worker \
+      -n "$NAMESPACE" >/dev/null 2>&1 || true
+    kubectl rollout status deployment/automation-orchestrator-backend \
+      -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 || true
+    kubectl rollout status deployment/automation-orchestrator-worker \
+      -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 || true
+    kubectl rollout status deployment/automation-orchestrator-background-worker \
+      -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 || true
+  fi
+  echo "✓ AO SSRF allowlist includes ${_aap_host}"
+}
+
+allow_aap_to_ao_backend() {
+  kubectl apply -f - <<EOF >/dev/null
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: automation-orchestrator-allow-aap
+  namespace: ${NAMESPACE}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: automation-orchestrator
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ${AAP_NAMESPACE}
+      ports:
+        - protocol: TCP
+          port: 8000
+EOF
+}
+
 show_access_info() {
   local AO_ROUTE PASS_SECRET AO_PASSWORD
   AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
@@ -515,6 +708,124 @@ show_access_info() {
   echo "  Status:   kubectl get pods -n $NAMESPACE"
 }
 
+sync_ao_demos() {
+  local _route _token _aap_credential _aap_integration _project _ao_namespace
+  local -a _import_args
+  _route=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+  [ -n "$_route" ] || return 0
+
+  # The wiring layer creates these records and keeps their credentials current.
+  _ao_namespace="$NAMESPACE"
+  NAMESPACE="$AAP_NAMESPACE"
+  AO_NAMESPACE="$_ao_namespace"
+  # shellcheck source=../../includes/addon-wire.sh
+  source "${REPO_ROOT}/includes/addon-wire.sh"
+  _token=$(wire_ao_login_token 2>/dev/null || true)
+  # Reuse the login token for subsequent wire_ao_api calls in this function.
+  AO_ACCESS_TOKEN="$_token"
+  _aap_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _aap_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
+  _project=$(wire_ao_default_project_id 2>/dev/null || true)
+  if [ -z "$_token" ] || [ -z "$_aap_credential" ] || [ -z "$_aap_integration" ]; then
+    echo "  ⚠ AO demo synchronization deferred (AO credentials not ready)"
+    return 0
+  fi
+
+  _import_args=(
+    --route "$_route"
+    --token "$_token"
+    --aap-credential-id "$_aap_credential"
+    --aap-integration-id "$_aap_integration"
+  )
+  _import_args+=(
+    --repository "${AO_DEMOS_REPOSITORY:-https://github.com/ansible-tmm/aap-orchestrator-demos}"
+    --ref "${AO_DEMOS_REF:-abcc1a1482a}"
+  )
+  local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+  if [ -z "$_agent_cred" ] && wire_ollama_deployed; then
+    _agent_cred=$(wire_ao_find_credential_by_name "aap-demo Ollama" 2>/dev/null || true)
+  fi
+  if [ -n "$_agent_cred" ]; then
+    _import_args+=(--agent-credential-id "$_agent_cred")
+    if wire_ollama_deployed && [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
+      local _ollama_integration _ollama_model_id
+      _ollama_integration=$(wire_ao_find_integration_by_name "aap-demo Ollama" 2>/dev/null || true)
+      if [ -n "$_ollama_integration" ]; then
+        _ollama_model_id=$(wire_ao_api GET \
+          "/integrations/${_ollama_integration}/models?limit=50" 2>/dev/null \
+          | wire_ao_list_items \
+          | jq -r --arg m "${WIRE_OLLAMA_MODEL:-qwen2.5:3b}" \
+            '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true)
+      fi
+      if [ -n "${_ollama_model_id:-}" ]; then
+        _import_args+=(--agent-model-id "$_ollama_model_id")
+      fi
+    fi
+  fi
+
+  local _mcp_credential _mcp_integration
+  _mcp_credential=$(wire_ao_find_credential_by_name "$WIRE_MCP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _mcp_integration=$(wire_ao_find_integration_by_name "$WIRE_MCP_INTEGRATION_NAME" 2>/dev/null || true)
+  if [ -n "$_mcp_credential" ] && [ -n "$_mcp_integration" ]; then
+    _import_args+=(--mcp-credential-id "$_mcp_credential" --mcp-integration-id "$_mcp_integration")
+  fi
+  if [ -n "$_project" ]; then
+    _import_args+=(--project-id "$_project")
+  fi
+  python3 "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" || true
+}
+
+AO_AAP_SYNC_RAN=0
+
+provision_aap_demos() {
+  local _aap_route _ao_route _aap_token _ao_namespace _ao_token _ao_credential _ao_integration
+  local -a _provision_args
+  _aap_route=$(aap_gateway_route_host)
+  _ao_route=$(wire_ao_route_host 2>/dev/null || true)
+  _ao_token=$(wire_ao_login_token 2>/dev/null || true)
+  _ao_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _ao_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
+  _ao_namespace="$NAMESPACE"
+  NAMESPACE="$AAP_NAMESPACE"
+  _aap_token=$(wire_aap_gateway_token "aap-demo AO template provisioning" write 2>/dev/null || true)
+  NAMESPACE="$_ao_namespace"
+  if [ -z "$_aap_route" ] || [ -z "$_aap_token" ]; then
+    echo "  ⚠ AAP demo template provisioning deferred (AAP credentials not ready)"
+    return 0
+  fi
+  _provision_args=(
+    --route "$_aap_route"
+    --token "$_aap_token"
+  )
+  if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
+    _provision_args+=(
+      --ao-api-url "${AO_SYNC_API_URL:-https://router-internal-default.openshift-ingress.svc.cluster.local/api/v1}"
+      --ao-api-host "$_ao_route"
+      --ao-token "$_ao_token"
+      --ao-credential-id "$_ao_credential"
+      --ao-integration-id "$_ao_integration"
+      --control-repository "${AO_SYNC_REPOSITORY:-https://github.com/RedHatOfficial/aap-demo.git}"
+      --control-branch "${AO_SYNC_BRANCH:-main}"
+      --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
+    )
+  else
+    echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
+  fi
+  local _provision_rc
+  if python3 "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
+    if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
+      AO_AAP_SYNC_RAN=1
+    fi
+  else
+    _provision_rc=$?
+    if [ "$_provision_rc" -eq 2 ]; then
+      echo "  Continuing with direct AO workflow import."
+    else
+      echo "  ⚠ AAP demo provisioning or AO sync job failed"
+    fi
+  fi
+}
+
 AO_PULL_SECRET_NAME="${AO_PULL_SECRET_NAME:-automation-orchestrator-pull-secret}"
 
 cnpg_database_crd_available() {
@@ -528,6 +839,19 @@ ensure_cnpg_operator() {
   if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
     && cnpg_database_crd_available; then
     echo "✓ CloudNativePG operator ready"
+    kubectl create serviceaccount "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" \
+      -n cnpg-system 2>/dev/null || true
+    if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
+      return 1
+    fi
+    if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
+      return 1
+    fi
+    kubectl rollout restart deployment/cnpg-controller-manager -n cnpg-system >/dev/null 2>&1 || true
+    echo "Waiting for CloudNativePG operator..."
+    kubectl rollout status deployment/cnpg-controller-manager \
+      -n cnpg-system --timeout=5m
+    echo "✓ CloudNativePG operator running"
     mkdir -p "$(dirname "$AO_STATE_FILE")"
     grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null \
       || echo "CNPG_VERSION=${CNPG_VERSION}" >>"$AO_STATE_FILE"
@@ -546,13 +870,33 @@ ensure_cnpg_operator() {
   fi
   mkdir -p "$(dirname "$AO_STATE_FILE")"
   echo "CNPG_VERSION=${CNPG_VERSION}" >"$AO_STATE_FILE"
-  oc adm policy add-scc-to-group anyuid "system:serviceaccounts:cnpg-system" 2>/dev/null || true
-  oc adm policy add-scc-to-group privileged "system:serviceaccounts:cnpg-system" 2>/dev/null || true
-
+  kubectl create serviceaccount "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" \
+    -n cnpg-system 2>/dev/null || true
+  if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
+    return 1
+  fi
+  if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
+    return 1
+  fi
   echo "Waiting for CloudNativePG operator..."
   kubectl rollout status deployment/cnpg-controller-manager \
     -n cnpg-system --timeout=5m
   echo "✓ CloudNativePG operator running"
+}
+
+grant_scc_to_serviceaccount() {
+  local _scc="$1" _service_account="$2" _namespace="$3"
+  local _binding_name="aap-demo-scc-${_scc}-${_namespace}-${_service_account}"
+  if kubectl create clusterrolebinding "$_binding_name" \
+    --clusterrole="system:openshift:scc:${_scc}" \
+    --serviceaccount="${_namespace}:${_service_account}" \
+    --dry-run=client -o yaml \
+    | kubectl apply -f - >/dev/null; then
+    return 0
+  fi
+  echo "ERROR: Failed to grant SCC '${_scc}' to ServiceAccount '${_service_account}' in namespace '${_namespace}'." >&2
+  echo "  The current user must be allowed to create the SCC binding '${_binding_name}'." >&2
+  return 1
 }
 
 postgres_primary_pod() {
@@ -567,6 +911,47 @@ postgres_database_exists() {
   _pod=$(postgres_primary_pod)
   kubectl exec -n "$NAMESPACE" "$_pod" -- psql -U postgres -tAc \
     "SELECT 1 FROM pg_database WHERE datname='${_db}'" 2>/dev/null | grep -qx 1
+}
+
+reset_ao_postgres_storage() {
+  local _pod _pods _i
+
+  kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
+  kubectl wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" \
+    --timeout=180s 2>/dev/null || true
+
+  # CNPG can leave the old primary terminating while its PVC is being
+  # released. Do not recreate the cluster until every old pod is gone.
+  _pods=$(kubectl get pods -n "$NAMESPACE" \
+    -l cnpg.io/cluster=orchestrator-postgres -o name 2>/dev/null || true)
+  for _pod in $_pods; do
+    kubectl delete "$_pod" -n "$NAMESPACE" --wait=false 2>/dev/null || true
+  done
+  for _i in $(seq 1 90); do
+    if ! kubectl get pods -n "$NAMESPACE" \
+      -l cnpg.io/cluster=orchestrator-postgres --no-headers 2>/dev/null \
+      | grep -q .; then
+      break
+    fi
+    sleep 2
+  done
+  _pods=$(kubectl get pods -n "$NAMESPACE" \
+    -l cnpg.io/cluster=orchestrator-postgres -o name 2>/dev/null || true)
+  for _pod in $_pods; do
+    echo "  Force-removing stale PostgreSQL pod ${_pod#pod/}..."
+    kubectl delete "$_pod" -n "$NAMESPACE" --grace-period=0 --force \
+      2>/dev/null || true
+  done
+
+  if kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
+    kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" \
+      --wait=false 2>/dev/null || true
+    if ! kubectl wait --for=delete pvc/orchestrator-postgres-1 \
+      -n "$NAMESPACE" --timeout=180s 2>/dev/null; then
+      echo "ERROR: PostgreSQL PVC did not finish deleting; refusing to recreate AO." >&2
+      exit 1
+    fi
+  fi
 }
 
 ensure_postgres_database() {
@@ -609,26 +994,46 @@ wait_for_ao_postgres_databases() {
   echo "✓ PostgreSQL databases ready (orchestrator, temporal, temporal_visibility)"
 }
 
+resolve_local_pull_secret_file() {
+  local path
+  for path in "${PULL_SECRET_PATH:-}" "$HOME/.aap-demo/pull-secret" \
+    "$HOME/.aap-demo/pull-secret.txt" "$HOME/.aap-demo/pull-secret.json"; do
+    if [ -n "$path" ] && [ -f "$path" ]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+ao_pull_secret_is_dockerconfig() {
+  local _type
+  _type=$(kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" \
+    -o jsonpath='{.type}' 2>/dev/null || echo "")
+  [ "$_type" = "kubernetes.io/dockerconfigjson" ] || return 1
+  kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" \
+    -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null | grep -q .
+}
+
+# AO operator requires spec.imagePullSecrets to be kubernetes.io/dockerconfigjson.
+# Do not copy redhat-operators-pull-secret: OLM may replace that name with an
+# Opaque placeholder ({operator: aap}) that fails ConfigurationValid.
 ensure_ao_pull_secret() {
-  local _src_ns="${CATALOG_NAMESPACE:-$AAP_NAMESPACE}"
-  if kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" &>/dev/null; then
+  local _pull_file
+  if ao_pull_secret_is_dockerconfig; then
     return 0
   fi
-  if ! kubectl get secret redhat-operators-pull-secret -n "$_src_ns" &>/dev/null; then
-    echo "WARNING: redhat-operators-pull-secret not found in ${_src_ns}"
+  if ! _pull_file=$(resolve_local_pull_secret_file); then
+    echo "WARNING: No local pull secret found (~/.aap-demo/pull-secret.txt)"
+    echo "  AO operator will reject Opaque catalog secrets as imagePullSecrets."
     return 1
   fi
-  echo "Copying pull secret into ${NAMESPACE}..."
-  kubectl get secret redhat-operators-pull-secret -n "$_src_ns" -o json \
-    | AO_PULL_SECRET_NAME="$AO_PULL_SECRET_NAME" NAMESPACE="$NAMESPACE" python3 -c "
-import json, os, sys
-secret = json.load(sys.stdin)
-secret['metadata'] = {
-    'name': os.environ['AO_PULL_SECRET_NAME'],
-    'namespace': os.environ['NAMESPACE'],
-}
-json.dump(secret, sys.stdout)
-" | kubectl apply -f -
+  echo "Creating image pull secret ${AO_PULL_SECRET_NAME} (kubernetes.io/dockerconfigjson)..."
+  kubectl delete secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" 2>/dev/null || true
+  kubectl create secret generic "$AO_PULL_SECRET_NAME" \
+    --from-file=.dockerconfigjson="$_pull_file" \
+    --type=kubernetes.io/dockerconfigjson \
+    -n "$NAMESPACE"
 }
 
 link_ao_pull_secrets_to_operator() {
@@ -647,8 +1052,12 @@ link_ao_pull_secrets_to_operator() {
 }
 
 deploy_ao_instance() {
-  kubectl delete secret automation-orchestrator-initial-admin-password \
-    -n "$NAMESPACE" 2>/dev/null || true
+  # The explicitly referenced initial-admin Secret is consumed during first
+  # database initialization. A forced reinstall resets PostgreSQL above, so it
+  # also needs a fresh referenced password for the new admin record.
+  if [ -n "$FORCE" ]; then
+    ao_admin_password_generate "$NAMESPACE"
+  fi
 
   echo "Creating AutomationOrchestrator instance (aapctl GitOps CR)..."
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
@@ -668,6 +1077,16 @@ cleanup_legacy_ea_resources() {
 # --- Delete ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing Automation Orchestrator..."
+
+  if [ -n "$PURGE_DATA" ]; then
+    echo "  Purging retained AO database and credentials..."
+    ao_admin_password_forget
+    kubectl delete secret "$AO_ADMIN_PASSWORD_SECRET" -n "$NAMESPACE" \
+      --ignore-not-found >/dev/null
+    reset_ao_postgres_storage
+  else
+    ao_admin_password_save "$NAMESPACE"
+  fi
 
   if command -v aapctl >/dev/null 2>&1; then
     aapctl uninstall automation-orchestrator --force --yes 2>/dev/null || true
@@ -701,8 +1120,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     fi
     if [ "$_i" -eq 60 ]; then
       echo ""
-      echo "  ⚠ Namespace still terminating after 5 minutes — continuing anyway"
+      echo "ERROR: Namespace still terminating after 5 minutes" >&2
       echo "  Check: kubectl get namespace $NAMESPACE"
+      exit 1
     fi
     sleep 5
   done
@@ -713,6 +1133,29 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "  CloudNativePG operator (cnpg-system) was left installed — it may be shared by other workloads."
   exit 0
 fi
+
+ao_ensure_mcp_server() {
+  if kubectl get ansiblemcpserver aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1 \
+    || kubectl get deployment aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1; then
+    return 0
+  fi
+  echo "Installing required mcp-server addon..."
+  bash "${REPO_ROOT}/addons/mcp-server/deploy.sh"
+  local config="${HOME}/.aap-demo/config"
+  local current
+  if [ -f "$config" ]; then
+    current=$(grep '^ADDONS=' "$config" 2>/dev/null | cut -d= -f2 | tr ',' ' ')
+    if ! echo " $current " | grep -qw ' mcp-server '; then
+      if [ -n "$current" ]; then
+        sed -i.bak "s/^ADDONS=.*/ADDONS=${current},mcp-server/" "$config" && rm -f "${config}.bak"
+      else
+        echo "ADDONS=mcp-server" >>"$config"
+      fi
+    fi
+  fi
+}
+
+ao_ensure_mcp_server
 
 ao_instance_ready_to_skip() {
   local _degraded _route _reason
@@ -751,7 +1194,23 @@ if [ -z "$FORCE" ]; then
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
     echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
     echo ""
+    configure_ao_local_aap_access
+    allow_aap_to_ao_backend
     show_access_info
+    if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
+      # shellcheck source=../../includes/addon-wire.sh
+      AO_NAMESPACE="$NAMESPACE"
+      NAMESPACE="$AAP_NAMESPACE"
+      source "${REPO_ROOT}/includes/addon-wire.sh"
+      aap_demo_wire || true
+      NAMESPACE="$AO_NAMESPACE"
+    fi
+    if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
+      provision_aap_demos
+      if [ "$AO_AAP_SYNC_RAN" -eq 0 ]; then
+        sync_ao_demos
+      fi
+    fi
     exit 0
   fi
 fi
@@ -759,8 +1218,26 @@ fi
 # --- Namespace + SCCs ---
 echo "Creating namespace and SCC grants..."
 kubectl create namespace "$NAMESPACE" 2>/dev/null || true
-oc adm policy add-scc-to-group anyuid "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
-oc adm policy add-scc-to-group privileged "system:serviceaccounts:${NAMESPACE}" 2>/dev/null || true
+if ! grant_scc_to_serviceaccount anyuid default "$NAMESPACE"; then
+  exit 1
+fi
+if ! grant_scc_to_serviceaccount privileged default "$NAMESPACE"; then
+  exit 1
+fi
+# OLM creates the local CatalogSource pod with a CatalogSource-named service
+# account. Grant it explicitly before creating the CatalogSource; granting the
+# namespace default service account does not cover this pod on MicroShift.
+kubectl create serviceaccount "${AO_CATALOG_SERVICE_ACCOUNT:-redhat-operators}" \
+  -n "$NAMESPACE" 2>/dev/null || true
+if ! grant_scc_to_serviceaccount anyuid "${AO_CATALOG_SERVICE_ACCOUNT:-redhat-operators}" "$NAMESPACE"; then
+  exit 1
+fi
+if ! grant_scc_to_serviceaccount privileged "${AO_CATALOG_SERVICE_ACCOUNT:-redhat-operators}" "$NAMESPACE"; then
+  exit 1
+fi
+if [ -z "$FORCE" ]; then
+  ao_admin_password_ensure "$NAMESPACE"
+fi
 echo "✓ Namespace ready"
 
 # --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---
@@ -826,9 +1303,7 @@ if [ -n "$FORCE" ] || [ -n "$_legacy_secret" ]; then
   if kubectl get cluster orchestrator-postgres -n "$NAMESPACE" &>/dev/null \
     || kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
     echo "  Resetting postgres cluster for fresh init..."
-    kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
-    kubectl wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" --timeout=120s 2>/dev/null || true
-    kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --timeout=60s 2>/dev/null || true
+    reset_ao_postgres_storage
   fi
 fi
 
@@ -1086,4 +1561,26 @@ if [ -z "${_ao_route:-}" ]; then
   echo "  Route is not ready yet; instance may still be reconciling."
 fi
 echo ""
+configure_ao_local_aap_access
+allow_aap_to_ao_backend
 show_access_info
+
+# Wire AO ↔ AAP and MCP when deploy.sh is invoked directly (not via aap-demo enable).
+if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
+  # shellcheck source=../../includes/addon-wire.sh
+  NAMESPACE="$AAP_NAMESPACE"
+  AO_NAMESPACE="automation-orchestrator"
+  source "${REPO_ROOT}/includes/addon-wire.sh"
+  aap_demo_wire || true
+  NAMESPACE="$AO_NAMESPACE"
+fi
+
+# Import the upstream AO workflows after integrations and credentials exist. The
+# workflow nodes launch AAP job templates, so playbooks remain executed and
+# governed by AAP rather than being run directly by this addon.
+if [ "${AO_IMPORT_DEMOS:-1}" != "0" ]; then
+  provision_aap_demos
+  if [ "$AO_AAP_SYNC_RAN" -eq 0 ]; then
+    sync_ao_demos
+  fi
+fi

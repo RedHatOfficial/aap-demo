@@ -6,7 +6,7 @@
 # Rendered by apme-portal-installer role apme_helm_values (placeholders below).
 # Placeholders: namespace, cluster-router-base, init-install-command, init-container-image
 #
-# APME plugins load from paths baked into the portal hub image (see prebuilt_hub.yml).
+# APME plugins load through the chart's standard dynamic-plugin installer.
 
 redhat-developer-hub:
   common:
@@ -873,7 +873,7 @@ redhat-developer-hub:
       - mountPath: /opt/app-root/src/.data
         name: apme-data
       extraVolumes:
-      # emptyDir staged by stage-baked-plugins init from the portal hub image
+      # emptyDir populated by the chart's dynamic-plugin init container
       - emptyDir: {}
         name: dynamic-plugins-root
       - configMap:
@@ -881,6 +881,10 @@ redhat-developer-hub:
           name: '{{ printf "%s-dynamic-plugins" .Release.Name }}'
           optional: true
         name: dynamic-plugins
+      - configMap:
+          defaultMode: 420
+          name: apme-oci-registry-config
+        name: apme-oci-registry-config
       - name: dynamic-plugins-npmrc
         secret:
           defaultMode: 420
@@ -962,6 +966,10 @@ redhat-developer-hub:
         - mountPath: /opt/app-root/src/.config/containers
           name: dynamic-plugins-registry-auth
           readOnly: true
+        - mountPath: /etc/containers/registries.conf.d/apme-registry.conf
+          name: apme-oci-registry-config
+          readOnly: true
+          subPath: registries.conf
         - mountPath: /opt/app-root/src/.npm/_cacache
           name: npmcacache
         - mountPath: /extensions

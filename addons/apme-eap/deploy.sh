@@ -14,7 +14,6 @@ NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
 GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
 VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
-PORTAL_HUB_IMAGE="${PORTAL_HUB_IMAGE:-quay.io/cferman/portal-hub-eap:latest}"
 
 # Color output
 RED='\033[0;31m'
@@ -176,6 +175,33 @@ setup_venv() {
   fi
 }
 
+_ensure_skopeo() {
+  if command -v skopeo &>/dev/null; then
+    return 0
+  fi
+
+  info "skopeo not found — installing (required for APME plugin OCI push)..."
+  case "$(uname -s)" in
+    Darwin)
+      if command -v brew &>/dev/null; then
+        brew install skopeo
+      else
+        die "skopeo not found. Install Homebrew, then: brew install skopeo"
+      fi
+      ;;
+    Linux)
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y skopeo
+      else
+        die "skopeo not found and cannot auto-install. Install it before enabling apme-eap."
+      fi
+      ;;
+    *)
+      die "skopeo not found. Install skopeo for your platform before enabling apme-eap."
+      ;;
+  esac
+}
+
 _helm_version_ok() {
   local helm_version helm_major helm_minor
   helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
@@ -253,10 +279,20 @@ check_prerequisites() {
     die "python3 not found. Please install Python 3.8 or later."
   fi
 
-  info "Using pre-built portal hub (${PORTAL_HUB_IMAGE})"
+  _ensure_skopeo
 
   # Portal/gateway Helm releases use kubernetes.core.helm (requires helm binary on PATH)
   _ensure_helm
+
+  # MicroShift lacks an integrated registry; runtime OCI plugins use this local registry.
+  if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
+    info "Deploying in-cluster registry for APME plugins..."
+    if ! bash "${SCRIPT_DIR}/../registry/deploy.sh"; then
+      die "Unable to deploy the local registry required for APME plugins."
+    fi
+  else
+    info "In-cluster registry already running"
+  fi
 
   info "Prerequisites check complete"
 }
@@ -541,6 +577,23 @@ generate_vars_file() {
 
   mkdir -p "$(dirname "$VARS_FILE")"
 
+  # Preserve runtime OCI settings when the generated vars file is regenerated.
+  # This lets users opt into skip/re-push behavior without editing defaults.yml.
+  local skip_plugin_push_value=false
+  local apme_oci_push_force_value=false
+  if [ -f "$VARS_FILE" ]; then
+    skip_plugin_push_value=$(sed -n 's/^skip_plugin_push:[[:space:]]*//p' "$VARS_FILE" | tail -1)
+    apme_oci_push_force_value=$(sed -n 's/^apme_oci_push_force:[[:space:]]*//p' "$VARS_FILE" | tail -1)
+    case "$skip_plugin_push_value" in
+      true | false) ;;
+      *) skip_plugin_push_value=false ;;
+    esac
+    case "$apme_oci_push_force_value" in
+      true | false) ;;
+      *) apme_oci_push_force_value=false ;;
+    esac
+  fi
+
   # Extract token for API and registry authentication.
   # CRC kubeconfig uses client certificate auth (no token field), so fall back
   # to the active oc session token.
@@ -580,11 +633,12 @@ portal_helm_chart_version: 2.2.3
 portal_helm_release_name: redhat-rhaap-portal
 portal_helm_install_timeout: 1800
 
-# Helm chart configuration (APME gateway - x86 only)
+# Helm chart configuration (APME gateway)
 apme_helm_chart_repo: apme
 apme_helm_chart_repo_url: https://ansible.github.io/apme
 apme_helm_chart_name: apme
-apme_helm_chart_version: 0.1.2
+apme_helm_chart_version: ""
+apme_helm_chart_fallback_version: 0.1.8
 apme_helm_release_name: apme
 
 # AAP organization
@@ -657,8 +711,11 @@ EOF
 
   cat >>"$VARS_FILE" <<EOF
 
-# Portal hub image (APME plugins baked in at build time)
-portal_hub_image: "${PORTAL_HUB_IMAGE}"
+# OCI registry configuration for chart-native runtime plugin installation
+oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
+oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
+skip_plugin_push: ${skip_plugin_push_value}
+apme_oci_push_force: ${apme_oci_push_force_value}
 
 # setup-pah / Automation Hub (reads ~/.aap-demo/galaxy-token and pah-config.yml)
 apme_pah_run_setup_pah: true

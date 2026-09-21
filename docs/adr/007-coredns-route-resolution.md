@@ -34,7 +34,9 @@ route hostnames to the ingress router Service** using the CoreDNS `rewrite` plug
 
 1. Wait for `router-internal-default` Service in `openshift-ingress`
 2. Detect route domain from MicroShift config (`apps.crc.testing` or custom)
-3. Patch CoreDNS Corefile with:
+3. Also rewrite `*.apps.127.0.0.1.nip.io` when that is not the cluster domain — leftover
+   MCP/addon routes still use nip.io and otherwise resolve to `127.0.0.1` inside pods
+4. Patch CoreDNS Corefile with a `rewrite` rule per domain:
 
 ```text
 rewrite stop {
@@ -84,7 +86,9 @@ CoreDNS fixes general in-cluster DNS; OAuth-specific workarounds address TLS and
 
 ### /etc/hosts in every pod
 
-Rejected: not maintainable; breaks on route changes.
+Rejected as a cluster-wide substitute for CoreDNS. Targeted `hostAliases` on AO
+backend/worker pods (route hostnames → ingress router ClusterIP) are still required
+because the DNS operator wipes `dns-default`; see ADR-017 / ADR-023.
 
 ### Use in-cluster Service DNS only
 

@@ -1,0 +1,43 @@
+---
+# Resolve the bundled prototype OCI pack and registry defaults.
+
+- name: Load plugin pack manifest
+  ansible.builtin.slurp:
+    src: "{{ collection_root }}/plugin_packs/plugin-pack.manifest.yml"
+  register: plugin_pack_manifest_file
+
+- name: Set plugin SHA from manifest
+  ansible.builtin.set_fact:
+    plugin_sha: "{{ (plugin_pack_manifest_file.content | b64decode | from_yaml).plugin_sha }}"
+  when:
+    - plugin_sha is not defined or plugin_sha | length == 0
+
+- name: Use explicitly provided OCI tarball
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ apme_oci_tar }}"
+  when:
+    - apme_oci_tar is defined
+    - apme_oci_tar | length > 0
+
+- name: Set OCI tarball from manifest
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: >-
+      {{ collection_root }}/plugin_packs/{{
+         (plugin_pack_manifest_file.content | b64decode | from_yaml).oci_pack_filename }}
+  when:
+    - apme_oci_tar_resolved is not defined
+
+- name: Verify bundled OCI tarball exists
+  ansible.builtin.stat:
+    path: "{{ apme_oci_tar_resolved }}"
+  register: plugin_pack_tarball
+
+- name: Fail when bundled OCI tarball is missing
+  ansible.builtin.fail:
+    msg: "OCI plugin pack not found: {{ apme_oci_tar_resolved }}"
+  when: not plugin_pack_tarball.stat.exists
+
+- name: Set external and internal registry defaults
+  ansible.builtin.set_fact:
+    oci_registry: "registry.{{ openshift_cluster_domain }}/apme"
+    oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"

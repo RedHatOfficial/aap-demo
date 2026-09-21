@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-07-15 (updated 2026-08-21)
+**Date**: 2026-07-15 (updated 2026-09-16)
 
 **Authors**: Chad Ferman
 
@@ -38,7 +38,7 @@ The addon applies **checked-in Kubernetes manifests** shaped like
 | PostgreSQL | CloudNativePG from upstream manifest (dev-only; not Red Hat supported) |
 | Instance | `AutomationOrchestrator` CR from [`manifests/automationorchestrator-cr.yaml`](../../addons/ao/manifests/automationorchestrator-cr.yaml) |
 | Database secrets | `orchestrator-postgres-secret`, `temporal-postgres-secret`, `temporal-visibility-postgres-secret` (created at install, not committed) |
-| Registry auth | Copy `redhat-operators-pull-secret` → `automation-orchestrator-pull-secret` |
+| Registry auth | `automation-orchestrator-pull-secret` from `~/.aap-demo/pull-secret.txt` (`kubernetes.io/dockerconfigjson`; do not copy the OLM catalog secret) |
 
 Manifest templates and apply order: [`addons/ao/manifests/README.md`](../../addons/ao/manifests/README.md).
 
@@ -54,6 +54,7 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 | Catalog signature failures | MicroShift 4.22+ GPG policy on `registry.redhat.io` | Shared [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh): relax `policy.json`, reload CRI-O, `wait_for_catalog_ready()` with auto-recovery; `ensure_catalog_signature_policy()` before AO catalog create |
 | Postgres password drift on re-run | Secret regenerated but CNPG cluster retains bootstrap password | Reuse password from existing secrets; `FORCE=1` recreates cluster |
 | AO missing from default index | Index version / publish lag | Automatic `AO_FALLBACK_INDEX_IMAGE` |
+| AAP credential SSRF (`base_url is not permitted by SSRF policy`) | AO re-resolves the AAP route hostname at job time; MicroShift's DNS operator wipes the CoreDNS rewrite so the name does not resolve and SSRF fails. `*.svc.cluster.local` is separately blocked as Kubernetes internal DNS. | `hostAliases` on AO backend/worker pods map route hostnames to the ingress router ClusterIP (`wire_ao_route_host_aliases` / `ao_pod_route_host_aliases`); CoreDNS rewrite is still restored when possible |
 
 ### Delete flow
 
@@ -70,6 +71,21 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 - `ao` in `AVAILABLE_ADDONS`; `ao-eap` normalized via `_normalize_addon_name()`
 - Pass-through: `--force`, `--refresh-catalog`
 - `show_status`: AO route URL when enabled
+- Post-install wiring via [`includes/addon-wire.sh`](../../includes/addon-wire.sh): registers global
+  **AAP** and **MCP Server** integrations automatically after enable and deploy (see ADR-023).
+  **`mcp-server` is a hard dependency of `ao`** — `aap-demo enable ao` enables MCP first.
+
+### Concurrent workflow synchronization (2026-09-16)
+
+The AAP control job synchronizes the pinned AO workflow exports concurrently. The preparation
+play creates one isolated local worker host per export; a second play runs the existing
+per-workflow normalization and AO API upsert tasks with Ansible's `free` strategy. The control
+job template is configured for ten forks, matching the current ten-export bundle.
+
+This keeps normalization facts isolated to one workflow, prevents one export's triggers or nodes
+from leaking into another, and avoids unnecessary one-by-one API waits. Completion order is
+intentionally nondeterministic, and effective concurrency remains bounded by the AAP fork limit
+and AO API capacity.
 
 ## Consequences
 
@@ -123,8 +139,16 @@ the full EA install sequence.
 
 ### Amendment log
 
+See [ADR-023](023-addon-auto-wiring.md) for the full auto-wiring design.
+
 | Date | Change |
 |------|--------|
 | 2026-08-20 | GA migration: `redhat-operators` OLM path, hand-written CR |
 | 2026-08-21 | Rename `ao-eap` → `ao`; GitOps manifests from `aapctl --dry-run`; MicroShift catalog in app namespace; aapctl optional at runtime |
 | 2026-08-21 | Catalog signature policy: shared `olm-catalog-signature.sh` with deploy; SSH key refresh; CRI-O reload; signature pull auto-recovery |
+| 2026-08-26 | Addon auto-wiring: `includes/addon-wire.sh` configures AO ↔ AAP OAuth and MCP integrations after enable |
+| 2026-08-26 | Wire applies APD-style AO network access (`APP_INTEGRATION_URL_ALLOWED_HOSTS`) before integration registration on MicroShift |
+| 2026-08-26 | `mcp-server` is a required dependency of `ao`; enable ao installs MCP and wire fails if MCP integration is missing |
+| 2026-09-01 | Local AAP integration: restore CoreDNS route rewrite when missing so allowlisted gateway hosts actually resolve inside AO pods |
+| 2026-09-11 | AO pod `hostAliases` for AAP/AO/MCP route hosts → ingress router, so Launch AAP SSRF does not depend on CoreDNS surviving the DNS operator |
+| 2026-09-16 | AAP control-job workflow synchronization uses isolated worker hosts, Ansible `free` strategy, and ten forks for concurrent AO upserts |

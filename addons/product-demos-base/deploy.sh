@@ -240,6 +240,9 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
+apd_wait_for_controller_api || exit 1
+apd_require_subscription || exit 1
+
 DEFAULT_ORG_ID=$(apd_default_org_id)
 if [ -z "$DEFAULT_ORG_ID" ]; then
   echo "❌ ERROR: Cannot resolve Default organization ID"
@@ -645,6 +648,9 @@ LAUNCH_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
 JOB_ID=$(echo "$LAUNCH_RESULT" | jq -r '.id // empty' 2>/dev/null)
 
 if [ -z "$JOB_ID" ]; then
+  if echo "$LAUNCH_RESULT" | jq -e '.detail | test("License"; "i")' >/dev/null 2>&1; then
+    apd_require_subscription || exit 1
+  fi
   echo "❌ ERROR: Failed to launch job"
   echo "$LAUNCH_RESULT" | jq '.' 2>/dev/null || echo "$LAUNCH_RESULT"
   exit 1
@@ -670,6 +676,11 @@ if apd_monitor_job "$JOB_ID" "APD base install" 60; then
   echo "  - Or one domain: aap-demo enable product-demo-linux"
   echo "  - Log into AAP UI at: $AAP_UI_URL"
   echo ""
+  if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-1}" != "0" ]; then
+    # shellcheck source=../../includes/addon-wire.sh
+    source "${SCRIPT_DIR}/../../includes/addon-wire.sh"
+    aap_demo_wire || true
+  fi
   exit 0
 fi
 

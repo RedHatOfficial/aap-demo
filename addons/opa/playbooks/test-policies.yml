@@ -1,0 +1,22 @@
+---
+- name: Test OPA Policies
+  hosts: localhost
+  gather_facts: false
+  vars:
+    opa_server: "{{ opa_server | default('http://opa.aap-operator.svc.cluster.local:8181') }}"
+
+  tasks:
+    - name: List loaded policies from OPA server
+      ansible.builtin.uri:
+        url: "{{ opa_server }}/v1/policies"
+        method: GET
+        validate_certs: false
+      register: loaded_policies
+
+    - name: Display loaded policies
+      ansible.builtin.debug:
+        msg: "Currently loaded policies: {{ loaded_policies.json.result | default([]) | map(attribute='id') | list }}"
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg: "OPA server has {{ loaded_policies.json.result | default([]) | length }} policies loaded"

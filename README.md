@@ -9,7 +9,10 @@ Deploy AAP to a local MicroShift cluster in minutes.
 ## Prerequisites
 
 - **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
-- **16 GB RAM minimum** — default VM allocation is 16 GB (override with `CRC_MEMORY=24576 aap-demo create` for 24 GB)
+- **16 GB RAM minimum** — default VM allocation is 16 GB (override with
+  `CRC_MEMORY=24576 aap-demo create` for 24 GB). On Linux, `aap-demo create`
+  prompts for optional temp swap on memory-constrained hosts (see
+  [scripts/README.md](scripts/README.md))
 - **Pull secret** — download from the
   [Red Hat console](https://console.redhat.com/openshift/install/pull-secret),
   then run:
@@ -139,8 +142,11 @@ aap-demo destroy       # Delete everything
 
 ### Versioning
 
-Every PR to `main` that changes files (other than `VERSION` itself) must **bump** the semver
-in [`VERSION`](VERSION). CI enforces this via [`.github/workflows/version-check.yaml`](.github/workflows/version-check.yaml).
+Every PR to `main` that changes files (other than `VERSION` itself) must set the semver in
+[`VERSION`](VERSION) to exactly one patch above the base branch. CI enforces this via
+[`.github/workflows/version-check.yaml`](.github/workflows/version-check.yaml). The pre-commit
+hook and pull-request CI automatically set and stage `VERSION` when they detect a required
+bump. CI commits the generated bump back to same-repository PR branches.
 
 ```bash
 aap-demo version              # show current version + git build info
