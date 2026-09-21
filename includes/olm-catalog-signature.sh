@@ -249,21 +249,6 @@ catalog_wait_timeout_seconds() {
   printf '%s' "${AAP_CATALOG_TIMEOUT:-${AO_CATALOG_TIMEOUT:-600}}"
 }
 
-catalog_pod_is_ready() {
-  local _catalog_ns="$1"
-  local _pod_phase _pod_ready
-
-  _pod_phase=$(kubectl get pods -n "$_catalog_ns" \
-    -l olm.catalogSource=redhat-operators \
-    -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
-  _pod_ready=$(kubectl get pods -n "$_catalog_ns" \
-    -l olm.catalogSource=redhat-operators \
-    -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' \
-    2>/dev/null || echo "")
-
-  [ "$_pod_phase" = "Running" ] && [ "$_pod_ready" = "True" ]
-}
-
 wait_for_catalog_ready() {
   local _catalog_ns="$1"
   local _i _status _pod_status _timeout _pod_restart_attempted _signature_fix_attempted
@@ -274,14 +259,6 @@ wait_for_catalog_ready() {
     _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
       -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
     if [ "$_status" = "READY" ]; then
-      echo ""
-      return 0
-    fi
-    # Some OLM versions (notably the MicroShift catalog operator) do not
-    # populate connectionState even after the gRPC registry is serving. A
-    # Running catalog pod that has passed its readiness probe is sufficient
-    # evidence that the CatalogSource is usable in that case.
-    if [ -z "$_status" ] && catalog_pod_is_ready "$_catalog_ns"; then
       echo ""
       return 0
     fi

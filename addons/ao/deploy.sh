@@ -317,10 +317,16 @@ ensure_ao_catalog_source() {
   if [ "$_src_ns" != "$_catalog_ns" ] && [ -n "$_source_image" ] \
     && [ "$_target_image" = "$_source_image" ]; then
     _shared_address="redhat-operators.${_src_ns}.svc:50051"
-    sed -e "/  image: /d" \
-      -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|" \
-      -e "s|  secrets:|  address: ${_shared_address}\\n  secrets:|" \
-      "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+    awk -v catalog_ns="$_catalog_ns" -v address="$_shared_address" '
+      /  image: / { next }
+      /^  secrets:$/ { skip_secrets=1; next }
+      skip_secrets && /^    - / { next }
+      /^  grpcPodConfig:/ {
+        skip_secrets=0
+        print "  address: " address
+      }
+      { sub(/namespace: aap-operator/, "namespace: " catalog_ns); print }
+    ' "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
   else
     if ! copy_pull_secret_to_namespace "$_src_ns" "$_catalog_ns" \
       "redhat-operators-pull-secret" "redhat-operators-pull-secret"; then # pragma: allowlist secret

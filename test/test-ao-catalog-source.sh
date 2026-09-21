@@ -29,7 +29,8 @@ else
 fi
 
 if grep -q '\[ "\$_target_image" = "\$_source_image" \]' "$DEPLOY_SCRIPT" \
-  && grep -q 'sed -e "/  image: /d"' "$DEPLOY_SCRIPT"; then
+  && grep -q 'awk -v catalog_ns=' "$DEPLOY_SCRIPT" \
+  && ! grep -q '\\\\n  secrets:' "$DEPLOY_SCRIPT"; then
   pass "shared_catalog_path_matches_default_image"
 else
   fail "shared_catalog_path_matches_default_image"
