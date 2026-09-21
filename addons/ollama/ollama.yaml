@@ -73,6 +73,9 @@ spec:
           env:
             - name: OLLAMA_HOST
               value: "0.0.0.0:11434"
+            # PR analysis prompts can include a complete GitHub diff.
+            - name: OLLAMA_CONTEXT_LENGTH
+              value: "16384"
           volumeMounts:
             - name: data
               mountPath: /root/.ollama
