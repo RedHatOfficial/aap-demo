@@ -115,8 +115,19 @@ else
   _fail "destroy_calls_crc_delete - crc delete not found in destroy function"
 fi
 
-# Test 7: create command - verify it calls crc-create.sh
-echo "Test 7: create command delegates to crc-create.sh"
+# Test 7: destroy asks about caching before showing the destructive message
+echo "Test 7: destroy asks about caching before the destructive message"
+cache_prompt_line=$(grep -n '^  _maybe_save_local_cache_before_destroy$' "$AAP_DEMO_SH" | cut -d: -f1)
+destroy_message_line=$(grep -n 'aap-demo destroy.*Deleting CRC cluster' "$AAP_DEMO_SH" | cut -d: -f1)
+if [ -n "$cache_prompt_line" ] && [ -n "$destroy_message_line" ] \
+  && [ "$cache_prompt_line" -lt "$destroy_message_line" ]; then
+  _pass "destroy_cache_prompt_order"
+else
+  _fail "destroy_cache_prompt_order - cache prompt must precede destroy message"
+fi
+
+# Test 8: create command - verify it calls crc-create.sh
+echo "Test 8: create command delegates to crc-create.sh"
 # Verify create function sources crc-create.sh
 if grep -q 'includes/crc-create.sh' "$AAP_DEMO_SH"; then
   _pass "create_calls_script"
@@ -124,8 +135,8 @@ else
   _fail "create_calls_script - crc-create.sh not referenced in create function"
 fi
 
-# Test 9: addon purge options are accepted and forwarded
-echo "Test 9: disable forwards addon purge options"
+# Test 10: addon purge options are accepted and forwarded
+echo "Test 10: disable forwards addon purge options"
 if grep -q -- '--purge-data' "$AAP_DEMO_SH" \
   && grep -q 'bash "\$addon_dir/deploy.sh" --delete "\$@"' "$AAP_DEMO_SH"; then
   _pass "disable_forwards_purge_data"
@@ -133,8 +144,8 @@ else
   _fail "disable_forwards_purge_data - purge option parsing or forwarding is missing"
 fi
 
-# Test 8: create command - verify OLM addon is enabled after cluster creation
-echo "Test 8: create enables OLM addon"
+# Test 9: create command - verify OLM addon is enabled after cluster creation
+echo "Test 9: create enables OLM addon"
 # Verify create function calls OLM deploy
 if grep -q 'addons/olm/deploy.sh' "$AAP_DEMO_SH"; then
   _pass "create_enables_olm"
