@@ -1992,6 +1992,7 @@ _maybe_save_local_cache_before_destroy() {
 }
 
 cmd_destroy() {
+  _maybe_save_local_cache_before_destroy
   echo ""
   printf "\033[1maap-demo destroy\033[0m - Deleting CRC cluster...\n"
   echo ""
@@ -2011,7 +2012,6 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
-  _maybe_save_local_cache_before_destroy
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
