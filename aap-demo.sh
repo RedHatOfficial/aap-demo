@@ -1979,6 +1979,7 @@ _maybe_save_local_cache_before_destroy() {
   case "${_cache_choice:-n}" in
     [yY]*)
       echo ""
+      echo "The next deploy can reuse these cached containers instead of downloading them again."
       echo "Saving container images for the next deployment..."
       if ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" save; then
         echo "⚠ Could not save the local image cache; continuing with cluster deletion"

@@ -37,9 +37,10 @@ Each image is saved as `<md5>.tar` plus a `<md5>.ref` sidecar with the original 
 ## Notes
 
 - **Save** adds `local-cache` to `~/.aap-demo/config` so deploy auto-loads on future runs.
-- `aap-demo destroy` offers to save the cache before deleting the cluster, and
-  `aap-demo deploy` auto-loads any existing cache even when the addon is not
-  enabled in the config.
+- `aap-demo destroy` offers to save the cache before deleting the cluster. Confirming
+  lets the next deploy reuse cached containers instead of downloading them again;
+  `aap-demo deploy` auto-loads any existing cache even when the addon is not enabled
+  in the config.
 - **Load** and **clear** are one-shot actions and do not change the saved addon list.
 - `aap-demo destroy` clears `ADDONS=` from config but keeps on-disk cache files.
 
