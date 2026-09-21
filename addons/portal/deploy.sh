@@ -9,11 +9,18 @@ AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
 PORTAL_NAMESPACE="${PORTAL_NAMESPACE:-redhat-rhaap-portal}"
 ACTION="${1:-deploy}"
 PORTAL_DIR="${HOME}/.aap-demo/portal"
+AAP_DEMO_LOCAL_BIN="${HOME}/.local/bin"
+if [[ ":${PATH:-}:" == *":${AAP_DEMO_LOCAL_BIN}:"* ]]; then
+  AAP_DEMO_LOCAL_BIN_IN_PATH=true
+else
+  AAP_DEMO_LOCAL_BIN_IN_PATH=false
+fi
+# Prefer user-local binaries (Helm auto-install, oc, kubectl) over system PATH.
+export PATH="${AAP_DEMO_LOCAL_BIN}:/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
 
 # Helm release name and chart
 RELEASE_NAME="redhat-rhaap-portal"
 CHART_REPO="openshift-helm-charts/redhat-rhaap-portal"
-
 # Default plugin version (AAP 2.7 compatible)
 DEFAULT_PLUGIN_VERSION="2.2"
 
@@ -167,6 +174,72 @@ check_architecture() {
   return 0
 }
 
+helm_version_ok() {
+  local helm_version helm_major helm_minor
+  command -v helm &>/dev/null || return 1
+  helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
+  [ -n "$helm_version" ] || return 1
+  helm_major=$(echo "$helm_version" | cut -d. -f1)
+  helm_minor=$(echo "$helm_version" | cut -d. -f2)
+  if [ "$helm_major" -gt 3 ]; then
+    return 0
+  fi
+  if [ "$helm_major" -eq 3 ] && [ "$helm_minor" -ge 10 ]; then
+    return 0
+  fi
+  return 1
+}
+
+install_helm_binary() {
+  case "$(uname -s)" in
+    Darwin)
+      if ! command -v brew &>/dev/null; then
+        echo "❌ Helm not found. Install Homebrew, then: brew install helm"
+        exit 1
+      fi
+      if brew list --formula helm &>/dev/null; then
+        brew upgrade helm
+      else
+        brew install helm
+      fi
+      ;;
+    Linux)
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y helm
+      else
+        echo "❌ Helm not found and cannot auto-install. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+        exit 1
+      fi
+      ;;
+    *)
+      echo "❌ Helm not found. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+      exit 1
+      ;;
+  esac
+}
+
+ensure_helm() {
+  if helm_version_ok; then
+    echo "✓ Helm: $(helm version --short 2>/dev/null || echo 'found')"
+    return 0
+  fi
+
+  if command -v helm &>/dev/null; then
+    echo "Helm $(helm version --short 2>/dev/null || echo 'unknown') is too old — installing a supported version..."
+  else
+    echo "Helm not found — installing a supported version..."
+  fi
+
+  install_helm_binary
+
+  if ! helm_version_ok; then
+    echo "❌ Helm install completed but helm is not usable (found: $(helm version --short 2>/dev/null || echo 'not on PATH'))"
+    echo "Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+    exit 1
+  fi
+  echo "✓ Helm: $(helm version --short 2>/dev/null)"
+}
+
 check_prerequisites() {
   echo "Checking prerequisites..."
 
@@ -187,25 +260,7 @@ check_prerequisites() {
     exit 1
   fi
 
-  # Check Helm installed
-  if ! command -v helm &>/dev/null; then
-    echo "❌ Helm not found"
-    echo "Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-    exit 1
-  fi
-
-  # Check Helm version
-  local helm_version
-  helm_version=$(helm version --short 2>/dev/null | grep -oE 'v[0-9]+\.[0-9]+' | sed 's/v//')
-  local helm_major
-  local helm_minor
-  helm_major=$(echo "$helm_version" | cut -d. -f1)
-  helm_minor=$(echo "$helm_version" | cut -d. -f2)
-
-  if [ "$helm_major" -lt 3 ] || ([ "$helm_major" -eq 3 ] && [ "$helm_minor" -lt 10 ]); then
-    echo "❌ Helm version 3.10+ required (found: v$helm_version)"
-    exit 1
-  fi
+  ensure_helm
 
   # Check jq installed
   if ! command -v jq &>/dev/null; then
@@ -1040,4 +1095,6 @@ main() {
   display_success
 }
 
-main
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main
+fi
