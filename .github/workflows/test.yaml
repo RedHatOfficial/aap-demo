@@ -41,6 +41,9 @@ jobs:
       - name: Run core command tests
         run: ./test/test-core-commands.sh
 
+      - name: Run AO CatalogSource tests
+        run: ./test/test-ao-catalog-source.sh
+
       - name: Run Ollama addon tests
         run: ./test/test-ollama.sh
 

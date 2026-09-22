@@ -290,37 +290,60 @@ select_ao_index_image() {
 
 ensure_ao_catalog_source() {
   local _catalog_ns="$NAMESPACE"
-  local _src_ns _target_image _current_image
+  local _src_ns _target_image _source_image _current_image _shared_address _refresh_ns
 
   _src_ns=$(find_catalog_namespace)
   _target_image=$(select_ao_index_image)
+  _source_image=$(kubectl get catalogsource redhat-operators -n "$_src_ns" \
+    -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
   _current_image=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
+  _refresh_ns="$_catalog_ns"
 
   echo "Creating AO CatalogSource in ${_catalog_ns}..." >&2
   echo "  Index: $(short_image_ref "$_target_image")" >&2
 
   ensure_catalog_signature_policy >&2 || return 1
 
-  if ! copy_pull_secret_to_namespace "$_src_ns" "$_catalog_ns" \
-    "redhat-operators-pull-secret" "redhat-operators-pull-secret"; then # pragma: allowlist secret
-    echo "ERROR: redhat-operators-pull-secret not found in ${_src_ns}" >&2
-    echo "  Run 'aap-demo deploy' first." >&2
-    return 1
-  fi
-
   if [ ! -f "$CATALOG_SOURCE_TEMPLATE" ]; then
     echo "ERROR: CatalogSource template not found: ${CATALOG_SOURCE_TEMPLATE}" >&2
     return 1
   fi
 
-  sed -e "s|image: .*|image: ${_target_image}|" \
-    -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|" \
-    "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+  # Keep the CatalogSource identity in the AO namespace, but proxy the
+  # already-healthy AAP catalog for the normal install. A second image-backed
+  # catalog pod can pass its local readiness probe while catalog-operator
+  # still reports the AO source unhealthy over the Service. Explicit/fallback
+  # images continue to use a local registry pod.
+  if [ "$_src_ns" != "$_catalog_ns" ] && [ -n "$_source_image" ] \
+    && [ "$_target_image" = "$_source_image" ]; then
+    _shared_address="redhat-operators.${_src_ns}.svc:50051"
+    _refresh_ns="$_src_ns"
+    awk -v catalog_ns="$_catalog_ns" -v address="$_shared_address" '
+      /  image: / { next }
+      /^  secrets:$/ { skip_secrets=1; next }
+      skip_secrets && /^    - / { next }
+      /^  grpcPodConfig:/ {
+        skip_secrets=0
+        print "  address: " address
+      }
+      { sub(/namespace: aap-operator/, "namespace: " catalog_ns); print }
+    ' "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+  else
+    if ! copy_pull_secret_to_namespace "$_src_ns" "$_catalog_ns" \
+      "redhat-operators-pull-secret" "redhat-operators-pull-secret"; then # pragma: allowlist secret
+      echo "ERROR: redhat-operators-pull-secret not found in ${_src_ns}" >&2
+      echo "  Run 'aap-demo deploy' first." >&2
+      return 1
+    fi
+    sed -e "s|image: .*|image: ${_target_image}|" \
+      -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|" \
+      "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+  fi
 
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
-    kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    kubectl delete pod -n "$_refresh_ns" -l olm.catalogSource=redhat-operators \
       --wait=false >/dev/null 2>&1 || true
   fi
 
@@ -1240,8 +1263,8 @@ if [ -z "$FORCE" ]; then
 fi
 echo "✓ Namespace ready"
 
-# --- AO-local catalog (MicroShift cannot resolve CatalogSources across namespaces) ---
-echo "Checking AAP redhat-operators catalog (for index image and pull secret)..."
+# --- AO-local CatalogSource identity (MicroShift cannot resolve cross-namespace refs) ---
+echo "Checking AAP redhat-operators catalog (for index and fallback image)..."
 _aap_catalog_ns=$(find_catalog_namespace)
 if ! kubectl get catalogsource redhat-operators -n "$_aap_catalog_ns" &>/dev/null; then
   echo "ERROR: redhat-operators CatalogSource is missing."
