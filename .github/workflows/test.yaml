@@ -50,6 +50,9 @@ jobs:
       - name: Run Ollama addon tests
         run: ./test/test-ollama.sh
 
+      - name: Run CRC version and local environment tests
+        run: ./test/test-crc-version-check.sh
+
       - name: Run product-demos API readiness tests
         run: ./test/test-product-demos-api.sh
 

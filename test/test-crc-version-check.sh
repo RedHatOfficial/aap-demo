@@ -41,11 +41,30 @@ echo "This test simulates the real issue: deploying AAP with wrong CRC version"
 echo "should fail immediately with a clear error, NOT 10 minutes into catalog pull."
 echo ""
 
+# Record the local runtime used for this test. CRC is not installed on every
+# CI runner, so absence is informational rather than a test failure.
+HOST_OS=$(uname -srm 2>/dev/null || echo "unknown")
+echo "Host OS: $HOST_OS"
+if command -v crc >/dev/null 2>&1; then
+  INSTALLED_CRC_OUTPUT=$(crc version 2>&1 || true)
+  echo "Installed CRC:"
+  echo "$INSTALLED_CRC_OUTPUT"
+else
+  echo "Installed CRC: not available (mock CRC is used below)"
+fi
+echo ""
+
 # Extract the required CRC version from aap-demo.sh
 REQUIRED_CRC_VERSION=$(grep '^CRC_VERSION=' "$AAP_DEMO_SH" | head -1 | sed 's/.*:-\([0-9.]*\).*/\1/')
 if [ -z "$REQUIRED_CRC_VERSION" ]; then
   echo "ERROR: Could not detect CRC_VERSION from aap-demo.sh"
   exit 1
+fi
+
+if [[ ! "$REQUIRED_CRC_VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+  _fail "required_crc_version_is_valid"
+else
+  _pass "required_crc_version_is_valid"
 fi
 echo "Required CRC version (from aap-demo.sh): $REQUIRED_CRC_VERSION"
 
