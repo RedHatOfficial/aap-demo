@@ -50,6 +50,10 @@ source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 AAP_VERSION="2.7"
 AAP_CHANNEL="stable-2.7"
 
+# Recommended CRC/MicroShift version for stable deployments
+# Older versions may encounter VM transport or operator catalog issues.
+CRC_RECOMMENDED_VERSION="4.22"
+
 # Minimum CRC/MicroShift version threshold for deployment
 # Default: 4.22 (avoids signature validation issues)
 # Override to lower value to force deployment on older versions (advanced users only)
@@ -650,6 +654,22 @@ _verify_crc_version() {
   local req_major="${CRC_VERSION%%.*}"
   local req_minor="${CRC_VERSION#*.}"
   req_minor="${req_minor%%.*}" # Handle 4.22.5 → 4.22
+
+  # Always warn when the actual cluster is below the recommended version,
+  # including when an advanced CRC_VERSION override allows deployment.
+  local recommended_major="${CRC_RECOMMENDED_VERSION%%.*}"
+  local recommended_minor="${CRC_RECOMMENDED_VERSION#*.}"
+  recommended_minor="${recommended_minor%%.*}"
+  if [ "$major" -lt "$recommended_major" ] \
+    || { [ "$major" -eq "$recommended_major" ] && [ "$minor" -lt "$recommended_minor" ]; }; then
+    echo ""
+    echo "WARNING: CRC/MicroShift version is below the recommended version"
+    echo "  Recommended: $CRC_RECOMMENDED_VERSION or newer"
+    echo "  Installed: $installed_version"
+    echo "  You may encounter deployment or VM stability issues on older versions."
+    echo "  Download latest CRC: https://console.redhat.com/openshift/create/local"
+    echo ""
+  fi
 
   # Reject if installed < CRC_VERSION (same logic as needs_signature_policy_relaxation)
   if [ "$major" -lt "$req_major" ] || { [ "$major" -eq "$req_major" ] && [ "$minor" -lt "$req_minor" ]; }; then
