@@ -16,6 +16,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
 OLLAMA_ROLLOUT_TIMEOUT="${OLLAMA_ROLLOUT_TIMEOUT:-15m}"
+OLLAMA_STORAGE_CLASS="${OLLAMA_STORAGE_CLASS:-}"
 
 # shellcheck source=../../includes/infra-crc.sh
 source "${SCRIPT_DIR}/../../includes/infra-crc.sh" 2>/dev/null || true
@@ -37,6 +38,55 @@ fi
 
 echo "Deploying Ollama (CPU-only)..."
 
+# Convert the kubectl duration used for rollout status into seconds for the
+# Kubernetes Deployment progress deadline. Support the integer-unit durations
+# accepted by this script, including combinations such as 1h30m.
+_ollama_timeout_seconds() {
+  local _duration="$1" _total=0 _value _unit
+
+  while [ -n "$_duration" ]; do
+    if [[ "$_duration" =~ ^([0-9]+)([smh])([0-9smh]*)$ ]]; then
+      _value="${BASH_REMATCH[1]}"
+      _unit="${BASH_REMATCH[2]}"
+      _duration="${BASH_REMATCH[3]}"
+      case "$_unit" in
+        s) _total=$((_total + _value)) ;;
+        m) _total=$((_total + _value * 60)) ;;
+        h) _total=$((_total + _value * 3600)) ;;
+      esac
+    else
+      echo "ERROR: OLLAMA_ROLLOUT_TIMEOUT must use durations such as 15m or 1h30m (got '${OLLAMA_ROLLOUT_TIMEOUT}')." >&2
+      return 1
+    fi
+  done
+
+  if [ "$_total" -lt 1 ]; then
+    echo "ERROR: OLLAMA_ROLLOUT_TIMEOUT must be greater than zero." >&2
+    return 1
+  fi
+  printf '%s\n' "$_total"
+}
+
+if ! _ollama_progress_deadline="$(_ollama_timeout_seconds "$OLLAMA_ROLLOUT_TIMEOUT")"; then
+  exit 1
+fi
+
+# Detect StorageClass: explicit override > topolvm-provisioner > CRC hostpath > standard
+if [ -n "$OLLAMA_STORAGE_CLASS" ]; then
+  _ollama_sc="$OLLAMA_STORAGE_CLASS"
+elif kubectl get sc topolvm-provisioner >/dev/null 2>&1; then
+  _ollama_sc="topolvm-provisioner"
+elif kubectl get sc crc-csi-hostpath-provisioner >/dev/null 2>&1; then
+  _ollama_sc="crc-csi-hostpath-provisioner"
+elif kubectl get sc standard >/dev/null 2>&1; then
+  _ollama_sc="standard"
+else
+  echo "ERROR: No suitable StorageClass found (expected topolvm-provisioner, crc-csi-hostpath-provisioner, or standard)." >&2
+  echo "  Set OLLAMA_STORAGE_CLASS=<name> to use a different class, or run 'aap-demo create'." >&2
+  exit 1
+fi
+echo "  StorageClass: ${_ollama_sc}"
+
 # Detect cluster apps domain from existing AAP route, fall back to nip.io default
 _aap_host=$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" \
   -o jsonpath='{.spec.host}' 2>/dev/null || true)
@@ -47,29 +97,45 @@ else
 fi
 OLLAMA_ROUTE="ollama.${CLUSTER_DOMAIN}"
 
-# Patch the route hostname if cluster domain differs from the nip.io default in the manifest
-sed "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
+# Patch the route hostname and StorageClass from their manifest placeholders
+sed -e "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
+  -e "s|storageClassName: __STORAGE_CLASS__|storageClassName: ${_ollama_sc}|" \
+  -e "s|progressDeadlineSeconds: __PROGRESS_DEADLINE_SECONDS__|progressDeadlineSeconds: ${_ollama_progress_deadline}|" \
   "${SCRIPT_DIR}/ollama.yaml" | kubectl apply -f -
 
 echo "  Waiting for Ollama deployment to be ready..."
-kubectl rollout status deployment/ollama -n aap-demo-ollama \
-  --timeout="${OLLAMA_ROLLOUT_TIMEOUT}"
+if ! kubectl rollout status deployment/ollama -n aap-demo-ollama \
+  --timeout="${OLLAMA_ROLLOUT_TIMEOUT}"; then
+  echo "ERROR: Ollama rollout failed — diagnostics:" >&2
+  kubectl get deployment,pod,pvc -n aap-demo-ollama >&2 || true
+  kubectl describe pod -n aap-demo-ollama -l app=ollama >&2 || true
+  kubectl get events -n aap-demo-ollama --sort-by=.lastTimestamp >&2 || true
+  exit 1
+fi
 
 echo "  Pulling model: ${OLLAMA_MODEL}..."
 echo "  (This may take several minutes — model is ~2.5GB)"
 
-# Pull model inside the pod — avoids ClusterIP routing issues on the CRC host
-OLLAMA_POD=$(kubectl get pod -n aap-demo-ollama -l app=ollama \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+# Pull from a Ready pod. During a rollout, the first pod returned by the API
+# can still be the terminating old replica even after rollout status succeeds.
+OLLAMA_POD=""
+for _ollama_attempt in $(seq 1 30); do
+  while read -r _ollama_candidate; do
+    [ -n "$_ollama_candidate" ] || continue
+    if kubectl wait --for=condition=ready "pod/${_ollama_candidate}" \
+      -n aap-demo-ollama --timeout=10s >/dev/null 2>&1 \
+      && kubectl exec -n aap-demo-ollama "$_ollama_candidate" -- ollama pull "${OLLAMA_MODEL}"; then
+      OLLAMA_POD="$_ollama_candidate"
+      break 2
+    fi
+  done < <(kubectl get pod -n aap-demo-ollama -l app=ollama \
+    --sort-by=.metadata.creationTimestamp \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+  sleep 2
+done
 
 if [ -n "$OLLAMA_POD" ]; then
-  if kubectl exec -n aap-demo-ollama "$OLLAMA_POD" -- ollama pull "${OLLAMA_MODEL}"; then
-    echo "  ✓ Model ${OLLAMA_MODEL} ready"
-  else
-    echo "  ERROR: Model pull failed — retry:" >&2
-    echo "    kubectl exec -n aap-demo-ollama $OLLAMA_POD -- ollama pull ${OLLAMA_MODEL}"
-    exit 1
-  fi
+  echo "  ✓ Model ${OLLAMA_MODEL} ready"
 else
   echo "  ERROR: Could not find Ollama pod — retry: aap-demo enable ollama" >&2
   exit 1
