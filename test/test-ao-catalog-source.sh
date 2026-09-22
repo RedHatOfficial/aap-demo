@@ -46,6 +46,28 @@ else
   fail "normal_catalog_uses_shared_service_address"
 fi
 
+fallback_shared_rendered="${TEST_DIR}/fallback-shared.yaml"
+awk -v catalog_ns="automation-orchestrator" \
+  -v address="ao-fallback.aap-operator.svc:50051" '
+  /  image: / { next }
+  /^  secrets:$/ { skip_secrets=1; next }
+  skip_secrets && /^    - / { next }
+  /^  grpcPodConfig:/ {
+    skip_secrets=0
+    print "  address: " address
+  }
+  { sub(/namespace: aap-operator/, "namespace: " catalog_ns); print }
+' "$TEMPLATE" >"$fallback_shared_rendered"
+
+if grep -q '^  address: ao-fallback.aap-operator.svc:50051$' "$fallback_shared_rendered" \
+  && grep -q '^  namespace: automation-orchestrator$' "$fallback_shared_rendered" \
+  && ! grep -q '^  image:' "$fallback_shared_rendered" \
+  && ! grep -q '^  secrets:' "$fallback_shared_rendered"; then
+  pass "fallback_catalog_uses_source_service_address"
+else
+  fail "fallback_catalog_uses_source_service_address"
+fi
+
 fallback_rendered="${TEST_DIR}/fallback.yaml"
 sed -e 's|image: .*|image: registry.redhat.io/redhat/redhat-operator-index:v4.22|' \
   -e 's|namespace: aap-operator|namespace: automation-orchestrator|' \
@@ -61,11 +83,17 @@ else
 fi
 
 if grep -q 'AO_FALLBACK_INDEX_IMAGE' "$DEPLOY_SCRIPT" \
+  && grep -q 'AO_FALLBACK_CATALOG_NAME' "$DEPLOY_SCRIPT" \
+  && grep -q 'ensure_fallback_catalog_source' "$DEPLOY_SCRIPT" \
+  && grep -q 'wait_for_catalog_service_ready "\$_catalog_ns" "\$AO_FALLBACK_CATALOG_NAME"' "$DEPLOY_SCRIPT" \
+  && grep -q 'wait_for_operator_package "\$_catalog_ns" "\$AO_FALLBACK_CATALOG_NAME"' "$DEPLOY_SCRIPT" \
+  && ! grep -q '"\$_image" 100' "$DEPLOY_SCRIPT" \
   && grep -q 'copy_pull_secret_to_namespace' "$DEPLOY_SCRIPT" \
-  && grep -q 'sed -e "s|image: .*|image:' "$DEPLOY_SCRIPT"; then
-  pass "fallback_catalog_keeps_image_backed_path"
+  && grep -q 'apply_image_catalog_source' "$DEPLOY_SCRIPT" \
+  && grep -q 'apply_address_catalog_source' "$DEPLOY_SCRIPT"; then
+  pass "fallback_catalog_uses_source_namespace_pod"
 else
-  fail "fallback_catalog_keeps_image_backed_path"
+  fail "fallback_catalog_uses_source_namespace_pod"
 fi
 
 if grep -q 'local _src_ns _target_image _source_image _current_image _shared_address _refresh_ns' "$DEPLOY_SCRIPT" \
@@ -76,7 +104,7 @@ else
   fail "refresh_targets_source_catalog_namespace"
 fi
 
-if grep -q 'fallback/explicit images use a local catalog pod' "$ADR"; then
+if grep -q 'fallback/explicit images use a source-namespace catalog pod' "$ADR"; then
   pass "fallback_catalog_behavior_documented"
 else
   fail "fallback_catalog_behavior_documented"
