@@ -56,6 +56,33 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 | AO missing from default index | Index version / publish lag | Automatic `AO_FALLBACK_INDEX_IMAGE` |
 | AAP credential SSRF (`base_url is not permitted by SSRF policy`) | AO re-resolves the AAP route hostname at job time; MicroShift's DNS operator wipes the CoreDNS rewrite so the name does not resolve and SSRF fails. `*.svc.cluster.local` is separately blocked as Kubernetes internal DNS. | `hostAliases` on AO backend/worker pods map route hostnames to the ingress router ClusterIP (`wire_ao_route_host_aliases` / `ao_pod_route_host_aliases`); CoreDNS rewrite is still restored when possible |
 
+### Global CatalogSource experiment (2026-09-21)
+
+We evaluated replacing the AO-local CatalogSource with one shared
+`redhat-operators` CatalogSource in `openshift-marketplace`, referenced by the AO
+Subscription with `sourceNamespace: openshift-marketplace`.
+
+The disposable MicroShift cluster accepted the global CatalogSource and exposed the
+AO package through `packagemanifest`. However, a fresh AO install failed OLM
+resolution repeatedly for both the default and fallback index images:
+
+```text
+ResolutionFailed: constraints not satisfiable: no operators found from catalog
+redhat-operators in namespace openshift-marketplace referenced by subscription
+automation-orchestrator-operator
+```
+
+This repository installs OLM with `operator-sdk olm install`, whose resolver requires
+the CatalogSource, OperatorGroup, and Subscription to share the AO namespace for this
+operator. Patching an already-installed Subscription to the global source reported
+`AtLatestKnown`, but that did not represent a fresh resolution and was not considered
+valid evidence.
+
+The global design is therefore rejected for the current runtime. Keep the AO-local
+CatalogSource and Subscription together until the OLM installation path or operator
+resolution behavior changes; re-test the global design as a fresh install if either
+changes.
+
 ### Delete flow
 
 `deploy.sh --delete` / `aap-demo disable ao`:
