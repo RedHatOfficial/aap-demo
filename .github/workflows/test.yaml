@@ -56,6 +56,9 @@ jobs:
       - name: Run product-demos API readiness tests
         run: ./test/test-product-demos-api.sh
 
+      - name: Run local-cache tests
+        run: ./test/test-local-cache.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

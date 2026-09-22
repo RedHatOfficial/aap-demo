@@ -27,6 +27,7 @@ cat >"${MOCK_BIN}/crc" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
   config\ get\ ssh-key) printf '%s\n' '/tmp/test-crc-key' ;;
+  config\ get\ preset) printf '%s\n' 'microshift' ;;
   *) exit 0 ;;
 esac
 EOF
