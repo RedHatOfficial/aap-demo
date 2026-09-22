@@ -283,12 +283,14 @@ wire_ingress_router_ip() {
 }
 
 # Route hostnames only (never *.svc.cluster.local — those must keep kube-dns).
+# Include Ollama so LLM calls survive CoreDNS rewrite wipes the same way AAP/MCP do.
 wire_ao_route_hosts_json() {
   local h
   {
     h=$(wire_aap_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
     h=$(wire_ao_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
     h=$(wire_mcp_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
+    h=$(wire_ollama_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
   } | awk 'NF && !seen[$0]++' | jq -R . | jq -s -c .
 }
 
