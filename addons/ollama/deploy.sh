@@ -38,15 +38,50 @@ fi
 
 echo "Deploying Ollama (CPU-only)..."
 
-# Detect StorageClass: explicit override > topolvm-provisioner > standard
+# Convert the kubectl duration used for rollout status into seconds for the
+# Kubernetes Deployment progress deadline. Support the integer-unit durations
+# accepted by this script, including combinations such as 1h30m.
+_ollama_timeout_seconds() {
+  local _duration="$1" _total=0 _value _unit
+
+  while [ -n "$_duration" ]; do
+    if [[ "$_duration" =~ ^([0-9]+)([smh])([0-9smh]*)$ ]]; then
+      _value="${BASH_REMATCH[1]}"
+      _unit="${BASH_REMATCH[2]}"
+      _duration="${BASH_REMATCH[3]}"
+      case "$_unit" in
+        s) _total=$((_total + _value)) ;;
+        m) _total=$((_total + _value * 60)) ;;
+        h) _total=$((_total + _value * 3600)) ;;
+      esac
+    else
+      echo "ERROR: OLLAMA_ROLLOUT_TIMEOUT must use durations such as 15m or 1h30m (got '${OLLAMA_ROLLOUT_TIMEOUT}')." >&2
+      return 1
+    fi
+  done
+
+  if [ "$_total" -lt 1 ]; then
+    echo "ERROR: OLLAMA_ROLLOUT_TIMEOUT must be greater than zero." >&2
+    return 1
+  fi
+  printf '%s\n' "$_total"
+}
+
+if ! _ollama_progress_deadline="$(_ollama_timeout_seconds "$OLLAMA_ROLLOUT_TIMEOUT")"; then
+  exit 1
+fi
+
+# Detect StorageClass: explicit override > topolvm-provisioner > CRC hostpath > standard
 if [ -n "$OLLAMA_STORAGE_CLASS" ]; then
   _ollama_sc="$OLLAMA_STORAGE_CLASS"
 elif kubectl get sc topolvm-provisioner >/dev/null 2>&1; then
   _ollama_sc="topolvm-provisioner"
+elif kubectl get sc crc-csi-hostpath-provisioner >/dev/null 2>&1; then
+  _ollama_sc="crc-csi-hostpath-provisioner"
 elif kubectl get sc standard >/dev/null 2>&1; then
   _ollama_sc="standard"
 else
-  echo "ERROR: No suitable StorageClass found (expected topolvm-provisioner or standard)." >&2
+  echo "ERROR: No suitable StorageClass found (expected topolvm-provisioner, crc-csi-hostpath-provisioner, or standard)." >&2
   echo "  Set OLLAMA_STORAGE_CLASS=<name> to use a different class, or run 'aap-demo create'." >&2
   exit 1
 fi
@@ -65,6 +100,7 @@ OLLAMA_ROUTE="ollama.${CLUSTER_DOMAIN}"
 # Patch the route hostname and StorageClass from their manifest placeholders
 sed -e "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
   -e "s|storageClassName: __STORAGE_CLASS__|storageClassName: ${_ollama_sc}|" \
+  -e "s|progressDeadlineSeconds: __PROGRESS_DEADLINE_SECONDS__|progressDeadlineSeconds: ${_ollama_progress_deadline}|" \
   "${SCRIPT_DIR}/ollama.yaml" | kubectl apply -f -
 
 echo "  Waiting for Ollama deployment to be ready..."

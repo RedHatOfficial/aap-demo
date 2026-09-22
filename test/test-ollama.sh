@@ -17,6 +17,7 @@ mkdir -p "$MOCK_BIN"
 
 # Parameterized mock kubectl. Callers set env vars to control behavior:
 #   SC_TOPOLVM_RC   exit code for 'get sc topolvm-provisioner' (default 0 = present)
+#   SC_CRC_RC       exit code for 'get sc crc-csi-hostpath-provisioner' (default 1 = absent)
 #   SC_STANDARD_RC  exit code for 'get sc standard'            (default 0 = present)
 #   ROLLOUT_RC      exit code for rollout status               (default 0 = success)
 # Unrecognised calls print DIAGNOSTIC_OUTPUT (allows failure-path diagnostics through).
@@ -26,11 +27,12 @@ set -euo pipefail
 case "$*" in
   "cluster-info") exit 0 ;;
   "get sc topolvm-provisioner") exit "${SC_TOPOLVM_RC:-0}" ;;
+  "get sc crc-csi-hostpath-provisioner") exit "${SC_CRC_RC:-1}" ;;
   "get sc standard") exit "${SC_STANDARD_RC:-0}" ;;
   "get route aap -n aap-operator -o jsonpath={.spec.host}")
     printf '%s' 'aap.apps.example.test' ;;
   "apply -f -") cat >"${MOCK_APPLY_FILE}" ;;
-  rollout\ status\ deployment/ollama\ -n\ aap-demo-ollama\ --timeout=15m)
+  rollout\ status\ deployment/ollama\ -n\ aap-demo-ollama\ --timeout=*)
     exit "${ROLLOUT_RC:-0}" ;;
   get\ pod\ -n\ aap-demo-ollama\ -l\ app=ollama\ --sort-by=.metadata.creationTimestamp\ -o\ jsonpath=*)
     printf '%s\n' 'ollama-test-pod' ;;
@@ -132,6 +134,15 @@ else
   fail "deployment_has_progress_deadline_seconds_900"
 fi
 
+# A custom rollout timeout must update the Kubernetes progress deadline too.
+if OLLAMA_MODEL=qwen2.5:3b OLLAMA_ROLLOUT_TIMEOUT=30m \
+  SC_TOPOLVM_RC=0 "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && grep -q 'progressDeadlineSeconds: 1800' "$MOCK_APPLY_FILE"; then
+  pass "deployment_progress_deadline_tracks_custom_rollout_timeout"
+else
+  fail "deployment_progress_deadline_tracks_custom_rollout_timeout"
+fi
+
 # ---------------------------------------------------------------------------
 # StorageClass placeholder resolution
 # ---------------------------------------------------------------------------
@@ -150,6 +161,15 @@ else
   fail "sc_detection_uses_topolvm_when_available"
 fi
 
+# crc-csi-hostpath-provisioner detected when topolvm is absent
+if OLLAMA_MODEL=qwen2.5:3b SC_TOPOLVM_RC=1 SC_CRC_RC=0 SC_STANDARD_RC=1 \
+  "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && grep -q 'storageClassName: crc-csi-hostpath-provisioner' "$MOCK_APPLY_FILE"; then
+  pass "sc_detection_uses_crc_hostpath_when_available"
+else
+  fail "sc_detection_uses_crc_hostpath_when_available"
+fi
+
 # ---------------------------------------------------------------------------
 # StorageClass: OLLAMA_STORAGE_CLASS override
 # ---------------------------------------------------------------------------
@@ -166,7 +186,7 @@ fi
 # StorageClass: fallback to 'standard' when topolvm absent
 # ---------------------------------------------------------------------------
 
-if OLLAMA_MODEL=qwen2.5:3b SC_TOPOLVM_RC=1 SC_STANDARD_RC=0 \
+if OLLAMA_MODEL=qwen2.5:3b SC_TOPOLVM_RC=1 SC_CRC_RC=1 SC_STANDARD_RC=0 \
   "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
   && grep -q 'storageClassName: standard' "$MOCK_APPLY_FILE"; then
   pass "sc_detection_falls_back_to_standard"
@@ -178,7 +198,7 @@ fi
 # StorageClass: no suitable SC → must exit non-zero before applying
 # ---------------------------------------------------------------------------
 
-if ! OLLAMA_MODEL=qwen2.5:3b SC_TOPOLVM_RC=1 SC_STANDARD_RC=1 \
+if ! OLLAMA_MODEL=qwen2.5:3b SC_TOPOLVM_RC=1 SC_CRC_RC=1 SC_STANDARD_RC=1 \
   "$OLLAMA_DEPLOY" >/dev/null 2>&1; then
   pass "sc_detection_fails_when_no_sc_available"
 else
