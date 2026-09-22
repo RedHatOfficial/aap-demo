@@ -32,7 +32,7 @@ The addon applies **checked-in Kubernetes manifests** shaped like
 | Addon ID | `ao` (`ao-eap` accepted as legacy alias) |
 | App namespace | `automation-orchestrator` |
 | Operator install | OLM `Subscription` + `OperatorGroup` (AllNamespaces) in app namespace |
-| Operator catalog | AO-local CatalogSource identity proxies the healthy AAP catalog Service; fallback/explicit images use a local catalog pod |
+| Operator catalog | AO-local CatalogSource identity proxies a healthy source catalog Service; fallback/explicit images use a source-namespace catalog pod |
 | Operator channel | `stable` default (`AO_OPERATOR_CHANNEL` override) |
 | Index fallback | Early-access build index when default AAP catalog lacks AO |
 | PostgreSQL | CloudNativePG from upstream manifest (dev-only; not Red Hat supported) |
@@ -48,7 +48,7 @@ User-facing guide: [`addons/ao/README.md`](../../addons/ao/README.md).
 
 | Problem | Cause | Workaround |
 |---------|-------|------------|
-| OLM can't resolve AO subscription | Catalog in `aap-operator`; subscription in another namespace | Keep the CatalogSource in `automation-orchestrator`, proxying the healthy AAP catalog Service; use a local pod only for fallback/explicit images |
+| OLM can't resolve AO subscription | Catalog in `aap-operator`; subscription in another namespace | Keep the CatalogSource in `automation-orchestrator`, proxying a healthy source catalog Service; create fallback/explicit image pods in the source namespace |
 | Second OperatorGroup in `aap-operator` | AO operator requires AllNamespaces; AAP already has `aap-operator-og` | Install AO OLM resources only in `automation-orchestrator` |
 | CNPG via OLM fails | No `certified-operators` on MicroShift | Install CNPG from upstream release manifest |
 | Catalog signature failures | MicroShift 4.22+ GPG policy on `registry.redhat.io` | Shared [`includes/olm-catalog-signature.sh`](../../includes/olm-catalog-signature.sh): relax `policy.json`, reload CRI-O, `wait_for_catalog_ready()` with auto-recovery; `ensure_catalog_signature_policy()` before AO catalog create |

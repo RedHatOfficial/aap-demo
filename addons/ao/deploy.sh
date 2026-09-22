@@ -47,6 +47,7 @@ REPO_ROOT="${SCRIPT_DIR}/../.."
 source "${REPO_ROOT}/includes/olm-catalog-signature.sh"
 CATALOG_SOURCE_TEMPLATE="${REPO_ROOT}/config/olm/catalogsource.yaml"
 AO_FALLBACK_INDEX_IMAGE="${AO_FALLBACK_INDEX_IMAGE:-registry.redhat.io/redhat/redhat-operator-index:v4.22-automation-orchestrator-operator-early-access-1787151066}"
+AO_FALLBACK_CATALOG_NAME="${AO_FALLBACK_CATALOG_NAME:-ao-fallback}"
 AO_ACTIVE_INDEX_IMAGE=""
 AO_INDEX_FALLBACK_USED=0
 
@@ -106,27 +107,28 @@ find_catalog_namespace() {
 
 report_catalog_failure() {
   local _catalog_ns="$1"
+  local _catalog_name="${2:-redhat-operators}"
   local _status _pod_status _reason
-  if catalog_pod_has_scc_admission_failure "$_catalog_ns"; then
-    report_catalog_scc_failure "$_catalog_ns"
+  if catalog_pod_has_scc_admission_failure "$_catalog_ns" "$_catalog_name"; then
+    report_catalog_scc_failure "$_catalog_ns" "$_catalog_name"
     return 1
   fi
-  _status=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
+  _status=$(kubectl get catalogsource "$_catalog_name" -n "$_catalog_ns" \
     -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "unknown")
-  _pod_status=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+  _pod_status=$(kubectl get pods -n "$_catalog_ns" -l "olm.catalogSource=${_catalog_name}" \
     -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "unknown")
   echo "ERROR: CatalogSource not READY after waiting." >&2
   echo "  Namespace: ${_catalog_ns}" >&2
   echo "  CatalogSource state: ${_status}" >&2
   echo "  Catalog pod phase: ${_pod_status}" >&2
-  _reason=$(catalog_pod_wait_reason "$_catalog_ns")
+  _reason=$(catalog_pod_wait_reason "$_catalog_ns" "$_catalog_name")
   if [ -n "$_reason" ]; then
     echo "  Pod detail:" >&2
     echo "$_reason" | sed 's/^/    /' >&2
   fi
-  if catalog_pod_has_signature_pull_failure "$_catalog_ns"; then
+  if catalog_pod_has_signature_pull_failure "$_catalog_ns" "$_catalog_name"; then
     local _fail_phase
-    _fail_phase=$(kubectl get pods -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    _fail_phase=$(kubectl get pods -n "$_catalog_ns" -l "olm.catalogSource=${_catalog_name}" \
       -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "")
     if [ "$_fail_phase" = "ImagePullBackOff" ] || [ "$_fail_phase" = "ErrImagePull" ]; then
       echo "" >&2
@@ -150,7 +152,7 @@ report_catalog_failure() {
   echo "  Retry with a longer wait or after fixing AAP deploy:" >&2
   echo "    aap-demo deploy" >&2
   echo "    AO_CATALOG_TIMEOUT=900 AO_REFRESH_CATALOG=1 aap-demo enable ao" >&2
-  kubectl describe catalogsource redhat-operators -n "$_catalog_ns" 2>/dev/null | tail -20 >&2
+  kubectl describe catalogsource "$_catalog_name" -n "$_catalog_ns" 2>/dev/null | tail -20 >&2
   return 1
 }
 
@@ -211,9 +213,10 @@ refresh_operator_channel
 
 wait_for_operator_package() {
   local _catalog_ns="$1"
+  local _catalog_name="${2:-redhat-operators}"
   local _i
   for _i in $(seq 1 24); do
-    if operator_package_in_catalog "$_catalog_ns"; then
+    if operator_package_in_catalog "$_catalog_ns" "$_catalog_name"; then
       echo "" >&2
       return 0
     fi
@@ -248,6 +251,81 @@ out = {
 }
 json.dump(out, sys.stdout)
 " | kubectl apply -f - >&2
+}
+
+ensure_catalog_service_account() {
+  local _catalog_name="$1"
+  local _catalog_ns="$2"
+  kubectl create serviceaccount "$_catalog_name" -n "$_catalog_ns" 2>/dev/null || true
+  grant_scc_to_serviceaccount anyuid "$_catalog_name" "$_catalog_ns" || return 1
+  grant_scc_to_serviceaccount privileged "$_catalog_name" "$_catalog_ns" || return 1
+}
+
+apply_image_catalog_source() {
+  local _catalog_name="$1"
+  local _catalog_ns="$2"
+  local _image="$3"
+  local _priority="${4:-}"
+  awk -v catalog_name="$_catalog_name" -v catalog_ns="$_catalog_ns" \
+    -v image="$_image" -v priority="$_priority" '
+    /^  name: redhat-operators$/ { print "  name: " catalog_name; next }
+    /^  namespace: / { print "  namespace: " catalog_ns; next }
+    /^  image: / { print "  image: " image; next }
+    /^  sourceType: / {
+      print
+      if (priority != "") print "  priority: " priority
+      next
+    }
+    { print }
+  ' "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+}
+
+apply_address_catalog_source() {
+  local _catalog_name="$1"
+  local _catalog_ns="$2"
+  local _address="$3"
+  awk -v catalog_name="$_catalog_name" -v catalog_ns="$_catalog_ns" -v address="$_address" '
+    /^  name: redhat-operators$/ { print "  name: " catalog_name; next }
+    /^  namespace: / { print "  namespace: " catalog_ns; next }
+    /  image: / { next }
+    /^  secrets:$/ { skip_secrets=1; next }
+    skip_secrets && /^    - / { next }
+    /^  grpcPodConfig:/ {
+      skip_secrets=0
+      print "  address: " address
+    }
+    { print }
+  ' "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+}
+
+remove_fallback_catalog_source() {
+  local _catalog_ns="$1"
+  kubectl delete catalogsource "$AO_FALLBACK_CATALOG_NAME" -n "$_catalog_ns" \
+    --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  kubectl delete serviceaccount "$AO_FALLBACK_CATALOG_NAME" -n "$_catalog_ns" \
+    --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete clusterrolebinding \
+    "aap-demo-scc-anyuid-${_catalog_ns}-${AO_FALLBACK_CATALOG_NAME}" \
+    "aap-demo-scc-privileged-${_catalog_ns}-${AO_FALLBACK_CATALOG_NAME}" \
+    --ignore-not-found >/dev/null 2>&1 || true
+}
+
+ensure_fallback_catalog_source() {
+  local _catalog_ns="$1"
+  local _image="$2"
+  echo "  Creating fallback CatalogSource ${AO_FALLBACK_CATALOG_NAME} in ${_catalog_ns}..." >&2
+  ensure_catalog_service_account "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" || return 1
+  apply_image_catalog_source "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" "$_image" 100
+  echo "  Waiting for fallback CatalogSource READY..." >&2
+  if ! wait_for_catalog_service_ready "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"; then
+    report_catalog_failure "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"
+    return 1
+  fi
+  if ! wait_for_operator_package "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"; then
+    echo "ERROR: automation-orchestrator-operator not found in fallback catalog." >&2
+    return 1
+  fi
+  printf '%s.%s.svc:50051\n' "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns"
 }
 
 select_ao_index_image() {
@@ -291,6 +369,7 @@ select_ao_index_image() {
 ensure_ao_catalog_source() {
   local _catalog_ns="$NAMESPACE"
   local _src_ns _target_image _source_image _current_image _shared_address _refresh_ns
+  local _refresh_catalog_name="redhat-operators"
 
   _src_ns=$(find_catalog_namespace)
   _target_image=$(select_ao_index_image)
@@ -310,25 +389,22 @@ ensure_ao_catalog_source() {
     return 1
   fi
 
-  # Keep the CatalogSource identity in the AO namespace, but proxy the
-  # already-healthy AAP catalog for the normal install. A second image-backed
-  # catalog pod can pass its local readiness probe while catalog-operator
-  # still reports the AO source unhealthy over the Service. Explicit/fallback
-  # images continue to use a local registry pod.
+  # Keep the CatalogSource identity in the AO namespace, but proxy a healthy
+  # source catalog Service. A second image-backed catalog pod can pass its
+  # local readiness probe while catalog-operator still reports the AO source
+  # unhealthy over the Service.
   if [ "$_src_ns" != "$_catalog_ns" ] && [ -n "$_source_image" ] \
     && [ "$_target_image" = "$_source_image" ]; then
+    remove_fallback_catalog_source "$_src_ns"
     _shared_address="redhat-operators.${_src_ns}.svc:50051"
     _refresh_ns="$_src_ns"
-    awk -v catalog_ns="$_catalog_ns" -v address="$_shared_address" '
-      /  image: / { next }
-      /^  secrets:$/ { skip_secrets=1; next }
-      skip_secrets && /^    - / { next }
-      /^  grpcPodConfig:/ {
-        skip_secrets=0
-        print "  address: " address
-      }
-      { sub(/namespace: aap-operator/, "namespace: " catalog_ns); print }
-    ' "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+    apply_address_catalog_source "redhat-operators" "$_catalog_ns" "$_shared_address"
+  elif [ "$_target_image" != "$_source_image" ]; then
+    _shared_address=$(ensure_fallback_catalog_source "$_src_ns" "$_target_image") || return 1
+    _shared_address="${_shared_address##*$'\n'}"
+    _refresh_ns="$_src_ns"
+    _refresh_catalog_name="$AO_FALLBACK_CATALOG_NAME"
+    apply_address_catalog_source "redhat-operators" "$_catalog_ns" "$_shared_address"
   else
     if ! copy_pull_secret_to_namespace "$_src_ns" "$_catalog_ns" \
       "redhat-operators-pull-secret" "redhat-operators-pull-secret"; then # pragma: allowlist secret
@@ -336,20 +412,18 @@ ensure_ao_catalog_source() {
       echo "  Run 'aap-demo deploy' first." >&2
       return 1
     fi
-    sed -e "s|image: .*|image: ${_target_image}|" \
-      -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|" \
-      "$CATALOG_SOURCE_TEMPLATE" | kubectl apply -f - >&2
+    apply_image_catalog_source "redhat-operators" "$_catalog_ns" "$_target_image"
   fi
 
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
-    kubectl delete pod -n "$_refresh_ns" -l olm.catalogSource=redhat-operators \
+    kubectl delete pod -n "$_refresh_ns" -l "olm.catalogSource=${_refresh_catalog_name}" \
       --wait=false >/dev/null 2>&1 || true
   fi
 
   echo "  Waiting for CatalogSource READY..." >&2
-  if ! wait_for_catalog_ready "$_catalog_ns"; then
-    report_catalog_failure "$_catalog_ns"
+  if ! wait_for_catalog_ready "$_catalog_ns" "redhat-operators"; then
+    report_catalog_failure "$_catalog_ns" "redhat-operators"
     return 1
   fi
   echo "✓ CatalogSource READY" >&2
@@ -402,8 +476,10 @@ operator_is_available() {
 
 operator_package_in_catalog() {
   local _catalog_ns="$1"
-  kubectl get packagemanifest automation-orchestrator-operator \
-    -n "$_catalog_ns" &>/dev/null 2>&1
+  local _catalog_name="${2:-redhat-operators}"
+  [ "$(kubectl get packagemanifest automation-orchestrator-operator \
+    -n "$_catalog_ns" -o jsonpath='{.status.catalogSource}' 2>/dev/null || echo "")" \
+    = "$_catalog_name" ]
 }
 
 subscription_has_resolution_failure() {
@@ -1097,6 +1173,12 @@ cleanup_legacy_ea_resources() {
   done
 }
 
+cleanup_ao_fallback_catalog() {
+  local _catalog_ns
+  _catalog_ns=$(find_catalog_namespace)
+  remove_fallback_catalog_source "$_catalog_ns"
+}
+
 # --- Delete ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing Automation Orchestrator..."
@@ -1128,6 +1210,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   OLM_NAMESPACE="$NAMESPACE"
   cleanup_ao_olm_state
 
+  cleanup_ao_fallback_catalog
   cleanup_legacy_ea_resources
 
   kubectl delete namespace "$NAMESPACE" --wait=false 2>/dev/null || true
