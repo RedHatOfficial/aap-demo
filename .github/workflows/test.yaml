@@ -41,6 +41,9 @@ jobs:
       - name: Run core command tests
         run: ./test/test-core-commands.sh
 
+      - name: Run CRC version check tests
+        run: ./test/test-crc-version-check.sh
+
       - name: Run AO CatalogSource tests
         run: ./test/test-ao-catalog-source.sh
 

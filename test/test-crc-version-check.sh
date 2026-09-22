@@ -175,6 +175,17 @@ else
   _pass "env_var_override_works"
 fi
 
+# Even when the advanced override allows deployment, warn about the unsupported
+# installed version and point the user to the latest CRC download.
+if echo "$override_output" | grep -q "WARNING: CRC/MicroShift version" \
+  && echo "$override_output" | grep -q "may encounter deployment or VM stability issues" \
+  && echo "$override_output" | grep -q "https://console.redhat.com/openshift/create/local"; then
+  _pass "override_shows_old_crc_warning_and_download_link"
+else
+  _fail "override_shows_old_crc_warning_and_download_link"
+  echo "  Output: $override_output"
+fi
+
 # Cleanup
 rm -rf "$MOCK_CRC_DIR"
 
