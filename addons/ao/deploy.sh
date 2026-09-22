@@ -290,7 +290,7 @@ select_ao_index_image() {
 
 ensure_ao_catalog_source() {
   local _catalog_ns="$NAMESPACE"
-  local _src_ns _target_image _source_image _current_image _shared_address
+  local _src_ns _target_image _source_image _current_image _shared_address _refresh_ns
 
   _src_ns=$(find_catalog_namespace)
   _target_image=$(select_ao_index_image)
@@ -298,6 +298,7 @@ ensure_ao_catalog_source() {
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
   _current_image=$(kubectl get catalogsource redhat-operators -n "$_catalog_ns" \
     -o jsonpath='{.spec.image}' 2>/dev/null || echo "")
+  _refresh_ns="$_catalog_ns"
 
   echo "Creating AO CatalogSource in ${_catalog_ns}..." >&2
   echo "  Index: $(short_image_ref "$_target_image")" >&2
@@ -317,6 +318,7 @@ ensure_ao_catalog_source() {
   if [ "$_src_ns" != "$_catalog_ns" ] && [ -n "$_source_image" ] \
     && [ "$_target_image" = "$_source_image" ]; then
     _shared_address="redhat-operators.${_src_ns}.svc:50051"
+    _refresh_ns="$_src_ns"
     awk -v catalog_ns="$_catalog_ns" -v address="$_shared_address" '
       /  image: / { next }
       /^  secrets:$/ { skip_secrets=1; next }
@@ -341,7 +343,7 @@ ensure_ao_catalog_source() {
 
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
-    kubectl delete pod -n "$_catalog_ns" -l olm.catalogSource=redhat-operators \
+    kubectl delete pod -n "$_refresh_ns" -l olm.catalogSource=redhat-operators \
       --wait=false >/dev/null 2>&1 || true
   fi
 
