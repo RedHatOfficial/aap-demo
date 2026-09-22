@@ -315,7 +315,7 @@ ensure_fallback_catalog_source() {
   local _image="$2"
   echo "  Creating fallback CatalogSource ${AO_FALLBACK_CATALOG_NAME} in ${_catalog_ns}..." >&2
   ensure_catalog_service_account "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" || return 1
-  apply_image_catalog_source "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" "$_image" 100
+  apply_image_catalog_source "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" "$_image"
   echo "  Waiting for fallback CatalogSource READY..." >&2
   if ! wait_for_catalog_service_ready "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"; then
     report_catalog_failure "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"

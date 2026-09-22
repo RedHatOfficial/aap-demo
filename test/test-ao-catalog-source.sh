@@ -87,7 +87,7 @@ if grep -q 'AO_FALLBACK_INDEX_IMAGE' "$DEPLOY_SCRIPT" \
   && grep -q 'ensure_fallback_catalog_source' "$DEPLOY_SCRIPT" \
   && grep -q 'wait_for_catalog_service_ready "\$_catalog_ns" "\$AO_FALLBACK_CATALOG_NAME"' "$DEPLOY_SCRIPT" \
   && grep -q 'wait_for_operator_package "\$_catalog_ns" "\$AO_FALLBACK_CATALOG_NAME"' "$DEPLOY_SCRIPT" \
-  && grep -q '"\$_image" 100' "$DEPLOY_SCRIPT" \
+  && ! grep -q '"\$_image" 100' "$DEPLOY_SCRIPT" \
   && grep -q 'copy_pull_secret_to_namespace' "$DEPLOY_SCRIPT" \
   && grep -q 'apply_image_catalog_source' "$DEPLOY_SCRIPT" \
   && grep -q 'apply_address_catalog_source' "$DEPLOY_SCRIPT"; then
