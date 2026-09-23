@@ -16,6 +16,35 @@ _persistent_crio_store_size_gb() {
   echo "${AAP_IMAGE_STORE_SIZE_GB:-60}"
 }
 
+persistent_crio_store_status() {
+  local disk target blklist attachment
+  disk="$(_persistent_crio_store_disk)"
+  target="${AAP_IMAGE_STORE_TARGET:-vdb}"
+
+  if [ ! -e "$disk" ] && ! _persistent_crio_store_enabled; then
+    printf "Persistent storage: disabled\n"
+    return 0
+  fi
+
+  printf "Persistent storage:\n"
+  printf "  Disk:        %s (%s)\n" "$disk" "$([ -e "$disk" ] && echo present || echo missing)"
+
+  if ! command -v virsh >/dev/null 2>&1; then
+    printf "  Attachment:  unavailable (virsh not found)\n"
+    return 0
+  fi
+
+  blklist="$(_persistent_crio_store_virsh domblklist crc --details 2>/dev/null || true)"
+  attachment=$(echo "$blklist" | awk -v disk="$disk" '$4 == disk {print $3; exit}')
+  if [ -n "$attachment" ]; then
+    printf "  Attachment:  attached as %s\n" "$attachment"
+  elif echo "$blklist" | awk -v target="$target" '$3 == target {found=1} END {exit !found}'; then
+    printf "  Attachment:  target %s is occupied by another disk\n" "$target"
+  else
+    printf "  Attachment:  detached\n"
+  fi
+}
+
 _persistent_crio_store_virsh() {
   virsh -c "${AAP_LIBVIRT_URI:-qemu:///system}" "$@"
 }

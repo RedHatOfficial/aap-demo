@@ -54,7 +54,8 @@ fi
 echo "Test 2: status output includes required sections"
 if output=$("$AAP_DEMO_SH" status 2>&1); then
   if echo "$output" | grep -q "Infra:" \
-    && echo "$output" | grep -q "Cluster:"; then
+    && echo "$output" | grep -q "Cluster:" \
+    && echo "$output" | grep -q "Persistent storage:"; then
     _pass "status_format"
   else
     _fail "status_format - missing required sections"

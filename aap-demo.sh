@@ -1743,6 +1743,7 @@ cmd_status() {
   cluster_name=$(infra_get_name 2>/dev/null || echo "")
 
   printf "Infra:       OpenShift Local (CRC)\n"
+  persistent_crio_store_status
 
   if [ "$cluster_state" = "running" ]; then
     printf "Cluster:     \033[1;32mrunning\033[0m"
