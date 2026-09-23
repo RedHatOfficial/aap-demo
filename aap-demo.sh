@@ -491,8 +491,8 @@ COMMANDS:
 ENVIRONMENT:
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
     AAP_PERSISTENT_IMAGE_STORE=true
-                        Keep CRI-O image storage on a persistent host disk
-                        (qcow2 on Linux/libvirt, sparse raw on macOS/vfkit)
+                        Keep CRI-O image storage on a persistent qcow2 disk
+                        (Linux/libvirt only; macOS uses the OCI image cache)
     AAP_IMAGE_STORE_DISK Path to the persistent image disk
     AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
     AAP_IMAGE_STORE_FORMAT=true
@@ -2145,7 +2145,6 @@ cmd_start() {
 }
 
 _start_crc_cluster() {
-  persistent_crio_store_prepare_before_crc_start || true
   crc start || true
   persistent_crio_store_prepare_or_fallback
   if [ -f /etc/resolver/testing ]; then
