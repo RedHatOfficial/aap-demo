@@ -434,9 +434,11 @@ persistent_crio_store_detach() {
     local macos_crc_status
     macos_crc_status=$(_crc_status_json 2>/dev/null | python3 -c \
       'import sys,json; print(json.load(sys.stdin).get("crcStatus", ""))' 2>/dev/null || true)
-    [ "$macos_crc_status" = "Running" ] || return 0
-    _persistent_crio_store_macos_unmount
-    return $?
+    if [ "$macos_crc_status" = "Running" ]; then
+      _persistent_crio_store_macos_unmount || return 1
+    fi
+    persistent_crio_store_restore_vfkit
+    return 0
   fi
   local target restore_services crc_state detach_live
   target="${AAP_IMAGE_STORE_TARGET:-vdb}"
