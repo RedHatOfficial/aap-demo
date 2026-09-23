@@ -2055,13 +2055,9 @@ _maybe_save_local_cache_before_destroy() {
       echo "The next deploy can reuse these cached containers instead of downloading them again."
       echo "Saving container images for the next deployment..."
       if ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" save; then
-        echo "✗ Could not save the local image cache — refusing to delete the cluster"
-        echo "  Use --skip-cache to bypass cache saving and validation."
-        return 1
+        echo "⚠ Could not save the local image cache — continuing with cluster deletion"
       elif ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" validate; then
-        echo "✗ Local image cache validation failed — refusing to delete the cluster"
-        echo "  Use --skip-cache to bypass cache saving and validation."
-        return 1
+        echo "⚠ Local image cache validation failed — continuing with cluster deletion"
       fi
       ;;
     *)
@@ -2328,7 +2324,6 @@ deploy_latest() {
   sed -e "s|image: registry.redhat.io/redhat/redhat-operator-index:v[0-9.]*|image: ${_catalog_image}|" \
     -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
     "${SCRIPT_DIR}/config/olm/catalogsource.yaml" | kubectl apply -f -
-  _rewrite_local_cache_refs
 
   # Wait for CatalogSource — skip if already READY
   _catsrc_status=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
@@ -2365,11 +2360,17 @@ deploy_latest() {
     -e "s|channel: stable-2.6|channel: $AAP_CHANNEL|" \
     "${SCRIPT_DIR}/config/olm/subscription.yaml" | kubectl apply -f -
 
+  # OLM creates the operator deployment asynchronously after the Subscription
+  # is applied. Rewrite immediately, then repeat during the CSV wait so a
+  # cached digest is applied as soon as the generated workload appears.
+  _rewrite_local_cache_refs
+
   # Wait for CSV
   echo ""
   echo "Waiting for CSV to be created..."
   CSV_NAME=""
   for i in $(seq 1 60); do
+    _rewrite_local_cache_refs
     CSV_NAME=$(kubectl get csv -n "$NAMESPACE" 2>/dev/null | grep '^aap-operator\.' | awk '{print $1}' | head -1)
     if [ -n "$CSV_NAME" ]; then
       echo "Found CSV: $CSV_NAME"

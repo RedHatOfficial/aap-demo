@@ -422,6 +422,10 @@ for img in data.get('images', []):
   echo ""
   total_size=$(du -sh "$CACHE_DIR" 2>/dev/null | awk '{print $1}')
   echo "✓ Saved ${saved} images, ${skipped} already cached, ${failed} skipped, ${pruned} corrupt entries removed (${total_size} total)"
+  if [ "$failed" -gt 0 ]; then
+    echo "✗ Local image cache save failed: ${failed} image(s) could not be exported" >&2
+    exit 1
+  fi
   echo ""
   echo "To load after a fresh create:"
   echo "  aap-demo enable local-cache load"

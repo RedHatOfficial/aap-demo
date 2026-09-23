@@ -138,6 +138,29 @@ else
   _fail "destroy_cache_prompt_order - cache prompt must precede destroy message"
 fi
 
+# Test 7c: a cache save failure must not block destroy
+echo "Test 7c: destroy continues when optional cache save fails"
+cache_function_start=$(grep -n '^_maybe_save_local_cache_before_destroy()' "$AAP_DEMO_SH" | cut -d: -f1)
+cache_function_end=$(grep -n '^cmd_destroy()' "$AAP_DEMO_SH" | cut -d: -f1)
+cache_function=$(sed -n "${cache_function_start},$((cache_function_end - 1))p" "$AAP_DEMO_SH")
+if echo "$cache_function" | grep -q 'refusing to delete the cluster'; then
+  _fail "destroy_cache_failure_nonblocking - cache failure must not refuse deletion"
+else
+  _pass "destroy_cache_failure_nonblocking"
+fi
+
+# Test 7d: rewrite after Subscription exists, before waiting for CSV
+echo "Test 7d: cache references are rewritten as OLM creates workloads"
+subscription_line=$(grep -n 'config/olm/subscription.yaml' "$AAP_DEMO_SH" | cut -d: -f1 | head -1)
+csv_wait_line=$(grep -n '^  # Wait for CSV$' "$AAP_DEMO_SH" | cut -d: -f1 | head -1)
+rewrite_after_subscription=$(awk -v start="$subscription_line" -v end="$csv_wait_line" \
+  'NR > start && NR < end && /_rewrite_local_cache_refs/ {print NR; exit}' "$AAP_DEMO_SH")
+if [ -n "$rewrite_after_subscription" ]; then
+  _pass "rewrite_cache_refs_during_olm_creation"
+else
+  _fail "rewrite_cache_refs_during_olm_creation - rewrite must run after subscription and before CSV wait"
+fi
+
 # Test 7b: destroy supports an explicit cache bypass
 echo "Test 7b: destroy supports --skip-cache"
 if grep -q -- '--skip-cache' "$AAP_DEMO_SH"; then

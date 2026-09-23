@@ -45,6 +45,7 @@ case "$*" in
     [ "${MOCK_INSPECT_RESULT:-fail}" = success ]
     ;;
   *"containers-storage:"*"oci-archive:"*)
+    [ "${MOCK_EXPORT_RESULT:-success}" = success ] || exit 1
     tar -cf - -C "$MOCK_ARCHIVE_DIR" oci-layout index.json blobs
     ;;
   *"oci-archive:"*"containers-storage:"*)
@@ -138,3 +139,11 @@ if ! AAP_DEMO_LOCAL_CACHE_QUIET=1 "$CACHE_SCRIPT" load >/dev/null 2>&1; then
   exit 1
 fi
 echo "✓ quiet cache load remains non-fatal"
+
+export MOCK_EXPORT_RESULT=fail
+rm -f "${CACHE_DIR}/.format-version"
+if "$CACHE_SCRIPT" save >/dev/null 2>&1; then
+  echo "✗ cache save should fail when an image export fails" >&2
+  exit 1
+fi
+echo "✓ cache save reports failed image exports"
