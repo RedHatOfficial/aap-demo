@@ -44,7 +44,7 @@ aap-demo disable local-cache         # alias for clear
 4. Each image is stored as three files: `<md5>.tar` (the OCI archive), `<md5>.ref`
    (the original image reference), and `<md5>.local-ref` (the archive's actual
    platform digest)
-5. Images already cached (both `.tar` and `.ref` exist) are skipped
+5. Images already cached (all three archive and sidecar files exist) are skipped
 
 ### Load flow
 
@@ -82,6 +82,38 @@ aap-demo creates MicroShift clusters only (`CRC_PRESET=microshift`). The cache i
 
 The directory layout retains a preset segment (`microshift/`) for compatibility if
 additional presets are reintroduced later.
+
+### Opt-in persistent CRI-O image storage
+
+The archive cache remains the portable fallback. For repeated CRC recreate cycles, an opt-in
+mode keeps CRI-O's native image store on a persistent host-managed virtual disk:
+
+```bash
+AAP_PERSISTENT_IMAGE_STORE=true
+AAP_IMAGE_STORE_DISK=~/.aap-demo/storage/crio-images.qcow2
+AAP_IMAGE_STORE_SIZE_GB=60
+# Required only for first-time initialization of a blank disk:
+AAP_IMAGE_STORE_FORMAT=true
+```
+
+Lifecycle:
+
+1. Create the qcow2 disk once. A blank disk is formatted only when
+   `AAP_IMAGE_STORE_FORMAT=true` is explicitly set.
+2. After `crc start`, attach the disk to the CRC system-libvirt VM.
+3. Mount it at `/var/lib/containers/storage`, persist the filesystem UUID in the guest's
+   `fstab`, install a CRI-O mount dependency, apply SELinux labels, and restart CRI-O and
+   MicroShift before deployment.
+4. Verify that `crictl images` sees the persistent store; image loading should then be near
+   zero because the native image metadata and layers already exist.
+5. Before `crc delete`, unmount and detach the disk but retain the qcow2 file.
+
+The implementation must never mount the host's overlay/container-storage directory directly
+through NFS or virtiofs. It must refuse to format an existing disk without explicit approval,
+verify the attached source and filesystem identity, and fall back to the OCI archive cache when
+attach or mount setup fails. Acceptance testing should cover three destroy/recreate cycles,
+image visibility before deployment, no image-layer pulls, and a fallback path with the
+persistent disk disabled.
 
 ### Technical details
 
@@ -158,4 +190,5 @@ the bottleneck on development machines. Can be added later if needed.
 - [ADR-008](008-addon-system.md) — Addon system architecture
 - [ADR-020](020-full-openshift-support.md) — Full OpenShift support evaluation (declined; MicroShift-only)
 - [addons/local-cache/deploy.sh](../../addons/local-cache/deploy.sh)
+- [includes/persistent-crio-store.sh](../../includes/persistent-crio-store.sh) — opt-in CRI-O disk lifecycle
 - [aap-demo.sh](../../aap-demo.sh) — `_load_local_cache()` auto-load function
