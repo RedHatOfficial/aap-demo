@@ -1,24 +1,171 @@
 #!/usr/bin/env bash
 # Persistent CRI-O image storage for the CRC/MicroShift VM.
 #
-# This is deliberately opt-in. The host-owned qcow2 disk survives `crc delete`
-# while the CRC VM and its normal disks do not.
+# This is deliberately opt-in. The host-owned disk survives `crc delete` while
+# the CRC VM and its normal disks do not. Linux/libvirt uses qcow2; macOS/vfkit
+# uses a sparse raw image passed as a virtio-blk device at launch.
 
 _persistent_crio_store_enabled() {
   [ "${AAP_PERSISTENT_IMAGE_STORE:-false}" = "true" ]
 }
 
+_persistent_crio_store_os() {
+  echo "${AAP_PERSISTENT_IMAGE_STORE_OS:-$(uname -s)}"
+}
+
+_persistent_crio_store_is_macos() {
+  [ "$(_persistent_crio_store_os)" = "Darwin" ]
+}
+
 _persistent_crio_store_disk() {
-  echo "${AAP_IMAGE_STORE_DISK:-${HOME}/.aap-demo/storage/crio-images.qcow2}"
+  if [ -n "${AAP_IMAGE_STORE_DISK:-}" ]; then
+    echo "$AAP_IMAGE_STORE_DISK"
+  elif _persistent_crio_store_is_macos; then
+    echo "${HOME}/.aap-demo/storage/crio-images.raw"
+  else
+    echo "${HOME}/.aap-demo/storage/crio-images.qcow2"
+  fi
 }
 
 _persistent_crio_store_size_gb() {
   echo "${AAP_IMAGE_STORE_SIZE_GB:-60}"
 }
 
+_persistent_crio_store_machine_config() {
+  echo "${AAP_CRC_MACHINE_CONFIG:-${HOME}/.crc/machines/crc/config.json}"
+}
+
+_persistent_crio_store_vfkit_wrapper() {
+  echo "${AAP_IMAGE_STORE_VFKIT_WRAPPER:-${HOME}/.aap-demo/bin/vfkit-persistent-storage}"
+}
+
+_persistent_crio_store_vfkit_original_file() {
+  echo "$(_persistent_crio_store_machine_config).aap-demo-vfkit-path"
+}
+
+_persistent_crio_store_read_vfkit_path() {
+  local config
+  config="$(_persistent_crio_store_machine_config)"
+  [ -f "$config" ] || return 1
+  python3 - "$config" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    config = json.load(stream)
+print(config.get("Driver", {}).get("VfkitPath", ""))
+PY
+}
+
+_persistent_crio_store_write_vfkit_path() {
+  local config="$1" path="$2" temp
+  temp="${config}.aap-demo-tmp.$$"
+  python3 - "$config" "$path" "$temp" <<'PY'
+import json
+import os
+import sys
+
+config_path, vfkit_path, temp_path = sys.argv[1:]
+with open(config_path, encoding="utf-8") as stream:
+    config = json.load(stream)
+config.setdefault("Driver", {})["VfkitPath"] = vfkit_path
+with open(temp_path, "w", encoding="utf-8") as stream:
+    json.dump(config, stream, indent=4)
+    stream.write("\n")
+os.replace(temp_path, config_path)
+PY
+}
+
+_persistent_crio_store_write_vfkit_wrapper() {
+  local wrapper="$1" real_vfkit="$2" disk="$3"
+  mkdir -p "$(dirname "$wrapper")"
+  cat >"$wrapper" <<EOF
+#!/bin/sh
+set -eu
+exec "$real_vfkit" "\$@" --device "virtio-blk,path=$disk"
+EOF
+  chmod 755 "$wrapper"
+}
+
+_persistent_crio_store_macos_configured() {
+  [ "$(_persistent_crio_store_read_vfkit_path 2>/dev/null || true)" = "$(_persistent_crio_store_vfkit_wrapper)" ]
+}
+
+_persistent_crio_store_macos_prepare() {
+  local config current wrapper original_file disk
+  disk="$(_persistent_crio_store_disk)"
+  _persistent_crio_store_create_disk || return 1
+  config="$(_persistent_crio_store_machine_config)"
+  [ -f "$config" ] || return 0
+  current="$(_persistent_crio_store_read_vfkit_path 2>/dev/null || true)"
+  [ -n "$current" ] || {
+    echo "ERROR: CRC machine config has no vfkit path" >&2
+    return 1
+  }
+  wrapper="$(_persistent_crio_store_vfkit_wrapper)"
+  if [ "$current" = "$wrapper" ]; then
+    return 0
+  fi
+  original_file="$(_persistent_crio_store_vfkit_original_file)"
+  printf '%s\n' "$current" >"$original_file"
+  _persistent_crio_store_write_vfkit_wrapper "$wrapper" "$current" "$disk"
+  _persistent_crio_store_write_vfkit_path "$config" "$wrapper"
+}
+
+_persistent_crio_store_macos_relaunch() {
+  if ! crc stop 2>/dev/null; then
+    crc stop -f 2>/dev/null || return 1
+  fi
+  if [ -n "${PULL_SECRET_PATH:-}" ] && [ -f "$PULL_SECRET_PATH" ]; then
+    crc start -p "$PULL_SECRET_PATH"
+  else
+    crc start
+  fi
+}
+
+_persistent_crio_store_macos_unmount() {
+  infra_exec_cmd bash -s <<'REMOTE'
+set -eu
+systemctl stop microshift 2>/dev/null || true
+systemctl stop crio 2>/dev/null || true
+if mountpoint -q /var/lib/containers/storage; then
+  umount --recursive /var/lib/containers/storage
+fi
+REMOTE
+}
+
+persistent_crio_store_create_disk() {
+  _persistent_crio_store_create_disk
+}
+
+persistent_crio_store_prepare_before_crc_start() {
+  _persistent_crio_store_enabled || return 0
+  _persistent_crio_store_is_macos || return 0
+  _persistent_crio_store_macos_prepare
+}
+
+persistent_crio_store_restore_vfkit() {
+  _persistent_crio_store_is_macos || return 0
+  local original_file wrapper config original
+  original_file="$(_persistent_crio_store_vfkit_original_file)"
+  wrapper="$(_persistent_crio_store_vfkit_wrapper)"
+  config="$(_persistent_crio_store_machine_config)"
+  [ -f "$original_file" ] || return 0
+  original=$(<"$original_file")
+  if [ -f "$config" ]; then
+    _persistent_crio_store_write_vfkit_path "$config" "$original"
+  fi
+  rm -f "$original_file" "$wrapper"
+}
+
 _persistent_crio_store_disk_size() {
   local disk attachment size
   disk="$(_persistent_crio_store_disk)"
+
+  if _persistent_crio_store_is_macos && [ -e "$disk" ]; then
+    stat -f '%z bytes' "$disk"
+    return 0
+  fi
 
   if command -v virsh >/dev/null 2>&1; then
     attachment="$(_persistent_crio_store_virsh domblklist crc --details 2>/dev/null \
@@ -26,14 +173,20 @@ _persistent_crio_store_disk_size() {
     if [ -n "$attachment" ]; then
       size="$(_persistent_crio_store_virsh domblkinfo crc "$attachment" --human 2>/dev/null \
         | awk -F': *' '/^Capacity:/ {print $2; exit}')"
-      [ -n "$size" ] && { echo "$size"; return 0; }
+      [ -n "$size" ] && {
+        echo "$size"
+        return 0
+      }
     fi
   fi
 
   if command -v qemu-img >/dev/null 2>&1 && [ -e "$disk" ]; then
     size=$(qemu-img info --force-share "$disk" 2>/dev/null \
       | awk -F': *' '/^virtual size:/ {print $2; exit}')
-    [ -n "$size" ] && { echo "$size"; return 0; }
+    [ -n "$size" ] && {
+      echo "$size"
+      return 0
+    }
   fi
 
   echo "unknown"
@@ -56,6 +209,15 @@ persistent_crio_store_status() {
     printf "  Disk:        %s (present, %s)\n" "$disk" "$disk_size"
   else
     printf "  Disk:        %s (missing)\n" "$disk"
+  fi
+
+  if _persistent_crio_store_is_macos; then
+    if _persistent_crio_store_macos_configured; then
+      printf "  Attachment:  configured for vfkit as %s\n" "${AAP_IMAGE_STORE_TARGET:-vdb}"
+    else
+      printf "  Attachment:  detached\n"
+    fi
+    return 0
   fi
 
   if ! command -v virsh >/dev/null 2>&1; then
@@ -92,7 +254,11 @@ _persistent_crio_store_create_disk() {
   fi
   mkdir -p "$(dirname "$disk")"
   echo "Creating persistent CRI-O image disk: ${disk} (${size}GB)"
-  qemu-img create -f qcow2 -o lazy_refcounts=on "$disk" "${size}G"
+  if _persistent_crio_store_is_macos; then
+    truncate -s "${size}g" "$disk"
+  else
+    qemu-img create -f qcow2 -o lazy_refcounts=on "$disk" "${size}G"
+  fi
 }
 
 _persistent_crio_store_attach() {
@@ -207,7 +373,26 @@ _persistent_crio_store_attached() {
 }
 
 persistent_crio_store_prepare() {
+  local macos_was_configured
   _persistent_crio_store_enabled || return 0
+  if _persistent_crio_store_is_macos; then
+    macos_was_configured=false
+    _persistent_crio_store_macos_configured && macos_was_configured=true
+    _persistent_crio_store_macos_prepare || return 1
+    if [ "$macos_was_configured" = false ]; then
+      if ! _persistent_crio_store_macos_relaunch; then
+        persistent_crio_store_restore_vfkit
+        crc start >/dev/null 2>&1 || true
+        return 1
+      fi
+    fi
+    if _persistent_crio_store_mount; then
+      return 0
+    fi
+    _persistent_crio_store_macos_unmount 2>/dev/null || true
+    persistent_crio_store_restore_vfkit
+    return 1
+  fi
   command -v virsh >/dev/null 2>&1 || {
     echo "ERROR: virsh is unavailable; cannot prepare persistent CRI-O storage" >&2
     return 1
@@ -245,6 +430,14 @@ persistent_crio_store_prepare_or_fallback() {
 
 persistent_crio_store_detach() {
   _persistent_crio_store_enabled || return 0
+  if _persistent_crio_store_is_macos; then
+    local macos_crc_status
+    macos_crc_status=$(_crc_status_json 2>/dev/null | python3 -c \
+      'import sys,json; print(json.load(sys.stdin).get("crcStatus", ""))' 2>/dev/null || true)
+    [ "$macos_crc_status" = "Running" ] || return 0
+    _persistent_crio_store_macos_unmount
+    return $?
+  fi
   local target restore_services crc_state detach_live
   target="${AAP_IMAGE_STORE_TARGET:-vdb}"
   restore_services="${1:-false}"
