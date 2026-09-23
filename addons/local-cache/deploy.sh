@@ -70,7 +70,7 @@ if [ "$ACTION" = "load" ]; then
   _require_crc_ssh
 
   image_count=$(ls "$CACHE_DIR"/*.tar 2>/dev/null | wc -l | tr -d ' ')
-  printf "${_BOLD}Loading ${image_count} cached images into CRC VM...${_NC}\n"
+  printf "${_BOLD}Checking ${image_count} cached images in CRC VM...${_NC}\n"
   echo ""
 
   loaded=0
