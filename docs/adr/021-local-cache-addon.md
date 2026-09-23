@@ -44,7 +44,9 @@ aap-demo disable local-cache         # alias for clear
 4. Each image is stored as three files: `<md5>.tar` (the OCI archive), `<md5>.ref`
    (the original image reference), and `<md5>.local-ref` (the archive's actual
    platform digest)
-5. Images already cached (all three archive and sidecar files exist) are skipped
+5. When the image is the Red Hat operator index, save also records the OCP version,
+   original catalog digest, and local platform digest in `catalog-digests`
+6. Images already cached (all three archive and sidecar files exist) are skipped
 
 ### Load flow
 
@@ -62,7 +64,11 @@ The `_load_local_cache()` function in `aap-demo.sh` is called near the start of
 checks for an existing cache, so a destroy/recreate cycle does not require the
 `local-cache` addon to remain in `~/.aap-demo/config` (`ADDONS=...`). It loads cached
 images that are not already present in CRI-O (checked via `crictl inspecti`) and remains
-silent when no cache exists.
+silent when no cache exists. Before creating the CatalogSource, deployment uses the
+cached catalog's local platform digest for the matching OCP version. This pins OLM to
+the catalog that produced the cached operator bundle instead of following a mutable
+`vX.Y` tag. Caches created before this metadata was added remain compatible but use the
+tagged catalog until refreshed.
 
 ### Save prompt during destroy
 
