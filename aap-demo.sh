@@ -43,6 +43,9 @@ source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 
+# shellcheck source=includes/persistent-crio-store.sh
+source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
+
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
 
 # AAP version
@@ -487,6 +490,12 @@ COMMANDS:
 
 ENVIRONMENT:
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
+    AAP_PERSISTENT_IMAGE_STORE=true
+                        Keep CRI-O image storage on a persistent qcow2 disk
+    AAP_IMAGE_STORE_DISK Path to the persistent image disk
+    AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
+    AAP_IMAGE_STORE_FORMAT=true
+                        Explicitly format a blank persistent disk once
 
 EXAMPLES:
     aap-demo create                  # Create OpenShift Local cluster
@@ -2035,6 +2044,10 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
+  if ! persistent_crio_store_detach; then
+    echo "✗ Persistent CRI-O image storage could not be detached — refusing to delete the cluster"
+    return 1
+  fi
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
@@ -2079,6 +2092,7 @@ cmd_start() {
 
 _start_crc_cluster() {
   crc start || true
+  persistent_crio_store_prepare_or_fallback
   if [ -f /etc/resolver/testing ]; then
     sudo rm -f /etc/resolver/testing
   fi
@@ -2095,6 +2109,8 @@ cmd_create() {
     _err "OpenShift Local cluster creation failed"
     exit 1
   fi
+
+  persistent_crio_store_prepare_or_fallback
 
   install_ingress_ca_trust
   setup_kubeconfig

@@ -161,6 +161,29 @@ else
   _fail "create_enables_olm - OLM deploy not referenced in create function"
 fi
 
+# Test 11: persistent CRI-O storage is opt-in and has a safe OCI fallback
+echo "Test 11: persistent CRI-O storage hooks"
+if grep -q 'source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"' "$AAP_DEMO_SH" \
+  && grep -q 'persistent_crio_store_prepare_or_fallback' "$AAP_DEMO_SH" \
+  && grep -q 'persistent_crio_store_detach' "$AAP_DEMO_SH" \
+  && grep -q -- '--subdriver qcow2' "${SCRIPT_DIR}/../includes/persistent-crio-store.sh" \
+  && AAP_PERSISTENT_IMAGE_STORE=false bash -c \
+    "source '${SCRIPT_DIR}/../includes/persistent-crio-store.sh'; persistent_crio_store_prepare; persistent_crio_store_detach"; then
+  _pass "persistent_crio_store_opt_in"
+else
+  _fail "persistent_crio_store_opt_in - helper wiring or disabled no-op is broken"
+fi
+
+# Test 12: persistent storage is detached before CRC deletion
+echo "Test 12: persistent CRI-O storage detach order"
+detach_line=$(grep -n 'persistent_crio_store_detach' "$AAP_DEMO_SH" | tail -1 | cut -d: -f1)
+delete_line=$(grep -n 'crc delete' "$AAP_DEMO_SH" | tail -1 | cut -d: -f1)
+if [ -n "$detach_line" ] && [ -n "$delete_line" ] && [ "$detach_line" -lt "$delete_line" ]; then
+  _pass "persistent_crio_store_detach_order"
+else
+  _fail "persistent_crio_store_detach_order - disk must detach before crc delete"
+fi
+
 # Cleanup mocks
 rm -rf "$SCRIPT_DIR/mocks"
 
