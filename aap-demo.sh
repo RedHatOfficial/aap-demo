@@ -1743,7 +1743,6 @@ cmd_status() {
   cluster_name=$(infra_get_name 2>/dev/null || echo "")
 
   printf "Infra:       OpenShift Local (CRC)\n"
-  persistent_crio_store_status
 
   if [ "$cluster_state" = "running" ]; then
     printf "Cluster:     \033[1;32mrunning\033[0m"
@@ -1810,8 +1809,9 @@ cmd_status() {
         echo "  Memory:       ${MEM_USED} / ${MEM_TOTAL} (${MEM_AVAIL} available)"
         echo "  Load:         $LOAD"
         echo "  Disk:         $DISK"
-    ' 2>/dev/null)
+  ' 2>/dev/null)
   echo "$vm_info"
+  persistent_crio_store_status
   echo ""
 
   # List application namespaces with pod counts (skip openshift-* and kube-* system namespaces)

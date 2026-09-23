@@ -54,14 +54,24 @@ fi
 echo "Test 2: status output includes required sections"
 if output=$("$AAP_DEMO_SH" status 2>&1); then
   if echo "$output" | grep -q "Infra:" \
-    && echo "$output" | grep -q "Cluster:" \
-    && echo "$output" | grep -q "Persistent storage:"; then
+    && echo "$output" | grep -q "Cluster:"; then
     _pass "status_format"
   else
     _fail "status_format - missing required sections"
   fi
 else
   _fail "status_format - command failed"
+fi
+
+# Test 2b: persistent storage is shown under the VM section
+echo "Test 2b: status places persistent storage under VM"
+vm_section_line=$(grep -n '^  echo "VM:"' "$AAP_DEMO_SH" | cut -d: -f1)
+persistent_status_line=$(grep -n '^  persistent_crio_store_status$' "$AAP_DEMO_SH" | cut -d: -f1)
+if [ -n "$vm_section_line" ] && [ -n "$persistent_status_line" ] \
+  && [ "$persistent_status_line" -gt "$vm_section_line" ]; then
+  _pass "status_persistent_storage_under_vm"
+else
+  _fail "status_persistent_storage_under_vm - persistent storage must be reported in VM section"
 fi
 
 # Test 3: stop command - verify it calls crc stop
