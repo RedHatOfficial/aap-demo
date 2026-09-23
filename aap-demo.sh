@@ -279,7 +279,7 @@ setup_kubeconfig() {
     KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
     export KUBECONFIG
     # Refresh from cluster if current kubeconfig doesn't work
-    if ! kubectl cluster-info &>/dev/null 2>&1; then
+    if ! kubectl cluster-info --request-timeout=3s &>/dev/null 2>&1; then
       # Ensure infra backend is loaded to set CRC_SSH_KEY
       _infra_ensure_backend 2>/dev/null || true
       if [ -n "$CRC_SSH_KEY" ]; then
@@ -1751,6 +1751,11 @@ cmd_status() {
     return 0
   fi
 
+  # Status must inspect CRC state before touching Kubernetes. A stopped CRC
+  # VM, or a VM with an unhealthy API server, can leave a stale kubeconfig
+  # probe hanging indefinitely.
+  setup_kubeconfig
+
   # Export CA env vars if installed, don't prompt for sudo
   local ca_path
   ca_path=$(get_ingress_ca_cert_path)
@@ -3023,7 +3028,7 @@ esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in
-  help | --help | -h | config | update | version | "" | destroy)
+  help | --help | -h | config | update | version | "" | destroy | status)
     # These commands don't need cluster access
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)

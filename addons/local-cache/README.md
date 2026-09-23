@@ -27,6 +27,10 @@ Images are stored per CRC preset:
 
 Each image is saved as `<md5>.tar` plus a `<md5>.ref` sidecar with the original image reference.
 
+Signed images are exported without signatures because Docker archives do not support
+them. If that changes the manifest digest during load, the image is imported under a
+deterministic `aap-demo-cache-*` tag so the cached layers remain available locally.
+
 ## Prerequisites
 
 - CRC cluster running with AAP deployed (for **save**)

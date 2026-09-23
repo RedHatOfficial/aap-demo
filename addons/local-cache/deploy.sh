@@ -72,11 +72,13 @@ if [ "$ACTION" = "load" ]; then
   echo ""
 
   loaded=0
+  tag_loaded=0
   skipped=0
   failed=0
   for tarball in "$CACHE_DIR"/*.tar; do
     [ -f "$tarball" ] || continue
     img_ref=$(cat "${tarball%.tar}.ref" 2>/dev/null || basename "$tarball" .tar)
+    safe_name=$(printf '%s\n' "$img_ref" | md5sum | awk '{print $1}')
     file_size=$(du -h "$tarball" | awk '{print $1}')
 
     # Truncate long names for display
@@ -98,6 +100,20 @@ if [ "$ACTION" = "load" ]; then
     if _ssh "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${img_ref}'" <"$tarball" &>/dev/null; then
       printf "${_GREEN}✓${_NC}\n"
       loaded=$((loaded + 1))
+    elif [[ "$img_ref" == *@* ]]; then
+      # Docker archives cannot preserve the original digest for signed images:
+      # removing signatures changes the manifest digest. Import the layers
+      # under a deterministic local tag so a later registry pull can reuse
+      # the cached blobs instead of downloading them again.
+      cache_tag="${img_ref%@*}:aap-demo-cache-${safe_name:0:12}"
+      if _ssh "sudo skopeo copy docker-archive:/dev/stdin containers-storage:'${cache_tag}'" <"$tarball" &>/dev/null; then
+        printf "${_GREEN}✓${_NC} (cache tag)\n"
+        loaded=$((loaded + 1))
+        tag_loaded=$((tag_loaded + 1))
+      else
+        printf "${_YELLOW}✗${_NC}\n"
+        failed=$((failed + 1))
+      fi
     else
       printf "${_YELLOW}✗${_NC}\n"
       failed=$((failed + 1))
@@ -105,7 +121,7 @@ if [ "$ACTION" = "load" ]; then
   done
 
   echo ""
-  echo "✓ Loaded ${loaded} images, ${skipped} already present (${failed} failed)"
+  echo "✓ Loaded ${loaded} images, ${skipped} already present (${failed} failed; ${tag_loaded} via cache tag)"
   if [ "$failed" -gt 0 ]; then
     echo "⚠ ${failed} cached image(s) could not be loaded" >&2
     if [ "${AAP_DEMO_LOCAL_CACHE_QUIET:-}" = "1" ]; then
@@ -168,11 +184,14 @@ for img in data.get('images', []):
   saved=0
   skipped=0
   failed=0
+  pruned=0
+  current_cache_names=$(mktemp)
   while IFS=' ' read -r img_size img_ref; do
     [ -z "$img_ref" ] && continue
 
     # Safe filename
     safe_name=$(echo "$img_ref" | md5sum | awk '{print $1}')
+    echo "$safe_name" >>"$current_cache_names"
     tarball="${CACHE_DIR}/${safe_name}.tar"
     ref_file="${CACHE_DIR}/${safe_name}.ref"
 
@@ -182,8 +201,10 @@ for img in data.get('images', []):
       display_name="...${display_name: -57}"
     fi
 
-    # Skip if already cached
-    if [ -f "$tarball" ] && [ -f "$ref_file" ]; then
+    # Skip only if the cached tarball is structurally valid. Older versions
+    # captured Skopeo progress output in the tar stream, so a ref file alone
+    # is not enough to trust an existing cache entry.
+    if [ -f "$tarball" ] && [ -f "$ref_file" ] && tar -tf "$tarball" >/dev/null 2>&1; then
       file_size=$(du -h "$tarball" | awk '{print $1}')
       printf "  %-62s %6s (cached)\n" "$display_name" "$file_size"
       skipped=$((skipped + 1))
@@ -194,7 +215,7 @@ for img in data.get('images', []):
 
     # Export from CRI-O via skopeo, stream to local file
     # Use -n to prevent SSH from consuming the while-read stdin
-    if _ssh -n "sudo skopeo copy --remove-signatures containers-storage:'${img_ref}' docker-archive:/dev/stdout" >"$tarball" 2>/dev/null; then
+    if _ssh -n "sudo skopeo copy --quiet --remove-signatures containers-storage:'${img_ref}' docker-archive:/dev/stdout" >"$tarball" 2>/dev/null; then
       echo "$img_ref" >"$ref_file"
       file_size=$(du -h "$tarball" | awk '{print $1}')
       printf "${_GREEN}%6s${_NC}\n" "$file_size"
@@ -206,9 +227,22 @@ for img in data.get('images', []):
     fi
   done <<<"$all_images"
 
+  # Remove corrupt or stale entries that are not part of the current image
+  # set. Keeping them would make a later load report failures even though
+  # those images are not needed for this deployment.
+  for cached_tarball in "$CACHE_DIR"/*.tar; do
+    [ -f "$cached_tarball" ] || continue
+    cached_name=$(basename "$cached_tarball" .tar)
+    if ! grep -Fqx "$cached_name" "$current_cache_names" || ! tar -tf "$cached_tarball" >/dev/null 2>&1; then
+      rm -f "$cached_tarball" "${cached_tarball%.tar}.ref"
+      pruned=$((pruned + 1))
+    fi
+  done
+  rm -f "$current_cache_names"
+
   echo ""
   total_size=$(du -sh "$CACHE_DIR" 2>/dev/null | awk '{print $1}')
-  echo "✓ Saved ${saved} images, ${skipped} already cached, ${failed} skipped (${total_size} total)"
+  echo "✓ Saved ${saved} images, ${skipped} already cached, ${failed} skipped, ${pruned} corrupt entries removed (${total_size} total)"
   echo ""
   echo "To load after a fresh create:"
   echo "  aap-demo enable local-cache load"

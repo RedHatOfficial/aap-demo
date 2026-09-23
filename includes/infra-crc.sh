@@ -72,6 +72,28 @@ _crc_copy_from() {
 # Backend implementation
 # ---------------------------------------------------------------------------
 
+_crc_status_json() {
+  # The CRC daemon can stop responding while the VM is stopped or unhealthy.
+  # Keep status/read-only callers from hanging indefinitely in that case.
+  local output_file pid i
+  output_file=$(mktemp "${TMPDIR:-/tmp}/aap-demo-crc-status.XXXXXX") || return 1
+  crc status --output json >"$output_file" 2>/dev/null &
+  pid=$!
+  for i in $(seq 1 20); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null
+      cat "$output_file"
+      rm -f "$output_file"
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  rm -f "$output_file"
+  return 124
+}
+
 _infra_crc_exec_cmd() {
   _crc_exec sudo "$@"
 }
@@ -98,7 +120,7 @@ _infra_crc_get_state() {
 
   # Check CRC status
   local crc_status
-  crc_status=$(crc status --output json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('crcStatus','Unknown'))" 2>/dev/null) || crc_status="Unknown"
+  crc_status=$(_crc_status_json | python3 -c "import sys,json; print(json.load(sys.stdin).get('crcStatus','Unknown'))" 2>/dev/null) || crc_status="Unknown"
 
   case "$crc_status" in
     Running) echo "running" ;;
