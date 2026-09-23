@@ -25,11 +25,16 @@ Images are stored per CRC preset:
 ~/.aap-demo/local-cache/microshift/
 ```
 
-Each image is saved as `<md5>.tar` plus a `<md5>.ref` sidecar with the original image reference.
+Each image is saved as `<md5>.tar`, a `<md5>.ref` sidecar with the original image
+reference, and a `<md5>.local-ref` sidecar containing the archive's actual platform
+digest. During deployment, generated workload templates are rewritten from the original
+index digest to that locally available platform digest.
+The cache format is versioned; the next save automatically refreshes older archives.
 
-Signed images are exported without signatures because Docker archives do not support
-them. If that changes the manifest digest during load, the image is imported under a
-deterministic `aap-demo-cache-*` tag so the cached layers remain available locally.
+Images are stored as OCI archives with signatures and all available manifests retained.
+They are loaded with digest preservation, so the original `repo@sha256:...` reference
+remains usable after a cache load. A digest mismatch is reported as a load failure
+rather than being hidden behind a synthetic tag.
 
 ## Prerequisites
 
@@ -64,6 +69,7 @@ To load them manually instead:
 ```bash
 aap-demo create
 aap-demo enable local-cache load   # load images into the fresh VM
+aap-demo enable local-cache rewrite # rewrite live workload refs to local digests
 aap-demo enable local-cache        # re-register auto-load for future deploys
 aap-demo deploy
 ```

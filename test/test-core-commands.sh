@@ -126,6 +126,14 @@ else
   _fail "destroy_cache_prompt_order - cache prompt must precede destroy message"
 fi
 
+# Test 7b: destroy supports an explicit cache bypass
+echo "Test 7b: destroy supports --skip-cache"
+if grep -q -- '--skip-cache' "$AAP_DEMO_SH"; then
+  _pass "destroy_skip_cache"
+else
+  _fail "destroy_skip_cache - flag not found in script"
+fi
+
 # Test 8: create command - verify it calls crc-create.sh
 echo "Test 8: create command delegates to crc-create.sh"
 # Verify create function sources crc-create.sh

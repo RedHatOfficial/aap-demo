@@ -139,7 +139,7 @@ for arg in "$@"; do
         *) COMMAND="$arg" ;;
       esac
       ;;
-    --ai | --reset | --force | --refresh-catalog | --purge-data | --purge-creds)
+    --ai | --reset | --skip-cache | --force | --refresh-catalog | --purge-data | --purge-creds)
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
@@ -404,7 +404,7 @@ Commands:
 
 Cluster management:
   create          Create OpenShift Local cluster
-  destroy         Delete cluster (--reset to clear config)
+  destroy         Delete cluster (--reset to clear config, --skip-cache to bypass image caching)
   stop            Stop cluster
   ssh             SSH into cluster node
 
@@ -476,7 +476,7 @@ COMMANDS (all infrastructure types):
 
 COMMANDS:
     create          Create OpenShift Local cluster
-    destroy [--reset] Delete local cluster (--reset also clears config)
+    destroy [--reset] [--skip-cache] Delete local cluster (--reset also clears config)
     stop            Stop local cluster gracefully
     start           Start stopped cluster (re-applies CoreDNS config)
     ssh             SSH into cluster node
@@ -1977,6 +1977,11 @@ _remove_temp_swap() {
   return 1
 }
 _maybe_save_local_cache_before_destroy() {
+  if [ "${_DESTROY_SKIP_CACHE:-false}" = "true" ]; then
+    echo "Skipping local image cache save and validation (--skip-cache)"
+    return 0
+  fi
+
   # Cache saving is intentionally opt-in: a full AAP image cache can use tens
   # of gigabytes and may take a while to create.
   if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
@@ -1992,7 +1997,13 @@ _maybe_save_local_cache_before_destroy() {
       echo "The next deploy can reuse these cached containers instead of downloading them again."
       echo "Saving container images for the next deployment..."
       if ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" save; then
-        echo "⚠ Could not save the local image cache; continuing with cluster deletion"
+        echo "✗ Could not save the local image cache — refusing to delete the cluster"
+        echo "  Use --skip-cache to bypass cache saving and validation."
+        return 1
+      elif ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" validate; then
+        echo "✗ Local image cache validation failed — refusing to delete the cluster"
+        echo "  Use --skip-cache to bypass cache saving and validation."
+        return 1
       fi
       ;;
     *)
@@ -2003,6 +2014,8 @@ _maybe_save_local_cache_before_destroy() {
 
 cmd_destroy() {
   _maybe_save_local_cache_before_destroy
+  local _cache_status=$?
+  [ "$_cache_status" -eq 0 ] || return "$_cache_status"
   echo ""
   printf "\033[1maap-demo destroy\033[0m - Deleting CRC cluster...\n"
   echo ""
@@ -2239,6 +2252,7 @@ deploy_latest() {
   sed -e "s|redhat-operator-index:v[0-9.]*|redhat-operator-index:v${AAP_OCP_VERSION}|" \
     -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
     "${SCRIPT_DIR}/config/olm/catalogsource.yaml" | kubectl apply -f -
+  _rewrite_local_cache_refs
 
   # Wait for CatalogSource — skip if already READY
   _catsrc_status=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
@@ -2475,6 +2489,12 @@ _load_local_cache() {
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
 }
 
+_rewrite_local_cache_refs() {
+  # Operators publish image references in generated workload templates. Keep
+  # those templates aligned with the platform digests imported from cache.
+  AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" rewrite || true
+}
+
 _ensure_aap_storage_pvcs() {
   local cr_file="$1"
   local aap_name ns manifest
@@ -2610,6 +2630,7 @@ watch_aap() {
   WATCH_START=$(date +%s)
 
   while true; do
+    _rewrite_local_cache_refs
     # clear requires TERM to be set (fails in nohup/cron)
     if [ -n "${TERM:-}" ] && [ "$TERM" != "dumb" ]; then
       clear
@@ -3060,6 +3081,7 @@ case "$COMMAND" in
   destroy)
     for _arg in "${EXTRA_ARGS[@]}"; do
       [ "$_arg" = "--reset" ] && _DESTROY_RESET=true
+      [ "$_arg" = "--skip-cache" ] && _DESTROY_SKIP_CACHE=true
     done
     cmd_destroy
     ;;
