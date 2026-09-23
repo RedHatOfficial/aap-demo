@@ -49,7 +49,10 @@ aap-demo disable local-cache         # alias for clear
 1. For each `.tar` file in the cache directory, read the corresponding `.ref` file
 2. Stream the tarball into the CRC VM via `skopeo copy docker-archive:/dev/stdin
    containers-storage:'<ref>'` over SSH
-3. Report per-image success/failure
+3. If the original digest cannot be represented by the signature-stripped Docker
+   archive, retry under a deterministic `aap-demo-cache-<md5>` tag so the image
+   layers are still seeded locally for the next registry pull
+4. Report per-image success/failure and the number loaded through cache tags
 
 ### Auto-load during deploy
 
@@ -85,6 +88,10 @@ additional presets are reintroduced later.
   `-n`, SSH consumes stdin from the heredoc, causing the loop to exit after 1-2 images.
 - **`--remove-signatures`**: Required for `skopeo copy` to `docker-archive:` format.
   Without it, skopeo fails with "Storing signatures for docker tar files is not supported".
+- **Cache-tag fallback**: Signature removal can change an image manifest digest, so
+  an archive may not import under its original digest reference. The load path falls
+  back to a deterministic local tag; this avoids noisy false failures while retaining
+  the cached layers for subsequent pulls.
 - **`containers-storage:` transport**: CRI-O images are accessed via skopeo's
   `containers-storage:` transport, not `crictl export` (which doesn't exist) or `ctr`
   (not available on CRC VMs).
