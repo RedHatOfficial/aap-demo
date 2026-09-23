@@ -38,21 +38,22 @@ aap-demo disable local-cache         # alias for clear
 1. SSH into the CRC VM and run `crictl images -o json` to enumerate all images in CRI-O
 2. Filter to images from `registry.redhat.io` and `registry.k8s.io` (skip pause, base, and
    builder images that ship with the VM)
-3. For each image, export via `skopeo copy --remove-signatures containers-storage:'<ref>'
-   docker-archive:/dev/stdout`, streaming the tarball to a local file
-4. Each image is stored as two files: `<md5>.tar` (the image archive) and `<md5>.ref`
-   (the original image reference for reload)
+3. For each image, export via `skopeo copy --all containers-storage:'<ref>'
+   oci-archive:/tmp/aap-demo-local-cache.oci:<tag>` on the VM, then stream the OCI
+   archive to a local file
+4. Each image is stored as three files: `<md5>.tar` (the OCI archive), `<md5>.ref`
+   (the original image reference), and `<md5>.local-ref` (the archive's actual
+   platform digest)
 5. Images already cached (both `.tar` and `.ref` exist) are skipped
 
 ### Load flow
 
 1. For each `.tar` file in the cache directory, read the corresponding `.ref` file
-2. Stream the tarball into the CRC VM via `skopeo copy docker-archive:/dev/stdin
-   containers-storage:'<ref>'` over SSH
-3. If the original digest cannot be represented by the signature-stripped Docker
-   archive, retry under a deterministic `aap-demo-cache-<md5>` tag so the image
-   layers are still seeded locally for the next registry pull
-4. Report per-image success/failure and the number loaded through cache tags
+2. Stream the OCI archive to a temporary file on the CRC VM, then run `skopeo copy
+   --all --preserve-digests oci-archive:<temporary-file>:<tag>
+   containers-storage:'<ref>'`; remove the temporary file afterward
+3. Import under the `.local-ref` platform digest and report per-image success/failure
+4. Rewrite matching CatalogSource and workload-template image references to `.local-ref`
 
 ### Auto-load during deploy
 
@@ -86,12 +87,10 @@ additional presets are reintroduced later.
 
 - **SSH `-n` flag**: The save loop reads image refs from a heredoc via `while read`. Without
   `-n`, SSH consumes stdin from the heredoc, causing the loop to exit after 1-2 images.
-- **`--remove-signatures`**: Required for `skopeo copy` to `docker-archive:` format.
-  Without it, skopeo fails with "Storing signatures for docker tar files is not supported".
-- **Cache-tag fallback**: Signature removal can change an image manifest digest, so
-  an archive may not import under its original digest reference. The load path falls
-  back to a deterministic local tag; this avoids noisy false failures while retaining
-  the cached layers for subsequent pulls.
+- **OCI archives**: The save/load path uses OCI archives instead of Docker archives so
+  signatures and manifest metadata are retained. Loading uses `--preserve-digests` and
+  fails when the archive cannot represent the recorded digest; importing under a
+  synthetic tag would not satisfy Kubernetes' digest pull request.
 - **`containers-storage:` transport**: CRI-O images are accessed via skopeo's
   `containers-storage:` transport, not `crictl export` (which doesn't exist) or `ctr`
   (not available on CRC VMs).
@@ -117,7 +116,7 @@ additional presets are reintroduced later.
 
 - Cache is ~30 GB on disk for a full AAP deployment (~50 images)
 - Save operation takes 10–15 minutes (same as pulling — images must be exported from CRI-O)
-- Images are stored uncompressed in docker-archive format; no deduplication of shared layers
+- Images are stored as OCI archives; no deduplication of shared layers
   across images
 
 ### Neutral

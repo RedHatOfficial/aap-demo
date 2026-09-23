@@ -24,14 +24,17 @@ printf 'test-key\n' >"$MOCK_HOME/.crc/machines/crc/id_ed25519"
 
 ARCHIVE_DIR="${TEST_DIR}/archive"
 mkdir -p "$ARCHIVE_DIR"
-printf '[{"Config":"config.json","RepoTags":[],"Layers":[]}]\n' \
-  >"$ARCHIVE_DIR/manifest.json"
+printf '%s\n' '{"imageLayoutVersion":"1.0.0"}' >"$ARCHIVE_DIR/oci-layout"
+mkdir -p "$ARCHIVE_DIR/blobs/sha256"
+printf '%s\n' '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}' \
+  >"$ARCHIVE_DIR/index.json"
 export MOCK_ARCHIVE_DIR="$ARCHIVE_DIR"
-tar -cf "${CACHE_DIR}/stale-valid.tar" -C "$ARCHIVE_DIR" manifest.json
+tar -cf "${CACHE_DIR}/stale-valid.tar" -C "$ARCHIVE_DIR" oci-layout index.json blobs
 printf '%s\n' 'registry.redhat.io/stale/valid@sha256:stale' >"${CACHE_DIR}/stale-valid.ref"
 
 cat >"${MOCK_BIN}/ssh" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"${MOCK_SSH_LOG}"
 case "$*" in
   *"crictl images -o json"*)
     printf '%s\n' '{"images":[{"repoDigests":["registry.redhat.io/example/image@sha256:deadbeef"],"size":123}]}'
@@ -39,22 +42,12 @@ case "$*" in
   *"crictl inspecti"*)
     exit 1
     ;;
-  *"docker-archive:/dev/stdout"*)
-    if [[ "$*" != *" --remove-signatures "* ]]; then
-      exit 1
-    fi
-    if [[ "$*" != *" --quiet "* ]]; then
-      printf 'Copying blob sha256:deadbeef\n'
-    fi
-    tar -cf - -C "$MOCK_ARCHIVE_DIR" manifest.json
+  *"containers-storage:"*"oci-archive:"*)
+    tar -cf - -C "$MOCK_ARCHIVE_DIR" oci-layout index.json blobs
     ;;
-  *"docker-archive:/dev/stdin"*)
+  *"oci-archive:"*"containers-storage:"*)
     tar -tf - >/dev/null 2>&1 || exit 1
-    if [[ "$*" == *"aap-demo-cache-"* ]]; then
-      [ "${MOCK_FALLBACK_RESULT:-success}" = success ]
-    else
-      [ "${MOCK_IMPORT_RESULT:-success}" = success ]
-    fi
+    [ "${MOCK_IMPORT_RESULT:-success}" = success ]
     ;;
   *)
     exit 1
@@ -75,6 +68,7 @@ chmod +x "${MOCK_BIN}/crc"
 export HOME="$MOCK_HOME"
 export PATH="$MOCK_BIN:$PATH"
 export CRC_SSH_PORT=2222
+export MOCK_SSH_LOG="${TEST_DIR}/ssh.log"
 
 if ! "$CACHE_SCRIPT" save >"${TEST_DIR}/save.out" 2>&1; then
   echo "✗ cache save should complete with a successful image export" >&2
@@ -82,10 +76,15 @@ if ! "$CACHE_SCRIPT" save >"${TEST_DIR}/save.out" 2>&1; then
   exit 1
 fi
 if ! tar -tf "${CACHE_DIR}/${CACHE_KEY}.tar" >/dev/null 2>&1; then
-  echo "✗ cache save must write a valid Docker archive" >&2
+  echo "✗ cache save must write a valid OCI archive" >&2
   exit 1
 fi
-echo "✓ cache save repairs an invalid Docker archive"
+echo "✓ cache save repairs an invalid OCI archive"
+if [ ! -s "${CACHE_DIR}/${CACHE_KEY}.local-ref" ] || [[ "$(cat "${CACHE_DIR}/${CACHE_KEY}.local-ref")" != *@sha256:* ]]; then
+  echo "✗ cache save should record the archive's local platform digest" >&2
+  exit 1
+fi
+echo "✓ cache save records the local platform digest"
 if [ -e "${CACHE_DIR}/stale.tar" ] || [ -e "${CACHE_DIR}/stale.ref" ] \
   || [ -e "${CACHE_DIR}/stale-valid.tar" ] || [ -e "${CACHE_DIR}/stale-valid.ref" ]; then
   echo "✗ cache save should remove stale entries" >&2
@@ -94,25 +93,28 @@ fi
 echo "✓ cache save removes stale entries"
 
 if ! "$CACHE_SCRIPT" load >/dev/null 2>&1; then
-  echo "✗ valid cached Docker archives should load successfully" >&2
+  echo "✗ valid cached OCI archives should load successfully" >&2
   exit 1
 fi
-echo "✓ valid cached Docker archives load successfully"
+echo "✓ valid cached OCI archives load successfully"
+
+if ! grep -q -- '--all --quiet containers-storage:' "$MOCK_SSH_LOG" \
+  || ! grep -q -- 'oci-archive:' "$MOCK_SSH_LOG"; then
+  echo "✗ cache save should create OCI archives with all manifests" >&2
+  exit 1
+fi
+echo "✓ cache save creates OCI archives with all manifests"
 
 export MOCK_IMPORT_RESULT=fail
-export MOCK_FALLBACK_RESULT=success
-if ! "$CACHE_SCRIPT" load >/dev/null 2>&1; then
-  echo "✗ digest-mismatched cache imports should fall back to a cache tag" >&2
-  exit 1
-fi
-echo "✓ digest-mismatched cache imports fall back to a cache tag"
-
-export MOCK_FALLBACK_RESULT=fail
 if "$CACHE_SCRIPT" load >/dev/null 2>&1; then
-  echo "✗ explicit cache load should fail when an image import fails" >&2
+  echo "✗ digest-preserving cache load should fail when an image import fails" >&2
   exit 1
 fi
-echo "✓ explicit cache load reports failed imports"
+if ! grep -q -- '--all --preserve-digests oci-archive:' "$MOCK_SSH_LOG"; then
+  echo "✗ cache load should preserve digest references" >&2
+  exit 1
+fi
+echo "✓ digest-preserving cache load reports failed imports"
 
 if ! AAP_DEMO_LOCAL_CACHE_QUIET=1 "$CACHE_SCRIPT" load >/dev/null 2>&1; then
   echo "✗ quiet cache load should remain non-fatal for deploy optimization" >&2
