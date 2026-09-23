@@ -17,6 +17,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
 OLLAMA_ROLLOUT_TIMEOUT="${OLLAMA_ROLLOUT_TIMEOUT:-15m}"
 OLLAMA_STORAGE_CLASS="${OLLAMA_STORAGE_CLASS:-}"
+_ollama_storage_size_explicit="${OLLAMA_STORAGE_SIZE+yes}"
+OLLAMA_STORAGE_SIZE="${OLLAMA_STORAGE_SIZE:-10Gi}"
 
 # shellcheck source=../../includes/infra-crc.sh
 source "${SCRIPT_DIR}/../../includes/infra-crc.sh" 2>/dev/null || true
@@ -87,6 +89,13 @@ else
 fi
 echo "  StorageClass: ${_ollama_sc}"
 
+# Prompt for PVC size when running interactively and no explicit override was given
+if [ -z "$_ollama_storage_size_explicit" ] && [ -t 0 ]; then
+  read -r -p "  PVC size [${OLLAMA_STORAGE_SIZE}] (e.g. 20Gi for multiple/larger models): " _input_size
+  [ -n "$_input_size" ] && OLLAMA_STORAGE_SIZE="$_input_size"
+fi
+echo "  PVC size:     ${OLLAMA_STORAGE_SIZE}"
+
 # Detect cluster apps domain from existing AAP route, fall back to nip.io default
 _aap_host=$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" \
   -o jsonpath='{.spec.host}' 2>/dev/null || true)
@@ -100,6 +109,7 @@ OLLAMA_ROUTE="ollama.${CLUSTER_DOMAIN}"
 # Patch the route hostname and StorageClass from their manifest placeholders
 sed -e "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
   -e "s|storageClassName: __STORAGE_CLASS__|storageClassName: ${_ollama_sc}|" \
+  -e "s|storage: __STORAGE_SIZE__|storage: ${OLLAMA_STORAGE_SIZE}|" \
   -e "s|progressDeadlineSeconds: __PROGRESS_DEADLINE_SECONDS__|progressDeadlineSeconds: ${_ollama_progress_deadline}|" \
   "${SCRIPT_DIR}/ollama.yaml" | kubectl apply -f -
 
@@ -114,7 +124,7 @@ if ! kubectl rollout status deployment/ollama -n aap-demo-ollama \
 fi
 
 echo "  Pulling model: ${OLLAMA_MODEL}..."
-echo "  (This may take several minutes — model is ~2.5GB)"
+echo "  (This may take several minutes — model is ~2GB)"
 
 # Pull from a Ready pod. During a rollout, the first pod returned by the API
 # can still be the terminating old replica even after rollout status succeeds.
