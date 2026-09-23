@@ -16,10 +16,34 @@ _persistent_crio_store_size_gb() {
   echo "${AAP_IMAGE_STORE_SIZE_GB:-60}"
 }
 
+_persistent_crio_store_disk_size() {
+  local disk attachment size
+  disk="$(_persistent_crio_store_disk)"
+
+  if command -v virsh >/dev/null 2>&1; then
+    attachment="$(_persistent_crio_store_virsh domblklist crc --details 2>/dev/null \
+      | awk -v disk="$disk" '$4 == disk {print $3; exit}')"
+    if [ -n "$attachment" ]; then
+      size="$(_persistent_crio_store_virsh domblkinfo crc "$attachment" --human 2>/dev/null \
+        | awk -F': *' '/^Capacity:/ {print $2; exit}')"
+      [ -n "$size" ] && { echo "$size"; return 0; }
+    fi
+  fi
+
+  if command -v qemu-img >/dev/null 2>&1 && [ -e "$disk" ]; then
+    size=$(qemu-img info --force-share "$disk" 2>/dev/null \
+      | awk -F': *' '/^virtual size:/ {print $2; exit}')
+    [ -n "$size" ] && { echo "$size"; return 0; }
+  fi
+
+  echo "unknown"
+}
+
 persistent_crio_store_status() {
-  local disk target blklist attachment
+  local disk target blklist attachment disk_state disk_size
   disk="$(_persistent_crio_store_disk)"
   target="${AAP_IMAGE_STORE_TARGET:-vdb}"
+  disk_state=$([ -e "$disk" ] && echo present || echo missing)
 
   if [ ! -e "$disk" ] && ! _persistent_crio_store_enabled; then
     printf "Persistent storage: disabled\n"
@@ -27,7 +51,12 @@ persistent_crio_store_status() {
   fi
 
   printf "Persistent storage:\n"
-  printf "  Disk:        %s (%s)\n" "$disk" "$([ -e "$disk" ] && echo present || echo missing)"
+  if [ "$disk_state" = "present" ]; then
+    disk_size="$(_persistent_crio_store_disk_size)"
+    printf "  Disk:        %s (present, %s)\n" "$disk" "$disk_size"
+  else
+    printf "  Disk:        %s (missing)\n" "$disk"
+  fi
 
   if ! command -v virsh >/dev/null 2>&1; then
     printf "  Attachment:  unavailable (virsh not found)\n"
