@@ -68,7 +68,8 @@ echo "Test 2b: status places persistent storage under VM"
 vm_section_line=$(grep -n '^  echo "VM:"' "$AAP_DEMO_SH" | cut -d: -f1)
 persistent_status_line=$(grep -n '^  persistent_crio_store_status$' "$AAP_DEMO_SH" | cut -d: -f1)
 if [ -n "$vm_section_line" ] && [ -n "$persistent_status_line" ] \
-  && [ "$persistent_status_line" -gt "$vm_section_line" ]; then
+  && [ "$persistent_status_line" -gt "$vm_section_line" ] \
+  && grep -q '_persistent_crio_store_disk_size' "${SCRIPT_DIR}/../includes/persistent-crio-store.sh"; then
   _pass "status_persistent_storage_under_vm"
 else
   _fail "status_persistent_storage_under_vm - persistent storage must be reported in VM section"
