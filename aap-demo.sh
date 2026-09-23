@@ -749,6 +749,58 @@ _verify_cluster() {
   return 1
 }
 
+# Wait for MicroShift's OVN components before starting OLM/AAP installation.
+# The Kubernetes API can be reachable while the node CNI is still unhealthy,
+# which leaves newly-created operator pods stuck in ContainerCreating.
+_wait_for_ovn_ready() {
+  local ovn_namespace="openshift-ovn-kubernetes"
+  local timeout="${AAP_OVN_TIMEOUT:-180}"
+  local interval=5
+  local elapsed=0
+  local node_desired node_ready master_desired master_ready
+
+  if ! kubectl get namespace "$ovn_namespace" &>/dev/null; then
+    echo ""
+    echo "ERROR: OVN namespace '$ovn_namespace' was not found"
+    echo "  The cluster network is not ready for AAP deployment."
+    return 1
+  fi
+
+  echo "Waiting for OVN networking to become ready..."
+  while [ "$elapsed" -lt "$timeout" ]; do
+    node_desired=$(kubectl get daemonset ovnkube-node -n "$ovn_namespace" \
+      -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "")
+    node_ready=$(kubectl get daemonset ovnkube-node -n "$ovn_namespace" \
+      -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "")
+    master_desired=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
+      -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "")
+    master_ready=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
+      -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "")
+
+    if [ "$node_desired" -gt 0 ] 2>/dev/null \
+      && [ "$node_ready" -eq "$node_desired" ] 2>/dev/null \
+      && [ "$master_desired" -gt 0 ] 2>/dev/null \
+      && [ "$master_ready" -eq "$master_desired" ] 2>/dev/null; then
+      echo "  ✓ OVN networking is ready"
+      return 0
+    fi
+
+    printf "  Waiting for OVN... node %s/%s, master %s/%s (%ss/%ss)\n" \
+      "${node_ready:-0}" "${node_desired:-0}" \
+      "${master_ready:-0}" "${master_desired:-0}" "$elapsed" "$timeout"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+
+  echo ""
+  echo "ERROR: OVN networking was not ready after ${timeout}s"
+  echo "  Check: kubectl get pods -n ${ovn_namespace} -o wide"
+  echo "  Check: kubectl get events -n ${ovn_namespace} --sort-by=.lastTimestamp"
+  kubectl get daemonset ovnkube-node ovnkube-master -n "$ovn_namespace" 2>/dev/null || true
+  kubectl get pods -n "$ovn_namespace" -o wide 2>/dev/null || true
+  return 1
+}
+
 cmd_clean() {
   setup_kubeconfig
   _clean_operator
@@ -2166,6 +2218,10 @@ cmd_deploy() {
   # Verify CRC version matches required version
   _verify_crc_version || exit 1
 
+  # The API can be available while OVN is still crash-looping. Do not create
+  # OLM/AAP workloads until the cluster CNI can create pod sandboxes.
+  _wait_for_ovn_ready || exit 1
+
   # Check if AAP already exists — skip OLM and the full deploy if so
   if [ "$FORCE" != "true" ]; then
     AAP_EXISTS=$(kubectl get aap -n "$NAMESPACE" 2>/dev/null | grep -v NAME | head -1 | awk '{print $1}' || true)
@@ -2265,8 +2321,15 @@ deploy_latest() {
   # Create CatalogSource in aap-operator namespace
   # (not openshift-marketplace — upstream OLM doesn't create pods there on OpenShift Local)
   echo ""
-  echo "Creating CatalogSource (OCP $AAP_OCP_VERSION)..."
-  sed -e "s|redhat-operator-index:v[0-9.]*|redhat-operator-index:v${AAP_OCP_VERSION}|" \
+  _catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${AAP_OCP_VERSION}"
+  _cached_catalog_image="$(_cached_operator_catalog_ref "$AAP_OCP_VERSION")"
+  if [ -n "$_cached_catalog_image" ]; then
+    _catalog_image="$_cached_catalog_image"
+    echo "Creating CatalogSource from cached digest (OCP $AAP_OCP_VERSION)..."
+  else
+    echo "Creating CatalogSource (OCP $AAP_OCP_VERSION)..."
+  fi
+  sed -e "s|image: registry.redhat.io/redhat/redhat-operator-index:v[0-9.]*|image: ${_catalog_image}|" \
     -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
     "${SCRIPT_DIR}/config/olm/catalogsource.yaml" | kubectl apply -f -
   _rewrite_local_cache_refs
@@ -2504,6 +2567,11 @@ _load_local_cache() {
   # Loading is safe and quiet when no cache exists. Always check so a
   # destroy/create cycle can reuse a cache even though destroy clears addons.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
+}
+
+_cached_operator_catalog_ref() {
+  AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" \
+    catalog-ref "$1" 2>/dev/null || true
 }
 
 _rewrite_local_cache_refs() {

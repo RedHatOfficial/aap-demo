@@ -29,6 +29,8 @@ Each image is saved as `<md5>.tar`, a `<md5>.ref` sidecar with the original imag
 reference, and a `<md5>.local-ref` sidecar containing the archive's actual platform
 digest. During deployment, generated workload templates are rewritten from the original
 index digest to that locally available platform digest.
+The cache also records the exact Red Hat operator catalog digest for each OCP version so
+OLM resolves the same operator bundle whose images were cached.
 The cache format is versioned; the next save automatically refreshes older archives.
 
 Images are stored as OCI archives with signatures and all available manifests retained.
@@ -52,6 +54,8 @@ rather than being hidden behind a synthetic tag.
   in the config.
 - **Load** and **clear** are one-shot actions and do not change the saved addon list.
 - `aap-demo destroy` clears `ADDONS=` from config but keeps on-disk cache files.
+- A cache created before catalog pinning is still loadable, but deployment follows the
+  current catalog tag until the cache is refreshed.
 
 ### After destroy and recreate
 

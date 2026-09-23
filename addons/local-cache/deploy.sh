@@ -15,8 +15,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="${1:-save}"
 CACHE_BASE="${HOME}/.aap-demo/local-cache"
-CACHE_FORMAT_VERSION=3
+CACHE_FORMAT_VERSION=4
 CACHE_REMOTE_ARCHIVE="/tmp/aap-demo-local-cache.oci"
+CACHE_CATALOG_METADATA="catalog-digests"
 
 _BOLD='\033[1m'
 _GREEN='\033[0;32m'
@@ -43,6 +44,26 @@ _require_crc_ssh() {
 _ssh() {
   ssh -p "$CRC_SSH_PORT" "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "$@"
 }
+
+# --- Cached operator catalog reference ---
+if [ "$ACTION" = "catalog-ref" ]; then
+  requested_version="${2:-}"
+  metadata_file="${CACHE_DIR}/${CACHE_CATALOG_METADATA}"
+
+  if [ -z "$requested_version" ] || [ ! -s "$metadata_file" ]; then
+    exit 1
+  fi
+
+  _require_crc_ssh
+  cached_catalog_ref=$(awk -F '\t' -v version="$requested_version" \
+    '$1 == version {print $3; exit}' "$metadata_file")
+  if [ -z "$cached_catalog_ref" ] \
+    || ! _crc_exec sudo crictl inspecti "$cached_catalog_ref" &>/dev/null; then
+    exit 1
+  fi
+  printf '%s\n' "$cached_catalog_ref"
+  exit 0
+fi
 
 # --- Clear ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ] || [ "$ACTION" = "clear" ]; then
@@ -240,8 +261,10 @@ if [ "$ACTION" = "save" ] || [ "$ACTION" = "deploy" ]; then
     echo "  Cache format changed; refreshing OCI archives with local platform digests"
   fi
 
-  # Get all Red Hat / registry.k8s.io images from CRI-O
-  all_images=$(_ssh "sudo crictl images -o json" 2>/dev/null | python3 -c "
+  # Get all Red Hat / registry.k8s.io images from CRI-O. Keep the raw image
+  # list so we can map the current operator catalog tag to its exact digest.
+  image_json=$(_ssh "sudo crictl images -o json" 2>/dev/null || true)
+  all_images=$(printf '%s\n' "$image_json" | python3 -c "
 import sys, json
 data = json.loads(sys.stdin.read())
 seen = set()
@@ -254,6 +277,25 @@ for img in data.get('images', []):
                 # size in bytes
                 size = img.get('size', '0')
                 print(f'{size} {digest}')
+" 2>/dev/null || true)
+
+  catalog_versions=$(printf '%s\n' "$image_json" | python3 -c "
+import re, sys, json
+data = json.loads(sys.stdin.read())
+seen = set()
+for img in data.get('images', []):
+    digests = img.get('repoDigests', [])
+    for tag in img.get('repoTags', []):
+        match = re.match(r'^(registry\\.redhat\\.io/redhat/redhat-operator-index):v([0-9]+\\.[0-9]+)$', tag)
+        if not match:
+            continue
+        repository, version = match.groups()
+        for digest in digests:
+            if digest.startswith(repository + '@'):
+                key = (version, digest)
+                if key not in seen:
+                    seen.add(key)
+                    print(f'{version}\\t{digest}')
 " 2>/dev/null || true)
 
   if [ -z "$all_images" ]; then
@@ -283,8 +325,12 @@ for img in data.get('images', []):
   failed=0
   pruned=0
   current_cache_names=$(mktemp)
+  catalog_metadata_tmp=$(mktemp)
   while IFS=' ' read -r img_size img_ref; do
     [ -z "$img_ref" ] && continue
+
+    catalog_version=$(printf '%s\n' "$catalog_versions" \
+      | awk -F '\t' -v ref="$img_ref" '$2 == ref {print $1; exit}')
 
     # Safe filename
     safe_name=$(echo "$img_ref" | md5sum | awk '{print $1}')
@@ -305,6 +351,10 @@ for img in data.get('images', []):
       && tar -tf "$tarball" 2>/dev/null | grep -qx 'oci-layout'; then
       file_size=$(du -h "$tarball" | awk '{print $1}')
       printf "  %-62s %6s (cached)\n" "$display_name" "$file_size"
+      if [ -n "$catalog_version" ] && [ -s "${tarball%.tar}.local-ref" ]; then
+        printf '%s\t%s\t%s\n' "$catalog_version" "$img_ref" \
+          "$(cat "${tarball%.tar}.local-ref")" >>"$catalog_metadata_tmp"
+      fi
       skipped=$((skipped + 1))
       continue
     fi
@@ -323,6 +373,10 @@ for img in data.get('images', []):
       if [ -n "$manifest_digest" ] && [ "${#manifest_digest}" -eq 64 ] && [[ "$img_ref" == *@* ]]; then
         echo "$img_ref" >"$ref_file"
         printf '%s@sha256:%s\n' "${img_ref%@*}" "$manifest_digest" >"${tarball%.tar}.local-ref"
+        if [ -n "$catalog_version" ]; then
+          printf '%s\t%s\t%s\n' "$catalog_version" "$img_ref" \
+            "$(cat "${tarball%.tar}.local-ref")" >>"$catalog_metadata_tmp"
+        fi
         file_size=$(du -h "$tarball" | awk '{print $1}')
         printf "${_GREEN}%6s${_NC}\n" "$file_size"
         saved=$((saved + 1))
@@ -337,6 +391,14 @@ for img in data.get('images', []):
       failed=$((failed + 1))
     fi
   done <<<"$all_images"
+
+  if [ -s "$catalog_metadata_tmp" ]; then
+    sort -u "$catalog_metadata_tmp" >"${CACHE_DIR}/${CACHE_CATALOG_METADATA}.tmp"
+    mv "${CACHE_DIR}/${CACHE_CATALOG_METADATA}.tmp" "${CACHE_DIR}/${CACHE_CATALOG_METADATA}"
+  else
+    rm -f "${CACHE_DIR}/${CACHE_CATALOG_METADATA}"
+  fi
+  rm -f "$catalog_metadata_tmp"
 
   # Remove corrupt or stale entries that are not part of the current image
   # set. Keeping them would make a later load report failures even though

@@ -18,6 +18,8 @@ CACHE_REF='registry.redhat.io/example/image@sha256:deadbeef'
 CACHE_KEY=$(printf '%s\n' "$CACHE_REF" | md5sum | awk '{print $1}')
 printf '%s\n' "$CACHE_REF" >"${CACHE_DIR}/${CACHE_KEY}.ref"
 printf 'Copying blob sha256:deadbeef\n' >"${CACHE_DIR}/${CACHE_KEY}.tar"
+CACHE_CATALOG_REF='registry.redhat.io/redhat/redhat-operator-index@sha256:cafebabe'
+CACHE_CATALOG_KEY=$(printf '%s\n' "$CACHE_CATALOG_REF" | md5sum | awk '{print $1}')
 printf '%s\n' 'registry.redhat.io/stale/image@sha256:stale' >"${CACHE_DIR}/stale.ref"
 printf 'Copying blob sha256:stale\n' >"${CACHE_DIR}/stale.tar"
 printf 'test-key\n' >"$MOCK_HOME/.crc/machines/crc/id_ed25519"
@@ -37,10 +39,10 @@ cat >"${MOCK_BIN}/ssh" <<'EOF'
 printf '%s\n' "$*" >>"${MOCK_SSH_LOG}"
 case "$*" in
   *"crictl images -o json"*)
-    printf '%s\n' '{"images":[{"repoDigests":["registry.redhat.io/example/image@sha256:deadbeef"],"size":123}]}'
+    printf '%s\n' '{"images":[{"repoDigests":["registry.redhat.io/example/image@sha256:deadbeef"],"size":123},{"repoTags":["registry.redhat.io/redhat/redhat-operator-index:v4.22"],"repoDigests":["registry.redhat.io/redhat/redhat-operator-index@sha256:cafebabe"],"size":456}]}'
     ;;
   *"crictl inspecti"*)
-    exit 1
+    [ "${MOCK_INSPECT_RESULT:-fail}" = success ]
     ;;
   *"containers-storage:"*"oci-archive:"*)
     tar -cf - -C "$MOCK_ARCHIVE_DIR" oci-layout index.json blobs
@@ -85,6 +87,12 @@ if [ ! -s "${CACHE_DIR}/${CACHE_KEY}.local-ref" ] || [[ "$(cat "${CACHE_DIR}/${C
   exit 1
 fi
 echo "✓ cache save records the local platform digest"
+if [ ! -s "${CACHE_DIR}/catalog-digests" ] \
+  || ! grep -q '^4\.22[[:space:]]' "${CACHE_DIR}/catalog-digests" 2>/dev/null; then
+  echo "✗ cache save should record the catalog digest for the OCP version" >&2
+  exit 1
+fi
+echo "✓ cache save records the operator catalog digest"
 if [ -e "${CACHE_DIR}/stale.tar" ] || [ -e "${CACHE_DIR}/stale.ref" ] \
   || [ -e "${CACHE_DIR}/stale-valid.tar" ] || [ -e "${CACHE_DIR}/stale-valid.ref" ]; then
   echo "✗ cache save should remove stale entries" >&2
@@ -98,6 +106,14 @@ if ! "$CACHE_SCRIPT" load >/dev/null 2>&1; then
 fi
 echo "✓ valid cached OCI archives load successfully"
 
+export MOCK_INSPECT_RESULT=success
+catalog_ref=$($CACHE_SCRIPT catalog-ref 4.22 2>/dev/null || true)
+if [[ "$catalog_ref" != *@sha256:* ]]; then
+  echo "✗ catalog-ref should return the loaded local catalog digest" >&2
+  exit 1
+fi
+echo "✓ catalog-ref returns the loaded local catalog digest"
+
 if ! grep -q -- '--all --quiet containers-storage:' "$MOCK_SSH_LOG" \
   || ! grep -q -- 'oci-archive:' "$MOCK_SSH_LOG"; then
   echo "✗ cache save should create OCI archives with all manifests" >&2
@@ -106,6 +122,7 @@ fi
 echo "✓ cache save creates OCI archives with all manifests"
 
 export MOCK_IMPORT_RESULT=fail
+export MOCK_INSPECT_RESULT=fail
 if "$CACHE_SCRIPT" load >/dev/null 2>&1; then
   echo "✗ digest-preserving cache load should fail when an image import fails" >&2
   exit 1
