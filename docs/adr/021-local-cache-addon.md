@@ -96,9 +96,9 @@ mode keeps CRI-O's native image store on a persistent host-managed virtual disk:
 
 ```bash
 AAP_PERSISTENT_IMAGE_STORE=true
-# Omit AAP_IMAGE_STORE_DISK to use the platform default:
-# Linux: ~/.aap-demo/storage/crio-images.qcow2
-# macOS: ~/.aap-demo/storage/crio-images.raw
+# Linux/libvirt only. macOS/vfkit uses the OCI image cache instead.
+# Omit AAP_IMAGE_STORE_DISK to use the Linux platform default:
+# ~/.aap-demo/storage/crio-images.qcow2
 AAP_IMAGE_STORE_SIZE_GB=60
 # Required only for first-time initialization of a blank disk:
 AAP_IMAGE_STORE_FORMAT=true
@@ -106,21 +106,17 @@ AAP_IMAGE_STORE_FORMAT=true
 
 Lifecycle:
 
-1. Create the host disk once. Linux uses qcow2; macOS uses a sparse raw image
-   because Apple Virtualization/vfkit does not support qcow2. A blank disk is
-   formatted only when `AAP_IMAGE_STORE_FORMAT=true` is explicitly set.
-2. On Linux, attach the disk to the CRC system-libvirt VM. On macOS, configure
-   CRC's machine config to launch vfkit through a wrapper that adds
-   `--device virtio-blk,path=...`; the VM is relaunched once so the disk is
-   present before CRI-O starts.
+1. Create the Linux qcow2 disk once. A blank disk is formatted only when
+   `AAP_IMAGE_STORE_FORMAT=true` is explicitly set. macOS/vfkit does not use
+   this persistent-store path; use the OCI image cache there.
+2. Attach the disk to the CRC system-libvirt VM.
 3. Mount it at `/var/lib/containers/storage`, persist the filesystem UUID in the guest's
    `fstab`, install a CRI-O mount dependency, apply SELinux labels, and restart CRI-O and
    MicroShift before deployment.
 4. Verify that `crictl images` sees the persistent store; image loading should then be near
    zero because the native image metadata and layers already exist.
-5. Before `crc delete`, stop CRI-O, unmount the disk, and retain the host disk.
-   Linux detaches it through libvirt; macOS retains the raw image and restores
-   the original vfkit path if the machine remains available.
+5. Before `crc delete`, stop CRI-O, unmount and detach the Linux disk, and
+   retain the host disk.
 
 The implementation must never mount the host's overlay/container-storage directory directly
 through NFS or virtiofs. It must refuse to format an existing disk without explicit approval,
