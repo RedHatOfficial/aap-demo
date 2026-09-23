@@ -19,6 +19,8 @@ source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 source "${SCRIPT_DIR}/includes/infra-crc.sh"
 # shellcheck source=includes/ingress-ca-trust.sh
 source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
+# shellcheck source=includes/persistent-crio-store.sh
+source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
 
 # Colors
 _RED='\033[0;31m'
@@ -363,6 +365,9 @@ printf "${_GREEN}▸${_NC} Pull secret: ${PULL_SECRET_PATH}\n"
 # Start CRC
 # ---------------------------------------------------------------------------
 printf "${_GREEN}▸${_NC} Starting CRC (this takes 3-5 minutes)...\n"
+if ! persistent_crio_store_prepare_before_crc_start; then
+  echo "WARNING: Could not prepare persistent CRI-O storage before CRC start; using the OCI cache fallback" >&2
+fi
 if ! crc start -p "$PULL_SECRET_PATH" 2>&1 | tee /tmp/crc-start.log; then
   # Retry: pipe pull secret via --pull-secret-file - (non-TTY workaround)
   echo "  Retrying with stdin pull secret..."
@@ -370,6 +375,14 @@ if ! crc start -p "$PULL_SECRET_PATH" 2>&1 | tee /tmp/crc-start.log; then
     echo "ERROR: crc start failed — see /tmp/crc-start.log"
     exit 1
   fi
+fi
+
+# On macOS the extra raw disk must be present in vfkit's launch configuration.
+# The first CRC start creates the machine config, so the helper may relaunch it
+# once with the persistent disk before any addons or storage-heavy setup runs.
+if ! persistent_crio_store_prepare_or_fallback; then
+  echo "ERROR: Persistent CRI-O storage setup failed" >&2
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
