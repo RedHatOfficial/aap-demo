@@ -1250,6 +1250,10 @@ else
   echo "AO replica profile: 2 each (explicit higher-resource mode)"
 fi
 
+CLUSTER_DOMAIN=$(resolve_cluster_domain)
+INGRESS_HOST="automation-orchestrator.${CLUSTER_DOMAIN}"
+echo "✓ Ingress host: ${INGRESS_HOST}"
+
 ao_ensure_mcp_server() {
   if kubectl get ansiblemcpserver aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1 \
     || kubectl get deployment aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1; then
@@ -1429,10 +1433,6 @@ if ! operator_package_in_catalog "$CATALOG_NAMESPACE"; then
   fi
 fi
 echo "✓ Operator package found in AO catalog (${CATALOG_NAMESPACE}, ${OPERATOR_CHANNEL})"
-
-CLUSTER_DOMAIN=$(resolve_cluster_domain)
-INGRESS_HOST="automation-orchestrator.${CLUSTER_DOMAIN}"
-echo "✓ Ingress host: ${INGRESS_HOST}"
 
 # --- CloudNativePG operator (dev-only PostgreSQL) ---
 ensure_cnpg_operator

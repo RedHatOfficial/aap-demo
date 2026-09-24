@@ -76,4 +76,15 @@ if grep -q 'kubectl scale' "${REPO_ROOT}/addons/ao/deploy.sh"; then
 fi
 echo "PASS: AO replica source of truth remains the custom resource"
 
+fast_path_apply_line=$(awk '/^[[:space:]]+deploy_ao_instance$/ { print NR; exit }' \
+  "${REPO_ROOT}/addons/ao/deploy.sh")
+ingress_init_line=$(awk '/^INGRESS_HOST=/ { print NR; exit }' \
+  "${REPO_ROOT}/addons/ao/deploy.sh")
+if [ -z "$fast_path_apply_line" ] || [ -z "$ingress_init_line" ] \
+  || [ "$ingress_init_line" -gt "$fast_path_apply_line" ]; then
+  echo "FAIL: existing-install CR apply can run before INGRESS_HOST is initialized" >&2
+  exit 1
+fi
+echo "PASS: existing-install CR apply has an initialized ingress host"
+
 echo "AO replica profile tests passed"
