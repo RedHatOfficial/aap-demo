@@ -1,0 +1,797 @@
+#!/usr/bin/env bash
+# Automation Portal Operator addon.
+#
+# The operator is a separate AAP 2.7 Technology Preview deployment path.  It
+# intentionally does not share the Helm release or namespace used by portal.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
+PORTAL_OPERATOR_NAMESPACE="${PORTAL_OPERATOR_NAMESPACE:-automation-portal}"
+PORTAL_OPERATOR_DIR="${HOME}/.aap-demo/portal-operator"
+PORTAL_NAME="${PORTAL_NAME:-portal}"
+OAUTH_APP_NAME="${OAUTH_APP_NAME:-automation-portal}"
+ACTION="${1:-deploy}"
+
+OPERATOR_PACKAGE="${PORTAL_OPERATOR_PACKAGE:-automation-portal-operator}"
+OPERATOR_CHANNEL="${PORTAL_OPERATOR_CHANNEL:-fast}"
+OPERATOR_SOURCE="${PORTAL_OPERATOR_SOURCE:-redhat-operators}"
+OPERATOR_SOURCE_NAMESPACE="${PORTAL_OPERATOR_SOURCE_NAMESPACE:-}"
+
+# Cleanup ownership is captured before the addon creates any resources. This
+# prevents disable from deleting pre-existing shared operator resources.
+# Conservative defaults protect shared resources when disabling an older
+# install that predates the ownership state file.
+PORTAL_OPERATOR_NAMESPACE_PREEXISTED=1
+OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=1
+AUTOMATION_PORTAL_CRD_PREEXISTED=1
+BACKSTAGES_CRD_PREEXISTED=1
+RHDH_SUBSCRIPTION_PREEXISTED=1
+CLEANUP_BASELINE_CAPTURED=0
+
+require_tools() {
+  local tool
+  for tool in kubectl curl jq; do
+    command -v "$tool" >/dev/null 2>&1 || {
+      echo "❌ Required tool not found: $tool" >&2
+      exit 1
+    }
+  done
+}
+
+cleanup_aap_credentials() {
+  local aap_route admin_pass app_id token_id encoded response id
+  command -v kubectl >/dev/null 2>&1 || return
+  command -v curl >/dev/null 2>&1 || return
+  command -v jq >/dev/null 2>&1 || return
+  aap_route=$(kubectl get route aap -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.spec.host}' 2>/dev/null || true)
+  admin_pass=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+  [ -n "$aap_route" ] && [ -n "$admin_pass" ] || return
+
+  if [ -f "$PORTAL_OPERATOR_DIR/oauth_credentials.json" ]; then
+    app_id=$(jq -r '.oauth_app_id // empty' "$PORTAL_OPERATOR_DIR/oauth_credentials.json")
+    token_id=$(jq -r '.api_token_id // empty' "$PORTAL_OPERATOR_DIR/oauth_credentials.json")
+    [ -z "$token_id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/tokens/$token_id/" >/dev/null || true
+    [ -z "$app_id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/applications/$app_id/" >/dev/null || true
+  fi
+
+  # Revoke credentials left by releases that did not persist token IDs.
+  response=$(curl -ksu "admin:$admin_pass" \
+    "https://$aap_route/api/gateway/v1/tokens/?page_size=200" 2>/dev/null || true)
+  while read -r id; do
+    [ -z "$id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/tokens/$id/" >/dev/null || true
+  done < <(echo "$response" | jq -r '.results[]? | select(.description == "Portal operator catalog access") | .id')
+
+  encoded=$(jq -rn --arg name "$OAUTH_APP_NAME" '$name|@uri')
+  response=$(curl -ksu "admin:$admin_pass" \
+    "https://$aap_route/api/gateway/v1/applications/?name=$encoded" 2>/dev/null || true)
+  while read -r id; do
+    [ -z "$id" ] || curl -ksu "admin:$admin_pass" -X DELETE \
+      "https://$aap_route/api/gateway/v1/applications/$id/" >/dev/null || true
+  done < <(echo "$response" | jq -r '.results[]?.id')
+}
+
+remove_operator_sccs_for_namespace() {
+  local namespace="$1"
+  kubectl label namespace "$namespace" \
+    pod-security.kubernetes.io/enforce- \
+    pod-security.kubernetes.io/audit- \
+    pod-security.kubernetes.io/warn- >/dev/null 2>&1 || true
+  if command -v oc >/dev/null 2>&1; then
+    oc adm policy remove-scc-from-group anyuid \
+      "system:serviceaccounts:${namespace}" >/dev/null 2>&1 || true
+    oc adm policy remove-scc-from-group privileged \
+      "system:serviceaccounts:${namespace}" >/dev/null 2>&1 || true
+    return
+  fi
+  kubectl delete clusterrolebinding \
+    "system:openshift:scc:anyuid:${namespace}" \
+    "system:openshift:scc:privileged:${namespace}" \
+    --ignore-not-found >/dev/null 2>&1 || true
+}
+
+cleanup() {
+  echo "Disabling portal-operator addon..."
+  cleanup_aap_credentials
+  remove_operator_sccs_for_namespace "$PORTAL_OPERATOR_NAMESPACE"
+  remove_operator_sccs_for_namespace openshift-operators
+  kubectl delete automationportal "$PORTAL_NAME" -n "$PORTAL_OPERATOR_NAMESPACE" \
+    --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete subscription "$OPERATOR_PACKAGE" -n "$PORTAL_OPERATOR_NAMESPACE" \
+    --ignore-not-found >/dev/null 2>&1 || true
+  if [ "$PORTAL_OPERATOR_NAMESPACE_PREEXISTED" -eq 0 ]; then
+    kubectl delete namespace "$PORTAL_OPERATOR_NAMESPACE" --timeout=120s \
+      --ignore-not-found >/dev/null 2>&1 || true
+  fi
+
+  # OLM intentionally leaves CRDs and generated ClusterRoles behind when a
+  # CSV is removed. Remove only artifacts that were absent before this addon
+  # ran, and only after all namespaced resources have been deleted.
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$AUTOMATION_PORTAL_CRD_PREEXISTED" -eq 0 ]; then
+    kubectl delete crd automationportals.automationportal.aap.redhat.com \
+      --ignore-not-found >/dev/null 2>&1 || true
+  fi
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$BACKSTAGES_CRD_PREEXISTED" -eq 0 ]; then
+    kubectl delete crd backstages.rhdh.redhat.com --ignore-not-found \
+      >/dev/null 2>&1 || true
+  fi
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && { [ "$AUTOMATION_PORTAL_CRD_PREEXISTED" -eq 0 ] \
+      || [ "$BACKSTAGES_CRD_PREEXISTED" -eq 0 ]; }; then
+    while read -r role; do
+      [ -z "$role" ] || kubectl delete "$role" --ignore-not-found \
+        >/dev/null 2>&1 || true
+    done < <(kubectl get clusterrole -o name 2>/dev/null \
+      | grep -E '/(automationportals\.automationportal\.aap\.redhat\.com-|backstages\.rhdh\.redhat\.com-|rhdh-backstage-|rhdh-metrics-reader$)' || true)
+  fi
+
+  if [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED" -eq 0 ]; then
+    kubectl delete namespace openshift-operators --timeout=120s \
+      --ignore-not-found >/dev/null 2>&1 || true
+  elif [ "$CLEANUP_BASELINE_CAPTURED" -eq 1 ] \
+    && [ "$RHDH_SUBSCRIPTION_PREEXISTED" -eq 0 ]; then
+    kubectl delete subscription rhdh -n openshift-operators \
+      --ignore-not-found >/dev/null 2>&1 || true
+  fi
+  rm -rf "$PORTAL_OPERATOR_DIR"
+  echo "Portal operator addon disabled"
+}
+
+capture_cleanup_baseline() {
+  PORTAL_OPERATOR_NAMESPACE_PREEXISTED=0
+  OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=0
+  AUTOMATION_PORTAL_CRD_PREEXISTED=0
+  BACKSTAGES_CRD_PREEXISTED=0
+  RHDH_SUBSCRIPTION_PREEXISTED=0
+  kubectl get namespace "$PORTAL_OPERATOR_NAMESPACE" >/dev/null 2>&1 \
+    && PORTAL_OPERATOR_NAMESPACE_PREEXISTED=1 || true
+  kubectl get namespace openshift-operators >/dev/null 2>&1 \
+    && OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=1 || true
+  kubectl get crd automationportals.automationportal.aap.redhat.com \
+    >/dev/null 2>&1 && AUTOMATION_PORTAL_CRD_PREEXISTED=1 || true
+  kubectl get crd backstages.rhdh.redhat.com >/dev/null 2>&1 \
+    && BACKSTAGES_CRD_PREEXISTED=1 || true
+  kubectl get subscription rhdh -n openshift-operators >/dev/null 2>&1 \
+    && RHDH_SUBSCRIPTION_PREEXISTED=1 || true
+  mkdir -p "$PORTAL_OPERATOR_DIR"
+  chmod 700 "$PORTAL_OPERATOR_DIR"
+  printf '%s\n' \
+    "PORTAL_OPERATOR_NAMESPACE_PREEXISTED=$PORTAL_OPERATOR_NAMESPACE_PREEXISTED" \
+    "OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED=$OPENSHIFT_OPERATORS_NAMESPACE_PREEXISTED" \
+    "AUTOMATION_PORTAL_CRD_PREEXISTED=$AUTOMATION_PORTAL_CRD_PREEXISTED" \
+    "BACKSTAGES_CRD_PREEXISTED=$BACKSTAGES_CRD_PREEXISTED" \
+    "RHDH_SUBSCRIPTION_PREEXISTED=$RHDH_SUBSCRIPTION_PREEXISTED" \
+    >"$PORTAL_OPERATOR_DIR/cleanup-baseline.env"
+  CLEANUP_BASELINE_CAPTURED=1
+}
+
+load_cleanup_baseline() {
+  local state_file="$PORTAL_OPERATOR_DIR/cleanup-baseline.env"
+  if [ -f "$state_file" ]; then
+    # shellcheck disable=SC1090
+    source "$state_file"
+    CLEANUP_BASELINE_CAPTURED=1
+  fi
+}
+
+if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
+  load_cleanup_baseline
+  cleanup
+  exit 0
+fi
+
+check_aap() {
+  AAP_ROUTE=$(kubectl get route aap -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.spec.host}' 2>/dev/null || true)
+  [ -n "$AAP_ROUTE" ] || {
+    echo "❌ AAP route not found in namespace $AAP_NAMESPACE. Run 'aap-demo deploy' first." >&2
+    exit 1
+  }
+  ADMIN_PASS=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)
+  [ -n "$ADMIN_PASS" ] || {
+    echo "❌ AAP admin password not found" >&2
+    exit 1
+  }
+}
+
+setup_namespace() {
+  kubectl create namespace "$PORTAL_OPERATOR_NAMESPACE" 2>/dev/null || true
+  # OLM catalog pods run with a fixed UID (e.g. 1001) that falls outside the
+  # restricted PSA range on MicroShift.  Set privileged to allow them; SCCs
+  # still govern what the pods can actually do at runtime.
+  kubectl label namespace "$PORTAL_OPERATOR_NAMESPACE" \
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged --overwrite >/dev/null 2>&1 || true
+  grant_operator_sccs_for_namespace "$PORTAL_OPERATOR_NAMESPACE"
+}
+
+grant_operator_sccs_for_namespace() {
+  local namespace="$1"
+  if command -v oc >/dev/null 2>&1; then
+    oc adm policy add-scc-to-group anyuid \
+      "system:serviceaccounts:${namespace}" >/dev/null
+    oc adm policy add-scc-to-group privileged \
+      "system:serviceaccounts:${namespace}" >/dev/null
+    return
+  fi
+  kubectl create clusterrolebinding \
+    "system:openshift:scc:anyuid:${namespace}" \
+    --clusterrole=system:openshift:scc:anyuid \
+    --group="system:serviceaccounts:${namespace}" >/dev/null 2>/dev/null || true
+  kubectl create clusterrolebinding \
+    "system:openshift:scc:privileged:${namespace}" \
+    --clusterrole=system:openshift:scc:privileged \
+    --group="system:serviceaccounts:${namespace}" >/dev/null 2>/dev/null || true
+}
+
+copy_catalog_source() {
+  local target_namespace="$1"
+  local catalog_image catalog_secret
+  kubectl create namespace "$target_namespace" 2>/dev/null || true
+  if kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" >/dev/null 2>&1; then
+    kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" -o json \
+      | jq --arg namespace "$target_namespace" \
+        'del(.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.managedFields) | .metadata.namespace=$namespace' \
+      | kubectl apply -f - >/dev/null
+  fi
+  catalog_image=$(kubectl get catalogsource "$OPERATOR_SOURCE" -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.spec.image}')
+  catalog_secret=$(kubectl get catalogsource "$OPERATOR_SOURCE" -n "$AAP_NAMESPACE" \
+    -o jsonpath='{.spec.secrets[0]}')
+  kubectl apply -f - <<EOF
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: ${OPERATOR_SOURCE}
+  namespace: ${target_namespace}
+spec:
+  displayName: Red Hat Operators
+  publisher: Red Hat
+  sourceType: grpc
+  image: ${catalog_image}
+  grpcPodConfig:
+    securityContextConfig: restricted
+  secrets:
+    - ${catalog_secret}
+  updateStrategy:
+    registryPoll:
+      interval: 10m
+EOF
+  grant_operator_sccs_for_namespace "$target_namespace"
+}
+
+prepare_catalog_source() {
+  if [ "$AAP_NAMESPACE" != openshift-marketplace ] \
+    && kubectl get catalogsource "$OPERATOR_SOURCE" -n "$AAP_NAMESPACE" >/dev/null 2>&1; then
+    # The local AAP demo uses namespace-scoped catalogs. Keep each OLM
+    # consumer in the namespace where its catalog is visible.
+    copy_catalog_source "$PORTAL_OPERATOR_NAMESPACE"
+    OPERATOR_SOURCE_NAMESPACE="$PORTAL_OPERATOR_NAMESPACE"
+    return
+  fi
+  if kubectl get catalogsource "$OPERATOR_SOURCE" -n openshift-marketplace >/dev/null 2>&1; then
+    OPERATOR_SOURCE_NAMESPACE="openshift-marketplace"
+    return
+  fi
+  if ! kubectl get catalogsource "$OPERATOR_SOURCE" -n "$AAP_NAMESPACE" >/dev/null 2>&1; then
+    echo "❌ CatalogSource $OPERATOR_SOURCE not found in $AAP_NAMESPACE or openshift-marketplace" >&2
+    exit 1
+  fi
+  copy_catalog_source "$PORTAL_OPERATOR_NAMESPACE"
+  OPERATOR_SOURCE_NAMESPACE="$PORTAL_OPERATOR_NAMESPACE"
+}
+
+prepare_rhdh_namespace() {
+  local rhdh_catalog_namespace="openshift-marketplace"
+  kubectl create namespace openshift-operators 2>/dev/null || true
+  # RHDH operator pods also require privileged PSA + anyuid/privileged SCCs on
+  # MicroShift for the same reason as the portal operator catalog pods.
+  kubectl label namespace openshift-operators \
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged --overwrite >/dev/null 2>&1 || true
+  grant_operator_sccs_for_namespace openshift-operators
+  kubectl apply -f - <<'EOF'
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: global-operators
+  namespace: openshift-operators
+spec: {}
+EOF
+  if [ "$OPERATOR_SOURCE_NAMESPACE" != openshift-marketplace ]; then
+    copy_catalog_source openshift-operators
+    rhdh_catalog_namespace="openshift-operators"
+  fi
+  if kubectl get subscription rhdh -n openshift-operators >/dev/null 2>&1; then
+    kubectl patch subscription rhdh -n openshift-operators --type=merge \
+      -p "{\"spec\":{\"source\":\"${OPERATOR_SOURCE}\",\"sourceNamespace\":\"${rhdh_catalog_namespace}\"}}" \
+      >/dev/null
+  fi
+}
+
+configure_rhdh_subscription() {
+  local rhdh_catalog_namespace="openshift-marketplace"
+  if [ "$OPERATOR_SOURCE_NAMESPACE" != openshift-marketplace ]; then
+    rhdh_catalog_namespace="openshift-operators"
+  fi
+
+  # The portal operator creates this Subscription only after the
+  # AutomationPortal CR exists. Wait for that first reconciliation so a
+  # namespace-scoped catalog can be selected on the initial deployment.
+  for _ in $(seq 1 60); do
+    if kubectl get subscription rhdh -n openshift-operators >/dev/null 2>&1; then
+      kubectl patch subscription rhdh -n openshift-operators --type=merge \
+        -p "{\"spec\":{\"source\":\"${OPERATOR_SOURCE}\",\"sourceNamespace\":\"${rhdh_catalog_namespace}\"}}" \
+        >/dev/null
+      return
+    fi
+    sleep 2
+  done
+  echo "❌ RHDH Operator Subscription was not created" >&2
+  exit 1
+}
+
+portal_operator_ready() {
+  local csv
+  kubectl get crd automationportals.automationportal.aap.redhat.com >/dev/null 2>&1 || return 1
+  csv=$(kubectl get subscription "$OPERATOR_PACKAGE" -n "$PORTAL_OPERATOR_NAMESPACE" \
+    -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)
+  [ -n "$csv" ] || return 1
+  [ "$(kubectl get csv "$csv" -n "$PORTAL_OPERATOR_NAMESPACE" \
+    -o jsonpath='{.status.phase}' 2>/dev/null || true)" = Succeeded ]
+}
+
+install_operator() {
+  if portal_operator_ready; then
+    echo "✓ Automation Portal Operator CRD already installed"
+    return
+  fi
+
+  if [ -z "$OPERATOR_SOURCE_NAMESPACE" ]; then
+    prepare_catalog_source
+  fi
+
+  echo "Installing Automation Portal Operator ($OPERATOR_PACKAGE/$OPERATOR_CHANNEL) from $OPERATOR_SOURCE_NAMESPACE..."
+  kubectl apply -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: automation-portal
+  namespace: ${PORTAL_OPERATOR_NAMESPACE}
+spec:
+  targetNamespaces:
+    - ${PORTAL_OPERATOR_NAMESPACE}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ${OPERATOR_PACKAGE}
+  namespace: ${PORTAL_OPERATOR_NAMESPACE}
+spec:
+  channel: ${OPERATOR_CHANNEL}
+  installPlanApproval: Automatic
+  name: ${OPERATOR_PACKAGE}
+  source: ${OPERATOR_SOURCE}
+  sourceNamespace: ${OPERATOR_SOURCE_NAMESPACE}
+EOF
+
+  for _ in $(seq 1 60); do
+    portal_operator_ready && {
+      echo "✓ Automation Portal Operator installed"
+      return
+    }
+    sleep 5
+  done
+  echo "❌ Operator CRD was not installed. Check the Subscription and CSV:" >&2
+  echo "   kubectl get subscription,csv -n $PORTAL_OPERATOR_NAMESPACE" >&2
+  exit 1
+}
+
+select_organization() {
+  local orgs_json org_count response
+  orgs_json=$(curl -ksu "admin:$ADMIN_PASS" \
+    "https://$AAP_ROUTE/api/gateway/v1/organizations/")
+  org_count=$(echo "$orgs_json" | jq -r '.count // 0')
+  if [ "$org_count" -eq 0 ]; then
+    response=$(curl -ksu "admin:$ADMIN_PASS" -X POST \
+      "https://$AAP_ROUTE/api/gateway/v1/organizations/" \
+      -H 'Content-Type: application/json' \
+      -d '{"name":"Default","description":"Default organization for portal operator"}')
+    ORG_ID=$(echo "$response" | jq -r '.id')
+  else
+    ORG_ID=$(echo "$orgs_json" | jq -r '.results[0].id')
+  fi
+  [ -n "${ORG_ID:-}" ] && [ "$ORG_ID" != null ] || {
+    echo "❌ Failed to select an AAP organization" >&2
+    exit 1
+  }
+}
+
+load_github_credentials() {
+  # Reuse the credential names already used by the existing APME/portal flow.
+  GITHUB_TOKEN="${GITHUB_TOKEN:-}"
+  GITHUB_APP_ID="${GITHUB_APP_ID:-}"
+  GITHUB_APP_CLIENT_ID="${GITHUB_APP_CLIENT_ID:-}"
+  GITHUB_APP_CLIENT_SECRET="${GITHUB_APP_CLIENT_SECRET:-}"
+  GITHUB_APP_PRIVATE_KEY_PATH="${GITHUB_APP_PRIVATE_KEY_PATH:-}"
+
+  local file="${GITHUB_CREDS_FILE:-${HOME}/.aap-demo/apme-eap-github-creds.yml}"
+  [ -f "$file" ] || return 0
+  GITHUB_TOKEN="${GITHUB_TOKEN:-$(sed -n 's/^github_token:[[:space:]]*//p' "$file" | tr -d '"' | head -1)}"
+  GITHUB_APP_ID="${GITHUB_APP_ID:-$(sed -n 's/^github_app_id:[[:space:]]*//p' "$file" | tr -d '"' | head -1)}"
+  GITHUB_APP_CLIENT_ID="${GITHUB_APP_CLIENT_ID:-$(sed -n 's/^github_app_client_id:[[:space:]]*//p' "$file" | tr -d '"' | head -1)}"
+  GITHUB_APP_CLIENT_SECRET="${GITHUB_APP_CLIENT_SECRET:-$(sed -n 's/^github_app_client_secret:[[:space:]]*//p' "$file" | tr -d '"' | head -1)}"
+  GITHUB_APP_PRIVATE_KEY_PATH="${GITHUB_APP_PRIVATE_KEY_PATH:-$(sed -n 's/^github_app_private_key_path:[[:space:]]*//p' "$file" | tr -d '"' | head -1)}"
+}
+
+create_oauth_app() {
+  local name="$OAUTH_APP_NAME"
+  local encoded existing count response
+  encoded=$(jq -rn --arg name "$name" '$name|@uri')
+  existing=$(curl -ksu "admin:$ADMIN_PASS" \
+    "https://$AAP_ROUTE/api/gateway/v1/applications/?name=$encoded")
+  count=$(echo "$existing" | jq -r '.count // 0')
+  if [ "$count" -gt 0 ] && [ -f "$PORTAL_OPERATOR_DIR/oauth_credentials.json" ]; then
+    OAUTH_APP_ID=$(echo "$existing" | jq -r '.results[0].id')
+    CLIENT_ID=$(jq -r '.client_id' "$PORTAL_OPERATOR_DIR/oauth_credentials.json")
+    CLIENT_SECRET=$(jq -r '.client_secret' "$PORTAL_OPERATOR_DIR/oauth_credentials.json")
+    return
+  fi
+  if [ "$count" -gt 0 ]; then
+    local old_id
+    old_id=$(echo "$existing" | jq -r '.results[0].id')
+    curl -ksu "admin:$ADMIN_PASS" -X DELETE \
+      "https://$AAP_ROUTE/api/gateway/v1/applications/$old_id/" >/dev/null || true
+  fi
+  response=$(curl -ksu "admin:$ADMIN_PASS" -X POST \
+    "https://$AAP_ROUTE/api/gateway/v1/applications/" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg name "$name" --argjson organization "$ORG_ID" \
+      '{name:$name, organization:$organization, authorization_grant_type:"authorization-code", client_type:"confidential", redirect_uris:"https://example.com"}')")
+  OAUTH_APP_ID=$(echo "$response" | jq -r '.id')
+  CLIENT_ID=$(echo "$response" | jq -r '.client_id')
+  CLIENT_SECRET=$(echo "$response" | jq -r '.client_secret')
+  [ -n "$CLIENT_ID" ] && [ "$CLIENT_ID" != null ] || {
+    echo "❌ Failed to create AAP OAuth app" >&2
+    exit 1
+  }
+  jq -n --arg oauth_app_id "$OAUTH_APP_ID" --arg client_id "$CLIENT_ID" \
+    --arg client_secret "$CLIENT_SECRET" \
+    '{oauth_app_id:$oauth_app_id,client_id:$client_id,client_secret:$client_secret}' \
+    >"$PORTAL_OPERATOR_DIR/oauth_credentials.json"
+  chmod 600 "$PORTAL_OPERATOR_DIR/oauth_credentials.json"
+}
+
+create_credentials() {
+  mkdir -p "$PORTAL_OPERATOR_DIR"
+  chmod 700 "$PORTAL_OPERATOR_DIR"
+  create_oauth_app
+  local token_response api_token api_token_id ca_path credentials_tmp
+  token_response=$(curl -ksu "admin:$ADMIN_PASS" -X POST \
+    "https://$AAP_ROUTE/api/gateway/v1/tokens/" -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg description 'Portal operator catalog access' '{description:$description,scope:"write"}')")
+  api_token=$(echo "$token_response" | jq -r '.token // empty')
+  api_token_id=$(echo "$token_response" | jq -r '.id // empty')
+  [ -n "$api_token" ] && [ -n "$api_token_id" ] || {
+    echo "❌ Failed to generate AAP API token" >&2
+    exit 1
+  }
+  credentials_tmp="$PORTAL_OPERATOR_DIR/oauth_credentials.json.tmp"
+  jq --arg api_token_id "$api_token_id" '.api_token_id=$api_token_id' \
+    "$PORTAL_OPERATOR_DIR/oauth_credentials.json" >"$credentials_tmp"
+  mv "$credentials_tmp" "$PORTAL_OPERATOR_DIR/oauth_credentials.json"
+  chmod 600 "$PORTAL_OPERATOR_DIR/oauth_credentials.json"
+
+  kubectl create secret generic secrets-rhaap-portal -n "$PORTAL_OPERATOR_NAMESPACE" \
+    --from-literal=aap-host-url="https://$AAP_ROUTE" \
+    --from-literal=oauth-client-id="$CLIENT_ID" \
+    --from-literal=oauth-client-secret="$CLIENT_SECRET" \
+    --from-literal=aap-token="$api_token" --dry-run=client -o yaml | kubectl apply -f -
+
+  if [ "${PORTAL_CHECK_SSL:-true}" = true ]; then
+    ca_path="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"
+    [ -s "$ca_path" ] || {
+      echo "❌ Ingress CA not found at $ca_path; export it or set PORTAL_CHECK_SSL=false" >&2
+      exit 1
+    }
+    kubectl create secret generic portal-ingress-ca -n "$PORTAL_OPERATOR_NAMESPACE" \
+      --from-file=ca-bundle.crt="$ca_path" --dry-run=client -o yaml | kubectl apply -f -
+  fi
+
+  load_github_credentials
+  if [ "${PORTAL_GITHUB_ENABLED:-false}" = true ]; then
+    local args=()
+    if [ "${PORTAL_GITHUB_AUTH_TYPE:-app}" = app ]; then
+      [ -n "${GITHUB_APP_ID:-}" ] && [ -n "${GITHUB_APP_CLIENT_ID:-}" ] && [ -n "${GITHUB_APP_CLIENT_SECRET:-}" ] && [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] || {
+        echo "❌ GitHub App enabled but app credentials are incomplete" >&2
+        exit 1
+      }
+      args+=(--from-literal=github-app-id="$GITHUB_APP_ID" --from-literal=github-app-client-id="$GITHUB_APP_CLIENT_ID"
+        --from-literal=github-app-client-secret="$GITHUB_APP_CLIENT_SECRET"
+        --from-file=github-app-private-key="$GITHUB_APP_PRIVATE_KEY_PATH")
+    else
+      [ -n "${GITHUB_TOKEN:-}" ] || {
+        echo "❌ GitHub token integration enabled but GITHUB_TOKEN is empty" >&2
+        exit 1
+      }
+      args+=(--from-literal=github-token="$GITHUB_TOKEN")
+    fi
+    kubectl create secret generic secrets-scm -n "$PORTAL_OPERATOR_NAMESPACE" "${args[@]}" \
+      --dry-run=client -o yaml | kubectl apply -f -
+  fi
+
+  if kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" >/dev/null 2>&1; then
+    kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" \
+      -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d >"$PORTAL_OPERATOR_DIR/auth.json"
+    kubectl create secret generic portal-registry-auth -n "$PORTAL_OPERATOR_NAMESPACE" \
+      --from-file=auth.json="$PORTAL_OPERATOR_DIR/auth.json" --dry-run=client -o yaml | kubectl apply -f -
+  else
+    echo "⚠️  redhat-operators-pull-secret not found; create portal-registry-auth before the portal starts"
+  fi
+}
+
+apply_portal() {
+  local github_enabled="${PORTAL_GITHUB_ENABLED:-false}"
+  local auth_type="${PORTAL_GITHUB_AUTH_TYPE:-app}"
+  local sync_interval="${PORTAL_CATALOG_SYNC_INTERVAL:-60}"
+  local check_ssl="${PORTAL_CHECK_SSL:-true}"
+  local git_contents="${PORTAL_GIT_CONTENTS_ENABLED:-false}"
+  local collections="${PORTAL_COLLECTIONS_ENABLED:-false}"
+  local devtools="${PORTAL_DEVTOOLS_ENABLED:-true}"
+  local apps_domain="${AAP_ROUTE#*.}"
+  local portal_route_host="${PORTAL_ROUTE_HOST:-backstage-${PORTAL_NAME}-backstage-${PORTAL_OPERATOR_NAMESPACE}.${apps_domain}}"
+  local ca_block=""
+  if [ "$check_ssl" = true ]; then
+    ca_block="    caCertificates:\n      secretRef: portal-ingress-ca"
+  fi
+  local integration_block=""
+  if [ "$github_enabled" = true ]; then
+    integration_block="  scm:\n    credentials:\n      secretRef: secrets-scm\n    github:\n      enabled: true\n      host: ${PORTAL_GITHUB_HOST:-github.com}\n      authType: ${auth_type}\n  auth:\n    providers:\n      github:\n        enabled: true\n        credentials:\n          secretRef: secrets-scm"
+  fi
+  kubectl apply -f - <<EOF
+apiVersion: automationportal.aap.redhat.com/v1alpha1
+kind: AutomationPortal
+metadata:
+  name: ${PORTAL_NAME}
+  namespace: ${PORTAL_OPERATOR_NAMESPACE}
+spec:
+  aap:
+    checkSSL: ${check_ssl}
+    credentials:
+      secretRef: secrets-rhaap-portal
+$(printf '%b\n' "$integration_block")
+  backstage:
+$(printf '%b\n' "$ca_block")
+    route:
+      enabled: true
+      host: ${portal_route_host}
+  plugins:
+    registry: ${PORTAL_PLUGIN_REGISTRY:-registry.redhat.io}
+    catalog:
+      syncInterval: ${sync_interval}
+      jobTemplates:
+        enabled: true
+      collections:
+        enabled: ${collections}
+      gitContents:
+        enabled: ${git_contents}
+  devtools:
+    enabled: ${devtools}
+  permissions:
+    enabled: true
+EOF
+}
+
+wait_for_portal() {
+  local phase image_pull_retries=0
+  echo "Waiting for AutomationPortal/$PORTAL_NAME to become Running..."
+  for _ in $(seq 1 120); do
+    phase=$(kubectl get automationportal "$PORTAL_NAME" -n "$PORTAL_OPERATOR_NAMESPACE" \
+      -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    [ "$phase" = Running ] && break
+    [ "$phase" = Failed ] && {
+      kubectl describe automationportal "$PORTAL_NAME" -n "$PORTAL_OPERATOR_NAMESPACE"
+      exit 1
+    }
+    if [ "$image_pull_retries" -lt 5 ]; then
+      local backstage_pod image_pull_reason
+      backstage_pod=$(kubectl get pod -n "$PORTAL_OPERATOR_NAMESPACE" \
+        -l "rhdh.redhat.com/app=backstage-${PORTAL_NAME}-backstage" \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+      if [ -n "$backstage_pod" ]; then
+        image_pull_reason=$(kubectl get pod "$backstage_pod" \
+          -n "$PORTAL_OPERATOR_NAMESPACE" -o json 2>/dev/null \
+          | jq -r '[.status.initContainerStatuses[]?, .status.containerStatuses[]?]
+            | map(select(.state.waiting.reason == "ErrImagePull" or
+              .state.waiting.reason == "ImagePullBackOff"))
+            | .[0].state.waiting.reason // empty' 2>/dev/null || true)
+        if [ -n "$image_pull_reason" ]; then
+          echo "⚠️  Backstage image pull failed (${image_pull_reason}); retrying pod" >&2
+          kubectl delete pod "$backstage_pod" -n "$PORTAL_OPERATOR_NAMESPACE" \
+            --wait=false >/dev/null 2>&1 || true
+          image_pull_retries=$((image_pull_retries + 1))
+          sleep 5
+          continue
+        fi
+      fi
+    fi
+    sleep 5
+  done
+  [ "${phase:-}" = Running ] || {
+    echo "❌ Portal did not reach Running" >&2
+    exit 1
+  }
+  PORTAL_ROUTE=$(kubectl get route -n "$PORTAL_OPERATOR_NAMESPACE" \
+    -o jsonpath='{.items[0].spec.host}' 2>/dev/null || true)
+  [ -n "$PORTAL_ROUTE" ] || {
+    echo "❌ Portal route not found" >&2
+    exit 1
+  }
+  curl -ksu "admin:$ADMIN_PASS" -X PATCH \
+    "https://$AAP_ROUTE/api/gateway/v1/applications/$OAUTH_APP_ID/" \
+    -H 'Content-Type: application/json' \
+    -d "{\"redirect_uris\":\"https://$PORTAL_ROUTE/api/auth/rhaap/handler/frame\"}" >/dev/null
+}
+
+# Convert a Kubernetes CPU quantity string to an integer number of millicores.
+# Handles "8" (cores) and "500m" (millicores) forms.
+_parse_cpu_m() {
+  local val="$1"
+  if [[ "$val" == *m ]]; then
+    echo "${val%m}"
+  else
+    echo $((val * 1000))
+  fi
+}
+
+cpu_preflight() {
+  local portal_min_m=1600
+  local portal_rollout_m=2850
+
+  if [ "${SKIP_CPU_PREFLIGHT:-0}" = "1" ]; then
+    return 0
+  fi
+
+  echo "Checking CPU headroom for portal-operator..."
+
+  local alloc_raw alloc_m requested_m headroom_m pct
+  alloc_raw=$(kubectl get node \
+    -o jsonpath='{.items[0].status.allocatable.cpu}' 2>/dev/null || echo "0")
+  alloc_m=$(_parse_cpu_m "$alloc_raw")
+
+  if [ "$alloc_m" -eq 0 ]; then
+    echo "⚠  Could not read node allocatable CPU; skipping preflight"
+    return 0
+  fi
+
+  requested_m=$(kubectl get pods -A -o json 2>/dev/null \
+    | jq '[.items[] | select(.status.phase == "Running")
+           | .spec.containers[].resources.requests.cpu // "0"]
+          | map(if test("m$") then gsub("m$"; "") | tonumber
+                else tonumber * 1000 end)
+          | add // 0' 2>/dev/null || echo "0")
+
+  headroom_m=$((alloc_m - requested_m))
+  pct=$((requested_m * 100 / alloc_m))
+
+  printf "  Node allocatable:    %sm\n" "$alloc_m"
+  printf "  Currently requested: %sm (%s%%)\n" "$requested_m" "$pct"
+  printf "  Available headroom:  %sm\n" "$headroom_m"
+  printf "  Portal requires (minimum):      %sm\n" "$portal_min_m"
+  printf "  Portal recommends (rollout):    %sm\n" "$portal_rollout_m"
+  echo ""
+
+  if [ "$headroom_m" -ge "$portal_rollout_m" ]; then
+    echo "✓ Sufficient CPU headroom for portal-operator"
+    return 0
+  fi
+
+  if [ "$headroom_m" -lt "$portal_min_m" ]; then
+    echo "❌ Headroom (${headroom_m}m) is below the portal minimum (${portal_min_m}m)."
+    echo "   PostgreSQL is likely to fail scheduling."
+  else
+    echo "⚠  Headroom (${headroom_m}m) is below the recommended rollout threshold (${portal_rollout_m}m)."
+    echo "   Initial install should succeed but a Backstage rollout may stall."
+  fi
+
+  local ollama_replicas=0
+  if kubectl get namespace aap-demo-ollama >/dev/null 2>&1; then
+    ollama_replicas=$(kubectl get deployment ollama -n aap-demo-ollama \
+      -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+  fi
+
+  if [ "${ollama_replicas:-0}" -gt 0 ]; then
+    echo ""
+    echo "   Largest optional reservations:"
+    echo "     aap-demo-ollama / ollama    ~1000m"
+    echo ""
+    local scale_confirm
+    if [ -t 0 ]; then
+      read -r -p "   Scale Ollama to 0 to free ~1000m CPU for the portal? [y/N]: " scale_confirm
+    fi
+    case "$(echo "${scale_confirm:-n}" | tr '[:upper:]' '[:lower:]')" in
+      y | yes)
+        kubectl scale deployment/ollama -n aap-demo-ollama --replicas=0 \
+          || { echo "⚠  Ollama scale-down failed; continuing anyway"; }
+        echo "✓ Ollama scaled to 0 (freeing ~1000m)"
+        requested_m=$(kubectl get pods -A -o json 2>/dev/null \
+          | jq '[.items[] | select(.status.phase == "Running")
+                 | .spec.containers[].resources.requests.cpu // "0"]
+                | map(if test("m$") then gsub("m$"; "") | tonumber
+                      else tonumber * 1000 end)
+                | add // 0' 2>/dev/null || echo "0")
+        headroom_m=$((alloc_m - requested_m))
+        printf "  New headroom: %sm\n" "$headroom_m"
+        if [ "$headroom_m" -ge "$portal_rollout_m" ]; then
+          echo "✓ Headroom now sufficient for portal-operator"
+        elif [ "$headroom_m" -ge "$portal_min_m" ]; then
+          echo "⚠  Headroom sufficient for initial install; rollout may still be slow"
+        else
+          echo "⚠  Headroom still below minimum; install may stall — proceeding anyway"
+        fi
+        ;;
+      *)
+        echo "   Skipping Ollama scale-down; install may stall if CPU is exhausted"
+        ;;
+    esac
+  else
+    echo "   (Ollama is not running; no obvious optional workload to scale)"
+    echo "   Proceeding anyway — install may stall if CPU is exhausted"
+  fi
+  echo ""
+}
+
+require_amd64_cluster() {
+  local cluster_arch
+  cluster_arch="$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true)"
+  if [ -z "$cluster_arch" ]; then
+    echo "❌ Could not detect cluster architecture; Automation Portal Operator requires amd64" >&2
+    exit 1
+  fi
+  echo "✓ Cluster architecture: $cluster_arch"
+  [ "$cluster_arch" = amd64 ] || {
+    echo "❌ Automation Portal Operator currently supports amd64 only; detected $cluster_arch" >&2
+    echo "   Use 'aap-demo enable portal' for the ARM64-compatible Helm portal path." >&2
+    exit 1
+  }
+}
+
+main() {
+  require_tools
+  kubectl cluster-info >/dev/null 2>&1 || {
+    echo "❌ Cannot connect to Kubernetes" >&2
+    exit 1
+  }
+  check_aap
+  require_amd64_cluster
+  capture_cleanup_baseline
+  cpu_preflight
+  setup_namespace
+  [ -n "$OPERATOR_SOURCE_NAMESPACE" ] || prepare_catalog_source
+  install_operator
+  prepare_rhdh_namespace
+  select_organization
+  create_credentials
+  apply_portal
+  configure_rhdh_subscription
+  wait_for_portal
+  echo "✓ Portal operator addon enabled"
+  echo "Portal URL: https://$PORTAL_ROUTE"
+  echo "AAP is the OIDC/OAuth provider; redirect URI updated for the deployed route."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main
+fi

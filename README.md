@@ -69,6 +69,7 @@ Addons:
 -------
   mcp-server      disabled
   portal          disabled
+  portal-operator disabled (AMD64 only)
   setup-pah       disabled
   ao            disabled
   apme-eap        disabled
@@ -82,6 +83,7 @@ Addons:
 ```bash
 aap-demo enable              # List all addons
 aap-demo enable portal       # Installs Automation Portal
+aap-demo enable portal-operator # Installs Operator-based Portal (Technology Preview; AMD64 only)
 aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
