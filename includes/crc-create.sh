@@ -61,6 +61,62 @@ _detect_host_resources() {
   esac
 }
 
+# CRC can report a running VM just before vfkit exits or the guest reboots.
+# Require consecutive healthy samples before changing the guest or declaring
+# the create flow complete.
+_wait_for_crc_stable() {
+  local required_samples="${1:-3}"
+  local max_attempts="${AAP_DEMO_CRC_STABILITY_ATTEMPTS:-30}"
+  local sleep_seconds="${AAP_DEMO_CRC_STABILITY_SLEEP:-5}"
+  local healthy_samples=0 attempt status_json crc_status openshift_status
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    status_json=$(crc status --output json 2>/dev/null || true)
+    crc_status=$(printf '%s\n' "$status_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin).get("crcStatus", ""))' \
+      2>/dev/null || true)
+    openshift_status=$(printf '%s\n' "$status_json" | python3 -c \
+      'import json,sys; print(json.load(sys.stdin).get("openshiftStatus", ""))' \
+      2>/dev/null || true)
+
+    api_healthy=false
+    if [ "$openshift_status" = "Running" ]; then
+      api_healthy=true
+    elif [ "$openshift_status" = "Unreachable" ] \
+      && command -v kubectl >/dev/null 2>&1 \
+      && kubectl get nodes --request-timeout=5s >/dev/null 2>&1; then
+      # CRC's status probe can briefly lose the host alias while the
+      # MicroShift API remains usable through the saved kubeconfig.
+      api_healthy=true
+    fi
+
+    if [ "$crc_status" = "Running" ] && [ "$api_healthy" = true ]; then
+      healthy_samples=$((healthy_samples + 1))
+      [ "$healthy_samples" -ge "$required_samples" ] && return 0
+    else
+      healthy_samples=0
+    fi
+
+    [ "$attempt" -lt "$max_attempts" ] && sleep "$sleep_seconds"
+  done
+
+  return 1
+}
+
+_ensure_crc_stable_after_create() {
+  if _wait_for_crc_stable 3; then
+    return 0
+  fi
+
+  echo "WARNING: CRC did not remain healthy after setup; restarting CRC once..." >&2
+  if [ -n "${PULL_SECRET_PATH:-}" ] && [ -f "$PULL_SECRET_PATH" ]; then
+    crc start -p "$PULL_SECRET_PATH" >/tmp/crc-recovery.log 2>&1 || return 1
+  else
+    crc start >/tmp/crc-recovery.log 2>&1 || return 1
+  fi
+  _wait_for_crc_stable 3
+}
+
 configure_coredns() {
   local route_domain current_domain escaped_domain current_corefile corefile
   local crc_ssh_key crc_ssh_opts nipio_domain escaped_nipio nipio_rewrite
@@ -604,6 +660,15 @@ fi
 # ---------------------------------------------------------------------------
 printf "${_GREEN}▸${_NC} Trusting ingress CA...\n"
 install_ingress_ca_trust
+
+# A vfkit guest can reboot while the create-time services are still settling.
+# Recover once before printing the ready banner so callers do not receive a
+# successful create with a stopped CRC machine.
+if ! _ensure_crc_stable_after_create; then
+  printf "${_RED}▸${_NC} CRC did not remain running after create\n" >&2
+  echo "  Check: crc status and /tmp/crc-recovery.log" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Done
