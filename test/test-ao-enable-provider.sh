@@ -51,6 +51,19 @@ else
   fail "imports_exported_openai_api_key"
 fi
 
+prompt_key_file="$TEST_DIR/state/ao/prompt-api-key"
+prompt_input="$TEST_DIR/prompt-input"
+printf '%s\n' 'prompt-secret' >"$prompt_input"
+if env -u OPENAI_API_KEY AO_LLM_API_KEY_FILE="$prompt_key_file" \
+  AO_LLM_PROMPT_DEVICE="$prompt_input" \
+  bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_prompt_for_key" \
+  >/dev/null 2>&1 \
+  && [ "$(<"$prompt_key_file")" = "prompt-secret" ]; then
+  :
+else
+  fail "prompts_when_openai_api_key_is_unavailable"
+fi
+
 none_key_file="$TEST_DIR/state/ao/none-api-key"
 if OPENAI_API_KEY="profile-secret" AO_LLM_API_KEY_FILE="$none_key_file" \
   bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_configure_provider none" \
