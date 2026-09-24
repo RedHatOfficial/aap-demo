@@ -938,6 +938,12 @@ wire_ao_llm_agent_credential_id() {
   wire_ao_find_credential_by_name "$integration_name"
 }
 
+wire_ao_llm_agent_integration_id() {
+  local integration_name
+  integration_name=$(wire_ao_llm_integration_name) || return 0
+  wire_ao_find_integration_by_name "$integration_name"
+}
+
 wire_ao_llm_agent_model_id() {
   local integration_name model integration_id
   integration_name=$(wire_ao_llm_integration_name) || return 0
@@ -952,7 +958,7 @@ wire_ao_llm_agent_model_id() {
 }
 
 wire_ao_rebind_agentic_workflows() {
-  local agent_credential_id agent_model_id workflows workflow workflow_id definition agent_count updated payload result
+  local agent_credential_id agent_integration_id agent_model_id workflows workflow workflow_id definition agent_count updated payload result
 
   if [ "${AO_LLM_PROVIDER:-ollama}" = none ]; then
     wire_log "Skipping AO workflow model rebinding (none selected)"
@@ -963,9 +969,13 @@ wire_ao_rebind_agentic_workflows() {
   if [ -z "$agent_credential_id" ]; then
     agent_credential_id=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
   fi
+  agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
+  if [ -z "$agent_integration_id" ]; then
+    agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
+  fi
   agent_model_id=$(wire_ao_llm_agent_model_id 2>/dev/null || true)
-  if [ -z "$agent_credential_id" ] || [ -z "$agent_model_id" ]; then
-    wire_warn "Could not determine the AO LLM credential/model; workflow rebinding skipped"
+  if [ -z "$agent_credential_id" ] || [ -z "$agent_integration_id" ] || [ -z "$agent_model_id" ]; then
+    wire_warn "Could not determine the AO LLM credential/integration/model; workflow rebinding skipped"
     return 0
   fi
 
@@ -979,12 +989,14 @@ wire_ao_rebind_agentic_workflows() {
 
     updated=$(printf '%s' "$definition" | jq -c \
       --arg credential_id "$agent_credential_id" \
+      --arg integration_id "$agent_integration_id" \
       --arg model_id "$agent_model_id" \
       '.nodes = [(.nodes // [])[] |
         if .type == "agentic" then
           .parameters = ((.parameters // {})
             | del(.model)
             | .credential_id = $credential_id
+            | .integration_id = $integration_id
             | .llm_model_id = $model_id)
         else .
         end]' 2>/dev/null) || continue

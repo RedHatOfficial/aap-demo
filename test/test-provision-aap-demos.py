@@ -56,6 +56,7 @@ def test_control_job_extra_vars_include_agent_binding():
         ao_credential_id="aap-credential",
         ao_integration_id="aap-integration",
         ao_agent_credential_id="llm-credential",
+        ao_agent_integration_id="llm-integration",
         ao_agent_model_id="gpt-6-luna-model-id",
     )
 

@@ -53,6 +53,7 @@ def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
         "ao_aap_credential_id": args.ao_credential_id,
         "ao_aap_integration_id": args.ao_integration_id,
         "ao_agent_credential_id": args.ao_agent_credential_id,
+        "ao_agent_integration_id": args.ao_agent_integration_id,
         "ao_agent_model_id": args.ao_agent_model_id,
     }
 
@@ -136,6 +137,7 @@ def main() -> int:
     parser.add_argument("--ao-credential-id", default="")
     parser.add_argument("--ao-integration-id", default="")
     parser.add_argument("--ao-agent-credential-id", default="")
+    parser.add_argument("--ao-agent-integration-id", default="")
     parser.add_argument("--ao-agent-model-id", default="")
     parser.add_argument("--control-repository", default=CONTROL_PROJECT_URL)
     parser.add_argument("--control-branch", default="main")

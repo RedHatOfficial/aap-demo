@@ -116,7 +116,7 @@ cloud templates when the product-demos addon is enabled.
 
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
 All agentic nodes in synchronized workflows receive the selected provider
-credential and model; external mode uses `gpt-6-luna` by default. Re-running
+integration, credential, and model; external mode uses `gpt-6-luna` by default. Re-running
 `aap-demo wire` reapplies that binding to existing `aap-demo` workflows.
 Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
 the CoreDNS route rewrite if MicroShift's DNS operator has dropped it, and reapplies
