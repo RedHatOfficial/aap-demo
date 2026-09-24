@@ -4,9 +4,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an opt-in `AO_LOW_RESOURCE=1` mode that configures the operator-managed AutomationOrchestrator custom resource to run its backend, UI, and worker with one replica each, while preserving the current two-replica default.
+**Goal:** Make one-replica Automation Orchestrator the default for this local development/demo environment, while preserving an explicit two-replica opt-out through `AO_LOW_RESOURCE=0`.
 
-**Architecture:** Keep replica configuration in the checked-in AutomationOrchestrator CR template and render one validated replica count at deploy time. The addon will apply the CR on both fresh installs and healthy existing-install paths so changing the environment variable reconciles through the operator without directly scaling Deployments or resetting the database. The normal mode renders `2`; low-resource mode renders `1`.
+**Architecture:** Keep replica configuration in the checked-in AutomationOrchestrator CR template and render one validated replica count at deploy time. The addon will apply the CR on both fresh installs and healthy existing-install paths so changing the environment variable reconciles through the operator without directly scaling Deployments or resetting the database. The default local mode renders `1`; `AO_LOW_RESOURCE=0` renders `2` for explicit higher availability.
 
 **Tech Stack:** Bash, `sed`, Kubernetes/OpenShift custom resources, OLM-managed Automation Orchestrator, shell regression tests, Markdown ADR documentation.
 
@@ -14,8 +14,8 @@
 
 ## Global Constraints
 
-- The current default remains two replicas for `backend`, `ui`, and `worker`.
-- Low-resource mode is opt-in through `AO_LOW_RESOURCE=1`.
+- The default in this repository is one replica for `backend`, `ui`, and `worker` because aap-demo targets local development/demo clusters.
+- `AO_LOW_RESOURCE` unset, `1`, or `true` selects one replica; `AO_LOW_RESOURCE=0` or `false` explicitly selects two replicas.
 - Replica settings must be applied through `kind: AutomationOrchestrator`, never by scaling generated Deployments directly.
 - Low-resource mode is intended for development/local clusters and is not HA.
 - The resulting AutomationOrchestrator resource must report healthy after reconciliation.
@@ -23,8 +23,8 @@
 
 ## Review Focus
 
-- Unset or disabled `AO_LOW_RESOURCE` must render all three components with `replicas: 2`; pin this in the rendering test.
-- `AO_LOW_RESOURCE=1` must render exactly one replica for backend, UI, and worker; pin all three fields in the rendering test.
+- Unset `AO_LOW_RESOURCE` must render all three components with `replicas: 1`; pin this default in the rendering test.
+- `AO_LOW_RESOURCE=0` must render exactly two replicas for backend, UI, and worker; pin the explicit higher-resource opt-out in the rendering test.
 - An invalid non-empty value must fail before applying the CR; pin the validation error in the shell test.
 - Re-running `aap-demo enable ao` on an existing healthy instance with the mode changed must update the CR without `FORCE=1` or database deletion; cover the fast path in the deployment test plan and live acceptance check.
 - The operator may temporarily reconcile after the CR update; the command must wait for `Ready=True` and no degraded condition before reporting success.
@@ -45,24 +45,24 @@
 
 - [ ] **Step 1: Create the ADR with the repository template sections.**
 
-  Use `Status: Proposed`, the current date `2026-09-24`, and `aap-demo maintainers` as authors. The context must state that the operator defaults backend, UI, and worker to two replicas, which reserves unnecessary CPU and memory on local CRC/MicroShift clusters. The decision must specify:
+  Use `Status: Proposed`, the current date `2026-09-24`, and `aap-demo maintainers` as authors. The context must state that the upstream operator defaults backend, UI, and worker to two replicas, which reserves unnecessary CPU and memory on local CRC/MicroShift clusters. Because this repository is a development/demo environment, the decision intentionally changes aap-demo’s rendered default to one replica. The decision must specify:
 
   ```text
-  AO_LOW_RESOURCE=1 selects one replica for spec.backend.replicas,
-  spec.ui.replicas, and spec.worker.replicas. When AO_LOW_RESOURCE is
-  unset or disabled, the rendered CR explicitly selects two replicas for
-  all three components. The addon applies this CR through kubectl and
-  never scales generated Deployments directly.
+  When AO_LOW_RESOURCE is unset, 1, or true, the rendered CR selects one
+  replica for spec.backend.replicas, spec.ui.replicas, and
+  spec.worker.replicas. AO_LOW_RESOURCE=0 or false explicitly selects two
+  replicas for all three components. The addon applies this CR through
+  kubectl and never scales generated Deployments directly.
   ```
 
-  Document that changing the mode on an existing install is done by rerunning `aap-demo enable ao` with the desired environment variable, not by using `FORCE=1`; `FORCE=1` remains the destructive reinstall escape hatch. State that one-replica mode is for development/local clusters and provides no HA redundancy.
+  Document that changing the mode on an existing install is done by rerunning `aap-demo enable ao` with `AO_LOW_RESOURCE=0` or `1`, not by using `FORCE=1`; `FORCE=1` remains the destructive reinstall escape hatch. State that the one-replica default is for development/local clusters and provides no HA redundancy.
 
 - [ ] **Step 2: Document alternatives and consequences.**
 
   Include these alternatives and reasons:
 
   - Directly scaling `automation-orchestrator-backend`, UI, and worker Deployments: reject because the operator can overwrite the changes and the CR would no longer be the source of truth.
-  - Changing the global default to one replica: reject because it silently reduces availability for existing users and violates issue #171’s default-preservation requirement.
+  - Keeping two replicas as the aap-demo default: reject because this repository targets development/demo clusters where the additional reservations can prevent the rest of the demo stack from scheduling; two replicas remain available through an explicit opt-out.
   - Adding a separate manifest file or second addon: reject because a single CR template plus a validated profile keeps the addon surface small and makes the mode reversible.
 
   Record the positive consequence of lower local resource reservation, the negative consequence of no HA in low-resource mode, and the neutral consequence that the operator still owns reconciliation.
@@ -127,11 +127,11 @@
   ```bash
   ao_resolve_replica_count() {
     case "${AO_LOW_RESOURCE:-}" in
-      ""|0|false)
-        printf '2\n'
-        ;;
-      1|true)
+      ""|1|true)
         printf '1\n'
+        ;;
+      0|false)
+        printf '2\n'
         ;;
       *)
         echo "ERROR: AO_LOW_RESOURCE must be unset, 0, false, 1, or true" >&2
@@ -151,7 +151,7 @@
   -e "s|__AO_REPLICA_COUNT__|${AO_REPLICA_COUNT}|g" \
   ```
 
-  Do not add `kubectl scale`, Deployment patches, or post-apply replica mutations. Emit a concise line such as `AO replica profile: 1 each (low-resource, non-HA)` when the count is `1`, and `AO replica profile: 2 each (default)` otherwise.
+  Do not add `kubectl scale`, Deployment patches, or post-apply replica mutations. Emit a concise line such as `AO replica profile: 1 each (default local, non-HA)` when the count is `1`, and `AO replica profile: 2 each (explicit higher-resource mode)` otherwise.
 
 - [ ] **Step 4: Apply the selected CR on the existing healthy-instance path.**
 
@@ -194,15 +194,15 @@
 **Interfaces:**
 
 - Consumes: `addons/ao/lib/replica-profile.sh`, the CR template, and the deploy script’s CR rendering behavior.
-- Produces: fast shell coverage for default, opt-in, invalid-input, and CR-only rendering behavior.
+- Produces: fast shell coverage for default, explicit higher-resource opt-out, invalid-input, and CR-only rendering behavior.
 
 - [ ] **Step 1: Write the profile test cases.**
 
   Source `addons/ao/lib/replica-profile.sh` and run the production helper without a cluster. Assert:
 
   ```bash
-  AO_LOW_RESOURCE= ao_resolve_replica_count  # prints 2
-  AO_LOW_RESOURCE=1 ao_resolve_replica_count # prints 1
+  AO_LOW_RESOURCE= ao_resolve_replica_count  # prints 1 by default
+  AO_LOW_RESOURCE=0 ao_resolve_replica_count # prints 2 for explicit opt-out
   AO_LOW_RESOURCE=true ao_resolve_replica_count # prints 1
   AO_LOW_RESOURCE=unexpected ao_resolve_replica_count # exits non-zero and prints validation error
   ```
@@ -210,8 +210,8 @@
   Do not duplicate a second production implementation in the test. Render temporary copies of `automationorchestrator-cr.yaml` using the same `sed` replacement contract as `deploy_ao_instance()`, then assert all three paths with exact YAML matches:
 
   ```bash
-  grep -c '^    replicas: 2$' "$rendered"  # expected 3 for default
-  grep -c '^    replicas: 1$' "$rendered"  # expected 3 for low-resource
+  grep -c '^    replicas: 1$' "$rendered"  # expected 3 for default
+  grep -c '^    replicas: 2$' "$rendered"  # expected 3 for explicit opt-out
   ```
 
 - [ ] **Step 2: Test that the rendered values live in the CR.**
@@ -227,7 +227,7 @@
   ./test/test-ao-replica-profile.sh
   ```
 
-  Expected: all default, low-resource, invalid-input, and CR-rendering assertions pass.
+  Expected: all default, explicit opt-out, invalid-input, and CR-rendering assertions pass.
 
 - [ ] **Step 4: Commit the regression coverage.**
 
@@ -236,7 +236,7 @@
   git commit -m "test(ao): cover replica profile rendering"
   ```
 
-### Task 4: Document the opt-in mode for local users
+### Task 4: Document the default and explicit higher-resource override
 
 **Files:**
 
@@ -245,7 +245,7 @@
 
 **Interfaces:**
 
-- Consumes: the `AO_LOW_RESOURCE=1` contract from ADR-026 and the deploy behavior from Task 2.
+- Consumes: the default/override `AO_LOW_RESOURCE` contract from ADR-026 and the deploy behavior from Task 2.
 - Produces: user-facing instructions that make the availability tradeoff and reversible workflow explicit.
 
 - [ ] **Step 1: Add the environment variable to the AO README table.**
@@ -253,7 +253,7 @@
   Add:
 
   ```markdown
-  | `AO_LOW_RESOURCE` | unset | Set to `1`/`true` for one backend, UI, and worker replica; development/local only, not HA |
+  | `AO_LOW_RESOURCE` | unset | Unset/`1`/`true` selects one backend, UI, and worker replica; set to `0`/`false` for two replicas |
   ```
 
 - [ ] **Step 2: Add enable, switch, and revert examples.**
@@ -261,9 +261,9 @@
   Document:
 
   ```bash
-  AO_LOW_RESOURCE=1 aap-demo enable ao  # 1 backend, 1 UI, 1 worker; non-HA
-  AO_LOW_RESOURCE=0 aap-demo enable ao  # restore the default 2 each
-  aap-demo enable ao                    # default is 2 each when unset
+  aap-demo enable ao                    # default: 1 backend, 1 UI, 1 worker; non-HA
+  AO_LOW_RESOURCE=1 aap-demo enable ao  # explicit one-replica local mode
+  AO_LOW_RESOURCE=0 aap-demo enable ao  # opt out to 2 replicas each
   ```
 
   State that this applies the `AutomationOrchestrator` custom resource, preserves the database, and waits for the resource to become healthy. State that `FORCE=1` is not required to change replica mode and remains a reinstall/reset path.
@@ -313,18 +313,18 @@
 - [ ] **Step 3: Run live acceptance on a disposable local cluster.**
 
   ```bash
-  AO_LOW_RESOURCE=1 aap-demo enable ao
+  aap-demo enable ao
   kubectl get automationorchestrator automation-orchestrator -n automation-orchestrator -o yaml
   ```
 
-  Confirm the CR contains `backend.replicas: 1`, `ui.replicas: 1`, and `worker.replicas: 1`, and that its `Ready` condition is `True` with no `Degraded=True` condition. Then restore the default without reinstalling:
+  Confirm the CR contains `backend.replicas: 1`, `ui.replicas: 1`, and `worker.replicas: 1`, and that its `Ready` condition is `True` with no `Degraded=True` condition. Then opt out to two replicas without reinstalling:
 
   ```bash
   AO_LOW_RESOURCE=0 aap-demo enable ao
   kubectl get automationorchestrator automation-orchestrator -n automation-orchestrator -o yaml
   ```
 
-  Confirm all three fields return to `2`, the PostgreSQL cluster and admin secret remain intact, and the resource again reports healthy. Record any operator-version-specific status shape in ADR-026’s references rather than weakening the CR source-of-truth rule.
+  Confirm all three fields change to `2`, the PostgreSQL cluster and admin secret remain intact, and the resource again reports healthy. Record any operator-version-specific status shape in ADR-026’s references rather than weakening the CR source-of-truth rule.
 
 - [ ] **Step 4: Review the final diff and branch state.**
 
