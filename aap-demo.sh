@@ -42,6 +42,8 @@ source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
 
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
+# shellcheck source=includes/ao-llm.sh
+source "${SCRIPT_DIR}/includes/ao-llm.sh"
 
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
 
@@ -2853,8 +2855,11 @@ cmd_enable() {
     _verify_cluster || return 1
   fi
   if [ "$addon" = "ao" ] && [ "$_skip_addon_save" != true ]; then
+    aap_demo_ao_llm_prepare || return 1
     _ensure_addon_dependency mcp-server "$@" || return 1
-    _ensure_addon_dependency ollama "$@" || return 1
+    if [ "${AO_LLM_PROVIDER:-ollama}" = ollama ]; then
+      _ensure_addon_dependency ollama "$@" || return 1
+    fi
   fi
   local _addon_was_enabled=false
   if echo "$(_addons_list)" | grep -qw "$addon"; then
