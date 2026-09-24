@@ -232,7 +232,10 @@ refresh, and select `AO_LLM_MODEL` as default.
 Update AO demo import lookup so external mode can supply the external LLM
 credential/model just as Ollama currently does, without assuming the Ollama
 deployment exists. In `none` mode, omit the optional agent credential and
-model arguments.
+model arguments. Pass the same provider credential/model through the normal AAP
+control-job synchronization path so every agentic node receives the selected
+model, with external mode defaulting to `luna` and local mode retaining the
+configured Ollama model.
 
 - [ ] **Step 4: Run the test to verify it passes**
 

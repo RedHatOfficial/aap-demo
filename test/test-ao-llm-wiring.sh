@@ -89,6 +89,20 @@ if [ "$ollama_called" != true ] || [ "$external_called" = true ]; then
   fail "ollama_provider_dispatch"
 fi
 
+AO_LLM_PROVIDER=external
+AO_LLM_MODEL=luna
+if [ "$(wire_ao_llm_integration_name)" != "aap-demo External LLM" ] \
+  || [ "$(wire_ao_llm_model_name)" != luna ]; then
+  fail "external_agent_model_selection"
+fi
+
+AO_LLM_PROVIDER=ollama
+WIRE_OLLAMA_MODEL=qwen2.5:3b
+if [ "$(wire_ao_llm_integration_name)" != "aap-demo Ollama" ] \
+  || [ "$(wire_ao_llm_model_name)" != qwen2.5:3b ]; then
+  fail "ollama_agent_model_selection"
+fi
+
 external_called=false
 ollama_called=false
 AO_LLM_PROVIDER=none
@@ -103,6 +117,14 @@ if grep -q 'AO_LLM_PROVIDER.*none' "${REPO_ROOT}/addons/ao/deploy.sh" \
   :
 else
   fail "none_provider_skips_agent_credential_import"
+fi
+
+if grep -q -- '--ao-agent-credential-id' "${REPO_ROOT}/addons/ao/deploy.sh" \
+  && grep -q -- '--ao-agent-model-id' "${REPO_ROOT}/addons/ao/deploy.sh" \
+  && grep -q 'ao_agent_model_id' "${REPO_ROOT}/addons/ao/scripts/provision-aap-demos.py"; then
+  :
+else
+  fail "aap_sync_receives_agent_model_binding"
 fi
 
 echo "AO LLM wiring failures: ${failures}"

@@ -842,27 +842,14 @@ sync_ao_demos() {
   )
   if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
     local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
-    local _llm_integration_name="aap-demo Ollama"
-    local _llm_model="${WIRE_OLLAMA_MODEL:-qwen2.5:3b}"
-    if [ "${AO_LLM_PROVIDER:-ollama}" = external ]; then
-      _llm_integration_name="aap-demo External LLM"
-      _llm_model="${AO_LLM_MODEL:-luna}"
-    fi
     if [ -z "$_agent_cred" ]; then
-      _agent_cred=$(wire_ao_find_credential_by_name "$_llm_integration_name" 2>/dev/null || true)
+      _agent_cred=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
     fi
     if [ -n "$_agent_cred" ]; then
       _import_args+=(--agent-credential-id "$_agent_cred")
       if [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-        local _llm_integration _llm_model_id
-        _llm_integration=$(wire_ao_find_integration_by_name "$_llm_integration_name" 2>/dev/null || true)
-        if [ -n "$_llm_integration" ]; then
-          _llm_model_id=$(wire_ao_api GET \
-            "/integrations/${_llm_integration}/models?limit=50" 2>/dev/null \
-            | wire_ao_list_items \
-            | jq -r --arg m "$_llm_model" \
-              '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true)
-        fi
+        local _llm_model_id
+        _llm_model_id=$(wire_ao_llm_agent_model_id 2>/dev/null || true)
         if [ -n "${_llm_model_id:-}" ]; then
           _import_args+=(--agent-model-id "$_llm_model_id")
         fi
@@ -915,6 +902,22 @@ provision_aap_demos() {
       --control-branch "${AO_SYNC_BRANCH:-main}"
       --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
     )
+    if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
+      local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+      local _agent_model_id=""
+      if [ -z "$_agent_cred" ]; then
+        _agent_cred=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
+      fi
+      if [ -n "$_agent_cred" ]; then
+        _provision_args+=(--ao-agent-credential-id "$_agent_cred")
+        if [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
+          _agent_model_id=$(wire_ao_llm_agent_model_id 2>/dev/null || true)
+          if [ -n "$_agent_model_id" ]; then
+            _provision_args+=(--ao-agent-model-id "$_agent_model_id")
+          fi
+        fi
+      fi
+    fi
   else
     echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
   fi

@@ -910,6 +910,41 @@ wire_ao_set_default_ollama_model() {
   wire_ao_set_default_llm_model "$@"
 }
 
+wire_ao_llm_integration_name() {
+  case "${AO_LLM_PROVIDER:-ollama}" in
+    external) printf '%s\n' "aap-demo External LLM" ;;
+    ollama) printf '%s\n' "aap-demo Ollama" ;;
+    *) return 1 ;;
+  esac
+}
+
+wire_ao_llm_model_name() {
+  case "${AO_LLM_PROVIDER:-ollama}" in
+    external) printf '%s\n' "${AO_LLM_MODEL:-luna}" ;;
+    ollama) printf '%s\n' "$WIRE_OLLAMA_MODEL" ;;
+    *) return 1 ;;
+  esac
+}
+
+wire_ao_llm_agent_credential_id() {
+  local integration_name
+  integration_name=$(wire_ao_llm_integration_name) || return 0
+  wire_ao_find_credential_by_name "$integration_name"
+}
+
+wire_ao_llm_agent_model_id() {
+  local integration_name model integration_id
+  integration_name=$(wire_ao_llm_integration_name) || return 0
+  model=$(wire_ao_llm_model_name) || return 0
+  integration_id=$(wire_ao_find_integration_by_name "$integration_name" 2>/dev/null || true)
+  [ -n "$integration_id" ] || return 0
+  wire_ao_api GET \
+    "/integrations/${integration_id}/models?limit=50" 2>/dev/null \
+    | wire_ao_list_items \
+    | jq -r --arg m "$model" \
+      '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true
+}
+
 wire_ao_llm_config_json() {
   local base_url="${AO_LLM_BASE_URL:-https://api.openai.com/v1}"
   jq -n \

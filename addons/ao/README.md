@@ -114,6 +114,8 @@ by AAP. The multi-OS cloud workflow continues to use the existing `ansible/produ
 cloud templates when the product-demos addon is enabled.
 
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
+All agentic nodes in synchronized workflows receive the selected provider
+credential and model; external mode uses `luna` by default.
 Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
 the CoreDNS route rewrite if MicroShift's DNS operator has dropped it, and reapplies
 AO pod `hostAliases` for AAP/AO/MCP route hostnames.
