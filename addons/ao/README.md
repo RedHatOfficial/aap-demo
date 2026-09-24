@@ -26,9 +26,10 @@ During an interactive `enable ao`, choose one of these LLM provider paths:
    the local provider into AO. This remains the default for `QUIET=true` and
    other non-interactive runs.
 2. **External provider** — skips Ollama and prompts for an API key for an
-   OpenAI-compatible endpoint. If `OPENAI_API_KEY` is already exported in the
-   environment, it is imported without another prompt. The default endpoint
-   is `https://api.openai.com/v1` and the default model is `gpt-6-luna`.
+   OpenAI-compatible endpoint, then prompts for the model. The default model
+   is `gpt-6-luna`; press Enter to accept it. If `OPENAI_API_KEY` is already
+   exported in the environment, it is imported without another prompt. The
+   default endpoint is `https://api.openai.com/v1`.
 3. **None** — skips Ollama and LLM credential wiring. AO still installs, but
    agentic demos that require an LLM are unavailable until a provider is
    configured.

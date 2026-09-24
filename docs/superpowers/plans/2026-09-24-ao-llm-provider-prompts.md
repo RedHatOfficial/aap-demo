@@ -29,6 +29,8 @@ populate external mode; shell profile files are never sourced or parsed.
   `https://api.openai.com/v1`, and default model `gpt-6-luna`.
 - When external mode is selected and no saved key exists, reuse an already
   exported `OPENAI_API_KEY` before prompting for hidden input.
+- When external mode is selected interactively and no model is configured,
+  prompt with `gpt-6-luna` as the default; `AO_LLM_MODEL` remains an override.
 - `AO_LLM_BASE_URL` and `AO_LLM_MODEL` must override the external defaults.
 - API keys must never be written to the plaintext config, command output, test
   fixtures, or logs; store the local key file with mode `600`.

@@ -83,6 +83,18 @@ aap_demo_ao_llm_external_defaults() {
   export AO_LLM_BASE_URL AO_LLM_MODEL
 }
 
+aap_demo_ao_llm_prompt_for_model() {
+  local prompt_device="${AO_LLM_PROMPT_DEVICE:-/dev/tty}"
+  local model
+
+  [ -z "${AO_LLM_MODEL:-}" ] || return 0
+  printf 'External LLM model [gpt-6-luna]: ' >&2
+  IFS= read -r model <"$prompt_device" || return 1
+  AO_LLM_MODEL="${model:-gpt-6-luna}"
+  export AO_LLM_MODEL
+  aap_demo_ao_llm_save_config AO_LLM_MODEL "$AO_LLM_MODEL"
+}
+
 aap_demo_ao_llm_configure_provider() {
   local provider="${1:-}"
   local api_key="${2:-}"
@@ -154,11 +166,16 @@ aap_demo_ao_llm_prepare() {
     return
   fi
 
-  if [ "$provider" = external ] && [ ! -s "$(aap_demo_ao_llm_key_file)" ]; then
-    aap_demo_ao_llm_prompt_for_key
+  if [ "$provider" = external ]; then
+    aap_demo_ao_llm_prompt_for_model || return 1
+    if [ ! -s "$(aap_demo_ao_llm_key_file)" ]; then
+      aap_demo_ao_llm_prompt_for_key
+      return
+    fi
+    aap_demo_ao_llm_configure_provider external
     return
   fi
-  if [ "$provider" = ollama ] || [ "$provider" = external ]; then
+  if [ "$provider" = ollama ]; then
     aap_demo_ao_llm_configure_provider "$provider"
     return
   fi
@@ -175,6 +192,7 @@ aap_demo_ao_llm_prepare() {
     return 1
   }
   if [ "$selected" = external ]; then
+    aap_demo_ao_llm_prompt_for_model || return 1
     aap_demo_ao_llm_prompt_for_key
   else
     aap_demo_ao_llm_configure_provider "$selected"

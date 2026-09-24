@@ -73,6 +73,27 @@ else
   fail "none_does_not_import_exported_openai_api_key"
 fi
 
+interactive_config="$TEST_DIR/interactive-config"
+interactive_key_file="$TEST_DIR/state/ao/interactive-api-key"
+interactive_input="$TEST_DIR/interactive-input"
+printf '%s' 'existing-secret' >"$interactive_key_file"
+printf '%s\n' 'custom-model' >"$interactive_input"
+if env -u OPENAI_API_KEY -u AO_LLM_MODEL \
+  AAP_DEMO_CONFIG="$interactive_config" \
+  AAP_DEMO_DIR="$TEST_DIR/interactive-state" \
+  AO_LLM_API_KEY_FILE="$interactive_key_file" \
+  AO_LLM_PROVIDER=external \
+  AO_LLM_PROMPT_DEVICE="$interactive_input" \
+  QUIET=false \
+  bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_prepare" \
+  >/dev/null 2>&1 \
+  && [ "$(<"$interactive_key_file")" = "existing-secret" ] \
+  && grep -q '^AO_LLM_MODEL=custom-model$' "$interactive_config"; then
+  :
+else
+  fail "interactive_external_model_prompt"
+fi
+
 unset AO_LLM_PROVIDER
 QUIET=true
 if ! aap_demo_ao_llm_prepare; then
@@ -97,6 +118,7 @@ fi
 
 if grep -q 'source .*includes/ao-llm.sh' "${REPO_ROOT}/aap-demo.sh" \
   && grep -q 'aap_demo_ao_llm_prepare' "${REPO_ROOT}/aap-demo.sh" \
+  && grep -q 'aap_demo_ao_llm_prompt_for_model' "${REPO_ROOT}/includes/ao-llm.sh" \
   && grep -q '_ensure_addon_dependency ollama' "${REPO_ROOT}/aap-demo.sh"; then
   :
 else

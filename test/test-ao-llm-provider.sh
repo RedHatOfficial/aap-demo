@@ -61,6 +61,16 @@ else
   fail "legacy_luna_default_is_migrated"
 fi
 
+model_prompt_input="$TEST_DIR/model-prompt-input"
+printf '\n' >"$model_prompt_input"
+unset AO_LLM_MODEL
+AO_LLM_PROMPT_DEVICE="$model_prompt_input"
+if aap_demo_ao_llm_prompt_for_model && [ "$AO_LLM_MODEL" = "gpt-6-luna" ]; then
+  pass "blank_model_prompt_uses_default"
+else
+  fail "blank_model_prompt_uses_default"
+fi
+
 if AO_LLM_BASE_URL="https://example.test/v1" AO_LLM_MODEL="custom-model" \
   bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_external_defaults; [ \"\$AO_LLM_BASE_URL\" = 'https://example.test/v1' ] && [ \"\$AO_LLM_MODEL\" = 'custom-model' ]"; then
   pass "external_provider_defaults_are_overridable"
