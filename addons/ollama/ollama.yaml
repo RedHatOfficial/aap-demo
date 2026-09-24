@@ -44,7 +44,7 @@ spec:
   storageClassName: __STORAGE_CLASS__
   resources:
     requests:
-      storage: 20Gi
+      storage: __STORAGE_SIZE__
 ---
 apiVersion: apps/v1
 kind: Deployment
