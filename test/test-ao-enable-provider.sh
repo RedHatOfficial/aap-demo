@@ -42,6 +42,13 @@ elif [ "${AO_LLM_PROVIDER:-}" != ollama ]; then
   fail "quiet_mode_defaults_to_ollama"
 fi
 
+AO_LLM_PROVIDER=external
+if ! aap_demo_ao_llm_prepare; then
+  fail "quiet_mode_respects_explicit_external_provider"
+elif [ "${AO_LLM_PROVIDER:-}" != external ]; then
+  fail "quiet_mode_respects_explicit_external_provider"
+fi
+
 if grep -q 'source .*includes/ao-llm.sh' "${REPO_ROOT}/aap-demo.sh" \
   && grep -q 'aap_demo_ao_llm_prepare' "${REPO_ROOT}/aap-demo.sh" \
   && grep -q '_ensure_addon_dependency ollama' "${REPO_ROOT}/aap-demo.sh"; then

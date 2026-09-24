@@ -129,7 +129,11 @@ aap_demo_ao_llm_prepare() {
   local choice selected
 
   if [ "${QUIET:-false}" = true ]; then
-    aap_demo_ao_llm_configure_provider ollama
+    if [ "$provider" = external ]; then
+      aap_demo_ao_llm_configure_provider external
+    else
+      aap_demo_ao_llm_configure_provider ollama
+    fi
     return
   fi
 
