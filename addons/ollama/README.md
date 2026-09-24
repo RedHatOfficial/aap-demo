@@ -19,6 +19,11 @@ The addon automatically:
    (named `aap-demo Ollama`) using the OpenAI-compatible `/v1` endpoint
 4. Sets `qwen2.5:3b` as the default model on the AO integration
 
+`aap-demo enable ao` prompts before installing this addon. Choose the external
+provider option when the local Ollama download and runtime are not appropriate
+for the host. Selecting an external provider does not remove an Ollama addon
+that is already installed.
+
 ## Model selection
 
 `qwen2.5:3b` is the default because it correctly generates OpenAI-format tool calls
