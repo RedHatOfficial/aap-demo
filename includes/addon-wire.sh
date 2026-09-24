@@ -945,6 +945,56 @@ wire_ao_llm_agent_model_id() {
       '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true
 }
 
+wire_ao_rebind_agentic_workflows() {
+  local agent_credential_id agent_model_id workflows workflow workflow_id definition agent_count updated payload result
+
+  if [ "${AO_LLM_PROVIDER:-ollama}" = none ]; then
+    wire_log "Skipping AO workflow model rebinding (none selected)"
+    return 0
+  fi
+
+  agent_credential_id="${AO_AGENT_CREDENTIAL_ID:-}"
+  if [ -z "$agent_credential_id" ]; then
+    agent_credential_id=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
+  fi
+  agent_model_id=$(wire_ao_llm_agent_model_id 2>/dev/null || true)
+  if [ -z "$agent_credential_id" ] || [ -z "$agent_model_id" ]; then
+    wire_warn "Could not determine the AO LLM credential/model; workflow rebinding skipped"
+    return 0
+  fi
+
+  workflows=$(wire_ao_api GET "/workflows?limit=${WIRE_AO_LIST_LIMIT}" 2>/dev/null)
+  while IFS= read -r workflow; do
+    workflow_id=$(printf '%s' "$workflow" | jq -r '.id // empty' 2>/dev/null)
+    definition=$(printf '%s' "$workflow" | jq -c '.workflow_definition // empty' 2>/dev/null)
+    [ -n "$workflow_id" ] && [ -n "$definition" ] || continue
+    agent_count=$(printf '%s' "$definition" | jq '[.nodes // [] | .[] | select(.type == "agentic")] | length' 2>/dev/null || echo 0)
+    [ "${agent_count:-0}" -gt 0 ] || continue
+
+    updated=$(printf '%s' "$definition" | jq -c \
+      --arg credential_id "$agent_credential_id" \
+      --arg model_id "$agent_model_id" \
+      '.nodes = [(.nodes // [])[] |
+        if .type == "agentic" then
+          .parameters = ((.parameters // {})
+            | del(.model)
+            | .credential_id = $credential_id
+            | .llm_model_id = $model_id)
+        else .
+        end]' 2>/dev/null) || continue
+    payload=$(jq -n \
+      --argjson workflow_definition "$updated" \
+      '{workflow_definition: $workflow_definition,
+        change_description: "Rebound AO agentic nodes to the selected aap-demo LLM model"}')
+    result=$(wire_ao_api PATCH "/workflows/${workflow_id}" "$payload" 2>/dev/null)
+    if wire_ao_response_is_error "$result"; then
+      wire_warn "Failed to rebind AO workflow ${workflow_id}"
+    else
+      wire_log "  ✓ Rebound ${agent_count} AO agentic node(s) in workflow ${workflow_id}"
+    fi
+  done < <(printf '%s' "$workflows" | wire_ao_list_items | jq -c '.[] | select((.labels // {})["aap-demo"] == "true")' 2>/dev/null)
+}
+
 wire_ao_llm_config_json() {
   local base_url="${AO_LLM_BASE_URL:-https://api.openai.com/v1}"
   jq -n \
@@ -1164,6 +1214,7 @@ aap_demo_wire() {
     wire_ao_aap || return 1
     wire_ao_mcp || return 1
     wire_ao_llm || wire_warn "AO LLM provider wiring skipped"
+    wire_ao_rebind_agentic_workflows || wire_warn "AO workflow model rebinding skipped"
   fi
 
   wire_log ""

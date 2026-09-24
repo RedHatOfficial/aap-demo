@@ -15,6 +15,7 @@ integration. When an LLM provider is configured, every agentic node is bound
 to that provider's discovered model ID (external mode defaults to `luna`; local
 Ollama mode uses its configured Ollama model). Legacy webhook triggers are
 authorized with the local AO service account required by current AO releases.
+Running `aap-demo wire` reapplies the same binding to existing demo workflows.
 
 The upstream demos that call ServiceNow, Lightspeed, or an LLM still require those
 external integrations and credentials to be configured in AO. Environment-specific

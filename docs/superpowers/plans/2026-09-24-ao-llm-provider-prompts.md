@@ -235,7 +235,9 @@ deployment exists. In `none` mode, omit the optional agent credential and
 model arguments. Pass the same provider credential/model through the normal AAP
 control-job synchronization path so every agentic node receives the selected
 model, with external mode defaulting to `luna` and local mode retaining the
-configured Ollama model.
+configured Ollama model. Re-running `aap-demo wire` must also rebind existing
+`aap-demo` workflows so the model selection is not limited to newly imported
+workflows.
 
 - [ ] **Step 4: Run the test to verify it passes**
 

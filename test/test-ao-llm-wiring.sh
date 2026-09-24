@@ -127,5 +127,11 @@ else
   fail "aap_sync_receives_agent_model_binding"
 fi
 
+if grep -q 'wire_ao_rebind_agentic_workflows' "${REPO_ROOT}/includes/addon-wire.sh"; then
+  :
+else
+  fail "wire_command_rebinds_existing_workflows"
+fi
+
 echo "AO LLM wiring failures: ${failures}"
 [ "$failures" -eq 0 ]
