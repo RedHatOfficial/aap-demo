@@ -16,7 +16,7 @@ and are checked in under [`manifests/`](manifests/). `deploy.sh` applies them wi
 
 ```bash
 aap-demo deploy          # once: AAP + OLM + catalog
-aap-demo enable ao       # prompts for local Ollama or an external LLM provider
+aap-demo enable ao       # prompts for local Ollama, external LLM, or no LLM
 aap-demo status          # route URL + admin password when ready
 ```
 
@@ -26,8 +26,12 @@ During an interactive `enable ao`, choose one of these LLM provider paths:
    the local provider into AO. This remains the default for `QUIET=true` and
    other non-interactive runs.
 2. **External provider** — skips Ollama and prompts for an API key for an
-   OpenAI-compatible endpoint. The default endpoint is
-   `https://api.openai.com/v1` and the default model is `luna`.
+   OpenAI-compatible endpoint. If `OPENAI_API_KEY` is already exported in the
+   environment, it is imported without another prompt. The default endpoint
+   is `https://api.openai.com/v1` and the default model is `luna`.
+3. **None** — skips Ollama and LLM credential wiring. AO still installs, but
+   agentic demos that require an LLM are unavailable until a provider is
+   configured.
 
 Override the external provider defaults when enabling AO:
 
@@ -37,6 +41,17 @@ AO_LLM_BASE_URL=https://api.example.com/v1 \
 AO_LLM_MODEL=my-model \
 aap-demo enable ao
 ```
+
+To reuse an OpenAI key from your shell profile, export it before enabling AO:
+
+```bash
+export OPENAI_API_KEY=...
+aap-demo enable ao
+```
+
+The installer reads the already-exported variable only; it does not source or
+parse shell profile files. Selecting **None** always skips the key, even when
+`OPENAI_API_KEY` is present.
 
 The API key is stored locally at `~/.aap-demo/ao/llm-api-key` with mode `600`
 and is sent only to the AO encrypted credential store. It is not written to
@@ -169,7 +184,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_IMPORT_DEMOS` | `1` | Download and synchronize upstream AO workflow exports after wiring |
 | `AO_DEMOS_REPOSITORY` | `https://github.com/ansible-tmm/aap-orchestrator-demos` | Upstream AO workflow repository |
 | `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
-| `AO_LLM_PROVIDER` | `ollama` | `ollama` or `external`; external mode skips the Ollama dependency |
+| `AO_LLM_PROVIDER` | `ollama` | `ollama`, `external`, or `none`; external and none modes skip the Ollama dependency |
 | `AO_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint used by external mode |
 | `AO_LLM_MODEL` | `luna` | External model selected as AO's default after discovery |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |

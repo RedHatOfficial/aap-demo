@@ -417,7 +417,7 @@ Addons:
                   Enable the AAP 2.7 Automation Portal Operator (Technology Preview; AMD64 only)
   enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao       Install Automation Orchestrator (prompts for an LLM provider)
+  enable ao       Install Automation Orchestrator (prompts for LLM or no LLM)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
 

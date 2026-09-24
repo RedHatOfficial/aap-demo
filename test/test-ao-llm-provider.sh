@@ -30,7 +30,7 @@ fail() {
 
 if [ "$(aap_demo_ao_llm_choice 1)" = "ollama" ] \
   && [ "$(aap_demo_ao_llm_choice 2)" = "external" ] \
-  && ! aap_demo_ao_llm_choice 3 >/dev/null 2>&1; then
+  && [ "$(aap_demo_ao_llm_choice 3)" = "none" ]; then
   pass "provider_choice_mapping"
 else
   fail "provider_choice_mapping"

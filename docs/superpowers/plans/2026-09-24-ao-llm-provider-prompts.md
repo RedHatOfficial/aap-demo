@@ -6,14 +6,15 @@
 > checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let `aap-demo enable ao` choose between the existing local Ollama
-provider and an external OpenAI-compatible LLM provider without installing
-Ollama when it is not wanted.
+provider, an external OpenAI-compatible LLM provider, or no LLM provider
+without installing Ollama when it is not wanted.
 
 **Architecture:** Add a small shared shell helper for provider selection,
 non-secret configuration, and mode-600 API-key storage. The CLI will select the
 provider before resolving AO dependencies, while the existing AO wiring layer
-will route to either the Ollama integration or a generic external LLM
-integration and reuse the saved credential on later `aap-demo wire` runs.
+will route to either the Ollama integration, a generic external LLM
+integration, or no LLM integration. An already-exported `OPENAI_API_KEY` may
+populate external mode; shell profile files are never sourced or parsed.
 
 **Tech Stack:** Bash, kubectl/curl/jq integration wiring, shell regression tests, Markdown documentation.
 
@@ -22,12 +23,17 @@ integration and reuse the saved credential on later `aap-demo wire` runs.
 ## Global Constraints
 
 - Preserve the current Ollama behavior as the default for quiet/non-interactive enablement.
+- The explicit `none` provider must skip LLM dependency installation, wiring,
+  and agent credential/model import while still installing AO and MCP.
 - The external provider must use an OpenAI-compatible API, default base URL
   `https://api.openai.com/v1`, and default model `luna`.
+- When external mode is selected and no saved key exists, reuse an already
+  exported `OPENAI_API_KEY` before prompting for hidden input.
 - `AO_LLM_BASE_URL` and `AO_LLM_MODEL` must override the external defaults.
 - API keys must never be written to the plaintext config, command output, test
   fixtures, or logs; store the local key file with mode `600`.
 - Provider selection must be idempotent and must not automatically delete an already-installed Ollama addon.
+- Selecting `none` must never import `OPENAI_API_KEY`.
 - Existing AAP, MCP, and Ollama wiring must remain functional.
 
 ---
@@ -41,7 +47,7 @@ integration and reuse the saved credential on later `aap-demo wire` runs.
 
 **Interfaces:**
 
-- Produces `aap_demo_ao_llm_choice(choice)` returning `ollama` or `external` and failing for unsupported choices.
+- Produces `aap_demo_ao_llm_choice(choice)` returning `ollama`, `external`, or `none` and failing for unsupported choices.
 - Produces `aap_demo_ao_llm_key_file()` returning `${AO_LLM_API_KEY_FILE:-${AAP_DEMO_DIR}/ao/llm-api-key}`.
 - Produces `aap_demo_ao_llm_save_key(key)` which writes only the supplied key to
   the mode-600 key file without printing it.
@@ -57,7 +63,7 @@ source includes/ao-llm.sh
 test_choice_mapping() {
   [ "$(aap_demo_ao_llm_choice 1)" = ollama ]
   [ "$(aap_demo_ao_llm_choice 2)" = external ]
-  ! aap_demo_ao_llm_choice 3
+  [ "$(aap_demo_ao_llm_choice 3)" = none ]
 }
 
 test_key_is_private_and_not_printed() {
@@ -115,7 +121,7 @@ git commit -m "feat: add AO LLM provider configuration helpers"
 **Interfaces:**
 
 - Consumes the helpers from `includes/ao-llm.sh`.
-- Produces provider state in `AO_LLM_PROVIDER` with values `ollama` or `external`.
+- Produces provider state in `AO_LLM_PROVIDER` with values `ollama`, `external`, or `none`.
 - Produces the child-process environment needed by `addons/ao/deploy.sh` and `includes/addon-wire.sh`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -225,7 +231,8 @@ refresh, and select `AO_LLM_MODEL` as default.
 
 Update AO demo import lookup so external mode can supply the external LLM
 credential/model just as Ollama currently does, without assuming the Ollama
-deployment exists.
+deployment exists. In `none` mode, omit the optional agent credential and
+model arguments.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -249,10 +256,11 @@ git commit -m "feat: wire external AO LLM providers"
 
 - [ ] **Step 1: Update documentation**
 
-Document the interactive prompt, the non-interactive default, the external
-defaults (`https://api.openai.com/v1` and `luna`),
+Document the interactive prompt, the non-interactive default, the `none`
+behavior, the external defaults (`https://api.openai.com/v1` and `luna`),
 `AO_LLM_BASE_URL`/`AO_LLM_MODEL` overrides, secure key-file behavior, and how
-to switch modes without automatically uninstalling Ollama.
+to reuse an exported `OPENAI_API_KEY` without sourcing profile files or
+automatically uninstalling Ollama.
 
 - [ ] **Step 2: Run focused verification**
 

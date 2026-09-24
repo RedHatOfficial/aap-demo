@@ -34,6 +34,32 @@ else
   fi
 fi
 
+if ! aap_demo_ao_llm_configure_provider none; then
+  fail "none_provider_configuration"
+elif [ "${AO_LLM_PROVIDER:-}" != none ] \
+  || ! grep -q '^AO_LLM_PROVIDER=none$' "$AAP_DEMO_CONFIG"; then
+  fail "none_provider_configuration"
+fi
+
+profile_key_file="$TEST_DIR/state/ao/profile-api-key"
+if OPENAI_API_KEY="profile-secret" AO_LLM_API_KEY_FILE="$profile_key_file" \
+  AO_LLM_PROMPT_DEVICE=/dev/null \
+  bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_prompt_for_key" \
+  && [ "$(<"$profile_key_file")" = "profile-secret" ]; then
+  :
+else
+  fail "imports_exported_openai_api_key"
+fi
+
+none_key_file="$TEST_DIR/state/ao/none-api-key"
+if OPENAI_API_KEY="profile-secret" AO_LLM_API_KEY_FILE="$none_key_file" \
+  bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_configure_provider none" \
+  && [ ! -e "$none_key_file" ]; then
+  :
+else
+  fail "none_does_not_import_exported_openai_api_key"
+fi
+
 unset AO_LLM_PROVIDER
 QUIET=true
 if ! aap_demo_ao_llm_prepare; then
@@ -47,6 +73,13 @@ if ! aap_demo_ao_llm_prepare; then
   fail "quiet_mode_respects_explicit_external_provider"
 elif [ "${AO_LLM_PROVIDER:-}" != external ]; then
   fail "quiet_mode_respects_explicit_external_provider"
+fi
+
+AO_LLM_PROVIDER=none
+if ! aap_demo_ao_llm_prepare; then
+  fail "quiet_mode_respects_explicit_none_provider"
+elif [ "${AO_LLM_PROVIDER:-}" != none ]; then
+  fail "quiet_mode_respects_explicit_none_provider"
 fi
 
 if grep -q 'source .*includes/ao-llm.sh' "${REPO_ROOT}/aap-demo.sh" \

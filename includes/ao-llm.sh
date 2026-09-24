@@ -13,6 +13,7 @@ aap_demo_ao_llm_choice() {
   case "${1:-}" in
     1) printf '%s\n' ollama ;;
     2) printf '%s\n' external ;;
+    3) printf '%s\n' none ;;
     *) return 1 ;;
   esac
 }
@@ -84,12 +85,19 @@ aap_demo_ao_llm_configure_provider() {
   local api_key="${2:-}"
 
   case "$provider" in
+    none)
+      export AO_LLM_PROVIDER=none
+      aap_demo_ao_llm_save_config AO_LLM_PROVIDER none
+      ;;
     ollama)
       export AO_LLM_PROVIDER=ollama
       aap_demo_ao_llm_save_config AO_LLM_PROVIDER ollama
       ;;
     external)
       aap_demo_ao_llm_external_defaults
+      if [ -z "$api_key" ] && [ -n "${OPENAI_API_KEY:-}" ]; then
+        api_key="$OPENAI_API_KEY"
+      fi
       if [ -n "$api_key" ]; then
         aap_demo_ao_llm_save_key "$api_key"
       fi
@@ -113,6 +121,12 @@ aap_demo_ao_llm_prompt_for_key() {
   local prompt_device="${AO_LLM_PROMPT_DEVICE:-/dev/tty}"
   local api_key
 
+  if [ -n "${OPENAI_API_KEY:-}" ]; then
+    echo "Using the exported OPENAI_API_KEY for the external LLM provider." >&2
+    aap_demo_ao_llm_configure_provider external "$OPENAI_API_KEY"
+    return
+  fi
+
   printf 'External LLM API key (input hidden): ' >&2
   IFS= read -r -s api_key <"$prompt_device" || return 1
   printf '\n' >&2
@@ -129,11 +143,11 @@ aap_demo_ao_llm_prepare() {
   local choice selected
 
   if [ "${QUIET:-false}" = true ]; then
-    if [ "$provider" = external ]; then
-      aap_demo_ao_llm_configure_provider external
-    else
-      aap_demo_ao_llm_configure_provider ollama
-    fi
+    case "$provider" in
+      external) aap_demo_ao_llm_configure_provider external ;;
+      none) aap_demo_ao_llm_configure_provider none ;;
+      *) aap_demo_ao_llm_configure_provider ollama ;;
+    esac
     return
   fi
 
@@ -149,16 +163,17 @@ aap_demo_ao_llm_prepare() {
   echo "Choose an AO LLM provider:"
   echo "  1) Install local Ollama (recommended for offline demos)"
   echo "  2) Use an external OpenAI-compatible provider"
+  echo "  3) Do not configure an LLM (agentic demos will be unavailable)"
   printf 'Choice [1]: '
   IFS= read -r choice <"$prompt_device" || return 1
   choice="${choice:-1}"
   selected=$(aap_demo_ao_llm_choice "$choice") || {
-    echo "ERROR: Choose 1 for Ollama or 2 for an external provider." >&2
+    echo "ERROR: Choose 1 for Ollama, 2 for an external provider, or 3 for no LLM." >&2
     return 1
   }
   if [ "$selected" = external ]; then
     aap_demo_ao_llm_prompt_for_key
   else
-    aap_demo_ao_llm_configure_provider ollama
+    aap_demo_ao_llm_configure_provider "$selected"
   fi
 }

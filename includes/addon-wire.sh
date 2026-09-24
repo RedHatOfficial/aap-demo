@@ -996,6 +996,9 @@ wire_ao_external_llm() {
 
 wire_ao_llm() {
   case "${AO_LLM_PROVIDER:-ollama}" in
+    none)
+      wire_log "Skipping AO LLM provider wiring (none selected)"
+      ;;
     external) wire_ao_external_llm ;;
     ollama) wire_ao_ollama ;;
     *)

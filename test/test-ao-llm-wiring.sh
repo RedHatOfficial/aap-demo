@@ -89,5 +89,21 @@ if [ "$ollama_called" != true ] || [ "$external_called" = true ]; then
   fail "ollama_provider_dispatch"
 fi
 
+external_called=false
+ollama_called=false
+AO_LLM_PROVIDER=none
+if ! wire_ao_llm; then
+  fail "none_provider_dispatch"
+elif [ "$ollama_called" = true ] || [ "$external_called" = true ]; then
+  fail "none_provider_dispatch"
+fi
+
+if grep -q 'AO_LLM_PROVIDER.*none' "${REPO_ROOT}/addons/ao/deploy.sh" \
+  && grep -q 'agent-credential-id' "${REPO_ROOT}/addons/ao/deploy.sh"; then
+  :
+else
+  fail "none_provider_skips_agent_credential_import"
+fi
+
 echo "AO LLM wiring failures: ${failures}"
 [ "$failures" -eq 0 ]
