@@ -841,23 +841,29 @@ sync_ao_demos() {
     --ref "${AO_DEMOS_REF:-abcc1a1482a}"
   )
   local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
-  if [ -z "$_agent_cred" ] && wire_ollama_deployed; then
-    _agent_cred=$(wire_ao_find_credential_by_name "aap-demo Ollama" 2>/dev/null || true)
+  local _llm_integration_name="aap-demo Ollama"
+  local _llm_model="${WIRE_OLLAMA_MODEL:-qwen2.5:3b}"
+  if [ "${AO_LLM_PROVIDER:-ollama}" = external ]; then
+    _llm_integration_name="aap-demo External LLM"
+    _llm_model="${AO_LLM_MODEL:-luna}"
+  fi
+  if [ -z "$_agent_cred" ]; then
+    _agent_cred=$(wire_ao_find_credential_by_name "$_llm_integration_name" 2>/dev/null || true)
   fi
   if [ -n "$_agent_cred" ]; then
     _import_args+=(--agent-credential-id "$_agent_cred")
-    if wire_ollama_deployed && [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-      local _ollama_integration _ollama_model_id
-      _ollama_integration=$(wire_ao_find_integration_by_name "aap-demo Ollama" 2>/dev/null || true)
-      if [ -n "$_ollama_integration" ]; then
-        _ollama_model_id=$(wire_ao_api GET \
-          "/integrations/${_ollama_integration}/models?limit=50" 2>/dev/null \
+    if [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
+      local _llm_integration _llm_model_id
+      _llm_integration=$(wire_ao_find_integration_by_name "$_llm_integration_name" 2>/dev/null || true)
+      if [ -n "$_llm_integration" ]; then
+        _llm_model_id=$(wire_ao_api GET \
+          "/integrations/${_llm_integration}/models?limit=50" 2>/dev/null \
           | wire_ao_list_items \
-          | jq -r --arg m "${WIRE_OLLAMA_MODEL:-qwen2.5:3b}" \
+          | jq -r --arg m "$_llm_model" \
             '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true)
       fi
-      if [ -n "${_ollama_model_id:-}" ]; then
-        _import_args+=(--agent-model-id "$_ollama_model_id")
+      if [ -n "${_llm_model_id:-}" ]; then
+        _import_args+=(--agent-model-id "$_llm_model_id")
       fi
     fi
   fi

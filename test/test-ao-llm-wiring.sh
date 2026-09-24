@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Regression tests for AO LLM provider wiring dispatch and configuration.
+# shellcheck disable=SC2218  # wiring functions are loaded from addon-wire.sh.
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# shellcheck source=../includes/addon-wire.sh
+source "${REPO_ROOT}/includes/addon-wire.sh"
+
+failures=0
+fail() {
+  echo "✗ $1" >&2
+  failures=$((failures + 1))
+}
+
+if ! grep -q 'wire_ao_external_llm' "${REPO_ROOT}/includes/addon-wire.sh"; then
+  fail "external_llm_wiring_function_exists"
+fi
+
+AO_LLM_BASE_URL="https://api.example.test/v1"
+AO_LLM_MODEL="luna"
+external_config=$(wire_ao_llm_config_json 2>/dev/null || true)
+if [ "$(printf '%s' "$external_config" | jq -r '.integration_type // empty' 2>/dev/null)" != "llm_provider" ] \
+  || [ "$(printf '%s' "$external_config" | jq -r '.base_url // empty' 2>/dev/null)" != "https://api.example.test/v1" ] \
+  || [ "$(printf '%s' "$external_config" | jq -r '.provider_hint // empty' 2>/dev/null)" != "custom" ]; then
+  fail "external_llm_configuration"
+fi
+
+TEST_DIR=$(mktemp -d)
+trap 'rm -rf "$TEST_DIR"' EXIT
+AO_LLM_API_KEY_FILE="$TEST_DIR/llm-api-key"
+printf '%s' 'secret-fixture' >"$AO_LLM_API_KEY_FILE"
+chmod 600 "$AO_LLM_API_KEY_FILE"
+AO_LLM_BASE_URL="https://api.example.test/v1"
+AO_LLM_MODEL="luna"
+
+wire_ao_ensure_credential() {
+  printf '%s' "$3" >"$TEST_DIR/credential.json"
+  printf '%s' 'credential-id'
+}
+wire_ao_find_integration_by_name() {
+  return 1
+}
+wire_ao_api() {
+  local method="$1"
+  local path="$2"
+  local data="$3"
+  case "$method $path" in
+    "POST /integrations")
+      printf '%s' "$data" >"$TEST_DIR/integration.json"
+      printf '%s' '{"id":"integration-id"}'
+      ;;
+    "POST /integrations/"*"/validate" | "POST /integrations/"*"/refresh")
+      printf '%s' '{}'
+      ;;
+  esac
+}
+wire_ao_set_default_llm_model() {
+  printf '%s:%s' "$1" "$2" >"$TEST_DIR/default-model"
+}
+wire_output=$(wire_ao_external_llm 2>&1)
+if printf '%s' "$wire_output" | grep -q 'secret-fixture' \
+  || [ "$(jq -r '.api_key // empty' "$TEST_DIR/credential.json")" != "secret-fixture" ] \
+  || [ "$(jq -r '.configuration.base_url // empty' "$TEST_DIR/integration.json")" != "https://api.example.test/v1" ] \
+  || grep -q 'secret-fixture' "$TEST_DIR/integration.json" \
+  || [ "$(<"$TEST_DIR/default-model")" != "integration-id:luna" ]; then
+  fail "external_llm_api_payloads"
+fi
+
+external_called=false
+ollama_called=false
+wire_ao_external_llm() { external_called=true; }
+wire_ao_ollama() { ollama_called=true; }
+
+AO_LLM_PROVIDER=external
+wire_ao_llm
+if [ "$external_called" != true ] || [ "$ollama_called" = true ]; then
+  fail "external_provider_dispatch"
+fi
+
+external_called=false
+ollama_called=false
+AO_LLM_PROVIDER=ollama
+wire_ao_llm
+if [ "$ollama_called" != true ] || [ "$external_called" = true ]; then
+  fail "ollama_provider_dispatch"
+fi
+
+echo "AO LLM wiring failures: ${failures}"
+[ "$failures" -eq 0 ]

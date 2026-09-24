@@ -886,7 +886,7 @@ wire_ao_mcp() {
     "mcp_server" "$mcp_url" "$cred_id" true || return 1
 }
 
-wire_ao_set_default_ollama_model() {
+wire_ao_set_default_llm_model() {
   local integration_id="$1"
   local preferred_model="$2"
   local models model_id
@@ -904,6 +904,105 @@ wire_ao_set_default_ollama_model() {
   wire_ao_api PATCH "/integrations/${integration_id}/models/${model_id}" \
     '{"is_default": true}' >/dev/null 2>&1 || true
   wire_log "  ✓ Default AO model set: ${preferred_model}"
+}
+
+wire_ao_set_default_ollama_model() {
+  wire_ao_set_default_llm_model "$@"
+}
+
+wire_ao_llm_config_json() {
+  local base_url="${AO_LLM_BASE_URL:-https://api.openai.com/v1}"
+  jq -n \
+    --arg url "$base_url" \
+    '{
+      integration_type: "llm_provider",
+      provider_hint: "custom",
+      base_url: $url,
+      allow_http: false,
+      insecure_skip_tls_verify: false
+    }'
+}
+
+wire_ao_external_llm() {
+  local api_key_file="${AO_LLM_API_KEY_FILE:-${AAP_DEMO_DIR}/ao/llm-api-key}"
+  local api_key="" cred_id config_json name integration_id result
+  local model="${AO_LLM_MODEL:-luna}"
+  name="aap-demo External LLM"
+
+  if [ -s "$api_key_file" ]; then
+    api_key=$(<"$api_key_file")
+  fi
+
+  if [ -n "$api_key" ]; then
+    cred_id=$(
+      wire_ao_ensure_credential \
+        "$name" \
+        "LLM Provider" \
+        "$(jq -n --arg key "$api_key" '{api_key: $key}')"
+    ) || return 1
+  else
+    cred_id=$(wire_ao_find_credential_by_name "$name")
+    if [ -z "$cred_id" ]; then
+      wire_warn "No API key found for the external LLM provider"
+      wire_warn "  Re-run 'aap-demo enable ao' and provide an API key"
+      return 1
+    fi
+  fi
+
+  config_json=$(wire_ao_llm_config_json)
+  integration_id=$(wire_ao_find_integration_by_name "$name")
+  if [ -n "$integration_id" ]; then
+    wire_log "  Updating external LLM integration..."
+    result=$(wire_ao_api PATCH "/integrations/${integration_id}" \
+      "$(jq -n \
+        --arg name "$name" \
+        --argjson config "$config_json" \
+        --arg cred "$cred_id" \
+        '{name: $name, description: "Auto-wired by aap-demo", configuration: $config, management_credential_id: $cred, enabled: true, scope: "global"}')" 2>/dev/null)
+  else
+    wire_log "  Creating external LLM integration..."
+    result=$(wire_ao_api POST "/integrations" \
+      "$(jq -n \
+        --arg name "$name" \
+        --argjson config "$config_json" \
+        --arg cred "$cred_id" \
+        '{name: $name, description: "Auto-wired by aap-demo", integration_type: "llm_provider", configuration: $config, management_credential_id: $cred, enabled: true, scope: "global"}')" 2>/dev/null)
+    integration_id=$(printf '%s' "$result" | jq -r '.id // empty' 2>/dev/null)
+  fi
+
+  if wire_ao_response_is_error "$result" || [ -z "$integration_id" ]; then
+    wire_warn "Failed to create/update AO integration: ${name}"
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
+  fi
+
+  wire_ao_api POST "/integrations/${integration_id}/validate" \
+    "$(jq -n \
+      --argjson config "$config_json" \
+      --arg cred "$cred_id" \
+      '{integration_type: "llm_provider", configuration: $config, credential_id: $cred}')" \
+    >/dev/null 2>&1 || true
+
+  result=$(wire_ao_api POST "/integrations/${integration_id}/refresh" '{}' 2>/dev/null)
+  if wire_ao_response_is_error "$result"; then
+    wire_warn "Failed to refresh external LLM models"
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
+  fi
+
+  wire_ao_set_default_llm_model "$integration_id" "$model"
+  wire_log "  ✓ External LLM wired as provider"
+}
+
+wire_ao_llm() {
+  case "${AO_LLM_PROVIDER:-ollama}" in
+    external) wire_ao_external_llm ;;
+    ollama) wire_ao_ollama ;;
+    *)
+      wire_warn "Unsupported AO LLM provider: ${AO_LLM_PROVIDER}"
+      return 1
+      ;;
+  esac
 }
 
 wire_ao_ollama() {
@@ -1002,7 +1101,7 @@ wire_ao_ollama() {
     return 1
   fi
 
-  wire_ao_set_default_ollama_model "$integration_id" "$WIRE_OLLAMA_MODEL"
+  wire_ao_set_default_llm_model "$integration_id" "$WIRE_OLLAMA_MODEL"
   wire_log "  ✓ Ollama wired as LLM provider"
 }
 
@@ -1026,7 +1125,7 @@ aap_demo_wire() {
     wire_ao_wait_for_route || return 1
     wire_ao_aap || return 1
     wire_ao_mcp || return 1
-    wire_ao_ollama || wire_warn "Ollama AO wiring skipped"
+    wire_ao_llm || wire_warn "AO LLM provider wiring skipped"
   fi
 
   wire_log ""
