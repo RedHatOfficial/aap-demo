@@ -22,6 +22,18 @@ aap_demo_ao_llm_key_file() {
   printf '%s\n' "${AO_LLM_API_KEY_FILE:-${AAP_DEMO_DIR}/ao/llm-api-key}"
 }
 
+aap_demo_ao_llm_read_key() {
+  local key_file key
+
+  key_file=$(aap_demo_ao_llm_key_file)
+  [ -f "$key_file" ] || return 1
+  [ ! -L "$key_file" ] || return 1
+  chmod 600 "$key_file" || return 1
+  key=$(<"$key_file")
+  [ -n "$key" ] || return 1
+  printf '%s' "$key"
+}
+
 aap_demo_ao_llm_save_key() {
   local key="${1:-}"
   local key_file tmp_file
@@ -29,14 +41,19 @@ aap_demo_ao_llm_save_key() {
 
   key_file=$(aap_demo_ao_llm_key_file)
   mkdir -p "$(dirname "$key_file")"
-  tmp_file="${key_file}.tmp.$$"
-  (
+  tmp_file=$(mktemp "${key_file}.tmp.XXXXXX") || return 1
+  if ! (
     umask 077
     printf '%s' "$key" >"$tmp_file"
     chmod 600 "$tmp_file"
-  )
-  mv "$tmp_file" "$key_file"
-  chmod 600 "$key_file"
+  ); then
+    rm -f -- "$tmp_file"
+    return 1
+  fi
+  if ! mv -f -- "$tmp_file" "$key_file"; then
+    rm -f -- "$tmp_file"
+    return 1
+  fi
 }
 
 aap_demo_ao_llm_save_config() {
@@ -116,7 +133,7 @@ aap_demo_ao_llm_configure_provider() {
       if [ -n "$api_key" ]; then
         aap_demo_ao_llm_save_key "$api_key"
       fi
-      if [ ! -s "$(aap_demo_ao_llm_key_file)" ]; then
+      if ! aap_demo_ao_llm_read_key >/dev/null; then
         echo "ERROR: An API key is required for the external LLM provider." >&2
         return 1
       fi

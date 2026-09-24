@@ -46,6 +46,14 @@ else
   fail "api_key_is_private_and_not_printed"
 fi
 
+chmod 644 "$AO_LLM_API_KEY_FILE"
+if [ "$(aap_demo_ao_llm_read_key)" = "secret-fixture" ] \
+  && [ "$(stat -f '%Lp' "$AO_LLM_API_KEY_FILE" 2>/dev/null || stat -c '%a' "$AO_LLM_API_KEY_FILE")" = "600" ]; then
+  pass "existing_key_permissions_are_repaired"
+else
+  fail "existing_key_permissions_are_repaired"
+fi
+
 unset AO_LLM_BASE_URL AO_LLM_MODEL
 aap_demo_ao_llm_external_defaults
 if [ "$AO_LLM_BASE_URL" = "https://api.openai.com/v1" ] \

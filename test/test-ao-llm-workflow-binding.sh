@@ -37,10 +37,21 @@ wire_ao_api() {
         {"id":"unrelated-workflow","labels":{"aap-demo":"false"},"workflow_definition":{"nodes":[
           {"type":"agentic","parameters":{"model":"leave-me-alone"}}
         ]}}
-      ]}'
+      ],"next":"next-cursor"}'
+      ;;
+    "GET /workflows?limit=100&cursor=next-cursor")
+      printf '%s\n' '{"resources":[
+        {"id":"second-demo-workflow","labels":{"aap-demo":"true"},"workflow_definition":{"nodes":[
+          {"type":"agentic","parameters":{"model":"stale-model"}}
+        ]}}
+      ],"next":null}'
       ;;
     "PATCH /workflows/demo-workflow")
       printf '%s' "$data" >"$TEST_DIR/demo-patch.json"
+      printf '%s\n' '{}'
+      ;;
+    "PATCH /workflows/second-demo-workflow")
+      printf '%s' "$data" >"$TEST_DIR/second-demo-patch.json"
       printf '%s\n' '{}'
       ;;
     *)
@@ -57,7 +68,8 @@ elif [ "$(jq -r '.workflow_definition.nodes | map(select(.type == "agentic")) | 
   || [ "$(jq -r '.workflow_definition.nodes[0].parameters.integration_id' "$TEST_DIR/demo-patch.json")" != gpt-6-luna-integration-id ] \
   || [ "$(jq -r '.workflow_definition.nodes[0].parameters.llm_model_id' "$TEST_DIR/demo-patch.json")" != gpt-6-luna-model-id ] \
   || [ "$(jq -r '.workflow_definition.nodes[1].parameters.llm_model_id' "$TEST_DIR/demo-patch.json")" != gpt-6-luna-model-id ] \
-  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.model // empty' "$TEST_DIR/demo-patch.json")" != "" ]; then
+  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.model // empty' "$TEST_DIR/demo-patch.json")" != "" ] \
+  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.integration_id' "$TEST_DIR/second-demo-patch.json")" != gpt-6-luna-integration-id ]; then
   fail "all_demo_agentic_nodes_receive_selected_model"
 fi
 

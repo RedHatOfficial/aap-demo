@@ -41,6 +41,43 @@ wire_ao_ensure_credential() {
   printf '%s' "$3" >"$TEST_DIR/credential.json"
   printf '%s' 'credential-id'
 }
+
+model_patch_called=false
+wire_ao_api() {
+  local method="$1"
+  local path="$2"
+  case "$method $path" in
+    "GET /integrations/integration-id/models?limit=50")
+      printf '%s' '{"resources":[]}'
+      ;;
+    "PATCH /integrations/integration-id/models/model-id")
+      model_patch_called=true
+      printf '%s' '{}'
+      ;;
+  esac
+}
+if wire_ao_set_default_llm_model integration-id gpt-6-luna; then
+  fail "missing_model_fails_closed"
+elif [ "$model_patch_called" = true ]; then
+  fail "missing_model_does_not_patch"
+fi
+
+wire_ao_api() {
+  local method="$1"
+  local path="$2"
+  case "$method $path" in
+    "GET /integrations/integration-id/models?limit=50")
+      printf '%s' '{"resources":[{"id":"model-id","model_id":"gpt-6-luna"}]}'
+      ;;
+    "PATCH /integrations/integration-id/models/model-id")
+      printf '%s' '{"code":"MODEL_UPDATE_FAILED"}'
+      ;;
+  esac
+}
+if wire_ao_set_default_llm_model integration-id gpt-6-luna; then
+  fail "model_patch_failure_fails_closed"
+fi
+
 wire_ao_find_integration_by_name() {
   return 1
 }
@@ -69,6 +106,26 @@ if printf '%s' "$wire_output" | grep -q 'secret-fixture' \
   || grep -q 'secret-fixture' "$TEST_DIR/integration.json" \
   || [ "$(<"$TEST_DIR/default-model")" != "integration-id:gpt-6-luna" ]; then
   fail "external_llm_api_payloads"
+fi
+
+wire_ao_find_integration_by_name() {
+  printf '%s' 'provider-integration-id'
+}
+wire_ao_api() {
+  local method="$1"
+  local path="$2"
+  case "$method $path" in
+    "GET /integrations/explicit-integration-id/models?limit=50")
+      printf '%s' '{"resources":[{"id":"model-id","model_id":"gpt-6-luna"}]}'
+      ;;
+    *)
+      echo "unexpected model lookup API call: $method $path" >&2
+      return 1
+      ;;
+  esac
+}
+if [ "$(wire_ao_llm_agent_model_id explicit-integration-id)" != model-id ]; then
+  fail "model_lookup_uses_explicit_integration"
 fi
 
 external_called=false

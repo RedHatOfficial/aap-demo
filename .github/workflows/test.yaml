@@ -56,6 +56,24 @@ jobs:
       - name: Run product-demos API readiness tests
         run: ./test/test-product-demos-api.sh
 
+      - name: Run AO LLM provider tests
+        run: ./test/test-ao-llm-provider.sh
+
+      - name: Run AO provider preparation tests
+        run: ./test/test-ao-enable-provider.sh
+
+      - name: Run AO LLM wiring tests
+        run: ./test/test-ao-llm-wiring.sh
+
+      - name: Run AO workflow binding tests
+        run: ./test/test-ao-llm-workflow-binding.sh
+
+      - name: Run AO importer tests
+        run: python3 ./test/test-ao-import-demos.py
+
+      - name: Run AO provisioning tests
+        run: python3 ./test/test-provision-aap-demos.py
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

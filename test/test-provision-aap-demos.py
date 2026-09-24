@@ -63,6 +63,7 @@ def test_control_job_extra_vars_include_agent_binding():
     extra_vars = MODULE.control_job_extra_vars(args)
 
     assert extra_vars["ao_agent_credential_id"] == "llm-credential"
+    assert extra_vars["ao_agent_integration_id"] == "llm-integration"
     assert extra_vars["ao_agent_model_id"] == "gpt-6-luna-model-id"
 
 

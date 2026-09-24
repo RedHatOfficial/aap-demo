@@ -843,24 +843,21 @@ sync_ao_demos() {
   if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
     local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
     local _agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
+    local _llm_model_id=""
     if [ -z "$_agent_cred" ]; then
       _agent_cred=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
     fi
     if [ -z "$_agent_integration_id" ]; then
       _agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
     fi
-    if [ -n "$_agent_cred" ]; then
+    if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ]; then
+      _llm_model_id=$(wire_ao_llm_agent_model_id "$_agent_integration_id" 2>/dev/null || true)
+    fi
+    if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ] && [ -n "$_llm_model_id" ]; then
       _import_args+=(--agent-credential-id "$_agent_cred")
-      if [ -n "$_agent_integration_id" ]; then
-        _import_args+=(--agent-integration-id "$_agent_integration_id")
-      fi
-      if [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-        local _llm_model_id
-        _llm_model_id=$(wire_ao_llm_agent_model_id 2>/dev/null || true)
-        if [ -n "${_llm_model_id:-}" ]; then
-          _import_args+=(--agent-model-id "$_llm_model_id")
-        fi
-      fi
+      _import_args+=(--agent-integration-id "$_agent_integration_id" --agent-model-id "$_llm_model_id")
+    elif [ -n "$_agent_cred" ] || [ -n "$_agent_integration_id" ]; then
+      wire_warn "AO LLM credential, integration, or model is incomplete; skipping agent binding for direct imports"
     fi
   fi
 
@@ -919,17 +916,14 @@ provision_aap_demos() {
       if [ -z "$_agent_integration_id" ]; then
         _agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
       fi
-      if [ -n "$_agent_cred" ]; then
+      if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ]; then
+        _agent_model_id=$(wire_ao_llm_agent_model_id "$_agent_integration_id" 2>/dev/null || true)
+      fi
+      if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ] && [ -n "$_agent_model_id" ]; then
         _provision_args+=(--ao-agent-credential-id "$_agent_cred")
-        if [ -n "$_agent_integration_id" ]; then
-          _provision_args+=(--ao-agent-integration-id "$_agent_integration_id")
-        fi
-        if [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-          _agent_model_id=$(wire_ao_llm_agent_model_id 2>/dev/null || true)
-          if [ -n "$_agent_model_id" ]; then
-            _provision_args+=(--ao-agent-model-id "$_agent_model_id")
-          fi
-        fi
+        _provision_args+=(--ao-agent-integration-id "$_agent_integration_id" --ao-agent-model-id "$_agent_model_id")
+      elif [ -n "$_agent_cred" ] || [ -n "$_agent_integration_id" ]; then
+        wire_warn "AO LLM credential, integration, or model is incomplete; skipping agent binding for AAP sync"
       fi
     fi
   else
