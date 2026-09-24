@@ -49,10 +49,16 @@ fi
 unset AO_LLM_BASE_URL AO_LLM_MODEL
 aap_demo_ao_llm_external_defaults
 if [ "$AO_LLM_BASE_URL" = "https://api.openai.com/v1" ] \
-  && [ "$AO_LLM_MODEL" = "luna" ]; then
+  && [ "$AO_LLM_MODEL" = "gpt-6-luna" ]; then
   pass "external_provider_defaults"
 else
   fail "external_provider_defaults"
+fi
+
+if AO_LLM_MODEL=luna bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_external_defaults; [ \"\$AO_LLM_MODEL\" = 'gpt-6-luna' ]"; then
+  pass "legacy_luna_default_is_migrated"
+else
+  fail "legacy_luna_default_is_migrated"
 fi
 
 if AO_LLM_BASE_URL="https://example.test/v1" AO_LLM_MODEL="custom-model" \

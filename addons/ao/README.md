@@ -28,7 +28,7 @@ During an interactive `enable ao`, choose one of these LLM provider paths:
 2. **External provider** — skips Ollama and prompts for an API key for an
    OpenAI-compatible endpoint. If `OPENAI_API_KEY` is already exported in the
    environment, it is imported without another prompt. The default endpoint
-   is `https://api.openai.com/v1` and the default model is `luna`.
+   is `https://api.openai.com/v1` and the default model is `gpt-6-luna`.
 3. **None** — skips Ollama and LLM credential wiring. AO still installs, but
    agentic demos that require an LLM are unavailable until a provider is
    configured.
@@ -115,7 +115,7 @@ cloud templates when the product-demos addon is enabled.
 
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
 All agentic nodes in synchronized workflows receive the selected provider
-credential and model; external mode uses `luna` by default. Re-running
+credential and model; external mode uses `gpt-6-luna` by default. Re-running
 `aap-demo wire` reapplies that binding to existing `aap-demo` workflows.
 Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
 the CoreDNS route rewrite if MicroShift's DNS operator has dropped it, and reapplies
@@ -189,7 +189,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
 | `AO_LLM_PROVIDER` | `ollama` | `ollama`, `external`, or `none`; external and none modes skip the Ollama dependency |
 | `AO_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint used by external mode |
-| `AO_LLM_MODEL` | `luna` | External model selected as AO's default after discovery |
+| `AO_LLM_MODEL` | `gpt-6-luna` | External model selected as AO's default after discovery |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
 | `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
 | `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |

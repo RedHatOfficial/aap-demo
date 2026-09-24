@@ -920,7 +920,13 @@ wire_ao_llm_integration_name() {
 
 wire_ao_llm_model_name() {
   case "${AO_LLM_PROVIDER:-ollama}" in
-    external) printf '%s\n' "${AO_LLM_MODEL:-luna}" ;;
+    external)
+      if [ "${AO_LLM_MODEL:-}" = luna ]; then
+        printf '%s\n' gpt-6-luna
+      else
+        printf '%s\n' "${AO_LLM_MODEL:-gpt-6-luna}"
+      fi
+      ;;
     ollama) printf '%s\n' "$WIRE_OLLAMA_MODEL" ;;
     *) return 1 ;;
   esac
@@ -1011,7 +1017,8 @@ wire_ao_llm_config_json() {
 wire_ao_external_llm() {
   local api_key_file="${AO_LLM_API_KEY_FILE:-${AAP_DEMO_DIR}/ao/llm-api-key}"
   local api_key="" cred_id config_json name integration_id result
-  local model="${AO_LLM_MODEL:-luna}"
+  local model
+  model=$(wire_ao_llm_model_name)
   name="aap-demo External LLM"
 
   if [ -s "$api_key_file" ]; then

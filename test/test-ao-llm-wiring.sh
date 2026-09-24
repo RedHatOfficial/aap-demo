@@ -21,7 +21,7 @@ if ! grep -q 'wire_ao_external_llm' "${REPO_ROOT}/includes/addon-wire.sh"; then
 fi
 
 AO_LLM_BASE_URL="https://api.example.test/v1"
-AO_LLM_MODEL="luna"
+AO_LLM_MODEL="gpt-6-luna"
 external_config=$(wire_ao_llm_config_json 2>/dev/null || true)
 if [ "$(printf '%s' "$external_config" | jq -r '.integration_type // empty' 2>/dev/null)" != "llm_provider" ] \
   || [ "$(printf '%s' "$external_config" | jq -r '.base_url // empty' 2>/dev/null)" != "https://api.example.test/v1" ] \
@@ -35,7 +35,7 @@ AO_LLM_API_KEY_FILE="$TEST_DIR/llm-api-key"
 printf '%s' 'secret-fixture' >"$AO_LLM_API_KEY_FILE"
 chmod 600 "$AO_LLM_API_KEY_FILE"
 AO_LLM_BASE_URL="https://api.example.test/v1"
-AO_LLM_MODEL="luna"
+AO_LLM_MODEL="gpt-6-luna"
 
 wire_ao_ensure_credential() {
   printf '%s' "$3" >"$TEST_DIR/credential.json"
@@ -61,12 +61,13 @@ wire_ao_api() {
 wire_ao_set_default_llm_model() {
   printf '%s:%s' "$1" "$2" >"$TEST_DIR/default-model"
 }
+AO_LLM_PROVIDER=external
 wire_output=$(wire_ao_external_llm 2>&1)
 if printf '%s' "$wire_output" | grep -q 'secret-fixture' \
   || [ "$(jq -r '.api_key // empty' "$TEST_DIR/credential.json")" != "secret-fixture" ] \
   || [ "$(jq -r '.configuration.base_url // empty' "$TEST_DIR/integration.json")" != "https://api.example.test/v1" ] \
   || grep -q 'secret-fixture' "$TEST_DIR/integration.json" \
-  || [ "$(<"$TEST_DIR/default-model")" != "integration-id:luna" ]; then
+  || [ "$(<"$TEST_DIR/default-model")" != "integration-id:gpt-6-luna" ]; then
   fail "external_llm_api_payloads"
 fi
 
@@ -90,10 +91,15 @@ if [ "$ollama_called" != true ] || [ "$external_called" = true ]; then
 fi
 
 AO_LLM_PROVIDER=external
-AO_LLM_MODEL=luna
+AO_LLM_MODEL=gpt-6-luna
 if [ "$(wire_ao_llm_integration_name)" != "aap-demo External LLM" ] \
-  || [ "$(wire_ao_llm_model_name)" != luna ]; then
+  || [ "$(wire_ao_llm_model_name)" != gpt-6-luna ]; then
   fail "external_agent_model_selection"
+fi
+
+AO_LLM_MODEL=luna
+if [ "$(wire_ao_llm_model_name)" != gpt-6-luna ]; then
+  fail "legacy_external_model_is_migrated"
 fi
 
 AO_LLM_PROVIDER=ollama

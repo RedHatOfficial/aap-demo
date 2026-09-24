@@ -76,7 +76,10 @@ aap_demo_ao_llm_save_config() {
 
 aap_demo_ao_llm_external_defaults() {
   : "${AO_LLM_BASE_URL:=https://api.openai.com/v1}"
-  : "${AO_LLM_MODEL:=luna}"
+  if [ "${AO_LLM_MODEL:-}" = luna ]; then
+    AO_LLM_MODEL=gpt-6-luna
+  fi
+  : "${AO_LLM_MODEL:=gpt-6-luna}"
   export AO_LLM_BASE_URL AO_LLM_MODEL
 }
 
