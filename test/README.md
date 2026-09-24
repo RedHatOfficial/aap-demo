@@ -23,6 +23,9 @@ Comprehensive test script validating all aap-demo commands.
 
 # AAP provisioning fast-path test
 python3 ./test/test-provision-aap-demos.py
+
+# AO replica profile rendering (no cluster required)
+./test/test-ao-replica-profile.sh
 ```
 
 ### Coverage
@@ -65,6 +68,9 @@ Tests validate:
 3. **Error handling** — unknown commands/args produce useful errors
 4. **Non-destructive behavior** — tests don't modify cluster state
 5. **Graceful degradation** — commands fail cleanly when cluster/AAP missing
+6. **AO replica profile rendering** — default one-replica and explicit
+   two-replica CR values, validation errors, and operator source-of-truth
+   behavior
 
 Tests **do not** validate:
 
