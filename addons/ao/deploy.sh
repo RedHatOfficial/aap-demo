@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
 # shellcheck source=lib/admin-password.sh
 source "${SCRIPT_DIR}/lib/admin-password.sh"
+# shellcheck source=lib/replica-profile.sh
+source "${SCRIPT_DIR}/lib/replica-profile.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -1162,6 +1164,7 @@ deploy_ao_instance() {
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     -e "s|__INGRESS_HOST__|${INGRESS_HOST}|g" \
     -e "s|__PULL_SECRET_NAME__|${AO_PULL_SECRET_NAME}|g" \
+    -e "s|__AO_REPLICA_COUNT__|${AO_REPLICA_COUNT}|g" \
     "${MANIFESTS_DIR}/automationorchestrator-cr.yaml" | kubectl apply -f -
 }
 
@@ -1240,6 +1243,13 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   exit 0
 fi
 
+AO_REPLICA_COUNT="$(ao_resolve_replica_count)"
+if [ "$AO_REPLICA_COUNT" = "1" ]; then
+  echo "AO replica profile: 1 each (default local, non-HA)"
+else
+  echo "AO replica profile: 2 each (explicit higher-resource mode)"
+fi
+
 ao_ensure_mcp_server() {
   if kubectl get ansiblemcpserver aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1 \
     || kubectl get deployment aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1; then
@@ -1284,6 +1294,45 @@ ao_instance_ready_to_skip() {
   return 0
 }
 
+wait_for_ao_instance_ready() {
+  local _ao_timeout="${1:-1200}"
+  local _ao_start _ao_elapsed _ao_reason _ao_degraded _ao_ready _ao_route
+  local _ao_running _ao_problem
+  _ao_start=$(date +%s)
+  while true; do
+    _ao_elapsed=$(($(date +%s) - _ao_start))
+    _ao_reason=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.reason}{end}' 2>/dev/null || echo "")
+    _ao_degraded=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' 2>/dev/null || echo "")
+    _ao_ready=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || echo "")
+    _ao_route=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+    _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+      | awk '$3=="Running" && $1 !~ /^redhat-operators-/ {c++} END {print c+0}')
+    _ao_problem=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+      | awk '$3 ~ /CrashLoopBackOff|Error|ImagePullBackOff/ {c++} END {print c+0}')
+    printf "\r  running=%s ready=%s degraded=%s" \
+      "${_ao_running}" "${_ao_ready:-unknown}" "${_ao_reason:-none}"
+    [ "${_ao_problem:-0}" -gt 0 ] && printf " problems=%s" "$_ao_problem"
+    printf " (%ds)    " "$_ao_elapsed"
+    if [ "${_ao_ready}" = "True" ] && [ "${_ao_degraded}" != "True" ] \
+      && [ -n "$_ao_route" ] && [ "${_ao_running:-0}" -gt 3 ]; then
+      echo ""
+      echo "✓ Route ready"
+      return 0
+    fi
+    if [ "$_ao_elapsed" -ge "$_ao_timeout" ]; then
+      echo ""
+      echo "ERROR: Automation Orchestrator was not Ready after $((_ao_timeout / 60)) minutes."
+      [ -n "$_ao_reason" ] && echo "  Degraded reason: $_ao_reason"
+      echo "  Check: kubectl get automationorchestrator,pods,routes -n $NAMESPACE"
+      return 1
+    fi
+    sleep 10
+  done
+}
+
 # --- Skip if already running (unless --force) ---
 if [ -z "$FORCE" ]; then
   _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
@@ -1297,6 +1346,8 @@ if [ -z "$FORCE" ]; then
     && [ "$_sub_channel" = "$OPERATOR_CHANNEL" ] \
     && operator_is_available \
     && ao_instance_ready_to_skip; then
+    deploy_ao_instance
+    wait_for_ao_instance_ready
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
     echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
     echo ""
@@ -1631,35 +1682,7 @@ deploy_ao_instance
 
 # --- Wait for instance ---
 echo "Waiting for Automation Orchestrator instance (may take 10+ minutes)..."
-_AO_TIMEOUT=1200
-_AO_START=$(date +%s)
-while true; do
-  _AO_ELAPSED=$(($(date +%s) - _AO_START))
-  _ao_reason=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
-    -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.reason}{end}' 2>/dev/null || echo "")
-  _ao_degraded=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
-    -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' 2>/dev/null || echo "")
-  _ao_route=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
-    | awk '$3=="Running" && $1 !~ /^redhat-operators-/ {c++} END {print c+0}')
-  _ao_problem=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
-    | awk '$3 ~ /CrashLoopBackOff|Error|ImagePullBackOff/ {c++} END {print c+0}')
-  printf "\r  running=%s degraded=%s" "${_ao_running}" "${_ao_reason:-none}"
-  [ "${_ao_problem:-0}" -gt 0 ] && printf " problems=%s" "$_ao_problem"
-  printf " (%ds)    " "$_AO_ELAPSED"
-  if [ -n "$_ao_route" ] && [ "${_ao_degraded}" != "True" ] && [ "${_ao_running:-0}" -gt 3 ]; then
-    echo ""
-    echo "✓ Route ready"
-    break
-  fi
-  if [ "$_AO_ELAPSED" -ge "$_AO_TIMEOUT" ]; then
-    echo ""
-    echo "  ⚠ Instance not ready after 20 minutes — continuing anyway"
-    echo "  Check: kubectl get automationorchestrator,pods,routes -n $NAMESPACE"
-    break
-  fi
-  sleep 10
-done
+wait_for_ao_instance_ready
 
 echo ""
 echo "✓ Automation Orchestrator operator and instance applied"
