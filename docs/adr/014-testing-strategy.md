@@ -27,7 +27,6 @@ Use **non-destructive CLI integration tests** that validate the command surface 
 |--------|-------|
 | `test/test-core-commands.sh` | Subset documented in README |
 | `test/test-ingress-ca-export.sh` | Ingress CA `CURL_CA_BUNDLE` export (combined bundle, OS-trust skip) |
-| `test/test-install.sh` | Installer uninstall/config-state coverage |
 
 ### What tests validate
 
