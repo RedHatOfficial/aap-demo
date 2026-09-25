@@ -1,11 +1,9 @@
-#!/usr/bin/env bash
-
 ao_resolve_replica_count() {
   case "${AO_LOW_RESOURCE:-}" in
-    ""|1|true)
+    "" | 1 | true)
       printf '1\n'
       ;;
-    0|false)
+    0 | false)
       printf '2\n'
       ;;
     *)
