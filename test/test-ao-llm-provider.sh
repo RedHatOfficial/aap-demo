@@ -28,6 +28,13 @@ fail() {
   ((FAILED++))
 }
 
+file_mode() {
+  if stat -c '%a' "$1" 2>/dev/null; then
+    return 0
+  fi
+  stat -f '%Lp' "$1"
+}
+
 if [ "$(aap_demo_ao_llm_choice 1)" = "ollama" ] \
   && [ "$(aap_demo_ao_llm_choice 2)" = "external" ] \
   && [ "$(aap_demo_ao_llm_choice 3)" = "none" ]; then
@@ -37,7 +44,7 @@ else
 fi
 
 key_output=$(aap_demo_ao_llm_save_key "secret-fixture" 2>&1)
-key_mode=$(stat -f '%Lp' "$AO_LLM_API_KEY_FILE" 2>/dev/null || stat -c '%a' "$AO_LLM_API_KEY_FILE")
+key_mode=$(file_mode "$AO_LLM_API_KEY_FILE")
 if [ -z "$key_output" ] \
   && [ "$(<"$AO_LLM_API_KEY_FILE")" = "secret-fixture" ] \
   && [ "$key_mode" = "600" ]; then
@@ -48,7 +55,7 @@ fi
 
 chmod 644 "$AO_LLM_API_KEY_FILE"
 if [ "$(aap_demo_ao_llm_read_key)" = "secret-fixture" ] \
-  && [ "$(stat -f '%Lp' "$AO_LLM_API_KEY_FILE" 2>/dev/null || stat -c '%a' "$AO_LLM_API_KEY_FILE")" = "600" ]; then
+  && [ "$(file_mode "$AO_LLM_API_KEY_FILE")" = "600" ]; then
   pass "existing_key_permissions_are_repaired"
 else
   fail "existing_key_permissions_are_repaired"
