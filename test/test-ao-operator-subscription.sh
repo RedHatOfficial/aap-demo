@@ -9,6 +9,8 @@ README="${SCRIPT_DIR}/addons/ao/README.md"
 grep -q 'installPlanApproval: __INSTALL_PLAN_APPROVAL__' "$MANIFEST"
 grep -q 'AO_INSTALL_PLAN_APPROVAL="${AO_INSTALL_PLAN_APPROVAL:-Automatic}"' "$DEPLOY"
 grep -q '__INSTALL_PLAN_APPROVAL__' "$DEPLOY"
+grep -q 'AO_INSTALLPLAN_NAME' "$DEPLOY"
+grep -q 'automation-orchestrator-operator' "$DEPLOY"
 grep -q 'AO_INSTALL_PLAN_APPROVAL' "$README"
 grep -q 'early-access' "$README"
 
