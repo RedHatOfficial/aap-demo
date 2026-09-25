@@ -86,12 +86,18 @@ if [ "$AUTO_GENERATE" = true ] && [ -n "$GIT_URL" ]; then
   fi
 
   # Validate HTTPS URL
-  if [[ "$GIT_URL" != http://* ]] && [[ "$GIT_URL" != https://* ]]; then
+  if [[ "$GIT_URL" != https://* ]]; then
     echo "ERROR: Only HTTPS Git URLs are supported"
     echo "  Provided: $GIT_URL"
     echo "  Expected: https://github.com/org/repo.git"
     echo ""
     echo "  SSH URLs (git@...) are not supported by this addon."
+    exit 1
+  fi
+
+  if [[ -z "$PROJECT_NAME" || ${#PROJECT_NAME} -gt 63 || ! "$PROJECT_NAME" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+    echo "ERROR: Project name must be a DNS-1123 name (lowercase letters, numbers, and hyphens; max 63 characters)"
+    echo "  Provided: $PROJECT_NAME"
     exit 1
   fi
 
@@ -206,6 +212,46 @@ VAULTEOF
   echo ""
 fi
 
+# Delete only needs kubectl and the resource name. It must work even when the
+# AAP route or admin secret is unavailable during a partial teardown.
+if ! command -v kubectl &>/dev/null; then
+  echo "ERROR: kubectl not found"
+  exit 1
+fi
+
+if [ "$ACTION" = "delete" ]; then
+  echo "Removing Ansible project resources..."
+
+  if [ -z "$PROJECT_NAME" ] && [ -f "$PROJECT_FILE" ]; then
+    PROJECT_NAME=$(grep '^project_name:' "$PROJECT_FILE" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo "")
+  fi
+
+  if [ -z "$PROJECT_NAME" ]; then
+    echo "ERROR: Project name not specified"
+    echo ""
+    echo "Usage: $0 --delete <project-name>"
+    echo "   Or: $0 --delete  # (will read from project.yml)"
+    exit 1
+  fi
+
+  if [[ ${#PROJECT_NAME} -gt 63 || ! "$PROJECT_NAME" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+    echo "ERROR: Project name must be a DNS-1123 name"
+    echo "  Provided: $PROJECT_NAME"
+    exit 1
+  fi
+
+  echo "  Project: $PROJECT_NAME"
+  kubectl delete jobtemplate "$PROJECT_NAME" -n "$NAMESPACE" 2>/dev/null || echo "  Job template not found"
+  kubectl delete inventory "$PROJECT_NAME" -n "$NAMESPACE" 2>/dev/null || echo "  Inventory not found"
+  kubectl delete project "$PROJECT_NAME" -n "$NAMESPACE" 2>/dev/null || echo "  Project not found"
+  kubectl delete ansibleautomationplatformcredential "${PROJECT_NAME}-aap" -n "$NAMESPACE" 2>/dev/null || echo "  AAP credential not found"
+  kubectl delete sourcecontrolcredential "${PROJECT_NAME}-scm" -n "$NAMESPACE" 2>/dev/null || echo "  SCM credential not found"
+
+  rm -f "${SCRIPT_DIR}/.auto-${PROJECT_NAME}.yml" "${SCRIPT_DIR}/.auto-${PROJECT_NAME}-vault.yml"
+  echo "✓ Project resources removed"
+  exit 0
+fi
+
 # Check project file exists
 if [ "$ACTION" = "deploy" ] && [ ! -f "$PROJECT_FILE" ]; then
   echo "ERROR: Project file not found: $PROJECT_FILE"
@@ -244,53 +290,6 @@ ADMIN_PASSWORD=$(kubectl get secret -n "$NAMESPACE" aap-admin-password -o jsonpa
 if [ -z "$ADMIN_PASSWORD" ]; then
   echo "ERROR: Could not retrieve AAP admin password"
   exit 1
-fi
-
-# Check kubectl is available (should always be available in aap-demo context)
-if ! command -v kubectl &>/dev/null; then
-  echo "ERROR: kubectl not found"
-  exit 1
-fi
-
-if [ "$ACTION" = "delete" ]; then
-  echo "Removing Ansible project resources..."
-
-  # Load project name from project file if not provided and file exists
-  if [ -z "$PROJECT_NAME" ] && [ -f "$PROJECT_FILE" ]; then
-    PROJECT_NAME=$(grep '^project_name:' "$PROJECT_FILE" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo "")
-  fi
-
-  if [ -z "$PROJECT_NAME" ]; then
-    echo "ERROR: Project name not specified"
-    echo ""
-    echo "Usage: $0 --delete <project-name>"
-    echo "   Or: $0 --delete  # (will read from project.yml)"
-    exit 1
-  fi
-
-  echo "  Project: $PROJECT_NAME"
-
-  # Delete in reverse dependency order (using Kubernetes CRs)
-  kubectl delete jobtemplate "$PROJECT_NAME" -n "$NAMESPACE" 2>/dev/null || echo "  Job template not found"
-  kubectl delete inventory "$PROJECT_NAME" -n "$NAMESPACE" 2>/dev/null || echo "  Inventory not found"
-  kubectl delete project "$PROJECT_NAME" -n "$NAMESPACE" 2>/dev/null || echo "  Project not found"
-  kubectl delete ansibleautomationplatformcredential "${PROJECT_NAME}-aap" -n "$NAMESPACE" 2>/dev/null || echo "  AAP credential not found"
-  kubectl delete sourcecontrolcredential "${PROJECT_NAME}-scm" -n "$NAMESPACE" 2>/dev/null || echo "  SCM credential not found"
-
-  # Clean up auto-generated files if they exist
-  AUTO_PROJECT_FILE="${SCRIPT_DIR}/.auto-${PROJECT_NAME}.yml"
-  AUTO_VAULT_FILE="${SCRIPT_DIR}/.auto-${PROJECT_NAME}-vault.yml"
-  if [ -f "$AUTO_PROJECT_FILE" ]; then
-    rm -f "$AUTO_PROJECT_FILE"
-    echo "  ✓ Removed auto-generated project file"
-  fi
-  if [ -f "$AUTO_VAULT_FILE" ]; then
-    rm -f "$AUTO_VAULT_FILE"
-    echo "  ✓ Removed auto-generated vault file"
-  fi
-
-  echo "✓ Project resources removed"
-  exit 0
 fi
 
 # Decrypt vault file if it's encrypted
@@ -338,18 +337,29 @@ fi
 echo "Rendering templates..."
 mkdir -p "$RENDERED_DIR"
 
-# Use Python to render Jinja templates
-python3 <<PYEOF
+# Use Python to render Jinja templates. Keep user-controlled values out of the
+# Python source so quotes/newlines in credentials cannot alter the program.
+ANSIBLE_PROJECT_FILE="$PROJECT_FILE" \
+  ANSIBLE_PROJECT_VAULT_FILE="$VAULT_FILE" \
+  ANSIBLE_PROJECT_NAMESPACE="$NAMESPACE" \
+  ANSIBLE_PROJECT_AAP_URL="$AAP_URL" \
+  ANSIBLE_PROJECT_ADMIN_USER="$ADMIN_USER" \
+  ANSIBLE_PROJECT_ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+  ANSIBLE_PROJECT_TEMPLATE_DIR="${SCRIPT_DIR}/templates" \
+  ANSIBLE_PROJECT_RENDERED_DIR="$RENDERED_DIR" \
+  python3 <<'PYEOF'
 import sys
+import os
 import yaml
 from jinja2 import Environment, FileSystemLoader
 
 # Load project configuration
-with open('$PROJECT_FILE', 'r') as f:
+project_file = os.environ['ANSIBLE_PROJECT_FILE']
+vault_file = os.environ['ANSIBLE_PROJECT_VAULT_FILE']
+with open(project_file, 'r') as f:
     vars_data = yaml.safe_load(f) or {}
 
 # Load and merge vault variables if vault file exists
-vault_file = '$VAULT_FILE'
 if vault_file and vault_file != '':
     try:
         with open(vault_file, 'r') as f:
@@ -359,20 +369,20 @@ if vault_file and vault_file != '':
         pass  # Vault file is optional
 
 # Inject namespace
-vars_data['namespace'] = '$NAMESPACE'
+vars_data['namespace'] = os.environ['ANSIBLE_PROJECT_NAMESPACE']
 
 # Inject current AAP credentials if not already specified
 if 'aap_host' not in vars_data:
-    vars_data['aap_host'] = '$AAP_URL'
+    vars_data['aap_host'] = os.environ['ANSIBLE_PROJECT_AAP_URL']
 if 'aap_username' not in vars_data:
-    vars_data['aap_username'] = '$ADMIN_USER'
+    vars_data['aap_username'] = os.environ['ANSIBLE_PROJECT_ADMIN_USER']
 if 'aap_password' not in vars_data:
-    vars_data['aap_password'] = '$ADMIN_PASSWORD'
+    vars_data['aap_password'] = os.environ['ANSIBLE_PROJECT_ADMIN_PASSWORD']
 if 'aap_verify_ssl' not in vars_data:
     vars_data['aap_verify_ssl'] = False
 
 # Setup Jinja environment
-env = Environment(loader=FileSystemLoader('${SCRIPT_DIR}/templates'))
+env = Environment(loader=FileSystemLoader(os.environ['ANSIBLE_PROJECT_TEMPLATE_DIR']))
 
 # Render each Kubernetes CR template
 templates = ['credential_cr.yml.j2', 'aap_credential_cr.yml.j2', 'project_cr.yml.j2', 'inventory_cr.yml.j2', 'job_template_cr.yml.j2']
@@ -380,7 +390,9 @@ for template_name in templates:
     template = env.get_template(template_name)
     rendered = template.render(vars_data)
 
-    output_file = '${RENDERED_DIR}/' + template_name.replace('.j2', '')
+    output_file = os.path.join(
+        os.environ['ANSIBLE_PROJECT_RENDERED_DIR'], template_name.replace('.j2', '')
+    )
     with open(output_file, 'w') as f:
         f.write(rendered)
     print(f'  ✓ {template_name} -> {output_file}')
