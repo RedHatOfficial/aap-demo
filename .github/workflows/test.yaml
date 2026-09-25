@@ -47,6 +47,9 @@ jobs:
       - name: Run AO CatalogSource tests
         run: ./test/test-ao-catalog-source.sh
 
+      - name: Run ansible-project addon tests
+        run: ./test/test-ansible-project.sh
+
       - name: Run Ollama addon tests
         run: ./test/test-ollama.sh
 
