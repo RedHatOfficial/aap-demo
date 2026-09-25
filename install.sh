@@ -11,6 +11,12 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "uninstall" ]; then
   rm -f ~/.zsh/completions/_aap-demo
   rm -f ~/.local/share/bash-completion/completions/aap-demo
   echo "  ✓ Binary and completions removed"
+  if [ -f "${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}" ]; then
+    config_file="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
+    sed -i.bak '/^ADDONS=/d' "$config_file"
+    rm -f "${config_file}.bak"
+    echo "  ✓ Enabled addon state removed from ${config_file}"
+  fi
   echo ""
   echo "  VM data at ~/.aap-demo/vm/ was NOT removed."
   echo "  To remove everything: rm -rf ~/.aap-demo/vm/"
@@ -120,12 +126,21 @@ if [ -n "$MISSING_DEPS" ]; then
           mkdir -p ~/.local/bin
           mv "$TMP_DIR/oc" ~/.local/bin/oc
           chmod +x ~/.local/bin/oc
+          # The OpenShift mirror's archive can inherit macOS quarantine metadata.
+          # Clear it only after the archive has passed checksum verification so
+          # Gatekeeper does not block the freshly installed client.
+          if command -v xattr &>/dev/null; then
+            xattr -d com.apple.quarantine ~/.local/bin/oc 2>/dev/null || true
+          fi
           echo "✓ oc installed to ~/.local/bin/oc"
 
           # Install kubectl if present in archive
           if [ -f "$TMP_DIR/kubectl" ]; then
             mv "$TMP_DIR/kubectl" ~/.local/bin/kubectl
             chmod +x ~/.local/bin/kubectl
+            if command -v xattr &>/dev/null; then
+              xattr -d com.apple.quarantine ~/.local/bin/kubectl 2>/dev/null || true
+            fi
             echo "✓ kubectl installed to ~/.local/bin/kubectl"
           fi
 
