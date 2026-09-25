@@ -79,6 +79,49 @@ Tests **do not** validate:
 - Live AAP operations (requires running instance)
 - Network endpoints (skipped in `--quick` mode)
 
+## Live add-on smoke test
+
+`test/test-addons-live.sh` runs an opt-in enable/verify/disable cycle for each
+user-facing add-on. It changes cluster state and may download images, so it is
+not part of the default test suite. Run it only against a disposable AAP demo
+cluster after the base AAP deployment is ready:
+
+```bash
+# Review the inventory without touching the cluster.
+./test/test-addons-live.sh --dry-run
+
+# Test every add-on and stop at the first failure.
+./test/test-addons-live.sh --live
+
+# Test every add-on, continue after failures, and use the local AO profile.
+./test/test-addons-live.sh --live --continue --low-resource
+
+# Test one add-on and preserve it for inspection.
+./test/test-addons-live.sh --live --addon mcp-server --keep
+```
+
+The harness tests MCP, Portal, Portal Operator, Private Automation Hub,
+Automation Orchestrator, APME EAP, local image cache, Product Demos, Satellite
+demos, OPA, and Ollama. Product Demos uses all domains by default; set
+`PRODUCT_DEMOS_DOMAINS=linux` (or another space-separated list) to shorten the
+run. Each add-on is disabled after its check unless it was already enabled or
+`--keep` was specified. Logs are written to a temporary directory and the path
+is printed at the start of the run; set `AAP_DEMO_TEST_LOG_DIR` to keep them in
+a known location.
+
+Results are classified as follows:
+
+- `PASS` means enable completed and the add-on's live health check passed.
+- `FAIL` means deployment or verification failed; inspect that add-on's log.
+- `SKIP` means a documented prerequisite is missing, such as the PAH offline
+  token. A skip does not hide deployment failures after prerequisites are met.
+
+The script refuses to change a cluster unless `--live` is supplied. Use
+`--continue` when collecting a complete compatibility report. A failed OPA test
+on a deployment whose AAP custom resource has `Successful=False` should be
+reported as a failure; this is the readiness issue tracked in GitHub issue
+[#188](https://github.com/RedHatOfficial/aap-demo/issues/188).
+
 ### Exit Codes
 
 - **0** — All tests passed
