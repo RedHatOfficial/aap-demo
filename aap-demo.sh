@@ -114,6 +114,7 @@ for arg in "$@"; do
     continue
   fi
 
+  # shellcheck disable=SC2221,SC2222
   case "$arg" in
     --branch=*)
       UPDATE_BRANCH="${arg#*=}"
@@ -581,6 +582,7 @@ cmd_repair() {
 }
 
 # Shared function: display cluster info for warnings
+# shellcheck disable=SC2120
 _show_cluster_info() {
   local _CLUSTER _API _AAP_COUNT _POD_COUNT
   _CLUSTER=$(kubectl config current-context 2>/dev/null) || _CLUSTER="unknown"
@@ -2007,8 +2009,6 @@ cmd_status() {
       printf "  %-15s %s\n" "$a" "$label"
     else
       printf "  %-15s disabled\n" "$a"
-    fi
-  done
     fi
   done
   echo ""

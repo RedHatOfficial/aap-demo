@@ -61,7 +61,6 @@ _fleet_migrate_from_seed_nodes() {
 
 _fleet_migrate_from_seed_nodes
 
-
 # -----------------------------------------------------------------------------
 # Architecture detection
 # -----------------------------------------------------------------------------
@@ -82,7 +81,15 @@ _fleet_detect_arch() {
 _fleet_qemu_binary() {
   local arch
   arch=$(_fleet_detect_arch) || return 1
-  echo "qemu-system-${arch}"
+  local bin="qemu-system-${arch}"
+  if command -v "$bin" &>/dev/null; then
+    echo "$bin"
+  elif [ -x "/usr/libexec/qemu-kvm" ]; then
+    # RHEL/CentOS ship qemu-kvm at this path rather than in $PATH
+    echo "/usr/libexec/qemu-kvm"
+  else
+    echo "$bin"
+  fi
 }
 
 _fleet_qemu_accel() {
@@ -508,7 +515,7 @@ _fleet_get_available_ram_mb() {
     free_pages=$(vm_stat 2>/dev/null | awk '/Pages free:/{gsub(/\./, ""); print $3}')
     local inactive_pages
     inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive:/{gsub(/\./, ""); print $3}')
-    echo $(( (${free_pages:-0} + ${inactive_pages:-0}) * page_size / 1024 / 1024 ))
+    echo $(((${free_pages:-0} + ${inactive_pages:-0}) * page_size / 1024 / 1024))
   else
     free -m 2>/dev/null | awk '/Mem:/{print $7}'
   fi
@@ -542,9 +549,9 @@ _fleet_check_ram() {
     return 1
   fi
 
-  local ram_after_pct=$(( ram_needed * 100 / available ))
+  local ram_after_pct=$((ram_needed * 100 / available))
   if [ "$ram_after_pct" -gt 80 ]; then
-    printf "  \033[1;33mWARNING: Fleet nodes will use %d MB of %d MB available RAM (%d%%)\033[0m\n"       "$ram_needed" "$available" "$ram_after_pct"
+    printf "  \033[1;33mWARNING: Fleet nodes will use %d MB of %d MB available RAM (%d%%)\033[0m\n" "$ram_needed" "$available" "$ram_after_pct"
     echo "  Reduce with: FLEET_NODE_MEM=512"
     echo ""
   fi
