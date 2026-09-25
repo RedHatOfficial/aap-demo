@@ -27,7 +27,6 @@ Use **non-destructive CLI integration tests** that validate the command surface 
 |--------|-------|
 | `test/test-core-commands.sh` | Subset documented in README |
 | `test/test-ingress-ca-export.sh` | Ingress CA `CURL_CA_BUNDLE` export (combined bundle, OS-trust skip) |
-| `test/test-aap-demo.sh` | Comprehensive CLI coverage |
 
 ### What tests validate
 
@@ -78,7 +77,8 @@ Mocking used where commands would touch CRC (e.g., `start`/`stop` delegation che
 ### Neutral
 
 - Manual testing still required for release validation
-- `aap-demo test` (ATF) is separate — requires deployed AAP and VPN for internal collections
+- The obsolete internal ATF runner is not part of the supported CLI; live deployment checks
+  are documented in each feature PR's Test Plan.
 
 ## Alternatives Considered
 

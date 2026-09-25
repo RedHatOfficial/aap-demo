@@ -63,6 +63,17 @@ else
   _fail "status_format - command failed"
 fi
 
+# Test 2a: obsolete ATF command is no longer exposed
+echo "Test 2a: obsolete ATF test command is removed"
+help_output=$("$AAP_DEMO_SH" help 2>&1)
+test_output=$("$AAP_DEMO_SH" test 2>&1 || true)
+if ! echo "$help_output" | grep -qE '^    test |aap-demo test' \
+  && echo "$test_output" | grep -qi "unknown argument"; then
+  _pass "obsolete_atf_command_removed"
+else
+  _fail "obsolete_atf_command_removed - test command is still available"
+fi
+
 # Test 2b: persistent storage is shown under the VM section
 echo "Test 2b: status places persistent storage under VM"
 vm_section_line=$(grep -n '^  echo "VM:"' "$AAP_DEMO_SH" | cut -d: -f1)

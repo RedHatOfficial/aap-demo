@@ -88,7 +88,7 @@ namespace preferences, and infra type.
 ### Negative
 
 - **Dual maintenance** — behavior changes need updates in two codebases
-- Feature parity gaps (portal, test) on Windows without Git Bash
+- Feature parity gaps (portal) on Windows without Git Bash
 - Subtle semantic differences risk drift (e.g., SCC grant timing)
 
 ### Neutral
