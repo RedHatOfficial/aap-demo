@@ -118,16 +118,59 @@ aap-demo enable local-cache load   # one-shot reload into fresh VM
 aap-demo enable local-cache        # restore auto-load on future deploys
 ```
 
-## Daily Use
+### Common Commands
 
 ```bash
-aap-demo start         # Start the cluster (after stop or reboot)
-aap-demo stop          # Stop gracefully
-aap-demo idle true     # Scale down AAP to save resources
-aap-demo idle false    # Scale back up
-aap-demo ssh           # SSH into the cluster node
-aap-demo status        # Check everything
-aap-demo repair        # Fix after sleep/wake issues
+# Deployment
+aap-demo deploy              # Deploy AAP 2.7
+
+# Cluster management
+aap-demo status              # Show cluster status, routes, credentials
+aap-demo stop                # Stop the cluster
+aap-demo start               # Start the cluster
+aap-demo ssh                 # SSH into the cluster node
+aap-demo watch               # Monitor deployment progress
+aap-demo destroy             # Delete entire cluster
+
+# AAP Operator Idle
+aap-demo idle true           # Scale down AAP to save resources
+aap-demo idle false          # Scale back up
+aap-demo idle                # Check current idle state
+
+# Troubleshooting
+aap-demo diagnose            # Quick health check (cluster, storage, SCCs, pods)
+aap-demo must-gather         # Collect full diagnostics (AAP + cluster)
+aap-demo must-gather /tmp/d  # Collect to specific directory
+aap-demo repair              # Fix after sleep/wake issues
+
+# Maintenance
+aap-demo clean               # Remove AAP deployment (keeps cluster)
+aap-demo update              # Pull latest code and reinstall
+aap-demo help                # Full command reference
+```
+
+## Architecture
+
+Architecture decisions are documented in [docs/adr/](docs/adr/README.md) (14 ADRs covering CLI
+design, storage, OLM, addons, and cross-platform support).
+
+### macOS / Linux / Windows
+
+- **Networking:** SSH (2222), API (6443), HTTP/HTTPS (443) — all on localhost
+- **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
+- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust;
+  on Windows, run `aap-demo deploy` from an elevated PowerShell (see
+  [powershell/README.md](powershell/README.md#ingress-ca-and-browser-tls))
+
+## Environment Variables
+
+```bash
+CRC_CPUS=8                   # VM CPU count (default: 8)
+CRC_MEMORY=16384             # VM memory in MiB (default: 16384)
+CRC_DISK=100                 # VM disk size in GiB (default: 100)
+CRC_PV_SIZE=70               # Storage reserved for LVMS PVCs in GiB (default: 70, must be < CRC_DISK)
+NAMESPACE=aap-operator       # Target namespace
+QUIET=true                   # Suppress disclaimer
 ```
 
 ## Troubleshooting
