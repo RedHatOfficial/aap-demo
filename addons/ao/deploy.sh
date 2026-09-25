@@ -8,6 +8,8 @@ source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
 source "${SCRIPT_DIR}/lib/admin-password.sh"
 # shellcheck source=lib/replica-profile.sh
 source "${SCRIPT_DIR}/lib/replica-profile.sh"
+# shellcheck source=lib/install-plan-approval.sh
+source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -72,14 +74,11 @@ ACTION="${1:-deploy}"
 FORCE="${FORCE:-}"
 REFRESH_CATALOG="${AO_REFRESH_CATALOG:-}"
 PURGE_DATA="${AO_PURGE_DATA:-}"
-AO_INSTALL_PLAN_APPROVAL="${AO_INSTALL_PLAN_APPROVAL:-Automatic}"
-case "$AO_INSTALL_PLAN_APPROVAL" in
-  Automatic | Manual) ;;
-  *)
-    echo "ERROR: AO_INSTALL_PLAN_APPROVAL must be Automatic or Manual" >&2
-    exit 1
-    ;;
-esac
+AO_INSTALL_PLAN_APPROVAL_REQUESTED="${AO_INSTALL_PLAN_APPROVAL:-}"
+if [ -n "$AO_INSTALL_PLAN_APPROVAL_REQUESTED" ]; then
+  ao_validate_install_plan_approval "$AO_INSTALL_PLAN_APPROVAL_REQUESTED"
+fi
+AO_INSTALL_PLAN_APPROVAL=""
 for _arg in "$@"; do
   case "$_arg" in
     --force) FORCE=1 ;;
@@ -1379,6 +1378,10 @@ if [ -z "$FORCE" ]; then
     && [ "$_sub_channel" = "$OPERATOR_CHANNEL" ] \
     && operator_is_available \
     && ao_instance_ready_to_skip; then
+    if [ -n "$AO_INSTALL_PLAN_APPROVAL_REQUESTED" ]; then
+      ao_apply_install_plan_approval "$NAMESPACE" \
+        automation-orchestrator-operator "$AO_INSTALL_PLAN_APPROVAL_REQUESTED"
+    fi
     deploy_ao_instance
     wait_for_ao_instance_ready
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
@@ -1576,6 +1579,9 @@ wait_for_ao_postgres_databases
 # --- Operator install (GA OLM subscription) ---
 # AAP already has an OperatorGroup in aap-operator; a second one there
 # makes OLM refuse all subscriptions in that namespace.
+AO_INSTALL_PLAN_APPROVAL=$(ao_resolve_install_plan_approval \
+  "$OLM_NAMESPACE" automation-orchestrator-operator \
+  "$AO_INSTALL_PLAN_APPROVAL_REQUESTED" Automatic)
 kubectl delete subscription automation-orchestrator-operator -n "$AAP_NAMESPACE" --wait=false 2>/dev/null || true
 kubectl delete operatorgroup automation-orchestrator-operator -n "$AAP_NAMESPACE" --wait=false 2>/dev/null || true
 
@@ -1611,24 +1617,11 @@ apply_operator_olm_manifests
 
 echo "Waiting for InstallPlan..."
 _sub_reset=0
-_ao_installplan_name=$(kubectl get subscription automation-orchestrator-operator \
-  -n "$OLM_NAMESPACE" -o jsonpath='{.status.installplan.name}' 2>/dev/null || echo "")
 for i in $(seq 1 30); do
-  _pending_ips=$(kubectl get installplan -n "$OLM_NAMESPACE" -o json 2>/dev/null \
-    | AO_INSTALLPLAN_NAME="$_ao_installplan_name" python3 -c '
-import json, sys
-import os
-data = json.load(sys.stdin)
-subscription_installplan = os.environ.get("AO_INSTALLPLAN_NAME", "")
-for item in data.get("items", []):
-    installplan_name = item.get("metadata", {}).get("name", "")
-    csv_names = item.get("spec", {}).get("clusterServiceVersionNames", [])
-    is_ao_installplan = installplan_name == subscription_installplan or any(
-        "automation-orchestrator-operator" in csv_name for csv_name in csv_names
-    )
-    if is_ao_installplan and not item.get("spec", {}).get("approved", False):
-        print(item["metadata"]["name"])
-' 2>/dev/null || echo "")
+  _ao_installplan_name=$(ao_subscription_install_plan "$OLM_NAMESPACE" \
+    automation-orchestrator-operator)
+  _pending_ips=$(ao_pending_install_plans "$OLM_NAMESPACE" \
+    automation-orchestrator-operator "$_ao_installplan_name")
   if [ "$AO_INSTALL_PLAN_APPROVAL" = "Automatic" ] && [ -n "$_pending_ips" ]; then
     while read -r _ip; do
       [ -z "$_ip" ] && continue
@@ -1636,6 +1629,14 @@ for item in data.get("items", []):
       kubectl patch installplan "$_ip" -n "$OLM_NAMESPACE" \
         --type merge -p '{"spec":{"approved":true}}'
     done <<<"$_pending_ips"
+  elif [ "$AO_INSTALL_PLAN_APPROVAL" = "Manual" ] && [ -n "$_pending_ips" ]; then
+    if [ "${_manual_installplan_notice:-}" != "$_pending_ips" ]; then
+      while read -r _ip; do
+        [ -z "$_ip" ] && continue
+        ao_manual_install_plan_instructions "$OLM_NAMESPACE" "$_ip"
+      done <<<"$_pending_ips"
+      _manual_installplan_notice="$_pending_ips"
+    fi
   fi
   if kubectl get csv -n "$OLM_NAMESPACE" -o name 2>/dev/null | grep -q "automation-orchestrator"; then
     echo "✓ CSV created"
@@ -1675,7 +1676,8 @@ for item in data.get("items", []):
   fi
   if [ "$i" -eq 30 ]; then
     echo ""
-    echo "ERROR: Operator CSV not found after 5 minutes."
+    ao_install_plan_timeout_message "$AO_INSTALL_PLAN_APPROVAL" \
+      "${_pending_ips%%$'\n'*}"
     echo "  Subscription conditions:"
     subscription_failure_detail | sed 's/^/    /'
     echo "  InstallPlans:"

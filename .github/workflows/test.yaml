@@ -50,6 +50,9 @@ jobs:
       - name: Run AO operator subscription tests
         run: ./test/test-ao-operator-subscription.sh
 
+      - name: Run AO InstallPlan approval tests
+        run: bash test/test-ao-install-plan-approval.sh
+
       - name: Run Ollama addon tests
         run: ./test/test-ollama.sh
 
