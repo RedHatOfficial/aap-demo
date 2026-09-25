@@ -1,3 +1,5 @@
+# shellcheck shell=bash
+
 ao_resolve_replica_count() {
   case "${AO_LOW_RESOURCE:-}" in
     "" | 1 | true)
