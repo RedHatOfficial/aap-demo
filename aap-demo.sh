@@ -114,6 +114,7 @@ for arg in "$@"; do
     continue
   fi
 
+  # shellcheck disable=SC2221,SC2222
   case "$arg" in
     --branch=*)
       UPDATE_BRANCH="${arg#*=}"
@@ -133,7 +134,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | fleet | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
@@ -143,7 +144,11 @@ for arg in "$@"; do
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
-    mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
+    add | remove | list)
+      # Subcommand args for fleet command
+      EXTRA_ARGS+=("$arg")
+      ;;
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -170,8 +175,8 @@ for arg in "$@"; do
       export "$arg"
       ;;
     *)
-      # Commands that accept arbitrary path args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ]; then
+      # Commands that accept arbitrary args
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "fleet" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -409,6 +414,17 @@ Cluster management:
   ssh             SSH into cluster node
 
 Addons:
+  enable fleet       Enable Fleet managed VMs for demos (requires AAP)
+  enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
+  enable mcp-server  Enable MCP server for AI assistants
+
+Fleet commands (requires: enable fleet):
+  fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
+  fleet list                    List running fleet node VMs
+  fleet remove [N|name]         Remove fleet node VMs
+  fleet destroy                 Remove all VMs and AAP resources
+
+Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
                    Requires: AAP 2.6+, registry.redhat.io credentials (Helm auto-installed if missing)
   enable portal-operator
@@ -420,9 +436,11 @@ Addons:
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
 
 Examples:
-  aap-demo deploy                 # Deploy AAP 2.7
-  aap-demo enable portal          # Enable Self-Service Portal (Helm; auto-detects CPU)
-  aap-demo enable setup-pah       # Configure Private Automation Hub
+  aap-demo deploy                              # Deploy AAP 2.7
+  aap-demo enable fleet                        # Enable fleet addon
+  aap-demo fleet add 3 --image ~/rhel9.qcow2  # Create 3 managed VMs
+  aap-demo enable portal                       # Enable Self-Service Portal
+  aap-demo enable setup-pah                    # Configure Private Automation Hub
 
 Run 'aap-demo help' for full documentation.
 EOF
@@ -462,7 +480,13 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
-    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama)
+    enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
+    disable [addon] Disable an addon
+    fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
+    fleet remove [N|name]  Remove last N VMs or a specific VM by name
+    fleet list             List running fleet node VMs
+    fleet destroy          Remove all VMs and AAP resources
+    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, fleet)
                     portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
@@ -489,13 +513,16 @@ ENVIRONMENT:
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
 
 EXAMPLES:
-    aap-demo create                  # Create OpenShift Local cluster
-    aap-demo deploy                  # Deploy AAP 2.7
-    aap-demo status                  # Show cluster and AAP status
-    aap-demo stop                    # Stop cluster
-    aap-demo start                   # Start stopped cluster
-    aap-demo ssh                     # SSH into cluster node
-    aap-demo enable setup-pah        # Configure Private Automation Hub remotes
+    aap-demo create                              # Create OpenShift Local cluster
+    aap-demo deploy                              # Deploy AAP 2.7
+    aap-demo enable fleet                        # Enable fleet addon
+    aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
+    aap-demo fleet list                          # Show running fleet nodes
+    aap-demo status                              # Show cluster and AAP status
+    aap-demo stop                                # Stop cluster
+    aap-demo start                               # Start stopped cluster
+    aap-demo ssh                                 # SSH into cluster node
+    aap-demo enable setup-pah                    # Configure Private Automation Hub remotes
 
 REQUIREMENTS:
     - OpenShift Local — https://console.redhat.com/openshift/create/local
@@ -555,6 +582,7 @@ cmd_repair() {
 }
 
 # Shared function: display cluster info for warnings
+# shellcheck disable=SC2120
 _show_cluster_info() {
   local _CLUSTER _API _AAP_COUNT _POD_COUNT
   _CLUSTER=$(kubectl config current-context 2>/dev/null) || _CLUSTER="unknown"
@@ -1902,27 +1930,101 @@ cmd_status() {
     fi
   fi
 
+  # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
-  echo ""
   echo "Addons:"
   echo "-------"
   for a in $AVAILABLE_ADDONS; do
-    local enabled=false
-    local note=""
-    [ "$a" = "portal-operator" ] && note=" (AMD64 only)"
+    local url="" label="" enabled=false
     if echo "$saved_addons" | grep -qw "$a"; then
       enabled=true
-    elif [ "$a" = "ao" ] && kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
-      enabled=true
     fi
-    if [ "$enabled" = true ]; then
-      printf "  %-15s enabled%s\n" "$a" "$note"
+    case "$a" in
+      fleet)
+        if [ "$enabled" = true ]; then
+          if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+            source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
+            local _fc
+            _fc=$(fleet_count 2>/dev/null || echo "0")
+            if [ "$_fc" -gt 0 ] 2>/dev/null; then
+              label="${_fc} node(s) running"
+            else
+              label="enabled (no nodes)"
+            fi
+          else
+            label="enabled"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      mcp-server)
+        if [ "$enabled" = true ]; then
+          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
+          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal)
+        if [ "$enabled" = true ]; then
+          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ -z "$url" ] || [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
+        else
+          label="disabled"
+        fi
+        ;;
+      portal-operator)
+        local _note=" (AMD64 only)"
+        if [ "$enabled" = true ]; then
+          label="enabled${_note}"
+        else
+          label="disabled${_note}"
+        fi
+        ;;
+      ao)
+        if [ "$enabled" = true ] || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
+          label="enabled"
+        else
+          label="disabled"
+        fi
+        ;;
+      *)
+        if [ "$enabled" = true ]; then
+          label="enabled"
+        else
+          label="disabled"
+        fi
+        ;;
+    esac
+    if [ -n "$url" ] && [ -z "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$url"
+    elif [ -n "$label" ]; then
+      printf "  %-15s %s\n" "$a" "$label"
     else
-      printf "  %-15s disabled%s\n" "$a" "$note"
+      printf "  %-15s disabled\n" "$a"
     fi
   done
   echo ""
+
+  # Show fleet nodes (addon)
+  if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+    source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
+    local _node_count
+    _node_count=$(fleet_count 2>/dev/null || echo "0")
+    if [ "$_node_count" -gt 0 ] 2>/dev/null; then
+      echo "Fleet:"
+      echo "-----------"
+      fleet_list
+      echo ""
+    fi
+  fi
 }
 
 cmd_redeploy() {
@@ -1992,6 +2094,12 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
+  # Clean up fleet nodes before destroying cluster (addon)
+  if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+    source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
+    fleet_destroy_all
+  fi
+
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
@@ -2009,6 +2117,14 @@ cmd_destroy() {
 cmd_stop() {
   echo ""
   printf "\033[1maap-demo stop\033[0m - Stopping CRC cluster...\n"
+
+  # Stop fleet node VMs (addon; ephemeral — must be recreated after start)
+  if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+    source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
+    fleet_stop_all
+    echo "  (Fleet nodes are ephemeral — recreate with: aap-demo fleet add)"
+  fi
+
   crc stop || true
   echo "✓ CRC cluster stopped"
   echo "To restart: aap-demo start"
@@ -2690,11 +2806,121 @@ watch_aap() {
 }
 
 # ---------------------------------------------------------------------------
+# Fleet nodes: managed RHEL VMs for AAP demos (addon)
+# ---------------------------------------------------------------------------
+
+cmd_fleet() {
+  local fleet_dir="${SCRIPT_DIR}/addons/fleet"
+  if [ ! -f "${fleet_dir}/fleet.sh" ]; then
+    _err "Fleet addon not found"
+    echo "  Expected: ${fleet_dir}/fleet.sh"
+    return 1
+  fi
+
+  source "${fleet_dir}/fleet.sh"
+  source "${fleet_dir}/fleet-aap.sh"
+
+  local subcmd="${1:-}"
+  shift 2>/dev/null || true
+
+  case "$subcmd" in
+    add)
+      local count="" image=""
+      for narg in "$@"; do
+        if [[ "$narg" =~ ^[0-9]+$ ]]; then
+          count="$narg"
+        elif [[ "$narg" == --image=* ]]; then
+          image="${narg#*=}"
+        else
+          image="$narg"
+        fi
+      done
+
+      count="${count:-1}"
+      image="${image:-${FLEET_IMAGE:-}}"
+
+      if [ -z "$image" ]; then
+        _err "No QCOW2 image specified"
+        echo ""
+        echo "Usage: aap-demo fleet add [count] --image <path-to-qcow2>"
+        echo ""
+        echo "  count    Number of VMs to create (default: 1)"
+        echo "  --image  Path to a RHEL/CentOS QCOW2 cloud image"
+        return 1
+      fi
+
+      image=$(cd "$(dirname "$image")" 2>/dev/null && echo "$(pwd)/$(basename "$image")")
+
+      _verify_cluster || return 1
+      fleet_check_prereqs "$image" || return 1
+      fleet_create_all "$count" "$image"
+      _fleet_save_image_config "$image"
+      fleet_register_aap
+      ;;
+    remove)
+      local target="${1:-1}"
+      if [[ "$target" =~ ^[0-9]+$ ]]; then
+        for narg in "$@"; do
+          if [[ "$narg" =~ ^[0-9]+$ ]]; then
+            target="$narg"
+            break
+          fi
+        done
+        local indices
+        indices=$(_fleet_running_indices)
+        local to_remove
+        to_remove=$(echo "$indices" | tail -n "$target")
+        for idx in $to_remove; do
+          local hn="aap-fleet-node-${idx}"
+          fleet_node_deregister_host "$hn" 2>/dev/null || true
+        done
+        fleet_remove_last "$target"
+      else
+        local hn="$target"
+        [[ "$hn" != aap-fleet-node-* ]] && hn="aap-fleet-node-${hn}"
+        fleet_node_deregister_host "$hn" 2>/dev/null || true
+        fleet_remove_by_name "$target"
+      fi
+      ;;
+    list)
+      echo ""
+      printf "\033[1mFleet Nodes\033[0m\n"
+      echo ""
+      fleet_list
+      ;;
+    destroy)
+      _verify_cluster 2>/dev/null && fleet_deregister_aap 2>/dev/null || true
+      fleet_destroy_all
+      ;;
+    *)
+      echo "Usage: aap-demo fleet <subcommand>"
+      echo ""
+      echo "Subcommands:"
+      echo "  add [count] --image <path>   Create fleet node VMs"
+      echo "  remove [count|name]          Remove fleet node VMs"
+      echo "  list                         List fleet node VMs"
+      echo "  destroy                      Remove all VMs and AAP resources"
+      echo ""
+      echo "Options:"
+      echo "  --image <path>    Path to RHEL/CentOS QCOW2 cloud image"
+      echo "  FLEET_NODE_MEM=N   VM memory in MB (default: 1024)"
+      echo "  FLEET_NODE_CPUS=N  VM CPU count (default: 2)"
+      echo ""
+      echo "Examples:"
+      echo "  aap-demo fleet add 3 --image ~/rhel9.qcow2"
+      echo "  aap-demo fleet list"
+      echo "  aap-demo fleet remove 1"
+      echo "  aap-demo fleet destroy"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # Addon management: enable / disable
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3096,6 +3322,9 @@ case "$COMMAND" in
     ;;
   test)
     cmd_test "${EXTRA_ARGS[@]}"
+    ;;
+  fleet)
+    cmd_fleet "${EXTRA_ARGS[@]}"
     ;;
   enable)
     cmd_enable "${EXTRA_ARGS[@]}"

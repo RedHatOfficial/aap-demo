@@ -1,0 +1,7 @@
+#cloud-config
+users:
+  - name: ansible
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - __SSH_PUBLIC_KEY__
+ssh_pwauth: false

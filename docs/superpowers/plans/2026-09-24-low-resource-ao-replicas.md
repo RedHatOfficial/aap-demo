@@ -35,13 +35,13 @@
 
 **Files:**
 
-- Create: `docs/adr/026-low-resource-ao-replicas.md`
+- Create: `docs/adr/027-low-resource-ao-replicas.md`
 - Modify: `docs/adr/README.md`
 
 **Interfaces:**
 
 - Consumes: GitHub issue #171, ADR-008 addon conventions, ADR-017 Automation Orchestrator deployment model, ADR-014 shell testing strategy.
-- Produces: ADR-026, a proposed decision that later implementation tasks execute and that links back to issue #171.
+- Produces: ADR-027, a proposed decision that later implementation tasks execute and that links back to issue #171.
 
 - [ ] **Step 1: Create the ADR with the repository template sections.**
 
@@ -67,12 +67,12 @@
 
   Record the positive consequence of lower local resource reservation, the negative consequence of no HA in low-resource mode, and the neutral consequence that the operator still owns reconciliation.
 
-- [ ] **Step 3: Add ADR-026 to the index.**
+- [ ] **Step 3: Add ADR-027 to the index.**
 
   Add this row to `docs/adr/README.md`:
 
   ```markdown
-  | [026](026-low-resource-ao-replicas.md) | Low-Resource Automation Orchestrator Replicas | Proposed |
+  | [027](027-low-resource-ao-replicas.md) | Low-Resource Automation Orchestrator Replicas | Proposed |
   ```
 
 - [ ] **Step 4: Check the ADR for scope and source coverage.**
@@ -80,15 +80,15 @@
   Run:
 
   ```bash
-  rg -n "TODO|TBD|FIXME|026|AO_LOW_RESOURCE|#171" docs/adr/026-low-resource-ao-replicas.md docs/adr/README.md
+  rg -n "TODO|TBD|FIXME|027|AO_LOW_RESOURCE|#171" docs/adr/027-low-resource-ao-replicas.md docs/adr/README.md
   ```
 
-  Expected: the new ADR contains no TODO/TBD/FIXME placeholders, contains issue #171 and the environment-variable contract, and the index contains exactly one ADR-026 row.
+  Expected: the new ADR contains no TODO/TBD/FIXME placeholders, contains issue #171 and the environment-variable contract, and the index contains exactly one ADR-027 row.
 
 - [ ] **Step 5: Commit the ADR separately.**
 
   ```bash
-  git add docs/adr/026-low-resource-ao-replicas.md docs/adr/README.md
+  git add docs/adr/027-low-resource-ao-replicas.md docs/adr/README.md
   git commit -m "docs(adr): add low-resource AO replica decision"
   ```
 
@@ -245,7 +245,7 @@
 
 **Interfaces:**
 
-- Consumes: the default/override `AO_LOW_RESOURCE` contract from ADR-026 and the deploy behavior from Task 2.
+- Consumes: the default/override `AO_LOW_RESOURCE` contract from ADR-027 and the deploy behavior from Task 2.
 - Produces: user-facing instructions that make the availability tradeoff and reversible workflow explicit.
 
 - [ ] **Step 1: Add the environment variable to the AO README table.**
@@ -304,7 +304,7 @@
 
   ```bash
   shellcheck addons/ao/deploy.sh test/test-ao-replica-profile.sh
-  markdownlint docs/adr/026-low-resource-ao-replicas.md addons/ao/README.md docs/adr/README.md test/README.md
+  markdownlint docs/adr/027-low-resource-ao-replicas.md addons/ao/README.md docs/adr/README.md test/README.md
   yamllint addons/ao/manifests/automationorchestrator-cr.yaml
   ```
 
@@ -324,7 +324,7 @@
   kubectl get automationorchestrator automation-orchestrator -n automation-orchestrator -o yaml
   ```
 
-  Confirm all three fields change to `2`, the PostgreSQL cluster and admin secret remain intact, and the resource again reports healthy. Record any operator-version-specific status shape in ADR-026’s references rather than weakening the CR source-of-truth rule.
+  Confirm all three fields change to `2`, the PostgreSQL cluster and admin secret remain intact, and the resource again reports healthy. Record any operator-version-specific status shape in ADR-027’s references rather than weakening the CR source-of-truth rule.
 
 - [ ] **Step 4: Review the final diff and branch state.**
 

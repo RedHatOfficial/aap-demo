@@ -1,4 +1,4 @@
-# ADR-026: Low-Resource Automation Orchestrator Replicas
+# ADR-027: Low-Resource Automation Orchestrator Replicas
 
 **Status**: Proposed
 
