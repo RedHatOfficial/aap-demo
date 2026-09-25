@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Focused normalization tests for the AO demo importer."""
 
 import importlib.util
@@ -16,6 +15,31 @@ SPEC.loader.exec_module(IMPORT_DEMOS)
 
 
 class NormalizeWebhookTests(unittest.TestCase):
+    def test_binds_agentic_node_to_provider_integration_and_model(self):
+        workflow = {
+            "nodes": [{
+                "type": "agentic",
+                "parameters": {
+                    "model": "stale-model",
+                    "integration_id": "stale-integration",
+                },
+            }]
+        }
+
+        normalized = IMPORT_DEMOS.normalize(
+            workflow,
+            "aap-credential",
+            agent_credential_id="llm-credential",
+            agent_integration_id="llm-integration",
+            agent_model_id="llm-model",
+        )
+
+        parameters = normalized["nodes"][0]["parameters"]
+        self.assertEqual(parameters["credential_id"], "llm-credential")
+        self.assertEqual(parameters["integration_id"], "llm-integration")
+        self.assertEqual(parameters["llm_model_id"], "llm-model")
+        self.assertNotIn("model", parameters)
+
     def test_authorizes_legacy_webhook_with_local_service_account(self):
         workflow = {
             "triggers": [{

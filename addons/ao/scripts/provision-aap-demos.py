@@ -43,6 +43,21 @@ TEMPLATES = [
 ]
 
 
+def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
+    """Build the AO sync playbook inputs from provision command arguments."""
+    return {
+        "ao_api_url": args.ao_api_url,
+        "ao_api_host": args.ao_api_host,
+        "ao_api_token": args.ao_token,
+        "ao_demo_ref": args.ao_demo_ref,
+        "ao_aap_credential_id": args.ao_credential_id,
+        "ao_aap_integration_id": args.ao_integration_id,
+        "ao_agent_credential_id": args.ao_agent_credential_id,
+        "ao_agent_integration_id": args.ao_agent_integration_id,
+        "ao_agent_model_id": args.ao_agent_model_id,
+    }
+
+
 def report_missing_license(route: str) -> None:
     """Tell the user how to register AAP before retrying the sync job."""
     print("WARNING: AAP does not have a registered subscription.")
@@ -121,6 +136,9 @@ def main() -> int:
     parser.add_argument("--ao-token")
     parser.add_argument("--ao-credential-id", default="")
     parser.add_argument("--ao-integration-id", default="")
+    parser.add_argument("--ao-agent-credential-id", default="")
+    parser.add_argument("--ao-agent-integration-id", default="")
+    parser.add_argument("--ao-agent-model-id", default="")
     parser.add_argument("--control-repository", default=CONTROL_PROJECT_URL)
     parser.add_argument("--control-branch", default="main")
     parser.add_argument("--ao-demo-ref", default="abcc1a1482a")
@@ -230,12 +248,7 @@ def main() -> int:
                 "POST",
                 {
                     "extra_vars": {
-                        "ao_api_url": args.ao_api_url,
-                        "ao_api_host": args.ao_api_host,
-                        "ao_api_token": args.ao_token,
-                        "ao_demo_ref": args.ao_demo_ref,
-                        "ao_aap_credential_id": args.ao_credential_id,
-                        "ao_aap_integration_id": args.ao_integration_id,
+                        **control_job_extra_vars(args),
                     }
                 },
             )

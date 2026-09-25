@@ -16,9 +16,49 @@ and are checked in under [`manifests/`](manifests/). `deploy.sh` applies them wi
 
 ```bash
 aap-demo deploy          # once: AAP + OLM + catalog
-aap-demo enable ao       # mcp-server + Automation Orchestrator + wiring
+aap-demo enable ao       # prompts for local Ollama, external LLM, or no LLM
 aap-demo status          # route URL + admin password when ready
 ```
+
+During an interactive `enable ao`, choose one of these LLM provider paths:
+
+1. **Local Ollama** — installs the `ollama` addon, pulls `qwen2.5:3b`, and wires
+   the local provider into AO. This remains the default for `QUIET=true` and
+   other non-interactive runs.
+2. **External provider** — skips Ollama and prompts for an API key for an
+   OpenAI-compatible endpoint, then prompts for the model. The default model
+   is `gpt-6-luna`; press Enter to accept it. If `OPENAI_API_KEY` is already
+   exported in the environment, it is imported without another prompt. The
+   default endpoint is `https://api.openai.com/v1`.
+3. **None** — skips Ollama and LLM credential wiring. AO still installs, but
+   agentic demos that require an LLM are unavailable until a provider is
+   configured.
+
+Override the external provider defaults when enabling AO:
+
+```bash
+AO_LLM_PROVIDER=external \
+AO_LLM_BASE_URL=https://api.example.com/v1 \
+AO_LLM_MODEL=my-model \
+aap-demo enable ao
+```
+
+To reuse an OpenAI key from your shell profile, export it before enabling AO:
+
+```bash
+export OPENAI_API_KEY=...
+aap-demo enable ao
+```
+
+The installer reads the already-exported variable only; it does not source or
+parse shell profile files. Selecting **None** always skips the key, even when
+`OPENAI_API_KEY` is present.
+
+The API key is stored locally at `~/.aap-demo/ao/llm-api-key` with mode `600`
+and is sent only to the AO encrypted credential store. It is not written to
+`~/.aap-demo/config` or printed in command output. Switching providers does not
+automatically uninstall an existing Ollama addon; disable it separately when
+it is no longer needed.
 
 Force a clean reinstall (resets Postgres if secret names or passwords drifted):
 
@@ -75,6 +115,9 @@ by AAP. The multi-OS cloud workflow continues to use the existing `ansible/produ
 cloud templates when the product-demos addon is enabled.
 
 Wiring also runs automatically when AAP deploy finishes (`aap-demo deploy` / `watch`).
+All agentic nodes in synchronized workflows receive the selected provider
+integration, credential, and model; external mode uses `gpt-6-luna` by default. Re-running
+`aap-demo wire` reapplies that binding to existing `aap-demo` workflows.
 Use `aap-demo wire` to re-run wiring after manual cluster changes; it also restores
 the CoreDNS route rewrite if MicroShift's DNS operator has dropped it, and reapplies
 AO pod `hostAliases` for AAP/AO/MCP route hostnames.
@@ -146,6 +189,9 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_IMPORT_DEMOS` | `1` | Download and synchronize upstream AO workflow exports after wiring |
 | `AO_DEMOS_REPOSITORY` | `https://github.com/ansible-tmm/aap-orchestrator-demos` | Upstream AO workflow repository |
 | `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
+| `AO_LLM_PROVIDER` | `ollama` | `ollama`, `external`, or `none`; external and none modes skip the Ollama dependency |
+| `AO_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint used by external mode |
+| `AO_LLM_MODEL` | `gpt-6-luna` | External model selected as AO's default after discovery |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
 | `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
 | `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |

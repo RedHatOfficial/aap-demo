@@ -69,6 +69,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [025](025-portal-operator-cpu-preflight.md) | Portal Operator CPU Preflight | Accepted |
 | [026](026-fleet-addon.md) | Fleet Addon — Local QEMU VMs as Managed Nodes | Accepted |
 | [027](027-low-resource-ao-replicas.md) | Low-Resource Automation Orchestrator Replicas | Proposed |
+| [028](028-ao-agentic-model-binding.md) | AO Agentic Task Model Binding | Accepted |
 
 ## Creating a New ADR
 

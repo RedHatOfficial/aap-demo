@@ -44,7 +44,7 @@
     __ao_node_parameters: "{{ __ao_node_item.parameters | default(__ao_node_item.config | default({})) }}"
     __ao_node_drop: >-
       {{ ['config', 'parameters']
-         + (['credential_id', 'llm_model_id', 'model', 'response_schema', 'responseSchema',
+         + (['credential_id', 'integration_id', 'llm_model_id', 'model', 'response_schema', 'responseSchema',
              'tool_selection_strategy', 'tool_selections', 'integration_connections']
             if __ao_node_item.type == 'agentic' else [])
          + (['credential_id', 'integration_id', 'job_template_id']
@@ -67,6 +67,9 @@
              ({'credential_id': ao_agent_credential_id}
               if __ao_node_item.type == 'agentic' and ao_agent_credential_id | length > 0 else {})
              | combine(
+                 ({'integration_id': ao_agent_integration_id}
+                  if __ao_node_item.type == 'agentic' and ao_agent_integration_id | length > 0 else {})
+                 | combine(
                  ({'responseSchema': __ao_node_parameters.response_schema}
                   if __ao_node_item.type == 'agentic' and __ao_node_parameters.response_schema is defined else {})
                  | combine(
@@ -86,7 +89,7 @@
                        ]}
                       if __ao_node_item.type == 'agentic'
                          and ao_mcp_integration_id | length > 0
-                         and ao_mcp_credential_id | length > 0 else {})))))) }}
+                       and ao_mcp_credential_id | length > 0 else {}))))))) }}
     __ao_parameters: >-
       {{ __ao_agent_parameters
          | combine(

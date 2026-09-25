@@ -131,6 +131,7 @@ def normalize(
     aap_integration_id: str | None = None,
     fallback_name: str | None = None,
     agent_credential_id: str | None = None,
+    agent_integration_id: str | None = None,
     agent_model_id: str | None = None,
     mcp_integration_id: str | None = None,
     mcp_credential_id: str | None = None,
@@ -168,16 +169,22 @@ def normalize(
             # Upstream exports contain environment-specific LLM credential IDs and
             # model names (e.g. "claude-sonnet-4-6") that AO rejects when the local
             # provider is Ollama.  Clear stale fields and re-bind using the correct
-            # AO schema: credential_id + llm_model_id (UUID of the LLMModel record).
+            # AO schema: credential_id + integration_id + llm_model_id (UUID
+            # of the LLMModel record).
             parameters.pop("model", None)
             if agent_credential_id:
                 parameters["credential_id"] = agent_credential_id
+                if agent_integration_id:
+                    parameters["integration_id"] = agent_integration_id
+                else:
+                    parameters.pop("integration_id", None)
                 if agent_model_id:
                     parameters["llm_model_id"] = agent_model_id
                 else:
                     parameters.pop("llm_model_id", None)
             else:
                 parameters.pop("credential_id", None)
+                parameters.pop("integration_id", None)
                 parameters.pop("llm_model_id", None)
             # Bind the MCP server credential via integration_connections so the
             # "Connections" panel in the workflow builder is pre-populated.
@@ -260,6 +267,7 @@ def import_workflows(args: argparse.Namespace) -> int:
                 args.aap_integration_id,
                 source.stem,
                 args.agent_credential_id,
+                args.agent_integration_id,
                 args.agent_model_id,
                 args.mcp_integration_id,
                 args.mcp_credential_id,
@@ -310,6 +318,7 @@ def main() -> int:
     parser.add_argument("--aap-credential-id", required=True)
     parser.add_argument("--aap-integration-id")
     parser.add_argument("--agent-credential-id")
+    parser.add_argument("--agent-integration-id", help="AO LLM provider integration UUID for agentic nodes")
     parser.add_argument("--agent-model-id", help="AO LLMModel UUID to set as llm_model_id on agentic nodes")
     parser.add_argument("--mcp-integration-id", help="AO MCP integration ID for tool connection credentials")
     parser.add_argument("--mcp-credential-id", help="AO MCP credential ID for tool connection credentials")

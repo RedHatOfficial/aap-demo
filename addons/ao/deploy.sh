@@ -842,25 +842,24 @@ sync_ao_demos() {
     --repository "${AO_DEMOS_REPOSITORY:-https://github.com/ansible-tmm/aap-orchestrator-demos}"
     --ref "${AO_DEMOS_REF:-abcc1a1482a}"
   )
-  local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
-  if [ -z "$_agent_cred" ] && wire_ollama_deployed; then
-    _agent_cred=$(wire_ao_find_credential_by_name "aap-demo Ollama" 2>/dev/null || true)
-  fi
-  if [ -n "$_agent_cred" ]; then
-    _import_args+=(--agent-credential-id "$_agent_cred")
-    if wire_ollama_deployed && [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-      local _ollama_integration _ollama_model_id
-      _ollama_integration=$(wire_ao_find_integration_by_name "aap-demo Ollama" 2>/dev/null || true)
-      if [ -n "$_ollama_integration" ]; then
-        _ollama_model_id=$(wire_ao_api GET \
-          "/integrations/${_ollama_integration}/models?limit=50" 2>/dev/null \
-          | wire_ao_list_items \
-          | jq -r --arg m "${WIRE_OLLAMA_MODEL:-qwen2.5:3b}" \
-            '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true)
-      fi
-      if [ -n "${_ollama_model_id:-}" ]; then
-        _import_args+=(--agent-model-id "$_ollama_model_id")
-      fi
+  if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
+    local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+    local _agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
+    local _llm_model_id=""
+    if [ -z "$_agent_cred" ]; then
+      _agent_cred=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
+    fi
+    if [ -z "$_agent_integration_id" ]; then
+      _agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
+    fi
+    if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ]; then
+      _llm_model_id=$(wire_ao_llm_agent_model_id "$_agent_integration_id" 2>/dev/null || true)
+    fi
+    if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ] && [ -n "$_llm_model_id" ]; then
+      _import_args+=(--agent-credential-id "$_agent_cred")
+      _import_args+=(--agent-integration-id "$_agent_integration_id" --agent-model-id "$_llm_model_id")
+    elif [ -n "$_agent_cred" ] || [ -n "$_agent_integration_id" ]; then
+      wire_warn "AO LLM credential, integration, or model is incomplete; skipping agent binding for direct imports"
     fi
   fi
 
@@ -909,6 +908,26 @@ provision_aap_demos() {
       --control-branch "${AO_SYNC_BRANCH:-main}"
       --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
     )
+    if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
+      local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+      local _agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
+      local _agent_model_id=""
+      if [ -z "$_agent_cred" ]; then
+        _agent_cred=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
+      fi
+      if [ -z "$_agent_integration_id" ]; then
+        _agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
+      fi
+      if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ]; then
+        _agent_model_id=$(wire_ao_llm_agent_model_id "$_agent_integration_id" 2>/dev/null || true)
+      fi
+      if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ] && [ -n "$_agent_model_id" ]; then
+        _provision_args+=(--ao-agent-credential-id "$_agent_cred")
+        _provision_args+=(--ao-agent-integration-id "$_agent_integration_id" --ao-agent-model-id "$_agent_model_id")
+      elif [ -n "$_agent_cred" ] || [ -n "$_agent_integration_id" ]; then
+        wire_warn "AO LLM credential, integration, or model is incomplete; skipping agent binding for AAP sync"
+      fi
+    fi
   else
     echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
   fi
