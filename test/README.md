@@ -2,24 +2,13 @@
 
 Validation tests for `aap-demo.sh` command-line interface.
 
-## test-aap-demo.sh
-
-Comprehensive test script validating all aap-demo commands.
-
-### Usage
+## Usage
 
 ```bash
-# Run all tests
-./test/test-aap-demo.sh
-
-# Quick mode (skip network/interactive tests)
-./test/test-aap-demo.sh --quick
-
-# Verbose mode (show failure reasons)
-./test/test-aap-demo.sh --verbose
-
-# Combined
-./test/test-aap-demo.sh --quick --verbose
+# Run the shell and Python test scripts used by CI
+./test/test-core-commands.sh
+./test/test-ingress-ca-export.sh
+python3 ./test/test-ao-import-demos.py
 
 # AAP provisioning fast-path test
 python3 ./test/test-provision-aap-demos.py
@@ -55,7 +44,7 @@ python3 ./test/test-provision-aap-demos.py
 - ✓ `enable fake-addon` errors
 - ✓ `deploy-all`, `redeploy-all` aliases recognized
 - ✓ `must-gather [dir]` arg parsing
-- ✓ `test [markers]` arg parsing
+- The obsolete `aap-demo test` ATF command is intentionally not part of the CLI.
 - ✓ `destroy`, `clean` show warnings (interactive skipped in quick mode)
 - ✓ `destroy --reset` flag parsing
 
