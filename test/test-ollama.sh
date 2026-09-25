@@ -206,6 +206,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# PVC storage size placeholder resolution and override
+# ---------------------------------------------------------------------------
+
+# The __STORAGE_SIZE__ token must not survive into the applied manifest
+if ! grep -q '__STORAGE_SIZE__' "$MOCK_APPLY_FILE"; then
+  pass "storage_size_placeholder_is_resolved"
+else
+  fail "storage_size_placeholder_is_resolved"
+fi
+
+# Default size (10Gi) is written when OLLAMA_STORAGE_SIZE is unset
+if grep -q 'storage: 10Gi' "$MOCK_APPLY_FILE"; then
+  pass "pvc_defaults_to_10gi"
+else
+  fail "pvc_defaults_to_10gi"
+fi
+
+# OLLAMA_STORAGE_SIZE override is respected
+if OLLAMA_MODEL=qwen2.5:3b OLLAMA_STORAGE_SIZE=20Gi \
+  "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && grep -q 'storage: 20Gi' "$MOCK_APPLY_FILE"; then
+  pass "pvc_honors_ollama_storage_size_override"
+else
+  fail "pvc_honors_ollama_storage_size_override"
+fi
+
+# ---------------------------------------------------------------------------
 # Rollout failure: diagnostic output must be emitted before exit
 # ---------------------------------------------------------------------------
 

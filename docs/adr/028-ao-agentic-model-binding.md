@@ -1,4 +1,4 @@
-# ADR-026: Bind AO Agentic Tasks to the Selected LLM Provider Model
+# ADR-028: Bind AO Agentic Tasks to the Selected LLM Provider Model
 
 **Status**: Accepted
 
