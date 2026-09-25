@@ -189,6 +189,30 @@ Example: `feat(storage): add LVMS storage class support`
 
 3. Update documentation if needed
 
+### Required Test Plan
+
+Every pull request must include a `Test Plan` section describing the checks that
+were run and their results. Use the smallest applicable set of checks for the
+change, and call out any validation that requires a live CRC cluster.
+
+For changes to installation, deployment, or addons, use a disposable local
+environment for the full lifecycle when available:
+
+```bash
+QUIET=true aap-demo destroy --reset
+./install.sh --uninstall
+./install.sh
+aap-demo deploy
+```
+
+Then verify the relevant addon lifecycle, including disable/enable behavior, and
+record the commands and observed results in the pull request. The lifecycle
+sequence is intentionally destructive; do not run it against a shared cluster.
+
+The installer removes enabled addon names from `~/.aap-demo/config` during
+uninstall while preserving unrelated user settings. A later installation starts
+with no addons selected, so addon state must be re-enabled explicitly.
+
 ### PR Checklist
 
 - [ ] Code passes all linters (shellcheck, yamllint, markdownlint)
