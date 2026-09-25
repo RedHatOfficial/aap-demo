@@ -1611,13 +1611,22 @@ apply_operator_olm_manifests
 
 echo "Waiting for InstallPlan..."
 _sub_reset=0
+_ao_installplan_name=$(kubectl get subscription automation-orchestrator-operator \
+  -n "$OLM_NAMESPACE" -o jsonpath='{.status.installplan.name}' 2>/dev/null || echo "")
 for i in $(seq 1 30); do
   _pending_ips=$(kubectl get installplan -n "$OLM_NAMESPACE" -o json 2>/dev/null \
-    | python3 -c '
+    | AO_INSTALLPLAN_NAME="$_ao_installplan_name" python3 -c '
 import json, sys
+import os
 data = json.load(sys.stdin)
+subscription_installplan = os.environ.get("AO_INSTALLPLAN_NAME", "")
 for item in data.get("items", []):
-    if not item.get("spec", {}).get("approved", False):
+    installplan_name = item.get("metadata", {}).get("name", "")
+    csv_names = item.get("spec", {}).get("clusterServiceVersionNames", [])
+    is_ao_installplan = installplan_name == subscription_installplan or any(
+        "automation-orchestrator-operator" in csv_name for csv_name in csv_names
+    )
+    if is_ao_installplan and not item.get("spec", {}).get("approved", False):
         print(item["metadata"]["name"])
 ' 2>/dev/null || echo "")
   if [ "$AO_INSTALL_PLAN_APPROVAL" = "Automatic" ] && [ -n "$_pending_ips" ]; then
