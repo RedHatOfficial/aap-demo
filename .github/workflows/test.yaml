@@ -38,6 +38,9 @@ jobs:
       - name: Run ingress CA export tests
         run: ./test/test-ingress-ca-export.sh
 
+      - name: Run installer tests
+        run: ./test/test-install.sh
+
       - name: Run core command tests
         run: ./test/test-core-commands.sh
 

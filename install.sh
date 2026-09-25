@@ -11,6 +11,12 @@ if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "uninstall" ]; then
   rm -f ~/.zsh/completions/_aap-demo
   rm -f ~/.local/share/bash-completion/completions/aap-demo
   echo "  ✓ Binary and completions removed"
+  if [ -f "${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}" ]; then
+    config_file="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
+    sed -i.bak '/^ADDONS=/d' "$config_file"
+    rm -f "${config_file}.bak"
+    echo "  ✓ Enabled addon state removed from ${config_file}"
+  fi
   echo ""
   echo "  VM data at ~/.aap-demo/vm/ was NOT removed."
   echo "  To remove everything: rm -rf ~/.aap-demo/vm/"
