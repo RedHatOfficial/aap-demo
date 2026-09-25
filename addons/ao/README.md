@@ -66,6 +66,29 @@ Force a clean reinstall (resets Postgres if secret names or passwords drifted):
 FORCE=1 aap-demo enable ao
 ```
 
+### Operator updates
+
+The AO subscription uses `installPlanApproval: Automatic` by default. OLM can
+therefore apply new operator versions discovered in the selected channel while
+the demo cluster is running. This is intentional for local development, where
+keeping the operator current is more useful than requiring a separate approval
+step.
+
+The default applies to both the `stable` channel and an explicitly selected
+`early-access` channel. The addon still waits for the operator CSV and AO
+instance to become healthy before completing an install or reinstall.
+
+For a review point before applying an operator update, use the supported escape
+hatch below. With manual approval, inspect and approve the pending InstallPlan
+yourself; the enable command will continue waiting until the CSV is available:
+
+```bash
+AO_INSTALL_PLAN_APPROVAL=Manual aap-demo enable ao
+kubectl get installplan -n automation-orchestrator
+kubectl patch installplan <name> -n automation-orchestrator \
+  --type merge -p '{"spec":{"approved":true}}'
+```
+
 Disabling AO preserves its bootstrap admin password under `~/.aap-demo/ao/` so
 a retained PostgreSQL database remains accessible after re-enable. To explicitly
 remove both the AO database and saved credential instead, run:
@@ -182,6 +205,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_INDEX_IMAGE` | auto | Pin operator index image explicitly |
 | `AO_FALLBACK_INDEX_IMAGE` | `...v4.22-automation-orchestrator-operator-early-access-1787151066` | Used when default AAP catalog lacks AO |
 | `AO_OPERATOR_CHANNEL` | `stable` | OLM subscription channel (`early-access` also available in the index) |
+| `AO_INSTALL_PLAN_APPROVAL` | `Automatic` | OLM InstallPlan policy; use `Manual` for an explicit review point |
 | `AO_PULL_SECRET_NAME` | `automation-orchestrator-pull-secret` | Registry pull secret in AO namespace |
 | `AO_CATALOG_TIMEOUT` | `600` | Seconds to wait for AO CatalogSource READY (index pull can be slow) |
 | `AO_DISABLE_INDEX_FALLBACK` | unset | Set to `1` to disable automatic fallback index |

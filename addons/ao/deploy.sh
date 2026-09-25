@@ -35,6 +35,7 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 #   ./deploy.sh --force            # Reinstall even if already running
 #   ./deploy.sh --refresh-catalog  # Re-pull redhat-operator-index before install
 #   AO_REFRESH_CATALOG=1 ./deploy.sh
+#   AO_INSTALL_PLAN_APPROVAL=Manual ./deploy.sh  # Pause upgrades for review
 #   AO_INDEX_IMAGE=registry.redhat.io/redhat/redhat-operator-index:v4.22-... ./deploy.sh
 
 NAMESPACE="automation-orchestrator"
@@ -71,6 +72,14 @@ ACTION="${1:-deploy}"
 FORCE="${FORCE:-}"
 REFRESH_CATALOG="${AO_REFRESH_CATALOG:-}"
 PURGE_DATA="${AO_PURGE_DATA:-}"
+AO_INSTALL_PLAN_APPROVAL="${AO_INSTALL_PLAN_APPROVAL:-Automatic}"
+case "$AO_INSTALL_PLAN_APPROVAL" in
+  Automatic | Manual) ;;
+  *)
+    echo "ERROR: AO_INSTALL_PLAN_APPROVAL must be Automatic or Manual" >&2
+    exit 1
+    ;;
+esac
 for _arg in "$@"; do
   case "$_arg" in
     --force) FORCE=1 ;;
@@ -514,6 +523,7 @@ apply_operator_olm_manifests() {
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     -e "s|__CATALOG_NAMESPACE__|${CATALOG_NAMESPACE}|g" \
     -e "s|__OPERATOR_CHANNEL__|${OPERATOR_CHANNEL}|g" \
+    -e "s|__INSTALL_PLAN_APPROVAL__|${AO_INSTALL_PLAN_APPROVAL}|g" \
     "${MANIFESTS_DIR}/operator-subscription.yaml" | kubectl apply -f -
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     "${MANIFESTS_DIR}/operator-rbac.yaml" | kubectl apply -f -
@@ -1610,7 +1620,7 @@ for item in data.get("items", []):
     if not item.get("spec", {}).get("approved", False):
         print(item["metadata"]["name"])
 ' 2>/dev/null || echo "")
-  if [ -n "$_pending_ips" ]; then
+  if [ "$AO_INSTALL_PLAN_APPROVAL" = "Automatic" ] && [ -n "$_pending_ips" ]; then
     while read -r _ip; do
       [ -z "$_ip" ] && continue
       echo "  Approving InstallPlan: ${_ip}"
