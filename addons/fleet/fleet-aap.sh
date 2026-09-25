@@ -1,4 +1,5 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
+
 # =============================================================================
 # fleet-aap.sh — Register/deregister fleet nodes in AAP via REST API
 # =============================================================================
@@ -183,7 +184,8 @@ _fleet_aap_create_credential() {
   escaped_key=$(python3 -c "import json; print(json.dumps(open('${ssh_key_path}').read()))")
 
   local body
-  body=$(cat <<CRED_EOF
+  body=$(
+    cat <<CRED_EOF
 {
   "name": "${cred_name}",
   "organization": ${org_id},
@@ -194,7 +196,7 @@ _fleet_aap_create_credential() {
   }
 }
 CRED_EOF
-)
+  )
 
   local resp
   resp=$(_fleet_aap_api POST "/credentials/" "$body")
@@ -224,13 +226,14 @@ _fleet_aap_create_inventory() {
   fi
 
   local body
-  body=$(cat <<INV_EOF
+  body=$(
+    cat <<INV_EOF
 {
   "name": "${inv_name}",
   "organization": ${org_id}
 }
 INV_EOF
-)
+  )
 
   local resp
   resp=$(_fleet_aap_api POST "/inventories/" "$body")
@@ -265,14 +268,15 @@ _fleet_aap_create_host() {
   variables="ansible_host: ${host_ip}\nansible_port: ${port}\nansible_user: ansible"
 
   local body
-  body=$(cat <<HOST_EOF
+  body=$(
+    cat <<HOST_EOF
 {
   "name": "${hostname}",
   "inventory": ${inv_id},
   "variables": "${variables}"
 }
 HOST_EOF
-)
+  )
 
   local resp
   resp=$(_fleet_aap_api POST "/hosts/" "$body")
@@ -295,7 +299,8 @@ _fleet_aap_run_ping() {
   echo "  Running ad-hoc ping..."
 
   local body
-  body=$(cat <<PING_EOF
+  body=$(
+    cat <<PING_EOF
 {
   "module_name": "ping",
   "credential": ${cred_id},
@@ -303,7 +308,7 @@ _fleet_aap_run_ping() {
   "extra_vars": ""
 }
 PING_EOF
-)
+  )
 
   local resp
   resp=$(_fleet_aap_api POST "/inventories/${inv_id}/ad_hoc_commands/" "$body")

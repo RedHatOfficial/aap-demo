@@ -68,6 +68,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [024](024-ollama-addon.md) | Ollama Addon | Accepted |
 | [025](025-portal-operator-cpu-preflight.md) | Portal Operator CPU Preflight | Accepted |
 | [026](026-fleet-addon.md) | Fleet Addon — Local QEMU VMs as Managed Nodes | Accepted |
+| [027](027-low-resource-ao-replicas.md) | Low-Resource Automation Orchestrator Replicas | Proposed |
 
 ## Creating a New ADR
 

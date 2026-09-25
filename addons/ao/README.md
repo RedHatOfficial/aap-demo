@@ -133,6 +133,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_STORAGE_CLASS` | auto-detected | StorageClass for CNPG PostgreSQL PVC |
 | `CNPG_VERSION` | `1.25.1` | CloudNativePG operator version (dev-only) |
 | `AAP_DEMO_NAMESPACE` | `aap-operator` | Used to derive cluster ingress domain for the AO route |
+| `AO_LOW_RESOURCE` | unset | Unset/`1`/`true` selects one backend, UI, and worker replica; set to `0`/`false` for two replicas |
 | `FORCE` | unset | Set to `1` or use `--force` to reinstall |
 | `AO_REFRESH_CATALOG` | unset | Set to `1` to restart the AO catalog pod before install |
 | `AO_INDEX_IMAGE` | auto | Pin operator index image explicitly |
@@ -154,6 +155,23 @@ and `Sync AO Workflows from TMM` job template. The job downloads the pinned work
 exports from the TMM repository and updates AO through its API. The addon launches this
 job through AAP; the local importer remains only as a bootstrap fallback when the AAP
 job cannot be launched yet.
+
+### Replica profile
+
+The local development default uses one replica each for the AO backend, UI, and
+worker to reduce reserved CPU and memory on CRC/MicroShift:
+
+```bash
+aap-demo enable ao                    # default: 1 backend, 1 UI, 1 worker; non-HA
+AO_LOW_RESOURCE=1 aap-demo enable ao  # explicit one-replica local mode
+AO_LOW_RESOURCE=0 aap-demo enable ao  # opt out to 2 replicas each
+```
+
+The setting is applied through the `AutomationOrchestrator` custom resource,
+preserves the existing database, and waits for the resource to become healthy.
+Changing profiles does not require `FORCE=1`; that flag remains the reinstall
+and database-reset path. One-replica mode is intended for local development and
+demos, not production or high-availability validation.
 
 ### Operator channel
 
