@@ -120,12 +120,21 @@ if [ -n "$MISSING_DEPS" ]; then
           mkdir -p ~/.local/bin
           mv "$TMP_DIR/oc" ~/.local/bin/oc
           chmod +x ~/.local/bin/oc
+          # The OpenShift mirror's archive can inherit macOS quarantine metadata.
+          # Clear it only after the archive has passed checksum verification so
+          # Gatekeeper does not block the freshly installed client.
+          if command -v xattr &>/dev/null; then
+            xattr -d com.apple.quarantine ~/.local/bin/oc 2>/dev/null || true
+          fi
           echo "✓ oc installed to ~/.local/bin/oc"
 
           # Install kubectl if present in archive
           if [ -f "$TMP_DIR/kubectl" ]; then
             mv "$TMP_DIR/kubectl" ~/.local/bin/kubectl
             chmod +x ~/.local/bin/kubectl
+            if command -v xattr &>/dev/null; then
+              xattr -d com.apple.quarantine ~/.local/bin/kubectl 2>/dev/null || true
+            fi
             echo "✓ kubectl installed to ~/.local/bin/kubectl"
           fi
 
