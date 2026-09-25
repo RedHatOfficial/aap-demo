@@ -38,27 +38,45 @@ aap-demo disable local-cache         # alias for clear
 1. SSH into the CRC VM and run `crictl images -o json` to enumerate all images in CRI-O
 2. Filter to images from `registry.redhat.io` and `registry.k8s.io` (skip pause, base, and
    builder images that ship with the VM)
-3. For each image, export via `skopeo copy --remove-signatures containers-storage:'<ref>'
-   docker-archive:/dev/stdout`, streaming the tarball to a local file
-4. Each image is stored as two files: `<md5>.tar` (the image archive) and `<md5>.ref`
-   (the original image reference for reload)
-5. Images already cached (both `.tar` and `.ref` exist) are skipped
+3. For each image, export via `skopeo copy --all containers-storage:'<ref>'
+   oci-archive:/tmp/aap-demo-local-cache.oci:<tag>` on the VM, then stream the OCI
+   archive to a local file
+4. Each image is stored as three files: `<md5>.tar` (the OCI archive), `<md5>.ref`
+   (the original image reference), and `<md5>.local-ref` (the archive's actual
+   platform digest)
+5. When the image is the Red Hat operator index, save also records the OCP version,
+   original catalog digest, and local platform digest in `catalog-digests`
+6. Images already cached (all three archive and sidecar files exist) are skipped
 
 ### Load flow
 
 1. For each `.tar` file in the cache directory, read the corresponding `.ref` file
-2. Stream the tarball into the CRC VM via `skopeo copy docker-archive:/dev/stdin
-   containers-storage:'<ref>'` over SSH
-3. Report per-image success/failure
+2. Stream the OCI archive to a temporary file on the CRC VM, then run `skopeo copy
+   --all --preserve-digests oci-archive:<temporary-file>:<tag>
+   containers-storage:'<ref>'`; remove the temporary file afterward
+3. Import under the `.local-ref` platform digest and report per-image success/failure
+4. Rewrite matching CatalogSource and workload-template image references to `.local-ref`
 
 ### Auto-load during deploy
 
-The `_load_local_cache()` function in `aap-demo.sh` is called during `aap-demo deploy`
-after the operator CSV reaches `Succeeded` phase and before the AAP CR is created.
-It runs only when the `local-cache` addon is listed in `~/.aap-demo/config` (`ADDONS=...`)
-or when `AAP_DEMO_LOAD_CACHE=1` is set. When triggered, it loads cached images that are
-not already present in CRI-O (checked via `crictl inspecti`). This is silent when no
-cache exists or the addon is not enabled.
+The `_load_local_cache()` function in `aap-demo.sh` is called near the start of
+`aap-demo deploy`, before the operator and AAP resources begin pulling images. It always
+checks for an existing cache, so a destroy/recreate cycle does not require the
+`local-cache` addon to remain in `~/.aap-demo/config` (`ADDONS=...`). It loads cached
+images that are not already present in CRI-O (checked via `crictl inspecti`) and remains
+silent when no cache exists. Before creating the CatalogSource, deployment uses the
+cached catalog's local platform digest for the matching OCP version. This pins OLM to
+the catalog that produced the cached operator bundle instead of following a mutable
+`vX.Y` tag. Caches created before this metadata was added remain compatible but use the
+tagged catalog until refreshed.
+
+### Save prompt during destroy
+
+Before `aap-demo destroy` displays its destructive warning, an interactive invocation
+asks whether to save the current AAP images to the local cache. The prompt is opt-in:
+answering `y` runs the save flow, while `n`, a timeout, or a non-interactive
+`QUIET=true` invocation skips it. A save failure is reported but does not prevent the
+cluster from being deleted.
 
 ### Preset isolation
 
@@ -71,12 +89,50 @@ aap-demo creates MicroShift clusters only (`CRC_PRESET=microshift`). The cache i
 The directory layout retains a preset segment (`microshift/`) for compatibility if
 additional presets are reintroduced later.
 
+### Opt-in persistent CRI-O image storage
+
+The archive cache remains the portable fallback. For repeated CRC recreate cycles, an opt-in
+mode keeps CRI-O's native image store on a persistent host-managed virtual disk:
+
+```bash
+AAP_PERSISTENT_IMAGE_STORE=true
+# Linux/libvirt only. macOS/vfkit uses the OCI image cache instead.
+# Omit AAP_IMAGE_STORE_DISK to use the Linux platform default:
+# ~/.aap-demo/storage/crio-images.qcow2
+AAP_IMAGE_STORE_SIZE_GB=60
+# Required only for first-time initialization of a blank disk:
+AAP_IMAGE_STORE_FORMAT=true
+```
+
+Lifecycle:
+
+1. Create the Linux qcow2 disk once. A blank disk is formatted only when
+   `AAP_IMAGE_STORE_FORMAT=true` is explicitly set. macOS/vfkit does not use
+   this persistent-store path; use the OCI image cache there.
+2. Attach the disk to the CRC system-libvirt VM.
+3. Mount it at `/var/lib/containers/storage`, persist the filesystem UUID in the guest's
+   `fstab`, install a CRI-O mount dependency, apply SELinux labels, and restart CRI-O and
+   MicroShift before deployment.
+4. Verify that `crictl images` sees the persistent store; image loading should then be near
+   zero because the native image metadata and layers already exist.
+5. Before `crc delete`, stop CRI-O, unmount and detach the Linux disk, and
+   retain the host disk.
+
+The implementation must never mount the host's overlay/container-storage directory directly
+through NFS or virtiofs. It must refuse to format an existing disk without explicit approval,
+verify the attached source and filesystem identity, and fall back to the OCI archive cache when
+attach or mount setup fails. Acceptance testing should cover three destroy/recreate cycles,
+image visibility before deployment, no image-layer pulls, and a fallback path with the
+persistent disk disabled.
+
 ### Technical details
 
 - **SSH `-n` flag**: The save loop reads image refs from a heredoc via `while read`. Without
   `-n`, SSH consumes stdin from the heredoc, causing the loop to exit after 1-2 images.
-- **`--remove-signatures`**: Required for `skopeo copy` to `docker-archive:` format.
-  Without it, skopeo fails with "Storing signatures for docker tar files is not supported".
+- **OCI archives**: The save/load path uses OCI archives instead of Docker archives so
+  signatures and manifest metadata are retained. Loading uses `--preserve-digests` and
+  fails when the archive cannot represent the recorded digest; importing under a
+  synthetic tag would not satisfy Kubernetes' digest pull request.
 - **`containers-storage:` transport**: CRI-O images are accessed via skopeo's
   `containers-storage:` transport, not `crictl export` (which doesn't exist) or `ctr`
   (not available on CRC VMs).
@@ -95,22 +151,24 @@ additional presets are reintroduced later.
 - Subsequent deploys after `aap-demo destroy` skip ~10-15 minutes of image pulls when
   the on-disk cache is reloaded
 - Cache persists across VM lifecycles — only needs to be rebuilt when AAP version changes
-- Auto-load during deploy is transparent — no extra step required after initial save
+- Auto-load during deploy is transparent — after accepting the destroy save prompt,
+  the normal `create` then `deploy` flow needs no manual cache-load command
 
 ### Negative
 
 - Cache is ~30 GB on disk for a full AAP deployment (~50 images)
 - Save operation takes 10–15 minutes (same as pulling — images must be exported from CRI-O)
-- Images are stored uncompressed in docker-archive format; no deduplication of shared layers
+- Images are stored as OCI archives; no deduplication of shared layers
   across images
 
 ### Neutral
 
 - The addon is listed in `AVAILABLE_ADDONS` and visible in `aap-demo enable` output
 - `aap-demo destroy` clears `ADDONS=` from config but does not delete on-disk cache files.
-  After recreate, run `aap-demo enable local-cache load` then `aap-demo enable local-cache`
-  to reload images and restore auto-load on deploy. Use `aap-demo enable local-cache clear`
-  or `aap-demo disable local-cache` to reclaim disk space
+  If the save prompt was accepted, the next `deploy` loads the cache automatically.
+  `aap-demo enable local-cache load` remains available for manual loading, while
+  `aap-demo enable local-cache clear` or `aap-demo disable local-cache` reclaims disk
+  space.
 
 ## Alternatives Considered
 
@@ -142,4 +200,5 @@ the bottleneck on development machines. Can be added later if needed.
 - [ADR-008](008-addon-system.md) — Addon system architecture
 - [ADR-020](020-full-openshift-support.md) — Full OpenShift support evaluation (declined; MicroShift-only)
 - [addons/local-cache/deploy.sh](../../addons/local-cache/deploy.sh)
+- [includes/persistent-crio-store.sh](../../includes/persistent-crio-store.sh) — opt-in CRI-O disk lifecycle
 - [aap-demo.sh](../../aap-demo.sh) — `_load_local_cache()` auto-load function

@@ -17,8 +17,14 @@ source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 # Source CRC infra backend (sets CRC_SSH_KEY, CRC_SSH_OPTS)
 # shellcheck source=includes/infra-crc.sh
 source "${SCRIPT_DIR}/includes/infra-crc.sh"
+# Load the infrastructure API used by persistent storage guest operations.
+# shellcheck source=includes/infra-api.sh
+INFRA_TYPE="${INFRA_TYPE:-crc}"
+source "${SCRIPT_DIR}/includes/infra-api.sh"
 # shellcheck source=includes/ingress-ca-trust.sh
 source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
+# shellcheck source=includes/persistent-crio-store.sh
+source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
 
 # Colors
 _RED='\033[0;31m'
@@ -370,6 +376,11 @@ if ! crc start -p "$PULL_SECRET_PATH" 2>&1 | tee /tmp/crc-start.log; then
     echo "ERROR: crc start failed — see /tmp/crc-start.log"
     exit 1
   fi
+fi
+
+if ! persistent_crio_store_prepare_or_fallback; then
+  echo "ERROR: Persistent CRI-O storage setup failed" >&2
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------

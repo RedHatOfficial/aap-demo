@@ -45,6 +45,9 @@ source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 # shellcheck source=includes/ao-llm.sh
 source "${SCRIPT_DIR}/includes/ao-llm.sh"
 
+# shellcheck source=includes/persistent-crio-store.sh
+source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
+
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
 
 # AAP version
@@ -142,7 +145,7 @@ for arg in "$@"; do
         *) COMMAND="$arg" ;;
       esac
       ;;
-    --ai | --reset | --force | --refresh-catalog | --purge-data | --purge-creds)
+    --ai | --reset | --skip-cache | --force | --refresh-catalog | --purge-data | --purge-creds)
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
       EXTRA_ARGS+=("$arg")
       ;;
@@ -286,7 +289,7 @@ setup_kubeconfig() {
     KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
     export KUBECONFIG
     # Refresh from cluster if current kubeconfig doesn't work
-    if ! kubectl cluster-info &>/dev/null 2>&1; then
+    if ! kubectl cluster-info --request-timeout=3s &>/dev/null 2>&1; then
       # Ensure infra backend is loaded to set CRC_SSH_KEY
       _infra_ensure_backend 2>/dev/null || true
       if [ -n "$CRC_SSH_KEY" ]; then
@@ -411,7 +414,7 @@ Commands:
 
 Cluster management:
   create          Create OpenShift Local cluster
-  destroy         Delete cluster (--reset to clear config)
+  destroy         Delete cluster (--reset to clear config, --skip-cache to bypass image caching)
   stop            Stop cluster
   ssh             SSH into cluster node
 
@@ -502,7 +505,7 @@ COMMANDS (all infrastructure types):
 
 COMMANDS:
     create          Create OpenShift Local cluster
-    destroy [--reset] Delete local cluster (--reset also clears config)
+    destroy [--reset] [--skip-cache] Delete local cluster (--reset also clears config)
     stop            Stop local cluster gracefully
     start           Start stopped cluster (re-applies CoreDNS config)
     ssh             SSH into cluster node
@@ -513,6 +516,13 @@ COMMANDS:
 
 ENVIRONMENT:
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
+    AAP_PERSISTENT_IMAGE_STORE=true
+                        Keep CRI-O image storage on a persistent qcow2 disk
+                        (Linux/libvirt only; macOS uses the OCI image cache)
+    AAP_IMAGE_STORE_DISK Path to the persistent image disk
+    AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
+    AAP_IMAGE_STORE_FORMAT=true
+                        Explicitly format a blank persistent disk once
 
 EXAMPLES:
     aap-demo create                              # Create OpenShift Local cluster
@@ -767,6 +777,58 @@ _verify_cluster() {
   echo "  Run: aap-demo create   # Create a new cluster"
   echo "  Run: crc start    # Start a stopped cluster"
   echo "  Run: aap-demo status   # Check cluster status"
+  return 1
+}
+
+# Wait for MicroShift's OVN components before starting OLM/AAP installation.
+# The Kubernetes API can be reachable while the node CNI is still unhealthy,
+# which leaves newly-created operator pods stuck in ContainerCreating.
+_wait_for_ovn_ready() {
+  local ovn_namespace="openshift-ovn-kubernetes"
+  local timeout="${AAP_OVN_TIMEOUT:-180}"
+  local interval=5
+  local elapsed=0
+  local node_desired node_ready master_desired master_ready
+
+  if ! kubectl get namespace "$ovn_namespace" &>/dev/null; then
+    echo ""
+    echo "ERROR: OVN namespace '$ovn_namespace' was not found"
+    echo "  The cluster network is not ready for AAP deployment."
+    return 1
+  fi
+
+  echo "Waiting for OVN networking to become ready..."
+  while [ "$elapsed" -lt "$timeout" ]; do
+    node_desired=$(kubectl get daemonset ovnkube-node -n "$ovn_namespace" \
+      -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "")
+    node_ready=$(kubectl get daemonset ovnkube-node -n "$ovn_namespace" \
+      -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "")
+    master_desired=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
+      -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "")
+    master_ready=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
+      -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "")
+
+    if [ "$node_desired" -gt 0 ] 2>/dev/null \
+      && [ "$node_ready" -eq "$node_desired" ] 2>/dev/null \
+      && [ "$master_desired" -gt 0 ] 2>/dev/null \
+      && [ "$master_ready" -eq "$master_desired" ] 2>/dev/null; then
+      echo "  ✓ OVN networking is ready"
+      return 0
+    fi
+
+    printf "  Waiting for OVN... node %s/%s, master %s/%s (%ss/%ss)\n" \
+      "${node_ready:-0}" "${node_desired:-0}" \
+      "${master_ready:-0}" "${master_desired:-0}" "$elapsed" "$timeout"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+
+  echo ""
+  echo "ERROR: OVN networking was not ready after ${timeout}s"
+  echo "  Check: kubectl get pods -n ${ovn_namespace} -o wide"
+  echo "  Check: kubectl get events -n ${ovn_namespace} --sort-by=.lastTimestamp"
+  kubectl get daemonset ovnkube-node ovnkube-master -n "$ovn_namespace" 2>/dev/null || true
+  kubectl get pods -n "$ovn_namespace" -o wide 2>/dev/null || true
   return 1
 }
 
@@ -1784,6 +1846,11 @@ cmd_status() {
     return 0
   fi
 
+  # Status must inspect CRC state before touching Kubernetes. A stopped CRC
+  # VM, or a VM with an unhealthy API server, can leave a stale kubeconfig
+  # probe hanging indefinitely.
+  setup_kubeconfig
+
   # Export CA env vars if installed, don't prompt for sudo
   local ca_path
   ca_path=$(get_ingress_ca_cert_path)
@@ -1828,8 +1895,9 @@ cmd_status() {
         echo "  Memory:       ${MEM_USED} / ${MEM_TOTAL} (${MEM_AVAIL} available)"
         echo "  Load:         $LOAD"
         echo "  Disk:         $DISK"
-    ' 2>/dev/null)
+  ' 2>/dev/null)
   echo "$vm_info"
+  persistent_crio_store_status
   echo ""
 
   # List application namespaces with pod counts (skip openshift-* and kube-* system namespaces)
@@ -2075,8 +2143,42 @@ _remove_temp_swap() {
   echo "    Run: ${SCRIPT_DIR}/scripts/enable-temp-swap.sh disable"
   return 1
 }
+_maybe_save_local_cache_before_destroy() {
+  if [ "${_DESTROY_SKIP_CACHE:-false}" = "true" ]; then
+    echo "Skipping local image cache save and validation (--skip-cache)"
+    return 0
+  fi
+
+  # Cache saving is intentionally opt-in: a full AAP image cache can use tens
+  # of gigabytes and may take a while to create.
+  if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
+    return 0
+  fi
+
+  printf "Cache container images locally before destroying the cluster? [y/N]: "
+  local _cache_choice=""
+  read -r _cache_choice </dev/tty || _cache_choice=""
+  case "${_cache_choice:-n}" in
+    [yY]*)
+      echo ""
+      echo "The next deploy can reuse these cached containers instead of downloading them again."
+      echo "Saving container images for the next deployment..."
+      if ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" save; then
+        echo "⚠ Could not save the local image cache — continuing with cluster deletion"
+      elif ! bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" validate; then
+        echo "⚠ Local image cache validation failed — continuing with cluster deletion"
+      fi
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
 
 cmd_destroy() {
+  _maybe_save_local_cache_before_destroy
+  local _cache_status=$?
+  [ "$_cache_status" -eq 0 ] || return "$_cache_status"
   echo ""
   printf "\033[1maap-demo destroy\033[0m - Deleting CRC cluster...\n"
   echo ""
@@ -2096,12 +2198,16 @@ cmd_destroy() {
     read -t 10 -r || true
     echo ""
   fi
+  if ! persistent_crio_store_detach; then
+    echo "✗ Persistent CRI-O image storage could not be detached — refusing to delete the cluster"
+    return 1
+  fi
+
   # Clean up fleet nodes before destroying cluster (addon)
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
     fleet_destroy_all
   fi
-
   if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
@@ -2154,6 +2260,7 @@ cmd_start() {
 
 _start_crc_cluster() {
   crc start || true
+  persistent_crio_store_prepare_or_fallback
   if [ -f /etc/resolver/testing ]; then
     sudo rm -f /etc/resolver/testing
   fi
@@ -2170,6 +2277,8 @@ cmd_create() {
     _err "OpenShift Local cluster creation failed"
     exit 1
   fi
+
+  persistent_crio_store_prepare_or_fallback
 
   install_ingress_ca_trust
   setup_kubeconfig
@@ -2200,6 +2309,11 @@ cmd_deploy() {
     _start_crc_cluster
   fi
 
+  # Restore any cache left by a previous destroy before OLM and AAP begin
+  # pulling images. This is independent of the local-cache addon setting so a
+  # destroy/create cycle does not require re-enabling the addon first.
+  _load_local_cache
+
   install_ingress_ca_trust
 
   # anyuid and privileged SCCs granted in setup_namespace() for all SAs in the namespace
@@ -2218,6 +2332,10 @@ cmd_deploy() {
 
   # Verify CRC version matches required version
   _verify_crc_version || exit 1
+
+  # The API can be available while OVN is still crash-looping. Do not create
+  # OLM/AAP workloads until the cluster CNI can create pod sandboxes.
+  _wait_for_ovn_ready || exit 1
 
   # Check if AAP already exists — skip OLM and the full deploy if so
   if [ "$FORCE" != "true" ]; then
@@ -2318,8 +2436,15 @@ deploy_latest() {
   # Create CatalogSource in aap-operator namespace
   # (not openshift-marketplace — upstream OLM doesn't create pods there on OpenShift Local)
   echo ""
-  echo "Creating CatalogSource (OCP $AAP_OCP_VERSION)..."
-  sed -e "s|redhat-operator-index:v[0-9.]*|redhat-operator-index:v${AAP_OCP_VERSION}|" \
+  _catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${AAP_OCP_VERSION}"
+  _cached_catalog_image="$(_cached_operator_catalog_ref "$AAP_OCP_VERSION")"
+  if [ -n "$_cached_catalog_image" ]; then
+    _catalog_image="$_cached_catalog_image"
+    echo "Creating CatalogSource from cached digest (OCP $AAP_OCP_VERSION)..."
+  else
+    echo "Creating CatalogSource (OCP $AAP_OCP_VERSION)..."
+  fi
+  sed -e "s|image: registry.redhat.io/redhat/redhat-operator-index:v[0-9.]*|image: ${_catalog_image}|" \
     -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
     "${SCRIPT_DIR}/config/olm/catalogsource.yaml" | kubectl apply -f -
 
@@ -2358,11 +2483,17 @@ deploy_latest() {
     -e "s|channel: stable-2.6|channel: $AAP_CHANNEL|" \
     "${SCRIPT_DIR}/config/olm/subscription.yaml" | kubectl apply -f -
 
+  # OLM creates the operator deployment asynchronously after the Subscription
+  # is applied. Rewrite immediately, then repeat during the CSV wait so a
+  # cached digest is applied as soon as the generated workload appears.
+  _rewrite_local_cache_refs
+
   # Wait for CSV
   echo ""
   echo "Waiting for CSV to be created..."
   CSV_NAME=""
   for i in $(seq 1 60); do
+    _rewrite_local_cache_refs
     CSV_NAME=$(kubectl get csv -n "$NAMESPACE" 2>/dev/null | grep '^aap-operator\.' | awk '{print $1}' | head -1)
     if [ -n "$CSV_NAME" ]; then
       echo "Found CSV: $CSV_NAME"
@@ -2382,9 +2513,6 @@ deploy_latest() {
   echo ""
   echo "Waiting for CSV to reach Succeeded phase..."
   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded csv/"$CSV_NAME" -n "$NAMESPACE" --timeout=600s || true
-
-  # Load cached container images if available (saves 10-15min of registry pulls)
-  _load_local_cache
 
   create_aap_instance
 
@@ -2556,14 +2684,20 @@ deploy_operator_sdk() {
 }
 
 _load_local_cache() {
-  # Only auto-load when local-cache addon is enabled or explicitly requested
-  if [ "${AAP_DEMO_LOAD_CACHE:-}" != "1" ]; then
-    if ! echo "$(_addons_list)" | grep -qw "local-cache"; then
-      return 0
-    fi
-  fi
-
+  # Loading is safe and quiet when no cache exists. Always check so a
+  # destroy/create cycle can reuse a cache even though destroy clears addons.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
+}
+
+_cached_operator_catalog_ref() {
+  AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" \
+    catalog-ref "$1" 2>/dev/null || true
+}
+
+_rewrite_local_cache_refs() {
+  # Operators publish image references in generated workload templates. Keep
+  # those templates aligned with the platform digests imported from cache.
+  AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" rewrite || true
 }
 
 _ensure_aap_storage_pvcs() {
@@ -2701,6 +2835,7 @@ watch_aap() {
   WATCH_START=$(date +%s)
 
   while true; do
+    _rewrite_local_cache_refs
     # clear requires TERM to be set (fails in nohup/cron)
     if [ -n "${TERM:-}" ] && [ "$TERM" != "dumb" ]; then
       clear
@@ -3238,7 +3373,7 @@ esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in
-  help | --help | -h | config | update | version | "" | destroy)
+  help | --help | -h | config | update | version | "" | destroy | status)
     # These commands don't need cluster access
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
@@ -3264,6 +3399,7 @@ case "$COMMAND" in
   destroy)
     for _arg in "${EXTRA_ARGS[@]}"; do
       [ "$_arg" = "--reset" ] && _DESTROY_RESET=true
+      [ "$_arg" = "--skip-cache" ] && _DESTROY_SKIP_CACHE=true
     done
     cmd_destroy
     ;;

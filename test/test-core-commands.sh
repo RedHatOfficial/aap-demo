@@ -63,6 +63,18 @@ else
   _fail "status_format - command failed"
 fi
 
+# Test 2b: persistent storage is shown under the VM section
+echo "Test 2b: status places persistent storage under VM"
+vm_section_line=$(grep -n '^  echo "VM:"' "$AAP_DEMO_SH" | cut -d: -f1)
+persistent_status_line=$(grep -n '^  persistent_crio_store_status$' "$AAP_DEMO_SH" | cut -d: -f1)
+if [ -n "$vm_section_line" ] && [ -n "$persistent_status_line" ] \
+  && [ "$persistent_status_line" -gt "$vm_section_line" ] \
+  && grep -q '_persistent_crio_store_disk_size' "${SCRIPT_DIR}/../includes/persistent-crio-store.sh"; then
+  _pass "status_persistent_storage_under_vm"
+else
+  _fail "status_persistent_storage_under_vm - persistent storage must be reported in VM section"
+fi
+
 # Test 3: stop command - verify it calls crc stop
 echo "Test 3: stop command logic"
 # Mock crc command to avoid actual stop
@@ -115,8 +127,50 @@ else
   _fail "destroy_calls_crc_delete - crc delete not found in destroy function"
 fi
 
-# Test 7: create command - verify it calls crc-create.sh
-echo "Test 7: create command delegates to crc-create.sh"
+# Test 7: destroy asks about caching before showing the destructive message
+echo "Test 7: destroy asks about caching before the destructive message"
+cache_prompt_line=$(grep -n '^  _maybe_save_local_cache_before_destroy$' "$AAP_DEMO_SH" | cut -d: -f1)
+destroy_message_line=$(grep -n 'aap-demo destroy.*Deleting CRC cluster' "$AAP_DEMO_SH" | cut -d: -f1)
+if [ -n "$cache_prompt_line" ] && [ -n "$destroy_message_line" ] \
+  && [ "$cache_prompt_line" -lt "$destroy_message_line" ]; then
+  _pass "destroy_cache_prompt_order"
+else
+  _fail "destroy_cache_prompt_order - cache prompt must precede destroy message"
+fi
+
+# Test 7c: a cache save failure must not block destroy
+echo "Test 7c: destroy continues when optional cache save fails"
+cache_function_start=$(grep -n '^_maybe_save_local_cache_before_destroy()' "$AAP_DEMO_SH" | cut -d: -f1)
+cache_function_end=$(grep -n '^cmd_destroy()' "$AAP_DEMO_SH" | cut -d: -f1)
+cache_function=$(sed -n "${cache_function_start},$((cache_function_end - 1))p" "$AAP_DEMO_SH")
+if echo "$cache_function" | grep -q 'refusing to delete the cluster'; then
+  _fail "destroy_cache_failure_nonblocking - cache failure must not refuse deletion"
+else
+  _pass "destroy_cache_failure_nonblocking"
+fi
+
+# Test 7d: rewrite after Subscription exists, before waiting for CSV
+echo "Test 7d: cache references are rewritten as OLM creates workloads"
+subscription_line=$(grep -n 'config/olm/subscription.yaml' "$AAP_DEMO_SH" | cut -d: -f1 | head -1)
+csv_wait_line=$(grep -n '^  # Wait for CSV$' "$AAP_DEMO_SH" | cut -d: -f1 | head -1)
+rewrite_after_subscription=$(awk -v start="$subscription_line" -v end="$csv_wait_line" \
+  'NR > start && NR < end && /_rewrite_local_cache_refs/ {print NR; exit}' "$AAP_DEMO_SH")
+if [ -n "$rewrite_after_subscription" ]; then
+  _pass "rewrite_cache_refs_during_olm_creation"
+else
+  _fail "rewrite_cache_refs_during_olm_creation - rewrite must run after subscription and before CSV wait"
+fi
+
+# Test 7b: destroy supports an explicit cache bypass
+echo "Test 7b: destroy supports --skip-cache"
+if grep -q -- '--skip-cache' "$AAP_DEMO_SH"; then
+  _pass "destroy_skip_cache"
+else
+  _fail "destroy_skip_cache - flag not found in script"
+fi
+
+# Test 8: create command - verify it calls crc-create.sh
+echo "Test 8: create command delegates to crc-create.sh"
 # Verify create function sources crc-create.sh
 if grep -q 'includes/crc-create.sh' "$AAP_DEMO_SH"; then
   _pass "create_calls_script"
@@ -124,8 +178,8 @@ else
   _fail "create_calls_script - crc-create.sh not referenced in create function"
 fi
 
-# Test 9: addon purge options are accepted and forwarded
-echo "Test 9: disable forwards addon purge options"
+# Test 10: addon purge options are accepted and forwarded
+echo "Test 10: disable forwards addon purge options"
 if grep -q -- '--purge-data' "$AAP_DEMO_SH" \
   && grep -q 'bash "\$addon_dir/deploy.sh" --delete "\$@"' "$AAP_DEMO_SH"; then
   _pass "disable_forwards_purge_data"
@@ -133,13 +187,36 @@ else
   _fail "disable_forwards_purge_data - purge option parsing or forwarding is missing"
 fi
 
-# Test 8: create command - verify OLM addon is enabled after cluster creation
-echo "Test 8: create enables OLM addon"
+# Test 9: create command - verify OLM addon is enabled after cluster creation
+echo "Test 9: create enables OLM addon"
 # Verify create function calls OLM deploy
 if grep -q 'addons/olm/deploy.sh' "$AAP_DEMO_SH"; then
   _pass "create_enables_olm"
 else
   _fail "create_enables_olm - OLM deploy not referenced in create function"
+fi
+
+# Test 11: persistent CRI-O storage is opt-in and has a safe OCI fallback
+echo "Test 11: persistent CRI-O storage hooks"
+if grep -q 'source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"' "$AAP_DEMO_SH" \
+  && grep -q 'persistent_crio_store_prepare_or_fallback' "$AAP_DEMO_SH" \
+  && grep -q 'persistent_crio_store_detach' "$AAP_DEMO_SH" \
+  && grep -q -- '--subdriver qcow2' "${SCRIPT_DIR}/../includes/persistent-crio-store.sh" \
+  && AAP_PERSISTENT_IMAGE_STORE=false bash -c \
+    "source '${SCRIPT_DIR}/../includes/persistent-crio-store.sh'; persistent_crio_store_prepare; persistent_crio_store_detach"; then
+  _pass "persistent_crio_store_opt_in"
+else
+  _fail "persistent_crio_store_opt_in - helper wiring or disabled no-op is broken"
+fi
+
+# Test 12: persistent storage is detached before CRC deletion
+echo "Test 12: persistent CRI-O storage detach order"
+detach_line=$(grep -n 'persistent_crio_store_detach' "$AAP_DEMO_SH" | tail -1 | cut -d: -f1)
+delete_line=$(grep -n 'crc delete' "$AAP_DEMO_SH" | tail -1 | cut -d: -f1)
+if [ -n "$detach_line" ] && [ -n "$delete_line" ] && [ "$detach_line" -lt "$delete_line" ]; then
+  _pass "persistent_crio_store_detach_order"
+else
+  _fail "persistent_crio_store_detach_order - disk must detach before crc delete"
 fi
 
 # Cleanup mocks

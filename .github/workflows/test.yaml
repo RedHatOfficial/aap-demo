@@ -56,6 +56,9 @@ jobs:
       - name: Run product-demos API readiness tests
         run: ./test/test-product-demos-api.sh
 
+      - name: Run local-cache tests
+        run: ./test/test-local-cache.sh
+
       - name: Run AO LLM provider tests
         run: ./test/test-ao-llm-provider.sh
 
