@@ -20,6 +20,22 @@ if ! grep -q 'wire_ao_external_llm' "${REPO_ROOT}/includes/addon-wire.sh"; then
   fail "external_llm_wiring_function_exists"
 fi
 
+wire_ao_default_project_id() { printf '%s' 'target-project'; }
+wire_ao_api() {
+  case "$1 $2" in
+    "GET /credentials?name=aap-demo%20External%20LLM&limit=100")
+      printf '%s' '{"resources":[
+        {"id":"wrong-project-credential","name":"aap-demo External LLM","project_id":"other-project"},
+        {"id":"target-project-credential","name":"aap-demo External LLM","project_id":"target-project"}
+      ]}'
+      ;;
+    *) return 1 ;;
+  esac
+}
+if [ "$(wire_ao_find_credential_by_name 'aap-demo External LLM')" != target-project-credential ]; then
+  fail "credential_lookup_is_scoped_to_default_project"
+fi
+
 AO_LLM_BASE_URL="https://api.example.test/v1"
 AO_LLM_MODEL="gpt-6-luna"
 external_config=$(wire_ao_llm_config_json 2>/dev/null || true)
