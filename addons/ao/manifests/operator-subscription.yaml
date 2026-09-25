@@ -3,6 +3,7 @@
 #   __NAMESPACE__           -> automation-orchestrator
 #   __CATALOG_NAMESPACE__   -> namespace of the CatalogSource (same ns on MicroShift)
 #   __OPERATOR_CHANNEL__    -> stable or early-access
+#   __INSTALL_PLAN_APPROVAL__ -> Automatic or Manual
 #
 # OperatorGroup spec is empty (AllNamespaces). The GA operator does not support
 # OwnNamespace / SingleNamespace / MultiNamespace install modes.
@@ -24,4 +25,4 @@ spec:
   name: automation-orchestrator-operator
   source: redhat-operators
   sourceNamespace: __CATALOG_NAMESPACE__
-  installPlanApproval: Manual
+  installPlanApproval: __INSTALL_PLAN_APPROVAL__

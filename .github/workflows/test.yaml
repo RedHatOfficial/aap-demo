@@ -47,6 +47,9 @@ jobs:
       - name: Run AO CatalogSource tests
         run: ./test/test-ao-catalog-source.sh
 
+      - name: Run AO operator subscription tests
+        run: ./test/test-ao-operator-subscription.sh
+
       - name: Run Ollama addon tests
         run: ./test/test-ollama.sh
 
