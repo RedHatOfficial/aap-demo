@@ -146,10 +146,13 @@ for arg in "$@"; do
       esac
       ;;
     destroy)
-      # When a command is already set (e.g. `fleet destroy`), treat destroy as a subcommand arg.
-      # When no command is set yet (`aap-demo destroy`), it is the top-level command.
-      if [ -n "$COMMAND" ]; then
+      # Fleet owns destroy as a subcommand; otherwise destroy is top-level.
+      if [ "$COMMAND" = "fleet" ]; then
         EXTRA_ARGS+=("$arg")
+      elif [ -n "$COMMAND" ]; then
+        echo "Unknown argument for '$COMMAND': $arg"
+        echo "Run '$0 help' for usage"
+        exit 1
       else
         COMMAND="$arg"
       fi
