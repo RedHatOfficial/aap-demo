@@ -3,9 +3,9 @@ name: aap-demo
 description: >
   Manages AAP (Ansible Automation Platform) development environments on local
   MicroShift clusters. Handles cluster lifecycle (create, deploy, destroy),
-  diagnostics, troubleshooting, and test execution. Activate when users want to
-  deploy AAP, check cluster health, fix deployment issues, run tests, or manage
-  their aap-demo environment.
+  diagnostics, troubleshooting, and local validation. Activate when users want
+  to deploy AAP, check cluster health, fix deployment issues, run local tests,
+  or manage their aap-demo environment.
 allowed-tools:
   - Bash(aap-demo *)
   - Bash(kubectl *)
@@ -46,7 +46,7 @@ This environment includes characteristics specific to local development:
 | Destroy entire cluster | `aap-demo destroy` |
 | Stop/start cluster | `aap-demo stop` / `aap-demo start` |
 | SSH into cluster node | `aap-demo ssh` |
-| Run tests | `aap-demo test` |
+| Run local tests | `./test/test-core-commands.sh` and the focused scripts under `test/` |
 | Enable addon | `aap-demo enable <name>` |
 | Disable addon | `aap-demo disable <name>` |
 | Destroy and rebuild from scratch | `aap-demo redeploy-all` |
@@ -109,7 +109,6 @@ When the user has multiple AAP deployments (e.g., operator in `aap-operator` + a
 
 Pull secrets are required for image pulls and live in `~/.aap-demo/`:
 - `pull-secret.txt` or `pull-secret.json` (from console.redhat.com)
-- ATF tests: `atf-vault-password` (for vaulted test vars)  # pragma: allowlist secret
 
 If image pulls fail with 403/unauthorized, check:  # pragma: allowlist secret
 1. Correct pull secret exists in `~/.aap-demo/`  # pragma: allowlist secret
@@ -144,11 +143,10 @@ When troubleshooting:
 
 ## Test Orchestration
 
-- Default: `aap-demo test` runs interop tests against auto-detected AAP deployment
-- Specific markers: `aap-demo test aap-operator interop,smoke`
-- Multiple deployments: specify namespace with `NAMESPACE=<ns> aap-demo test`
-- After tests, summarize pass/fail counts from the output
-- If tests fail, check AAP health first (`aap-demo diagnose`) before investigating test issues
+- Run the non-destructive shell and Python tests under `test/` locally or via CI.
+- Use `aap-demo diagnose` before investigating failures that require a live cluster.
+- For deployment and addon changes, record live CRC lifecycle checks in the PR
+  Test Plan; the repository no longer bundles the obsolete internal ATF runner.
 
 ## Post-Deploy Verification
 
