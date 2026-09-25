@@ -39,6 +39,7 @@ The addon applies **checked-in Kubernetes manifests** shaped like
 | Instance | `AutomationOrchestrator` CR from [`manifests/automationorchestrator-cr.yaml`](../../addons/ao/manifests/automationorchestrator-cr.yaml) |
 | Database secrets | `orchestrator-postgres-secret`, `temporal-postgres-secret`, `temporal-visibility-postgres-secret` (created at install, not committed) |
 | Registry auth | `automation-orchestrator-pull-secret` from `~/.aap-demo/pull-secret.txt` (`kubernetes.io/dockerconfigjson`; do not copy the OLM catalog secret) |
+| InstallPlan approval | `Automatic` by default; set `AO_INSTALL_PLAN_APPROVAL=Manual` when operator upgrades require an explicit approval gate |
 
 Manifest templates and apply order: [`addons/ao/manifests/README.md`](../../addons/ao/manifests/README.md).
 
@@ -180,3 +181,4 @@ See [ADR-023](023-addon-auto-wiring.md) for the full auto-wiring design.
 | 2026-09-11 | AO pod `hostAliases` for AAP/AO/MCP route hosts → ingress router, so Launch AAP SSRF does not depend on CoreDNS surviving the DNS operator |
 | 2026-09-18 | Include the Ollama route in AO `hostAliases` so LLM provider calls survive CoreDNS rewrite wipes |
 | 2026-09-16 | AAP control-job workflow synchronization uses isolated worker hosts, Ansible `free` strategy, and ten forks for concurrent AO upserts |
+| 2026-09-25 | AO operator subscriptions approve InstallPlans automatically by default, with a documented manual override |
