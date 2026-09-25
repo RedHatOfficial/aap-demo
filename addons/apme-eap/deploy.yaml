@@ -115,16 +115,16 @@ objects:
     namespace: ${NAMESPACE}
   data:
     app-config.local.yaml: "ansible:\n  apme:\n    baseUrl: http://apme-gateway:8080\n    checkSSL: false\n    enabled: true\n\
-      \    enableAi: true\n    mockMode: false\n  rhaap:\n    baseUrl: ${AAP_HOST_URL}\n    checkSSL: false\n    token: ${AAP_TOKEN}\n\
-      \  automationHub:\n    baseUrl: ${AAP_HOST_URL}\napp:\n  baseUrl: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n\
+      \    enableAi: true\n    mockMode: false\n  rhaap:\n    baseUrl: ${RHAAP_URL}\n    checkSSL: false\n    token: ${RHAAP_TOKEN}\n\
+      \  automationHub:\n    baseUrl: ${RHAAP_URL}\napp:\n  baseUrl: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n\
       \  title: Ansible automation portal\nauth:\n  environment: production\n  omitIdentityTokenOwnershipClaim: true\n  providers:\n\
-      \    rhaap:\n      production:\n        checkSSL: false\n        clientId: ${OAUTH_CLIENT_ID}\n        clientSecret:\
-      \ ${OAUTH_CLIENT_SECRET}\n        host: ${AAP_HOST_URL}\n        signIn:\n          resolvers:\n            - resolver:\
+      \    rhaap:\n      production:\n        checkSSL: false\n        clientId: ${RHAAP_OAUTH_CLIENT_ID}\n        clientSecret:\
+      \ ${RHAAP_OAUTH_CLIENT_SECRET}\n        host: ${RHAAP_URL}\n        signIn:\n          resolvers:\n            - resolver:\
       \ allowNewAAPUserSignIn\n    # Optional: leave GITHUB_OAUTH_* empty if using PAT-only integrations.github\n    github:\n\
       \      production:\n        clientId: ${GITHUB_OAUTH_CLIENT_ID}\n        clientSecret: ${GITHUB_OAUTH_CLIENT_SECRET}\n\
-      \  signInPage: rhaap\nbackend:\n  auth:\n    keys:\n      - secret: ${BACKEND_SECRET}\n  baseUrl: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n\
+      \  signInPage: rhaap\nbackend:\n  auth:\n    keys:\n      - secret: ${PORTAL_SESSION_SECRET}\n  baseUrl: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n\
       \  cors:\n    origin: https://redhat-rhaap-portal-apme.${CLUSTER_ROUTER_BASE}\n  database:\n    client: pg\n    connection:\n\
-      \      host: portal-postgresql\n      port: 5432\n      user: bn_backstage\n      password: ${POSTGRES_PASSWORD}\n \
+      \      host: portal-postgresql\n      port: 5432\n      user: bn_backstage\n      password: ${PORTAL_DB_PASSWORD}\n \
       \ listen:\n    port: 7007\n  reading:\n    allow:\n      - host: github.com\n      - host: raw.githubusercontent.com\n\
       # Optional: leave GITHUB_TOKEN empty if using OAuth-only ScmAuth\nintegrations:\n  github:\n    - host: github.com\n\
       \      token: ${GITHUB_TOKEN}\ncatalog:\n  locations:\n    - type: file\n      target: /opt/app-root/src/configs/catalog/apme-register-git-repository/template.yaml\n\

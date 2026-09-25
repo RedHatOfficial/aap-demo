@@ -122,18 +122,107 @@ apme_init_aap_connection() {
 
 apme_create_openshift_deploy_token() {
   local ns="${AAP_NAMESPACE:-aap-operator}"
+  local target_ns="${NAMESPACE:-apme}"
   local sa="apme-deployer"
-  local binding="apme-deployer-admin"
+  local binding="apme-deployer"
+  local cluster_role="apme-deployer-read"
+  local cluster_binding="apme-deployer-read"
 
   kubectl get serviceaccount "$sa" -n "$ns" &>/dev/null \
     || kubectl create serviceaccount "$sa" -n "$ns" &>/dev/null
 
-  kubectl get clusterrolebinding "$binding" &>/dev/null \
-    || kubectl create clusterrolebinding "$binding" \
-      --clusterrole=cluster-admin \
-      --serviceaccount="${ns}:${sa}" &>/dev/null
+  kubectl create namespace "$target_ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl apply -f - >/dev/null <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ${binding}
+  namespace: ${target_ns}
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${binding}
+  namespace: ${target_ns}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ${binding}
+subjects:
+  - kind: ServiceAccount
+    name: ${sa}
+    namespace: ${ns}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ${binding}-aap
+  namespace: ${ns}
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["aap"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${binding}-aap
+  namespace: ${ns}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ${binding}-aap
+subjects:
+  - kind: ServiceAccount
+    name: ${sa}
+    namespace: ${ns}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ${cluster_role}
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    resourceNames: ["${target_ns}"]
+    verbs: ["get", "patch"]
+  - apiGroups: ["config.openshift.io"]
+    resources: ["ingresses"]
+    resourceNames: ["cluster"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${cluster_binding}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ${cluster_role}
+subjects:
+  - kind: ServiceAccount
+    name: ${sa}
+    namespace: ${ns}
+EOF
 
-  kubectl create token "$sa" -n "$ns" --duration=87600h
+  kubectl create token "$sa" -n "$ns" --duration="${APME_TOKEN_DURATION:-2h}"
+}
+
+apme_cleanup_openshift_deploy_token() {
+  local ns="${AAP_NAMESPACE:-aap-operator}"
+  local target_ns="${NAMESPACE:-apme}"
+  kubectl delete clusterrolebinding apme-deployer-read --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete clusterrole apme-deployer-read --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete rolebinding apme-deployer-aap -n "$ns" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete role apme-deployer-aap -n "$ns" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete rolebinding apme-deployer -n "$target_ns" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete role apme-deployer -n "$target_ns" --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete serviceaccount apme-deployer -n "$ns" --ignore-not-found >/dev/null 2>&1 || true
 }
 
 apme_find_controller_task_pod() {

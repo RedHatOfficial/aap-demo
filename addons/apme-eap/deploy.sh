@@ -779,6 +779,8 @@ _should_purge_apme_credentials() {
 cleanup() {
   info "Removing APME namespace and resources..."
 
+  apme_cleanup_openshift_deploy_token
+
   # Delete namespace
   kubectl delete namespace "$NAMESPACE" --ignore-not-found=true
 
