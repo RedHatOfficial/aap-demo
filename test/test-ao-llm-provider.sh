@@ -64,13 +64,13 @@ fi
 unset AO_LLM_BASE_URL AO_LLM_MODEL
 aap_demo_ao_llm_external_defaults
 if [ "$AO_LLM_BASE_URL" = "https://api.openai.com/v1" ] \
-  && [ "$AO_LLM_MODEL" = "gpt-6-luna" ]; then
+  && [ "$AO_LLM_MODEL" = "gpt-5.6-luna" ]; then
   pass "external_provider_defaults"
 else
   fail "external_provider_defaults"
 fi
 
-if AO_LLM_MODEL=luna bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_external_defaults; [ \"\$AO_LLM_MODEL\" = 'gpt-6-luna' ]"; then
+if AO_LLM_MODEL=luna bash -c "source '${REPO_ROOT}/includes/ao-llm.sh'; aap_demo_ao_llm_external_defaults; [ \"\$AO_LLM_MODEL\" = 'gpt-5.6-luna' ]"; then
   pass "legacy_luna_default_is_migrated"
 else
   fail "legacy_luna_default_is_migrated"
@@ -80,7 +80,7 @@ model_prompt_input="$TEST_DIR/model-prompt-input"
 printf '\n' >"$model_prompt_input"
 unset AO_LLM_MODEL
 AO_LLM_PROMPT_DEVICE="$model_prompt_input"
-if aap_demo_ao_llm_prompt_for_model && [ "$AO_LLM_MODEL" = "gpt-6-luna" ]; then
+if aap_demo_ao_llm_prompt_for_model && [ "$AO_LLM_MODEL" = "gpt-5.6-luna" ]; then
   pass "blank_model_prompt_uses_default"
 else
   fail "blank_model_prompt_uses_default"

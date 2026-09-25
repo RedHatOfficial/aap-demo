@@ -94,9 +94,9 @@ aap_demo_ao_llm_save_config() {
 aap_demo_ao_llm_external_defaults() {
   : "${AO_LLM_BASE_URL:=https://api.openai.com/v1}"
   if [ "${AO_LLM_MODEL:-}" = luna ]; then
-    AO_LLM_MODEL=gpt-6-luna
+    AO_LLM_MODEL=gpt-5.6-luna
   fi
-  : "${AO_LLM_MODEL:=gpt-6-luna}"
+  : "${AO_LLM_MODEL:=gpt-5.6-luna}"
   export AO_LLM_BASE_URL AO_LLM_MODEL
 }
 
@@ -105,9 +105,9 @@ aap_demo_ao_llm_prompt_for_model() {
   local model
 
   [ -z "${AO_LLM_MODEL:-}" ] || return 0
-  printf 'External LLM model [gpt-6-luna]: ' >&2
+  printf 'External LLM model [gpt-5.6-luna]: ' >&2
   IFS= read -r model <"$prompt_device" || return 1
-  AO_LLM_MODEL="${model:-gpt-6-luna}"
+  AO_LLM_MODEL="${model:-gpt-5.6-luna}"
   export AO_LLM_MODEL
   aap_demo_ao_llm_save_config AO_LLM_MODEL "$AO_LLM_MODEL"
 }

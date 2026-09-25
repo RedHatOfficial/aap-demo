@@ -940,9 +940,9 @@ wire_ao_llm_model_name() {
   case "${AO_LLM_PROVIDER:-ollama}" in
     external)
       if [ "${AO_LLM_MODEL:-}" = luna ]; then
-        printf '%s\n' gpt-6-luna
+        printf '%s\n' gpt-5.6-luna
       else
-        printf '%s\n' "${AO_LLM_MODEL:-gpt-6-luna}"
+        printf '%s\n' "${AO_LLM_MODEL:-gpt-5.6-luna}"
       fi
       ;;
     ollama) printf '%s\n' "$WIRE_OLLAMA_MODEL" ;;

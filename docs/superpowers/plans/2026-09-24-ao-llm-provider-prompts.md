@@ -26,11 +26,11 @@ populate external mode; shell profile files are never sourced or parsed.
 - The explicit `none` provider must skip LLM dependency installation, wiring,
   and agent credential/model import while still installing AO and MCP.
 - The external provider must use an OpenAI-compatible API, default base URL
-  `https://api.openai.com/v1`, and default model `gpt-6-luna`.
+  `https://api.openai.com/v1`, and default model `gpt-5.6-luna`.
 - When external mode is selected and no saved key exists, reuse an already
   exported `OPENAI_API_KEY` before prompting for hidden input.
 - When external mode is selected interactively and no model is configured,
-  prompt with `gpt-6-luna` as the default; `AO_LLM_MODEL` remains an override.
+  prompt with `gpt-5.6-luna` as the default; `AO_LLM_MODEL` remains an override.
 - `AO_LLM_BASE_URL` and `AO_LLM_MODEL` must override the external defaults.
 - API keys must never be written to the plaintext config, command output, test
   fixtures, or logs; store the local key file with mode `600`.
@@ -81,7 +81,7 @@ test_external_defaults() {
   unset AO_LLM_BASE_URL AO_LLM_MODEL
   aap_demo_ao_llm_external_defaults
   [ "$AO_LLM_BASE_URL" = 'https://api.openai.com/v1' ]
-  [ "$AO_LLM_MODEL" = gpt-6-luna ]
+  [ "$AO_LLM_MODEL" = gpt-5.6-luna ]
 }
 
 test_choice_mapping
@@ -103,7 +103,7 @@ for config entries. Do not include API-key values in diagnostics.
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bash test/test-ao-llm-provider.sh`
-Expected: PASS, including a mode-600 key file and the `gpt-6-luna` default.
+Expected: PASS, including a mode-600 key file and the `gpt-5.6-luna` default.
 
 - [ ] **Step 5: Commit**
 
@@ -207,7 +207,7 @@ Add source-level and mocked API assertions that verify:
 ```bash
 grep -q 'wire_ao_external_llm' includes/addon-wire.sh
 grep -q 'provider_hint: "custom"' includes/addon-wire.sh
-grep -q 'AO_LLM_MODEL.*gpt-6-luna' includes/addon-wire.sh
+grep -q 'AO_LLM_MODEL.*gpt-5.6-luna' includes/addon-wire.sh
 ```
 
 The mocked wiring test must assert that external mode sends the API key only
@@ -236,7 +236,7 @@ credential/model just as Ollama currently does, without assuming the Ollama
 deployment exists. In `none` mode, omit the optional agent credential and
 model arguments. Pass the same provider credential/model through the normal AAP
 control-job synchronization path so every agentic node receives the selected
-model, with external mode defaulting to `gpt-6-luna` and local mode retaining the
+model, with external mode defaulting to `gpt-5.6-luna` and local mode retaining the
 configured Ollama model. Re-running `aap-demo wire` must also rebind existing
 `aap-demo` workflows so the model selection is not limited to newly imported
 workflows.
@@ -264,7 +264,7 @@ git commit -m "feat: wire external AO LLM providers"
 - [ ] **Step 1: Update documentation**
 
 Document the interactive prompt, the non-interactive default, the `none`
-behavior, the external defaults (`https://api.openai.com/v1` and `gpt-6-luna`),
+behavior, the external defaults (`https://api.openai.com/v1` and `gpt-5.6-luna`),
 `AO_LLM_BASE_URL`/`AO_LLM_MODEL` overrides, secure key-file behavior, and how
 to reuse an exported `OPENAI_API_KEY` without sourcing profile files or
 automatically uninstalling Ollama.

@@ -39,7 +39,7 @@ The implementation applies this consistently across all synchronization paths:
 
 The model resource UUID is resolved from the selected provider integration by matching
 the configured model identifier. For external providers, the default identifier remains
-`gpt-6-luna`. Stale or legacy free-form `model` fields are removed so AO does not retain
+`gpt-5.6-luna`. Stale or legacy free-form `model` fields are removed so AO does not retain
 an environment-specific selection that conflicts with the local provider.
 
 ## Consequences

@@ -18,10 +18,10 @@ fail() {
 }
 
 AO_LLM_PROVIDER=external
-AO_LLM_MODEL=gpt-6-luna
-wire_ao_llm_agent_credential_id() { printf '%s\n' 'gpt-6-luna-credential-id'; }
-wire_ao_llm_agent_integration_id() { printf '%s\n' 'gpt-6-luna-integration-id'; }
-wire_ao_llm_agent_model_id() { printf '%s\n' 'gpt-6-luna-model-id'; }
+AO_LLM_MODEL=gpt-5.6-luna
+wire_ao_llm_agent_credential_id() { printf '%s\n' 'gpt-5.6-luna-credential-id'; }
+wire_ao_llm_agent_integration_id() { printf '%s\n' 'gpt-5.6-luna-integration-id'; }
+wire_ao_llm_agent_model_id() { printf '%s\n' 'gpt-5.6-luna-model-id'; }
 wire_ao_api() {
   local method="$1"
   local path="$2"
@@ -64,12 +64,12 @@ wire_ao_api() {
 if ! wire_ao_rebind_agentic_workflows; then
   fail "workflow_rebinding_succeeds"
 elif [ "$(jq -r '.workflow_definition.nodes | map(select(.type == "agentic")) | length' "$TEST_DIR/demo-patch.json")" != 2 ] \
-  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.credential_id' "$TEST_DIR/demo-patch.json")" != gpt-6-luna-credential-id ] \
-  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.integration_id' "$TEST_DIR/demo-patch.json")" != gpt-6-luna-integration-id ] \
-  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.llm_model_id' "$TEST_DIR/demo-patch.json")" != gpt-6-luna-model-id ] \
-  || [ "$(jq -r '.workflow_definition.nodes[1].parameters.llm_model_id' "$TEST_DIR/demo-patch.json")" != gpt-6-luna-model-id ] \
+  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.credential_id' "$TEST_DIR/demo-patch.json")" != gpt-5.6-luna-credential-id ] \
+  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.integration_id' "$TEST_DIR/demo-patch.json")" != gpt-5.6-luna-integration-id ] \
+  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.llm_model_id' "$TEST_DIR/demo-patch.json")" != gpt-5.6-luna-model-id ] \
+  || [ "$(jq -r '.workflow_definition.nodes[1].parameters.llm_model_id' "$TEST_DIR/demo-patch.json")" != gpt-5.6-luna-model-id ] \
   || [ "$(jq -r '.workflow_definition.nodes[0].parameters.model // empty' "$TEST_DIR/demo-patch.json")" != "" ] \
-  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.integration_id' "$TEST_DIR/second-demo-patch.json")" != gpt-6-luna-integration-id ]; then
+  || [ "$(jq -r '.workflow_definition.nodes[0].parameters.integration_id' "$TEST_DIR/second-demo-patch.json")" != gpt-5.6-luna-integration-id ]; then
   fail "all_demo_agentic_nodes_receive_selected_model"
 fi
 
