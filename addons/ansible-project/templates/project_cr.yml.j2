@@ -1,0 +1,20 @@
+---
+apiVersion: controller.ansible.com/v1beta1
+kind: Project
+metadata:
+  name: {{ project_name }}
+  namespace: {{ namespace }}
+spec:
+  name: "{{ project_name }}"
+  description: "{{ project_description | default('Ansible project: ' + project_name) }}"
+  organization: "{{ organization | default('Default') }}"
+  scm_type: git
+  scm_url: "{{ git_url }}"
+  scm_branch: "{{ git_branch | default('main') }}"
+  scm_clean: {{ scm_clean | default(true) | lower }}
+  scm_delete_on_update: {{ scm_delete_on_update | default(false) | lower }}
+  scm_track_submodules: {{ scm_track_submodules | default(false) | lower }}
+  scm_update_on_launch: {{ scm_update_on_launch | default(true) | lower }}
+  scm_update_cache_timeout: {{ scm_update_cache_timeout | default(0) }}
+  allow_override: {{ allow_override | default(false) | lower }}
+  credential: "{{ project_name }}-scm"

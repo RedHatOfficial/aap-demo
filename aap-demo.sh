@@ -153,6 +153,10 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
+    ansible-project)
+      # Addon name for enable/disable commands
+      EXTRA_ARGS+=("$arg")
+      ;;
     fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
@@ -181,7 +185,7 @@ for arg in "$@"; do
       ;;
     *)
       # Commands that accept arbitrary args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "fleet" ]; then
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "fleet" ] || [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -422,6 +426,8 @@ Addons:
   enable fleet       Enable Fleet managed VMs for demos (requires AAP)
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
   enable mcp-server  Enable MCP server for AI assistants
+  enable ansible-project <git-url> [name]
+                     Bootstrap AAP Controller resources from an HTTPS Git repository
 
 Fleet commands (requires: enable fleet):
   fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
@@ -435,6 +441,8 @@ Addons:
   enable portal-operator
                   Enable the AAP 2.7 Automation Portal Operator (Technology Preview; AMD64 only)
   enable mcp-server Enable MCP server for AI assistants (required by ao)
+  enable ansible-project <git-url> [name]
+                  Bootstrap AAP Controller resources from an HTTPS Git repository
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator (prompts for LLM or no LLM)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
@@ -3058,6 +3066,7 @@ cmd_fleet() {
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
 AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
+AVAILABLE_ADDONS="${AVAILABLE_ADDONS} ansible-project"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3176,6 +3185,9 @@ cmd_enable() {
       [ "$a" = "portal-operator" ] && status="${status}; AMD64 only"
       printf "  %-15s %s\n" "$a" "($status)"
     done
+    echo ""
+    echo "Special usage:"
+    echo "  aap-demo enable ansible-project <git-url> [project-name]"
     return 0
   fi
 
