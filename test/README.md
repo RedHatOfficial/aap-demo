@@ -23,6 +23,9 @@ Comprehensive test script validating all aap-demo commands.
 
 # AAP provisioning fast-path test
 python3 ./test/test-provision-aap-demos.py
+
+# AO replica profile rendering (no cluster required)
+./test/test-ao-replica-profile.sh
 ```
 
 ### Coverage
@@ -65,6 +68,9 @@ Tests validate:
 3. **Error handling** — unknown commands/args produce useful errors
 4. **Non-destructive behavior** — tests don't modify cluster state
 5. **Graceful degradation** — commands fail cleanly when cluster/AAP missing
+6. **AO replica profile rendering** — default one-replica and explicit
+   two-replica CR values, validation errors, and operator source-of-truth
+   behavior
 
 Tests **do not** validate:
 
@@ -101,6 +107,52 @@ test_my_new_feature
 - Tests may behave differently when cluster exists vs. doesn't exist
 - Some commands (like `idle`, `status`) adapt to current cluster state
 - Interactive prompts skipped via `QUIET=true` env var
+
+## Live AO replica-profile clean lifecycle
+
+Run this scenario on a disposable local MicroShift cluster to validate fresh
+enable/disable behavior for both replica profiles. `AO_IMPORT_DEMOS=0` keeps
+the scenario focused on AO installation and avoids importing demo workflows.
+
+The ordinary disable command is intentional: it removes the AO namespace and
+OLM resources while preserving the bootstrap credential and shared
+CloudNativePG operator. Use the separate purge scenario below only when
+irreversible database deletion is explicitly required.
+
+```bash
+# Start from a clean AO addon state.
+./aap-demo.sh disable ao
+
+# Default local profile: one backend, UI, and worker replica.
+AO_IMPORT_DEMOS=0 ./aap-demo.sh enable ao
+kubectl get automationorchestrator automation-orchestrator \
+  -n automation-orchestrator \
+  -o jsonpath='backend={.spec.backend.replicas} ui={.spec.ui.replicas} worker={.spec.worker.replicas} ready={.status.conditions[?(@.type=="Ready")].status} degraded={.status.conditions[?(@.type=="Degraded")].status}'
+kubectl get deployments -n automation-orchestrator \
+  -o custom-columns='NAME:.metadata.name,DESIRED:.spec.replicas,READY:.status.readyReplicas'
+./aap-demo.sh disable ao
+kubectl get namespace automation-orchestrator  # expect NotFound
+
+# Explicit higher-resource profile: two replicas each.
+AO_LOW_RESOURCE=0 AO_IMPORT_DEMOS=0 ./aap-demo.sh enable ao
+kubectl get automationorchestrator automation-orchestrator \
+  -n automation-orchestrator \
+  -o jsonpath='backend={.spec.backend.replicas} ui={.spec.ui.replicas} worker={.spec.worker.replicas} ready={.status.conditions[?(@.type=="Ready")].status} degraded={.status.conditions[?(@.type=="Degraded")].status}'
+kubectl get deployments -n automation-orchestrator \
+  -o custom-columns='NAME:.metadata.name,DESIRED:.spec.replicas,READY:.status.readyReplicas'
+./aap-demo.sh disable ao
+kubectl get namespace automation-orchestrator  # expect NotFound
+```
+
+### Results (2026-09-24, local MicroShift)
+
+- Default profile: `backend=1 ui=1 worker=1 ready=True degraded=False`; the
+  backend, UI, and worker deployments each reported `DESIRED=1 READY=1`.
+- Default disable: the `automation-orchestrator` namespace was removed.
+- Two-replica profile: `backend=2 ui=2 worker=2 ready=True degraded=False`; the
+  backend, UI, and worker deployments each reported `DESIRED=2 READY=2`.
+- Final disable: the `automation-orchestrator` namespace was removed, leaving
+  AO disabled and the repository worktree clean.
 
 ## Live AO clean-install regression scenario
 

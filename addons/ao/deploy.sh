@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
 # shellcheck source=lib/admin-password.sh
 source "${SCRIPT_DIR}/lib/admin-password.sh"
+# shellcheck source=lib/replica-profile.sh
+source "${SCRIPT_DIR}/lib/replica-profile.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -840,25 +842,24 @@ sync_ao_demos() {
     --repository "${AO_DEMOS_REPOSITORY:-https://github.com/ansible-tmm/aap-orchestrator-demos}"
     --ref "${AO_DEMOS_REF:-abcc1a1482a}"
   )
-  local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
-  if [ -z "$_agent_cred" ] && wire_ollama_deployed; then
-    _agent_cred=$(wire_ao_find_credential_by_name "aap-demo Ollama" 2>/dev/null || true)
-  fi
-  if [ -n "$_agent_cred" ]; then
-    _import_args+=(--agent-credential-id "$_agent_cred")
-    if wire_ollama_deployed && [ -z "${AO_AGENT_CREDENTIAL_ID:-}" ]; then
-      local _ollama_integration _ollama_model_id
-      _ollama_integration=$(wire_ao_find_integration_by_name "aap-demo Ollama" 2>/dev/null || true)
-      if [ -n "$_ollama_integration" ]; then
-        _ollama_model_id=$(wire_ao_api GET \
-          "/integrations/${_ollama_integration}/models?limit=50" 2>/dev/null \
-          | wire_ao_list_items \
-          | jq -r --arg m "${WIRE_OLLAMA_MODEL:-qwen2.5:3b}" \
-            '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null || true)
-      fi
-      if [ -n "${_ollama_model_id:-}" ]; then
-        _import_args+=(--agent-model-id "$_ollama_model_id")
-      fi
+  if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
+    local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+    local _agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
+    local _llm_model_id=""
+    if [ -z "$_agent_cred" ]; then
+      _agent_cred=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
+    fi
+    if [ -z "$_agent_integration_id" ]; then
+      _agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
+    fi
+    if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ]; then
+      _llm_model_id=$(wire_ao_llm_agent_model_id "$_agent_integration_id" 2>/dev/null || true)
+    fi
+    if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ] && [ -n "$_llm_model_id" ]; then
+      _import_args+=(--agent-credential-id "$_agent_cred")
+      _import_args+=(--agent-integration-id "$_agent_integration_id" --agent-model-id "$_llm_model_id")
+    elif [ -n "$_agent_cred" ] || [ -n "$_agent_integration_id" ]; then
+      wire_warn "AO LLM credential, integration, or model is incomplete; skipping agent binding for direct imports"
     fi
   fi
 
@@ -907,6 +908,26 @@ provision_aap_demos() {
       --control-branch "${AO_SYNC_BRANCH:-main}"
       --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
     )
+    if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
+      local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
+      local _agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
+      local _agent_model_id=""
+      if [ -z "$_agent_cred" ]; then
+        _agent_cred=$(wire_ao_llm_agent_credential_id 2>/dev/null || true)
+      fi
+      if [ -z "$_agent_integration_id" ]; then
+        _agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
+      fi
+      if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ]; then
+        _agent_model_id=$(wire_ao_llm_agent_model_id "$_agent_integration_id" 2>/dev/null || true)
+      fi
+      if [ -n "$_agent_cred" ] && [ -n "$_agent_integration_id" ] && [ -n "$_agent_model_id" ]; then
+        _provision_args+=(--ao-agent-credential-id "$_agent_cred")
+        _provision_args+=(--ao-agent-integration-id "$_agent_integration_id" --ao-agent-model-id "$_agent_model_id")
+      elif [ -n "$_agent_cred" ] || [ -n "$_agent_integration_id" ]; then
+        wire_warn "AO LLM credential, integration, or model is incomplete; skipping agent binding for AAP sync"
+      fi
+    fi
   else
     echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
   fi
@@ -1162,6 +1183,7 @@ deploy_ao_instance() {
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     -e "s|__INGRESS_HOST__|${INGRESS_HOST}|g" \
     -e "s|__PULL_SECRET_NAME__|${AO_PULL_SECRET_NAME}|g" \
+    -e "s|__AO_REPLICA_COUNT__|${AO_REPLICA_COUNT}|g" \
     "${MANIFESTS_DIR}/automationorchestrator-cr.yaml" | kubectl apply -f -
 }
 
@@ -1240,6 +1262,17 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   exit 0
 fi
 
+AO_REPLICA_COUNT="$(ao_resolve_replica_count)"
+if [ "$AO_REPLICA_COUNT" = "1" ]; then
+  echo "AO replica profile: 1 each (default local, non-HA)"
+else
+  echo "AO replica profile: 2 each (explicit higher-resource mode)"
+fi
+
+CLUSTER_DOMAIN=$(resolve_cluster_domain)
+INGRESS_HOST="automation-orchestrator.${CLUSTER_DOMAIN}"
+echo "✓ Ingress host: ${INGRESS_HOST}"
+
 ao_ensure_mcp_server() {
   if kubectl get ansiblemcpserver aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1 \
     || kubectl get deployment aap-mcp-server -n "$AAP_NAMESPACE" &>/dev/null 2>&1; then
@@ -1284,6 +1317,45 @@ ao_instance_ready_to_skip() {
   return 0
 }
 
+wait_for_ao_instance_ready() {
+  local _ao_timeout="${1:-1200}"
+  local _ao_start _ao_elapsed _ao_reason _ao_degraded _ao_ready _ao_route
+  local _ao_running _ao_problem
+  _ao_start=$(date +%s)
+  while true; do
+    _ao_elapsed=$(($(date +%s) - _ao_start))
+    _ao_reason=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.reason}{end}' 2>/dev/null || echo "")
+    _ao_degraded=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' 2>/dev/null || echo "")
+    _ao_ready=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
+      -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || echo "")
+    _ao_route=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+    _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+      | awk '$3=="Running" && $1 !~ /^redhat-operators-/ {c++} END {print c+0}')
+    _ao_problem=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+      | awk '$3 ~ /CrashLoopBackOff|Error|ImagePullBackOff/ {c++} END {print c+0}')
+    printf "\r  running=%s ready=%s degraded=%s" \
+      "${_ao_running}" "${_ao_ready:-unknown}" "${_ao_reason:-none}"
+    [ "${_ao_problem:-0}" -gt 0 ] && printf " problems=%s" "$_ao_problem"
+    printf " (%ds)    " "$_ao_elapsed"
+    if [ "${_ao_ready}" = "True" ] && [ "${_ao_degraded}" != "True" ] \
+      && [ -n "$_ao_route" ] && [ "${_ao_running:-0}" -gt 3 ]; then
+      echo ""
+      echo "✓ Route ready"
+      return 0
+    fi
+    if [ "$_ao_elapsed" -ge "$_ao_timeout" ]; then
+      echo ""
+      echo "ERROR: Automation Orchestrator was not Ready after $((_ao_timeout / 60)) minutes."
+      [ -n "$_ao_reason" ] && echo "  Degraded reason: $_ao_reason"
+      echo "  Check: kubectl get automationorchestrator,pods,routes -n $NAMESPACE"
+      return 1
+    fi
+    sleep 10
+  done
+}
+
 # --- Skip if already running (unless --force) ---
 if [ -z "$FORCE" ]; then
   _ao_total=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
@@ -1297,6 +1369,8 @@ if [ -z "$FORCE" ]; then
     && [ "$_sub_channel" = "$OPERATOR_CHANNEL" ] \
     && operator_is_available \
     && ao_instance_ready_to_skip; then
+    deploy_ao_instance
+    wait_for_ao_instance_ready
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
     echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
     echo ""
@@ -1378,10 +1452,6 @@ if ! operator_package_in_catalog "$CATALOG_NAMESPACE"; then
   fi
 fi
 echo "✓ Operator package found in AO catalog (${CATALOG_NAMESPACE}, ${OPERATOR_CHANNEL})"
-
-CLUSTER_DOMAIN=$(resolve_cluster_domain)
-INGRESS_HOST="automation-orchestrator.${CLUSTER_DOMAIN}"
-echo "✓ Ingress host: ${INGRESS_HOST}"
 
 # --- CloudNativePG operator (dev-only PostgreSQL) ---
 ensure_cnpg_operator
@@ -1631,35 +1701,7 @@ deploy_ao_instance
 
 # --- Wait for instance ---
 echo "Waiting for Automation Orchestrator instance (may take 10+ minutes)..."
-_AO_TIMEOUT=1200
-_AO_START=$(date +%s)
-while true; do
-  _AO_ELAPSED=$(($(date +%s) - _AO_START))
-  _ao_reason=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
-    -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.reason}{end}' 2>/dev/null || echo "")
-  _ao_degraded=$(kubectl get automationorchestrator automation-orchestrator -n "$NAMESPACE" \
-    -o jsonpath='{range .status.conditions[?(@.type=="Degraded")]}{.status}{end}' 2>/dev/null || echo "")
-  _ao_route=$(kubectl get routes -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-  _ao_running=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
-    | awk '$3=="Running" && $1 !~ /^redhat-operators-/ {c++} END {print c+0}')
-  _ao_problem=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
-    | awk '$3 ~ /CrashLoopBackOff|Error|ImagePullBackOff/ {c++} END {print c+0}')
-  printf "\r  running=%s degraded=%s" "${_ao_running}" "${_ao_reason:-none}"
-  [ "${_ao_problem:-0}" -gt 0 ] && printf " problems=%s" "$_ao_problem"
-  printf " (%ds)    " "$_AO_ELAPSED"
-  if [ -n "$_ao_route" ] && [ "${_ao_degraded}" != "True" ] && [ "${_ao_running:-0}" -gt 3 ]; then
-    echo ""
-    echo "✓ Route ready"
-    break
-  fi
-  if [ "$_AO_ELAPSED" -ge "$_AO_TIMEOUT" ]; then
-    echo ""
-    echo "  ⚠ Instance not ready after 20 minutes — continuing anyway"
-    echo "  Check: kubectl get automationorchestrator,pods,routes -n $NAMESPACE"
-    break
-  fi
-  sleep 10
-done
+wait_for_ao_instance_ready
 
 echo ""
 echo "✓ Automation Orchestrator operator and instance applied"
