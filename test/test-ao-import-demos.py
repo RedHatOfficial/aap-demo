@@ -82,6 +82,41 @@ class NormalizeWebhookTests(unittest.TestCase):
             ["upstream-account-id"],
         )
 
+    def test_drops_stale_mcp_connection_when_local_binding_is_missing(self):
+        workflow = {
+            "nodes": [{
+                "type": "agentic",
+                "parameters": {
+                    "integration_connections": [{
+                        "integration_id": "old-integration",
+                        "credential_id": "old-credential",
+                    }],
+                },
+            }]
+        }
+
+        normalized = IMPORT_DEMOS.normalize(workflow, "aap-credential")
+
+        self.assertNotIn(
+            "integration_connections",
+            normalized["nodes"][0]["parameters"],
+        )
+
+
+class ExistingWorkflowProjectTests(unittest.TestCase):
+    def test_rejects_existing_workflow_from_different_project(self):
+        with self.assertRaisesRegex(ValueError, "different AO project"):
+            IMPORT_DEMOS.validate_existing_workflow_project(
+                {"id": "workflow-id", "project_id": "old-project"},
+                "target-project",
+            )
+
+    def test_accepts_existing_workflow_in_target_project(self):
+        IMPORT_DEMOS.validate_existing_workflow_project(
+            {"id": "workflow-id", "project_id": "target-project"},
+            "target-project",
+        )
+
 
 class DownloadArchiveTests(unittest.TestCase):
     @mock.patch.object(IMPORT_DEMOS.subprocess, "run")

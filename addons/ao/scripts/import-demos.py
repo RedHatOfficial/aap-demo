@@ -95,6 +95,22 @@ def items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def validate_existing_workflow_project(
+    workflow: dict[str, Any], project_id: str,
+) -> None:
+    """Reject updates that would bind a workflow to another project's credentials."""
+    existing_project_id = workflow.get("project_id")
+    if (
+        existing_project_id is not None
+        and str(existing_project_id) != str(project_id)
+    ):
+        raise ValueError(
+            "existing workflow belongs to a different AO project "
+            f"({existing_project_id}); target project is {project_id}. "
+            "Move or recreate the workflow in the target project before syncing."
+        )
+
+
 @contextmanager
 def workflow_sources(source_dir: str | None, repository: str, ref: str):
     """Yield upstream workflows without storing exports in this repository."""
@@ -192,6 +208,10 @@ def normalize(
                 parameters["integration_connections"] = [
                     {"integration_id": mcp_integration_id, "credential_id": mcp_credential_id}
                 ]
+            else:
+                # Do not carry an upstream or previously configured credential
+                # into a workflow when the local MCP binding is unavailable.
+                parameters.pop("integration_connections", None)
         elif node.get("type") == "aap_job_template":
             # Always bind AAP nodes to the credential created by aap-demo. The
             # upstream exports may contain a valid-looking UUID from another AO.
@@ -290,6 +310,7 @@ def import_workflows(args: argparse.Namespace) -> int:
             }
             current = existing_by_source.get(source.name) or existing_by_name.get(name)
             if current:
+                validate_existing_workflow_project(current, project_id)
                 request(base, args.token, "PATCH", f"/workflows/{current['id']}", {
                     "description": payload["description"],
                     "labels": payload["labels"],

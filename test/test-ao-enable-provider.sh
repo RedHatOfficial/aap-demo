@@ -27,7 +27,7 @@ else
   if [ "${AO_LLM_PROVIDER:-}" != external ] \
     || ! grep -q '^AO_LLM_PROVIDER=external$' "$AAP_DEMO_CONFIG" \
     || ! grep -q '^AO_LLM_BASE_URL=https://api.openai.com/v1$' "$AAP_DEMO_CONFIG" \
-    || ! grep -q '^AO_LLM_MODEL=gpt-6-luna$' "$AAP_DEMO_CONFIG"; then
+    || ! grep -q '^AO_LLM_MODEL=gpt-5.6-luna$' "$AAP_DEMO_CONFIG"; then
     fail "external_provider_configuration"
   elif grep -q 'external-secret' "$AAP_DEMO_CONFIG"; then
     fail "external_provider_configuration_does_not_persist_secret"

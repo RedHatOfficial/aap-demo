@@ -529,21 +529,29 @@ wire_ao_find_credential_type_by_name() {
 }
 
 wire_ao_find_credential_by_name() {
-  local name="$1"
+  local name="$1" project_id="${2:-}"
   local encoded
+  if [ -z "$project_id" ]; then
+    project_id=$(wire_ao_default_project_id)
+  fi
   encoded=$(jq -rn --arg n "$name" '$n|@uri')
   wire_ao_api GET "/credentials?name=${encoded}&limit=${WIRE_AO_LIST_LIMIT}" 2>/dev/null \
     | wire_ao_list_items \
-    | jq -r --arg n "$name" '[.[] | select(.name == $n)] | .[0].id // empty' 2>/dev/null
+    | jq -r --arg n "$name" --arg p "$project_id" \
+      '[.[] | select(.name == $n and ($p == "" or (.project_id | tostring) == $p))] | .[0].id // empty' 2>/dev/null
 }
 
 wire_ao_get_credential_record() {
-  local name="$1"
+  local name="$1" project_id="${2:-}"
   local encoded
+  if [ -z "$project_id" ]; then
+    project_id=$(wire_ao_default_project_id)
+  fi
   encoded=$(jq -rn --arg n "$name" '$n|@uri')
   wire_ao_api GET "/credentials?name=${encoded}&limit=${WIRE_AO_LIST_LIMIT}" 2>/dev/null \
     | wire_ao_list_items \
-    | jq -c --arg n "$name" '[.[] | select(.name == $n)] | .[0] // empty' 2>/dev/null
+    | jq -c --arg n "$name" --arg p "$project_id" \
+      '[.[] | select(.name == $n and ($p == "" or (.project_id | tostring) == $p))] | .[0] // empty' 2>/dev/null
 }
 
 wire_ao_ensure_credential() {
@@ -569,7 +577,7 @@ wire_ao_ensure_credential() {
     return 1
   fi
 
-  cred_record=$(wire_ao_get_credential_record "$cred_name")
+  cred_record=$(wire_ao_get_credential_record "$cred_name" "$project_id")
   cred_id=$(echo "$cred_record" | jq -r '.id // empty' 2>/dev/null)
   existing_type_id=$(echo "$cred_record" | jq -r '.credential_type_id // empty' 2>/dev/null)
   if [ -n "$cred_id" ] && [ -n "$existing_type_id" ] && [ "$existing_type_id" != "$type_id" ]; then
@@ -932,9 +940,9 @@ wire_ao_llm_model_name() {
   case "${AO_LLM_PROVIDER:-ollama}" in
     external)
       if [ "${AO_LLM_MODEL:-}" = luna ]; then
-        printf '%s\n' gpt-6-luna
+        printf '%s\n' gpt-5.6-luna
       else
-        printf '%s\n' "${AO_LLM_MODEL:-gpt-6-luna}"
+        printf '%s\n' "${AO_LLM_MODEL:-gpt-5.6-luna}"
       fi
       ;;
     ollama) printf '%s\n' "$WIRE_OLLAMA_MODEL" ;;

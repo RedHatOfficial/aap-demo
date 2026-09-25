@@ -12,7 +12,7 @@ auto-wired AAP credential and `aap-demo AAP` integration, old `config` exports a
 upgraded to `parameters`, and
 agent nodes with empty tool selections use all tools from the auto-wired MCP
 integration. When an LLM provider is configured, every agentic node is bound
-to that provider's integration, credential, and discovered model ID (external mode defaults to `gpt-6-luna`; local
+to that provider's integration, credential, and discovered model ID (external mode defaults to `gpt-5.6-luna`; local
 Ollama mode uses its configured Ollama model). Legacy webhook triggers are
 authorized with the local AO service account required by current AO releases.
 Running `aap-demo wire` reapplies the same binding to existing demo workflows.

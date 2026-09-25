@@ -20,8 +20,24 @@ if ! grep -q 'wire_ao_external_llm' "${REPO_ROOT}/includes/addon-wire.sh"; then
   fail "external_llm_wiring_function_exists"
 fi
 
+wire_ao_default_project_id() { printf '%s' 'target-project'; }
+wire_ao_api() {
+  case "$1 $2" in
+    "GET /credentials?name=aap-demo%20External%20LLM&limit=100")
+      printf '%s' '{"resources":[
+        {"id":"wrong-project-credential","name":"aap-demo External LLM","project_id":"other-project"},
+        {"id":"target-project-credential","name":"aap-demo External LLM","project_id":"target-project"}
+      ]}'
+      ;;
+    *) return 1 ;;
+  esac
+}
+if [ "$(wire_ao_find_credential_by_name 'aap-demo External LLM')" != target-project-credential ]; then
+  fail "credential_lookup_is_scoped_to_default_project"
+fi
+
 AO_LLM_BASE_URL="https://api.example.test/v1"
-AO_LLM_MODEL="gpt-6-luna"
+AO_LLM_MODEL="gpt-5.6-luna"
 external_config=$(wire_ao_llm_config_json 2>/dev/null || true)
 if [ "$(printf '%s' "$external_config" | jq -r '.integration_type // empty' 2>/dev/null)" != "llm_provider" ] \
   || [ "$(printf '%s' "$external_config" | jq -r '.base_url // empty' 2>/dev/null)" != "https://api.example.test/v1" ] \
@@ -35,7 +51,7 @@ AO_LLM_API_KEY_FILE="$TEST_DIR/llm-api-key"
 printf '%s' 'secret-fixture' >"$AO_LLM_API_KEY_FILE"
 chmod 600 "$AO_LLM_API_KEY_FILE"
 AO_LLM_BASE_URL="https://api.example.test/v1"
-AO_LLM_MODEL="gpt-6-luna"
+AO_LLM_MODEL="gpt-5.6-luna"
 
 wire_ao_ensure_credential() {
   printf '%s' "$3" >"$TEST_DIR/credential.json"
@@ -56,7 +72,7 @@ wire_ao_api() {
       ;;
   esac
 }
-if wire_ao_set_default_llm_model integration-id gpt-6-luna; then
+if wire_ao_set_default_llm_model integration-id gpt-5.6-luna; then
   fail "missing_model_fails_closed"
 elif [ "$model_patch_called" = true ]; then
   fail "missing_model_does_not_patch"
@@ -67,14 +83,14 @@ wire_ao_api() {
   local path="$2"
   case "$method $path" in
     "GET /integrations/integration-id/models?limit=50")
-      printf '%s' '{"resources":[{"id":"model-id","model_id":"gpt-6-luna"}]}'
+      printf '%s' '{"resources":[{"id":"model-id","model_id":"gpt-5.6-luna"}]}'
       ;;
     "PATCH /integrations/integration-id/models/model-id")
       printf '%s' '{"code":"MODEL_UPDATE_FAILED"}'
       ;;
   esac
 }
-if wire_ao_set_default_llm_model integration-id gpt-6-luna; then
+if wire_ao_set_default_llm_model integration-id gpt-5.6-luna; then
   fail "model_patch_failure_fails_closed"
 fi
 
@@ -104,7 +120,7 @@ if printf '%s' "$wire_output" | grep -q 'secret-fixture' \
   || [ "$(jq -r '.api_key // empty' "$TEST_DIR/credential.json")" != "secret-fixture" ] \
   || [ "$(jq -r '.configuration.base_url // empty' "$TEST_DIR/integration.json")" != "https://api.example.test/v1" ] \
   || grep -q 'secret-fixture' "$TEST_DIR/integration.json" \
-  || [ "$(<"$TEST_DIR/default-model")" != "integration-id:gpt-6-luna" ]; then
+  || [ "$(<"$TEST_DIR/default-model")" != "integration-id:gpt-5.6-luna" ]; then
   fail "external_llm_api_payloads"
 fi
 
@@ -116,7 +132,7 @@ wire_ao_api() {
   local path="$2"
   case "$method $path" in
     "GET /integrations/explicit-integration-id/models?limit=50")
-      printf '%s' '{"resources":[{"id":"model-id","model_id":"gpt-6-luna"}]}'
+      printf '%s' '{"resources":[{"id":"model-id","model_id":"gpt-5.6-luna"}]}'
       ;;
     *)
       echo "unexpected model lookup API call: $method $path" >&2
@@ -148,14 +164,14 @@ if [ "$ollama_called" != true ] || [ "$external_called" = true ]; then
 fi
 
 AO_LLM_PROVIDER=external
-AO_LLM_MODEL=gpt-6-luna
+AO_LLM_MODEL=gpt-5.6-luna
 if [ "$(wire_ao_llm_integration_name)" != "aap-demo External LLM" ] \
-  || [ "$(wire_ao_llm_model_name)" != gpt-6-luna ]; then
+  || [ "$(wire_ao_llm_model_name)" != gpt-5.6-luna ]; then
   fail "external_agent_model_selection"
 fi
 
 AO_LLM_MODEL=luna
-if [ "$(wire_ao_llm_model_name)" != gpt-6-luna ]; then
+if [ "$(wire_ao_llm_model_name)" != gpt-5.6-luna ]; then
   fail "legacy_external_model_is_migrated"
 fi
 
