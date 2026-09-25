@@ -43,7 +43,7 @@ cluster provisioning, OLM installation, AAP operator deployment, and optional ad
 2. **Observability** — `status`, `watch`, `diagnose`, `must-gather`
 3. **Operations** — `idle`, `ssh`, `repair`, `update`
 4. **Addons** — `enable <addon>`, `disable <addon>`, `status <addon>`
-5. **Testing** — `test` (delegates to AAP ATF via Ansible)
+5. **Testing** — repository-local shell and Python validation scripts
 
 ### Configuration model
 
@@ -77,7 +77,7 @@ cluster provisioning, OLM installation, AAP operator deployment, and optional ad
 ### Neutral
 
 - No long-running daemon; each invocation is a shell process
-- Ansible used only for ATF test execution, not core deploy flow
+- Ansible is used by selected addon workflows, not by the repository-local CLI test suite
 
 ## Alternatives Considered
 

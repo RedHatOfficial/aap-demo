@@ -139,7 +139,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | fleet | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
@@ -181,7 +181,7 @@ for arg in "$@"; do
       ;;
     *)
       # Commands that accept arbitrary args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "test" ] || [ "$COMMAND" = "fleet" ]; then
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -478,10 +478,6 @@ COMMANDS (all infrastructure types):
     diagnose [--ai] Check environment health and identify common issues
                     Checks: cluster, storage, SCCs, pods, PVCs, DNS
                     --ai: analyze issues with Claude AI (requires 'claude' CLI)
-    test [markers]  Run ATF test suite against deployed AAP
-                    Default markers: interop (comma-separate for multiple)
-                    NAMESPACE=<ns>: target a specific namespace
-                    Requires: aapqa collections (auto-installed from GitLab)
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
@@ -1467,262 +1463,6 @@ Diagnostic data:" 2>&1 || {
       echo "⚠ AI analysis failed. The diagnostic data above should help with manual troubleshooting."
     }
   fi
-}
-
-cmd_test() {
-  setup_kubeconfig
-
-  local markers="interop"
-  local run_all=false
-
-  # Parse arguments: --all or markers
-  for arg in "$@"; do
-    case "$arg" in
-      --all) run_all=true ;;
-      *) markers="$arg" ;;
-    esac
-  done
-
-  local artifacts_dir="${SCRIPT_DIR}/artifacts/atf"
-  local test_namespace="$NAMESPACE"
-
-  echo ""
-  printf "\033[1maap-demo test\033[0m\n"
-  echo ""
-
-  # Find all namespaces with AAP deployments
-  local aap_namespaces=()
-  # Operator deploys: namespaces with AAP CRDs
-  local ns_list ns
-  ns_list=$(kubectl get aap --all-namespaces --no-headers 2>/dev/null | awk '{print $1}' | sort -u || true)
-  while IFS= read -r ns; do
-    [ -n "$ns" ] && aap_namespaces+=("$ns")
-  done <<<"$ns_list"
-
-  if [ ${#aap_namespaces[@]} -eq 0 ]; then
-    _err "No AAP deployments found on cluster"
-    echo "  Deploy AAP first: aap-demo deploy"
-    return 1
-  fi
-
-  # If NAMESPACE was explicitly set via flag or env, use it directly
-  # Otherwise, if multiple deployments, prompt
-  if [ "$_NAMESPACE_EXPLICIT" = "true" ]; then
-    # Explicit namespace override
-    test_namespace="$NAMESPACE"
-  elif [ ${#aap_namespaces[@]} -eq 1 ]; then
-    # Single match — use it directly
-    test_namespace=$(echo "${aap_namespaces[0]}" | awk '{print $1}')
-  elif [ -t 0 ]; then
-    echo "  Multiple AAP deployments found:"
-    echo ""
-    local i=1
-    for entry in "${aap_namespaces[@]}"; do
-      printf "    %d) %s\n" "$i" "$entry"
-      i=$((i + 1))
-    done
-    echo ""
-    # Print padding lines then move cursor back up so prompt isn't at terminal bottom
-    local _term_lines
-    _term_lines=$(tput lines 2>/dev/null || echo "24")
-    [ "$_term_lines" -gt 8 ] && printf '\n\n\n\n\033[4A'
-    printf "  Select deployment [1]: "
-    read -r choice </dev/tty
-    echo ""
-    choice="${choice:-1}"
-    if [ "$choice" -ge 1 ] && [ "$choice" -le ${#aap_namespaces[@]} ] 2>/dev/null; then
-      test_namespace=$(echo "${aap_namespaces[$((choice - 1))]}" | awk '{print $1}')
-    fi
-  else
-    # Non-interactive, multiple matches — use first
-    test_namespace=$(echo "${aap_namespaces[0]}" | awk '{print $1}')
-  fi
-
-  # Check for ansible-playbook
-  if ! command -v ansible-playbook &>/dev/null; then
-    _err "ansible-playbook not found"
-    echo "  Install: pip install ansible-core"
-    return 1
-  fi
-
-  # Install ATF collections if not present
-  if ! ansible-galaxy collection list 2>/dev/null | grep -q "aapqa.atf"; then
-    echo "Installing ATF collections..."
-    ansible-galaxy collection install \
-      git+https://gitlab.cee.redhat.com/aap-ci/aapqa-provisioner.git#/ansible_collections/aapqa/atf,devel \
-      git+https://gitlab.cee.redhat.com/aap-ci/aapqa-provisioner.git#/ansible_collections/aapqa/core,devel \
-      2>&1 || {
-      _err "Failed to install ATF collections"
-      echo "  These require access to gitlab.cee.redhat.com (VPN may be needed)"
-      return 1
-    }
-    echo "  ✓ ATF collections installed"
-  else
-    echo "  ✓ ATF collections already installed"
-  fi
-
-  # Run --all: iterate every deployment
-  if [ "$run_all" = "true" ]; then
-    echo "  Running ATF against all ${#aap_namespaces[@]} deployment(s)..."
-    echo ""
-    local overall_rc=0
-    for entry in "${aap_namespaces[@]}"; do
-      local ns
-      ns=$(echo "$entry" | awk '{print $1}')
-      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      printf "\033[1mTesting: %s\033[0m\n" "$entry"
-      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      _run_atf "$ns" "$markers" "$artifacts_dir" || overall_rc=1
-      echo ""
-    done
-    if [ "$overall_rc" -eq 0 ]; then
-      echo "✓ ATF tests passed on all deployments"
-    else
-      _err "ATF tests failed on one or more deployments"
-    fi
-    return $overall_rc
-  fi
-
-  # Single deployment target (|| captures exit code so set -e doesn't suppress clean error output)
-  local _test_rc=0
-  _run_atf "$test_namespace" "$markers" "$artifacts_dir" || _test_rc=$?
-  return $_test_rc
-}
-
-_run_atf() {
-  local test_namespace="$1"
-  local markers="$2"
-  local artifacts_dir="$3/${test_namespace}"
-
-  # Get AAP instance name
-  local aap_name
-  aap_name=$(kubectl get aap -n "$test_namespace" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-  if [ -z "$aap_name" ]; then
-    aap_name="aap"
-  fi
-
-  # Auto-detect gateway hostname from route
-  local gateway_host
-  gateway_host=$(kubectl get route "${aap_name}" -n "$test_namespace" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
-  if [ -z "$gateway_host" ]; then
-    gateway_host=$(kubectl get route -n "$test_namespace" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-  fi
-  if [ -z "$gateway_host" ]; then
-    _err "Could not detect gateway route in namespace $test_namespace"
-    return 1
-  fi
-
-  # Auto-detect admin password from secret
-  local admin_password
-  admin_password=$(kubectl get secret "${aap_name}-admin-password" -n "$test_namespace" \
-    -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-  # Fallback: search for any *-admin-password secret in the namespace
-  if [ -z "$admin_password" ]; then
-    local _pw_secret
-    _pw_secret=$(kubectl get secrets -n "$test_namespace" -o name 2>/dev/null | grep "admin-password" | head -1)
-    if [ -n "$_pw_secret" ]; then
-      admin_password=$(kubectl get "$_pw_secret" -n "$test_namespace" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-    fi
-  fi
-  if [ -z "$admin_password" ]; then
-    _err "Could not retrieve admin password in namespace $test_namespace"
-    return 1
-  fi
-
-  # Auto-detect AAP version (ATF needs a valid PEP 440 version, not 'devel')
-  local aap_version=""
-  # Try CSV version first (e.g., aap-operator.v2.6.0-0.1772556720)
-  aap_version=$(kubectl get csv -n "$test_namespace" -o jsonpath='{.items[0].spec.version}' 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
-  if [ -z "$aap_version" ]; then
-    # Fallback: gateway API ping (may report base version, not dev version)
-    local _ca_cert
-    _ca_cert=$(get_ingress_ca_cert_path)
-    local _curl_tls="--cacert ${_ca_cert}"
-    [ ! -f "$_ca_cert" ] && _curl_tls="-k"
-    aap_version=$(curl -s $_curl_tls "https://${gateway_host}/api/gateway/v1/ping/" 2>/dev/null | python3 -c "import sys,json; print(json.loads(sys.stdin.read() or '{}').get('version',''))" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+' || true)
-  fi
-  aap_version="${aap_version:-2.7}"
-
-  echo "  Namespace: ${test_namespace}"
-  echo "  Gateway:   https://${gateway_host}"
-  echo "  Version:   ${aap_version}"
-  echo "  Markers:   ${markers}"
-  echo "  Artifacts: ${artifacts_dir}"
-  echo ""
-
-  # Create artifacts directory (per-namespace)
-  mkdir -p "${artifacts_dir}"
-
-  # Fetch test suite definition (always re-fetch to get latest from devel branch)
-  curl -fsSL -o "${artifacts_dir}/aap_test_suite.yml" \
-    "https://gitlab.cee.redhat.com/aap-ci/aapqa-provisioner/-/raw/devel/input/atf/test_suites/aap_test_suite.yml" 2>/dev/null || {
-    _err "Failed to fetch test suite definition (VPN may be needed)"
-    return 1
-  }
-
-  # Generate ATF installer inventory (restricted permissions — contains admin password)
-  (
-    umask 077
-    cat >"${artifacts_dir}/atf_installer_inventory" <<INVEOF
-[automationcontroller]
-
-[automationhub]
-
-[automationedacontroller]
-
-[automationgateway]
-${gateway_host}
-
-[all:vars]
-gateway_base_url=https://${gateway_host}
-automationgateway_admin_password=${admin_password}
-INVEOF
-  )
-
-  # Run ATF
-  echo "Running ATF tests..."
-  echo ""
-  local extra_args=()
-  if [ -f "$HOME/.aap-demo/atf-vault-password" ]; then
-    extra_args+=("--vault-password-file=$HOME/.aap-demo/atf-vault-password")
-  fi
-  # Override ansible_distribution on macOS — ATF only has vars for RHEL
-  # System packages are skipped anyway (atf_install_system_packages=false)
-  if [ "$(uname)" = "Darwin" ]; then
-    extra_args+=("-e" "ansible_distribution=RedHat" "-e" "ansible_distribution_major_version=9")
-  fi
-  ansible-playbook "${SCRIPT_DIR}/test/test-aap.yaml" \
-    -i "${artifacts_dir}/atf_installer_inventory" \
-    "${extra_args[@]}" \
-    -e "inventory_dir=${artifacts_dir}" \
-    -e "aap_name=${aap_name}" \
-    -e "aap_namespace=${test_namespace}" \
-    -e "aap_hostname=${gateway_host}" \
-    -e "aap_version=${aap_version}" \
-    -e "atf_artifacts_dir=${artifacts_dir}" \
-    -e "atf_tsd_host_file=${artifacts_dir}/tsd.json" \
-    -e "atf_tsd_file=${artifacts_dir}/tsd.json" \
-    -e "atf_test_markers=${markers}" \
-    -e "atf_install_collections=false" \
-    -e "atf_install_system_packages=false" \
-    -e "atf_install_external_dependencies=false" \
-    -e "atf_create_ssh_keys=false" \
-    -e "atf_setup=true" \
-    -e "aap_topology=ocp-a" \
-    -e "aap_install_method=operator-ocp" \
-    -e "atf_git_clone_protocol=https" \
-    -e "@${artifacts_dir}/aap_test_suite.yml"
-
-  local rc=$?
-  echo ""
-  if [ "$rc" -eq 0 ]; then
-    echo "✓ ATF tests passed: ${test_namespace} (markers: ${markers})"
-  else
-    _err "ATF tests failed: ${test_namespace} (exit code: ${rc})"
-    echo "  Artifacts: ${artifacts_dir}"
-  fi
-  return $rc
 }
 
 cmd_ssh() {
@@ -3460,9 +3200,6 @@ case "$COMMAND" in
     ;;
   must-gather)
     cmd_must_gather "${EXTRA_ARGS[0]:-}"
-    ;;
-  test)
-    cmd_test "${EXTRA_ARGS[@]}"
     ;;
   fleet)
     cmd_fleet "${EXTRA_ARGS[@]}"
