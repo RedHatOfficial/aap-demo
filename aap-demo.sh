@@ -139,11 +139,20 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | destroy | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | fleet | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | test | fleet | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
       esac
+      ;;
+    destroy)
+      # When a command is already set (e.g. `fleet destroy`), treat destroy as a subcommand arg.
+      # When no command is set yet (`aap-demo destroy`), it is the top-level command.
+      if [ -n "$COMMAND" ]; then
+        EXTRA_ARGS+=("$arg")
+      else
+        COMMAND="$arg"
+      fi
       ;;
     --ai | --reset | --skip-cache | --force | --refresh-catalog | --purge-data | --purge-creds)
       # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
