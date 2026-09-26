@@ -155,21 +155,20 @@ pre-commit run --all-files
 | Workflow | Purpose |
 |----------|---------|
 | `lint.yaml` | shellcheck, yamllint, markdownlint, shfmt, secrets |
-| `version-check.yaml` | Require `VERSION` semver bump on PRs/pushes to `main` |
+| `version-check.yaml` | Validate `VERSION` semver on PRs/pushes to `main` |
 | `commitlint.yaml` | Conventional commits |
 | `pr-checks.yaml` | PR metadata, size, conflicts |
 
-Run the version check locally before opening a PR:
+Check the version format locally:
 
 ```bash
-git fetch origin main
-./scripts/check-version-bump.sh origin/main
+grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$' VERSION
 ```
 
 Every pull request triggers:
 
 1. **Lint workflow**: Runs all linters (shellcheck, yamllint, markdownlint, ansible-lint, etc.)
-2. **Version check workflow**: Ensures `VERSION` is bumped when merging to `main`
+2. **Version check workflow**: Ensures `VERSION` contains valid semver
 3. **Commit lint workflow**: Validates commit messages and PR title
 4. **Test workflow**: Shell syntax checks, dry-run tests, link validation
 5. **PR checks workflow**: Metadata validation, size check, conflict detection

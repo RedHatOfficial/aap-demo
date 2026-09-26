@@ -1,5 +1,5 @@
 ---
-name: Version Check
+name: Version Format
 
 on:
   pull_request:
@@ -8,55 +8,20 @@ on:
     branches: [main, master]
 
 jobs:
-  version-bump:
-    name: VERSION bump required
+  version-format:
+    name: VERSION format
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Fetch base branch
-        if: github.event_name == 'pull_request'
-        run: git fetch origin "${{ github.base_ref }}"
-
-      - name: Auto-bump VERSION (pull request)
-        if: github.event_name == 'pull_request'
-        run: ./scripts/check-version-bump.sh --fix "origin/${{ github.base_ref }}"
-
-      - name: Commit VERSION bump (same-repository pull request)
-        if: github.event_name == 'pull_request'
-        env:
-          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_HEAD_REF: ${{ github.head_ref }}
+      - name: Verify VERSION format
+        shell: bash
         run: |
-          if git diff --cached --quiet -- VERSION; then
-            if [ "$PR_HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
-              echo "::warning::Cannot push an automatic VERSION bump to a fork PR; run the pre-commit hook locally."
-            fi
-            exit 0
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "VERSION must contain a valid semver value; got: $version" >&2
+            exit 1
           fi
-
-          if [ "$PR_HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
-            echo "::warning::VERSION was auto-bumped in CI but cannot be pushed to a fork PR."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: auto-bump VERSION [skip ci]"
-          git push origin "HEAD:${PR_HEAD_REF}"
-
-      - name: Verify VERSION bump (push to main)
-        if: github.event_name == 'push'
-        run: |
-          if [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
-            echo "Initial push or new branch — skipping strict bump check"
-            exit 0
-          fi
-          git fetch origin "${{ github.ref_name }}" --depth=2 || true
-          ./scripts/check-version-bump.sh "${{ github.event.before }}"
+          echo "VERSION format OK: $version"
