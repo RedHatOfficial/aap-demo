@@ -2920,7 +2920,7 @@ _ao_prompt_product_demos() {
   IFS= read -r _choice </dev/tty || _choice=""
   _choice="${_choice:-y}"
   case "$_choice" in
-    [Yy]*|"")
+    [Yy]* | "")
       echo "Enabling product-demos first..."
       if ! cmd_enable product-demos; then
         echo ""
