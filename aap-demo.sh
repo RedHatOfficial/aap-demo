@@ -2893,6 +2893,48 @@ _ensure_addon_dependency() {
   cmd_enable "$dep" "$@" || return 1
 }
 
+# Prompt user to enable product-demos before AO if no demo content is installed.
+# Skipped in CI, QUIET mode, or when any product-demo addon is already enabled.
+_ao_prompt_product_demos() {
+  local _current _demo_addon
+  _current=$(_addons_list)
+  for _demo_addon in product-demos product-demos-base \
+    product-demo-linux product-demo-windows product-demo-network \
+    product-demo-cloud product-demo-openshift product-demo-satellite; do
+    if echo "$_current" | grep -qw "$_demo_addon"; then
+      return 0
+    fi
+  done
+
+  if [ "${CI:-}" = "true" ] || [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
+    return 0
+  fi
+
+  echo ""
+  echo "AO wires its workflows to AAP job templates at deploy time."
+  echo "If you enable product-demos AFTER AO, those templates won't be wired correctly"
+  echo "until you re-run 'aap-demo enable ao'."
+  echo ""
+  echo "No product-demos content detected. Enable product-demos before AO? [Y/n]"
+  local _choice
+  IFS= read -r _choice </dev/tty || _choice=""
+  _choice="${_choice:-y}"
+  case "$_choice" in
+    [Yy]*|"")
+      echo "Enabling product-demos first..."
+      if ! cmd_enable product-demos; then
+        echo ""
+        echo "⚠ Some product-demos domains failed to install."
+        echo "  AO will wire to the domains that succeeded."
+        echo "  Retry failed domains with: aap-demo enable product-demos"
+      fi
+      ;;
+    *)
+      echo "Skipping product-demos. Re-run 'aap-demo enable ao' after enabling demos if needed."
+      ;;
+  esac
+}
+
 # Auto-wire enabled addons (APD credentials, AO integrations). Runs after enable,
 # deploy, and watch; idempotent and safe to call multiple times.
 _aap_demo_run_addon_wire() {
@@ -2969,6 +3011,7 @@ cmd_enable() {
   fi
   if [ "$addon" = "ao" ] && [ "$_skip_addon_save" != true ]; then
     aap_demo_ao_llm_prepare || return 1
+    _ao_prompt_product_demos || return 1
     _ensure_addon_dependency mcp-server "$@" || return 1
     if [ "${AO_LLM_PROVIDER:-ollama}" = ollama ]; then
       _ensure_addon_dependency ollama "$@" || return 1

@@ -603,7 +603,7 @@ apd_install_domain_demo() {
   echo "✓ Job launched for ${demo} (ID: ${job_id})"
   echo "View in UI: ${AAP_UI_URL}/#/jobs/playbook/${job_id}/output"
 
-  apd_monitor_job "$job_id" "${demo} demo install" 80
+  apd_monitor_job "$job_id" "${demo} demo install" 160
   monitor_rc=$?
   apd_cleanup_default_org_apd_projects
 
