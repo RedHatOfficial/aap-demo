@@ -387,7 +387,7 @@ for img in data.get('images', []):
       fi
     else
       rm -f "$tarball" "$ref_file" "${tarball%.tar}.local-ref"
-      printf "${_YELLOW}%6s${_NC}\n" "skip"
+      printf "${_YELLOW}%6s${_NC}\n" "fail"
       failed=$((failed + 1))
     fi
   done <<<"$all_images"
@@ -421,7 +421,7 @@ for img in data.get('images', []):
 
   echo ""
   total_size=$(du -sh "$CACHE_DIR" 2>/dev/null | awk '{print $1}')
-  echo "✓ Saved ${saved} images, ${skipped} already cached, ${failed} skipped, ${pruned} corrupt entries removed (${total_size} total)"
+  echo "✓ Saved ${saved} images, ${skipped} already cached, ${failed} failed, ${pruned} corrupt entries removed (${total_size} total)"
   if [ "$failed" -gt 0 ]; then
     echo "✗ Local image cache save failed: ${failed} image(s) could not be exported" >&2
     exit 1

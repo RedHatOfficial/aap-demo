@@ -3217,7 +3217,7 @@ case "$COMMAND" in
     cmd_fleet "${EXTRA_ARGS[@]}"
     ;;
   enable)
-    cmd_enable "${EXTRA_ARGS[@]}"
+    cmd_enable "${EXTRA_ARGS[@]}" || exit $?
     ;;
   wire)
     cmd_wire
