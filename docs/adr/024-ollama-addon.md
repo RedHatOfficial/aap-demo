@@ -52,14 +52,17 @@ Resource limits for the Ollama container:
 
 ```yaml
 requests:
-  cpu: "1"
+  cpu: 200m
   memory: 2Gi
 limits:
   cpu: "4"
   memory: 8Gi
 ```
 
-`phi4-mini` comfortably fits within 8 Gi for CPU inference while leaving headroom for AAP.
+The CPU request stays small so an idle Ollama pod can still schedule beside AAP and
+other addons on a single-node CRC VM. The 4-core limit is unchanged, so inference can
+burst. `phi4-mini` comfortably fits within 8 Gi for CPU inference while leaving headroom
+for AAP.
 
 ### Cluster domain detection
 

@@ -656,6 +656,15 @@ _parse_cpu_m() {
   fi
 }
 
+# Return the total CPU reservation for an Ollama Deployment in millicores.
+_ollama_cpu_reservation_m() {
+  local cpu_request="$1" replicas="$2" request_m
+  [ -n "$cpu_request" ] || return 1
+  [[ "$replicas" =~ ^[0-9]+$ ]] || return 1
+  request_m=$(_parse_cpu_m "$cpu_request") || return 1
+  printf '%s\n' "$((request_m * replicas))"
+}
+
 cpu_preflight() {
   local portal_min_m=1600
   local portal_rollout_m=2850
@@ -706,26 +715,45 @@ cpu_preflight() {
     echo "   Initial install should succeed but a Backstage rollout may stall."
   fi
 
-  local ollama_replicas=0
+  local ollama_replicas=0 ollama_cpu_request ollama_reservation_m=0
   if kubectl get namespace aap-demo-ollama >/dev/null 2>&1; then
     ollama_replicas=$(kubectl get deployment ollama -n aap-demo-ollama \
       -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+    ollama_cpu_request=$(kubectl get deployment ollama -n aap-demo-ollama \
+      -o jsonpath='{.spec.template.spec.containers[?(@.name=="ollama")].resources.requests.cpu}' \
+      2>/dev/null || true)
+    if [ -n "$ollama_cpu_request" ]; then
+      ollama_reservation_m=$(_ollama_cpu_reservation_m \
+        "$ollama_cpu_request" "$ollama_replicas" 2>/dev/null || echo "0")
+    fi
   fi
 
   if [ "${ollama_replicas:-0}" -gt 0 ]; then
     echo ""
     echo "   Largest optional reservations:"
-    echo "     aap-demo-ollama / ollama    ~1000m"
+    if [ "$ollama_reservation_m" -gt 0 ]; then
+      echo "     aap-demo-ollama / ollama    ~${ollama_reservation_m}m"
+    else
+      echo "     aap-demo-ollama / ollama    CPU request unavailable"
+    fi
     echo ""
     local scale_confirm
     if [ -t 0 ]; then
-      read -r -p "   Scale Ollama to 0 to free ~1000m CPU for the portal? [y/N]: " scale_confirm
+      if [ "$ollama_reservation_m" -gt 0 ]; then
+        read -r -p "   Scale Ollama to 0 to free ~${ollama_reservation_m}m CPU for the portal? [y/N]: " scale_confirm
+      else
+        read -r -p "   Scale Ollama to 0 to free its requested CPU for the portal? [y/N]: " scale_confirm
+      fi
     fi
     case "$(echo "${scale_confirm:-n}" | tr '[:upper:]' '[:lower:]')" in
       y | yes)
         kubectl scale deployment/ollama -n aap-demo-ollama --replicas=0 \
           || { echo "⚠  Ollama scale-down failed; continuing anyway"; }
-        echo "✓ Ollama scaled to 0 (freeing ~1000m)"
+        if [ "$ollama_reservation_m" -gt 0 ]; then
+          echo "✓ Ollama scaled to 0 (freeing ~${ollama_reservation_m}m)"
+        else
+          echo "✓ Ollama scaled to 0"
+        fi
         requested_m=$(kubectl get pods -A -o json 2>/dev/null \
           | jq '[.items[] | select(.status.phase == "Running")
                  | .spec.containers[].resources.requests.cpu // "0"]

@@ -18,7 +18,7 @@ all allocatable CPU is already reserved by request:
 |---|---:|
 | `aap-operator` | ~3310m |
 | `automation-orchestrator` | ~1980m |
-| `aap-demo-ollama` (if enabled) | ~1000m |
+| `aap-demo-ollama` (if enabled) | ~200m |
 
 The portal operator deployment adds:
 
@@ -31,7 +31,7 @@ The portal operator deployment adds:
 
 The PostgreSQL pod (250m) was the first to fail with
 `0/1 nodes are available: 1 Insufficient cpu` in observed failures. Scaling Ollama to zero
-freed ~1000m of reserved CPU and unblocked the install.
+freed ~200m of reserved CPU and unblocked the install.
 
 Because the scheduler uses requests rather than live consumption, a node can appear healthy
 under `kubectl top` while still being unable to place new pods. The gap between observed usage
@@ -80,8 +80,8 @@ When headroom is amber or red, the function checks whether `deployment/ollama` i
 `aap-demo-ollama` has `replicas > 0`. If yes, it prompts:
 
 ```
-Ollama is running and reserves ~1000m CPU.
-Scale Ollama to 0 to free CPU for the portal? [y/N]:
+Ollama is running and reserves ~200m CPU.
+Scale Ollama to 0 to free ~200m CPU for the portal? [y/N]:
 ```
 
 If the user answers yes, the function runs:
