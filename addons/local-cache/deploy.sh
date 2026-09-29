@@ -368,7 +368,7 @@ for img in data.get('images', []):
     # Export from CRI-O to an OCI archive on the VM, then stream that archive
     # to the host. OCI archives retain signatures and manifest metadata.
     # Use -n to prevent SSH from consuming the while-read stdin
-    if _ssh -n "sudo rm -f '${CACHE_REMOTE_ARCHIVE}' && sudo skopeo copy --all --quiet containers-storage:'${img_ref}' oci-archive:'${CACHE_REMOTE_ARCHIVE}':aap-demo-cache && sudo cat '${CACHE_REMOTE_ARCHIVE}' && sudo rm -f '${CACHE_REMOTE_ARCHIVE}'" >"$tarball" 2>/dev/null; then
+    if _ssh -n "sudo rm -f '${CACHE_REMOTE_ARCHIVE}' && sudo skopeo copy --quiet --remove-signatures containers-storage:'${img_ref}' oci-archive:'${CACHE_REMOTE_ARCHIVE}':aap-demo-cache && sudo cat '${CACHE_REMOTE_ARCHIVE}' && sudo rm -f '${CACHE_REMOTE_ARCHIVE}'" >"$tarball" 2>/dev/null; then
       manifest_digest=$(skopeo inspect --raw "oci-archive:${tarball}:aap-demo-cache" 2>/dev/null | sha256sum | awk '{print $1}')
       if [ -n "$manifest_digest" ] && [ "${#manifest_digest}" -eq 64 ] && [[ "$img_ref" == *@* ]]; then
         echo "$img_ref" >"$ref_file"
@@ -415,16 +415,19 @@ for img in data.get('images', []):
   done
   rm -f "$current_cache_names"
 
-  if [ "$failed" -eq 0 ]; then
+  if [ "$saved" -gt 0 ]; then
     printf '%s\n' "$cache_format_version" >"$cache_format_marker"
   fi
 
   echo ""
   total_size=$(du -sh "$CACHE_DIR" 2>/dev/null | awk '{print $1}')
   echo "✓ Saved ${saved} images, ${skipped} already cached, ${failed} failed, ${pruned} corrupt entries removed (${total_size} total)"
-  if [ "$failed" -gt 0 ]; then
-    echo "✗ Local image cache save failed: ${failed} image(s) could not be exported" >&2
+  if [ "$failed" -gt 0 ] && [ "$saved" -eq 0 ]; then
+    echo "✗ Local image cache save failed: no images could be exported" >&2
     exit 1
+  fi
+  if [ "$failed" -gt 0 ]; then
+    echo "  ⚠ ${failed} image(s) could not be exported (not available in local CRI-O storage)" >&2
   fi
   echo ""
   echo "To load after a fresh create:"
