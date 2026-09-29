@@ -59,7 +59,10 @@ limits:
   memory: 8Gi
 ```
 
-The CPU request stays small so an idle Ollama pod can still schedule beside AAP and other addons on a single-node CRC VM. The 4-core limit is unchanged, so inference can burst. `phi4-mini` comfortably fits within 8 Gi for CPU inference while leaving headroom for AAP.
+The CPU request stays small so an idle Ollama pod can still schedule beside AAP and
+other addons on a single-node CRC VM. The 4-core limit is unchanged, so inference can
+burst. `phi4-mini` comfortably fits within 8 Gi for CPU inference while leaving headroom
+for AAP.
 
 ### Cluster domain detection
 
