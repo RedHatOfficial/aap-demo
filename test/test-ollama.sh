@@ -233,6 +233,18 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CPU request stays burstable so Ollama schedules beside AAP
+# ---------------------------------------------------------------------------
+
+if OLLAMA_MODEL=qwen2.5:3b SC_TOPOLVM_RC=0 "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && grep -q 'cpu: 200m' "$MOCK_APPLY_FILE" \
+  && grep -q 'cpu: "4"' "$MOCK_APPLY_FILE"; then
+  pass "deployment_cpu_request_is_burstable"
+else
+  fail "deployment_cpu_request_is_burstable"
+fi
+
+# ---------------------------------------------------------------------------
 # Rollout failure: diagnostic output must be emitted before exit
 # ---------------------------------------------------------------------------
 

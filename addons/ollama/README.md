@@ -61,7 +61,7 @@ The new model will be set as the AO default on re-wire.
 
 ## Resource usage
 
-- **CPU**: requests 1 core, limit 4 cores (CPU-only inference — no GPU in MicroShift VMs)
+- **CPU**: requests 200m, limit 4 cores (CPU-only inference — no GPU in MicroShift VMs). The small request keeps an idle Ollama pod schedulable next to AAP on a single-node CRC VM. The limit still lets inference burst.
 - **Memory**: requests 2Gi, limit 8Gi
 - **Storage**: 20Gi RWO PVC on `topolvm-provisioner`
 
