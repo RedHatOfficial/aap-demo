@@ -89,8 +89,9 @@ consumption, when placing pods.
 When AAP, Automation Orchestrator, and Ollama are all running, reserved CPU requests
 often exceed 7000m on an 8-CPU node, leaving less than 1000m free. Running
 `aap-demo enable portal-operator` triggers a preflight check that reports available
-headroom and offers to scale Ollama to zero (freeing ~1000m) before the install
-proceeds.
+headroom and offers to scale Ollama to zero. The preflight reports the Ollama
+Deployment's current CPU request (currently ~200m for one replica) before the
+install proceeds.
 
 **Recommended CRC configuration** when running AAP + AO + portal together:
 
