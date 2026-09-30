@@ -53,7 +53,7 @@
     NAMESPACE: "{{ apme_pah_aap_namespace }}"
     GALAXY_TOKEN_FILE: "{{ apme_pah_galaxy_token_file }}"
     PAH_CONFIG_FILE: "{{ apme_pah_config_file }}"
-    KUBECONFIG: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true) }}"
+    KUBECONFIG: "{{ apme_oci_kubeconfig | default(lookup('env', 'KUBECONFIG'), true) }}"
   register: apme_pah_setup_result
   changed_when: apme_pah_setup_result.rc == 0
   failed_when: apme_pah_setup_result.rc != 0

@@ -21,7 +21,7 @@
     name: secrets-rhaap-portal
     namespace: "{{ openshift_project_name }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_portal_secret
@@ -57,7 +57,7 @@
     label_selectors:
       - app.kubernetes.io/instance={{ apme_helm_release_name | default('apme') }}
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_gateway_pods
@@ -86,7 +86,7 @@
       curl -sf
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_gateway_wait
@@ -140,7 +140,7 @@
       curl -sf
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_existing_galaxy_servers_raw
@@ -168,7 +168,7 @@
       } | to_json }}'
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   loop: "{{ apme_pah_desired_galaxy_servers | default([]) }}"
@@ -185,7 +185,7 @@
   kubernetes.core.k8s:
     state: patched
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
     kind: Deployment

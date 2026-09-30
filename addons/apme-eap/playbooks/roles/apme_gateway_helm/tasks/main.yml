@@ -18,7 +18,7 @@
     api_version: storage.k8s.io/v1
     kind: StorageClass
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ apme_gateway_helm_validate_certs }}"
   register: all_storage_classes
@@ -60,7 +60,7 @@
         wait: true
         wait_timeout: "{{ apme_gateway_helm_timeout }}s"
         api_key: "{{ openshift_token | default(omit) }}"
-        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
         host: "{{ openshift_api_url }}"
         validate_certs: "{{ apme_gateway_helm_validate_certs }}"
       environment:
@@ -102,7 +102,7 @@
         wait: true
         wait_timeout: "{{ apme_gateway_helm_timeout }}s"
         api_key: "{{ openshift_token | default(omit) }}"
-        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
         host: "{{ openshift_api_url }}"
         validate_certs: "{{ apme_gateway_helm_validate_certs }}"
       environment:
