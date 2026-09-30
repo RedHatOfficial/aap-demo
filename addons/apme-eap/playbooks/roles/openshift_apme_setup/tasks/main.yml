@@ -7,7 +7,7 @@
     kind: Namespace
     name: "{{ openshift_project_name }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
   register: existing_project
@@ -17,7 +17,7 @@
   kubernetes.core.k8s:
     state: present
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     definition:
@@ -51,7 +51,7 @@
   kubernetes.core.k8s:
     state: present
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     namespace: "{{ openshift_project_name }}"
@@ -67,7 +67,7 @@
   kubernetes.core.k8s:
     state: present
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit, true) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_apme_setup_validate_certs }}"
     namespace: "{{ openshift_project_name }}"
