@@ -32,6 +32,9 @@ foreach ($addon in $required) {
 }
 if ($addons -contains 'fleet') { throw 'Fleet must remain out of scope for Windows parity' }
 if ($addons -contains 'apme-eap') { throw 'APME must remain deferred from the Windows build while alpha' }
+foreach ($legacyProductAddon in @('product-demos-base', 'product-demo-linux', 'product-demo-windows', 'product-demo-network', 'product-demo-cloud', 'product-demo-openshift', 'product-demo-satellite')) {
+  if ($addons -contains $legacyProductAddon) { throw "Legacy product-demo addon must not be exposed on Windows: $legacyProductAddon" }
+}
 foreach ($command in @('Invoke-AapDemoStart', 'Invoke-AapDemoWire')) {
   if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
     throw "Missing PowerShell command: $command"
