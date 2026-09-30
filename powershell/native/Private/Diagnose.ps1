@@ -221,13 +221,19 @@ function Invoke-AapDemoDiagnose {
     } else {
       $aapJsonResult = Invoke-AapOcCapture @('get', 'aap', $aapName, '-n', $Namespace, '-o', 'json')
       $aapOk = ''
+      $aapRunning = ''
+      $aapSuccessfulReason = ''
       $aapFail = ''
       $failMsg = 'unknown'
       if ($aapJsonResult.ExitCode -eq 0 -and $aapJsonResult.Output) {
         try {
           $aapObj = $aapJsonResult.Output | ConvertFrom-Json
           foreach ($cond in @($aapObj.status.conditions)) {
-            if ($cond.type -eq 'Successful') { $aapOk = [string]$cond.status }
+            if ($cond.type -eq 'Successful') {
+              $aapOk = [string]$cond.status
+              $aapSuccessfulReason = [string]$cond.reason
+            }
+            if ($cond.type -eq 'Running') { $aapRunning = [string]$cond.status }
             if ($cond.type -eq 'Failure') {
               $aapFail = [string]$cond.status
               if ($cond.message) { $failMsg = [string]$cond.message }
@@ -238,10 +244,15 @@ function Invoke-AapDemoDiagnose {
         }
       }
 
-      if ($aapOk -eq 'True') {
-        Write-AapDiagPass "AAP '$aapName' deployed successfully"
-      } elseif ($aapFail -eq 'True') {
+      $aapComplete = $aapOk -eq 'True' -or (
+        $aapOk -eq 'False' -and
+        $aapRunning -eq 'True' -and
+        $aapSuccessfulReason -eq 'Successful'
+      )
+      if ($aapFail -eq 'True') {
         Write-AapDiagFail "AAP '$aapName' has failures: $failMsg"
+      } elseif ($aapComplete) {
+        Write-AapDiagPass "AAP '$aapName' deployed successfully"
       } else {
         Write-AapDiagWarn "AAP '$aapName' is still reconciling"
       }

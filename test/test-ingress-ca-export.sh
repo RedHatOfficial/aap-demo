@@ -25,9 +25,21 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 export AAP_DEMO_CONFIG_DIR="$TMPDIR"
 DUMMY_CA="$TMPDIR/crc-ingress-ca.crt"
+SYSTEM_CA="$TMPDIR/system-ca.crt"
+SYSTEM_LEAF="$TMPDIR/system-leaf.crt"
 
 openssl req -x509 -newkey rsa:2048 -keyout "$TMPDIR/key.pem" -out "$DUMMY_CA" \
   -days 1 -nodes -subj "/CN=aap-demo-test-ca" >/dev/null 2>&1
+openssl req -x509 -newkey rsa:2048 -keyout "$TMPDIR/system-ca-key.pem" -out "$SYSTEM_CA" \
+  -days 1 -nodes -subj "/CN=aap-demo-test-system-ca" >/dev/null 2>&1
+openssl req -newkey rsa:2048 -keyout "$TMPDIR/system-leaf-key.pem" \
+  -out "$TMPDIR/system-leaf.csr" -nodes -subj "/CN=aap-demo-test-system-leaf" >/dev/null 2>&1
+openssl x509 -req -in "$TMPDIR/system-leaf.csr" -CA "$SYSTEM_CA" \
+  -CAkey "$TMPDIR/system-ca-key.pem" -CAcreateserial -out "$SYSTEM_LEAF" \
+  -days 1 >/dev/null 2>&1
+
+# Use a controlled trust anchor instead of depending on the host's system bundle.
+export AAP_DEMO_SYSTEM_CA_BUNDLE="$SYSTEM_CA"
 
 echo "======================================"
 echo "ingress CA export tests"
@@ -58,15 +70,17 @@ else
   _fail "combined_bundle_includes_ingress_ca"
 fi
 
-# Public HTTPS must still verify when the combined bundle is in use.
+# A certificate signed by the system trust anchor must still verify when the
+# combined bundle is in use. This avoids making the unit test depend on DNS or
+# external network availability.
 if [ -n "${CURL_CA_BUNDLE:-}" ]; then
-  if curl -fsSL -o /dev/null --max-time 15 -I "https://github.com" 2>/dev/null; then
-    _pass "combined_bundle_verifies_github"
+  if openssl verify -CAfile "$COMBINED" "$SYSTEM_LEAF" >/dev/null 2>&1; then
+    _pass "combined_bundle_verifies_system_ca"
   else
-    _fail "combined_bundle_verifies_github"
+    _fail "combined_bundle_verifies_system_ca"
   fi
 else
-  _fail "combined_bundle_verifies_github (CURL_CA_BUNDLE unset)"
+  _fail "combined_bundle_verifies_system_ca (CURL_CA_BUNDLE unset)"
 fi
 
 # When the CA is already in the OS store, env vars must not override it.

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# shellcheck source=../includes/aap-readiness.sh
+source "${REPO_ROOT}/includes/aap-readiness.sh"
+
 # Watch AAP deployment status
 # Works with any AAP deployment (MINC, CRC, full OpenShift, etc.)
 #
@@ -99,8 +105,10 @@ while true; do
     NOT_RUNNING_COUNT=0
     RUNNING_COUNT=0
   fi
-  AAP_SUCCESSFUL_RAW=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[*].status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
-  AAP_SUCCESSFUL=$(echo "$AAP_SUCCESSFUL_RAW" | grep -q "True" && echo "true" || echo "false")
+  AAP_SUCCESSFUL=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[*].status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
+  AAP_RUNNING=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[*].status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
+  AAP_SUCCESSFUL_REASON=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[*].status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
+  AAP_FAILURE=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[*].status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
 
   # Check Running condition message - "Awaiting next reconciliation" means operator is idle
   # Running: True with "Awaiting next reconciliation" = idle (ready)
@@ -108,14 +116,17 @@ while true; do
   AAP_RUNNING_MSG=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[*].status.conditions[?(@.type=="Running")].message}' 2>/dev/null || echo "")
   AAP_IDLE=$(echo "$AAP_RUNNING_MSG" | grep -qi "awaiting" && echo "true" || echo "false")
 
-  echo "Completion Check: NOT_RUNNING=$NOT_RUNNING_COUNT, RUNNING_PODS=$RUNNING_COUNT, AAP_SUCCESSFUL=$AAP_SUCCESSFUL, AAP_IDLE=$AAP_IDLE"
+  AAP_COMPLETE="false"
+  if aap_condition_is_complete "$AAP_SUCCESSFUL" "$AAP_RUNNING" "$AAP_SUCCESSFUL_REASON" "$AAP_FAILURE"; then
+    AAP_COMPLETE="true"
+  fi
+  echo "Completion Check: NOT_RUNNING=$NOT_RUNNING_COUNT, RUNNING_PODS=$RUNNING_COUNT, AAP_SUCCESSFUL=$AAP_SUCCESSFUL, AAP_RUNNING=$AAP_RUNNING, AAP_IDLE=$AAP_IDLE"
 
   # Deployment is complete when:
   # - All pods are Running/Completed (NOT_RUNNING=0)
   # - At least some pods exist (RUNNING_PODS > 0)
-  # - Successful condition is True
-  # - Running condition message contains "Awaiting" (operator is idle, not reconciling)
-  if [ "$NOT_RUNNING_COUNT" -eq 0 ] 2>/dev/null && [ "$RUNNING_COUNT" -gt 0 ] 2>/dev/null && [ "$AAP_SUCCESSFUL" = "true" ] && [ "$AAP_IDLE" = "true" ]; then
+  # - AAP reports a terminal, non-failed condition state
+  if [ "$NOT_RUNNING_COUNT" -eq 0 ] 2>/dev/null && [ "$RUNNING_COUNT" -gt 0 ] 2>/dev/null && [ "$AAP_COMPLETE" = "true" ]; then
     # Get the AAP route URL
     AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[?(@.metadata.name=="aap")].spec.host}' 2>/dev/null || true)
     if [ -z "$AAP_ROUTE" ]; then

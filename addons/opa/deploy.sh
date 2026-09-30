@@ -24,8 +24,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 ACTION="${1:-deploy}"
+
+# shellcheck source=../../includes/aap-readiness.sh
+source "${REPO_ROOT}/includes/aap-readiness.sh"
 
 # Configuration
 # Note: Using latest stable OPA. Some upstream example policies fail due to
@@ -66,7 +70,13 @@ check_prerequisites() {
   # Check AAP is ready
   local aap_status
   aap_status=$(kubectl get aap aap -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "Unknown")
-  if [ "$aap_status" != "True" ]; then
+  local aap_running
+  aap_running=$(kubectl get aap aap -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
+  local aap_successful_reason
+  aap_successful_reason=$(kubectl get aap aap -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
+  local aap_failure
+  aap_failure=$(kubectl get aap aap -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
+  if ! aap_condition_is_complete "$aap_status" "$aap_running" "$aap_successful_reason" "$aap_failure"; then
     echo "❌ ERROR: AAP is not ready (status: $aap_status)"
     echo "  Wait for AAP to deploy: aap-demo status"
     exit 1
