@@ -640,7 +640,10 @@ else
   if [ -z "$DEFAULT_SC" ]; then
     DEFAULT_SC="topolvm-provisioner"
   fi
-  sed "s/__DEFAULT_SC__/${DEFAULT_SC}/g" "${SCRIPT_DIR}/config/manifests/nfs-server.yaml" | kubectl apply -f -
+  NFS_BACKING_STORAGE_SIZE="${NFS_BACKING_STORAGE_SIZE:-5Gi}"
+  sed -e "s/__DEFAULT_SC__/${DEFAULT_SC}/g" \
+    -e "s/__NFS_BACKING_STORAGE_SIZE__/${NFS_BACKING_STORAGE_SIZE}/g" \
+    "${SCRIPT_DIR}/config/manifests/nfs-server.yaml" | kubectl apply -f -
   echo "  Waiting for NFS server..."
   kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s 2>/dev/null || {
     echo "  Waiting for NFS backing PVC to bind..."

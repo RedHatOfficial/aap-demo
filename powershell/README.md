@@ -122,6 +122,7 @@ Set in PowerShell before running commands, or add to
 | `CRC_MEMORY`        | `16384`                                      | VM memory (MiB)                                    |
 | `CRC_DISK`          | `100`                                        | VM disk (GiB)                                      |
 | `CRC_PV_SIZE`       | `50`                                         | Storage for PVCs (GiB)                             |
+| `NFS_BACKING_STORAGE_SIZE` | `5Gi`                                  | LVMS-backed storage reserved for the NFS server      |
 | `NAMESPACE`         | `aap-operator`                               | Kubernetes namespace                               |
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |
 | `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |

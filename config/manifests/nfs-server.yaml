@@ -22,7 +22,7 @@ spec:
   storageClassName: __DEFAULT_SC__
   resources:
     requests:
-      storage: 10Gi
+      storage: __NFS_BACKING_STORAGE_SIZE__
 ---
 apiVersion: apps/v1
 kind: Deployment
