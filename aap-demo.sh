@@ -48,6 +48,9 @@ source "${SCRIPT_DIR}/includes/ao-llm.sh"
 # shellcheck source=includes/persistent-crio-store.sh
 source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
 
+# shellcheck source=includes/aap-readiness.sh
+source "${SCRIPT_DIR}/includes/aap-readiness.sh"
+
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
 
 # AAP version
@@ -1302,15 +1305,19 @@ cmd_diagnose() {
     else
       # Check AAP status conditions
       local aap_status
-      aap_status=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null)
+      aap_status=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
+      local aap_running
+      aap_running=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
+      local aap_successful_reason
+      aap_successful_reason=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
       local aap_failure
-      aap_failure=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Failure")].status}' 2>/dev/null)
+      aap_failure=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
 
-      if [ "$aap_status" = "True" ]; then
+      if aap_condition_is_complete "$aap_status" "$aap_running" "$aap_successful_reason" "$aap_failure"; then
         _check_pass "AAP '$aap_name' deployed successfully"
       elif [ "$aap_failure" = "True" ]; then
         local fail_msg
-        fail_msg=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Failure")].message}' 2>/dev/null)
+        fail_msg=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Failure")].message}' 2>/dev/null || echo "")
         _check_fail "AAP '$aap_name' has failures: ${fail_msg:-unknown}"
       else
         _check_warn "AAP '$aap_name' is still reconciling"
@@ -1672,10 +1679,12 @@ cmd_status() {
 
       if [ -n "$AAP_CR" ]; then
         AAP_STATUS=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
-        if [ "$AAP_STATUS" = "True" ]; then
+        AAP_RUNNING=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
+        AAP_SUCCESSFUL_REASON=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
+        AAP_FAILURE=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
+        if aap_condition_is_complete "$AAP_STATUS" "$AAP_RUNNING" "$AAP_SUCCESSFUL_REASON" "$AAP_FAILURE"; then
           printf "  %-30s %s/%s pods   \033[1;32m%s\033[0m\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
         else
-          AAP_RUNNING=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
           if [ "$AAP_RUNNING" = "True" ]; then
             printf "  %-30s %s/%s pods   \033[1;33m%s (Deploying)\033[0m\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
           else
@@ -2640,9 +2649,13 @@ watch_aap() {
       fi
     fi
 
-    # Check if deployment is complete — operator CR Successful condition only
+    # Check if deployment is complete. AAP 2.7 reports a terminal
+    # Successful=False/reason=Successful alongside Running=True.
     SUCCESSFUL=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
-    if [ "$SUCCESSFUL" = "True" ]; then
+    RUNNING=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
+    SUCCESSFUL_REASON=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
+    FAILURE=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
+    if aap_condition_is_complete "$SUCCESSFUL" "$RUNNING" "$SUCCESSFUL_REASON" "$FAILURE"; then
       # Get admin password from secret
       ADMIN_PASSWORD=""
       ADMIN_SECRET=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.adminPasswordSecret}' 2>/dev/null || true)

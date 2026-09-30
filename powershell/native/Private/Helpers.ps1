@@ -1060,10 +1060,26 @@ function Get-AapAapSuccessful {
   try {
     $aapObj = $aapJsonResult.Output | ConvertFrom-Json
     foreach ($item in @($aapObj.items)) {
+      $successfulStatus = $null
+      $runningStatus = $null
+      $successfulReason = $null
+      $failureStatus = $null
       foreach ($cond in @($item.status.conditions)) {
-        if ($cond.type -eq 'Successful' -and [string]$cond.status -eq 'True') {
-          return $true
+        switch ($cond.type) {
+          'Successful' {
+            $successfulStatus = [string]$cond.status
+            $successfulReason = [string]$cond.reason
+          }
+          'Running' { $runningStatus = [string]$cond.status }
+          'Failure' { $failureStatus = [string]$cond.status }
         }
+      }
+      if ($failureStatus -eq 'True') { continue }
+      if ($successfulStatus -eq 'True') { return $true }
+      if ($successfulStatus -eq 'False' -and
+          $runningStatus -eq 'True' -and
+          $successfulReason -eq 'Successful') {
+        return $true
       }
     }
   } catch {

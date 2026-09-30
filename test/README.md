@@ -7,6 +7,7 @@ Validation tests for `aap-demo.sh` command-line interface.
 ```bash
 # Run the shell and Python test scripts used by CI
 ./test/test-core-commands.sh
+./test/test-aap-readiness.sh
 ./test/test-ingress-ca-export.sh
 python3 ./test/test-ao-import-demos.py
 
@@ -47,6 +48,7 @@ python3 ./test/test-provision-aap-demos.py
 - The obsolete `aap-demo test` ATF command is intentionally not part of the CLI.
 - ✓ `destroy`, `clean` show warnings (interactive skipped in quick mode)
 - ✓ `destroy --reset` flag parsing
+- ✓ AAP 2.7 terminal readiness across shell and PowerShell implementations
 
 ### Test Design
 
