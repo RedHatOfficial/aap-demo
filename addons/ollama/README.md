@@ -13,7 +13,7 @@ aap-demo disable ollama    # Remove Ollama (AO integration becomes invalid)
 
 The addon automatically:
 
-1. Deploys the `ollama/ollama` container with a 20Gi PVC for model storage
+1. Deploys the `ollama/ollama` container with a 10Gi PVC for model storage
 2. Pulls `qwen2.5:3b` (~2GB) from the Ollama registry at deploy time
 3. Wires Ollama into Automation Orchestrator as an `llm_provider` integration
    (named `aap-demo Ollama`) using the OpenAI-compatible `/v1` endpoint
@@ -65,7 +65,7 @@ The new model will be set as the AO default on re-wire.
   The small request keeps an idle Ollama pod schedulable next to AAP on a single-node
   CRC VM. The limit still lets inference burst.
 - **Memory**: requests 2Gi, limit 8Gi
-- **Storage**: 20Gi RWO PVC on `topolvm-provisioner`
+- **Storage**: 10Gi RWO PVC on `topolvm-provisioner`
 
 ## Status
 

@@ -25,7 +25,7 @@ spec:
     parameters:
       max_connections: "200"
   storage:
-    size: 5Gi
+    size: 3Gi
     storageClass: __STORAGE_CLASS__
 ---
 apiVersion: postgresql.cnpg.io/v1
