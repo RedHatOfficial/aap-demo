@@ -40,10 +40,10 @@ The PowerShell launcher also advertises `start` without dispatching it, has no `
 
 Expose every current non-fleet addon that has a supported Bash deployment path:
 
-`mcp-server`, `portal`, `portal-operator`, `setup-pah`, `ao`/`ao-eap`, `local-cache`, `product-demos-base`, `product-demos`, `product-demo-linux`, `product-demo-windows`, `product-demo-network`, `product-demo-cloud`, `product-demo-openshift`, `product-demo-satellite`, `opa`, and `ollama`. APME is deferred while it remains alpha.
+`mcp-server`, `portal`, `portal-operator`, `setup-pah`, `ao`/`ao-eap`, `local-cache`, `product-demos`, `opa`, and `ollama`. Product Demos is a single aggregate deployment on Windows; APME is deferred while it remains alpha.
 
 - Normalize aliases before saving `ADDONS`.
-- Keep dependency behavior explicit: AO must ensure MCP and its selected LLM provider; Product Demos domains must ensure their base.
+- Keep dependency behavior explicit: AO must ensure MCP and its selected LLM provider; Product Demos deploys its base and domains as one aggregate operation.
 - Save an addon only after a successful deployment and remove it only after a successful disable operation, including purge options.
 - Keep `fleet` out of the registry, help, tests, and acceptance criteria for this branch.
 
@@ -75,7 +75,7 @@ Use a Windows/CRC validation matrix. The tests should be non-destructive by defa
 | Core lifecycle | `create`, `deploy`, `status`, `stop`, `start`, `repair`, `kubeconfig`, `redeploy`, `redeploy-all`, `clean`, `destroy` |
 | Wiring | `deploy`/`watch` auto-wire; explicit `wire` is idempotent and reports failures |
 | AO | `enable ao` with Ollama, external provider, and no-LLM paths; `ao-eap` alias; `disable ao --purge-data` |
-| Product Demos | base, aggregate, and Windows domain enable/disable paths; credential and auto-wiring hints |
+| Product Demos | aggregate enable/disable path; credential and auto-wiring hints |
 | Other addons | MCP, Helm portal, portal-operator (AMD64 guard), OPA, Ollama, and local-cache save/load/clear |
 | Failure handling | missing Git Bash/tooling, bad paths, failed deploy, interrupted cleanup, and stale kubeconfig |
 | Documentation | Windows README, help output, ADR-010 cross-reference, and this plan stay consistent |

@@ -179,9 +179,7 @@ ADDONS:
     disable <name>  Disable an addon
     wire            Apply addon integrations after deployment
     Available: mcp-server, portal, portal-operator, setup-pah, ao,
-               local-cache, product-demos-base, product-demos, product-demo-linux,
-               product-demo-windows, product-demo-network, product-demo-cloud,
-               product-demo-openshift, product-demo-satellite, opa, ollama
+               local-cache, product-demos, opa, ollama
     Legacy alias: ao-eap maps to ao
 
 NOTES:
