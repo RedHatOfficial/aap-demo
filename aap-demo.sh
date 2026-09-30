@@ -2270,11 +2270,6 @@ deploy_latest() {
 
   # Watch deployment
   watch_aap
-
-  # Remind to configure PAH
-  echo ""
-  echo "To configure Private Automation Hub remotes:"
-  echo "  aap-demo enable setup-pah"
 }
 
 verify_coredns() {
