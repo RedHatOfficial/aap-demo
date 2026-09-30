@@ -12,8 +12,6 @@ $PrivateDir = Join-Path $PSScriptRoot 'Private'
 
 . (Join-Path $PrivateDir 'NativeAo.ps1')
 
-. (Join-Path $PrivateDir 'NativeApme.ps1')
-
 . (Join-Path $PrivateDir 'Create.ps1')
 
 . (Join-Path $PrivateDir 'Deploy.ps1')

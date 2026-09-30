@@ -1,5 +1,5 @@
 $Script:AapAvailableAddons = @(
-  'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao', 'apme-eap',
+  'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
   'local-cache', 'product-demos-base', 'product-demos', 'product-demo-linux',
   'product-demo-windows', 'product-demo-network', 'product-demo-cloud',
   'product-demo-openshift', 'product-demo-satellite', 'opa', 'ollama'
@@ -124,7 +124,6 @@ function Invoke-AapAddonEnable {
       Invoke-AapDeployPortalAddon -Namespace $Namespace
     }
     'ao' { Invoke-AapAoAddonNative -Namespace 'automation-orchestrator' -ScriptArgs $ScriptArgs }
-    'apme-eap' { Invoke-AapApmeAddonNative -Namespace 'apme' -ScriptArgs $ScriptArgs }
     'ollama' { Invoke-AapOllamaAddonNative -Namespace $Namespace -ScriptArgs $ScriptArgs }
     'local-cache' { Invoke-AapLocalCacheAddonNative -ScriptArgs $ScriptArgs }
     default {
@@ -228,7 +227,6 @@ function Invoke-AapAddonDisable {
       Invoke-AapRemovePortalAddon -Namespace $Namespace
     }
     'ao' { Invoke-AapAoAddonNative -Namespace 'automation-orchestrator' -ScriptArgs (@('--delete') + @($ScriptArgs)) }
-    'apme-eap' { Invoke-AapApmeAddonNative -Namespace 'apme' -ScriptArgs (@('--delete') + @($ScriptArgs)) }
     'ollama' { Invoke-AapOllamaAddonNative -Namespace $Namespace -ScriptArgs (@('--delete') + @($ScriptArgs)) }
     'local-cache' { Invoke-AapLocalCacheAddonNative -ScriptArgs @('clear') }
     default {

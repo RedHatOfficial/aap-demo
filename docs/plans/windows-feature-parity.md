@@ -12,7 +12,7 @@ Bring the PowerShell CLI and its Windows addon workflow up to date with the curr
 
 ## Current state
 
-The existing PowerShell implementation has native handlers for the core lifecycle, status, diagnostics, deployment, cleanup, PAH setup, portal, and MCP server. Its addon registry currently contains only `mcp-server`, `portal`, `setup-pah`, `ao`, `apme-eap`, and `local-cache`.
+The existing PowerShell implementation has native handlers for the core lifecycle, status, diagnostics, deployment, cleanup, PAH setup, portal, and MCP server. Its addon registry contains the supported Windows addons; the alpha APME addon is intentionally excluded.
 
 Since the previous Windows work, `main` has added or changed:
 
@@ -40,10 +40,10 @@ The PowerShell launcher also advertises `start` without dispatching it, has no `
 
 Expose every current non-fleet addon that has a supported Bash deployment path:
 
-`mcp-server`, `portal`, `portal-operator`, `setup-pah`, `ao`/`ao-eap`, `apme-eap`, `local-cache`, `product-demos-base`, `product-demos`, `product-demo-linux`, `product-demo-windows`, `product-demo-network`, `product-demo-cloud`, `product-demo-openshift`, `product-demo-satellite`, `opa`, and `ollama`.
+`mcp-server`, `portal`, `portal-operator`, `setup-pah`, `ao`/`ao-eap`, `local-cache`, `product-demos-base`, `product-demos`, `product-demo-linux`, `product-demo-windows`, `product-demo-network`, `product-demo-cloud`, `product-demo-openshift`, `product-demo-satellite`, `opa`, and `ollama`. APME is deferred while it remains alpha.
 
 - Normalize aliases before saving `ADDONS`.
-- Keep dependency behavior explicit: AO must ensure MCP and its selected LLM provider; Product Demos domains must ensure their base; APME must preserve its credential and PAH flows.
+- Keep dependency behavior explicit: AO must ensure MCP and its selected LLM provider; Product Demos domains must ensure their base.
 - Save an addon only after a successful deployment and remove it only after a successful disable operation, including purge options.
 - Keep `fleet` out of the registry, help, tests, and acceptance criteria for this branch.
 
@@ -61,7 +61,7 @@ Keep addon implementations in their existing `deploy.sh` files for this pass, bu
 ### 4. Bring status, help, and diagnostics to parity
 
 - Show the complete addon registry and distinguish disabled, enabled, not deployed, and route-ready states.
-- Surface AO, APME, portal-operator, Ollama, OPA, MCP, and Product Demos routes or actionable status hints where those addons expose them.
+- Surface AO, portal-operator, Ollama, OPA, MCP, and Product Demos routes or actionable status hints where those addons expose them.
 - Add wiring status and remediation hints to `status`/`diagnose` without exposing secrets.
 - Align CRC version checks, AAP readiness checks, SCC/PSA checks, catalog health, and local-cache diagnostics with the current Bash behavior.
 - Delegate `diagnose --ai` to Git Bash with the same explicit prerequisite and failure message used by the Windows adapter, rather than silently claiming native support.
@@ -75,7 +75,6 @@ Use a Windows/CRC validation matrix. The tests should be non-destructive by defa
 | Core lifecycle | `create`, `deploy`, `status`, `stop`, `start`, `repair`, `kubeconfig`, `redeploy`, `redeploy-all`, `clean`, `destroy` |
 | Wiring | `deploy`/`watch` auto-wire; explicit `wire` is idempotent and reports failures |
 | AO | `enable ao` with Ollama, external provider, and no-LLM paths; `ao-eap` alias; `disable ao --purge-data` |
-| APME | `enable apme-eap` with token-only and existing PAH credentials; `disable apme-eap --purge-creds` |
 | Product Demos | base, aggregate, and Windows domain enable/disable paths; credential and auto-wiring hints |
 | Other addons | MCP, Helm portal, portal-operator (AMD64 guard), OPA, Ollama, and local-cache save/load/clear |
 | Failure handling | missing Git Bash/tooling, bad paths, failed deploy, interrupted cleanup, and stale kubeconfig |

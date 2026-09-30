@@ -72,7 +72,6 @@ Addons:
   portal-operator disabled (AMD64 only)
   setup-pah       disabled
   ao            disabled
-  apme-eap        disabled
   local-cache     disabled
   product-demos       disabled
   product-demo-satellite  disabled
@@ -87,7 +86,6 @@ aap-demo enable portal-operator # Installs Operator-based Portal (Technology Pre
 aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
-aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 
 # Ansible Product Demos - Official demo content from ansible/product-demos

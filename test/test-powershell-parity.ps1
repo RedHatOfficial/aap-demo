@@ -23,7 +23,7 @@ if ($parseErrors.Count -gt 0) {
 $module = Import-Module (Join-Path $repoRoot 'powershell/native/AapDemo.psm1') -Force -PassThru
 $addons = & $module { @($Script:AapAvailableAddons) }
 $required = @(
-  'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao', 'apme-eap',
+  'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
   'local-cache', 'product-demos-base', 'product-demos', 'product-demo-linux',
   'product-demo-windows', 'product-demo-network', 'product-demo-cloud',
   'product-demo-openshift', 'product-demo-satellite', 'opa', 'ollama'
@@ -33,6 +33,7 @@ foreach ($addon in $required) {
   if ($addons -notcontains $addon) { throw "Missing Windows addon registry entry: $addon" }
 }
 if ($addons -contains 'fleet') { throw 'Fleet must remain out of scope for Windows parity' }
+if ($addons -contains 'apme-eap') { throw 'APME must remain deferred from the Windows build while alpha' }
 foreach ($command in @('Invoke-AapDemoStart', 'Invoke-AapDemoWire')) {
   if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
     throw "Missing PowerShell command: $command"
