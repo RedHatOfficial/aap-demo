@@ -25,7 +25,7 @@ function Invoke-AapAddonDeployScript {
     $bashEnvironment.NAMESPACE = $Namespace
   }
 
-  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $arguments -Environment $bashEnvironment
+  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $arguments -Environment $bashEnvironment -Interactive
   if ($result.Stdout) { Write-Host $result.Stdout.TrimEnd() }
   if (-not $result.Success) {
     $detail = if ($result.Stderr) { $result.Stderr.Trim() } else { $result.Stdout.Trim() }

@@ -64,8 +64,9 @@ if (-not $help.Success -or $help.Stdout -match '(?im)^\s*fleet\b|\bapme\b') {
 }
 
 $dispatch = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Addons.ps1') -Raw
-if ($dispatch -notmatch 'Invoke-AapGitBash' -or $dispatch -notmatch 'aap-demo\.sh') {
-  throw 'Windows addon dispatch must use the repository Git Bash wrapper'
+if ($dispatch -notmatch 'Invoke-AapGitBash' -or $dispatch -notmatch 'aap-demo\.sh' -or
+    $dispatch -notmatch '-Interactive') {
+  throw 'Windows addon dispatch must use the interactive repository Git Bash wrapper'
 }
 $wrapperSource = Get-Content $wrapper -Raw
 if ($wrapperSource -notmatch 'Invoke-AapGitBashCli' -or

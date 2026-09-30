@@ -196,19 +196,24 @@ function Install-AapDemo {
   Set-Content -LiteralPath $RepoMarker -Value $RepoRoot -NoNewline -Encoding ascii
   Write-Ok "Repo registered: $RepoRoot"
 
-  @(
-    '#Requires -Version 5.1'
-    '$repo = (Get-Content -LiteralPath "$env:USERPROFILE\.aap-demo\repo-path" -Raw).Trim()'
-    '& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo ''powershell\aap-demo.ps1'') @args'
-    'exit $LASTEXITCODE'
-  ) | Set-Content -LiteralPath $WrapperTarget -Encoding ascii
-  Write-Ok "Launcher installed: $WrapperTarget"
+  # PowerShell resolves .ps1 commands before .cmd commands. A policy-blocked
+  # .ps1 shim therefore prevents `aap-demo` from reaching the bypass-enabled
+  # command shim below, so remove any launcher from older installations.
+  Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
 
-  @"
+@"
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%USERPROFILE%\.local\bin\aap-demo.ps1" %*
+setlocal
+set "AAP_DEMO_REPO="
+for /f "usebackq delims=" %%R in ("%USERPROFILE%\.aap-demo\repo-path") do set "AAP_DEMO_REPO=%%R"
+if not defined AAP_DEMO_REPO (
+  echo aap-demo is not installed: missing %USERPROFILE%\.aap-demo\repo-path 1>&2
+  exit /b 1
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%AAP_DEMO_REPO%\powershell\aap-demo.ps1" %*
+exit /b %ERRORLEVEL%
 "@ | Set-Content -LiteralPath $CmdShim -Encoding ascii
-  Write-Ok "CMD shim installed: $CmdShim"
+  Write-Ok "Launcher installed: $CmdShim"
 
   if (Add-UserPathEntry -Directory $BinDir) {
     Write-Ok 'Added %USERPROFILE%\.local\bin to user PATH'

@@ -14,15 +14,16 @@ function Invoke-AapNativeProcess {
     [Parameter(Mandatory)][string]$FilePath,
     [string[]]$ArgumentList = @(),
     [hashtable]$Environment = @{},
-    [string]$WorkingDirectory = $null
+    [string]$WorkingDirectory = $null,
+    [switch]$Interactive
   )
 
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = $FilePath
   $psi.UseShellExecute = $false
-  $psi.CreateNoWindow = $true
-  $psi.RedirectStandardOutput = $true
-  $psi.RedirectStandardError = $true
+  $psi.CreateNoWindow = -not $Interactive
+  $psi.RedirectStandardOutput = -not $Interactive
+  $psi.RedirectStandardError = -not $Interactive
   if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
 
   $argumentListProperty = $psi.PSObject.Properties['ArgumentList']
@@ -44,6 +45,18 @@ function Invoke-AapNativeProcess {
   $process.StartInfo = $psi
   try {
     if (-not $process.Start()) { throw "Unable to start process: $FilePath" }
+    if ($Interactive) {
+      $process.WaitForExit()
+      return [pscustomobject]@{
+        FilePath = $FilePath
+        Arguments = @($ArgumentList)
+        ExitCode = $process.ExitCode
+        Success = ($process.ExitCode -eq 0)
+        Stdout = ''
+        Stderr = ''
+        Output = ''
+      }
+    }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()

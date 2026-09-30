@@ -28,23 +28,35 @@ function Invoke-AapGitBash {
   param(
     [Parameter(Mandatory)][string]$Command,
     [string[]]$Arguments = @(),
-    [hashtable]$Environment = @{}
+    [hashtable]$Environment = @{},
+    [switch]$Interactive
   )
 
   $bash = Get-AapGitBashExecutable
   $result = Invoke-AapNativeProcess -FilePath $bash -ArgumentList (@('-lc', $Command, '--') + @($Arguments)) `
-    -Environment $Environment -WorkingDirectory $Script:AapDemoRepoRoot
+    -Environment $Environment -WorkingDirectory $Script:AapDemoRepoRoot -Interactive:$Interactive
   return $result
 }
 
 function Invoke-AapGitBashCli {
   param(
-    [Parameter(Mandatory)][string[]]$Arguments
+    [Parameter(Mandatory)][string[]]$Arguments,
+    [switch]$Interactive
   )
 
-  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $Arguments
+  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $Arguments -Interactive:$Interactive
   if ($result.Output) { Write-Host $result.Output.TrimEnd() }
   return $result
+}
+
+function Invoke-AapGitBashInteractive {
+  param(
+    [Parameter(Mandatory)][string]$Command,
+    [string[]]$Arguments = @(),
+    [hashtable]$Environment = @{}
+  )
+
+  return Invoke-AapGitBash -Command $Command -Arguments $Arguments -Environment $Environment -Interactive
 }
 
 function Get-AapKubernetesExecutable {

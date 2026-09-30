@@ -51,6 +51,15 @@ Open a **new** PowerShell window when install finishes, then:
 aap-demo help
 ```
 
+The installer registers `aap-demo.cmd` in `%USERPROFILE%\.local\bin`. The
+command shim invokes the repository wrapper with `ExecutionPolicy Bypass`, so
+the command remains usable when the machine policy blocks `.ps1` scripts. If a
+previous install left a stale `aap-demo.ps1`, rerun the installer with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\powershell\install.ps1
+```
+
 ## Quick start
 
 ```powershell
@@ -282,8 +291,9 @@ Then run commands with `pwsh` instead of `powershell`.
 
 ```
 aap-demo (launcher in ~/.local/bin)
-  └── powershell/aap-demo.ps1
-        └── powershell/native/AapDemo.psm1  (all commands)
+  └── aap-demo.cmd (policy-safe command shim)
+        └── powershell/aap-demo.ps1
+              └── powershell/native/AapDemo.psm1  (all commands)
               └── native process runner → oc/kubectl/helm/python/ansible
 ```
 

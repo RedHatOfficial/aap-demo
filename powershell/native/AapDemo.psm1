@@ -94,4 +94,6 @@ Export-ModuleMember -Function @(
 
   'Invoke-AapGitBashCli'
 
+  'Invoke-AapGitBashInteractive'
+
 )

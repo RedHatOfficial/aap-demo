@@ -68,7 +68,15 @@ function Assert-AapWindowsAddonPolicy {
 function Invoke-AapWindowsBashCli {
   param([Parameter(Mandatory)][string[]]$CliArguments)
 
-  $result = Invoke-AapGitBashCli -Arguments $CliArguments
+  $interactiveCommands = @(
+    'create', 'deploy', 'deploy-all', 'redeploy', 'redeploy-all',
+    'setup', 'enable', 'disable', 'wire', 'repair', 'start', 'stop',
+    'destroy', 'clean', 'update', 'idle', 'ssh'
+  )
+  $interactive = @($CliArguments | Where-Object {
+      $interactiveCommands -contains $_.ToLowerInvariant()
+    }).Count -gt 0
+  $result = Invoke-AapGitBashCli -Arguments $CliArguments -Interactive:$interactive
   if ($result.Success) { exit 0 }
   $detail = if ($result.Stderr) { $result.Stderr.Trim() } else { $result.Stdout.Trim() }
   Write-Error "Git Bash CLI failed (exit $($result.ExitCode)): $detail"
