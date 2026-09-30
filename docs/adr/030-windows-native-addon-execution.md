@@ -10,7 +10,7 @@ ADR-029 established a Git Bash adapter so Windows could expose the current Bash 
 
 ## Decision
 
-The Windows CLI will port addon deployment and wiring logic to PowerShell. PowerShell will invoke platform binaries directly through a structured process runner and use `oc`, `kubectl`, and `curl` for the native control path. APME will create and launch its deployment job through the AAP Controller API, leaving its Ansible, Helm, and plugin tooling in the AAP execution environment. It will not invoke Bash, WSL, or shell command strings.
+The Windows CLI will port addon deployment and wiring logic to PowerShell. PowerShell will invoke platform binaries directly through a structured process runner and use `oc`, `kubectl`, and `curl` for the native control path. APME will create and launch its deployment job through the AAP Controller API. The job uses a standard-library OCI publisher and bootstraps a pinned Helm client inside the execution environment when the selected EE does not include Helm. Windows does not reproduce that toolchain locally, and the native path will not invoke Bash, WSL, or shell command strings.
 
 The port will preserve the existing addon dependency graph, state persistence rules, cleanup flags, credential handling, and idempotent wiring behavior. Fleet remains outside this decision and requires its own design.
 
