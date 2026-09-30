@@ -15,12 +15,6 @@ does not invoke Git Bash; addon families not yet ported report an explicit messa
 | **Git for Windows**         | Not required by the native PowerShell path.                                  |
 | **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
-Core PowerShell commands use `oc`. APME's normal Windows path uses the AAP
-Controller API to create/update its project, inventory, and job template, then
-launches the deployment inside AAP. It does not require local Python, Ansible,
-Helm, or skopeo. The AAP execution environment still needs the collections and
-tools declared by the APME playbook.
-
 Optional for the core CLI: `python`, `jq` (some addons require them).
 
 ## Install
@@ -101,11 +95,10 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo help`                | Show command help                                                  |
 
 Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
-`setup-pah`, `ao` (alias `ao-eap`), `apme-eap`, `local-cache`,
+`setup-pah`, `ao` (alias `ao-eap`), `local-cache`,
 `product-demos-base`, `product-demos`, the Linux/Windows/Network/Cloud/OpenShift/
-Satellite product-demo addons, `opa`, and `ollama`. AO, APME, and Ollama use
-native PowerShell handlers. APME launches its deployment in AAP; AO-to-AAP/MCP/Ollama
-wiring and optional AO demo provisioning/import remain native when Python is installed. AO accepts `--delete` and `--purge-data`, while Ollama accepts
+Satellite product-demo addons, `opa`, and `ollama`. AO and Ollama use native
+PowerShell handlers. AO-to-AAP/MCP/Ollama wiring and optional AO demo provisioning/import remain native when Python is installed. AO accepts `--delete` and `--purge-data`, while Ollama accepts
 `--delete` and reads `OLLAMA_MODEL`, `OLLAMA_STORAGE_CLASS`, and
 `OLLAMA_STORAGE_SIZE` from the environment.
 `aap-demo diagnose --ai` is not yet implemented natively and reports that status.
@@ -125,9 +118,6 @@ Set in PowerShell before running commands, or add to
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |
 | `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |
 | `AAP_DEMO_TRUST_CA` | `true` (implicit)                            | Set to `false` to skip automatic ingress CA import |
-| `APME_AAP_PROJECT_URL` | `https://github.com/RedHatOfficial/aap-demo.git` | Git URL for the AAP project used by `apme-eap` |
-| `APME_AAP_PROJECT_BRANCH` | `main` | Branch to sync into AAP for the APME job |
-| `APME_SKIP_PLUGIN_PUSH` | `false` | Skip the APME OCI plugin push when the image already exists |
 
 Example:
 

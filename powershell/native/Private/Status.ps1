@@ -132,9 +132,6 @@ function Invoke-AapDemoStatus {
     if (-not $enabled -and $a -eq 'ao') {
       $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'automation-orchestrator')) -eq 0
     }
-    if (-not $enabled -and $a -eq 'apme-eap') {
-      $enabled = (Invoke-AapOcQuiet @('get', 'namespace', 'apme')) -eq 0
-    }
     $state = if ($enabled) { 'enabled' } else { 'disabled' }
     $detail = if ($enabled) { Get-AapAddonStatusLabel -Addon $a -Namespace $Namespace -Enabled:$true } else { $state }
     if (-not $detail) { $detail = $state }
@@ -181,7 +178,7 @@ ADDONS:
     enable <name>   Enable a non-fleet addon (pass addon-specific arguments through)
     disable <name>  Disable an addon
     wire            Apply addon integrations after deployment
-    Available: mcp-server, portal, portal-operator, setup-pah, ao, apme-eap,
+    Available: mcp-server, portal, portal-operator, setup-pah, ao,
                local-cache, product-demos-base, product-demos, product-demo-linux,
                product-demo-windows, product-demo-network, product-demo-cloud,
                product-demo-openshift, product-demo-satellite, opa, ollama

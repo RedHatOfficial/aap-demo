@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $module = Import-Module (Join-Path $repoRoot 'powershell/native/AapDemo.psm1') -Force -PassThru
 
-foreach ($name in @('Invoke-AapOllamaAddonNative', 'Invoke-AapAoAddonNative', 'Invoke-AapAoWire', 'Invoke-AapApmeAddonNative')) {
+foreach ($name in @('Invoke-AapOllamaAddonNative', 'Invoke-AapAoAddonNative', 'Invoke-AapAoWire')) {
   if (-not (& $module { param($n) Get-Command $n -ErrorAction SilentlyContinue } $name)) {
     throw "Missing native addon handler: $name"
   }
@@ -69,30 +69,6 @@ if ($duration -ne 5400) { throw "Expected 1h30m to convert to 5400 seconds, got 
 $allowedHosts = & $module { ConvertTo-AapAoHostListJson -Hosts @('aap.apps.example.test') }
 if ($allowedHosts -ne '["aap.apps.example.test"]') {
   throw "Expected AO host allowlist JSON array, got '$allowedHosts'"
-}
-
-$apmeSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/NativeApme.ps1') -Raw
-if ($apmeSource -match '(?im)\b(bash|wsl|sh)\b') {
-  throw 'Native APME implementation must not invoke Bash, WSL, or shell interpreters'
-}
-if ($apmeSource -match 'Ensure-AapApmePythonEnvironment|ansible-playbook|helm\.exe|skopeo\.exe') {
-  throw 'Native APME deployment must not require a local Python, Ansible, Helm, or skopeo preflight'
-}
-foreach ($name in @('deploy_apme_portal.yml', 'apme-eap-vars.yml', '--purge-creds', 'job_templates', 'extra_vars', 'scm_url', 'create', 'token')) {
-  if ($apmeSource -notmatch [regex]::Escape($name)) {
-    throw "Native APME implementation is missing expected behavior: $name"
-  }
-}
-if (-not (Test-Path (Join-Path $repoRoot 'addons/apme-eap/scripts/push_oci_archive.py'))) {
-  throw 'AAP-native APME OCI publisher script is missing'
-}
-$ociRole = Get-Content (Join-Path $repoRoot 'addons/apme-eap/playbooks/roles/apme_oci_push/tasks/main.yml') -Raw
-if ($ociRole -notmatch 'push_oci_archive\.py' -or $ociRole -match 'skopeo') {
-  throw 'APME OCI publishing must use the AAP-native Python publisher, not skopeo'
-}
-$apmeDispatch = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Addons.ps1') -Raw
-if ($apmeDispatch -notmatch "'apme-eap'\s*\{\s*Invoke-AapApmeAddonNative") {
-  throw 'Addon dispatcher must route APME through the native handler'
 }
 
 Write-Output 'Native addon checks passed'
