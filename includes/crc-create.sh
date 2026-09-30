@@ -583,6 +583,19 @@ else
   exit 1
 fi
 
+# CRC's oc-env is not reliable on every Windows installation. Resolve the
+# Kubernetes client explicitly before the post-create resources use kubectl;
+# OpenShift's oc is API-compatible for these operations.
+if ! command -v kubectl >/dev/null 2>&1; then
+  if command -v oc >/dev/null 2>&1; then
+    kubectl() { oc "$@"; }
+  else
+    echo "ERROR: kubectl/oc is required to finish cluster setup (metrics-server and NFS)." >&2
+    echo "Install the OpenShift client, then rerun: aap-demo create" >&2
+    exit 1
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # Register podman connection
 # ---------------------------------------------------------------------------
