@@ -125,6 +125,10 @@
     api_version: v1
     kind: Service
     namespace: openshift-ingress
+    api_key: "{{ openshift_token | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
+    host: "{{ openshift_api_url }}"
+    validate_certs: "{{ openshift_validate_certs | default(false) }}"
     label_selectors:
       - ingresscontroller.operator.openshift.io/owning-ingresscontroller=default
   register: router_service
