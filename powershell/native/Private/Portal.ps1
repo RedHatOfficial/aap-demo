@@ -1153,6 +1153,29 @@ function Get-AapPortalDeploymentHostAliasIp {
   return ''
 }
 
+function New-AapPortalAapRouteHostAliasPatch {
+  param(
+    [Parameter(Mandatory)][string]$AapRoute,
+    [Parameter(Mandatory)][string]$AapServiceIp
+  )
+
+  if ([string]::IsNullOrWhiteSpace($AapRoute) -or [string]::IsNullOrWhiteSpace($AapServiceIp)) {
+    throw 'AAP route and service IP are required for the portal host alias patch'
+  }
+
+  return (@{
+    spec = @{
+      template = @{
+        spec = @{
+          hostAliases = @(
+            @{ ip = $AapServiceIp; hostnames = @($AapRoute) }
+          )
+        }
+      }
+    }
+  } | ConvertTo-Json -Depth 6 -Compress)
+}
+
 function Update-AapPortalAapRouteHostAlias {
   param(
     [Parameter(Mandatory)][string]$AapNamespace,
@@ -1198,17 +1221,7 @@ function Update-AapPortalAapRouteHostAlias {
     return
   }
 
-  $patch = (@{
-    spec = @{
-      template = @{
-        spec = @{
-          hostAliases = @(
-            @{ ip = $aapIp; hostnames = @($aapRoute) }
-          )
-        }
-      }
-    }
-  } | ConvertTo-Json -Depth 6 -Compress)
+  $patch = New-AapPortalAapRouteHostAliasPatch -AapRoute $aapRoute -AapServiceIp $aapIp
   Invoke-AapOcPatch @('patch', 'deployment', $release, '-n', $PortalNamespace) -Patch $patch | Out-Null
 
   Write-Host '  Restarting portal pod to apply host alias...'

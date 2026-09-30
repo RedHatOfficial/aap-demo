@@ -61,6 +61,10 @@ function Get-AapParsedCliArgs {
     Reset        = $false
 
     Ai           = $false
+    SkipCache    = $false
+    RefreshCatalog = $false
+    PurgeData    = $false
+    PurgeCreds   = $false
 
     Positional   = [System.Collections.Generic.List[string]]::new()
 
@@ -77,6 +81,10 @@ function Get-AapParsedCliArgs {
       '^--reset$' { $parsed.Reset = $true; continue }
 
       '^--ai$' { $parsed.Ai = $true; continue }
+      '^--skip-cache$' { $parsed.SkipCache = $true; continue }
+      '^--refresh-catalog$' { $parsed.RefreshCatalog = $true; continue }
+      '^--purge-data$' { $parsed.PurgeData = $true; continue }
+      '^--purge-creds$' { $parsed.PurgeCreds = $true; continue }
 
       '^-Namespace=(.+)$' { $parsed.Namespace = $Matches[1]; continue }
 
@@ -200,7 +208,11 @@ try {
 
     'stop' { Invoke-AapDemoStop }
 
-    'destroy' { Invoke-AapDemoDestroy -Reset:$cli.Reset }
+    'start' { Invoke-AapDemoStart }
+
+    'wire' { Invoke-AapDemoWire }
+
+    'destroy' { Invoke-AapDemoDestroy -Reset:$cli.Reset -SkipCache:$cli.SkipCache }
 
     'clean' {
 
@@ -269,6 +281,12 @@ try {
       $params = @{}
       if ($addon) { $params.Addon = $addon }
       if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
+      $addonArgs = @($cli.Positional | Select-Object -Skip 1)
+      if ($cli.Force) { $addonArgs += '--force' }
+      if ($cli.RefreshCatalog) { $addonArgs += '--refresh-catalog' }
+      if ($cli.PurgeData) { $addonArgs += '--purge-data' }
+      if ($cli.PurgeCreds) { $addonArgs += '--purge-creds' }
+      if ($addonArgs.Count -gt 0) { $params.AddonArgs = $addonArgs }
       Invoke-AapDemoEnable @params
 
     }
@@ -280,6 +298,11 @@ try {
       $params = @{}
       if ($addon) { $params.Addon = $addon }
       if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
+      $addonArgs = @($cli.Positional | Select-Object -Skip 1)
+      if ($cli.Force) { $addonArgs += '--force' }
+      if ($cli.PurgeData) { $addonArgs += '--purge-data' }
+      if ($cli.PurgeCreds) { $addonArgs += '--purge-creds' }
+      if ($addonArgs.Count -gt 0) { $params.AddonArgs = $addonArgs }
       Invoke-AapDemoDisable @params
 
     }

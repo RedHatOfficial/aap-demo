@@ -1,7 +1,8 @@
 function Invoke-AapDemoEnable {
   param(
     [string]$Addon = $null,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$AddonArgs = @()
   )
 
   if (-not $Addon) {
@@ -27,17 +28,31 @@ function Invoke-AapDemoEnable {
   }
 
   Write-Host "Enabling addon: $Addon"
-  Invoke-AapEnsureClusterReady
-  Invoke-AapAddonEnable -Addon $Addon -Namespace $Namespace
-  Add-AapAddon $Addon
-  $addons = (Get-AapAddonsList) -join ','
-  Write-AapStep "Saved to config: ADDONS=$addons"
+  $oneShot = $Addon -eq 'local-cache' -and $AddonArgs.Count -gt 0 -and
+    $AddonArgs[0].ToLowerInvariant() -in @('load', 'clear')
+  if (-not ($oneShot -and $AddonArgs[0].ToLowerInvariant() -eq 'clear')) {
+    Invoke-AapEnsureClusterReady
+  }
+  Invoke-AapAddonEnable -Addon $Addon -Namespace $Namespace -ScriptArgs $AddonArgs
+  if (-not $oneShot) {
+    try {
+      Invoke-AapDemoWire -Namespace $Namespace -Quiet
+    } catch {
+      Write-AapWarn "Addon wiring skipped: $($_.Exception.Message)"
+    }
+  }
+  if (-not $oneShot) {
+    Add-AapAddon $Addon
+    $addons = (Get-AapAddonsList) -join ','
+    Write-AapStep "Saved to config: ADDONS=$addons"
+  }
 }
 
 function Invoke-AapDemoDisable {
   param(
     [string]$Addon = $null,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$AddonArgs = @()
   )
 
   if (-not $Addon) {
@@ -55,9 +70,52 @@ function Invoke-AapDemoDisable {
 
   Write-Host "Disabling addon: $Addon"
   Invoke-AapEnsureClusterReady
-  Invoke-AapAddonDisable -Addon $Addon -Namespace $Namespace
+  Invoke-AapAddonDisable -Addon $Addon -Namespace $Namespace -ScriptArgs $AddonArgs
   Remove-AapAddon $Addon
   Write-AapStep 'Removed from config'
+}
+
+function Invoke-AapDemoStart {
+  [CmdletBinding()]
+  param()
+
+  Write-Host ''
+  Write-Host 'aap-demo start - Starting OpenShift Local...' -ForegroundColor Cyan
+  Write-Host ''
+
+  $crc = Get-AapCrcStatus
+  if ([string]$crc.crcStatus -eq 'Unknown') {
+    throw 'No cluster found. Run: aap-demo create'
+  }
+  if ([string]$crc.crcStatus -eq 'Stopped') {
+    Invoke-AapCrcStart
+  } else {
+    Write-AapStep 'CRC is already running'
+  }
+
+  Sync-AapKubeconfig -Quiet
+  Initialize-AapKubeEnvironment
+  if ((Invoke-AapOcQuiet @('get', 'configmap', 'dns-default', '-n', 'openshift-dns')) -eq 0) {
+    Set-AapCoreDns -RouteDomain 'apps.127.0.0.1.nip.io'
+    Write-AapStep 'CoreDNS configuration refreshed'
+  }
+  Set-AapIngressCaEnvFromSaved
+  Write-AapStep 'OpenShift Local started'
+}
+
+function Invoke-AapDemoWire {
+  [CmdletBinding()]
+  param(
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [switch]$Quiet
+  )
+
+  if (-not $Quiet) {
+    Write-Host ''
+    Write-Host 'aap-demo wire - Applying addon integrations...' -ForegroundColor Cyan
+    Write-Host ''
+  }
+  Invoke-AapAoWire -Quiet:$Quiet
 }
 
 function Write-AapClusterSummary {
@@ -94,12 +152,15 @@ function Invoke-AapDemoStop {
   if (-not (Invoke-AapCrcStop)) {
     throw 'crc stop failed'
   }
-  Write-Host 'To restart: aap-demo deploy'
+  Write-Host 'To restart: aap-demo start'
 }
 
 function Invoke-AapDemoDestroy {
   [CmdletBinding()]
-  param([switch]$Reset)
+  param(
+    [switch]$Reset,
+    [switch]$SkipCache
+  )
 
   Write-Host ''
   Write-Host 'aap-demo destroy - Deleting CRC cluster...' -ForegroundColor Cyan
@@ -110,6 +171,9 @@ function Invoke-AapDemoDestroy {
   Write-Host '  All PVC storage will be LOST'
   Write-Host '  All deployed applications will be removed'
   Write-Host '  You will need to redeploy AAP from scratch'
+  if ($SkipCache) {
+    Write-Host '  Local image cache handling skipped (--skip-cache)' -ForegroundColor Yellow
+  }
   Write-Host ''
   Wait-AapUserContinue
 
