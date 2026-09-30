@@ -1,0 +1,10 @@
+---
+# Helm is not included in the standard AAP execution environment. Download a
+# pinned client into the job's writable /tmp area so kubernetes.core.helm can
+# run entirely inside AAP.
+
+apme_helm_version: "3.15.4"
+apme_helm_install_dir: "/tmp/apme-helm"
+apme_helm_binary: "{{ apme_helm_install_dir }}/helm"
+apme_helm_archive: "/tmp/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"
+apme_helm_download_url: "https://get.helm.sh/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"

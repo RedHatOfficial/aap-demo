@@ -29,7 +29,7 @@ authentication.
 
 - `kubectl` or `oc`
 - `python3` (3.8+)
-- `helm` 3.10+ (portal Helm chart — auto-installed via brew/dnf when missing)
+- AAP execution environment with network access to `get.helm.sh` (the playbook bootstraps a pinned Helm client)
 - AAP deployed (`aap-demo deploy`)
 
 The addon uses the portal Helm chart's standard RHDH image and delivers the APME plugins
@@ -366,27 +366,17 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 2. Re-push the bundled OCI archive by setting `apme_oci_push_force: true`
 3. Re-deploy: `aap-demo enable apme-eap`
 
-### Helm not installed
+### Helm bootstrap
 
 **Symptom**: Playbook fails with `Failed to find required executable 'helm'` or `helm: command not found`
 
-**Solution**: Re-run enable — helm is auto-installed when Homebrew (`brew`) or `dnf` is available:
+**Solution**: Re-run enable. The AAP job downloads the pinned Helm client into its writable `/tmp` area; no Windows or host Helm installation is required.
 
 ```bash
 aap-demo enable apme-eap
 ```
 
-Or install manually:
-
-```bash
-# macOS
-brew install helm
-
-# RHEL/Fedora
-sudo dnf install helm
-```
-
-Verify: `helm version --short` (requires 3.10+).
+The selected AAP execution environment must be able to reach `https://get.helm.sh`.
 
 ### Helm timeout
 

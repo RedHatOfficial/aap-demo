@@ -84,6 +84,7 @@
         mode: "0755"
 
   roles:
+    - role: apme_helm_bootstrap
     - role: openshift_apme_setup
     - role: apme_pah_integration
     - role: aap_apme_prerequisites
