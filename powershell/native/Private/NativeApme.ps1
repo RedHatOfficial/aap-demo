@@ -214,7 +214,7 @@ function New-AapApmeExtraVars {
   $github = Get-AapApmeGithubSettings
   $vars = @{
     openshift_api_url = 'https://kubernetes.default.svc:443'; openshift_project_name = 'apme'; openshift_cluster_domain = $domain; openshift_validate_certs = $false; openshift_token = $OpenShiftToken
-    aap_host = "https://$Route"; aap_token = $AapToken; aap_organization = 'Default'
+    aap_host = "https://$Route"; aap_api_host = 'http://aap.aap-operator.svc.cluster.local'; aap_token = $AapToken; aap_organization = 'Default'
     portal_helm_chart_repo = 'openshift-helm-charts'; portal_helm_chart_repo_url = 'https://charts.openshift.io/'; portal_helm_chart_name = 'redhat-rhaap-portal'; portal_helm_chart_version = '2.2.3'; portal_helm_release_name = 'redhat-rhaap-portal'; portal_helm_install_timeout = 1800
     apme_helm_chart_repo = 'apme'; apme_helm_chart_repo_url = 'https://ansible.github.io/apme'; apme_helm_chart_name = 'apme'; apme_helm_chart_version = ''; apme_helm_chart_fallback_version = '0.1.8'; apme_helm_release_name = 'apme'
     # The AAP execution pod reaches the registry by service DNS; using the
