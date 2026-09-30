@@ -14,6 +14,14 @@
 ### Description of Changes
 <!-- Provide a detailed list of changes, including what was modified, added, or removed. If applicable, mention related issue numbers (e.g., Fixes #123). -->
 
+## Test Plan
+<!-- List the commands and scenarios used to verify this change. Include the results for each check. -->
+
+- [ ] Shell syntax and focused unit tests pass
+- [ ] `aap-demo help` / command-specific dry run passes
+- [ ] Clean install, deployment, and addon lifecycle tested when applicable
+- [ ] `Closes #<issue>` or `Fixes #<issue>` is included when this PR resolves an issue
+
 
 ## Checklist
 - [ ] I have tested this change and it works as expected
