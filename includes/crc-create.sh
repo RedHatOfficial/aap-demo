@@ -644,12 +644,37 @@ else
   sed -e "s/__DEFAULT_SC__/${DEFAULT_SC}/g" \
     -e "s/__NFS_BACKING_STORAGE_SIZE__/${NFS_BACKING_STORAGE_SIZE}/g" \
     "${SCRIPT_DIR}/config/manifests/nfs-server.yaml" | kubectl apply -f -
-  echo "  Waiting for NFS server..."
-  kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s 2>/dev/null || {
+
+  wait_for_nfs_server() {
+    if kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s 2>/dev/null; then
+      return 0
+    fi
+
+    local nfs_events
+    nfs_events=$(kubectl get events -n nfs-storage \
+      --field-selector involvedObject.name=nfs-backing-storage \
+      --sort-by=.metadata.creationTimestamp \
+      -o jsonpath='{range .items[*]}{.reason}{" "}{.message}{"\n"}{end}' 2>/dev/null || true)
+
+    if grep -Eiq 'NotEnoughCapacity|no enough space left on VG|ResourceExhausted|requested storage .*greater than available capacity' <<<"$nfs_events"; then
+      echo "ERROR: NFS backing PVC could not be provisioned"
+      echo "  Requested size: ${NFS_BACKING_STORAGE_SIZE}"
+      echo "$nfs_events" | tail -n 5 | sed 's/^/  /'
+      echo "  Increase CRC_DISK and/or CRC_PV_SIZE, then recreate the CRC cluster before retrying."
+      return 1
+    fi
+
     echo "  Waiting for NFS backing PVC to bind..."
     sleep 10
-    kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s
+    if ! kubectl wait --for=condition=Available deployment/nfs-server -n nfs-storage --timeout=120s; then
+      echo "ERROR: NFS server did not become ready"
+      kubectl describe pvc nfs-backing-storage -n nfs-storage 2>/dev/null | tail -n 20 || true
+      return 1
+    fi
   }
+
+  echo "  Waiting for NFS server..."
+  wait_for_nfs_server
   # Kubelet resolves NFS server by IP (can't use cluster DNS for mount)
   NFS_IP=$(kubectl get svc nfs-server -n nfs-storage -o jsonpath='{.spec.clusterIP}')
   sed "s/__NFS_SERVER_IP__/${NFS_IP}/g" "${SCRIPT_DIR}/config/manifests/nfs-provisioner.yaml" | kubectl apply -f -
