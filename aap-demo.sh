@@ -44,6 +44,8 @@ source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 # shellcheck source=includes/ao-llm.sh
 source "${SCRIPT_DIR}/includes/ao-llm.sh"
+# shellcheck source=includes/json-utils.sh
+source "${SCRIPT_DIR}/includes/json-utils.sh"
 
 # shellcheck source=includes/persistent-crio-store.sh
 source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
@@ -682,8 +684,9 @@ _verify_crc_version() {
   local installed_version
 
   # Get installed CRC version from status
-  installed_version=$(crc status -o json 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('openshiftVersion',''))" 2>/dev/null \
+  local _crc_status_json
+  _crc_status_json=$(crc status -o json 2>/dev/null || echo '{}')
+  installed_version=$(aap_demo_json_value openshiftVersion "$_crc_status_json" 2>/dev/null \
     | grep -oE '^[0-9]+\.[0-9]+' || echo "")
 
   if [ -z "$installed_version" ]; then
@@ -1159,11 +1162,12 @@ cmd_diagnose() {
   # Cluster connectivity
   # =========================================================================
   echo "Cluster:"
-  local crc_state
-  crc_state=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('crcStatus','unknown'))" 2>/dev/null || echo "unknown")
+  local crc_state status_json
+  status_json=$(crc status -o json 2>/dev/null || echo '{}')
+  crc_state=$(aap_demo_json_value crcStatus "$status_json" 2>/dev/null || echo "unknown")
   if [ "$crc_state" = "Running" ]; then
     local ms_version
-    ms_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('openshiftVersion',''))" 2>/dev/null || echo "")
+    ms_version=$(aap_demo_json_value openshiftVersion "$status_json" 2>/dev/null || echo "")
     _check_pass "OpenShift Local running"
   elif [ "$crc_state" = "Stopped" ]; then
     _check_fail "OpenShift Local is stopped — run: crc start"
@@ -1209,7 +1213,7 @@ cmd_diagnose() {
 
   # Check disk usage
   local disk_pct
-  disk_pct=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); u=d.get('diskUse',0); t=d.get('diskSize',1); print(int(u/t*100))" 2>/dev/null || echo "0")
+  disk_pct=$(aap_demo_json_disk_percent "$status_json" 2>/dev/null || echo "0")
   if [ "$disk_pct" -gt 90 ]; then
     _check_fail "Disk usage: ${disk_pct}% — critically low space"
   elif [ "$disk_pct" -gt 80 ]; then
@@ -2230,7 +2234,8 @@ deploy_latest() {
   AAP_CHANNEL="stable-2.7"
   # Auto-detect OCP version from CRC status (e.g. 4.22.0 → 4.22)
   if [ -z "${AAP_OCP_VERSION:-}" ]; then
-    _crc_ocp_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('openshiftVersion',''))" 2>/dev/null || true)
+    _crc_status_json=$(crc status -o json 2>/dev/null || echo '{}')
+    _crc_ocp_version=$(aap_demo_json_value openshiftVersion "$_crc_status_json" 2>/dev/null || true)
     if [[ "$_crc_ocp_version" =~ ^([0-9]+\.[0-9]+) ]]; then
       AAP_OCP_VERSION="${BASH_REMATCH[1]}"
     else
@@ -2433,7 +2438,9 @@ setup_namespace() {
     # Force-clear if still stuck
     if [ "$_ns_status" = "Terminating" ]; then
       echo "  Force-clearing stuck namespace..."
-      kubectl get namespace "$NAMESPACE" -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); d[\"spec\"][\"finalizers\"]=[];print(json.dumps(d))" | kubectl replace --raw "/api/v1/namespaces/$NAMESPACE/finalize" -f - 2>/dev/null || true
+      kubectl get namespace "$NAMESPACE" -o json 2>/dev/null \
+        | aap_demo_json_clear_namespace_finalizers \
+        | kubectl replace --raw "/api/v1/namespaces/$NAMESPACE/finalize" -f - 2>/dev/null || true
       sleep 2
     fi
   fi

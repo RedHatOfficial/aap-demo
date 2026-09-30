@@ -25,6 +25,8 @@ source "${SCRIPT_DIR}/includes/infra-api.sh"
 source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 # shellcheck source=includes/persistent-crio-store.sh
 source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
+# shellcheck source=includes/json-utils.sh
+source "${SCRIPT_DIR}/includes/json-utils.sh"
 
 # Colors
 _RED='\033[0;31m'
@@ -72,12 +74,8 @@ _wait_for_crc_stable() {
 
   for attempt in $(seq 1 "$max_attempts"); do
     status_json=$(crc status --output json 2>/dev/null || true)
-    crc_status=$(printf '%s\n' "$status_json" | python3 -c \
-      'import json,sys; print(json.load(sys.stdin).get("crcStatus", ""))' \
-      2>/dev/null || true)
-    openshift_status=$(printf '%s\n' "$status_json" | python3 -c \
-      'import json,sys; print(json.load(sys.stdin).get("openshiftStatus", ""))' \
-      2>/dev/null || true)
+    crc_status=$(aap_demo_json_value crcStatus "$status_json" 2>/dev/null || true)
+    openshift_status=$(aap_demo_json_value openshiftStatus "$status_json" 2>/dev/null || true)
 
     api_healthy=false
     if [ "$openshift_status" = "Running" ]; then
@@ -288,7 +286,7 @@ fi
 
 # Check if already running
 CRC_STATUS_JSON=$(crc status --output json 2>/dev/null || echo '{}')
-CRC_STATUS=$(echo "$CRC_STATUS_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('crcStatus','Unknown'))" 2>/dev/null || echo "Unknown")
+CRC_STATUS=$(aap_demo_json_value crcStatus "$CRC_STATUS_JSON" 2>/dev/null || echo "Unknown")
 
 if [ "$CRC_STATUS" = "Running" ]; then
   echo "CRC is already running"

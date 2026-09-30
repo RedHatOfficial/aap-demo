@@ -8,6 +8,9 @@
 #
 # =============================================================================
 
+# shellcheck source=includes/json-utils.sh
+source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/includes/json-utils.sh"
+
 # CRC SSH port
 CRC_SSH_PORT=2222
 
@@ -153,7 +156,9 @@ _infra_crc_get_state() {
 
   # Check CRC status
   local crc_status
-  crc_status=$(_crc_status_json | python3 -c "import sys,json; print(json.load(sys.stdin).get('crcStatus','Unknown'))" 2>/dev/null) || crc_status="Unknown"
+  local crc_json
+  crc_json=$(_crc_status_json || true)
+  crc_status=$(aap_demo_json_value crcStatus "$crc_json" 2>/dev/null) || crc_status="Unknown"
   if [ "$crc_status" = "Unknown" ]; then
     crc_status=$(_crc_status_text | _crc_state_from_text 2>/dev/null) || crc_status="Unknown"
     [ -n "$crc_status" ] || crc_status="Unknown"
