@@ -1,8 +1,6 @@
 $Script:AapAvailableAddons = @(
   'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
-  'local-cache', 'product-demos-base', 'product-demos', 'product-demo-linux',
-  'product-demo-windows', 'product-demo-network', 'product-demo-cloud',
-  'product-demo-openshift', 'product-demo-satellite', 'opa', 'ollama'
+  'local-cache', 'product-demos', 'opa', 'ollama'
 )
 
 function Invoke-AapAddonDeployScript {
@@ -107,13 +105,6 @@ function Invoke-AapAddonEnable {
       Add-AapAddon 'ollama'
     }
   }
-  if ($Addon -match '^product-demo' -and $Addon -ne 'product-demos-base' -and
-      $savedAddons -notcontains 'product-demos-base') {
-    Write-AapStep 'Product demo domains require product-demos-base; enabling the dependency first'
-    Invoke-AapAddonDeployScript -Addon 'product-demos-base' -Namespace $Namespace
-    Add-AapAddon 'product-demos-base'
-  }
-
   switch ($Addon) {
     'mcp-server' {
       if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for mcp-server' }

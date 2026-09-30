@@ -96,8 +96,8 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 
 Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
 `setup-pah`, `ao` (alias `ao-eap`), `local-cache`,
-`product-demos-base`, `product-demos`, the Linux/Windows/Network/Cloud/OpenShift/
-Satellite product-demo addons, `opa`, and `ollama`. AO and Ollama use native
+`product-demos`, `opa`, and `ollama`. Product Demos is exposed as one aggregate
+deployment on Windows. AO and Ollama use native
 PowerShell handlers. AO-to-AAP/MCP/Ollama wiring and optional AO demo provisioning/import remain native when Python is installed. AO accepts `--delete` and `--purge-data`, while Ollama accepts
 `--delete` and reads `OLLAMA_MODEL`, `OLLAMA_STORAGE_CLASS`, and
 `OLLAMA_STORAGE_SIZE` from the environment.
