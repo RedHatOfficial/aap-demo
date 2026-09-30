@@ -10,6 +10,8 @@ $PrivateDir = Join-Path $PSScriptRoot 'Private'
 
 . (Join-Path $PrivateDir 'NativeAddons.ps1')
 
+. (Join-Path $PrivateDir 'Prerequisites.ps1')
+
 . (Join-Path $PrivateDir 'NativeAo.ps1')
 
 . (Join-Path $PrivateDir 'Create.ps1')
@@ -95,5 +97,9 @@ Export-ModuleMember -Function @(
   'Invoke-AapGitBashCli'
 
   'Invoke-AapGitBashInteractive'
+
+  'Get-AapWindowsDeployPrerequisiteFailures'
+
+  'Assert-AapWindowsDeployPrerequisites'
 
 )

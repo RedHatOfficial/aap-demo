@@ -68,6 +68,13 @@ function Assert-AapWindowsAddonPolicy {
 function Invoke-AapWindowsBashCli {
   param([Parameter(Mandatory)][string[]]$CliArguments)
 
+  $deployCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all')
+  if (@($CliArguments | Where-Object {
+      $deployCommands -contains $_.ToLowerInvariant()
+    }).Count -gt 0) {
+    Assert-AapWindowsDeployPrerequisites
+  }
+
   $interactiveCommands = @(
     'create', 'deploy', 'deploy-all', 'redeploy', 'redeploy-all',
     'setup', 'enable', 'disable', 'wire', 'repair', 'start', 'stop',
@@ -95,7 +102,7 @@ try {
   Assert-AapWindowsAddonPolicy -CliArguments $Arguments
   Invoke-AapWindowsBashCli -CliArguments $Arguments
 } catch {
-  Write-Error $_
+  Write-Error $_.Exception.Message
   exit 1
 }
 
