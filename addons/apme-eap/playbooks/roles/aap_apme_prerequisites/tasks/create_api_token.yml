@@ -26,7 +26,7 @@
 
 - name: Create write-scope API token in AAP  # noqa: var-naming[no-role-prefix]
   ansible.builtin.uri:
-    url: "{{ aap_host_normalized }}/api/gateway/v1/tokens/"
+    url: "{{ aap_api_host_normalized }}/api/gateway/v1/tokens/"
     method: POST
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"

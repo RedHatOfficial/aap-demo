@@ -9,10 +9,10 @@
 
 - name: Normalize AAP host URL for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    aap_host_normalized: "{{ aap_host_normalized | default(aap_host | regex_replace('/$', '')) }}"
+    aap_api_host_normalized: "{{ aap_api_host_normalized | default(aap_api_host | default(aap_host) | regex_replace('/$', '')) }}"
   when:
     - apme_pah_seed_apme_galaxy_servers | bool
-    - aap_host_normalized is not defined or aap_host_normalized | length == 0
+      - aap_api_host_normalized is not defined or aap_api_host_normalized | length == 0
 
 - name: Load AAP API token from portal secret when not in vars  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s_info:
@@ -42,11 +42,11 @@
 - name: Validate AAP host for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
   ansible.builtin.assert:
     that:
-      - aap_host_normalized is defined
-      - aap_host_normalized | length > 0
+      - aap_api_host_normalized is defined
+      - aap_api_host_normalized | length > 0
       - aap_api_token is defined
       - aap_api_token | length > 0
-    fail_msg: "aap_host_normalized and aap_api_token are required to seed APME galaxy servers"
+    fail_msg: "aap_api_host_normalized and aap_api_token are required to seed APME galaxy servers"
   when: apme_pah_seed_apme_galaxy_servers | bool
 
 - name: Resolve APME gateway pod for in-cluster API calls  # noqa: var-naming[no-role-prefix]
@@ -99,7 +99,7 @@
   ansible.builtin.set_fact:
     apme_pah_desired_galaxy_servers:
       - name: automation_hub
-        url: "{{ aap_host_normalized }}/api/galaxy/"
+        url: "{{ aap_api_host_normalized }}/api/galaxy/"
         token: "{{ aap_api_token }}"
         auth_url: ""
       - name: community
