@@ -6,6 +6,9 @@
 
 **Date:** 2026-09-26
 
+> This hybrid/native plan is superseded for the current implementation by
+> [`windows-git-bash-wrapper.md`](windows-git-bash-wrapper.md) and ADR-031.
+
 ## Goal
 
 Bring the PowerShell CLI and its Windows addon workflow up to date with the current Bash CLI while preserving the native Windows experience for the core cluster lifecycle. Fleet remains out of scope for this effort.

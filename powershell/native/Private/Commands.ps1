@@ -34,7 +34,7 @@ function Invoke-AapDemoEnable {
     Invoke-AapEnsureClusterReady
   }
   Invoke-AapAddonEnable -Addon $Addon -Namespace $Namespace -ScriptArgs $AddonArgs
-  if (-not $oneShot) {
+  if (-not $oneShot -and -not $Script:AapAddonDelegatedToBash) {
     try {
       Invoke-AapDemoWire -Namespace $Namespace -Quiet
     } catch {

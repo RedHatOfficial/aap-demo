@@ -1,6 +1,6 @@
 # ADR-030: Native PowerShell Addon Execution
 
-**Status**: Proposed
+**Status**: Superseded by [ADR-031](031-windows-git-bash-wrapper.md)
 
 **Date**: 2026-09-26
 

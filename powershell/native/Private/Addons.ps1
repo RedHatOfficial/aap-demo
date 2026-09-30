@@ -11,7 +11,27 @@ function Invoke-AapAddonDeployScript {
     [hashtable]$Environment = @{}
   )
 
-  throw "Addon '$Addon' does not have a native PowerShell implementation yet. See docs/plans/windows-native-addon-port.md."
+  $isDelete = @($ScriptArgs) -contains '--delete'
+  $forwardedArgs = @($ScriptArgs | Where-Object { $_ -ne '--delete' })
+  $arguments = if ($isDelete) {
+    @('disable', $Addon) + $forwardedArgs
+  } else {
+    @('enable', $Addon) + $forwardedArgs
+  }
+
+  $bashEnvironment = @{}
+  foreach ($key in $Environment.Keys) { $bashEnvironment[$key] = $Environment[$key] }
+  if (-not $bashEnvironment.ContainsKey('NAMESPACE') -and $Namespace) {
+    $bashEnvironment.NAMESPACE = $Namespace
+  }
+
+  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $arguments -Environment $bashEnvironment
+  if ($result.Stdout) { Write-Host $result.Stdout.TrimEnd() }
+  if (-not $result.Success) {
+    $detail = if ($result.Stderr) { $result.Stderr.Trim() } else { $result.Stdout.Trim() }
+    throw "Git Bash addon '$Addon' failed (exit $($result.ExitCode)): $detail"
+  }
+  $Script:AapAddonDelegatedToBash = $true
 }
 function Invoke-AapEnsureClusterReady {
   Invoke-AapEnsureCluster
@@ -89,42 +109,8 @@ function Invoke-AapAddonEnable {
     [string[]]$ScriptArgs = @()
   )
 
-  $savedAddons = @(Get-AapAddonsList)
-  if ($Addon -eq 'ao' -and $savedAddons -notcontains 'mcp-server') {
-    Write-AapStep 'AO requires mcp-server; enabling the dependency first'
-    Invoke-AapAddonEnable -Addon 'mcp-server' -Namespace $Namespace
-    Add-AapAddon 'mcp-server'
-  }
-  if ($Addon -eq 'ao') {
-    $provider = $env:AO_LLM_PROVIDER
-    if (-not $provider) { $provider = Get-AapConfigValue 'AO_LLM_PROVIDER' }
-    if (-not $provider) { $provider = 'ollama' }
-    if ($provider.ToLowerInvariant() -eq 'ollama' -and $savedAddons -notcontains 'ollama') {
-      Write-AapStep 'AO uses Ollama by default; enabling the dependency first'
-      Invoke-AapOllamaAddonNative -Namespace $Namespace
-      Add-AapAddon 'ollama'
-    }
-  }
-  switch ($Addon) {
-    'mcp-server' {
-      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for mcp-server' }
-      Invoke-AapDeployMcpServerAddon -Namespace $Namespace
-    }
-    'portal' {
-      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for portal' }
-      Invoke-AapDeployPortalAddon -Namespace $Namespace
-    }
-    'ao' { Invoke-AapAoAddonNative -Namespace 'automation-orchestrator' -ScriptArgs $ScriptArgs }
-    'ollama' { Invoke-AapOllamaAddonNative -Namespace $Namespace -ScriptArgs $ScriptArgs }
-    'local-cache' { Invoke-AapLocalCacheAddonNative -ScriptArgs $ScriptArgs }
-    default {
-      $environment = @{}
-      if ($Addon -eq 'ao') {
-        $environment.AO_LLM_PROVIDER = $provider
-      }
-      Invoke-AapAddonDeployScript -Addon $Addon -Namespace $Namespace -ScriptArgs $ScriptArgs -Environment $environment
-    }
-  }
+  $Script:AapAddonDelegatedToBash = $false
+  Invoke-AapAddonDeployScript -Addon $Addon -Namespace $Namespace -ScriptArgs $ScriptArgs
 }
 
 function Get-AapMcpServerRouteHost {
@@ -208,21 +194,6 @@ function Invoke-AapAddonDisable {
     [string[]]$ScriptArgs = @()
   )
 
-  switch ($Addon) {
-    'mcp-server' {
-      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for mcp-server' }
-      Invoke-AapRemoveMcpServerAddon -Namespace $Namespace
-    }
-    'portal' {
-      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for portal' }
-      Invoke-AapRemovePortalAddon -Namespace $Namespace
-    }
-    'ao' { Invoke-AapAoAddonNative -Namespace 'automation-orchestrator' -ScriptArgs (@('--delete') + @($ScriptArgs)) }
-    'ollama' { Invoke-AapOllamaAddonNative -Namespace $Namespace -ScriptArgs (@('--delete') + @($ScriptArgs)) }
-    'local-cache' { Invoke-AapLocalCacheAddonNative -ScriptArgs @('clear') }
-    default {
-      $args = @('--delete') + @($ScriptArgs)
-      Invoke-AapAddonDeployScript -Addon $Addon -Namespace $Namespace -ScriptArgs $args
-    }
-  }
+  $Script:AapAddonDelegatedToBash = $false
+  Invoke-AapAddonDeployScript -Addon $Addon -Namespace $Namespace -ScriptArgs (@('--delete') + @($ScriptArgs))
 }

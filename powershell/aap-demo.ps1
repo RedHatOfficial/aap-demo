@@ -10,7 +10,8 @@
 
 .DESCRIPTION
 
-  All commands run natively in PowerShell.
+  PowerShell is the Windows entrypoint and delegates supported commands to the
+  repository Bash CLI through Git for Windows.
 
 #>
 
@@ -34,7 +35,65 @@ $ErrorActionPreference = 'Stop'
 
 $ModuleRoot = Join-Path $PSScriptRoot 'native'
 
-Import-Module (Join-Path $ModuleRoot 'AapDemo.psm1') -Force
+$AapDemoModule = Import-Module (Join-Path $ModuleRoot 'AapDemo.psm1') -Force -PassThru
+
+$WindowsBlockedAddons = @(
+  'apme', 'apme-eap', 'fleet',
+  'product-demos-base', 'product-demo-linux', 'product-demo-windows',
+  'product-demo-network', 'product-demo-cloud', 'product-demo-openshift',
+  'product-demo-satellite'
+)
+
+function Assert-AapWindowsAddonPolicy {
+  param([string[]]$CliArguments)
+
+  $commandIndex = -1
+  for ($i = 0; $i -lt $CliArguments.Count; $i++) {
+    if ($CliArguments[$i].ToLowerInvariant() -in @('enable', 'disable', 'fleet')) {
+      $commandIndex = $i
+      break
+    }
+  }
+  if ($commandIndex -lt 0) { return }
+  if ($CliArguments[$commandIndex].ToLowerInvariant() -eq 'fleet') {
+    throw "Addon 'fleet' is not available through the Windows wrapper. Use the supported Bash/Linux workflow for this addon."
+  }
+  if ($commandIndex + 1 -ge $CliArguments.Count) { return }
+  $addon = $CliArguments[$commandIndex + 1].ToLowerInvariant()
+  if ($WindowsBlockedAddons -contains $addon) {
+    throw "Addon '$addon' is not available through the Windows wrapper. Use the supported Bash/Linux workflow for this addon."
+  }
+}
+
+function Invoke-AapWindowsBashCli {
+  param([Parameter(Mandatory)][string[]]$CliArguments)
+
+  $result = Invoke-AapGitBashCli -Arguments $CliArguments
+  if ($result.Success) { exit 0 }
+  $detail = if ($result.Stderr) { $result.Stderr.Trim() } else { $result.Stdout.Trim() }
+  Write-Error "Git Bash CLI failed (exit $($result.ExitCode)): $detail"
+  $exitCode = [int]$result.ExitCode
+  if ($exitCode -le 0) { $exitCode = 1 }
+  exit $exitCode
+}
+
+if (-not $Arguments -or $Arguments.Count -eq 0 -or
+    $Arguments[0].ToLowerInvariant() -in @('help', '--help', '-h')) {
+  Get-AapDemoHelp
+  exit 0
+}
+
+try {
+  Assert-AapWindowsAddonPolicy -CliArguments $Arguments
+  Invoke-AapWindowsBashCli -CliArguments $Arguments
+} catch {
+  Write-Error $_
+  exit 1
+}
+
+# The legacy native dispatcher below remains available for module-level
+# development and future migration, but the Windows launcher exits through the
+# single Git Bash path above.
 
 
 

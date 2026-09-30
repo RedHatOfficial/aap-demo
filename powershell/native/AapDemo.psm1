@@ -92,4 +92,6 @@ Export-ModuleMember -Function @(
 
   'Invoke-AapNativeProcess'
 
+  'Invoke-AapGitBashCli'
+
 )

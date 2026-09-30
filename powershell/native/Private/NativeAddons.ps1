@@ -8,6 +8,45 @@ function Get-AapNativeExecutable {
   return $command.Source
 }
 
+function Get-AapGitBashExecutable {
+  $candidates = @(
+    (Join-Path ${env:ProgramFiles} 'Git\bin\bash.exe'),
+    (Join-Path ${env:LOCALAPPDATA} 'Programs\Git\bin\bash.exe'),
+    (Get-Command 'bash.exe' -ErrorAction SilentlyContinue).Source
+  )
+
+  foreach ($candidate in $candidates) {
+    if (-not $candidate -or -not (Test-Path -LiteralPath $candidate)) { continue }
+    if ($candidate -match '(?i)[\\/]Windows[\\/]System32[\\/]bash\.exe$') { continue }
+    return $candidate
+  }
+
+  throw 'Git Bash is required for Windows addon commands. Install Git for Windows and ensure bash.exe is available.'
+}
+
+function Invoke-AapGitBash {
+  param(
+    [Parameter(Mandatory)][string]$Command,
+    [string[]]$Arguments = @(),
+    [hashtable]$Environment = @{}
+  )
+
+  $bash = Get-AapGitBashExecutable
+  $result = Invoke-AapNativeProcess -FilePath $bash -ArgumentList (@('-lc', $Command, '--') + @($Arguments)) `
+    -Environment $Environment -WorkingDirectory $Script:AapDemoRepoRoot
+  return $result
+}
+
+function Invoke-AapGitBashCli {
+  param(
+    [Parameter(Mandatory)][string[]]$Arguments
+  )
+
+  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $Arguments
+  if ($result.Output) { Write-Host $result.Output.TrimEnd() }
+  return $result
+}
+
 function Get-AapKubernetesExecutable {
   $kubectl = Get-Command 'kubectl' -ErrorAction SilentlyContinue
   if ($kubectl) { return $kubectl.Source }

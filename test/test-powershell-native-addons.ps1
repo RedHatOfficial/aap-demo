@@ -1,4 +1,4 @@
-# Offline checks for native Ollama and Automation Orchestrator addon paths.
+# Offline checks for the Windows addon dispatch boundary.
 [CmdletBinding()]
 param()
 
@@ -6,9 +6,9 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $module = Import-Module (Join-Path $repoRoot 'powershell/native/AapDemo.psm1') -Force -PassThru
 
-foreach ($name in @('Invoke-AapOllamaAddonNative', 'Invoke-AapAoAddonNative', 'Invoke-AapAoWire')) {
+foreach ($name in @('Invoke-AapGitBash', 'Get-AapGitBashExecutable', 'Invoke-AapAddonDeployScript')) {
   if (-not (& $module { param($n) Get-Command $n -ErrorAction SilentlyContinue } $name)) {
-    throw "Missing native addon handler: $name"
+    throw "Missing Git Bash addon bridge command: $name"
   }
 }
 
@@ -42,27 +42,8 @@ try {
 }
 
 $dispatch = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Addons.ps1') -Raw
-if ($dispatch -notmatch "'ao'\s*\{\s*Invoke-AapAoAddonNative" -or
-    $dispatch -notmatch "'ollama'\s*\{\s*Invoke-AapOllamaAddonNative") {
-  throw 'Addon dispatcher must route AO and Ollama through native handlers'
-}
-
-$wireSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/NativeAoWire.ps1') -Raw
-if ($wireSource -match '(?im)\b(bash|wsl|sh)\b') {
-  throw 'Native AO wiring must not invoke Bash, WSL, or shell interpreters'
-}
-foreach ($name in @('aap-demo AAP', 'aap-demo MCP Server', 'aap-demo Ollama', 'credential_types', 'integrations')) {
-  if ($wireSource -notmatch [regex]::Escape($name)) {
-    throw "Native AO wiring is missing expected integration path: $name"
-  }
-}
-if ($dispatch -match "Invoke-AapAddonDeployScript\s+-Addon\s+'(?:ao|ollama)'") {
-  throw 'AO and Ollama must not fall back to the Bash addon dispatcher'
-}
-
-$ollamaSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/NativeAddons.ps1') -Raw
-if ($ollamaSource -notmatch "'ollama',\s*'pull'") {
-  throw 'Native Ollama implementation must pull the configured model'
+if ($dispatch -notmatch 'Invoke-AapGitBash' -or $dispatch -notmatch 'aap-demo\.sh') {
+  throw 'Addon dispatcher must route addon lifecycle commands through Git Bash'
 }
 $duration = & $module { ConvertTo-AapDurationSeconds -Value '1h30m' }
 if ($duration -ne 5400) { throw "Expected 1h30m to convert to 5400 seconds, got $duration" }

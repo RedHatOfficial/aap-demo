@@ -1,8 +1,9 @@
 # aap-demo on Windows (PowerShell)
 
 Install and run [aap-demo](../README.md) on Windows using PowerShell. Core lifecycle
-commands and the native addon handlers run in PowerShell. This native-port branch
-does not invoke Git Bash; addon families not yet ported report an explicit message.
+commands enter through PowerShell, which delegates execution to the repository's
+Git Bash CLI. Bash remains the single implementation for cluster lifecycle,
+addons, wiring, and cleanup so Windows follows the current cross-platform behavior.
 
 ## Requirements
 
@@ -12,7 +13,7 @@ does not invoke Git Bash; addon families not yet ported report an explicit messa
 | **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
 | **OpenShift CLI (`oc`)**    | Installed by `install.ps1` via winget when missing.                             |
 | **Red Hat pull secret**     | [Download](https://console.redhat.com/openshift/install/pull-secret)            |
-| **Git for Windows**         | Not required by the native PowerShell path.                                  |
+| **Git for Windows**         | Required; the wrapper runs `aap-demo.sh` through Git Bash.                    |
 | **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
 Optional for the core CLI: `python`, `jq` (some addons require them).
@@ -97,11 +98,9 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
 `setup-pah`, `ao` (alias `ao-eap`), `local-cache`,
 `product-demos`, `opa`, and `ollama`. Product Demos is exposed as one aggregate
-deployment on Windows. AO and Ollama use native
-PowerShell handlers. AO-to-AAP/MCP/Ollama wiring and optional AO demo provisioning/import remain native when Python is installed. AO accepts `--delete` and `--purge-data`, while Ollama accepts
-`--delete` and reads `OLLAMA_MODEL`, `OLLAMA_STORAGE_CLASS`, and
-`OLLAMA_STORAGE_SIZE` from the environment.
-`aap-demo diagnose --ai` is not yet implemented natively and reports that status.
+deployment on Windows. These commands are delegated to the same Bash addon
+scripts used on Linux and macOS. APME, Fleet, and the legacy Product Demo
+domain aliases remain unavailable through the Windows wrapper.
 
 ## Environment variables
 
@@ -167,12 +166,12 @@ Re-run from the repo directory:
 
 Do not move or delete the cloned repo after install — the launcher points at it.
 
-### Native addon not implemented yet
+### Git Bash addon delegation
 
-The native branch reports an explicit message for addon families that have not
-yet been ported from their Bash implementation. AO and Ollama are native; follow the progress in
-`docs/plans/windows-native-addon-port.md`; the compatibility branch remains
-available while the port is in progress.
+The PowerShell launcher discovers Git for Windows and forwards the original
+command, arguments, environment, exit code, and output to `aap-demo.sh`. Install
+Git for Windows or run the Bash CLI directly if the wrapper reports that Git Bash
+is unavailable.
 
 ### `oc` or `crc` not found
 
