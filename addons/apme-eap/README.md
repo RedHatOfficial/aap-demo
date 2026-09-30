@@ -34,7 +34,8 @@ authentication.
 
 The addon uses the portal Helm chart's standard RHDH image and delivers the APME plugins
 through the chart's runtime OCI plugin installer. The deploy bootstraps the local registry,
-pushes the bundled plugin archive with `skopeo`, and runs `install-dynamic-plugins` in the
+publishes the bundled plugin archive with the AAP execution environment's standard-library
+OCI publisher, and runs `install-dynamic-plugins` in the
 chart-provided init container.
 
 **Ansible installation** (auto-installed in venv):

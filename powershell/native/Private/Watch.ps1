@@ -124,6 +124,11 @@ function Invoke-AapDemoWatch {
       }
       Write-Host ''
       Write-AapSetupPahReminder
+      try {
+        Invoke-AapDemoWire -Namespace $Namespace -Quiet
+      } catch {
+        Write-AapWarn "Addon wiring skipped: $($_.Exception.Message)"
+      }
       return
     }
 

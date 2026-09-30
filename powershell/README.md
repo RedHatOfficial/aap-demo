@@ -1,7 +1,8 @@
 # aap-demo on Windows (PowerShell)
 
-Install and run [aap-demo](../README.md) on Windows using PowerShell. All commands
-run natively in PowerShell; only `diagnose --ai` uses Git Bash.
+Install and run [aap-demo](../README.md) on Windows using PowerShell. Core lifecycle
+commands and the native addon handlers run in PowerShell. This native-port branch
+does not invoke Git Bash; addon families not yet ported report an explicit message.
 
 ## Requirements
 
@@ -11,12 +12,16 @@ run natively in PowerShell; only `diagnose --ai` uses Git Bash.
 | **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
 | **OpenShift CLI (`oc`)**    | Installed by `install.ps1` via winget when missing.                             |
 | **Red Hat pull secret**     | [Download](https://console.redhat.com/openshift/install/pull-secret)            |
-| **Git for Windows**         | Optional. Only needed for `diagnose --ai`.                                      |
+| **Git for Windows**         | Not required by the native PowerShell path.                                  |
 | **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
-`kubectl` is **not** required on Windows — all commands use `oc` exclusively.
+Core PowerShell commands use `oc`. APME's normal Windows path uses the AAP
+Controller API to create/update its project, inventory, and job template, then
+launches the deployment inside AAP. It does not require local Python, Ansible,
+Helm, or skopeo. The AAP execution environment still needs the collections and
+tools declared by the APME playbook.
 
-Optional: `python`, `jq`.
+Optional for the core CLI: `python`, `jq` (some addons require them).
 
 ## Install
 
@@ -80,6 +85,7 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo clean`               | Remove AAP deployment                                              |
 | `aap-demo destroy`             | Delete CRC cluster (`--reset` clears saved preset)                 |
 | `aap-demo stop`                | Stop CRC cluster                                                   |
+| `aap-demo start`               | Start CRC and refresh MicroShift DNS                               |
 | `aap-demo status`              | Cluster health, namespaces, routes, admin password                 |
 | `aap-demo diagnose`            | Environment health checks                                          |
 | `aap-demo watch`               | Monitor AAP deployment until Successful                            |
@@ -87,13 +93,22 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo kubeconfig`          | Sync kubeconfig (context: `aap-demo`)                              |
 | `aap-demo ssh`                 | SSH into CRC VM                                                    |
 | `aap-demo enable` / `disable`  | Enable or disable addons                                           |
+| `aap-demo wire`                | Apply addon integrations after deployment                          |
 | `aap-demo must-gather`         | Collect diagnostic bundle                                          |
 | `aap-demo redhat-status`       | Check Red Hat registry status                                      |
 | `aap-demo config`              | Show or set `~/.aap-demo/config` values                            |
 | `aap-demo update`              | `git pull` and reinstall launcher                                  |
 | `aap-demo help`                | Show command help                                                  |
 
-`aap-demo diagnose --ai` delegates to Git Bash for Claude-assisted analysis.
+Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
+`setup-pah`, `ao` (alias `ao-eap`), `apme-eap`, `local-cache`,
+`product-demos-base`, `product-demos`, the Linux/Windows/Network/Cloud/OpenShift/
+Satellite product-demo addons, `opa`, and `ollama`. AO, APME, and Ollama use
+native PowerShell handlers. APME launches its deployment in AAP; AO-to-AAP/MCP/Ollama
+wiring and optional AO demo provisioning/import remain native when Python is installed. AO accepts `--delete` and `--purge-data`, while Ollama accepts
+`--delete` and reads `OLLAMA_MODEL`, `OLLAMA_STORAGE_CLASS`, and
+`OLLAMA_STORAGE_SIZE` from the environment.
+`aap-demo diagnose --ai` is not yet implemented natively and reports that status.
 
 ## Environment variables
 
@@ -110,6 +125,9 @@ Set in PowerShell before running commands, or add to
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |
 | `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |
 | `AAP_DEMO_TRUST_CA` | `true` (implicit)                            | Set to `false` to skip automatic ingress CA import |
+| `APME_AAP_PROJECT_URL` | `https://github.com/RedHatOfficial/aap-demo.git` | Git URL for the AAP project used by `apme-eap` |
+| `APME_AAP_PROJECT_BRANCH` | `main` | Branch to sync into AAP for the APME job |
+| `APME_SKIP_PLUGIN_PUSH` | `false` | Skip the APME OCI plugin push when the image already exists |
 
 Example:
 
@@ -159,16 +177,12 @@ Re-run from the repo directory:
 
 Do not move or delete the cloned repo after install — the launcher points at it.
 
-### Git Bash required for diagnose --ai
+### Native addon not implemented yet
 
-Re-run the installer (it installs Git for Windows via winget when missing), then
-open a new PowerShell window:
-
-```powershell
-.\powershell\install.ps1
-```
-
-Most commands (`create`, `deploy`, `destroy`, …) do not need Git Bash.
+The native branch reports an explicit message for addon families that have not
+yet been ported from their Bash implementation. AO and Ollama are native; follow the progress in
+`docs/plans/windows-native-addon-port.md`; the compatibility branch remains
+available while the port is in progress.
 
 ### `oc` or `crc` not found
 
@@ -281,7 +295,7 @@ Then run commands with `pwsh` instead of `powershell`.
 aap-demo (launcher in ~/.local/bin)
   └── powershell/aap-demo.ps1
         └── powershell/native/AapDemo.psm1  (all commands)
-              └── diagnose --ai  →  Git Bash (when needed)
+              └── native process runner → oc/kubectl/helm/python/ansible
 ```
 
 ## Updating

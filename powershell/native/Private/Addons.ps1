@@ -1,27 +1,19 @@
 $Script:AapAvailableAddons = @(
-  'mcp-server', 'portal', 'setup-pah', 'ao', 'apme-eap', 'local-cache'
+  'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao', 'apme-eap',
+  'local-cache', 'product-demos-base', 'product-demos', 'product-demo-linux',
+  'product-demo-windows', 'product-demo-network', 'product-demo-cloud',
+  'product-demo-openshift', 'product-demo-satellite', 'opa', 'ollama'
 )
 
 function Invoke-AapAddonDeployScript {
   param(
     [Parameter(Mandatory)][string]$Addon,
-    [string[]]$ScriptArgs = @()
+    [string[]]$ScriptArgs = @(),
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [hashtable]$Environment = @{}
   )
 
-  $deploySh = Join-Path $Script:AapDemoRepoRoot "addons/$Addon/deploy.sh"
-  if (-not (Test-Path -LiteralPath $deploySh)) {
-    throw "Addon '$Addon' has no deploy.sh"
-  }
-
-  $bash = Get-Command bash -ErrorAction SilentlyContinue
-  if (-not $bash) {
-    throw "Addon '$Addon' requires bash (Git Bash or WSL). Install Git for Windows or use Linux/macOS."
-  }
-
-  & $bash.Source $deploySh @ScriptArgs
-  if ($LASTEXITCODE -ne 0) {
-    throw "Addon '$Addon' deploy failed (exit code: $LASTEXITCODE)"
-  }
+  throw "Addon '$Addon' does not have a native PowerShell implementation yet. See docs/plans/windows-native-addon-port.md."
 }
 function Invoke-AapEnsureClusterReady {
   Invoke-AapEnsureCluster
@@ -95,13 +87,53 @@ function Invoke-AapRemoveMcpServerAddon {
 function Invoke-AapAddonEnable {
   param(
     [Parameter(Mandatory)][string]$Addon,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$ScriptArgs = @()
   )
 
+  $savedAddons = @(Get-AapAddonsList)
+  if ($Addon -eq 'ao' -and $savedAddons -notcontains 'mcp-server') {
+    Write-AapStep 'AO requires mcp-server; enabling the dependency first'
+    Invoke-AapAddonEnable -Addon 'mcp-server' -Namespace $Namespace
+    Add-AapAddon 'mcp-server'
+  }
+  if ($Addon -eq 'ao') {
+    $provider = $env:AO_LLM_PROVIDER
+    if (-not $provider) { $provider = Get-AapConfigValue 'AO_LLM_PROVIDER' }
+    if (-not $provider) { $provider = 'ollama' }
+    if ($provider.ToLowerInvariant() -eq 'ollama' -and $savedAddons -notcontains 'ollama') {
+      Write-AapStep 'AO uses Ollama by default; enabling the dependency first'
+      Invoke-AapOllamaAddonNative -Namespace $Namespace
+      Add-AapAddon 'ollama'
+    }
+  }
+  if ($Addon -match '^product-demo' -and $Addon -ne 'product-demos-base' -and
+      $savedAddons -notcontains 'product-demos-base') {
+    Write-AapStep 'Product demo domains require product-demos-base; enabling the dependency first'
+    Invoke-AapAddonDeployScript -Addon 'product-demos-base' -Namespace $Namespace
+    Add-AapAddon 'product-demos-base'
+  }
+
   switch ($Addon) {
-    'mcp-server' { Invoke-AapDeployMcpServerAddon -Namespace $Namespace }
-    'portal' { Invoke-AapDeployPortalAddon -Namespace $Namespace }
-    default { Invoke-AapAddonDeployScript -Addon $Addon }
+    'mcp-server' {
+      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for mcp-server' }
+      Invoke-AapDeployMcpServerAddon -Namespace $Namespace
+    }
+    'portal' {
+      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for portal' }
+      Invoke-AapDeployPortalAddon -Namespace $Namespace
+    }
+    'ao' { Invoke-AapAoAddonNative -Namespace 'automation-orchestrator' -ScriptArgs $ScriptArgs }
+    'apme-eap' { Invoke-AapApmeAddonNative -Namespace 'apme' -ScriptArgs $ScriptArgs }
+    'ollama' { Invoke-AapOllamaAddonNative -Namespace $Namespace -ScriptArgs $ScriptArgs }
+    'local-cache' { Invoke-AapLocalCacheAddonNative -ScriptArgs $ScriptArgs }
+    default {
+      $environment = @{}
+      if ($Addon -eq 'ao') {
+        $environment.AO_LLM_PROVIDER = $provider
+      }
+      Invoke-AapAddonDeployScript -Addon $Addon -Namespace $Namespace -ScriptArgs $ScriptArgs -Environment $environment
+    }
   }
 }
 
@@ -145,61 +177,63 @@ function Get-AapAddonStatusLabel {
       if ($portalHost) { return "https://$portalHost" }
       return 'not-deployed'
     }
-    default { return $null }  }
+    'portal-operator' {
+      $portalOperatorHost = Get-AapAddonRouteHost -Namespace 'automation-portal'
+      if ($portalOperatorHost) { return "https://$portalOperatorHost" }
+      return 'not-deployed'
+    }
+    'ao' {
+      $aoHost = Get-AapAddonRouteHost -Namespace 'automation-orchestrator'
+      if ($aoHost) { return "https://$aoHost" }
+      return 'enabled'
+    }
+    'ollama' {
+      $ollamaHost = Get-AapAddonRouteHost -Namespace 'aap-demo-ollama'
+      if ($ollamaHost) { return "https://$ollamaHost" }
+      return 'enabled'
+    }
+    default { return 'enabled' }
+  }
 }
 
-function Get-AapMcpServerRouteHost {
-  param([string]$Namespace = $Script:AapDemoDefaultNamespace)
+function Get-AapAddonRouteHost {
+  param([Parameter(Mandatory)][string]$Namespace)
 
-  $result = Invoke-AapOcCapture @(
-    'get', 'ansiblemcpserver', 'aap-mcp-server', '-n', $Namespace,
-    '-o', 'jsonpath={.spec.route_host}'
-  )
+  $result = Invoke-AapOcCapture @('get', 'route', '-n', $Namespace, '--no-headers')
   if ($result.ExitCode -ne 0) { return $null }
-  $routeHost = $result.Output.Trim()
-  if ($routeHost -and $routeHost -notmatch '\s' -and $routeHost -notmatch ':') {
-    return $routeHost
+  foreach ($line in @($result.Lines)) {
+    if ([string]::IsNullOrWhiteSpace($line) -or $line -match '^No resources found') { continue }
+    $cols = $line -split '\s+'
+    if ($cols.Count -ge 2 -and $cols[1] -and $cols[1] -notmatch '^HOST') {
+      return $cols[1]
+    }
   }
   return $null
-}
-
-function Get-AapAddonEnableCommand {
-  param([Parameter(Mandatory)][string]$Addon)
-  return "aap-demo enable $Addon"
-}
-
-function Get-AapAddonStatusLabel {
-  param(
-    [Parameter(Mandatory)][string]$Addon,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace,
-    [Parameter(Mandatory)][bool]$Enabled
-  )
-
-  if (-not $Enabled) { return 'disabled' }
-
-  switch ($Addon) {
-    'mcp-server' {
-      $mcpHost = Get-AapMcpServerRouteHost -Namespace $Namespace
-      if ($mcpHost) { return "https://$mcpHost/mcp" }
-      return 'not-deployed'
-    }
-    'portal' {
-      $portalHost = Get-AapPortalRouteHost -AapNamespace $Namespace
-      if ($portalHost) { return "https://$portalHost" }
-      return 'not-deployed'
-    }
-    default { return $null }
-  }
 }
 
 function Invoke-AapAddonDisable {
   param(
     [Parameter(Mandatory)][string]$Addon,
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [string[]]$ScriptArgs = @()
   )
 
   switch ($Addon) {
-    'mcp-server' { Invoke-AapRemoveMcpServerAddon -Namespace $Namespace }
-    'portal' { Invoke-AapRemovePortalAddon -Namespace $Namespace }
-    default { Invoke-AapAddonDeployScript -Addon $Addon -ScriptArgs @('--delete') }  }
+    'mcp-server' {
+      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for mcp-server' }
+      Invoke-AapRemoveMcpServerAddon -Namespace $Namespace
+    }
+    'portal' {
+      if ($ScriptArgs.Count -gt 0) { Write-AapWarn 'Ignoring addon arguments for portal' }
+      Invoke-AapRemovePortalAddon -Namespace $Namespace
+    }
+    'ao' { Invoke-AapAoAddonNative -Namespace 'automation-orchestrator' -ScriptArgs (@('--delete') + @($ScriptArgs)) }
+    'apme-eap' { Invoke-AapApmeAddonNative -Namespace 'apme' -ScriptArgs (@('--delete') + @($ScriptArgs)) }
+    'ollama' { Invoke-AapOllamaAddonNative -Namespace $Namespace -ScriptArgs (@('--delete') + @($ScriptArgs)) }
+    'local-cache' { Invoke-AapLocalCacheAddonNative -ScriptArgs @('clear') }
+    default {
+      $args = @('--delete') + @($ScriptArgs)
+      Invoke-AapAddonDeployScript -Addon $Addon -Namespace $Namespace -ScriptArgs $args
+    }
+  }
 }
