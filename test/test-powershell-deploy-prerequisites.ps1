@@ -41,8 +41,10 @@ if ($wrapperSource -notmatch '\$isDemoEnable' -or
   throw 'PowerShell wrapper must preflight AO and product-demos enablement'
 }
 $prerequisiteSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Prerequisites.ps1') -Raw
+$helperSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Helpers.ps1') -Raw
 if ($prerequisiteSource -notmatch 'Ensure-AapJq' -or
     $prerequisiteSource -notmatch 'Ensure-AapPython' -or
+    $helperSource -notmatch "'python3', 'python', 'py'" -or
     $prerequisiteSource -notmatch 'jqlang\.jq' -or
     $prerequisiteSource -notmatch 'Python\.Python\.3\.12') {
   throw 'Windows deploy preflight must attempt to install jq and Python via winget'

@@ -334,7 +334,7 @@ check_python_windows() {
   case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
       local _python
-      for _python in python3 python; do
+      for _python in python3 python py; do
         if command -v "$_python" &>/dev/null \
           && "$_python" -c 'import sys' &>/dev/null 2>&1; then
           return 0

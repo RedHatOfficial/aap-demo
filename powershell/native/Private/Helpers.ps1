@@ -148,13 +148,17 @@ Install jq: winget install --id jqlang.jq -e --source winget
 }
 
 function Get-AapPythonRuntimePath {
-  foreach ($name in @('python3', 'python')) {
+  foreach ($name in @('python3', 'python', 'py')) {
     $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { continue }
     $path = if ($command.Path) { $command.Path } else { $command.Source }
     if (-not $path) { continue }
     try {
-      & $path -c 'import sys' *> $null
+      if ($name -eq 'py') {
+        & $path -3 -c 'import sys' *> $null
+      } else {
+        & $path -c 'import sys' *> $null
+      }
       if ($LASTEXITCODE -eq 0) { return $path }
     } catch { }
   }

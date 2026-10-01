@@ -106,7 +106,7 @@ short_image_ref() {
 
 ao_python_command() {
   local _candidate
-  for _candidate in "${AO_PYTHON:-}" python3 python; do
+  for _candidate in "${AO_PYTHON:-}" python3 python py; do
     [ -n "$_candidate" ] || continue
     command -v "$_candidate" >/dev/null 2>&1 || continue
     "$_candidate" -c 'import sys' >/dev/null 2>&1 || continue
