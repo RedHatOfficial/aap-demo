@@ -69,7 +69,15 @@ function Invoke-AapWindowsBashCli {
   param([Parameter(Mandatory)][string[]]$CliArguments)
 
   $deployCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all')
-  if (@($CliArguments | Where-Object {
+  $demoAddons = @(
+    'ao', 'product-demos', 'product-demos-base',
+    'product-demo-linux', 'product-demo-windows', 'product-demo-network',
+    'product-demo-cloud', 'product-demo-openshift', 'product-demo-satellite'
+  )
+  $isDemoEnable = $CliArguments.Count -ge 2 -and
+    $CliArguments[0].ToLowerInvariant() -eq 'enable' -and
+    $demoAddons -contains $CliArguments[1].ToLowerInvariant()
+  if ($isDemoEnable -or @($CliArguments | Where-Object {
       $deployCommands -contains $_.ToLowerInvariant()
     }).Count -gt 0) {
     Assert-AapWindowsDeployPrerequisites

@@ -318,6 +318,29 @@ check_jq_windows() {
   return 0
 }
 
+# Demo provisioning/imports use Python. Keep this check Windows-only so Linux
+# and macOS retain their existing optional-runtime behavior.
+check_python_windows() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      local _python
+      for _python in python3 python; do
+        if command -v "$_python" &>/dev/null \
+          && "$_python" -c 'import sys' &>/dev/null 2>&1; then
+          return 0
+        fi
+      done
+      _err "Python runtime not found"
+      echo ""
+      echo "Install Python from PowerShell or Git Bash with:"
+      echo "  winget install --id Python.Python.3.13 -e --source winget"
+      echo ""
+      return 1
+      ;;
+  esac
+  return 0
+}
+
 # -----------------------------------------------------------------------------
 # Infrastructure Type Handling
 # -----------------------------------------------------------------------------
@@ -3310,6 +3333,7 @@ case "$COMMAND" in
     # These handle their own cluster state (auto-start if stopped)
     if [[ "$COMMAND" != "create" ]]; then
       check_jq_windows || exit 1
+      check_python_windows || exit 1
     fi
     setup_kubeconfig
     ;;
@@ -3398,7 +3422,13 @@ case "$COMMAND" in
     cmd_fleet "${EXTRA_ARGS[@]}"
     ;;
   enable)
-    cmd_enable "${EXTRA_ARGS[@]}" || exit $?
+    case "${EXTRA_ARGS[0]:-}" in
+      ao | product-demos | product-demos-base | product-demo-*)
+        check_jq_windows || exit 1
+        check_python_windows || exit 1
+        ;;
+    esac
+    cmd_enable "${EXTRA_ARGS[@]}"
     ;;
   wire)
     cmd_wire

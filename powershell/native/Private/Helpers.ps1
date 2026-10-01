@@ -147,6 +147,68 @@ Install jq: winget install --id jqlang.jq -e --source winget
   Write-AapStep 'jq installed via winget'
 }
 
+function Get-AapPythonRuntimePath {
+  foreach ($name in @('python3', 'python')) {
+    $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $command) { continue }
+    $path = if ($command.Path) { $command.Path } else { $command.Source }
+    if (-not $path) { continue }
+    try {
+      & $path -c 'import sys' *> $null
+      if ($LASTEXITCODE -eq 0) { return $path }
+    } catch { }
+  }
+  return $null
+}
+
+function Install-AapPython {
+  if (Get-AapPythonRuntimePath) { return $true }
+
+  if (-not (Test-AapCommand 'winget')) {
+    Write-AapWarn 'Python not found and winget is unavailable'
+    return $false
+  }
+
+  Write-Host 'Installing Python via winget (Python.Python.3.13)...'
+  $wingetArgs = @(
+    'install', '--id', 'Python.Python.3.13', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements',
+    '--disable-interactivity'
+  )
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & winget @wingetArgs
+    if ($LASTEXITCODE -ne 0) {
+      Write-AapWarn "winget install Python.Python.3.13 failed (exit $LASTEXITCODE)"
+      return $false
+    }
+  } catch {
+    Write-AapWarn "Could not install Python via winget: $($_.Exception.Message)"
+    return $false
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+
+  Update-AapSessionPath
+  return [bool](Get-AapPythonRuntimePath)
+}
+
+function Ensure-AapPython {
+  if (Get-AapPythonRuntimePath) { return }
+
+  Write-Host 'Python runtime not found — installing via winget...'
+  if (-not (Install-AapPython)) {
+    throw @"
+Python runtime not found.
+
+Install Python: winget install --id Python.Python.3.13 -e --source winget
+"@
+  }
+  Write-AapStep 'Python installed via winget'
+}
+
 function Assert-AapCommand {
   param(
     [Parameter(Mandatory)][string]$Name,
