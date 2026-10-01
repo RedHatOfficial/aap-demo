@@ -750,7 +750,7 @@ wire_ao_ensure_integration() {
   local base_url="$3"
   local credential_id="$4"
   local discover_tools="${5:-false}"
-  local integration_id payload result discovered_tools_json
+  local integration_id payload result discovery_payload
 
   integration_id=$(wire_ao_find_integration_by_name "$name")
   local config_json
@@ -793,15 +793,15 @@ wire_ao_ensure_integration() {
         scope: "global"
       }')
     if [ "$discover_tools" = true ]; then
-      discovered_tools_json=$(wire_ao_api POST "/integrations/discover" \
-        "$(jq -n \
-          --arg type "$integration_type" \
-          --arg cred "$credential_id" \
-          --argjson config "$config_json" \
-          '{integration_type: $type, configuration: $config, credential_id: $cred}')" 2>/dev/null \
-        | jq '[.discovered_tools[]? | {name: .name, description: (.description // ""), enabled: true}]' 2>/dev/null)
-      if [ -n "$discovered_tools_json" ] && [ "$discovered_tools_json" != "[]" ] && [ "$discovered_tools_json" != "null" ]; then
-        payload=$(echo "$payload" | jq --argjson tools "$discovered_tools_json" '. + {discovered_tools: $tools}')
+      # Discovery can return hundreds of tools.  Keep the create request small;
+      # the refresh below populates and enables the tools after creation.
+      discovery_payload=$(jq -n \
+        --arg type "$integration_type" \
+        --arg cred "$credential_id" \
+        --argjson config "$config_json" \
+        '{integration_type: $type, configuration: $config, credential_id: $cred}')
+      if ! wire_ao_api POST "/integrations/discover" "$discovery_payload" >/dev/null 2>&1; then
+        wire_warn "MCP discovery probe failed; AO will retry during refresh"
       fi
     fi
     result=$(wire_ao_api POST "/integrations" "$payload" 2>/dev/null)
