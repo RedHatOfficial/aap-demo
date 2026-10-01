@@ -114,8 +114,10 @@ different roles: bootstrap is the SCM source for installer and domain-setup jobs
 the APD org project is managed by APD dispatch for demo content.
 
 **Ephemeral patch:** The `install-apd.yml` patch is written directly into the synced project
-directory on the controller task pod. A manual project sync in the AAP UI restores upstream
-content and removes the version-ping skip. Re-run `aap-demo enable product-demos-base` to
+directory on the controller task pod. The bootstrap project uses AAP's `scm_clean` setting,
+so every subsequent sync removes the previous overlay before fetching upstream content; the
+deploy then reapplies the patch. If a sync fails, the command prints the AAP project-update
+details and the last 40 lines of its output. Re-run `aap-demo enable product-demos-base` to
 re-sync, re-patch, and reinstall.
 
 Upstream `install-apd.yml` queries `/api/gateway/v1/ping/` to set `_aap_version` for generic

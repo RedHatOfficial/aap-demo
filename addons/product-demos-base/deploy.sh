@@ -396,6 +396,7 @@ PROJECT_PAYLOAD=$(
   "scm_url": "$PRODUCT_DEMOS_REPO",
   "scm_branch": "$PRODUCT_DEMOS_BRANCH",
   "scm_update_on_launch": false,
+  "scm_clean": true,
   "organization": ${DEFAULT_ORG_ID}
 }
 EOF
@@ -433,7 +434,7 @@ if [ -z "$PROJECT_ID" ]; then
         --arg name "$APD_BOOTSTRAP_PROJECT_NAME" \
         --arg repo "$PRODUCT_DEMOS_REPO" \
         --arg branch "$PRODUCT_DEMOS_BRANCH" \
-        '{name: $name, scm_url: $repo, scm_branch: $branch, scm_update_on_launch: false}')" \
+        '{name: $name, scm_url: $repo, scm_branch: $branch, scm_update_on_launch: false, scm_clean: true}')" \
       "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1
   else
     echo "❌ ERROR: Failed to create project"
@@ -474,6 +475,34 @@ echo "Waiting for project to sync..."
 SYNC_ATTEMPTS="${APD_PROJECT_SYNC_ATTEMPTS:-60}"
 SYNC_DELAY="${APD_PROJECT_SYNC_DELAY:-5}"
 PROJECT_SYNCED=false
+
+apd_print_project_sync_diagnostics() {
+  local update_id="${PROJECT_UPDATE_ID:-}"
+  local update_details update_stdout
+
+  if [ -z "$update_id" ]; then
+    update_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      "${AAP_API}/project_updates/?project=${PROJECT_ID}&order_by=-id&page_size=1" 2>/dev/null \
+      | jq -r '.results[0].id // empty' 2>/dev/null || true)
+  fi
+
+  if [ -z "$update_id" ]; then
+    return 0
+  fi
+
+  update_details=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/project_updates/${update_id}/" 2>/dev/null || true)
+  echo "$update_details" | jq '{id, status, job_explanation, result_traceback, scm_revision} | with_entries(select(.value != null and .value != ""))' 2>/dev/null \
+    || true
+
+  update_stdout=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/project_updates/${update_id}/stdout/?format=txt_download" 2>/dev/null || true)
+  if [ -n "$update_stdout" ]; then
+    echo "  Project sync output (last 40 lines):"
+    printf '%s\n' "$update_stdout" | tail -n 40
+  fi
+}
+
 for i in $(seq 1 "$SYNC_ATTEMPTS"); do
   PROJECT_STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     "${AAP_API}/projects/${PROJECT_ID}/" 2>&1)
@@ -488,6 +517,7 @@ for i in $(seq 1 "$SYNC_ATTEMPTS"); do
     echo "❌ ERROR: Project sync failed (status: $STATUS)"
     echo "$PROJECT_STATUS" | jq '{status, scm_revision, job_explanation, last_job_id, detail, error} | with_entries(select(.value != null and .value != ""))' 2>/dev/null \
       || echo "$PROJECT_STATUS"
+    apd_print_project_sync_diagnostics
     exit 1
   fi
 
@@ -499,6 +529,7 @@ if [ "$PROJECT_SYNCED" != true ]; then
   echo "❌ ERROR: Project sync did not complete successfully (last status: ${STATUS:-unknown})"
   echo "$PROJECT_STATUS" | jq '{status, scm_revision, job_explanation, last_job_id, detail, error} | with_entries(select(.value != null and .value != ""))' 2>/dev/null \
     || echo "$PROJECT_STATUS"
+  apd_print_project_sync_diagnostics
   exit 1
 fi
 
@@ -510,7 +541,7 @@ fi
 curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
   -X PATCH \
   -H "Content-Type: application/json" \
-  -d '{"scm_update_on_launch": false}' \
+  -d '{"scm_update_on_launch": false, "scm_clean": true}' \
   "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1
 
 # ==============================================================================

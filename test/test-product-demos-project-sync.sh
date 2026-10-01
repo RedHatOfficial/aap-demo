@@ -21,4 +21,9 @@ if ! grep -Fq 'job_explanation' <<<"$sync_block"; then
   exit 1
 fi
 
-echo "PASS: product-demos explicitly starts and diagnoses project sync"
+if ! grep -Fq 'scm_clean' <<<"$sync_block"; then
+  echo "FAIL: bootstrap project sync must clean intentional overlay modifications" >&2
+  exit 1
+fi
+
+echo "PASS: product-demos explicitly starts, cleans, and diagnoses project sync"
