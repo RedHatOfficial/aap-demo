@@ -115,12 +115,12 @@ if [[ "$catalog_ref" != *@sha256:* ]]; then
 fi
 echo "✓ catalog-ref returns the loaded local catalog digest"
 
-if ! grep -q -- '--all --quiet containers-storage:' "$MOCK_SSH_LOG" \
+if ! grep -q -- '--quiet --remove-signatures containers-storage:' "$MOCK_SSH_LOG" \
   || ! grep -q -- 'oci-archive:' "$MOCK_SSH_LOG"; then
-  echo "✗ cache save should create OCI archives with all manifests" >&2
+  echo "✗ cache save should export from containers-storage to oci-archive without signatures" >&2
   exit 1
 fi
-echo "✓ cache save creates OCI archives with all manifests"
+echo "✓ cache save exports from containers-storage to oci-archive without signatures"
 
 export MOCK_IMPORT_RESULT=fail
 export MOCK_INSPECT_RESULT=fail
