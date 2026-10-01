@@ -29,7 +29,7 @@ Windows preflight installs them with winget when they are missing:
 
 ```powershell
 winget install --id jqlang.jq -e --source winget
-winget install --id Python.Python.3.13 -e --source winget
+winget install --id Python.Python.3.12 -e --source winget
 ```
 
 Linux and macOS keep their existing prerequisite behavior; Python remains

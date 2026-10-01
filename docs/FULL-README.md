@@ -31,14 +31,14 @@ The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384`
 
 - PowerShell 5.1 or later (included with Windows 10/11)
 - `jq` — used by the Bash deployment and addon wiring paths
-- Python 3.13 — used to provision AAP demos and import AO demo workflows
+- Python 3.12 — used to provision AAP demos and import AO demo workflows
 
 The Windows deploy and AO/Product Demo preflight installs `jq` and Python with
 winget when they are missing:
 
 ```powershell
 winget install --id jqlang.jq -e --source winget
-winget install --id Python.Python.3.13 -e --source winget
+winget install --id Python.Python.3.12 -e --source winget
 ```
 
 #### OpenShift Local

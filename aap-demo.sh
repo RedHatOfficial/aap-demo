@@ -343,7 +343,7 @@ check_python_windows() {
       _err "Python runtime not found"
       echo ""
       echo "Install Python from PowerShell or Git Bash with:"
-      echo "  winget install --id Python.Python.3.13 -e --source winget"
+      echo "  winget install --id Python.Python.3.12 -e --source winget"
       echo ""
       return 1
       ;;

@@ -29,7 +29,7 @@ Windows deploys and AO/Product Demo enablement run a PowerShell preflight for
 the external tools required at the Bash boundary. `jq` is required for JSON
 wiring, and Python is required for AAP demo provisioning and AO workflow
 imports. When either runtime is missing, the preflight installs it with
-winget (`jqlang.jq` and `Python.Python.3.13`) and reports the same commands if
+winget (`jqlang.jq` and `Python.Python.3.12`) and reports the same commands if
 installation fails. Direct Git Bash invocation performs the equivalent
 Windows-only checks and leaves Linux and macOS behavior unchanged.
 

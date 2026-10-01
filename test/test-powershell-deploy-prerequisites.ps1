@@ -44,7 +44,7 @@ $prerequisiteSource = Get-Content (Join-Path $repoRoot 'powershell/native/Privat
 if ($prerequisiteSource -notmatch 'Ensure-AapJq' -or
     $prerequisiteSource -notmatch 'Ensure-AapPython' -or
     $prerequisiteSource -notmatch 'jqlang\.jq' -or
-    $prerequisiteSource -notmatch 'Python\.Python\.3\.13') {
+    $prerequisiteSource -notmatch 'Python\.Python\.3\.12') {
   throw 'Windows deploy preflight must attempt to install jq and Python via winget'
 }
 

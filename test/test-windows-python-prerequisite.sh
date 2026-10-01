@@ -16,7 +16,7 @@ if ! grep -q "'import sys'" <<<"$script"; then
   echo '✗ Python prerequisite must validate an executable runtime' >&2
   exit 1
 fi
-if ! grep -q 'winget install --id Python.Python.3.13' <<<"$script"; then
+if ! grep -q 'winget install --id Python.Python.3.12' <<<"$script"; then
   echo '✗ Python prerequisite must provide the winget install command' >&2
   exit 1
 fi

@@ -60,7 +60,7 @@ function Assert-AapWindowsDeployPrerequisites {
     'Install OpenShift Local (CRC) and ensure crc.exe is on PATH.'
     'Install the Red Hat OpenShift client (oc) or kubectl and ensure it is on PATH.'
     'Install jq: winget install --id jqlang.jq -e --source winget'
-    'Install Python: winget install --id Python.Python.3.13 -e --source winget'
+    'Install Python: winget install --id Python.Python.3.12 -e --source winget'
   )
   $details = @($missing | ForEach-Object { "  - $_" })
   throw ((@('Windows deploy prerequisites are missing:') + $details + @('', 'Next steps:') +

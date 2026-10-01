@@ -67,7 +67,7 @@ function Install-AapHelm {
   $previousEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & winget @wingetArgs
+    & winget @wingetArgs | Out-Host
     if ($LASTEXITCODE -ne 0) {
       Write-AapWarn "winget install Helm.Helm failed (exit $LASTEXITCODE)"
       return $false
@@ -117,7 +117,7 @@ function Install-AapJq {
   $previousEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & winget @wingetArgs
+    & winget @wingetArgs | Out-Host
     if ($LASTEXITCODE -ne 0) {
       Write-AapWarn "winget install jqlang.jq failed (exit $LASTEXITCODE)"
       return $false
@@ -169,9 +169,9 @@ function Install-AapPython {
     return $false
   }
 
-  Write-Host 'Installing Python via winget (Python.Python.3.13)...'
+  Write-Host 'Installing Python via winget (Python.Python.3.12)...'
   $wingetArgs = @(
-    'install', '--id', 'Python.Python.3.13', '-e', '--source', 'winget',
+    'install', '--id', 'Python.Python.3.12', '-e', '--source', 'winget',
     '--accept-package-agreements', '--accept-source-agreements',
     '--disable-interactivity'
   )
@@ -179,9 +179,9 @@ function Install-AapPython {
   $previousEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & winget @wingetArgs
+    & winget @wingetArgs | Out-Host
     if ($LASTEXITCODE -ne 0) {
-      Write-AapWarn "winget install Python.Python.3.13 failed (exit $LASTEXITCODE)"
+      Write-AapWarn "winget install Python.Python.3.12 failed (exit $LASTEXITCODE)"
       return $false
     }
   } catch {
@@ -203,7 +203,7 @@ function Ensure-AapPython {
     throw @"
 Python runtime not found.
 
-Install Python: winget install --id Python.Python.3.13 -e --source winget
+Install Python: winget install --id Python.Python.3.12 -e --source winget
 "@
   }
   Write-AapStep 'Python installed via winget'

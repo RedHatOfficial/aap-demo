@@ -68,7 +68,7 @@ install them manually:
 
 ```powershell
 winget install --id jqlang.jq -e --source winget
-winget install --id Python.Python.3.13 -e --source winget
+winget install --id Python.Python.3.12 -e --source winget
 ```
 
 Python is used by the AAP demo provisioning and AO workflow import steps. If
