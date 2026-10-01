@@ -95,7 +95,7 @@ function Invoke-AapWindowsBashCli {
   if ($result.Success) {
     $trustCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all', 'repair', 'start')
     if ($CliArguments | Where-Object { $trustCommands -contains $_.ToLowerInvariant() }) {
-      try { Install-AapIngressCaTrust } catch {
+      try { & $AapDemoModule { Install-AapIngressCaTrust } } catch {
         Write-Warning "Could not update Windows ingress CA trust: $($_.Exception.Message)"
       }
     }
