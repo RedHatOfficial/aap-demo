@@ -147,19 +147,78 @@ Install jq: winget install --id jqlang.jq -e --source winget
   Write-AapStep 'jq installed via winget'
 }
 
-function Get-AapPythonRuntimePath {
+function Add-AapPythonRuntimePath {
+  param([Parameter(Mandatory)][string]$RuntimePath)
+
+  $directory = Split-Path -Parent $RuntimePath
+  if ([string]::IsNullOrWhiteSpace($directory)) { return }
+  $existing = @($env:Path -split ';' | Where-Object { $_ })
+  if (-not ($existing | Where-Object { $_.TrimEnd('\') -ieq $directory.TrimEnd('\') })) {
+    $env:Path = "$directory;$env:Path"
+  }
+}
+
+function Get-AapPythonCandidatePaths {
+  $candidates = [System.Collections.Generic.List[string]]::new()
+
   foreach ($name in @('python3', 'python', 'py')) {
     $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $command) { continue }
     $path = if ($command.Path) { $command.Path } else { $command.Source }
-    if (-not $path) { continue }
+    if ($path) { $null = $candidates.Add($path) }
+  }
+
+  $patterns = @()
+  if ($env:LOCALAPPDATA) {
+    $patterns += (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python*\python.exe')
+  }
+  if ($env:ProgramFiles) {
+    $patterns += (Join-Path $env:ProgramFiles 'Python*\python.exe')
+  }
+  foreach ($pattern in $patterns) {
+    foreach ($item in @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue)) {
+      $null = $candidates.Add($item.FullName)
+    }
+  }
+
+  if ($env:WINDIR) {
+    $null = $candidates.Add((Join-Path $env:WINDIR 'py.exe'))
+  }
+
+  foreach ($registryPath in @(
+      'HKCU:\Software\Python\PythonCore\*\InstallPath'
+      'HKLM:\Software\Python\PythonCore\*\InstallPath'
+      'HKLM:\Software\WOW6432Node\Python\PythonCore\*\InstallPath')) {
+    foreach ($key in @(Get-Item -Path $registryPath -ErrorAction SilentlyContinue)) {
+      $installPath = $key.GetValue('')
+      if ($installPath) {
+        $null = $candidates.Add((Join-Path $installPath 'python.exe'))
+      }
+    }
+  }
+
+  foreach ($package in @(Get-AppxPackage -Name 'PythonSoftwareFoundation.Python*' -ErrorAction SilentlyContinue)) {
+    if ($package.InstallLocation) {
+      $null = $candidates.Add((Join-Path $package.InstallLocation 'python.exe'))
+    }
+  }
+
+  return @($candidates | Select-Object -Unique)
+}
+
+function Get-AapPythonRuntimePath {
+  foreach ($path in Get-AapPythonCandidatePaths) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
     try {
-      if ($name -eq 'py') {
+      if ([IO.Path]::GetFileName($path) -ieq 'py.exe') {
         & $path -3 -c 'import sys' *> $null
       } else {
         & $path -c 'import sys' *> $null
       }
-      if ($LASTEXITCODE -eq 0) { return $path }
+      if ($LASTEXITCODE -eq 0) {
+        Add-AapPythonRuntimePath -RuntimePath $path
+        return $path
+      }
     } catch { }
   }
   return $null
@@ -186,11 +245,9 @@ function Install-AapPython {
     & winget @wingetArgs | Out-Host
     if ($LASTEXITCODE -ne 0) {
       Write-AapWarn "winget install Python.Python.3.12 failed (exit $LASTEXITCODE)"
-      return $false
     }
   } catch {
     Write-AapWarn "Could not install Python via winget: $($_.Exception.Message)"
-    return $false
   } finally {
     $ErrorActionPreference = $previousEap
   }

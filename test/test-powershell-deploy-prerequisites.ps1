@@ -45,9 +45,11 @@ $helperSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Help
 if ($prerequisiteSource -notmatch 'Ensure-AapJq' -or
     $prerequisiteSource -notmatch 'Ensure-AapPython' -or
     $helperSource -notmatch "'python3', 'python', 'py'" -or
+    $helperSource -notmatch 'Programs\\Python\\Python\*\\python\.exe' -or
+    $helperSource -notmatch 'Add-AapPythonRuntimePath' -or
     $prerequisiteSource -notmatch 'jqlang\.jq' -or
     $prerequisiteSource -notmatch 'Python\.Python\.3\.12') {
-  throw 'Windows deploy preflight must attempt to install jq and Python via winget'
+  throw 'Windows deploy preflight must discover installed Python and attempt winget installation when needed'
 }
 
 Write-Output 'PowerShell deploy prerequisite checks passed'
