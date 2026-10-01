@@ -93,6 +93,7 @@ if [ "$IS_MICROSHIFT" = true ]; then
 fi
 
 echo "  Waiting for MCP server deployment..."
+MCP_ROLLOUT_TIMEOUT="${MCP_ROLLOUT_TIMEOUT:-600s}"
 # Wait up to 3 minutes for the deployment to appear (operator may take a moment)
 for i in $(seq 1 18); do
   if kubectl get deployment aap-mcp-server -n "$NAMESPACE" &>/dev/null; then
@@ -101,7 +102,15 @@ for i in $(seq 1 18); do
   sleep 10
 done
 
-kubectl rollout status deployment/aap-mcp-server -n "$NAMESPACE" --timeout=120s
+if ! kubectl rollout status deployment/aap-mcp-server -n "$NAMESPACE" \
+  --timeout="$MCP_ROLLOUT_TIMEOUT"; then
+  echo "❌ MCP server rollout did not complete within ${MCP_ROLLOUT_TIMEOUT}" >&2
+  kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/name=aap-mcp-server -o wide >&2 || true
+  kubectl describe deployment aap-mcp-server -n "$NAMESPACE" >&2 || true
+  kubectl get events -n "$NAMESPACE" --sort-by=.metadata.creationTimestamp \
+    | tail -n 30 >&2 || true
+  exit 1
+fi
 
 # ── Ingress CA fix ────────────────────────────────────────────────────────────
 # The MCP server validates AAP bearer tokens by calling back to the AAP API over
@@ -153,7 +162,8 @@ if ! kubectl get deployment aap-mcp-server -n "$NAMESPACE" \
     }
   ]'
 
-  kubectl rollout status deployment/aap-mcp-server -n "$NAMESPACE" --timeout=120s
+  kubectl rollout status deployment/aap-mcp-server -n "$NAMESPACE" \
+    --timeout="$MCP_ROLLOUT_TIMEOUT"
 fi
 
 # ── Generate AAP OAuth token ──────────────────────────────────────────────────
