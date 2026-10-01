@@ -73,6 +73,50 @@ ensure_operator_sdk() {
   echo ""
 }
 
+install_olm_via_crc_vm() {
+  local sdk_version='v1.38.0'
+  local kube_config='/var/lib/microshift/resources/kubeadmin/kubeconfig'
+  local sdk_url="https://github.com/operator-framework/operator-sdk/releases/download/${sdk_version}/operator-sdk_linux_amd64"
+  local ssh_key="${CRC_SSH_KEY:-}"
+  if [ -z "$ssh_key" ]; then
+    for candidate in \
+      "${HOME}/.crc/machines/crc/id_ed25519" \
+      "${HOME}/.crc/machines/crc/id_ecdsa"; do
+      if [ -f "$candidate" ]; then
+        ssh_key="$candidate"
+        break
+      fi
+    done
+  fi
+  if [ -z "$ssh_key" ] || [ ! -f "$ssh_key" ]; then
+    echo "ERROR: CRC SSH key not found; cannot install OLM inside the CRC VM" >&2
+    return 1
+  fi
+
+  echo "Installing OLM using operator-sdk inside the CRC VM..."
+  ssh -p 2222 -i "$ssh_key" \
+    -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR \
+    -o ConnectTimeout=10 \
+    -o BatchMode=yes \
+    core@127.0.0.1 \
+    "curl -fsSL -o /tmp/operator-sdk '$sdk_url' && chmod +x /tmp/operator-sdk && sudo KUBECONFIG='$kube_config' /tmp/operator-sdk olm install"
+}
+
+run_olm_install() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      install_olm_via_crc_vm
+      ;;
+    *)
+      ensure_operator_sdk
+      operator-sdk olm install 2>&1 | tail -10
+      ;;
+  esac
+}
+
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing OLM..."
   operator-sdk olm uninstall 2>/dev/null || {
@@ -98,9 +142,6 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
   exit 1
 fi
 
-# Ensure operator-sdk is available (auto-install if missing)
-ensure_operator_sdk
-
 # Check if OLM is already installed
 if kubectl get crd subscriptions.operators.coreos.com &>/dev/null; then
   echo "✓ OLM is already installed"
@@ -109,7 +150,7 @@ if kubectl get crd subscriptions.operators.coreos.com &>/dev/null; then
 fi
 
 echo "Installing OLM..."
-if operator-sdk olm install 2>&1 | tail -10; then
+if run_olm_install; then
   # Remove operatorhubio catalog (causes pod creation issues on MicroShift)
   kubectl delete catsrc operatorhubio-catalog -n olm 2>/dev/null || true
   echo ""

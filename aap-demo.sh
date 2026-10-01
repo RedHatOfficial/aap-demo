@@ -219,6 +219,16 @@ if [ -n "$PENDING_FLAG" ]; then
   exit 1
 fi
 
+# --skip-cache is accepted as a deploy optimization flag as well as for the
+# destroy command. Keep the setting in the environment so child addon scripts
+# inherit the same behavior.
+for _arg in "${EXTRA_ARGS[@]}"; do
+  if [ "$_arg" = "--skip-cache" ]; then
+    AAP_DEMO_SKIP_CACHE=true
+    export AAP_DEMO_SKIP_CACHE
+  fi
+done
+
 # Load infrastructure abstraction layer
 source "${SCRIPT_DIR}/includes/infra-api.sh"
 # shellcheck source=includes/ingress-ca-trust.sh
@@ -238,6 +248,7 @@ check_kubectl() {
     kubectl() {
       oc "$@"
     }
+    export -f kubectl
     return 0
   fi
 
@@ -249,6 +260,7 @@ check_kubectl() {
       kubectl() {
         oc "$@"
       }
+      export -f kubectl
       return 0
     fi
   fi
@@ -2519,17 +2531,23 @@ deploy_operator_sdk() {
 }
 
 _load_local_cache() {
+  if [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ]; then
+    echo "Skipping local image cache (AAP_DEMO_SKIP_CACHE=true)"
+    return 0
+  fi
   # Loading is safe and quiet when no cache exists. Always check so a
   # destroy/create cycle can reuse a cache even though destroy clears addons.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
 }
 
 _cached_operator_catalog_ref() {
+  [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ] && return 0
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" \
     catalog-ref "$1" 2>/dev/null || true
 }
 
 _rewrite_local_cache_refs() {
+  [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ] && return 0
   # Operators publish image references in generated workload templates. Keep
   # those templates aligned with the platform digests imported from cache.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" rewrite || true
@@ -2644,18 +2662,29 @@ _patch_gateway_capability() {
     fi
   fi
 
-  # Check if already patched
-  local existing_caps
+  # Check if already patched. OpenShift Local's restricted SCC also needs
+  # supplemental group 0 for the gateway's supervisord socket.
+  local existing_caps existing_supplemental_groups
   existing_caps=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}' 2>/dev/null || echo "")
+  existing_supplemental_groups=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.securityContext.supplementalGroups}' 2>/dev/null || echo "")
+
+  local needs_capability=true needs_supplemental_group=true
   if [[ "$existing_caps" == *"NET_BIND_SERVICE"* ]]; then
-    echo "  ✓ Gateway already has NET_BIND_SERVICE capability"
+    needs_capability=false
+  fi
+  if [[ "$existing_supplemental_groups" == *"0"* ]]; then
+    needs_supplemental_group=false
+  fi
+
+  if [ "$needs_capability" = false ] && [ "$needs_supplemental_group" = false ]; then
+    echo "  ✓ Gateway already has NET_BIND_SERVICE and supplementalGroups [0]"
     return 0
   fi
 
-  echo "  Patching gateway with NET_BIND_SERVICE capability..."
+  echo "  Patching gateway security context (NET_BIND_SERVICE + supplementalGroups [0])..."
   if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=strategic \
-    -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
-    echo "  ✓ Gateway patched — pod will restart with correct capabilities"
+    -p '{"spec":{"template":{"spec":{"securityContext":{"supplementalGroups":[0]},"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
+    echo "  ✓ Gateway patched — pod will restart with correct security context"
   else
     echo "  ⚠ Gateway patch failed — may need manual fix if gateway crashes"
   fi
