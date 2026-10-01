@@ -136,7 +136,7 @@ function Install-AapJq {
 function Ensure-AapJq {
   if (Test-AapCommand 'jq') { return }
 
-  Write-Host 'jq not found — installing via winget...'
+  Write-Host 'jq not found - installing via winget...'
   if (-not (Install-AapJq)) {
     throw @"
 jq not found.
@@ -198,7 +198,7 @@ function Install-AapPython {
 function Ensure-AapPython {
   if (Get-AapPythonRuntimePath) { return }
 
-  Write-Host 'Python runtime not found — installing via winget...'
+  Write-Host 'Python runtime not found - installing via winget...'
   if (-not (Install-AapPython)) {
     throw @"
 Python runtime not found.
