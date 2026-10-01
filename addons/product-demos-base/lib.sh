@@ -711,20 +711,28 @@ print(p.get_project_path() or '')
     tee "$dest_path" <"$src" 2>&1 >/dev/null); then
     echo "  ⚠ Direct overlay copy failed: ${copy_error:-unknown remote error}" >&2
 
-    # kubectl cp uses the same tar transport as AAP's normal project handling
-    # and avoids relying on tee being present in the controller image. Convert
-    # the local source explicitly so disabling MSYS path conversion only affects
-    # the remote project path.
-    local local_src="$src" cp_error
-    if command -v cygpath >/dev/null 2>&1; then
-      local_src=$(cygpath -w "$src")
+    local python_error
+    if ! python_error=$(MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
+      awx-manage shell -c "import sys; open('${dest_path}', 'wb').write(sys.stdin.buffer.read())" \
+      <"$src" 2>&1 >/dev/null); then
+      echo "  ⚠ Controller Python overlay copy failed: ${python_error:-unknown remote error}" >&2
+
+      # kubectl cp uses the same tar transport as AAP's normal project handling.
+      # Convert the local source explicitly so disabling MSYS path conversion
+      # only affects the remote project path.
+      local local_src="$src" cp_error
+      if command -v cygpath >/dev/null 2>&1; then
+        local_src=$(cygpath -w "$src")
+      fi
+      if ! cp_error=$(MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 kubectl cp \
+        "$local_src" "${NAMESPACE}/${task_pod}:${dest_path}" 2>&1); then
+        echo "  ⚠ kubectl cp fallback failed: ${cp_error:-unknown remote error}" >&2
+        return 1
+      fi
+      echo "  ✓ Copied ${dest_name} with kubectl cp fallback"
+    else
+      echo "  ✓ Copied ${dest_name} with controller Python fallback"
     fi
-    if ! cp_error=$(MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 kubectl cp \
-      "$local_src" "${NAMESPACE}/${task_pod}:${dest_path}" 2>&1); then
-      echo "  ⚠ kubectl cp fallback failed: ${cp_error:-unknown remote error}" >&2
-      return 1
-    fi
-    echo "  ✓ Copied ${dest_name} with kubectl cp fallback"
   fi
 
   if [ -n "$verify_pattern" ] && ! MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 kubectl exec -n "$NAMESPACE" "$task_pod" -- \
