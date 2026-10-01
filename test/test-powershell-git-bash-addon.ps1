@@ -76,8 +76,9 @@ if ($dispatch -notmatch 'Invoke-AapGitBash' -or $dispatch -notmatch 'aap-demo\.s
 }
 $wrapperSource = Get-Content $wrapper -Raw
 if ($wrapperSource -notmatch 'Invoke-AapGitBashCli' -or
-    $wrapperSource -notmatch 'WindowsBlockedAddons') {
-  throw 'PowerShell wrapper must delegate through Git Bash and enforce addon policy'
+    $wrapperSource -notmatch 'WindowsBlockedAddons' -or
+    $wrapperSource -notmatch 'Install-AapIngressCaTrust') {
+  throw 'PowerShell wrapper must delegate through Git Bash, enforce addon policy, and restore Windows TLS trust'
 }
 
 Write-Output 'PowerShell Git Bash addon checks passed'

@@ -92,7 +92,15 @@ function Invoke-AapWindowsBashCli {
       $interactiveCommands -contains $_.ToLowerInvariant()
     }).Count -gt 0
   $result = Invoke-AapGitBashCli -Arguments $CliArguments -Interactive:$interactive
-  if ($result.Success) { exit 0 }
+  if ($result.Success) {
+    $trustCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all', 'repair', 'start')
+    if ($CliArguments | Where-Object { $trustCommands -contains $_.ToLowerInvariant() }) {
+      try { Install-AapIngressCaTrust } catch {
+        Write-AapWarn "Could not update Windows ingress CA trust: $($_.Exception.Message)"
+      }
+    }
+    exit 0
+  }
   $detail = if ($result.Stderr) { $result.Stderr.Trim() } else { $result.Stdout.Trim() }
   Write-Error "Git Bash CLI failed (exit $($result.ExitCode)): $detail"
   $exitCode = [int]$result.ExitCode
