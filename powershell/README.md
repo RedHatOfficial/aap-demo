@@ -120,9 +120,10 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo help`                | Show command help                                                  |
 
 Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
-`setup-pah`, `ao` (alias `ao-eap`), `local-cache`,
-`product-demos`, `opa`, and `ollama`. Product Demos is exposed as one aggregate
-deployment on Windows. These commands are delegated to the same Bash addon
+`setup-pah`, `ao` (alias `ao-eap`), `product-demos`, `opa`, and `ollama`.
+Product Demos is exposed as one aggregate deployment on Windows. Fleet and
+`local-cache` are deferred from the Windows build. These commands are delegated
+to the same Bash addon
 scripts used on Linux and macOS. APME, Fleet, and the legacy Product Demo
 domain aliases remain unavailable through the Windows wrapper.
 

@@ -1,6 +1,6 @@
 $Script:AapAvailableAddons = @(
   'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
-  'local-cache', 'product-demos', 'opa', 'ollama'
+  'product-demos', 'opa', 'ollama'
 )
 
 function Invoke-AapAddonDeployScript {

@@ -28,24 +28,18 @@ function Invoke-AapDemoEnable {
   }
 
   Write-Host "Enabling addon: $Addon"
-  $oneShot = $Addon -eq 'local-cache' -and $AddonArgs.Count -gt 0 -and
-    $AddonArgs[0].ToLowerInvariant() -in @('load', 'clear')
-  if (-not ($oneShot -and $AddonArgs[0].ToLowerInvariant() -eq 'clear')) {
-    Invoke-AapEnsureClusterReady
-  }
+  Invoke-AapEnsureClusterReady
   Invoke-AapAddonEnable -Addon $Addon -Namespace $Namespace -ScriptArgs $AddonArgs
-  if (-not $oneShot -and -not $Script:AapAddonDelegatedToBash) {
+  if (-not $Script:AapAddonDelegatedToBash) {
     try {
       Invoke-AapDemoWire -Namespace $Namespace -Quiet
     } catch {
       Write-AapWarn "Addon wiring skipped: $($_.Exception.Message)"
     }
   }
-  if (-not $oneShot) {
-    Add-AapAddon $Addon
-    $addons = (Get-AapAddonsList) -join ','
-    Write-AapStep "Saved to config: ADDONS=$addons"
-  }
+  Add-AapAddon $Addon
+  $addons = (Get-AapAddonsList) -join ','
+  Write-AapStep "Saved to config: ADDONS=$addons"
 }
 
 function Invoke-AapDemoDisable {

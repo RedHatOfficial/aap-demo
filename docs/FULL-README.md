@@ -164,6 +164,9 @@ other cluster data.
   other commands (`diagnose`, `test`, `watch`, …)
 - See [powershell/README.md](powershell/README.md) for full Windows install and usage
 
+The Windows wrapper currently defers Fleet and local image caching. Both remain
+available through the Linux/macOS Bash workflow.
+
 Once deployed, `aap-demo status` shows routes, credentials, and cluster health:
 
 ```text

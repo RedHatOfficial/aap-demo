@@ -19,11 +19,11 @@ supported command to `aap-demo.sh` through Git Bash. The wrapper discovers a
 Git-for-Windows `bash.exe`, forwards arguments and inherited environment values,
 captures output and exit codes, and reports an actionable prerequisite error.
 
-The wrapper continues to enforce the Windows addon surface. Fleet, APME, and
-legacy Product Demo domain aliases are rejected even though their Bash code may
-still exist for other platforms. Product Demos remains one aggregate Windows
-entry point. Native PowerShell modules remain available for development and
-future migration, but they are not the Windows launcher execution path.
+The wrapper continues to enforce the Windows addon surface. Fleet, local-cache,
+APME, and legacy Product Demo domain aliases are rejected even though their Bash
+code may still exist for other platforms. Product Demos remains one aggregate
+Windows entry point. Native PowerShell modules remain available for development
+and future migration, but they are not the Windows launcher execution path.
 
 Windows deploys and AO/Product Demo enablement run a PowerShell preflight for
 the external tools required at the Bash boundary. `jq` is required for JSON
@@ -41,7 +41,8 @@ runtime dependency, and shell output/quoting remains part of the boundary. The
 wrapper must keep forwarding arguments and environment values without leaking
 secrets or changing addon state semantics. Windows demo enablement has a small
 host-runtime install step, while the cluster itself remains the deployment
-boundary; Linux and macOS do not inherit the Windows auto-install behavior.
+boundary; Linux and macOS do not inherit the Windows auto-install or deferred
+Fleet/cache behavior.
 
 ## Alternatives considered
 

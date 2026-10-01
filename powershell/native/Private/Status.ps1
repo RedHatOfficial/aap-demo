@@ -175,12 +175,13 @@ STATUS:
     must-gather     Collect diagnostic bundle
 
 ADDONS:
-    enable <name>   Enable a non-fleet addon (pass addon-specific arguments through)
+    enable <name>   Enable a supported addon (pass addon-specific arguments through)
     disable <name>  Disable an addon
     wire            Apply addon integrations after deployment
     Available: mcp-server, portal, portal-operator, setup-pah, ao,
-               local-cache, product-demos, opa, ollama
+               product-demos, opa, ollama
     Legacy alias: ao-eap maps to ao
+    Host VM and image caching features are deferred from the Windows build.
 
 NOTES:
     Requires oc and crc on PATH. OpenShift Local needs Hyper-V.

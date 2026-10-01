@@ -38,7 +38,7 @@ $ModuleRoot = Join-Path $PSScriptRoot 'native'
 $AapDemoModule = Import-Module (Join-Path $ModuleRoot 'AapDemo.psm1') -Force -PassThru
 
 $WindowsBlockedAddons = @(
-  'apme', 'apme-eap', 'fleet',
+  'apme', 'apme-eap', 'fleet', 'local-cache',
   'product-demos-base', 'product-demo-linux', 'product-demo-windows',
   'product-demo-network', 'product-demo-cloud', 'product-demo-openshift',
   'product-demo-satellite'

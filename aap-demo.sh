@@ -229,6 +229,16 @@ for _arg in "${EXTRA_ARGS[@]}"; do
   fi
 done
 
+# Fleet VMs and the host-side image cache are deferred from the Windows build.
+# Keep the Linux/macOS Bash behavior unchanged.
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*)
+    AAP_DEMO_SKIP_CACHE=true
+    _DESTROY_SKIP_CACHE=true
+    export AAP_DEMO_SKIP_CACHE
+    ;;
+esac
+
 # Load infrastructure abstraction layer
 source "${SCRIPT_DIR}/includes/infra-api.sh"
 # shellcheck source=includes/ingress-ca-trust.sh
@@ -336,6 +346,21 @@ check_python_windows() {
       echo "  winget install --id Python.Python.3.13 -e --source winget"
       echo ""
       return 1
+      ;;
+  esac
+  return 0
+}
+
+reject_windows_deferred_addon() {
+  local _addon="${1:-}"
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      case "$_addon" in
+        fleet | local-cache)
+          _err "Addon '$_addon' is disabled on Windows for now"
+          return 1
+          ;;
+      esac
       ;;
   esac
   return 0
@@ -3419,9 +3444,11 @@ case "$COMMAND" in
     cmd_must_gather "${EXTRA_ARGS[0]:-}"
     ;;
   fleet)
+    reject_windows_deferred_addon fleet || exit 1
     cmd_fleet "${EXTRA_ARGS[@]}"
     ;;
   enable)
+    reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
     case "${EXTRA_ARGS[0]:-}" in
       ao | product-demos | product-demos-base | product-demo-*)
         check_jq_windows || exit 1
@@ -3434,6 +3461,7 @@ case "$COMMAND" in
     cmd_wire
     ;;
   disable)
+    reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
     cmd_disable "${EXTRA_ARGS[@]}"
     ;;
   deploy | deploy-all)

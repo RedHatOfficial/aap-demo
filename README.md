@@ -107,6 +107,9 @@ aap-demo enable product-demo-satellite  # Satellite demos (requires a Satellite 
 aap-demo disable addon_name  # Disables addon
 ```
 
+The Windows wrapper currently defers Fleet and local image caching; those
+addons remain available through the Linux/macOS Bash workflow.
+
 When destroying a running cluster, `aap-demo destroy` asks whether to save the
 container images locally. Confirming lets the next `aap-demo deploy` reuse the
 cached containers instead of downloading them again. Existing cached images are

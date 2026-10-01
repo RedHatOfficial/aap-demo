@@ -56,10 +56,16 @@ $blockedFleet = Invoke-AapNativeProcess -FilePath $pwsh -ArgumentList @(
 if ($blockedFleet.Success -or $blockedFleet.Output -notmatch 'not available through the Windows wrapper') {
   throw 'PowerShell wrapper did not block the Fleet command'
 }
+$blockedCache = Invoke-AapNativeProcess -FilePath $pwsh -ArgumentList @(
+  '-NoProfile', '-NonInteractive', '-File', $wrapper, 'enable', 'local-cache'
+)
+if ($blockedCache.Success -or $blockedCache.Output -notmatch 'not available through the Windows wrapper') {
+  throw 'PowerShell wrapper did not block the local-cache addon'
+}
 $help = Invoke-AapNativeProcess -FilePath $pwsh -ArgumentList @(
   '-NoProfile', '-NonInteractive', '-File', $wrapper, 'help'
 )
-if (-not $help.Success -or $help.Stdout -match '(?im)^\s*fleet\b|\bapme\b') {
+if (-not $help.Success -or $help.Stdout -match '(?im)^\s*fleet\b|\bapme\b|\blocal-cache\b') {
   throw 'PowerShell help exposed an addon that is excluded from the Windows wrapper'
 }
 
