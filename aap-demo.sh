@@ -2451,8 +2451,8 @@ _cached_operator_catalog_ref() {
 }
 
 _rewrite_local_cache_refs() {
-  # Operators publish image references in generated workload templates. Keep
-  # those templates aligned with the platform digests imported from cache.
+  # Cached platform digests exist only in local CRI-O storage. The rewrite
+  # helper also sets IfNotPresent so kubelet does not ask the registry for them.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" rewrite || true
 }
 

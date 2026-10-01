@@ -219,11 +219,13 @@ if [ "$ACTION" = "rewrite" ]; then
       ([
         ((.spec.template.spec.containers // []) | to_entries[] |
           select(.value.image == $old) |
-          {op:"replace", path:("/spec/template/spec/containers/" + (.key|tostring) + "/image"), value:$new}),
+          [{op:"replace", path:("/spec/template/spec/containers/" + (.key|tostring) + "/image"), value:$new},
+           {op:"add", path:("/spec/template/spec/containers/" + (.key|tostring) + "/imagePullPolicy"), value:"IfNotPresent"}]),
         ((.spec.template.spec.initContainers // []) | to_entries[] |
           select(.value.image == $old) |
-          {op:"replace", path:("/spec/template/spec/initContainers/" + (.key|tostring) + "/image"), value:$new})
-      ] | map(select(.op == "replace"))) as $patch |
+          [{op:"replace", path:("/spec/template/spec/initContainers/" + (.key|tostring) + "/image"), value:$new},
+           {op:"add", path:("/spec/template/spec/initContainers/" + (.key|tostring) + "/imagePullPolicy"), value:"IfNotPresent"}])
+      ] | add) as $patch |
       select(($patch | length) > 0) |
       [.kind, .metadata.namespace, .metadata.name, ($patch | tojson)] | @tsv')
 
@@ -235,7 +237,9 @@ if [ "$ACTION" = "rewrite" ]; then
     done < <(kubectl get catalogsources -A -o json 2>/dev/null | jq -r \
       --arg old "$original_ref" --arg new "$local_ref" '
       .items[] | select(.spec.image == $old) |
-      [.metadata.namespace, .metadata.name, ([{op:"replace",path:"/spec/image",value:$new}] | tojson)] | @tsv')
+      [.metadata.namespace, .metadata.name,
+       ([{op:"replace",path:"/spec/image",value:$new},
+         {op:"add",path:"/spec/imagePullPolicy",value:"IfNotPresent"}] | tojson)] | @tsv')
   done
 
   if [ "$mappings" -gt 0 ] && [ "$rewrites" -gt 0 ]; then

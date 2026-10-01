@@ -147,3 +147,44 @@ if "$CACHE_SCRIPT" save >/dev/null 2>&1; then
   exit 1
 fi
 echo "✓ cache save reports failed image exports"
+
+# Rewritten OCI archive digests are local-only references. Patched workloads
+# must use IfNotPresent so kubelet resolves the imported image from CRI-O
+# instead of trying to pull the synthetic digest from registry.redhat.io.
+rm -f "${CACHE_DIR}"/*.tar "${CACHE_DIR}"/*.ref "${CACHE_DIR}"/*.local-ref
+REWRITE_ORIGINAL='registry.redhat.io/example/operator@sha256:registry-digest'
+REWRITE_LOCAL='registry.redhat.io/example/operator@sha256:archive-digest'
+REWRITE_KEY=$(printf '%s\n' "$REWRITE_ORIGINAL" | md5sum | awk '{print $1}')
+printf '%s\n' "$REWRITE_ORIGINAL" >"${CACHE_DIR}/${REWRITE_KEY}.ref"
+printf '%s\n' "$REWRITE_LOCAL" >"${CACHE_DIR}/${REWRITE_KEY}.local-ref"
+export MOCK_REWRITE_LOG="${TEST_DIR}/rewrite.log"
+cat >"${MOCK_BIN}/kubectl" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  "get deployments,statefulsets,daemonsets,jobs,cronjobs -A -o json")
+    printf '%s\n' '{"items":[{"kind":"Deployment","metadata":{"namespace":"aap-operator","name":"operator"},"spec":{"template":{"spec":{"containers":[{"image":"registry.redhat.io/example/operator@sha256:registry-digest","imagePullPolicy":"Always"}]}}}}]}'
+    ;;
+  "get catalogsources -A -o json")
+    printf '%s\n' '{"items":[]}'
+    ;;
+  patch*)
+    printf '%s\n' "$*" >>"$MOCK_REWRITE_LOG"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+EOF
+chmod +x "${MOCK_BIN}/kubectl"
+if ! "$CACHE_SCRIPT" rewrite >"${TEST_DIR}/rewrite.out" 2>&1; then
+  echo "✗ compatibility rewrite command should remain non-fatal" >&2
+  cat "${TEST_DIR}/rewrite.out" >&2
+  exit 1
+fi
+if ! grep -q 'archive-digest' "$MOCK_REWRITE_LOG" \
+  || ! grep -q 'IfNotPresent' "$MOCK_REWRITE_LOG"; then
+  echo "✗ cache rewrite must use the local digest with IfNotPresent" >&2
+  cat "$MOCK_REWRITE_LOG" >&2
+  exit 1
+fi
+echo "✓ cache rewrite uses local digests without registry pulls"

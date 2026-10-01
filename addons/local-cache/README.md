@@ -27,8 +27,9 @@ Images are stored per CRC preset:
 
 Each image is saved as `<md5>.tar`, a `<md5>.ref` sidecar with the original image
 reference, and a `<md5>.local-ref` sidecar containing the archive's actual platform
-digest. During deployment, generated workload templates are rewritten from the original
-index digest to that locally available platform digest.
+digest for local cache import bookkeeping. During deployment, matching workload
+templates are rewritten to that local platform digest and use `IfNotPresent`, so CRI-O
+uses the imported image instead of sending the archive-only digest to the registry.
 The cache also records the exact Red Hat operator catalog digest for each OCP version so
 OLM resolves the same operator bundle whose images were cached.
 The cache format is versioned; the next save automatically refreshes older archives.
