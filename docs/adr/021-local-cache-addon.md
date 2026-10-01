@@ -96,15 +96,18 @@ availability, and fall back to the original registry reference when it is not us
 ### Auto-load during deploy
 
 The `_load_local_cache()` function in `aap-demo.sh` is called near the start of
-`aap-demo deploy`, before the operator and AAP resources begin pulling images. It always
-checks for an existing cache, so a destroy/recreate cycle does not require the
-`local-cache` addon to remain in `~/.aap-demo/config` (`ADDONS=...`). It loads cached
-images that are not already present in CRI-O (checked via `crictl inspecti`) and remains
-silent when no cache exists. Before creating the CatalogSource, deployment uses the
-cached catalog's local platform digest for the matching OCP version. This pins OLM to
-the catalog that produced the cached operator bundle instead of following a mutable
-`vX.Y` tag. Caches created before this metadata was added remain compatible but use the
-tagged catalog until refreshed.
+`aap-demo deploy`, after Kubernetes API connectivity and MicroShift OVN readiness have
+been verified but before the operator and AAP resources begin pulling images. The
+readiness gate is intentional: loading into the CRI-O runtime before the cluster and
+CNI are ready can race cluster startup and make a clean deploy appear to have a
+working cache when the runtime is not yet usable. It always checks for an existing
+cache, so a destroy/recreate cycle does not require the `local-cache` addon to remain in
+`~/.aap-demo/config` (`ADDONS=...`). It loads cached images that are not already present
+in CRI-O (checked via `crictl inspecti`) and remains silent when no cache exists. Before
+creating the CatalogSource, deployment uses the cached catalog's local platform digest
+for the matching OCP version. This pins OLM to the catalog that produced the cached
+operator bundle instead of following a mutable `vX.Y` tag. Caches created before this
+metadata was added remain compatible but use the tagged catalog until refreshed.
 
 ### Save prompt during destroy
 
