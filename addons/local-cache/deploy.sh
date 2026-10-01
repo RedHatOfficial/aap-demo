@@ -136,10 +136,17 @@ if [ "$ACTION" = "load" ]; then
     # on the VM, import it, and remove it. Preserve the digest so a mismatch is
     # an error, not a renamed tag.
     if _ssh "cat >'${CACHE_REMOTE_ARCHIVE}' && sudo skopeo copy --all --preserve-digests oci-archive:'${CACHE_REMOTE_ARCHIVE}':aap-demo-cache containers-storage:'${local_ref}'; status=\$?; rm -f '${CACHE_REMOTE_ARCHIVE}'; exit \$status" <"$tarball" &>/dev/null; then
-      printf "${_GREEN}✓${_NC}\n"
-      loaded=$((loaded + 1))
+      if _crc_exec sudo crictl inspecti "$local_ref" &>/dev/null; then
+        printf "${_GREEN}✓${_NC}\n"
+        loaded=$((loaded + 1))
+      else
+        printf "${_YELLOW}✗${_NC} (digest unavailable)\n"
+        rm -f "$tarball" "${tarball%.tar}.ref" "${tarball%.tar}.local-ref"
+        failed=$((failed + 1))
+      fi
     else
       printf "${_YELLOW}✗${_NC}\n"
+      rm -f "$tarball" "${tarball%.tar}.ref" "${tarball%.tar}.local-ref"
       failed=$((failed + 1))
     fi
   done
@@ -208,6 +215,15 @@ if [ "$ACTION" = "rewrite" ]; then
     [ -n "$original_ref" ] && [ -n "$local_ref" ] || continue
     mappings=$((mappings + 1))
 
+    # A cache entry can retain a digest that was valid when it was saved but
+    # was not imported into the current CRC VM. Do not rewrite live workloads
+    # to an unavailable image; leave the original registry reference in place
+    # so Kubernetes can pull it normally.
+    if ! _crc_exec sudo crictl inspecti "$local_ref" &>/dev/null; then
+      echo "  ⚠ Skipping unavailable cached image: ${local_ref}" >&2
+      continue
+    fi
+
     while IFS=$'\t' read -r kind namespace name patch; do
       [ -n "$kind" ] || continue
       if kubectl patch "$kind" "$name" -n "$namespace" --type=json -p "$patch" >/dev/null 2>&1; then
@@ -218,14 +234,44 @@ if [ "$ACTION" = "rewrite" ]; then
       .items[] |
       ([
         ((.spec.template.spec.containers // []) | to_entries[] |
-          select(.value.image == $old) |
-          {op:"replace", path:("/spec/template/spec/containers/" + (.key|tostring) + "/image"), value:$new}),
+          select(.value.image == $old or .value.image == $new) |
+          (if .value.image == $old then
+            {op:"replace", path:("/spec/template/spec/containers/" + (.key|tostring) + "/image"), value:$new}
+          else empty end),
+          (if .value.imagePullPolicy == "Always" then
+            {op:"replace", path:("/spec/template/spec/containers/" + (.key|tostring) + "/imagePullPolicy"), value:"IfNotPresent"}
+          else empty end)),
         ((.spec.template.spec.initContainers // []) | to_entries[] |
-          select(.value.image == $old) |
-          {op:"replace", path:("/spec/template/spec/initContainers/" + (.key|tostring) + "/image"), value:$new})
+          select(.value.image == $old or .value.image == $new) |
+          (if .value.image == $old then
+            {op:"replace", path:("/spec/template/spec/initContainers/" + (.key|tostring) + "/image"), value:$new}
+          else empty end),
+          (if .value.imagePullPolicy == "Always" then
+            {op:"replace", path:("/spec/template/spec/initContainers/" + (.key|tostring) + "/imagePullPolicy"), value:"IfNotPresent"}
+          else empty end))
       ] | map(select(.op == "replace"))) as $patch |
       select(($patch | length) > 0) |
       [.kind, .metadata.namespace, .metadata.name, ($patch | tojson)] | @tsv')
+
+    while IFS=$'\t' read -r namespace name patch; do
+      [ -n "$name" ] || continue
+      if kubectl patch csv "$name" -n "$namespace" --type=json -p "$patch" >/dev/null 2>&1; then
+        rewrites=$((rewrites + 1))
+      fi
+    done < <(kubectl get csv -A -o json 2>/dev/null | jq -r \
+      --arg old "$original_ref" --arg new "$local_ref" '
+      .items[] | . as $item |
+      (.spec.install.spec.deployments // []) | to_entries[] as $deployment |
+      (($deployment.value.spec.template.spec.containers // []) | to_entries[]) as $container |
+      select($container.value.image == $old or $container.value.image == $new) |
+      ([(if $container.value.image == $old then
+          {op:"replace", path:("/spec/install/spec/deployments/" + ($deployment.key|tostring) + "/spec/template/spec/containers/" + ($container.key|tostring) + "/image"), value:$new}
+        else empty end),
+        (if $container.value.imagePullPolicy == "Always" then
+          {op:"replace", path:("/spec/install/spec/deployments/" + ($deployment.key|tostring) + "/spec/template/spec/containers/" + ($container.key|tostring) + "/imagePullPolicy"), value:"IfNotPresent"}
+        else empty end)] | map(select(.op == "replace"))) as $patch |
+      select(($patch | length) > 0) |
+      [$item.metadata.namespace, $item.metadata.name, ($patch | tojson)] | @tsv')
 
     while IFS=$'\t' read -r namespace name patch; do
       [ -n "$name" ] || continue

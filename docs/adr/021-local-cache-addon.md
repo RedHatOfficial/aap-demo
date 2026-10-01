@@ -4,6 +4,8 @@
 
 **Date**: 2026-07-30
 
+**Last updated**: 2026-10-01
+
 **Authors**: Chad Ferman
 
 ## Context
@@ -42,8 +44,8 @@ aap-demo disable local-cache         # alias for clear
    oci-archive:/tmp/aap-demo-local-cache.oci:<tag>` on the VM, then stream the OCI
    archive to a local file
 4. Each image is stored as three files: `<md5>.tar` (the OCI archive), `<md5>.ref`
-   (the original image reference), and `<md5>.local-ref` (the archive's actual
-   platform digest)
+   (the original image reference), and `<md5>.local-ref` (the digest address of the
+   imported archive in the CRC image store)
 5. When the image is the Red Hat operator index, save also records the OCP version,
    original catalog digest, and local platform digest in `catalog-digests`
 6. Images already cached (all three archive and sidecar files exist) are skipped
@@ -56,6 +58,35 @@ aap-demo disable local-cache         # alias for clear
    containers-storage:'<ref>'`; remove the temporary file afterward
 3. Import under the `.local-ref` platform digest and report per-image success/failure
 4. Rewrite matching CatalogSource and workload-template image references to `.local-ref`
+
+### Self-healing cache behavior
+
+The cache is an optimization, not a prerequisite for deployment. A cache entry can be
+valid on disk but unavailable in a newly created CRC VM, for example when an import
+failed, an archive was incomplete, or the recorded local digest came from an older VM.
+The loader therefore verifies every successful import with `crictl inspecti`. Entries
+that fail import or do not expose the expected digest are removed together with their
+sidecars. In quiet/automatic deploy mode, those failures are reported but do not abort
+the deployment; Kubernetes can pull the original registry reference instead.
+
+The rewrite phase independently verifies that the cached digest is present before it
+changes any workload. Unavailable entries are skipped, leaving the original registry
+reference untouched. Rewrites are idempotent and handle both the original and already
+rewritten image reference. They also change `imagePullPolicy: Always` to
+`IfNotPresent`; otherwise Kubernetes contacts the registry even when the image is
+already in CRI-O, defeating the purpose of the cache.
+
+Patching only generated Deployments is insufficient because OLM and AAP component
+operators recreate them from their source templates. The rewrite therefore updates the
+CSV install strategy as well as live workload templates. The CSV is the source of truth
+for the AAP operator deployment; keeping its image and pull policy aligned prevents an
+operator reconciliation loop from restoring `Always` and the original registry image.
+
+The cache deliberately retains OCI multi-architecture archives and their imported
+archive digest. An experiment that attempted to re-import those archives directly under
+the original platform digest failed for multi-architecture archives. The supported
+behavior is consequently: preserve the archive digest during import, verify its actual
+availability, and fall back to the original registry reference when it is not usable.
 
 ### Auto-load during deploy
 
@@ -143,6 +174,35 @@ persistent disk disabled.
   resolves preset in order: `CRC_PRESET` env var → `CRC_PRESET` in `~/.aap-demo/config` →
   `crc config get preset` → default `microshift`. Avoids mis-parsing CRC's "not set"
   message (which mentions openshift as CRC's default, not aap-demo's).
+
+### Failure analysis and automation outcome
+
+The cache appeared not to work after a destroy/recreate cycle for two independent
+reasons:
+
+1. A stale local digest mapping was reused after the corresponding image was no longer
+   available in the new CRC VM. The deploy path attempted to use that mapping without
+   validating the imported image.
+2. Images that were already present in CRI-O still had `imagePullPolicy: Always`, so the
+   kubelet contacted `registry.redhat.io` and failed with `manifest unknown` instead of
+   using the local image.
+
+The automated fix keeps good cache entries, evicts only entries that fail validation,
+skips unusable rewrites, and repairs the operator CSV/workload pull policy. This makes
+the cache a partial accelerator with safe registry fallback rather than an all-or-nothing
+deployment dependency.
+
+The implementation is covered by regression tests for failed import eviction, digest
+availability checks, quiet fallback, stale-reference skipping, idempotent rewrites,
+`IfNotPresent` policy repair, and CSV source-of-truth repair.
+
+Validation on 2026-10-01 included a destructive CRC destroy/recreate cycle, a clean AAP
+deployment attempt, shell syntax and ShellCheck validation, the local-cache regression
+suite, and the repository CLI tests. The CRC version integration test passed with host
+filesystem access; an unprivileged sandbox run could not remove existing user cache files
+and was not considered a product failure. The ingress CA suite retained one pre-existing
+environment-sensitive failure (`combined_bundle_verifies_github`) unrelated to local
+cache behavior.
 
 ## Consequences
 
