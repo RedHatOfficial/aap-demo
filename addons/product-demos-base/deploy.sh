@@ -444,12 +444,37 @@ else
   echo "✓ Project created (ID: $PROJECT_ID)"
 fi
 
-# Wait for project sync
-echo "Waiting for project to sync..."
-sleep 5
+# A project create/patch does not reliably start an SCM update on AAP 2.7.
+# Trigger it explicitly so a fresh or reused bootstrap project cannot remain in
+# the "never updated" state while the polling loop waits forever.
+echo "Starting project sync..."
+PROJECT_UPDATE_RESULT=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  -X POST \
+  "${AAP_API}/projects/${PROJECT_ID}/update/" 2>&1)
+PROJECT_UPDATE_ID=$(echo "$PROJECT_UPDATE_RESULT" | jq -r '.id // empty' 2>/dev/null)
 
+if [ -n "$PROJECT_UPDATE_ID" ]; then
+  echo "✓ Project sync started (job ID: $PROJECT_UPDATE_ID)"
+else
+  # A 400 can mean that AAP already has an update in progress. Continue polling
+  # in that case, but surface any other response before failing with a timeout.
+  PROJECT_STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/projects/${PROJECT_ID}/" 2>&1)
+  STATUS=$(echo "$PROJECT_STATUS" | jq -r '.status // "unknown"' 2>/dev/null)
+  if [[ "$STATUS" != "pending" && "$STATUS" != "running" && "$STATUS" != "waiting" ]]; then
+    echo "❌ ERROR: Could not start project sync"
+    echo "$PROJECT_UPDATE_RESULT" | jq '{detail, error, job_explanation} | with_entries(select(.value != null and .value != ""))' 2>/dev/null \
+      || echo "$PROJECT_UPDATE_RESULT"
+    exit 1
+  fi
+  echo "  Project sync is already in progress (status: $STATUS)"
+fi
+
+echo "Waiting for project to sync..."
+SYNC_ATTEMPTS="${APD_PROJECT_SYNC_ATTEMPTS:-60}"
+SYNC_DELAY="${APD_PROJECT_SYNC_DELAY:-5}"
 PROJECT_SYNCED=false
-for i in {1..30}; do
+for i in $(seq 1 "$SYNC_ATTEMPTS"); do
   PROJECT_STATUS=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     "${AAP_API}/projects/${PROJECT_ID}/" 2>&1)
 
@@ -459,18 +484,21 @@ for i in {1..30}; do
     echo "✓ Project synced successfully"
     PROJECT_SYNCED=true
     break
-  elif [ "$STATUS" = "failed" ]; then
-    echo "❌ ERROR: Project sync failed"
-    echo "$PROJECT_STATUS" | jq '.job_explanation // empty' 2>/dev/null
+  elif [[ "$STATUS" = "failed" || "$STATUS" = "error" || "$STATUS" = "canceled" ]]; then
+    echo "❌ ERROR: Project sync failed (status: $STATUS)"
+    echo "$PROJECT_STATUS" | jq '{status, scm_revision, job_explanation, last_job_id, detail, error} | with_entries(select(.value != null and .value != ""))' 2>/dev/null \
+      || echo "$PROJECT_STATUS"
     exit 1
   fi
 
-  echo "  Status: $STATUS (waiting... $i/30)"
-  sleep 2
+  echo "  Status: $STATUS (waiting... $i/$SYNC_ATTEMPTS)"
+  sleep "$SYNC_DELAY"
 done
 
 if [ "$PROJECT_SYNCED" != true ]; then
-  echo "❌ ERROR: Project sync did not complete successfully"
+  echo "❌ ERROR: Project sync did not complete successfully (last status: ${STATUS:-unknown})"
+  echo "$PROJECT_STATUS" | jq '{status, scm_revision, job_explanation, last_job_id, detail, error} | with_entries(select(.value != null and .value != ""))' 2>/dev/null \
+    || echo "$PROJECT_STATUS"
   exit 1
 fi
 

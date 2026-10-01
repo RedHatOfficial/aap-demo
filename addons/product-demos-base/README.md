@@ -148,6 +148,20 @@ aap-demo diagnose
 
 Wait until AAP finishes reconciling, then re-run `aap-demo enable product-demos`.
 
+### Bootstrap project sync does not complete
+
+The addon explicitly starts an SCM update for the bootstrap project, then waits
+up to five minutes for AAP to report `successful`. If the sync fails, the
+command prints AAP's project status and job explanation. Check that the
+controller can reach the configured repository and that the branch exists.
+
+For slower or constrained environments, adjust the polling window:
+
+```bash
+APD_PROJECT_SYNC_ATTEMPTS=120 APD_PROJECT_SYNC_DELAY=5 \
+  aap-demo enable product-demos
+```
+
 ### License is missing / cannot launch installer jobs
 
 AAP will not launch jobs until a subscription is attached. A destroy/redeploy clears the previous
