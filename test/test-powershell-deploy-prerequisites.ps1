@@ -13,7 +13,7 @@ $missing = @(& $module {
     -KubernetesPath ''
 })
 
-foreach ($label in @('Git Bash', 'CRC', 'oc or kubectl')) {
+foreach ($label in @('Git Bash', 'CRC', 'oc or kubectl', 'jq')) {
   if ($missing -notcontains $label) {
     throw "Deploy preflight did not report missing ${label}: $($missing -join ', ')"
   }
@@ -23,7 +23,8 @@ $complete = @(& $module {
   Get-AapWindowsDeployPrerequisiteFailures `
     -GitBashPath 'C:\Program Files\Git\bin\bash.exe' `
     -CrcPath 'C:\Program Files\crc\crc.exe' `
-    -KubernetesPath 'C:\Program Files\oc\oc.exe'
+    -KubernetesPath 'C:\Program Files\oc\oc.exe' `
+    -JqPath 'C:\Program Files\jq\jq.exe'
 })
 if ($complete.Count -ne 0) {
   throw "Deploy preflight reported false failures: $($complete -join ', ')"
@@ -33,6 +34,11 @@ $wrapperSource = Get-Content (Join-Path $repoRoot 'powershell/aap-demo.ps1') -Ra
 if ($wrapperSource -notmatch 'Assert-AapWindowsDeployPrerequisites' -or
     $wrapperSource -notmatch "'deploy', 'deploy-all', 'redeploy', 'redeploy-all'") {
   throw 'PowerShell wrapper must preflight every deploy-family command'
+}
+$prerequisiteSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Prerequisites.ps1') -Raw
+if ($prerequisiteSource -notmatch 'Ensure-AapJq' -or
+    $prerequisiteSource -notmatch 'jqlang\.jq') {
+  throw 'Windows deploy preflight must attempt to install jq via winget'
 }
 
 Write-Output 'PowerShell deploy prerequisite checks passed'

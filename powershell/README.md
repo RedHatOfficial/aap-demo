@@ -16,7 +16,8 @@ addons, wiring, and cleanup so Windows follows the current cross-platform behavi
 | **Git for Windows**         | Required; the wrapper runs `aap-demo.sh` through Git Bash.                    |
 | **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
-Optional for the core CLI: `python`, `jq` (some addons require them).
+`jq` is required for Windows deploys because the Git Bash deployment and addon
+wiring paths use it. Python remains optional for demo provisioning and imports.
 
 ## Install
 

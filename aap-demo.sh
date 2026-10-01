@@ -299,6 +299,25 @@ check_kubectl() {
   return 1
 }
 
+# jq is required by the Bash deploy and addon wiring paths. Keep this check
+# Windows-only here so Linux and macOS retain their existing prerequisite flow.
+check_jq_windows() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      if command -v jq &>/dev/null; then
+        return 0
+      fi
+      _err "jq not found"
+      echo ""
+      echo "Install jq from PowerShell or Git Bash with:"
+      echo "  winget install --id jqlang.jq -e --source winget"
+      echo ""
+      return 1
+      ;;
+  esac
+  return 0
+}
+
 # -----------------------------------------------------------------------------
 # Infrastructure Type Handling
 # -----------------------------------------------------------------------------
@@ -3289,6 +3308,9 @@ case "$COMMAND" in
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
     # These handle their own cluster state (auto-start if stopped)
+    if [[ "$COMMAND" != "create" ]]; then
+      check_jq_windows || exit 1
+    fi
     setup_kubeconfig
     ;;
   *)

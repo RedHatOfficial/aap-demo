@@ -16,13 +16,15 @@ function Get-AapWindowsDeployPrerequisiteFailures {
   param(
     [AllowEmptyString()][string]$GitBashPath,
     [AllowEmptyString()][string]$CrcPath,
-    [AllowEmptyString()][string]$KubernetesPath
+    [AllowEmptyString()][string]$KubernetesPath,
+    [AllowEmptyString()][string]$JqPath
   )
 
   $missing = [System.Collections.Generic.List[string]]::new()
   if ([string]::IsNullOrWhiteSpace($GitBashPath)) { $missing.Add('Git Bash') }
   if ([string]::IsNullOrWhiteSpace($CrcPath)) { $missing.Add('CRC') }
   if ([string]::IsNullOrWhiteSpace($KubernetesPath)) { $missing.Add('oc or kubectl') }
+  if ([string]::IsNullOrWhiteSpace($JqPath)) { $missing.Add('jq') }
   return $missing.ToArray()
 }
 
@@ -32,10 +34,16 @@ function Assert-AapWindowsDeployPrerequisites {
 
   $crcPath = Get-AapWindowsCommandPath -Names @('crc')
   $kubernetesPath = Get-AapWindowsCommandPath -Names @('oc', 'kubectl')
+  $jqPath = Get-AapWindowsCommandPath -Names @('jq')
+  if ([string]::IsNullOrWhiteSpace($jqPath)) {
+    try { Ensure-AapJq } catch { }
+    $jqPath = Get-AapWindowsCommandPath -Names @('jq')
+  }
   $missing = @(Get-AapWindowsDeployPrerequisiteFailures `
     -GitBashPath $gitBashPath `
     -CrcPath $crcPath `
-    -KubernetesPath $kubernetesPath)
+    -KubernetesPath $kubernetesPath `
+    -JqPath $jqPath)
 
   if ($missing.Count -eq 0) { return }
 
@@ -43,6 +51,7 @@ function Assert-AapWindowsDeployPrerequisites {
     'Install Git for Windows so bash.exe is available.'
     'Install OpenShift Local (CRC) and ensure crc.exe is on PATH.'
     'Install the Red Hat OpenShift client (oc) or kubectl and ensure it is on PATH.'
+    'Install jq: winget install --id jqlang.jq -e --source winget'
   )
   $details = @($missing | ForEach-Object { "  - $_" })
   throw ((@('Windows deploy prerequisites are missing:') + $details + @('', 'Next steps:') +
