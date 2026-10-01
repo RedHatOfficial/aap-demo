@@ -572,7 +572,7 @@ spec:
     credentials:
       secretRef: secrets-rhaap-portal
 $(printf '%b\n' "$integration_block")
-  backstage:
+  deployment:
 $(printf '%b\n' "$ca_block")
     route:
       enabled: true
