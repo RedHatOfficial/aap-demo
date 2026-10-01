@@ -1008,6 +1008,47 @@ function Import-AapIngressCaToUserStore {
   return $result.ExitCode -eq 0
 }
 
+function Import-AapIngressCaToMachineStoreElevated {
+  param([Parameter(Mandatory)][string]$Path)
+
+  if (Test-AapIsAdministrator) {
+    return (Add-AapCertToRootStore -Path $Path -Location 'LocalMachine')
+  }
+
+  $hostCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+  if (-not $hostCommand) {
+    $hostCommand = Get-Command powershell.exe -ErrorAction SilentlyContinue
+  }
+  if (-not $hostCommand) {
+    return $false
+  }
+
+  try {
+    $pathLiteral = $Path.Replace("'", "''")
+    $script = @"
+`$ErrorActionPreference = 'Stop'
+`$store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+try {
+  `$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+  `$stale = @(`$store.Certificates | Where-Object { `$_.Subject -match 'CN=ingress-ca' })
+  foreach (`$cert in `$stale) { [void]`$store.Remove(`$cert) }
+  `$store.Add((New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('$pathLiteral')))
+} finally {
+  `$store.Close()
+}
+"@
+    $encoded = [Convert]::ToBase64String(
+      [Text.Encoding]::Unicode.GetBytes($script)
+    )
+    $result = Start-Process -FilePath $hostCommand.Source `
+      -ArgumentList @('-NoProfile', '-EncodedCommand', $encoded) `
+      -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+    return $result.ExitCode -eq 0
+  } catch {
+    return $false
+  }
+}
+
 function Import-AapIngressCaCertificate {
   param(
     [Parameter(Mandatory)][string]$Path,
@@ -1036,19 +1077,30 @@ function Import-AapIngressCaCertificate {
   }
 
   if (Import-AapIngressCaToUserStore -Path $Path) {
+    if (-not (Test-AapIsAdministrator) -and
+        (Import-AapIngressCaToMachineStoreElevated -Path $Path)) {
+      if (-not $Quiet) {
+        Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+        Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
+      }
+      return $true
+    }
     if (-not $Quiet) {
       Write-AapStep 'Ingress CA trusted (Current User certificate store)'
-      if (-not (Test-AapIsAdministrator)) {
-        Write-AapWarn 'Chrome/Edge may still warn until you import from an elevated PowerShell:'
-        Write-Host "  certutil -delstore Root `"ingress-ca`""
-        Write-Host "  certutil -addstore Root `"$Path`""
-      }
+    }
+    return $true
+  }
+
+  if (Import-AapIngressCaToMachineStoreElevated -Path $Path) {
+    if (-not $Quiet) {
+      Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+      Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
     }
     return $true
   }
 
   if (-not $Quiet) {
-    Write-AapWarn 'Could not import ingress CA to Windows certificate store'
+    Write-AapWarn 'Could not automatically import ingress CA; approve the Windows UAC prompt when repair retries'
   }
   return $false
 }
@@ -1094,9 +1146,7 @@ function Install-AapIngressCaTrust {
   }
   $imported = Import-AapIngressCaCertificate -Path $caPath -Quiet:$Quiet
   if (-not $imported -and -not (Test-AapIngressCaBrowserTrusted -Path $caPath) -and -not $Quiet) {
-    Write-AapWarn 'Chrome/Edge need the ingress CA in the Local Machine trust store (elevated PowerShell):'
-    Write-Host "  certutil -delstore Root `"ingress-ca`""
-    Write-Host "  certutil -addstore Root `"$caPath`""
+    Write-AapWarn 'Ingress CA trust could not be installed automatically; rerun repair and approve the Windows UAC prompt'
   }
   Set-AapIngressCaEnv -Path $caPath
 }

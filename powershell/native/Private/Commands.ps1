@@ -266,10 +266,8 @@ function Invoke-AapDemoRepair {
   Sync-AapKubeconfig -Quiet
   Install-AapIngressCaTrust
   Write-Host ''
-  Write-Host 'If Chrome/Edge still shows a certificate warning:'
-  Write-Host '  1. Run this command from an elevated PowerShell'
-  Write-Host '  2. Fully quit the browser (all windows), then reopen the AAP URL'
-  Write-Host '  3. Clear HSTS for 127.0.0.1.nip.io at chrome://net-internals/#hsts'
+  Write-Host 'Fully quit Chrome or Edge (all windows), then reopen the route URLs.'
+  Write-Host 'If Windows shows a UAC prompt, approve it so the ingress CA can be trusted automatically.'
   Write-Host ''
 }
 
