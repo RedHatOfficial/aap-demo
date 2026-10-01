@@ -202,7 +202,11 @@ suite, and the repository CLI tests. The CRC version integration test passed wit
 filesystem access; an unprivileged sandbox run could not remove existing user cache files
 and was not considered a product failure. The ingress CA suite retained one pre-existing
 environment-sensitive failure (`combined_bundle_verifies_github`) unrelated to local
-cache behavior.
+cache behavior. A follow-up fresh-cache validation that also requested Automation
+Orchestrator and portal images was blocked before AAP deployment by CRC's LVMS operator:
+its certificate secrets were not created, leaving the NFS backing PVC `Pending` and
+causing cluster setup to time out. The failed disposable cluster was removed. This is an
+infrastructure readiness failure, not evidence that the cache load path succeeded.
 
 ## Consequences
 
