@@ -62,6 +62,19 @@ previous install left a stale `aap-demo.ps1`, rerun the installer with:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\powershell\install.ps1
 ```
 
+Before `deploy`, `redeploy`, or `enable ao`, the Windows preflight checks for
+`jq` and a working Python runtime. Missing tools are installed with winget. To
+install them manually:
+
+```powershell
+winget install --id jqlang.jq -e --source winget
+winget install --id Python.Python.3.13 -e --source winget
+```
+
+Python is used by the AAP demo provisioning and AO workflow import steps. If
+the install cannot complete, the command stops with the same commands so the
+demo content is not silently skipped.
+
 ## Quick start
 
 ```powershell

@@ -25,13 +25,23 @@ still exist for other platforms. Product Demos remains one aggregate Windows
 entry point. Native PowerShell modules remain available for development and
 future migration, but they are not the Windows launcher execution path.
 
+Windows deploys and AO/Product Demo enablement run a PowerShell preflight for
+the external tools required at the Bash boundary. `jq` is required for JSON
+wiring, and Python is required for AAP demo provisioning and AO workflow
+imports. When either runtime is missing, the preflight installs it with
+winget (`jqlang.jq` and `Python.Python.3.13`) and reports the same commands if
+installation fails. Direct Git Bash invocation performs the equivalent
+Windows-only checks and leaves Linux and macOS behavior unchanged.
+
 ## Consequences
 
 Windows behavior now stays aligned with Bash automatically, including AO's GA
 catalog handling and future addon fixes. Git for Windows becomes a required
 runtime dependency, and shell output/quoting remains part of the boundary. The
 wrapper must keep forwarding arguments and environment values without leaking
-secrets or changing addon state semantics.
+secrets or changing addon state semantics. Windows demo enablement has a small
+host-runtime install step, while the cluster itself remains the deployment
+boundary; Linux and macOS do not inherit the Windows auto-install behavior.
 
 ## Alternatives considered
 

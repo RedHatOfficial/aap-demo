@@ -22,14 +22,24 @@ The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384`
 
 - Windows 11 Pro, Enterprise, or Server (Hyper-V is not available on Windows 11 Home)
 - [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`; Hyper-V must be enabled
-- [Git for Windows](https://git-scm.com/download/win) — optional for `create`/`deploy`/`status`;
-  required for `diagnose`, `test`, `watch`, and other advanced commands
+- [Git for Windows](https://git-scm.com/download/win) — required by the PowerShell wrapper
+  for deploys and addon commands
 
   ```powershell
   winget install --id Git.Git -e --source winget
   ```
 
 - PowerShell 5.1 or later (included with Windows 10/11)
+- `jq` — used by the Bash deployment and addon wiring paths
+- Python 3.13 — used to provision AAP demos and import AO demo workflows
+
+The Windows deploy and AO/Product Demo preflight installs `jq` and Python with
+winget when they are missing:
+
+```powershell
+winget install --id jqlang.jq -e --source winget
+winget install --id Python.Python.3.13 -e --source winget
+```
 
 #### OpenShift Local
 

@@ -22,6 +22,19 @@ mkdir -p ~/.aap-demo
 cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
 ```
 
+On Windows, the PowerShell launcher runs the maintained Bash CLI through Git
+for Windows. Windows deploys and AO/Product Demo enablement also require `jq`
+and a working Python runtime for shell wiring and demo provisioning. The
+Windows preflight installs them with winget when they are missing:
+
+```powershell
+winget install --id jqlang.jq -e --source winget
+winget install --id Python.Python.3.13 -e --source winget
+```
+
+Linux and macOS keep their existing prerequisite behavior; Python remains
+optional there when demo provisioning is not requested.
+
 ## Install
 
 ```bash
