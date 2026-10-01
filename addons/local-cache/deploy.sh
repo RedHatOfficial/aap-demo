@@ -411,8 +411,9 @@ for img in data.get('images', []):
       rm -f "$tarball" "$ref_file" "${tarball%.tar}.local-ref"
     fi
 
-    # Export from CRI-O to an OCI archive on the VM, then stream that archive
-    # to the host. OCI archives retain signatures and manifest metadata.
+    # Export the current platform from CRI-O to an OCI archive on the VM, then
+    # stream that archive to the host. OCI archives do not support the source
+    # signature store, so signatures are removed during export.
     # Use -n to prevent SSH from consuming the while-read stdin
     if _ssh -n "sudo rm -f '${CACHE_REMOTE_ARCHIVE}' && sudo skopeo copy --quiet --remove-signatures containers-storage:'${img_ref}' oci-archive:'${CACHE_REMOTE_ARCHIVE}':aap-demo-cache && sudo cat '${CACHE_REMOTE_ARCHIVE}' && sudo rm -f '${CACHE_REMOTE_ARCHIVE}'" >"$tarball" 2>/dev/null; then
       manifest_digest=$(skopeo inspect --raw "oci-archive:${tarball}:aap-demo-cache" 2>/dev/null | sha256sum | awk '{print $1}')

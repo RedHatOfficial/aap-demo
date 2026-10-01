@@ -117,6 +117,7 @@ fi
 echo "✓ catalog-ref returns the loaded local catalog digest"
 
 if ! grep -q -- '--quiet --remove-signatures containers-storage:' "$MOCK_SSH_LOG" \
+  || grep -q -- '--all --remove-signatures' "$MOCK_SSH_LOG" \
   || ! grep -q -- 'oci-archive:' "$MOCK_SSH_LOG"; then
   echo "✗ cache save should export from containers-storage to oci-archive without signatures" >&2
   exit 1

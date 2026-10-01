@@ -40,9 +40,12 @@ aap-demo disable local-cache         # alias for clear
 1. SSH into the CRC VM and run `crictl images -o json` to enumerate all images in CRI-O
 2. Filter to images from `registry.redhat.io` and `registry.k8s.io` (skip pause, base, and
    builder images that ship with the VM)
-3. For each image, export via `skopeo copy --all containers-storage:'<ref>'
+3. For each image, export the current CRC platform via
+   `skopeo copy --remove-signatures containers-storage:'<ref>'
    oci-archive:/tmp/aap-demo-local-cache.oci:<tag>` on the VM, then stream the OCI
-   archive to a local file
+   archive to a local file. The export is single-platform because CRI-O can retain a
+   multi-architecture index whose other manifests are not present locally; OCI archives
+   also cannot store the Red Hat signature store, so signatures are intentionally removed.
 4. Each image is stored as three files: `<md5>.tar` (the OCI archive), `<md5>.ref`
    (the original image reference), and `<md5>.local-ref` (the digest address of the
    imported archive in the CRC image store)
@@ -82,9 +85,11 @@ CSV install strategy as well as live workload templates. The CSV is the source o
 for the AAP operator deployment; keeping its image and pull policy aligned prevents an
 operator reconciliation loop from restoring `Always` and the original registry image.
 
-The cache deliberately retains OCI multi-architecture archives and their imported
-archive digest. An experiment that attempted to re-import those archives directly under
-the original platform digest failed for multi-architecture archives. The supported
+The cache stores a single-platform OCI archive and its imported archive digest. This is
+the platform that the current CRC VM can execute. An experiment that attempted to
+re-import multi-architecture archives directly under the original platform digest failed
+because the local CRI-O store did not contain every manifest in the list. Exporting the
+current platform and removing unsupported signatures avoids that failure. The supported
 behavior is consequently: preserve the archive digest during import, verify its actual
 availability, and fall back to the original registry reference when it is not usable.
 
@@ -160,10 +165,12 @@ persistent disk disabled.
 
 - **SSH `-n` flag**: The save loop reads image refs from a heredoc via `while read`. Without
   `-n`, SSH consumes stdin from the heredoc, causing the loop to exit after 1-2 images.
-- **OCI archives**: The save/load path uses OCI archives instead of Docker archives so
-  signatures and manifest metadata are retained. Loading uses `--preserve-digests` and
-  fails when the archive cannot represent the recorded digest; importing under a
-  synthetic tag would not satisfy Kubernetes' digest pull request.
+- **OCI archives**: The save/load path uses single-platform OCI archives instead of
+  Docker archives. Saving removes signatures because OCI archives do not support the
+  source signature store, and avoids `--all` because CRI-O may have only the current
+  platform manifest for a multi-architecture image list. Loading uses
+  `--preserve-digests` and fails when the archive cannot represent the recorded digest;
+  importing under a synthetic tag would not satisfy Kubernetes' digest pull request.
 - **`containers-storage:` transport**: CRI-O images are accessed via skopeo's
   `containers-storage:` transport, not `crictl export` (which doesn't exist) or `ctr`
   (not available on CRC VMs).
@@ -186,6 +193,12 @@ reasons:
 2. Images that were already present in CRI-O still had `imagePullPolicy: Always`, so the
    kubelet contacted `registry.redhat.io` and failed with `manifest unknown` instead of
    using the local image.
+
+The fresh-cache test then exposed a third export defect: `skopeo copy --all` attempted to
+copy Red Hat signatures into an OCI archive and failed with `Pushing signatures for OCI
+images is not supported`. After removing signatures, multi-architecture exports still
+failed when a local CRI-O image list referenced a manifest that was not present in the
+VM. The exporter now saves only the current platform image without signatures.
 
 The automated fix keeps good cache entries, evicts only entries that fail validation,
 skips unusable rewrites, and repairs the operator CSV/workload pull policy. This makes
