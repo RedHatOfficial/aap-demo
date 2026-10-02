@@ -223,7 +223,7 @@ fi
 # Test 12: persistent storage is detached before CRC deletion
 echo "Test 12: persistent CRI-O storage detach order"
 detach_line=$(grep -n 'persistent_crio_store_detach' "$AAP_DEMO_SH" | tail -1 | cut -d: -f1)
-delete_line=$(grep -n 'crc delete' "$AAP_DEMO_SH" | tail -1 | cut -d: -f1)
+delete_line=$(grep -n 'if _crc_delete_cluster; then' "$AAP_DEMO_SH" | tail -1 | cut -d: -f1)
 if [ -n "$detach_line" ] && [ -n "$delete_line" ] && [ "$detach_line" -lt "$delete_line" ]; then
   _pass "persistent_crio_store_detach_order"
 else

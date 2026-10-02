@@ -1936,6 +1936,76 @@ _maybe_save_local_cache_before_destroy() {
   esac
 }
 
+_crc_wait_for_stopped() {
+  local timeout="${1:-30}"
+  local elapsed=0
+  local interval=2
+  local status_line state
+
+  while [ "$elapsed" -lt "$timeout" ]; do
+    status_line=$(crc status 2>/dev/null | awk -F: '/^[[:space:]]*CRC VM:/ {print $2; exit}' || true)
+    state=$(printf '%s' "$status_line" | xargs 2>/dev/null || true)
+    case "$state" in
+      Stopped) return 0 ;;
+      "") sleep "$interval" ;;
+      *) sleep "$interval" ;;
+    esac
+    elapsed=$((elapsed + interval))
+  done
+  return 1
+}
+
+_crc_vm_state() {
+  local status_line
+  status_line=$(crc status 2>/dev/null | awk -F: '/^[[:space:]]*CRC VM:/ {print $2; exit}' || true)
+  printf '%s' "$status_line" | xargs 2>/dev/null || true
+}
+
+_crc_stop_if_needed() {
+  local state
+  state="$(_crc_vm_state)"
+  case "$state" in
+    Running | Starting | Stopping)
+      echo "Stopping CRC cluster before delete..."
+      crc stop >/dev/null 2>&1 || true
+      _crc_wait_for_stopped 60 || sleep 5
+      ;;
+  esac
+}
+
+_crc_delete_cluster() {
+  local output
+  _crc_stop_if_needed
+
+  if output=$(crc delete -f 2>&1); then
+    return 0
+  fi
+
+  if echo "$output" | grep -qi 'invalid state for action'; then
+    echo "CRC delete reported an invalid VM state - stopping CRC and retrying..."
+    crc stop >/dev/null 2>&1 || true
+    _crc_wait_for_stopped 60 || sleep 5
+    if output=$(crc delete -f 2>&1); then
+      return 0
+    fi
+  fi
+
+  if output=$(crc delete 2>&1); then
+    return 0
+  fi
+
+  if echo "$output" | grep -qi 'invalid state for action'; then
+    echo "CRC delete still reports an invalid VM state - running crc cleanup..."
+    if output=$(crc cleanup 2>&1); then
+      return 0
+    fi
+  fi
+
+  [ -z "$output" ] || echo "$output"
+  echo "Manual recovery: run 'crc cleanup' from an elevated PowerShell, then retry 'aap-demo create'."
+  return 1
+}
+
 cmd_destroy() {
   _maybe_save_local_cache_before_destroy
   local _cache_status=$?
@@ -1969,7 +2039,7 @@ cmd_destroy() {
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
     fleet_destroy_all
   fi
-  if crc delete -f 2>/dev/null || crc delete 2>/dev/null; then
+  if _crc_delete_cluster; then
     podman system connection remove aap-demo 2>/dev/null || true
     _addons_save ""
     echo "✓ CRC cluster deleted"

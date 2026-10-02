@@ -330,9 +330,13 @@ function Invoke-AapOcPatchQuiet {
 function Get-AapCrcStatus {
   Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
   $parsed = Get-AapCrcStatusJson
-  if (-not $parsed) { return @{ crcStatus = 'Unknown' } }
-  $prop = $parsed.PSObject.Properties['crcStatus']
-  $status = if ($prop) { [string]$prop.Value } else { 'Unknown' }
+  $status = 'Unknown'
+  if ($parsed) {
+    $prop = $parsed.PSObject.Properties['crcStatus']
+    if ($prop) { $status = [string]$prop.Value }
+  } else {
+    $status = Get-AapCrcStatusFromText
+  }
   return @{ crcStatus = $status }
 }
 
@@ -344,6 +348,37 @@ function Get-AapCrcStatusJson {
     return $raw | ConvertFrom-Json
   } catch {
     return $null
+  }
+}
+
+function Get-AapCrcStatusFromText {
+  Assert-AapCommand crc 'Install OpenShift Local: https://console.redhat.com/openshift/create/local'
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $lines = @(& crc status 2>$null | ForEach-Object { "$_" })
+  } catch {
+    return 'Unknown'
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+
+  foreach ($line in $lines) {
+    if ($line -match '^\s*CRC VM:\s*(\S+)') {
+      return Get-AapNormalizedCrcState $Matches[1]
+    }
+  }
+  return 'Unknown'
+}
+
+function Get-AapNormalizedCrcState {
+  param([string]$State)
+
+  switch -Regex ($State) {
+    '^(?i:running)$' { return 'Running' }
+    '^(?i:stopped)$' { return 'Stopped' }
+    default { return 'Unknown' }
   }
 }
 

@@ -94,6 +94,39 @@ _crc_status_json() {
   return 124
 }
 
+_crc_status_text() {
+  # Plain text status can keep working on Windows when JSON status fails during
+  # CRC socket permission checks.
+  local output_file pid i
+  output_file=$(mktemp "${TMPDIR:-/tmp}/aap-demo-crc-status.XXXXXX") || return 1
+  crc status >"$output_file" 2>/dev/null &
+  pid=$!
+  for i in $(seq 1 20); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null
+      cat "$output_file"
+      rm -f "$output_file"
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  rm -f "$output_file"
+  return 124
+}
+
+_crc_state_from_text() {
+  awk -F: '
+    /^[[:space:]]*CRC VM:/ {
+      state=$2
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", state)
+      print state
+      exit
+    }
+  '
+}
+
 _infra_crc_exec_cmd() {
   _crc_exec sudo "$@"
 }
@@ -121,6 +154,10 @@ _infra_crc_get_state() {
   # Check CRC status
   local crc_status
   crc_status=$(_crc_status_json | python3 -c "import sys,json; print(json.load(sys.stdin).get('crcStatus','Unknown'))" 2>/dev/null) || crc_status="Unknown"
+  if [ "$crc_status" = "Unknown" ]; then
+    crc_status=$(_crc_status_text | _crc_state_from_text 2>/dev/null) || crc_status="Unknown"
+    [ -n "$crc_status" ] || crc_status="Unknown"
+  fi
 
   case "$crc_status" in
     Running) echo "running" ;;

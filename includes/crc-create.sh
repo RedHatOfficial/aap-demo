@@ -222,6 +222,40 @@ COREFILE_EOF
   fi
 }
 
+_is_mingw() {
+  case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
+
+_crc_windows_daemon_task_exists() {
+  _is_mingw || return 0
+  command -v powershell.exe >/dev/null 2>&1 || return 1
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+    "if (Get-ScheduledTask -TaskName crcDaemon -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" \
+    >/dev/null 2>&1
+}
+
+_crc_needs_setup() {
+  [ "${CRC_STATUS:-Unknown}" = "Unknown" ] && return 0
+  if _is_mingw && ! _crc_windows_daemon_task_exists; then
+    return 0
+  fi
+  return 1
+}
+
+_crc_machine_exists() {
+  [ -e "${HOME}/.crc/machines/crc/.crc-exist" ] || [ -d "${HOME}/.crc/machines/crc" ]
+}
+
+_crc_resource_prompt_needed() {
+  return 0
+}
+
+_crc_should_prompt_resources() {
+  [ "${QUIET:-false}" = "true" ] && return 1
+  [ -t 0 ] || return 1
+  _crc_resource_prompt_needed
+}
+
 # When sourced for CoreDNS only (aap-demo start), skip cluster creation.
 [[ "${AAP_DEMO_CONFIGURE_COREDNS_ONLY:-}" == "1" ]] && return 0
 
@@ -245,10 +279,6 @@ if ! command -v crc &>/dev/null; then
 fi
 
 # Ensure CRC daemon is running (Linux only — macOS/Windows manage the daemon)
-_is_mingw() {
-  case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) return 0 ;; *) return 1 ;; esac
-}
-
 if ! _is_mingw && [ "$(uname)" != "Darwin" ] && ! [ -S ~/.crc/crc-http.sock ]; then
   echo "Starting CRC daemon..."
   crc daemon &>/dev/null &
@@ -310,7 +340,7 @@ if [ -f "${HOME}/.aap-demo/config" ]; then
   [ -n "$_saved_memory" ] && _DEFAULT_MEMORY_GB=$(((_saved_memory + 512) / 1024))
 fi
 
-if [ "$CRC_STATUS" = "Unknown" ] && [ -t 0 ]; then
+if _crc_should_prompt_resources; then
   echo ""
   printf "${_BOLD}Resource allocation for CRC VM:${_NC}\n"
   if [ "$HOST_CPUS" -gt 0 ]; then
@@ -393,7 +423,7 @@ printf "${_GREEN}▸${_NC} Resources: ${CRC_CPUS} CPUs, $((CRC_MEMORY / 1024))GB
 # ---------------------------------------------------------------------------
 # Setup CRC (if needed)
 # ---------------------------------------------------------------------------
-if [ "$CRC_STATUS" = "Unknown" ]; then
+if _crc_needs_setup; then
   printf "${_GREEN}▸${_NC} Running CRC setup...\n"
   crc setup --show-progressbars 2>&1 | { grep -E "^level=info|^  " | sed 's/level=info msg="/  /' | sed 's/"$//'; } || true
 fi

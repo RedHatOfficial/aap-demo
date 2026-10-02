@@ -30,10 +30,24 @@ function Invoke-AapDemoCreate {
     Set-AapConfigValue 'CRC_PRESET' $preset
   }
 
-  $cpus = if ($env:CRC_CPUS) { $env:CRC_CPUS } else { '8' }
-  $memory = if ($env:CRC_MEMORY) { $env:CRC_MEMORY } else { '16384' }
+  $cpus = if ($env:CRC_CPUS) { $env:CRC_CPUS } elseif (Get-AapConfigValue 'CRC_CPUS') { Get-AapConfigValue 'CRC_CPUS' } else { '8' }
+  $memory = if ($env:CRC_MEMORY) { $env:CRC_MEMORY } elseif (Get-AapConfigValue 'CRC_MEMORY') { Get-AapConfigValue 'CRC_MEMORY' } else { '16384' }
   $disk = if ($env:CRC_DISK) { $env:CRC_DISK } else { '100' }
   $pvSize = if ($env:CRC_PV_SIZE) { $env:CRC_PV_SIZE } else { '50' }
+
+  if ($env:QUIET -ne 'true') {
+    $cpuChoice = Read-Host "CPUs [$cpus]"
+    if (-not [string]::IsNullOrWhiteSpace($cpuChoice)) { $cpus = $cpuChoice.Trim() }
+
+    $memoryGbDefault = [int][Math]::Ceiling(([int]$memory) / 1024)
+    $memoryChoice = Read-Host "Memory in GB [$memoryGbDefault]"
+    if (-not [string]::IsNullOrWhiteSpace($memoryChoice)) {
+      $memory = ([int]$memoryChoice.Trim()) * 1024
+    }
+
+    Set-AapConfigValue 'CRC_CPUS' $cpus
+    Set-AapConfigValue 'CRC_MEMORY' $memory
+  }
 
   & crc config set preset $preset 2>$null | Out-Null
   & crc config set cpus $cpus 2>$null | Out-Null
