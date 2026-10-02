@@ -71,6 +71,9 @@ jobs:
       - name: Run local-cache tests
         run: ./test/test-local-cache.sh
 
+      - name: Run deploy cache-order tests
+        run: ./test/test-deploy-cache-order.sh
+
       - name: Run AO LLM provider tests
         run: ./test/test-ao-llm-provider.sh
 

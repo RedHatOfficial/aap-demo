@@ -60,7 +60,8 @@ aap-demo disable local-cache         # alias for clear
    --all --preserve-digests oci-archive:<temporary-file>:<tag>
    containers-storage:'<ref>'`; remove the temporary file afterward
 3. Import under the `.local-ref` platform digest and report per-image success/failure
-4. Rewrite matching CatalogSource and workload-template image references to `.local-ref`
+4. During deployment, separately rewrite matching CatalogSource and workload-template
+   image references to `.local-ref` after the cached images have been loaded and verified
 
 ### Self-healing cache behavior
 
