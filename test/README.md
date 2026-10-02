@@ -9,6 +9,7 @@ Validation tests for `aap-demo.sh` command-line interface.
 ./test/test-core-commands.sh
 ./test/test-aap-readiness.sh
 ./test/test-ingress-ca-export.sh
+./test/test-apme-eap-oauth.sh
 python3 ./test/test-ao-import-demos.py
 
 # AAP provisioning fast-path test

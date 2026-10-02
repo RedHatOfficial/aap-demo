@@ -355,6 +355,23 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 # Verify password works by logging into AAP web UI
 ```
 
+### OAuth login fails on CRC or MicroShift
+
+The portal uses the external HTTPS AAP route for browser access. On CRC and
+MicroShift, its backend uses `http://<aap-route>` for the in-cluster token
+exchange and receives a `hostAliases` entry for the AAP Service. This applies
+to the default `apps.crc.testing` domain as well as `nip.io` routes.
+
+If login still fails, check the generated values and portal environment:
+
+```bash
+grep -E '^aap_(host|host_url):' ~/.aap-demo/apme-eap-vars.yml
+kubectl exec deploy/redhat-rhaap-portal -n apme -- \
+  printenv AAP_HOST_URL
+kubectl get deploy redhat-rhaap-portal -n apme \
+  -o jsonpath='{.spec.template.spec.hostAliases}'
+```
+
 ### Portal image or plugin pull fails
 
 **Symptom**: Portal pod stays in `ImagePullBackOff`

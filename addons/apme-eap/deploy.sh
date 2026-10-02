@@ -9,6 +9,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
+# shellcheck source=lib.sh
+source "${SCRIPT_DIR}/lib.sh"
 ACTION="${1:-deploy}"
 NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
@@ -354,6 +356,8 @@ discover_environment() {
   fi
   AAP_HOST="https://${AAP_ROUTE}"
   info "AAP host: $AAP_HOST"
+  AAP_HOST_URL=$(apme_aap_portal_host_url "$AAP_HOST" "$CLUSTER_DOMAIN")
+  info "AAP portal host URL: $AAP_HOST_URL"
 
   # 5. AAP CR name
   AAP_CR_NAME=$(kubectl get aap -n aap-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
@@ -622,6 +626,8 @@ $(if [ -n "$openshift_token" ]; then echo "openshift_token: \"${openshift_token}
 
 # AAP (for OAuth app creation - external route for redirect)
 aap_host: "${AAP_HOST}"
+# AAP URL used by the portal backend for in-cluster OAuth/API calls
+aap_host_url: "${AAP_HOST_URL}"
 aap_username: admin
 aap_password: "${AAP_PASSWORD}"
 
