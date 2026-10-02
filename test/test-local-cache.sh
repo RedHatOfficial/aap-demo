@@ -101,6 +101,7 @@ if [ -e "${CACHE_DIR}/stale.tar" ] || [ -e "${CACHE_DIR}/stale.ref" ] \
 fi
 echo "✓ cache save removes stale entries"
 
+export MOCK_INSPECT_RESULT=success
 if ! "$CACHE_SCRIPT" load >/dev/null 2>&1; then
   echo "✗ valid cached OCI archives should load successfully" >&2
   exit 1
@@ -116,6 +117,7 @@ fi
 echo "✓ catalog-ref returns the loaded local catalog digest"
 
 if ! grep -q -- '--quiet --remove-signatures containers-storage:' "$MOCK_SSH_LOG" \
+  || grep -q -- '--all --remove-signatures' "$MOCK_SSH_LOG" \
   || ! grep -q -- 'oci-archive:' "$MOCK_SSH_LOG"; then
   echo "✗ cache save should export from containers-storage to oci-archive without signatures" >&2
   exit 1
@@ -130,6 +132,11 @@ if "$CACHE_SCRIPT" load >/dev/null 2>&1; then
 fi
 if ! grep -q -- '--all --preserve-digests oci-archive:' "$MOCK_SSH_LOG"; then
   echo "✗ cache load should preserve digest references" >&2
+  exit 1
+fi
+if [ -e "${CACHE_DIR}/${CACHE_KEY}.tar" ] || [ -e "${CACHE_DIR}/${CACHE_KEY}.ref" ] \
+  || [ -e "${CACHE_DIR}/${CACHE_KEY}.local-ref" ]; then
+  echo "✗ failed cache imports should evict the invalid cache entry" >&2
   exit 1
 fi
 echo "✓ digest-preserving cache load reports failed imports"
@@ -147,3 +154,78 @@ if "$CACHE_SCRIPT" save >/dev/null 2>&1; then
   exit 1
 fi
 echo "✓ cache save reports failed image exports"
+
+# A stale local digest must not be rewritten into live workloads. The original
+# registry digest remains pullable, while the cached digest may no longer exist.
+REWRITE_REF='registry.redhat.io/example/gateway@sha256:original'
+REWRITE_KEY=$(printf '%s\n' "$REWRITE_REF" | md5sum | awk '{print $1}')
+printf '%s\n' "$REWRITE_REF" >"${CACHE_DIR}/${REWRITE_KEY}.ref"
+printf '%s\n' 'registry.redhat.io/example/gateway@sha256:stale-local' \
+  >"${CACHE_DIR}/${REWRITE_KEY}.local-ref"
+export MOCK_REWRITE_REF="$REWRITE_REF"
+export MOCK_PATCH_LOG="${TEST_DIR}/patch.log"
+cat >"${MOCK_BIN}/kubectl" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  "get deployments,statefulsets,daemonsets,jobs,cronjobs -A -o json")
+    printf '%s\n' "{\"items\":[{\"kind\":\"Deployment\",\"metadata\":{\"namespace\":\"aap-operator\",\"name\":\"aap-gateway-operator\"},\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"${MOCK_CURRENT_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"},{\"image\":\"${MOCK_SECOND_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"}]}}}}]}"
+    ;;
+  "get catalogsources -A -o json")
+    printf '%s\n' '{"items":[]}'
+    ;;
+  "get csv -A -o json")
+    printf '%s\n' "{\"items\":[{\"metadata\":{\"namespace\":\"aap-operator\",\"name\":\"aap-operator.v2.7.0\"},\"spec\":{\"install\":{\"spec\":{\"deployments\":[{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"${MOCK_CURRENT_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"},{\"image\":\"${MOCK_SECOND_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"}]}}}}]}}}}]}"
+    ;;
+  patch*)
+    printf '%s\n' "$*" >>"${MOCK_PATCH_LOG}"
+    ;;
+esac
+EOF
+chmod +x "${MOCK_BIN}/kubectl"
+export MOCK_INSPECT_RESULT=fail
+rewrite_output=$($CACHE_SCRIPT rewrite 2>&1)
+if [ -s "$MOCK_PATCH_LOG" ]; then
+  echo "✗ stale cached digests must not rewrite live workloads" >&2
+  echo "$rewrite_output" >&2
+  exit 1
+fi
+echo "✓ stale cached digests are skipped during workload rewrite"
+
+export MOCK_INSPECT_RESULT=success
+: >"${MOCK_PATCH_LOG}"
+rewrite_output=$($CACHE_SCRIPT rewrite 2>&1)
+if ! grep -q 'IfNotPresent' "$MOCK_PATCH_LOG"; then
+  echo "✗ cached workload rewrites must disable unconditional registry pulls" >&2
+  echo "$rewrite_output" >&2
+  exit 1
+fi
+echo "✓ cached workload rewrites use IfNotPresent"
+if ! grep -q '/spec/template/spec/containers/0/image' "$MOCK_PATCH_LOG" \
+  || ! grep -q '/spec/template/spec/containers/1/image' "$MOCK_PATCH_LOG"; then
+  echo "✗ cached workload rewrites must update every matching container" >&2
+  echo "$rewrite_output" >&2
+  exit 1
+fi
+echo "✓ cached workload rewrites update every matching container"
+if ! grep -q '/spec/install/spec/deployments/0/spec/template/spec/containers/0/image' "$MOCK_PATCH_LOG" \
+  || ! grep -q '/spec/install/spec/deployments/0/spec/template/spec/containers/1/image' "$MOCK_PATCH_LOG"; then
+  echo "✗ cached CSV rewrites must update every matching container" >&2
+  echo "$rewrite_output" >&2
+  exit 1
+fi
+echo "✓ cached CSV rewrites update every matching container"
+
+export MOCK_CURRENT_IMAGE='registry.redhat.io/example/gateway@sha256:stale-local'
+: >"${MOCK_PATCH_LOG}"
+rewrite_output=$($CACHE_SCRIPT rewrite 2>&1)
+if ! grep -q 'IfNotPresent' "$MOCK_PATCH_LOG"; then
+  echo "✗ cached workload rewrites must repair already-rewritten workloads" >&2
+  echo "$rewrite_output" >&2
+  exit 1
+fi
+echo "✓ cached workload rewrites are idempotent"
+if ! grep -q '/spec/install/spec/deployments' "$MOCK_PATCH_LOG"; then
+  echo "✗ cached rewrites must update the CSV install strategy" >&2
+  exit 1
+fi
+echo "✓ cached rewrites update the CSV source of truth"

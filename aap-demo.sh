@@ -2070,11 +2070,6 @@ cmd_deploy() {
     _start_crc_cluster
   fi
 
-  # Restore any cache left by a previous destroy before OLM and AAP begin
-  # pulling images. This is independent of the local-cache addon setting so a
-  # destroy/create cycle does not require re-enabling the addon first.
-  _load_local_cache
-
   install_ingress_ca_trust
 
   # anyuid and privileged SCCs granted in setup_namespace() for all SAs in the namespace
@@ -2097,6 +2092,13 @@ cmd_deploy() {
   # The API can be available while OVN is still crash-looping. Do not create
   # OLM/AAP workloads until the cluster CNI can create pod sandboxes.
   _wait_for_ovn_ready || exit 1
+
+  # Restore any cache left by a previous destroy before OLM and AAP begin
+  # pulling images. The cluster and CNI must be ready first so the cache loader
+  # can safely import images into the MicroShift runtime.
+  # This is independent of the local-cache addon setting so a destroy/create
+  # cycle does not require re-enabling the addon first.
+  _load_local_cache
 
   # Check if AAP already exists — skip OLM and the full deploy if so
   if [ "$FORCE" != "true" ]; then
