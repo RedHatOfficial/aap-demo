@@ -5,10 +5,10 @@
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '\$\{AAP_HOST_URL\}'
-    replace: "{{ aap_host_normalized }}"
+    replace: "{{ aap_host_url_normalized | default(aap_host_normalized) }}"
   when:
-    - aap_host_normalized is defined
-    - aap_host_normalized | length > 0
+    - (aap_host_url_normalized | default(aap_host_normalized)) is defined
+    - (aap_host_url_normalized | default(aap_host_normalized)) | length > 0
 
 - name: Enable PAH collection catalog sync when setup-pah credentials are present  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
