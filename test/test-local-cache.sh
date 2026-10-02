@@ -168,13 +168,13 @@ cat >"${MOCK_BIN}/kubectl" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
   "get deployments,statefulsets,daemonsets,jobs,cronjobs -A -o json")
-    printf '%s\n' "{\"items\":[{\"kind\":\"Deployment\",\"metadata\":{\"namespace\":\"aap-operator\",\"name\":\"aap-gateway-operator\"},\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"${MOCK_CURRENT_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"}]}}}}]}"
+    printf '%s\n' "{\"items\":[{\"kind\":\"Deployment\",\"metadata\":{\"namespace\":\"aap-operator\",\"name\":\"aap-gateway-operator\"},\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"${MOCK_CURRENT_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"},{\"image\":\"${MOCK_SECOND_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"}]}}}}]}"
     ;;
   "get catalogsources -A -o json")
     printf '%s\n' '{"items":[]}'
     ;;
   "get csv -A -o json")
-    printf '%s\n' "{\"items\":[{\"metadata\":{\"namespace\":\"aap-operator\",\"name\":\"aap-operator.v2.7.0\"},\"spec\":{\"install\":{\"spec\":{\"deployments\":[{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"${MOCK_CURRENT_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"}]}}}}]}}}}]}"
+    printf '%s\n' "{\"items\":[{\"metadata\":{\"namespace\":\"aap-operator\",\"name\":\"aap-operator.v2.7.0\"},\"spec\":{\"install\":{\"spec\":{\"deployments\":[{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"image\":\"${MOCK_CURRENT_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"},{\"image\":\"${MOCK_SECOND_IMAGE:-${MOCK_REWRITE_REF}}\",\"imagePullPolicy\":\"Always\"}]}}}}]}}}}]}"
     ;;
   patch*)
     printf '%s\n' "$*" >>"${MOCK_PATCH_LOG}"
@@ -200,6 +200,20 @@ if ! grep -q 'IfNotPresent' "$MOCK_PATCH_LOG"; then
   exit 1
 fi
 echo "✓ cached workload rewrites use IfNotPresent"
+if ! grep -q '/spec/template/spec/containers/0/image' "$MOCK_PATCH_LOG" \
+  || ! grep -q '/spec/template/spec/containers/1/image' "$MOCK_PATCH_LOG"; then
+  echo "✗ cached workload rewrites must update every matching container" >&2
+  echo "$rewrite_output" >&2
+  exit 1
+fi
+echo "✓ cached workload rewrites update every matching container"
+if ! grep -q '/spec/install/spec/deployments/0/spec/template/spec/containers/0/image' "$MOCK_PATCH_LOG" \
+  || ! grep -q '/spec/install/spec/deployments/0/spec/template/spec/containers/1/image' "$MOCK_PATCH_LOG"; then
+  echo "✗ cached CSV rewrites must update every matching container" >&2
+  echo "$rewrite_output" >&2
+  exit 1
+fi
+echo "✓ cached CSV rewrites update every matching container"
 
 export MOCK_CURRENT_IMAGE='registry.redhat.io/example/gateway@sha256:stale-local'
 : >"${MOCK_PATCH_LOG}"
