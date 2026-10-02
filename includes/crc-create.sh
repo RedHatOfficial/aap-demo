@@ -250,11 +250,34 @@ _crc_resource_prompt_needed() {
 
 _crc_should_prompt_resources() {
   [ "${QUIET:-false}" = "true" ] && return 1
-  [ -t 0 ] || return 1
+  aap_demo_resource_prompt_enabled || return 1
   _crc_resource_prompt_needed
 }
 
 # When sourced for CoreDNS only (aap-demo start), skip cluster creation.
+aap_demo_resource_prompt_enabled() {
+  if [ -t 0 ] || [ "${AAP_DEMO_INTERACTIVE:-}" = "1" ]; then
+    return 0
+  fi
+
+  local _tty_fd
+  if { exec {_tty_fd}</dev/tty; } 2>/dev/null; then
+    if [ -t "$_tty_fd" ]; then
+      exec {_tty_fd}<&-
+      return 0
+    fi
+    exec {_tty_fd}<&-
+  fi
+  return 1
+}
+
+aap_demo_normalize_crc_status() {
+  case "${1:-}" in
+    Running | Stopped) printf '%s\n' "$1" ;;
+    *) printf '%s\n' 'Unknown' ;;
+  esac
+}
+
 [[ "${AAP_DEMO_CONFIGURE_COREDNS_ONLY:-}" == "1" ]] && return 0
 
 echo ""
@@ -287,6 +310,7 @@ fi
 # Check if already running
 CRC_STATUS_JSON=$(crc status --output json 2>/dev/null || echo '{}')
 CRC_STATUS=$(aap_demo_json_value crcStatus "$CRC_STATUS_JSON" 2>/dev/null || echo "Unknown")
+CRC_STATUS=$(aap_demo_normalize_crc_status "$CRC_STATUS")
 
 if [ "$CRC_STATUS" = "Running" ]; then
   echo "CRC is already running"

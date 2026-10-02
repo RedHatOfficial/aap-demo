@@ -18,10 +18,16 @@ New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
 $env:AAP_DEMO_DIR = Join-Path $stateRoot 'home'
 $env:AAP_DEMO_CONFIG = Join-Path $stateRoot 'config'
 $env:AO_LLM_PROVIDER = 'ollama'
+$markerPath = Join-Path $stateRoot 'interactive-marker'
 
-$result = Invoke-AapGitBashInteractive -Command 'printf "interactive Bash output\\n"; source includes/ao-llm.sh; aap_demo_ao_llm_prepare'
+$result = Invoke-AapGitBashInteractive `
+  -Command 'printf "%s" "$AAP_DEMO_INTERACTIVE" > "$AAP_TEST_MARKER_PATH"; printf "interactive Bash output\\n"; source includes/ao-llm.sh; aap_demo_ao_llm_prepare' `
+  -Environment @{ AAP_TEST_MARKER_PATH = $markerPath }
 if (-not $result.Success) {
   throw "Interactive Git Bash command failed with exit $($result.ExitCode)"
+}
+if (-not (Test-Path -LiteralPath $markerPath) -or (Get-Content -LiteralPath $markerPath -Raw).Trim() -ne '1') {
+  throw 'Interactive Git Bash command did not receive the interactive prompt marker'
 }
 Write-Output 'Interactive Git Bash command passed'
 '@

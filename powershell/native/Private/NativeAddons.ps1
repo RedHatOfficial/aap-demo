@@ -33,8 +33,11 @@ function Invoke-AapGitBash {
   )
 
   $bash = Get-AapGitBashExecutable
+  $bashEnvironment = @{}
+  foreach ($key in $Environment.Keys) { $bashEnvironment[$key] = $Environment[$key] }
+  if ($Interactive) { $bashEnvironment.AAP_DEMO_INTERACTIVE = '1' }
   $result = Invoke-AapNativeProcess -FilePath $bash -ArgumentList (@('-lc', $Command, '--') + @($Arguments)) `
-    -Environment $Environment -WorkingDirectory $Script:AapDemoRepoRoot -Interactive:$Interactive
+    -Environment $bashEnvironment -WorkingDirectory $Script:AapDemoRepoRoot -Interactive:$Interactive
   return $result
 }
 

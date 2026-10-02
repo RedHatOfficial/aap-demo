@@ -50,6 +50,9 @@ jobs:
       - name: Run CRC version check tests
         run: ./test/test-crc-version-check.sh
 
+      - name: Run CRC resource prompt bridge test
+        run: ./test/test-crc-resource-prompt.sh
+
       - name: Run AO CatalogSource tests
         run: ./test/test-ao-catalog-source.sh
 
