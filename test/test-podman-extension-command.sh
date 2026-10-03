@@ -27,4 +27,15 @@ if ! grep -q "extension directory not found" <<<"$output"; then
   exit 1
 fi
 
-echo "PASS: Podman Desktop extension command parsing and validation"
+if output=$(PATH=/usr/bin:/bin QUIET=true "$AAP_DEMO_SH" podman-extension 2>&1); then
+  echo "FAIL: podman-extension succeeded without npm"
+  exit 1
+fi
+
+if ! grep -q "npm is required" <<<"$output"; then
+  echo "FAIL: missing npm error was not actionable"
+  echo "$output"
+  exit 1
+fi
+
+echo "PASS: Podman Desktop extension command parsing and prerequisite validation"
