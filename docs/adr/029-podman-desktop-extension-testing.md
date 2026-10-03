@@ -85,6 +85,12 @@ It builds `localhost/aap-demo-podman-extension:dev` from the extension's
 continues to invoke the host `aap-demo` and CRC executables. Catalog publication
 is outside this ADR.
 
+The repository also provides a manual/tagged GitHub Actions workflow that
+publishes the image to GHCR as
+`ghcr.io/redhatofficial/aap-demo-podman-desktop-extension`. It grants the job
+`packages: write` permission and uses `GITHUB_TOKEN`; package visibility and
+release governance remain repository-owner decisions.
+
 ### Manual smoke test
 
 The smoke test is documented in

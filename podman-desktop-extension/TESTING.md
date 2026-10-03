@@ -70,6 +70,18 @@ The script prints the image name. In Podman Desktop, open
 The container contains the compiled extension assets; the extension still calls
 the host `aap-demo` and CRC executables at runtime.
 
+## Install the GitHub-hosted image
+
+The `Publish Podman Desktop Extension` workflow publishes the image to GHCR:
+
+```text
+ghcr.io/redhatofficial/aap-demo-podman-desktop-extension:dev
+```
+
+In Podman Desktop, open **Extensions → Install custom...**, enter that image
+name, and install it. The GHCR package must be public, or Podman must be
+authenticated to GHCR before installation.
+
 ## Local development without manually rebuilding
 
 Start the continuous compiler:

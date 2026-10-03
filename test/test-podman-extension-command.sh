@@ -22,6 +22,16 @@ if ! grep -q "FROM scratch" "${SCRIPT_DIR}/../podman-desktop-extension/Container
   exit 1
 fi
 
+if ! grep -q "packages: write" "${SCRIPT_DIR}/../.github/workflows/publish-podman-extension.yml"; then
+  echo "FAIL: GHCR workflow does not request package write permission"
+  exit 1
+fi
+
+if ! grep -q "ghcr.io" "${SCRIPT_DIR}/../.github/workflows/publish-podman-extension.yml"; then
+  echo "FAIL: GHCR workflow does not target ghcr.io"
+  exit 1
+fi
+
 missing_dir="$(mktemp -d "${TMPDIR:-/tmp}/aap-demo-extension-test.XXXXXX")/missing"
 trap 'rmdir "${missing_dir%/missing}"' EXIT
 
