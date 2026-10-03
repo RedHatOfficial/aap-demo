@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AAP Demo Dashboard</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 24px; background: #15191e; color: #f0f0f0; }
+      main { max-width: 900px; margin: 0 auto; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      h1, h2, p { margin-top: 0; }
+      h1 { margin-bottom: 4px; font-size: 1.6rem; }
+      h2 { margin-bottom: 12px; font-size: 1rem; }
+      .muted { color: #a9b1bb; }
+      .status { padding: 18px; border: 1px solid #39424d; border-radius: 10px; margin: 20px 0; background: #20262d; }
+      .status-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      .status-state { display: flex; align-items: center; gap: 10px; font-size: 1.15rem; font-weight: 650; }
+      .status-dot { width: 11px; height: 11px; border-radius: 50%; background: #8993a0; }
+      .status-dot.running { background: #3fb950; }
+      .status-dot.stopped { background: #d29922; }
+      .status-dot.not-running, .status-dot.error { background: #f85149; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+      .card { padding: 16px; border: 1px solid #39424d; border-radius: 10px; background: #20262d; }
+      .card p:last-child { margin-bottom: 0; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 20px; }
+      .addon-actions { margin: 0; }
+      .addon-control { display: flex; align-items: center; gap: 8px; }
+      button { border: 1px solid #596675; border-radius: 5px; padding: 8px 12px; color: inherit; background: #2b333d; cursor: pointer; }
+      button:hover { background: #394552; }
+      button.primary { border-color: #2f81f7; background: #1f6feb; }
+      button.danger { border-color: #da3633; }
+      button.addon-toggle.enabled { border-color: #2ea043; background: #1c3927; color: #7ee787; }
+      button.addon-toggle.disabled { border-color: #6e7681; background: #30363d; color: #c9d1d9; }
+      button.addon-toggle:disabled { cursor: wait; opacity: .7; }
+      button.small { padding: 5px 8px; font-size: .85rem; }
+      .list { display: grid; gap: 9px; }
+      .list-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid #303842; }
+      .list-row:last-child { border-bottom: 0; }
+      .list-row a { color: #58a6ff; overflow-wrap: anywhere; }
+      .badge { padding: 3px 7px; border-radius: 999px; font-size: .78rem; background: #303842; }
+      .badge.enabled { color: #7ee787; background: #1c3927; }
+      .badge.disabled { color: #a9b1bb; }
+      .empty { color: #a9b1bb; font-style: italic; }
+      .prerequisite { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; }
+      .prerequisite.ready { color: #7ee787; }
+      .prerequisite.failed { color: #ff7b72; }
+      details { margin-top: 18px; }
+      pre { min-height: 90px; max-height: 240px; padding: 12px; overflow: auto; background: #0d1117; border-radius: 6px; white-space: pre-wrap; }
+      @media (max-width: 600px) { body { padding: 16px; } .status-header { align-items: flex-start; flex-direction: column; } header { align-items: flex-start; flex-direction: column; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <h1>AAP Demo</h1>
+          <p class="muted">Local Ansible Automation Platform environment</p>
+        </div>
+        <button data-action="status">Refresh status</button>
+      </header>
+      <div class="status" id="status">
+        <h2>Status</h2>
+        <div class="status-header">
+          <div>
+            <div class="status-state"><span class="status-dot" id="status-dot"></span><span id="status-state">Unknown</span></div>
+            <p class="muted" id="status-summary">Waiting for status...</p>
+          </div>
+          <span class="muted" id="last-updated">Not updated</span>
+        </div>
+        <div class="status-prerequisites">
+          <div id="prerequisite-list"><p class="empty">Checking prerequisites...</p></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" data-action="create">Create cluster</button>
+        <button class="primary" data-action="deploy">Deploy AAP</button>
+        <button data-action="diagnose">Diagnose</button>
+        <button id="idle-toggle">Set idle</button>
+        <button class="danger" data-action="destroy">Destroy cluster</button>
+      </div>
+      <section class="card">
+        <h2>Addons</h2>
+        <p class="muted">green means enabled and grey means disabled</p>
+        <div class="actions addon-actions" id="addon-actions"><p class="empty">No add-on actions available.</p></div>
+      </section>
+      <div class="grid">
+        <section class="card">
+          <h2>AAP access</h2>
+          <div class="list" id="routes"><p class="empty">No routes available.</p></div>
+        </section>
+        <section class="card">
+          <h2>Credentials</h2>
+          <div class="list" id="credentials"><p class="empty">No credentials available.</p></div>
+        </section>
+        <section class="card">
+          <h2>Environment</h2>
+          <p id="infra">Infrastructure: unknown</p>
+          <p id="kubeconfig" class="muted">Kubeconfig: unknown</p>
+          <p id="tool-version" class="muted">CLI: unknown</p>
+        </section>
+      </div>
+      <details>
+        <summary>Command output</summary>
+        <pre id="output">Ready.</pre>
+      </details>
+    </main>
+    <script type="module" src="./dashboard.ts"></script>
+  </body>
+</html>

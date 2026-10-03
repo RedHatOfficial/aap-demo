@@ -1,0 +1,94 @@
+{
+  "name": "aap-demo-podman-desktop-extension",
+  "displayName": "AAP Demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Podman Desktop extension for the local AAP Demo environment",
+  "publisher": "redhat",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "podman-desktop": ">=1.12.0"
+  },
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "aap-demo.openDashboard",
+        "title": "AAP Demo: Open Dashboard"
+      },
+      {
+        "command": "aap-demo.create",
+        "title": "AAP Demo: Create Cluster"
+      },
+      {
+        "command": "aap-demo.deploy",
+        "title": "AAP Demo: Deploy AAP"
+      },
+      {
+        "command": "aap-demo.destroy",
+        "title": "AAP Demo: Destroy Cluster"
+      },
+      {
+        "command": "aap-demo.status",
+        "title": "AAP Demo: Show Status"
+      },
+      {
+        "command": "aap-demo.idle",
+        "title": "AAP Demo: Toggle AAP Idle State"
+      },
+      {
+        "command": "aap-demo.diagnose",
+        "title": "AAP Demo: Diagnose Environment"
+      }
+    ],
+    "configuration": {
+      "title": "AAP Demo",
+      "properties": {
+        "aap-demo.pullSecretPath": {
+          "type": "string",
+          "format": "file",
+          "default": "",
+          "description": "Path to the Red Hat pull-secret.txt file."
+        },
+        "aap-demo.memory": {
+          "type": "integer",
+          "minimum": 16384,
+          "default": 24576,
+          "description": "Memory in MiB allocated to OpenShift Local."
+        },
+        "aap-demo.cliPath": {
+          "type": "string",
+          "default": "aap-demo",
+          "description": "Path to the aap-demo executable."
+        },
+        "aap-demo.crcPath": {
+          "type": "string",
+          "default": "crc",
+          "description": "Path to the OpenShift Local (CRC) executable."
+        },
+        "aap-demo.cliVersion": {
+          "type": "string",
+          "default": "unknown",
+          "readOnly": true,
+          "description": "Installed aap-demo CLI version."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run build:backend && npm run build:webview",
+    "build:backend": "vite build --config vite.backend.config.ts",
+    "build:webview": "vite build --config vite.webview.config.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "watch": "npm run build:backend -- --watch & npm run build:webview -- --watch"
+  },
+  "devDependencies": {
+    "@podman-desktop/api": "1.12.0",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  }
+}
