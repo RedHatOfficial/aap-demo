@@ -9,7 +9,8 @@ virtual environment.
 
 ## Overview
 
-This addon uses the **official APME EAP welcome pack playbooks** executed locally via `ansible-playbook`. This implementation:
+This addon uses the **official APME EAP welcome pack playbooks** executed
+locally via `ansible-playbook`. This implementation:
 
 - **Local execution**: Playbooks run in isolated Python venv (no AAP API dependency)
 - **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access
@@ -29,12 +30,13 @@ authentication.
 
 - `kubectl` or `oc`
 - `python3` (3.8+)
-- `helm` 3.10+ (portal Helm chart — auto-installed via brew/dnf when missing)
+- AAP execution environment with network access to `get.helm.sh` (the playbook bootstraps a pinned Helm client)
 - AAP deployed (`aap-demo deploy`)
 
 The addon uses the portal Helm chart's standard RHDH image and delivers the APME plugins
 through the chart's runtime OCI plugin installer. The deploy bootstraps the local registry,
-pushes the bundled plugin archive with `skopeo`, and runs `install-dynamic-plugins` in the
+publishes the bundled plugin archive with the AAP execution environment's standard-library
+OCI publisher, and runs `install-dynamic-plugins` in the
 chart-provided init container.
 
 **Ansible installation** (auto-installed in venv):
@@ -211,7 +213,8 @@ Then re-run:
 aap-demo enable apme-eap
 ```
 
-For detailed GitHub setup instructions, see the [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
+For detailed GitHub setup instructions, see the
+[APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
 
 ### Advanced Configuration
 
@@ -365,27 +368,19 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 2. Re-push the bundled OCI archive by setting `apme_oci_push_force: true`
 3. Re-deploy: `aap-demo enable apme-eap`
 
-### Helm not installed
+### Helm bootstrap
 
 **Symptom**: Playbook fails with `Failed to find required executable 'helm'` or `helm: command not found`
 
-**Solution**: Re-run enable — helm is auto-installed when Homebrew (`brew`) or `dnf` is available:
+**Solution**: Re-run enable. The AAP job downloads the pinned Helm client
+into its writable `/tmp` area; no Windows or host Helm installation is
+required.
 
 ```bash
 aap-demo enable apme-eap
 ```
 
-Or install manually:
-
-```bash
-# macOS
-brew install helm
-
-# RHEL/Fedora
-sudo dnf install helm
-```
-
-Verify: `helm version --short` (requires 3.10+).
+The selected AAP execution environment must be able to reach `https://get.helm.sh`.
 
 ### Helm timeout
 
@@ -491,3 +486,4 @@ ansible-playbook playbooks/deploy_apme_portal.yml \
 - [aap-demo Documentation](../../docs/FULL-README.md) - Main aap-demo documentation
 - [APME GitHub Repository](https://github.com/ansible/apme) - APME source code
 - [APME Plugins Repository](https://github.com/ansible/ansible-rhdh-plugins) - RHDH plugins for APME
+<!-- markdownlint-disable MD013 -->

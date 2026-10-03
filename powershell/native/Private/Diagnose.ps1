@@ -6,7 +6,7 @@ function Invoke-AapDemoDiagnose {
   )
 
   if ($Ai) {
-    throw 'diagnose --ai is not available in the native PowerShell CLI. Use aap-demo diagnose without --ai.'
+    throw 'diagnose --ai has no native PowerShell provider yet. Use the native checks or install an explicitly supported AI provider.'
   }
 
   $counts = @{ Issues = 0; Warnings = 0 }

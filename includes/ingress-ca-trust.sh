@@ -266,6 +266,14 @@ _import_ingress_ca_nss() {
   local path="$1"
   local db imported=false
 
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      # Git Bash's certutil is the Windows utility, not NSS certutil. Browser
+      # trust is imported by the PowerShell wrapper into the Windows store.
+      return 1
+      ;;
+  esac
+
   if ! command -v certutil &>/dev/null; then
     if command -v dnf &>/dev/null; then
       echo "  Installing nss-tools for Chrome/Firefox browser trust..."
@@ -468,6 +476,12 @@ install_ingress_ca_trust() {
       return 0
     fi
     local import_ok=true
+    case "$(uname -s)" in
+      MINGW* | MSYS* | CYGWIN*)
+        _ingress_ca_export_env "$ca_path"
+        return 0
+        ;;
+    esac
     import_ingress_ca_certificate "$ca_path" true || import_ok=false
     _ingress_ca_export_env "$ca_path"
     if [ "$import_ok" = false ]; then
@@ -498,6 +512,13 @@ install_ingress_ca_trust() {
       return 0
     fi
   fi
+
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      _ingress_ca_export_env "$ca_path"
+      return 0
+      ;;
+  esac
 
   local import_ok=true
   import_ingress_ca_certificate "$ca_path" || import_ok=false

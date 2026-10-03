@@ -672,6 +672,36 @@ apd_find_controller_task_pod() {
   return 1
 }
 
+apd_kubectl_remote() {
+  local had_kubeconfig=false original_kubeconfig="${KUBECONFIG-}" rc
+  local windows_kubeconfig
+  if [ "${KUBECONFIG+x}" = x ]; then
+    had_kubeconfig=true
+  fi
+
+  # MSYS_NO_PATHCONV keeps remote paths such as /var/lib/awx/... intact, but
+  # that also prevents oc.exe from receiving KUBECONFIG as a Windows path.
+  # Convert only the environment value before invoking the Windows client.
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      if [ -n "${KUBECONFIG:-}" ] && command -v cygpath >/dev/null 2>&1; then
+        windows_kubeconfig=$(cygpath -w "$KUBECONFIG")
+        export KUBECONFIG="$windows_kubeconfig"
+      fi
+      ;;
+  esac
+
+  MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 kubectl "$@"
+  rc=$?
+
+  if [ "$had_kubeconfig" = true ]; then
+    export KUBECONFIG="$original_kubeconfig"
+  else
+    unset KUBECONFIG
+  fi
+  return "$rc"
+}
+
 apd_overlay_project_playbook() {
   local project_id="$1"
   local src="$2"
@@ -704,14 +734,39 @@ print(p.get_project_path() or '')
     return 1
   fi
 
-  if ! kubectl exec -i -n "$NAMESPACE" "$task_pod" -- \
-    tee "${project_dir}/${dest_name}" <"$src" >/dev/null 2>&1; then
-    echo "  ⚠ Failed to copy ${dest_name} into ${project_dir}" >&2
-    return 1
+  local dest_path="${project_dir}/${dest_name}"
+  local copy_error
+  # Git Bash rewrites Unix paths (e.g. /var/lib/awx/...) before kubectl sees them.
+  if ! copy_error=$(apd_kubectl_remote exec -i -n "$NAMESPACE" "$task_pod" -- \
+    tee "$dest_path" <"$src" 2>&1 >/dev/null); then
+    echo "  ⚠ Direct overlay copy failed: ${copy_error:-unknown remote error}" >&2
+
+    local python_error
+    if ! python_error=$(apd_kubectl_remote exec -i -n "$NAMESPACE" "$task_pod" -- \
+      awx-manage shell -c "import sys; open('${dest_path}', 'wb').write(sys.stdin.buffer.read())" \
+      <"$src" 2>&1 >/dev/null); then
+      echo "  ⚠ Controller Python overlay copy failed: ${python_error:-unknown remote error}" >&2
+
+      # kubectl cp uses the same tar transport as AAP's normal project handling.
+      # Convert the local source explicitly so disabling MSYS path conversion
+      # only affects the remote project path.
+      local local_src="$src" cp_error
+      if command -v cygpath >/dev/null 2>&1; then
+        local_src=$(cygpath -w "$src")
+      fi
+      if ! cp_error=$(apd_kubectl_remote cp \
+        "$local_src" "${NAMESPACE}/${task_pod}:${dest_path}" 2>&1); then
+        echo "  ⚠ kubectl cp fallback failed: ${cp_error:-unknown remote error}" >&2
+        return 1
+      fi
+      echo "  ✓ Copied ${dest_name} with kubectl cp fallback"
+    else
+      echo "  ✓ Copied ${dest_name} with controller Python fallback"
+    fi
   fi
 
-  if [ -n "$verify_pattern" ] && ! kubectl exec -n "$NAMESPACE" "$task_pod" -- \
-    grep -q "$verify_pattern" "${project_dir}/${dest_name}" 2>/dev/null; then
+  if [ -n "$verify_pattern" ] && ! apd_kubectl_remote exec -n "$NAMESPACE" "$task_pod" -- \
+    grep -q "$verify_pattern" "$dest_path" 2>/dev/null; then
     echo "  ⚠ Overlay verification failed for ${dest_name} (missing: ${verify_pattern})" >&2
     return 1
   fi

@@ -17,7 +17,7 @@
     name: "{{ aap_apme_prerequisites_openshift_secret_name }}"
     namespace: "{{ openshift_project_name }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ aap_apme_prerequisites_openshift_validate_certs }}"
   register: portal_oauth_secret_check
@@ -26,7 +26,7 @@
 - name: Check if OAuth application exists in AAP  # noqa: var-naming[no-role-prefix]
   ansible.builtin.uri:
     url: >-
-      {{ aap_host_normalized }}/api/gateway/v1/applications/?name={{
+      {{ aap_api_host_normalized }}/api/gateway/v1/applications/?name={{
       aap_apme_prerequisites_oauth_application_name | urlencode }}&organization__name={{
       aap_organization | urlencode }}
     method: GET
@@ -61,7 +61,7 @@
 
 - name: Reconcile OAuth application settings  # noqa: var-naming[no-role-prefix]
   ansible.builtin.uri:
-    url: "{{ aap_host_normalized }}/api/gateway/v1/applications/{{ existing_oauth_app.id }}/"
+    url: "{{ aap_api_host_normalized }}/api/gateway/v1/applications/{{ existing_oauth_app.id }}/"
     method: PATCH
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"
@@ -107,7 +107,7 @@
 
 - name: Delete unusable OAuth application from AAP  # noqa: var-naming[no-role-prefix]
   ansible.builtin.uri:
-    url: "{{ aap_host_normalized }}/api/gateway/v1/applications/{{ existing_oauth_app.id }}/"
+    url: "{{ aap_api_host_normalized }}/api/gateway/v1/applications/{{ existing_oauth_app.id }}/"
     method: DELETE
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"
@@ -124,7 +124,7 @@
 
 - name: Look up AAP organization for OAuth application creation  # noqa: var-naming[no-role-prefix]
   ansible.builtin.uri:
-    url: "{{ aap_host_normalized }}/api/gateway/v1/organizations/?name={{ aap_organization | urlencode }}"
+    url: "{{ aap_api_host_normalized }}/api/gateway/v1/organizations/?name={{ aap_organization | urlencode }}"
     method: GET
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"
@@ -147,7 +147,7 @@
 
 - name: Create OAuth application in AAP  # noqa: var-naming[no-role-prefix]
   ansible.builtin.uri:
-    url: "{{ aap_host_normalized }}/api/gateway/v1/applications/"
+    url: "{{ aap_api_host_normalized }}/api/gateway/v1/applications/"
     method: POST
     user: "{{ aap_username | default(omit) }}"
     password: "{{ aap_password | default(omit) }}"

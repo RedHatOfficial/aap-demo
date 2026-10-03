@@ -100,13 +100,31 @@ aap_demo_ao_llm_external_defaults() {
   export AO_LLM_BASE_URL AO_LLM_MODEL
 }
 
+aap_demo_ao_llm_prompt_device() {
+  if [ -n "${AO_LLM_PROMPT_DEVICE:-}" ]; then
+    printf '%s\n' "$AO_LLM_PROMPT_DEVICE"
+  elif { : </dev/tty; } 2>/dev/null; then
+    printf '%s\n' /dev/tty
+  else
+    # The PowerShell bridge can inherit stdin without exposing a Git Bash
+    # /dev/tty or /dev/stdin device. An empty result means read from fd 0.
+    printf '\n'
+  fi
+}
+
 aap_demo_ao_llm_prompt_for_model() {
-  local prompt_device="${AO_LLM_PROMPT_DEVICE:-/dev/tty}"
+  local prompt_device
   local model
+
+  prompt_device=$(aap_demo_ao_llm_prompt_device)
 
   [ -z "${AO_LLM_MODEL:-}" ] || return 0
   printf 'External LLM model [gpt-5.6-luna]: ' >&2
-  IFS= read -r model <"$prompt_device" || return 1
+  if [ -n "$prompt_device" ]; then
+    IFS= read -r model <"$prompt_device" || return 1
+  else
+    IFS= read -r model || return 1
+  fi
   AO_LLM_MODEL="${model:-gpt-5.6-luna}"
   export AO_LLM_MODEL
   aap_demo_ao_llm_save_config AO_LLM_MODEL "$AO_LLM_MODEL"
@@ -150,8 +168,10 @@ aap_demo_ao_llm_configure_provider() {
 }
 
 aap_demo_ao_llm_prompt_for_key() {
-  local prompt_device="${AO_LLM_PROMPT_DEVICE:-/dev/tty}"
+  local prompt_device
   local api_key
+
+  prompt_device=$(aap_demo_ao_llm_prompt_device)
 
   if [ -n "${OPENAI_API_KEY:-}" ]; then
     echo "Using the exported OPENAI_API_KEY for the external LLM provider." >&2
@@ -160,7 +180,11 @@ aap_demo_ao_llm_prompt_for_key() {
   fi
 
   printf 'External LLM API key (input hidden): ' >&2
-  IFS= read -r -s api_key <"$prompt_device" || return 1
+  if [ -n "$prompt_device" ]; then
+    IFS= read -r -s api_key <"$prompt_device" || return 1
+  else
+    IFS= read -r -s api_key || return 1
+  fi
   printf '\n' >&2
   [ -n "$api_key" ] || {
     echo "ERROR: API key cannot be empty." >&2
@@ -171,8 +195,10 @@ aap_demo_ao_llm_prompt_for_key() {
 
 aap_demo_ao_llm_prepare() {
   local provider="${AO_LLM_PROVIDER:-}"
-  local prompt_device="${AO_LLM_PROMPT_DEVICE:-/dev/tty}"
+  local prompt_device
   local choice selected
+
+  prompt_device=$(aap_demo_ao_llm_prompt_device)
 
   if [ "${QUIET:-false}" = true ]; then
     case "$provider" in
@@ -202,7 +228,11 @@ aap_demo_ao_llm_prepare() {
   echo "  2) Use an external OpenAI-compatible provider"
   echo "  3) Do not configure an LLM (agentic demos will be unavailable)"
   printf 'Choice [1]: '
-  IFS= read -r choice <"$prompt_device" || return 1
+  if [ -n "$prompt_device" ]; then
+    IFS= read -r choice <"$prompt_device" || return 1
+  else
+    IFS= read -r choice || return 1
+  fi
   choice="${choice:-1}"
   selected=$(aap_demo_ao_llm_choice "$choice") || {
     echo "ERROR: Choose 1 for Ollama, 2 for an external provider, or 3 for no LLM." >&2

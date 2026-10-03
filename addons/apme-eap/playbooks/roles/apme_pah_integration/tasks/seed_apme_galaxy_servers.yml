@@ -9,10 +9,10 @@
 
 - name: Normalize AAP host URL for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    aap_host_normalized: "{{ aap_host_normalized | default(aap_host | regex_replace('/$', '')) }}"
+    aap_api_host_normalized: "{{ aap_api_host_normalized | default(aap_api_host | default(aap_host) | regex_replace('/$', '')) }}"
   when:
     - apme_pah_seed_apme_galaxy_servers | bool
-    - aap_host_normalized is not defined or aap_host_normalized | length == 0
+      - aap_api_host_normalized is not defined or aap_api_host_normalized | length == 0
 
 - name: Load AAP API token from portal secret when not in vars  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s_info:
@@ -21,7 +21,7 @@
     name: secrets-rhaap-portal
     namespace: "{{ openshift_project_name }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_portal_secret
@@ -42,11 +42,11 @@
 - name: Validate AAP host for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
   ansible.builtin.assert:
     that:
-      - aap_host_normalized is defined
-      - aap_host_normalized | length > 0
+      - aap_api_host_normalized is defined
+      - aap_api_host_normalized | length > 0
       - aap_api_token is defined
       - aap_api_token | length > 0
-    fail_msg: "aap_host_normalized and aap_api_token are required to seed APME galaxy servers"
+    fail_msg: "aap_api_host_normalized and aap_api_token are required to seed APME galaxy servers"
   when: apme_pah_seed_apme_galaxy_servers | bool
 
 - name: Resolve APME gateway pod for in-cluster API calls  # noqa: var-naming[no-role-prefix]
@@ -57,7 +57,7 @@
     label_selectors:
       - app.kubernetes.io/instance={{ apme_helm_release_name | default('apme') }}
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_gateway_pods
@@ -86,7 +86,7 @@
       curl -sf
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_gateway_wait
@@ -99,7 +99,7 @@
   ansible.builtin.set_fact:
     apme_pah_desired_galaxy_servers:
       - name: automation_hub
-        url: "{{ aap_host_normalized }}/api/galaxy/"
+        url: "{{ aap_api_host_normalized }}/api/galaxy/"
         token: "{{ aap_api_token }}"
         auth_url: ""
       - name: community
@@ -140,7 +140,7 @@
       curl -sf
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_existing_galaxy_servers_raw
@@ -168,7 +168,7 @@
       } | to_json }}'
       http://127.0.0.1:{{ apme_pah_gateway_port }}/api/v1/settings/galaxy-servers
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   loop: "{{ apme_pah_desired_galaxy_servers | default([]) }}"
@@ -185,7 +185,7 @@
   kubernetes.core.k8s:
     state: patched
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
     kind: Deployment

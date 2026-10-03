@@ -18,7 +18,7 @@
     api_version: storage.k8s.io/v1
     kind: StorageClass
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ apme_gateway_helm_validate_certs }}"
   register: all_storage_classes
@@ -60,11 +60,11 @@
         wait: true
         wait_timeout: "{{ apme_gateway_helm_timeout }}s"
         api_key: "{{ openshift_token | default(omit) }}"
-        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
         host: "{{ openshift_api_url }}"
         validate_certs: "{{ apme_gateway_helm_validate_certs }}"
       environment:
-        PATH: "/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
+        PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
         HELM_CACHE_HOME: "/tmp/.helm/cache"
         HELM_CONFIG_HOME: "/tmp/.helm/config"
         HELM_DATA_HOME: "/tmp/.helm/data"
@@ -102,11 +102,11 @@
         wait: true
         wait_timeout: "{{ apme_gateway_helm_timeout }}s"
         api_key: "{{ openshift_token | default(omit) }}"
-        kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
         host: "{{ openshift_api_url }}"
         validate_certs: "{{ apme_gateway_helm_validate_certs }}"
       environment:
-        PATH: "/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
+        PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
         HELM_CACHE_HOME: "/tmp/.helm/cache"
         HELM_CONFIG_HOME: "/tmp/.helm/config"
         HELM_DATA_HOME: "/tmp/.helm/data"

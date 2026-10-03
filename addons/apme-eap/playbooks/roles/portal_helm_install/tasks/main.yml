@@ -2,7 +2,7 @@
 # Install redhat-rhaap-portal with rendered APME values file
 
 - name: Verify Helm is available  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.command: helm version --short
+  ansible.builtin.command: "{{ apme_helm_binary | default('helm') }} version --short"
   changed_when: false
   register: helm_version_check
 
@@ -23,13 +23,13 @@
     wait: true
     wait_timeout: "{{ portal_helm_install_timeout }}s"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ portal_helm_install_validate_certs }}"
     force: "{{ portal_helm_install_force_upgrade | bool }}"
     atomic: "{{ false if portal_helm_install_force_upgrade | bool else true }}"
   environment:
-    PATH: "/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
+    PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
     HELM_CACHE_HOME: "/tmp/.helm/cache"
     HELM_CONFIG_HOME: "/tmp/.helm/config"
     HELM_DATA_HOME: "/tmp/.helm/data"
@@ -41,7 +41,7 @@
     kind: Route
     namespace: "{{ openshift_project_name }}"
     api_key: "{{ openshift_token | default(omit) }}"
-    kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(omit) }}"
+    kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ portal_helm_install_validate_certs }}"
   register: portal_routes

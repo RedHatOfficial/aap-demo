@@ -104,6 +104,18 @@ short_image_ref() {
   esac
 }
 
+ao_python_command() {
+  local _candidate
+  for _candidate in "${AO_PYTHON:-}" python3 python py; do
+    [ -n "$_candidate" ] || continue
+    command -v "$_candidate" >/dev/null 2>&1 || continue
+    "$_candidate" -c 'import sys' >/dev/null 2>&1 || continue
+    printf '%s\n' "$_candidate"
+    return 0
+  done
+  return 1
+}
+
 find_catalog_namespace() {
   local _ns
   for _ns in aap-operator openshift-marketplace olm; do
@@ -245,22 +257,18 @@ copy_pull_secret_to_namespace() {
   if ! kubectl get secret "$_src_name" -n "$_src_ns" &>/dev/null; then
     return 1
   fi
-  kubectl get secret "$_src_name" -n "$_src_ns" -o json \
-    | DST_NAME="$_dst_name" DST_NS="$_dst_ns" python3 -c "
-import json, os, sys
-secret = json.load(sys.stdin)
-out = {
-    'apiVersion': 'v1',
-    'kind': 'Secret',
-    'metadata': {
-        'name': os.environ['DST_NAME'],
-        'namespace': os.environ['DST_NS'],
-    },
-    'type': secret.get('type', 'kubernetes.io/dockerconfigjson'),
-    'data': secret.get('data', {}),
-}
-json.dump(out, sys.stdout)
-" | kubectl apply -f - >&2
+  local _dockerconfig_b64
+  _dockerconfig_b64=$(kubectl get secret "$_src_name" -n "$_src_ns" \
+    -o jsonpath='{.data.\.dockerconfigjson}' 2>/dev/null || echo "")
+  if [ -z "$_dockerconfig_b64" ]; then
+    echo "ERROR: Secret ${_src_name} does not contain .dockerconfigjson" >&2
+    return 1
+  fi
+  printf '%s' "$_dockerconfig_b64" | base64 -d 2>/dev/null \
+    | kubectl create secret generic "$_dst_name" -n "$_dst_ns" \
+      --from-file=.dockerconfigjson=/dev/stdin \
+      --type=kubernetes.io/dockerconfigjson --dry-run=client -o yaml \
+    | kubectl apply -f - >&2
 }
 
 ensure_catalog_service_account() {
@@ -493,23 +501,28 @@ operator_package_in_catalog() {
 }
 
 subscription_has_resolution_failure() {
-  kubectl get subscription automation-orchestrator-operator -n "${OLM_NAMESPACE}" \
-    -o json 2>/dev/null | python3 -c '
-import json, sys
-try:
-    data = json.load(sys.stdin)
-except json.JSONDecodeError:
-    sys.exit(1)
-for cond in data.get("status", {}).get("conditions", []):
-    if cond.get("status") != "True":
-        continue
-    if cond.get("type") == "ResolutionFailed":
-        sys.exit(0)
-    if cond.get("type") == "CatalogSourcesUnhealthy":
-        if cond.get("reason") != "AllCatalogSourcesHealthy":
-            sys.exit(0)
-sys.exit(1)
-' 2>/dev/null
+  local _type _status _reason
+  while IFS='|' read -r _type _status _reason; do
+    [ "$_status" = "True" ] || continue
+    if [ "$_type" = "ResolutionFailed" ]; then
+      return 0
+    fi
+    if [ "$_type" = "CatalogSourcesUnhealthy" ] \
+      && [ "$_reason" != "AllCatalogSourcesHealthy" ]; then
+      return 0
+    fi
+  done < <(kubectl get subscription automation-orchestrator-operator \
+    -n "${OLM_NAMESPACE}" \
+    -o jsonpath='{range .status.conditions[*]}{.type}|{.status}|{.reason}{"\n"}{end}' \
+    2>/dev/null || true)
+  return 1
+}
+
+pending_installplans() {
+  kubectl get installplan -n "$OLM_NAMESPACE" \
+    -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.approved}{"\n"}{end}' \
+    2>/dev/null \
+    | awk -F'|' '$1 != "" && $2 != "true" { print $1 }'
 }
 
 subscription_failure_detail() {
@@ -708,30 +721,22 @@ configure_ao_local_aap_access() {
   ensure_coredns_route_rewrite || true
   ao_pod_route_host_aliases || true
 
-  _hosts_json=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$_aap_host")
+  _hosts_json=$(printf '["%s"]' "$_aap_host")
   _cm_current=$(kubectl get configmap automation-orchestrator-admin-settings -n "$NAMESPACE" \
     -o jsonpath='{.data.APP_INTEGRATION_URL_ALLOWED_HOSTS}' 2>/dev/null || echo "")
-  HOST="$_aap_host" NAMESPACE="$NAMESPACE" python3 -c '
-import json, os
-host = os.environ["HOST"]
-hosts = json.dumps([host])
-print(json.dumps({
-    "apiVersion": "v1",
-    "kind": "ConfigMap",
-    "metadata": {
-        "name": "automation-orchestrator-admin-settings",
-        "namespace": os.environ["NAMESPACE"],
-        "labels": {
-            "app.kubernetes.io/managed-by": "aap-demo",
-            "app.kubernetes.io/part-of": "automation-orchestrator",
-        },
-    },
-    "data": {
-        "APP_INTEGRATION_URL_ALLOWED_HOSTS": hosts,
-        "APP_WORKFLOW_HTTP_REQUEST_ALLOWED_HOSTS": hosts,
-    },
-}))
-' | kubectl apply -f - >/dev/null
+  cat <<EOF | kubectl apply -f - >/dev/null
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: automation-orchestrator-admin-settings
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/managed-by: aap-demo
+    app.kubernetes.io/part-of: automation-orchestrator
+data:
+  APP_INTEGRATION_URL_ALLOWED_HOSTS: '${_hosts_json}'
+  APP_WORKFLOW_HTTP_REQUEST_ALLOWED_HOSTS: '${_hosts_json}'
+EOF
   if [ "$_cm_current" != "$_hosts_json" ]; then
     _changed=1
   fi
@@ -881,7 +886,12 @@ sync_ao_demos() {
   if [ -n "$_project" ]; then
     _import_args+=(--project-id "$_project")
   fi
-  python3 "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" || true
+  local _python_cmd
+  if ! _python_cmd=$(ao_python_command); then
+    echo "  ⚠ Python runtime unavailable; skipping optional AO demo import"
+    return 0
+  fi
+  "$_python_cmd" "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" || true
 }
 
 AO_AAP_SYNC_RAN=0
@@ -941,7 +951,12 @@ provision_aap_demos() {
     echo "  ⚠ AAP AO sync job deferred (AO credentials not ready)"
   fi
   local _provision_rc
-  if python3 "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
+  local _python_cmd
+  if ! _python_cmd=$(ao_python_command); then
+    echo "  ⚠ Python runtime unavailable; skipping optional AAP demo provisioning"
+    return 0
+  fi
+  if "$_python_cmd" "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
     if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
       AO_AAP_SYNC_RAN=1
     fi
@@ -1618,10 +1633,7 @@ apply_operator_olm_manifests
 echo "Waiting for InstallPlan..."
 _sub_reset=0
 for i in $(seq 1 30); do
-  _ao_installplan_name=$(ao_subscription_install_plan "$OLM_NAMESPACE" \
-    automation-orchestrator-operator)
-  _pending_ips=$(ao_pending_install_plans "$OLM_NAMESPACE" \
-    automation-orchestrator-operator "$_ao_installplan_name")
+  _pending_ips=$(pending_installplans || echo "")
   if [ "$AO_INSTALL_PLAN_APPROVAL" = "Automatic" ] && [ -n "$_pending_ips" ]; then
     while read -r _ip; do
       [ -z "$_ip" ] && continue

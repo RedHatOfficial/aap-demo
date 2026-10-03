@@ -1,7 +1,9 @@
 # aap-demo on Windows (PowerShell)
 
-Install and run [aap-demo](../README.md) on Windows using PowerShell. All commands
-run natively in PowerShell; only `diagnose --ai` uses Git Bash.
+Install and run [aap-demo](../README.md) on Windows using PowerShell. Core lifecycle
+commands enter through PowerShell, which delegates execution to the repository's
+Git Bash CLI. Bash remains the single implementation for cluster lifecycle,
+addons, wiring, and cleanup so Windows follows the current cross-platform behavior.
 
 ## Requirements
 
@@ -11,12 +13,12 @@ run natively in PowerShell; only `diagnose --ai` uses Git Bash.
 | **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
 | **OpenShift CLI (`oc`)**    | Installed by `install.ps1` via winget when missing.                             |
 | **Red Hat pull secret**     | [Download](https://console.redhat.com/openshift/install/pull-secret)            |
-| **Git for Windows**         | Optional. Only needed for `diagnose --ai`.                                      |
+| **Git for Windows**         | Required; the wrapper runs `aap-demo.sh` through Git Bash.                    |
 | **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
-`kubectl` is **not** required on Windows — all commands use `oc` exclusively.
-
-Optional: `python`, `jq`.
+`jq` and Python are required for Windows deploys because the Git Bash deployment
+and demo provisioning paths use them. Python provisions AAP demo content and
+imports AO demo workflows.
 
 ## Install
 
@@ -51,6 +53,28 @@ Open a **new** PowerShell window when install finishes, then:
 aap-demo help
 ```
 
+The installer registers `aap-demo.cmd` in `%USERPROFILE%\.local\bin`. The
+command shim invokes the repository wrapper with `ExecutionPolicy Bypass`, so
+the command remains usable when the machine policy blocks `.ps1` scripts. If a
+previous install left a stale `aap-demo.ps1`, rerun the installer with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\powershell\install.ps1
+```
+
+Before `deploy`, `redeploy`, or `enable ao`, the Windows preflight checks for
+`jq` and a working Python runtime. Missing tools are installed with winget. To
+install them manually:
+
+```powershell
+winget install --id jqlang.jq -e --source winget
+winget install --id Python.Python.3.12 -e --source winget
+```
+
+Python is used by the AAP demo provisioning and AO workflow import steps. If
+the install cannot complete, the command stops with the same commands so the
+demo content is not silently skipped.
+
 ## Quick start
 
 ```powershell
@@ -80,6 +104,7 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo clean`               | Remove AAP deployment                                              |
 | `aap-demo destroy`             | Delete CRC cluster (`--reset` clears saved preset)                 |
 | `aap-demo stop`                | Stop CRC cluster                                                   |
+| `aap-demo start`               | Start CRC and refresh MicroShift DNS                               |
 | `aap-demo status`              | Cluster health, namespaces, routes, admin password                 |
 | `aap-demo diagnose`            | Environment health checks                                          |
 | `aap-demo watch`               | Monitor AAP deployment until Successful                            |
@@ -87,13 +112,20 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo kubeconfig`          | Sync kubeconfig (context: `aap-demo`)                              |
 | `aap-demo ssh`                 | SSH into CRC VM                                                    |
 | `aap-demo enable` / `disable`  | Enable or disable addons                                           |
+| `aap-demo wire`                | Apply addon integrations after deployment                          |
 | `aap-demo must-gather`         | Collect diagnostic bundle                                          |
 | `aap-demo redhat-status`       | Check Red Hat registry status                                      |
 | `aap-demo config`              | Show or set `~/.aap-demo/config` values                            |
 | `aap-demo update`              | `git pull` and reinstall launcher                                  |
 | `aap-demo help`                | Show command help                                                  |
 
-`aap-demo diagnose --ai` delegates to Git Bash for Claude-assisted analysis.
+Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
+`setup-pah`, `ao` (alias `ao-eap`), `product-demos`, `opa`, and `ollama`.
+Product Demos is exposed as one aggregate deployment on Windows. Fleet and
+`local-cache` are deferred from the Windows build. These commands are delegated
+to the same Bash addon
+scripts used on Linux and macOS. APME, Fleet, and the legacy Product Demo
+domain aliases remain unavailable through the Windows wrapper.
 
 ## Environment variables
 
@@ -106,6 +138,7 @@ Set in PowerShell before running commands, or add to
 | `CRC_MEMORY`        | `16384`                                      | VM memory (MiB)                                    |
 | `CRC_DISK`          | `100`                                        | VM disk (GiB)                                      |
 | `CRC_PV_SIZE`       | `50`                                         | Storage for PVCs (GiB)                             |
+| `NFS_BACKING_STORAGE_SIZE` | `5Gi`                                  | LVMS-backed storage reserved for the NFS server      |
 | `NAMESPACE`         | `aap-operator`                               | Kubernetes namespace                               |
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |
 | `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |
@@ -159,16 +192,12 @@ Re-run from the repo directory:
 
 Do not move or delete the cloned repo after install — the launcher points at it.
 
-### Git Bash required for diagnose --ai
+### Git Bash addon delegation
 
-Re-run the installer (it installs Git for Windows via winget when missing), then
-open a new PowerShell window:
-
-```powershell
-.\powershell\install.ps1
-```
-
-Most commands (`create`, `deploy`, `destroy`, …) do not need Git Bash.
+The PowerShell launcher discovers Git for Windows and forwards the original
+command, arguments, environment, exit code, and output to `aap-demo.sh`. Install
+Git for Windows or run the Bash CLI directly if the wrapper reports that Git Bash
+is unavailable.
 
 ### `oc` or `crc` not found
 
@@ -279,9 +308,10 @@ Then run commands with `pwsh` instead of `powershell`.
 
 ```
 aap-demo (launcher in ~/.local/bin)
-  └── powershell/aap-demo.ps1
-        └── powershell/native/AapDemo.psm1  (all commands)
-              └── diagnose --ai  →  Git Bash (when needed)
+  └── aap-demo.cmd (policy-safe command shim)
+        └── powershell/aap-demo.ps1
+              └── powershell/native/AapDemo.psm1  (all commands)
+              └── native process runner → oc/kubectl/helm/python/ansible
 ```
 
 ## Updating

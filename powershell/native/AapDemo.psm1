@@ -6,6 +6,14 @@ $PrivateDir = Join-Path $PSScriptRoot 'Private'
 
 . (Join-Path $PrivateDir 'Helpers.ps1')
 
+. (Join-Path $PrivateDir 'NativeProcess.ps1')
+
+. (Join-Path $PrivateDir 'NativeAddons.ps1')
+
+. (Join-Path $PrivateDir 'Prerequisites.ps1')
+
+. (Join-Path $PrivateDir 'NativeAo.ps1')
+
 . (Join-Path $PrivateDir 'Create.ps1')
 
 . (Join-Path $PrivateDir 'Deploy.ps1')
@@ -17,6 +25,8 @@ $PrivateDir = Join-Path $PSScriptRoot 'Private'
 . (Join-Path $PrivateDir 'Watch.ps1')
 
 . (Join-Path $PrivateDir 'Portal.ps1')
+
+. (Join-Path $PrivateDir 'NativeAoWire.ps1')
 
 . (Join-Path $PrivateDir 'Addons.ps1')
 
@@ -39,6 +49,10 @@ Export-ModuleMember -Function @(
   'Invoke-AapDemoWatch'
 
   'Invoke-AapDemoStop'
+
+  'Invoke-AapDemoStart'
+
+  'Invoke-AapDemoWire'
 
   'Invoke-AapDemoDestroy'
 
@@ -77,5 +91,15 @@ Export-ModuleMember -Function @(
   'Show-AapDemoVersion'
 
   'Invoke-AapDemoSetupPah'
+
+  'Invoke-AapNativeProcess'
+
+  'Invoke-AapGitBashCli'
+
+  'Invoke-AapGitBashInteractive'
+
+  'Get-AapWindowsDeployPrerequisiteFailures'
+
+  'Assert-AapWindowsDeployPrerequisites'
 
 )

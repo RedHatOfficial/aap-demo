@@ -437,6 +437,14 @@ validation steps for all 37 test cases.
 4. **Error Testing**: Intentional failure scenarios
 5. **Regression Testing**: Existing features and addons verification
 
+## Follow-up: Reliable bootstrap project re-sync (2026-10-01)
+
+The installer overlays its version-pinned playbook directly into the AAP controller task pod.
+The bootstrap project therefore sets `scm_clean: true` so a later explicit SCM update removes
+the previous overlay before applying upstream changes. This keeps repeated `product-demos`
+enables working without manual cleanup. Failed syncs now include the AAP project-update metadata
+and recent controller output to make repository or checkout errors actionable.
+
 ## References
 
 - [Issue #71: Feature: Integrate `ansible/product-demos` as an Add-on](https://github.com/RedHatOfficial/aap-demo/issues/71)

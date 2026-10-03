@@ -22,6 +22,19 @@ mkdir -p ~/.aap-demo
 cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
 ```
 
+On Windows, the PowerShell launcher runs the maintained Bash CLI through Git
+for Windows. Windows deploys and AO/Product Demo enablement also require `jq`
+and a working Python runtime for shell wiring and demo provisioning. The
+Windows preflight installs them with winget when they are missing:
+
+```powershell
+winget install --id jqlang.jq -e --source winget
+winget install --id Python.Python.3.12 -e --source winget
+```
+
+Linux and macOS keep their existing prerequisite behavior; Python remains
+optional there when demo provisioning is not requested.
+
 ## Install
 
 ```bash
@@ -72,7 +85,6 @@ Addons:
   portal-operator disabled (AMD64 only)
   setup-pah       disabled
   ao            disabled
-  apme-eap        disabled
   local-cache     disabled
   product-demos       disabled
   product-demo-satellite  disabled
@@ -87,7 +99,6 @@ aap-demo enable portal-operator # Installs Operator-based Portal (Technology Pre
 aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
-aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 
 # Ansible Product Demos - Official demo content from ansible/product-demos
@@ -95,6 +106,9 @@ aap-demo enable product-demos        # Five domains at once (includes base; Sate
 aap-demo enable product-demo-satellite  # Satellite demos (requires a Satellite server)
 aap-demo disable addon_name  # Disables addon
 ```
+
+The Windows wrapper currently defers Fleet and local image caching; those
+addons remain available through the Linux/macOS Bash workflow.
 
 When destroying a running cluster, `aap-demo destroy` asks whether to save the
 container images locally. Confirming lets the next `aap-demo deploy` reuse the

@@ -44,6 +44,8 @@ source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 # shellcheck source=includes/ao-llm.sh
 source "${SCRIPT_DIR}/includes/ao-llm.sh"
+# shellcheck source=includes/json-utils.sh
+source "${SCRIPT_DIR}/includes/json-utils.sh"
 
 # shellcheck source=includes/persistent-crio-store.sh
 source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
@@ -217,6 +219,26 @@ if [ -n "$PENDING_FLAG" ]; then
   exit 1
 fi
 
+# --skip-cache is accepted as a deploy optimization flag as well as for the
+# destroy command. Keep the setting in the environment so child addon scripts
+# inherit the same behavior.
+for _arg in "${EXTRA_ARGS[@]}"; do
+  if [ "$_arg" = "--skip-cache" ]; then
+    AAP_DEMO_SKIP_CACHE=true
+    export AAP_DEMO_SKIP_CACHE
+  fi
+done
+
+# Fleet VMs and the host-side image cache are deferred from the Windows build.
+# Keep the Linux/macOS Bash behavior unchanged.
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*)
+    AAP_DEMO_SKIP_CACHE=true
+    _DESTROY_SKIP_CACHE=true
+    export AAP_DEMO_SKIP_CACHE
+    ;;
+esac
+
 # Load infrastructure abstraction layer
 source "${SCRIPT_DIR}/includes/infra-api.sh"
 # shellcheck source=includes/ingress-ca-trust.sh
@@ -236,6 +258,7 @@ check_kubectl() {
     kubectl() {
       oc "$@"
     }
+    export -f kubectl
     return 0
   fi
 
@@ -247,6 +270,7 @@ check_kubectl() {
       kubectl() {
         oc "$@"
       }
+      export -f kubectl
       return 0
     fi
   fi
@@ -283,6 +307,63 @@ check_kubectl() {
   echo ""
   echo "Or download from: https://kubernetes.io/docs/tasks/tools/"
   return 1
+}
+
+# jq is required by the Bash deploy and addon wiring paths. Keep this check
+# Windows-only here so Linux and macOS retain their existing prerequisite flow.
+check_jq_windows() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      if command -v jq &>/dev/null; then
+        return 0
+      fi
+      _err "jq not found"
+      echo ""
+      echo "Install jq from PowerShell or Git Bash with:"
+      echo "  winget install --id jqlang.jq -e --source winget"
+      echo ""
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# Demo provisioning/imports use Python. Keep this check Windows-only so Linux
+# and macOS retain their existing optional-runtime behavior.
+check_python_windows() {
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      local _python
+      for _python in python3 python py; do
+        if command -v "$_python" &>/dev/null \
+          && "$_python" -c 'import sys' &>/dev/null 2>&1; then
+          return 0
+        fi
+      done
+      _err "Python runtime not found"
+      echo ""
+      echo "Install Python from PowerShell or Git Bash with:"
+      echo "  winget install --id Python.Python.3.12 -e --source winget"
+      echo ""
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+reject_windows_deferred_addon() {
+  local _addon="${1:-}"
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      case "$_addon" in
+        fleet | local-cache)
+          _err "Addon '$_addon' is disabled on Windows for now"
+          return 1
+          ;;
+      esac
+      ;;
+  esac
+  return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -682,8 +763,9 @@ _verify_crc_version() {
   local installed_version
 
   # Get installed CRC version from status
-  installed_version=$(crc status -o json 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('openshiftVersion',''))" 2>/dev/null \
+  local _crc_status_json
+  _crc_status_json=$(crc status -o json 2>/dev/null || echo '{}')
+  installed_version=$(aap_demo_json_value openshiftVersion "$_crc_status_json" 2>/dev/null \
     | grep -oE '^[0-9]+\.[0-9]+' || echo "")
 
   if [ -z "$installed_version" ]; then
@@ -1159,11 +1241,12 @@ cmd_diagnose() {
   # Cluster connectivity
   # =========================================================================
   echo "Cluster:"
-  local crc_state
-  crc_state=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('crcStatus','unknown'))" 2>/dev/null || echo "unknown")
+  local crc_state status_json
+  status_json=$(crc status -o json 2>/dev/null || echo '{}')
+  crc_state=$(aap_demo_json_value crcStatus "$status_json" 2>/dev/null || echo "unknown")
   if [ "$crc_state" = "Running" ]; then
     local ms_version
-    ms_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); print(d.get('openshiftVersion',''))" 2>/dev/null || echo "")
+    ms_version=$(aap_demo_json_value openshiftVersion "$status_json" 2>/dev/null || echo "")
     _check_pass "OpenShift Local running"
   elif [ "$crc_state" = "Stopped" ]; then
     _check_fail "OpenShift Local is stopped — run: crc start"
@@ -1209,7 +1292,7 @@ cmd_diagnose() {
 
   # Check disk usage
   local disk_pct
-  disk_pct=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); u=d.get('diskUse',0); t=d.get('diskSize',1); print(int(u/t*100))" 2>/dev/null || echo "0")
+  disk_pct=$(aap_demo_json_disk_percent "$status_json" 2>/dev/null || echo "0")
   if [ "$disk_pct" -gt 90 ]; then
     _check_fail "Disk usage: ${disk_pct}% — critically low space"
   elif [ "$disk_pct" -gt 80 ]; then
@@ -2230,7 +2313,8 @@ deploy_latest() {
   AAP_CHANNEL="stable-2.7"
   # Auto-detect OCP version from CRC status (e.g. 4.22.0 → 4.22)
   if [ -z "${AAP_OCP_VERSION:-}" ]; then
-    _crc_ocp_version=$(crc status -o json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('openshiftVersion',''))" 2>/dev/null || true)
+    _crc_status_json=$(crc status -o json 2>/dev/null || echo '{}')
+    _crc_ocp_version=$(aap_demo_json_value openshiftVersion "$_crc_status_json" 2>/dev/null || true)
     if [[ "$_crc_ocp_version" =~ ^([0-9]+\.[0-9]+) ]]; then
       AAP_OCP_VERSION="${BASH_REMATCH[1]}"
     else
@@ -2433,7 +2517,9 @@ setup_namespace() {
     # Force-clear if still stuck
     if [ "$_ns_status" = "Terminating" ]; then
       echo "  Force-clearing stuck namespace..."
-      kubectl get namespace "$NAMESPACE" -o json 2>/dev/null | python3 -c "import sys,json; d=json.loads(sys.stdin.read() or '{}'); d[\"spec\"][\"finalizers\"]=[];print(json.dumps(d))" | kubectl replace --raw "/api/v1/namespaces/$NAMESPACE/finalize" -f - 2>/dev/null || true
+      kubectl get namespace "$NAMESPACE" -o json 2>/dev/null \
+        | aap_demo_json_clear_namespace_finalizers \
+        | kubectl replace --raw "/api/v1/namespaces/$NAMESPACE/finalize" -f - 2>/dev/null || true
       sleep 2
     fi
   fi
@@ -2512,17 +2598,23 @@ deploy_operator_sdk() {
 }
 
 _load_local_cache() {
+  if [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ]; then
+    echo "Skipping local image cache (AAP_DEMO_SKIP_CACHE=true)"
+    return 0
+  fi
   # Loading is safe and quiet when no cache exists. Always check so a
   # destroy/create cycle can reuse a cache even though destroy clears addons.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" load
 }
 
 _cached_operator_catalog_ref() {
+  [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ] && return 0
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" \
     catalog-ref "$1" 2>/dev/null || true
 }
 
 _rewrite_local_cache_refs() {
+  [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ] && return 0
   # Operators publish image references in generated workload templates. Keep
   # those templates aligned with the platform digests imported from cache.
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" rewrite || true
@@ -2637,18 +2729,29 @@ _patch_gateway_capability() {
     fi
   fi
 
-  # Check if already patched
-  local existing_caps
+  # Check if already patched. OpenShift Local's restricted SCC also needs
+  # supplemental group 0 for the gateway's supervisord socket.
+  local existing_caps existing_supplemental_groups
   existing_caps=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}' 2>/dev/null || echo "")
+  existing_supplemental_groups=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.securityContext.supplementalGroups}' 2>/dev/null || echo "")
+
+  local needs_capability=true needs_supplemental_group=true
   if [[ "$existing_caps" == *"NET_BIND_SERVICE"* ]]; then
-    echo "  ✓ Gateway already has NET_BIND_SERVICE capability"
+    needs_capability=false
+  fi
+  if [[ "$existing_supplemental_groups" == *"0"* ]]; then
+    needs_supplemental_group=false
+  fi
+
+  if [ "$needs_capability" = false ] && [ "$needs_supplemental_group" = false ]; then
+    echo "  ✓ Gateway already has NET_BIND_SERVICE and supplementalGroups [0]"
     return 0
   fi
 
-  echo "  Patching gateway with NET_BIND_SERVICE capability..."
+  echo "  Patching gateway security context (NET_BIND_SERVICE + supplementalGroups [0])..."
   if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=strategic \
-    -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
-    echo "  ✓ Gateway patched — pod will restart with correct capabilities"
+    -p '{"spec":{"template":{"spec":{"securityContext":{"supplementalGroups":[0]},"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
+    echo "  ✓ Gateway patched — pod will restart with correct security context"
   else
     echo "  ⚠ Gateway patch failed — may need manual fix if gateway crashes"
   fi
@@ -3253,6 +3356,10 @@ case "$COMMAND" in
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
     # These handle their own cluster state (auto-start if stopped)
+    if [[ "$COMMAND" != "create" ]]; then
+      check_jq_windows || exit 1
+      check_python_windows || exit 1
+    fi
     setup_kubeconfig
     ;;
   *)
@@ -3337,15 +3444,24 @@ case "$COMMAND" in
     cmd_must_gather "${EXTRA_ARGS[0]:-}"
     ;;
   fleet)
+    reject_windows_deferred_addon fleet || exit 1
     cmd_fleet "${EXTRA_ARGS[@]}"
     ;;
   enable)
-    cmd_enable "${EXTRA_ARGS[@]}" || exit $?
+    reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
+    case "${EXTRA_ARGS[0]:-}" in
+      ao | product-demos | product-demos-base | product-demo-*)
+        check_jq_windows || exit 1
+        check_python_windows || exit 1
+        ;;
+    esac
+    cmd_enable "${EXTRA_ARGS[@]}"
     ;;
   wire)
     cmd_wire
     ;;
   disable)
+    reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
     cmd_disable "${EXTRA_ARGS[@]}"
     ;;
   deploy | deploy-all)

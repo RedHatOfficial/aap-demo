@@ -1,0 +1,54 @@
+---
+- name: Check for the pinned Helm client  # noqa var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_helm_binary }}"
+  register: apme_helm_binary_stat
+
+- name: Create Helm install directory  # noqa var-naming[no-role-prefix]
+  ansible.builtin.file:
+    path: "{{ apme_helm_install_dir }}"
+    state: directory
+    mode: "0755"
+  when: not apme_helm_binary_stat.stat.exists
+
+- name: Download pinned Helm client  # noqa var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -fsSL
+      - --retry
+      - "3"
+      - --output
+      - "{{ apme_helm_archive }}"
+      - "{{ apme_helm_download_url }}"
+  args:
+    creates: "{{ apme_helm_archive }}"
+  when: not apme_helm_binary_stat.stat.exists
+
+- name: Extract pinned Helm client  # noqa var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - tar
+      - -xzf
+      - "{{ apme_helm_archive }}"
+      - -C
+      - "{{ apme_helm_install_dir }}"
+      - --strip-components=1
+  args:
+    creates: "{{ apme_helm_binary }}"
+  when: not apme_helm_binary_stat.stat.exists
+
+- name: Make Helm executable  # noqa var-naming[no-role-prefix]
+  ansible.builtin.file:
+    path: "{{ apme_helm_binary }}"
+    mode: "0755"
+    state: file
+
+- name: Verify pinned Helm client  # noqa var-naming[no-role-prefix]
+  ansible.builtin.command: "{{ apme_helm_binary }} version --short"
+  changed_when: false
+  register: apme_helm_version_check
+
+- name: Display Helm version  # noqa var-naming[no-role-prefix]
+  ansible.builtin.debug:
+    msg: "Helm version: {{ apme_helm_version_check.stdout }}"

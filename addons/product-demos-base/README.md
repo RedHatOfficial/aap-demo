@@ -114,8 +114,10 @@ different roles: bootstrap is the SCM source for installer and domain-setup jobs
 the APD org project is managed by APD dispatch for demo content.
 
 **Ephemeral patch:** The `install-apd.yml` patch is written directly into the synced project
-directory on the controller task pod. A manual project sync in the AAP UI restores upstream
-content and removes the version-ping skip. Re-run `aap-demo enable product-demos-base` to
+directory on the controller task pod. The bootstrap project uses AAP's `scm_clean` setting,
+so every subsequent sync removes the previous overlay before fetching upstream content; the
+deploy then reapplies the patch. If a sync fails, the command prints the AAP project-update
+details and the last 40 lines of its output. Re-run `aap-demo enable product-demos-base` to
 re-sync, re-patch, and reinstall.
 
 Upstream `install-apd.yml` queries `/api/gateway/v1/ping/` to set `_aap_version` for generic
@@ -147,6 +149,20 @@ aap-demo diagnose
 ```
 
 Wait until AAP finishes reconciling, then re-run `aap-demo enable product-demos`.
+
+### Bootstrap project sync does not complete
+
+The addon explicitly starts an SCM update for the bootstrap project, then waits
+up to five minutes for AAP to report `successful`. If the sync fails, the
+command prints AAP's project status and job explanation. Check that the
+controller can reach the configured repository and that the branch exists.
+
+For slower or constrained environments, adjust the polling window:
+
+```bash
+APD_PROJECT_SYNC_ATTEMPTS=120 APD_PROJECT_SYNC_DELAY=5 \
+  aap-demo enable product-demos
+```
 
 ### License is missing / cannot launch installer jobs
 

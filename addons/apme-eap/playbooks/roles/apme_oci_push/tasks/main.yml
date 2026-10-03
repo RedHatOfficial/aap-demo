@@ -11,6 +11,8 @@
 - name: Normalize OCI registry host
   ansible.builtin.set_fact:
     apme_oci_push_registry_normalized: "{{ oci_registry | regex_replace('/$', '') }}"
+    apme_oci_push_registry_host: "{{ (oci_registry | regex_replace('/$', '')).rsplit('/', 1)[0] }}"
+    apme_oci_push_registry_repository: "{{ (oci_registry | regex_replace('/$', '')).rsplit('/', 1)[1] }}"
 
 - name: Use explicit OCI tarball when provided  # noqa var-naming[no-role-prefix]
   ansible.builtin.set_fact:
@@ -53,34 +55,21 @@
       - "Loading: {{ apme_oci_tar_resolved }}"
       - "Target: docker://{{ apme_oci_push_registry_normalized }}/{{ apme_oci_push_image_reference }}"
 
-- name: Check whether the OCI plugin image already exists
+- name: Publish OCI archive to the local registry
   ansible.builtin.command:
     argv:
-      - "{{ apme_oci_push_skopeo_binary }}"
-      - inspect
-      - --tls-verify=false
-      - "docker://{{ apme_oci_push_registry_normalized }}/{{ apme_oci_push_image_reference }}"
-  register: apme_oci_push_inspect_result
-  changed_when: false
-  failed_when: false
-  no_log: true
-  when: not (apme_oci_push_force | bool)
-
-- name: Set OCI push skip state
-  ansible.builtin.set_fact:
-    apme_oci_push_skip_existing: >-
-      {{ false if (apme_oci_push_force | bool) else
-         (apme_oci_push_inspect_result.rc | default(1) == 0) }}
-
-- name: Push OCI archive to the local registry
-  ansible.builtin.command:
-    argv:
-      - "{{ apme_oci_push_skopeo_binary }}"
-      - copy
-      - "docker-archive:{{ apme_oci_tar_resolved }}"
-      - "docker://{{ apme_oci_push_registry_normalized }}/{{ apme_oci_push_image_reference }}"
-      - --dest-tls-verify=false
+      - "{{ apme_oci_push_python_binary }}"
+      - "{{ collection_root }}/scripts/push_oci_archive.py"
+      - --archive
+      - "{{ apme_oci_tar_resolved }}"
+      - --registry
+      - "{{ apme_oci_push_registry_host }}"
+      - --repository
+      - "{{ apme_oci_push_registry_repository }}"
+      - --tag
+      - "{{ plugin_sha }}"
+  environment:
+    APME_OCI_PUSH_FORCE: "{{ '1' if (apme_oci_push_force | bool) else '0' }}"
   register: apme_oci_push_result
   changed_when: apme_oci_push_result.rc == 0
-  no_log: true
-  when: apme_oci_push_force | bool or not (apme_oci_push_skip_existing | bool)
+  no_log: false

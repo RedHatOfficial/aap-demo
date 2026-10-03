@@ -67,7 +67,7 @@ function Install-AapHelm {
   $previousEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & winget @wingetArgs
+    & winget @wingetArgs | Out-Host
     if ($LASTEXITCODE -ne 0) {
       Write-AapWarn "winget install Helm.Helm failed (exit $LASTEXITCODE)"
       return $false
@@ -117,7 +117,7 @@ function Install-AapJq {
   $previousEap = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
   try {
-    & winget @wingetArgs
+    & winget @wingetArgs | Out-Host
     if ($LASTEXITCODE -ne 0) {
       Write-AapWarn "winget install jqlang.jq failed (exit $LASTEXITCODE)"
       return $false
@@ -136,7 +136,7 @@ function Install-AapJq {
 function Ensure-AapJq {
   if (Test-AapCommand 'jq') { return }
 
-  Write-Host 'jq not found — installing via winget...'
+  Write-Host 'jq not found - installing via winget...'
   if (-not (Install-AapJq)) {
     throw @"
 jq not found.
@@ -145,6 +145,129 @@ Install jq: winget install --id jqlang.jq -e --source winget
 "@
   }
   Write-AapStep 'jq installed via winget'
+}
+
+function Add-AapPythonRuntimePath {
+  param([Parameter(Mandatory)][string]$RuntimePath)
+
+  $directory = Split-Path -Parent $RuntimePath
+  if ([string]::IsNullOrWhiteSpace($directory)) { return }
+  $existing = @($env:Path -split ';' | Where-Object { $_ })
+  if (-not ($existing | Where-Object { $_.TrimEnd('\') -ieq $directory.TrimEnd('\') })) {
+    $env:Path = "$directory;$env:Path"
+  }
+}
+
+function Get-AapPythonCandidatePaths {
+  $candidates = [System.Collections.Generic.List[string]]::new()
+
+  foreach ($name in @('python3', 'python', 'py')) {
+    $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $command) { continue }
+    $path = if ($command.Path) { $command.Path } else { $command.Source }
+    if ($path) { $null = $candidates.Add($path) }
+  }
+
+  $patterns = @()
+  if ($env:LOCALAPPDATA) {
+    $patterns += (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python*\python.exe')
+  }
+  if ($env:ProgramFiles) {
+    $patterns += (Join-Path $env:ProgramFiles 'Python*\python.exe')
+  }
+  foreach ($pattern in $patterns) {
+    foreach ($item in @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue)) {
+      $null = $candidates.Add($item.FullName)
+    }
+  }
+
+  if ($env:WINDIR) {
+    $null = $candidates.Add((Join-Path $env:WINDIR 'py.exe'))
+  }
+
+  foreach ($registryPath in @(
+      'HKCU:\Software\Python\PythonCore\*\InstallPath'
+      'HKLM:\Software\Python\PythonCore\*\InstallPath'
+      'HKLM:\Software\WOW6432Node\Python\PythonCore\*\InstallPath')) {
+    foreach ($key in @(Get-Item -Path $registryPath -ErrorAction SilentlyContinue)) {
+      $installPath = $key.GetValue('')
+      if ($installPath) {
+        $null = $candidates.Add((Join-Path $installPath 'python.exe'))
+      }
+    }
+  }
+
+  foreach ($package in @(Get-AppxPackage -Name 'PythonSoftwareFoundation.Python*' -ErrorAction SilentlyContinue)) {
+    if ($package.InstallLocation) {
+      $null = $candidates.Add((Join-Path $package.InstallLocation 'python.exe'))
+    }
+  }
+
+  return @($candidates | Select-Object -Unique)
+}
+
+function Get-AapPythonRuntimePath {
+  foreach ($path in Get-AapPythonCandidatePaths) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+    try {
+      if ([IO.Path]::GetFileName($path) -ieq 'py.exe') {
+        & $path -3 -c 'import sys' *> $null
+      } else {
+        & $path -c 'import sys' *> $null
+      }
+      if ($LASTEXITCODE -eq 0) {
+        Add-AapPythonRuntimePath -RuntimePath $path
+        return $path
+      }
+    } catch { }
+  }
+  return $null
+}
+
+function Install-AapPython {
+  if (Get-AapPythonRuntimePath) { return $true }
+
+  if (-not (Test-AapCommand 'winget')) {
+    Write-AapWarn 'Python not found and winget is unavailable'
+    return $false
+  }
+
+  Write-Host 'Installing Python via winget (Python.Python.3.12)...'
+  $wingetArgs = @(
+    'install', '--id', 'Python.Python.3.12', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements',
+    '--disable-interactivity'
+  )
+
+  $previousEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & winget @wingetArgs | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+      Write-AapWarn "winget install Python.Python.3.12 failed (exit $LASTEXITCODE)"
+    }
+  } catch {
+    Write-AapWarn "Could not install Python via winget: $($_.Exception.Message)"
+  } finally {
+    $ErrorActionPreference = $previousEap
+  }
+
+  Update-AapSessionPath
+  return [bool](Get-AapPythonRuntimePath)
+}
+
+function Ensure-AapPython {
+  if (Get-AapPythonRuntimePath) { return }
+
+  Write-Host 'Python runtime not found - installing via winget...'
+  if (-not (Install-AapPython)) {
+    throw @"
+Python runtime not found.
+
+Install Python: winget install --id Python.Python.3.12 -e --source winget
+"@
+  }
+  Write-AapStep 'Python installed via winget'
 }
 
 function Assert-AapCommand {
@@ -885,6 +1008,47 @@ function Import-AapIngressCaToUserStore {
   return $result.ExitCode -eq 0
 }
 
+function Import-AapIngressCaToMachineStoreElevated {
+  param([Parameter(Mandatory)][string]$Path)
+
+  if (Test-AapIsAdministrator) {
+    return (Add-AapCertToRootStore -Path $Path -Location 'LocalMachine')
+  }
+
+  $hostCommand = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+  if (-not $hostCommand) {
+    $hostCommand = Get-Command powershell.exe -ErrorAction SilentlyContinue
+  }
+  if (-not $hostCommand) {
+    return $false
+  }
+
+  try {
+    $pathLiteral = $Path.Replace("'", "''")
+    $script = @"
+`$ErrorActionPreference = 'Stop'
+`$store = New-Object System.Security.Cryptography.X509Certificates.X509Store('Root', 'LocalMachine')
+try {
+  `$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+  `$stale = @(`$store.Certificates | Where-Object { `$_.Subject -match 'CN=ingress-ca' })
+  foreach (`$cert in `$stale) { [void]`$store.Remove(`$cert) }
+  `$store.Add((New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('$pathLiteral')))
+} finally {
+  `$store.Close()
+}
+"@
+    $encoded = [Convert]::ToBase64String(
+      [Text.Encoding]::Unicode.GetBytes($script)
+    )
+    $result = Start-Process -FilePath $hostCommand.Source `
+      -ArgumentList @('-NoProfile', '-EncodedCommand', $encoded) `
+      -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+    return $result.ExitCode -eq 0
+  } catch {
+    return $false
+  }
+}
+
 function Import-AapIngressCaCertificate {
   param(
     [Parameter(Mandatory)][string]$Path,
@@ -913,19 +1077,30 @@ function Import-AapIngressCaCertificate {
   }
 
   if (Import-AapIngressCaToUserStore -Path $Path) {
+    if (-not (Test-AapIsAdministrator) -and
+        (Import-AapIngressCaToMachineStoreElevated -Path $Path)) {
+      if (-not $Quiet) {
+        Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+        Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
+      }
+      return $true
+    }
     if (-not $Quiet) {
       Write-AapStep 'Ingress CA trusted (Current User certificate store)'
-      if (-not (Test-AapIsAdministrator)) {
-        Write-AapWarn 'Chrome/Edge may still warn until you import from an elevated PowerShell:'
-        Write-Host "  certutil -delstore Root `"ingress-ca`""
-        Write-Host "  certutil -addstore Root `"$Path`""
-      }
+    }
+    return $true
+  }
+
+  if (Import-AapIngressCaToMachineStoreElevated -Path $Path) {
+    if (-not $Quiet) {
+      Write-AapStep 'Ingress CA trusted (Windows system certificate store)'
+      Write-Host '  Fully quit Chrome or Edge (all windows), then reopen the route URL.'
     }
     return $true
   }
 
   if (-not $Quiet) {
-    Write-AapWarn 'Could not import ingress CA to Windows certificate store'
+    Write-AapWarn 'Could not automatically import ingress CA; approve the Windows UAC prompt when repair retries'
   }
   return $false
 }
@@ -971,9 +1146,7 @@ function Install-AapIngressCaTrust {
   }
   $imported = Import-AapIngressCaCertificate -Path $caPath -Quiet:$Quiet
   if (-not $imported -and -not (Test-AapIngressCaBrowserTrusted -Path $caPath) -and -not $Quiet) {
-    Write-AapWarn 'Chrome/Edge need the ingress CA in the Local Machine trust store (elevated PowerShell):'
-    Write-Host "  certutil -delstore Root `"ingress-ca`""
-    Write-Host "  certutil -addstore Root `"$caPath`""
+    Write-AapWarn 'Ingress CA trust could not be installed automatically; rerun repair and approve the Windows UAC prompt'
   }
   Set-AapIngressCaEnv -Path $caPath
 }

@@ -10,7 +10,8 @@
 
 .DESCRIPTION
 
-  All commands run natively in PowerShell.
+  PowerShell is the Windows entrypoint and delegates supported commands to the
+  repository Bash CLI through Git for Windows.
 
 #>
 
@@ -34,7 +35,96 @@ $ErrorActionPreference = 'Stop'
 
 $ModuleRoot = Join-Path $PSScriptRoot 'native'
 
-Import-Module (Join-Path $ModuleRoot 'AapDemo.psm1') -Force
+$AapDemoModule = Import-Module (Join-Path $ModuleRoot 'AapDemo.psm1') -Force -PassThru
+
+$WindowsBlockedAddons = @(
+  'apme', 'apme-eap', 'fleet', 'local-cache',
+  'product-demos-base', 'product-demo-linux', 'product-demo-windows',
+  'product-demo-network', 'product-demo-cloud', 'product-demo-openshift',
+  'product-demo-satellite'
+)
+
+function Assert-AapWindowsAddonPolicy {
+  param([string[]]$CliArguments)
+
+  $commandIndex = -1
+  for ($i = 0; $i -lt $CliArguments.Count; $i++) {
+    if ($CliArguments[$i].ToLowerInvariant() -in @('enable', 'disable', 'fleet')) {
+      $commandIndex = $i
+      break
+    }
+  }
+  if ($commandIndex -lt 0) { return }
+  if ($CliArguments[$commandIndex].ToLowerInvariant() -eq 'fleet') {
+    throw "Addon 'fleet' is not available through the Windows wrapper. Use the supported Bash/Linux workflow for this addon."
+  }
+  if ($commandIndex + 1 -ge $CliArguments.Count) { return }
+  $addon = $CliArguments[$commandIndex + 1].ToLowerInvariant()
+  if ($WindowsBlockedAddons -contains $addon) {
+    throw "Addon '$addon' is not available through the Windows wrapper. Use the supported Bash/Linux workflow for this addon."
+  }
+}
+
+function Invoke-AapWindowsBashCli {
+  param([Parameter(Mandatory)][string[]]$CliArguments)
+
+  $deployCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all')
+  $demoAddons = @(
+    'ao', 'product-demos', 'product-demos-base',
+    'product-demo-linux', 'product-demo-windows', 'product-demo-network',
+    'product-demo-cloud', 'product-demo-openshift', 'product-demo-satellite'
+  )
+  $isDemoEnable = $CliArguments.Count -ge 2 -and
+    $CliArguments[0].ToLowerInvariant() -eq 'enable' -and
+    $demoAddons -contains $CliArguments[1].ToLowerInvariant()
+  if ($isDemoEnable -or @($CliArguments | Where-Object {
+      $deployCommands -contains $_.ToLowerInvariant()
+    }).Count -gt 0) {
+    Assert-AapWindowsDeployPrerequisites
+  }
+
+  $interactiveCommands = @(
+    'create', 'deploy', 'deploy-all', 'redeploy', 'redeploy-all',
+    'setup', 'enable', 'disable', 'wire', 'repair', 'start', 'stop',
+    'destroy', 'clean', 'update', 'idle', 'ssh'
+  )
+  $interactive = @($CliArguments | Where-Object {
+      $interactiveCommands -contains $_.ToLowerInvariant()
+    }).Count -gt 0
+  $result = Invoke-AapGitBashCli -Arguments $CliArguments -Interactive:$interactive
+  if ($result.Success) {
+    $trustCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all', 'repair', 'start')
+    if ($CliArguments | Where-Object { $trustCommands -contains $_.ToLowerInvariant() }) {
+      try { & $AapDemoModule { Install-AapIngressCaTrust } } catch {
+        Write-Warning "Could not update Windows ingress CA trust: $($_.Exception.Message)"
+      }
+    }
+    exit 0
+  }
+  $detail = if ($result.Stderr) { $result.Stderr.Trim() } else { $result.Stdout.Trim() }
+  Write-Error "Git Bash CLI failed (exit $($result.ExitCode)): $detail"
+  $exitCode = [int]$result.ExitCode
+  if ($exitCode -le 0) { $exitCode = 1 }
+  exit $exitCode
+}
+
+if (-not $Arguments -or $Arguments.Count -eq 0 -or
+    $Arguments[0].ToLowerInvariant() -in @('help', '--help', '-h')) {
+  Get-AapDemoHelp
+  exit 0
+}
+
+try {
+  Assert-AapWindowsAddonPolicy -CliArguments $Arguments
+  Invoke-AapWindowsBashCli -CliArguments $Arguments
+} catch {
+  Write-Error $_.Exception.Message
+  exit 1
+}
+
+# The legacy native dispatcher below remains available for module-level
+# development and future migration, but the Windows launcher exits through the
+# single Git Bash path above.
 
 
 
@@ -61,6 +151,10 @@ function Get-AapParsedCliArgs {
     Reset        = $false
 
     Ai           = $false
+    SkipCache    = $false
+    RefreshCatalog = $false
+    PurgeData    = $false
+    PurgeCreds   = $false
 
     Positional   = [System.Collections.Generic.List[string]]::new()
 
@@ -77,6 +171,10 @@ function Get-AapParsedCliArgs {
       '^--reset$' { $parsed.Reset = $true; continue }
 
       '^--ai$' { $parsed.Ai = $true; continue }
+      '^--skip-cache$' { $parsed.SkipCache = $true; continue }
+      '^--refresh-catalog$' { $parsed.RefreshCatalog = $true; continue }
+      '^--purge-data$' { $parsed.PurgeData = $true; continue }
+      '^--purge-creds$' { $parsed.PurgeCreds = $true; continue }
 
       '^-Namespace=(.+)$' { $parsed.Namespace = $Matches[1]; continue }
 
@@ -200,7 +298,11 @@ try {
 
     'stop' { Invoke-AapDemoStop }
 
-    'destroy' { Invoke-AapDemoDestroy -Reset:$cli.Reset }
+    'start' { Invoke-AapDemoStart }
+
+    'wire' { Invoke-AapDemoWire }
+
+    'destroy' { Invoke-AapDemoDestroy -Reset:$cli.Reset -SkipCache:$cli.SkipCache }
 
     'clean' {
 
@@ -269,6 +371,12 @@ try {
       $params = @{}
       if ($addon) { $params.Addon = $addon }
       if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
+      $addonArgs = @($cli.Positional | Select-Object -Skip 1)
+      if ($cli.Force) { $addonArgs += '--force' }
+      if ($cli.RefreshCatalog) { $addonArgs += '--refresh-catalog' }
+      if ($cli.PurgeData) { $addonArgs += '--purge-data' }
+      if ($cli.PurgeCreds) { $addonArgs += '--purge-creds' }
+      if ($addonArgs.Count -gt 0) { $params.AddonArgs = $addonArgs }
       Invoke-AapDemoEnable @params
 
     }
@@ -280,6 +388,11 @@ try {
       $params = @{}
       if ($addon) { $params.Addon = $addon }
       if ($cli.Namespace) { $params.Namespace = $cli.Namespace }
+      $addonArgs = @($cli.Positional | Select-Object -Skip 1)
+      if ($cli.Force) { $addonArgs += '--force' }
+      if ($cli.PurgeData) { $addonArgs += '--purge-data' }
+      if ($cli.PurgeCreds) { $addonArgs += '--purge-creds' }
+      if ($addonArgs.Count -gt 0) { $params.AddonArgs = $addonArgs }
       Invoke-AapDemoDisable @params
 
     }
