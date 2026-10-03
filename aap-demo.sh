@@ -929,6 +929,9 @@ cmd_version() {
 cmd_podman_extension() {
   local extension_dir="$AAP_DEMO_PODMAN_EXTENSION_DIR"
   local package_json="${extension_dir}/package.json"
+  local npm_cmd=""
+  local brew_cmd=""
+  local brew_node_prefix=""
 
   if [ ! -d "$extension_dir" ]; then
     _err "Podman Desktop extension directory not found: ${extension_dir}"
@@ -940,22 +943,48 @@ cmd_podman_extension() {
     return 1
   fi
 
-  if ! command -v npm &>/dev/null; then
+  npm_cmd="$(command -v npm || true)"
+  if [ -z "$npm_cmd" ] && [ "${AAP_DEMO_PODMAN_EXTENSION_SKIP_NPM_INSTALL:-false}" != "true" ]; then
+    for _brew_candidate in "$(command -v brew 2>/dev/null || true)" \
+      /opt/homebrew/bin/brew /usr/local/bin/brew /home/linuxbrew/.linuxbrew/bin/brew; do
+      if [ -n "$_brew_candidate" ] && [ -x "$_brew_candidate" ]; then
+        brew_cmd="$_brew_candidate"
+        break
+      fi
+    done
+
+    if [ -n "$brew_cmd" ]; then
+      echo "npm not found; installing Node.js and npm with Homebrew..."
+      if ! "$brew_cmd" install node; then
+        _err "Node.js and npm installation failed"
+        return 1
+      fi
+      npm_cmd="$(command -v npm || true)"
+      if [ -z "$npm_cmd" ]; then
+        brew_node_prefix="$("$brew_cmd" --prefix node 2>/dev/null || true)"
+        if [ -x "${brew_node_prefix}/bin/npm" ]; then
+          npm_cmd="${brew_node_prefix}/bin/npm"
+        fi
+      fi
+    fi
+  fi
+
+  if [ -z "$npm_cmd" ]; then
     _err "npm is required to build the Podman Desktop extension"
-    echo "  Install Node.js and npm, then rerun: aap-demo podman-extension"
+    echo "  Install Node.js and npm, or rerun with a working Homebrew installation"
     return 1
   fi
 
   if [ ! -x "${extension_dir}/node_modules/.bin/vite" ]; then
     echo "Installing Podman Desktop extension dependencies..."
-    if ! (cd "$extension_dir" && npm install); then
+    if ! (cd "$extension_dir" && "$npm_cmd" install); then
       _err "Podman Desktop extension dependency installation failed"
       return 1
     fi
   fi
 
   echo "Building Podman Desktop extension..."
-  if ! (cd "$extension_dir" && npm run build); then
+  if ! (cd "$extension_dir" && "$npm_cmd" run build); then
     _err "Podman Desktop extension build failed"
     return 1
   fi

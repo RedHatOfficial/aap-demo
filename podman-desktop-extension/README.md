@@ -18,10 +18,12 @@ For local UI iteration without manually rebuilding after every edit, use:
 npm run watch
 ```
 
-From the repository root, `aap-demo podman-extension` installs missing
-dependencies, builds the extension, and opens Podman Desktop. On first use,
-follow the printed Local Extensions steps to register this folder; subsequent
-runs rebuild the registered local extension.
+From the repository root, `aap-demo podman-extension` installs Node.js/npm
+with Homebrew when needed, installs missing extension dependencies, builds the
+extension, and opens Podman Desktop. On first use, follow the printed Local
+Extensions steps to register this folder; subsequent runs rebuild the
+registered local extension. Set `AAP_DEMO_PODMAN_EXTENSION_SKIP_NPM_INSTALL=true`
+to disable automatic Node.js/npm installation.
 
 See [TESTING.md](TESTING.md) for the Podman Desktop local-extension setup,
 automated checks, smoke tests, and troubleshooting.

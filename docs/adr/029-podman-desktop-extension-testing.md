@@ -65,8 +65,9 @@ For a one-shot build and Podman Desktop launch from the repository root, use:
 aap-demo podman-extension
 ```
 
-The command installs dependencies when needed and builds both outputs. The
-first local-folder registration remains a one-time UI step because Podman
+The command installs Node.js/npm with Homebrew when needed, installs extension
+dependencies, and builds both outputs. The first local-folder registration
+remains a one-time UI step because Podman
 Desktop does not expose a supported CLI for enabling an arbitrary local folder.
 
 ### Manual smoke test

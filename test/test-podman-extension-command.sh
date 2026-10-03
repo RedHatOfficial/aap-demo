@@ -27,7 +27,8 @@ if ! grep -q "extension directory not found" <<<"$output"; then
   exit 1
 fi
 
-if output=$(PATH=/usr/bin:/bin QUIET=true "$AAP_DEMO_SH" podman-extension 2>&1); then
+if output=$(PATH=/usr/bin:/bin AAP_DEMO_PODMAN_EXTENSION_SKIP_NPM_INSTALL=true \
+  QUIET=true "$AAP_DEMO_SH" podman-extension 2>&1); then
   echo "FAIL: podman-extension succeeded without npm"
   exit 1
 fi
