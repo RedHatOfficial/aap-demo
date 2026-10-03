@@ -48,6 +48,7 @@ python3 ./test/test-provision-aap-demos.py
 - The obsolete `aap-demo test` ATF command is intentionally not part of the CLI.
 - ✓ `destroy`, `clean` show warnings (interactive skipped in quick mode)
 - ✓ `destroy --reset` flag parsing
+- ✓ `podman-extension` validates and builds the local Podman Desktop extension
 - ✓ AAP 2.7 terminal readiness across shell and PowerShell implementations
 
 ### Test Design

@@ -89,6 +89,10 @@ if [ -f "$AAP_DEMO_CONFIG" ]; then
   done <"$AAP_DEMO_CONFIG"
 fi
 
+# Local Podman Desktop extension directory. Override this when a packaged or
+# separately checked-out extension is being developed.
+AAP_DEMO_PODMAN_EXTENSION_DIR="${AAP_DEMO_PODMAN_EXTENSION_DIR:-${SCRIPT_DIR}/podman-desktop-extension}"
+
 # Collection authentication environment variables
 GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}"
 PAH_CONFIG_FILE="${PAH_CONFIG_FILE:-$HOME/.aap-demo/pah-config.yml}"
@@ -142,7 +146,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | podman-extension | podman-desktop-extension | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
@@ -498,6 +502,7 @@ COMMANDS (all infrastructure types):
                     Output saved to must-gather.local.<timestamp> (or specified dir)
     enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
+    podman-extension Build the Podman Desktop extension and open local-extension setup
     fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
@@ -919,6 +924,69 @@ cmd_config() {
 
 cmd_version() {
   aap_demo_print_version
+}
+
+cmd_podman_extension() {
+  local extension_dir="$AAP_DEMO_PODMAN_EXTENSION_DIR"
+  local package_json="${extension_dir}/package.json"
+
+  if [ ! -d "$extension_dir" ]; then
+    _err "Podman Desktop extension directory not found: ${extension_dir}"
+    return 1
+  fi
+
+  if [ ! -f "$package_json" ]; then
+    _err "Podman Desktop extension manifest not found: ${package_json}"
+    return 1
+  fi
+
+  if ! command -v npm &>/dev/null; then
+    _err "npm is required to build the Podman Desktop extension"
+    echo "  Install Node.js and npm, then rerun: aap-demo podman-extension"
+    return 1
+  fi
+
+  if [ ! -x "${extension_dir}/node_modules/.bin/vite" ]; then
+    echo "Installing Podman Desktop extension dependencies..."
+    if ! (cd "$extension_dir" && npm install); then
+      _err "Podman Desktop extension dependency installation failed"
+      return 1
+    fi
+  fi
+
+  echo "Building Podman Desktop extension..."
+  if ! (cd "$extension_dir" && npm run build); then
+    _err "Podman Desktop extension build failed"
+    return 1
+  fi
+
+  echo "✓ Podman Desktop extension built"
+  echo "  Extension directory: ${extension_dir}"
+
+  if [ "${AAP_DEMO_PODMAN_EXTENSION_NO_OPEN:-false}" = "true" ]; then
+    echo "  Podman Desktop launch skipped (AAP_DEMO_PODMAN_EXTENSION_NO_OPEN=true)"
+  elif [[ "${OSTYPE:-}" == darwin* ]] && command -v open &>/dev/null; then
+    if open -a "${AAP_DEMO_PODMAN_DESKTOP_APP:-Podman Desktop}"; then
+      echo "✓ Podman Desktop opened"
+    else
+      echo "  Could not open Podman Desktop automatically"
+    fi
+  elif command -v podman-desktop &>/dev/null; then
+    podman-desktop >/dev/null 2>&1 &
+    echo "✓ Podman Desktop launch requested"
+  else
+    echo "  Podman Desktop was not found as an executable; launch it manually"
+  fi
+
+  echo ""
+  echo "To enable this local extension the first time:"
+  echo "  1. In Podman Desktop, open Settings → Preferences → Extensions."
+  echo "  2. Enable Development mode."
+  echo "  3. Open Extensions → Local Extensions → Add a local folder extension."
+  echo "  4. Select: ${extension_dir}"
+  echo ""
+  echo "After it is registered, rerun this command to rebuild it; Podman Desktop"
+  echo "will reload the local extension when its watcher detects the new build."
 }
 
 cmd_update() {
@@ -3176,7 +3244,7 @@ esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in
-  help | --help | -h | config | update | version | "" | destroy | status)
+  help | --help | -h | config | update | version | podman-extension | podman-desktop-extension | "" | destroy | status)
     # These commands don't need cluster access
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
@@ -3232,6 +3300,9 @@ case "$COMMAND" in
     ;;
   version | --version | -V)
     cmd_version
+    ;;
+  podman-extension | podman-desktop-extension)
+    cmd_podman_extension
     ;;
   config)
     cmd_config "${EXTRA_ARGS[@]}"

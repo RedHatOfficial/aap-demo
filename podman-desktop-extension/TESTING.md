@@ -30,6 +30,20 @@ npm run build
 
 The test suite is non-destructive. It does not create or destroy a cluster.
 
+## Build and open from the AAP Demo CLI
+
+From the repository root, use the helper command to install missing extension
+dependencies, build both extension outputs, and open Podman Desktop:
+
+```bash
+aap-demo podman-extension
+```
+
+The first run still requires the one-time Podman Desktop setup below because
+Podman Desktop does not provide a supported CLI for registering an arbitrary
+local extension folder. Once the folder is registered, rerunning the command
+rebuilds the extension and the local-extension watcher can reload it.
+
 ## Local development without manually rebuilding
 
 Start the continuous compiler:

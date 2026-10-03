@@ -59,6 +59,16 @@ backend change, stop and start the local extension if Podman Desktop does not
 reload the extension host automatically. Reopen the AAP Demo dashboard after a
 webview change.
 
+For a one-shot build and Podman Desktop launch from the repository root, use:
+
+```bash
+aap-demo podman-extension
+```
+
+The command installs dependencies when needed and builds both outputs. The
+first local-folder registration remains a one-time UI step because Podman
+Desktop does not expose a supported CLI for enabling an arbitrary local folder.
+
 ### Manual smoke test
 
 The smoke test is documented in
