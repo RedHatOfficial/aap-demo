@@ -49,6 +49,7 @@ python3 ./test/test-provision-aap-demos.py
 - ✓ `destroy`, `clean` show warnings (interactive skipped in quick mode)
 - ✓ `destroy --reset` flag parsing
 - ✓ `podman-extension` validates and builds the local Podman Desktop extension
+- ✓ `build-image.sh` validates OCI image build prerequisites
 - ✓ AAP 2.7 terminal readiness across shell and PowerShell implementations
 
 ### Test Design

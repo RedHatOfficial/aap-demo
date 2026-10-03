@@ -12,6 +12,16 @@ if ! grep -q "podman-extension" <<<"$help_output"; then
   exit 1
 fi
 
+if [ ! -x "${SCRIPT_DIR}/../podman-desktop-extension/build-image.sh" ]; then
+  echo "FAIL: extension image build script is not executable"
+  exit 1
+fi
+
+if ! grep -q "FROM scratch" "${SCRIPT_DIR}/../podman-desktop-extension/Containerfile"; then
+  echo "FAIL: extension Containerfile is not an OCI scratch image"
+  exit 1
+fi
+
 missing_dir="$(mktemp -d "${TMPDIR:-/tmp}/aap-demo-extension-test.XXXXXX")/missing"
 trap 'rmdir "${missing_dir%/missing}"' EXIT
 
@@ -35,6 +45,18 @@ fi
 
 if ! grep -q "npm is required" <<<"$output"; then
   echo "FAIL: missing npm error was not actionable"
+  echo "$output"
+  exit 1
+fi
+
+if output=$(PATH=/usr/bin:/bin \
+  "${SCRIPT_DIR}/../podman-desktop-extension/build-image.sh" 2>&1); then
+  echo "FAIL: extension image build succeeded without podman"
+  exit 1
+fi
+
+if ! grep -q "podman is required" <<<"$output"; then
+  echo "FAIL: missing podman error was not actionable"
   echo "$output"
   exit 1
 fi

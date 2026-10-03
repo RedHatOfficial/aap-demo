@@ -926,6 +926,23 @@ cmd_version() {
   aap_demo_print_version
 }
 
+launch_podman_desktop() {
+  if [ "${AAP_DEMO_PODMAN_EXTENSION_NO_OPEN:-false}" = "true" ]; then
+    echo "  Podman Desktop launch skipped (AAP_DEMO_PODMAN_EXTENSION_NO_OPEN=true)"
+  elif [[ "${OSTYPE:-}" == darwin* ]] && command -v open &>/dev/null; then
+    if open -a "${AAP_DEMO_PODMAN_DESKTOP_APP:-Podman Desktop}"; then
+      echo "✓ Podman Desktop opened"
+    else
+      echo "  Could not open Podman Desktop automatically"
+    fi
+  elif command -v podman-desktop &>/dev/null; then
+    podman-desktop >/dev/null 2>&1 &
+    echo "✓ Podman Desktop launch requested"
+  else
+    echo "  Podman Desktop was not found as an executable; launch it manually"
+  fi
+}
+
 cmd_podman_extension() {
   local extension_dir="$AAP_DEMO_PODMAN_EXTENSION_DIR"
   local package_json="${extension_dir}/package.json"
@@ -992,20 +1009,7 @@ cmd_podman_extension() {
   echo "✓ Podman Desktop extension built"
   echo "  Extension directory: ${extension_dir}"
 
-  if [ "${AAP_DEMO_PODMAN_EXTENSION_NO_OPEN:-false}" = "true" ]; then
-    echo "  Podman Desktop launch skipped (AAP_DEMO_PODMAN_EXTENSION_NO_OPEN=true)"
-  elif [[ "${OSTYPE:-}" == darwin* ]] && command -v open &>/dev/null; then
-    if open -a "${AAP_DEMO_PODMAN_DESKTOP_APP:-Podman Desktop}"; then
-      echo "✓ Podman Desktop opened"
-    else
-      echo "  Could not open Podman Desktop automatically"
-    fi
-  elif command -v podman-desktop &>/dev/null; then
-    podman-desktop >/dev/null 2>&1 &
-    echo "✓ Podman Desktop launch requested"
-  else
-    echo "  Podman Desktop was not found as an executable; launch it manually"
-  fi
+  launch_podman_desktop
 
   echo ""
   echo "To enable this local extension the first time:"

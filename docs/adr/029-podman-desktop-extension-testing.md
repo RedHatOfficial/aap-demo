@@ -70,6 +70,21 @@ dependencies, and builds both outputs. The first local-folder registration
 remains a one-time UI step because Podman
 Desktop does not expose a supported CLI for enabling an arbitrary local folder.
 
+### OCI image packaging
+
+For environments that should not install Node.js/npm on the host, use the
+standalone image build script:
+
+```bash
+./podman-desktop-extension/build-image.sh
+```
+
+It builds `localhost/aap-demo-podman-extension:dev` from the extension's
+`Containerfile` and prints the **Install custom...** steps. The image uses a
+`scratch` runtime and contains the compiled extension assets; the extension
+continues to invoke the host `aap-demo` and CRC executables. Catalog publication
+is outside this ADR.
+
 ### Manual smoke test
 
 The smoke test is documented in
@@ -107,8 +122,8 @@ an environment containing data that needs to be preserved.
 
 ### Neutral
 
-- The extension remains a local development extension; this ADR does not define
-  OCI packaging or catalog publication.
+- The extension supports local-folder development and OCI image installation;
+  catalog publication remains outside this ADR.
 - CLI-level testing remains governed by [ADR-014](014-testing-strategy.md).
 
 ## Alternatives Considered

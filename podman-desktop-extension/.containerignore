@@ -1,0 +1,5 @@
+node_modules/
+dist/
+media/
+.git/
+.DS_Store

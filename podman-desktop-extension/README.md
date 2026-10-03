@@ -25,6 +25,12 @@ Extensions steps to register this folder; subsequent runs rebuild the
 registered local extension. Set `AAP_DEMO_PODMAN_EXTENSION_SKIP_NPM_INSTALL=true`
 to disable automatic Node.js/npm installation.
 
+To build an OCI image without using host npm, run
+`./podman-desktop-extension/build-image.sh` from the repository root. It builds
+`localhost/aap-demo-podman-extension:dev` with Podman and prints the steps for
+installing it through **Extensions → Install custom...**. Pass a different
+image name as the first argument when needed.
+
 See [TESTING.md](TESTING.md) for the Podman Desktop local-extension setup,
 automated checks, smoke tests, and troubleshooting.
 

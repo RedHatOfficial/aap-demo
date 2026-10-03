@@ -48,6 +48,28 @@ rebuilds the extension and the local-extension watcher can reload it.
 Set `AAP_DEMO_PODMAN_EXTENSION_SKIP_NPM_INSTALL=true` to disable automatic
 Node.js/npm installation in CI or another managed environment.
 
+## Build an OCI extension image
+
+To build the extension without installing npm on the host, use the standalone
+container build script from the repository root:
+
+```bash
+./podman-desktop-extension/build-image.sh
+```
+
+Pass a different image name as the first argument when needed.
+
+This uses the extension `Containerfile` and defaults to:
+
+```text
+localhost/aap-demo-podman-extension:dev
+```
+
+The script prints the image name. In Podman Desktop, open
+**Extensions → Install custom...**, enter that image name, and install it.
+The container contains the compiled extension assets; the extension still calls
+the host `aap-demo` and CRC executables at runtime.
+
 ## Local development without manually rebuilding
 
 Start the continuous compiler:
