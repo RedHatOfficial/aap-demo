@@ -9,7 +9,8 @@ virtual environment.
 
 ## Overview
 
-This addon uses the **official APME EAP welcome pack playbooks** executed locally via `ansible-playbook`. This implementation:
+This addon uses the **official APME EAP welcome pack playbooks** executed
+locally via `ansible-playbook`. This implementation:
 
 - **Local execution**: Playbooks run in isolated Python venv (no AAP API dependency)
 - **KUBECONFIG authentication**: Uses standard kubeconfig for cluster access
@@ -212,7 +213,8 @@ Then re-run:
 aap-demo enable apme-eap
 ```
 
-For detailed GitHub setup instructions, see the [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
+For detailed GitHub setup instructions, see the
+[APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
 
 ### Advanced Configuration
 
@@ -370,7 +372,9 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 
 **Symptom**: Playbook fails with `Failed to find required executable 'helm'` or `helm: command not found`
 
-**Solution**: Re-run enable. The AAP job downloads the pinned Helm client into its writable `/tmp` area; no Windows or host Helm installation is required.
+**Solution**: Re-run enable. The AAP job downloads the pinned Helm client
+into its writable `/tmp` area; no Windows or host Helm installation is
+required.
 
 ```bash
 aap-demo enable apme-eap
@@ -482,3 +486,4 @@ ansible-playbook playbooks/deploy_apme_portal.yml \
 - [aap-demo Documentation](../../docs/FULL-README.md) - Main aap-demo documentation
 - [APME GitHub Repository](https://github.com/ansible/apme) - APME source code
 - [APME Plugins Repository](https://github.com/ansible/ansible-rhdh-plugins) - RHDH plugins for APME
+<!-- markdownlint-disable MD013 -->

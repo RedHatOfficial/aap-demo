@@ -674,6 +674,7 @@ apd_find_controller_task_pod() {
 
 apd_kubectl_remote() {
   local had_kubeconfig=false original_kubeconfig="${KUBECONFIG-}" rc
+  local windows_kubeconfig
   if [ "${KUBECONFIG+x}" = x ]; then
     had_kubeconfig=true
   fi
@@ -684,7 +685,8 @@ apd_kubectl_remote() {
   case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*)
       if [ -n "${KUBECONFIG:-}" ] && command -v cygpath >/dev/null 2>&1; then
-        export KUBECONFIG="$(cygpath -w "$KUBECONFIG")"
+        windows_kubeconfig=$(cygpath -w "$KUBECONFIG")
+        export KUBECONFIG="$windows_kubeconfig"
       fi
       ;;
   esac

@@ -13,8 +13,8 @@ if ! grep -q 'Git Bash.*certutil' <<<"$trust_script"; then
   echo '✗ ingress trust must document the Windows certutil/NSS distinction' >&2
   exit 1
 fi
-if ! grep -q 'Install-AapIngressCaTrust' <<<"$wrapper" ||
-   ! grep -q 'Write-Warning' <<<"$wrapper"; then
+if ! grep -q 'Install-AapIngressCaTrust' <<<"$wrapper" \
+  || ! grep -q 'Write-Warning' <<<"$wrapper"; then
   echo '✗ Windows wrapper must restore CA trust without module-private warning calls' >&2
   exit 1
 fi

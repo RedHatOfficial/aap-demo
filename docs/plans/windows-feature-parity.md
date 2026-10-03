@@ -1,5 +1,7 @@
 # Windows Feature Parity Plan
 
+<!-- markdownlint-disable MD013 -->
+
 **Scope:** Windows parity follow-up to [PR #95](https://github.com/RedHatOfficial/aap-demo/pull/95)
 
 **Branch:** `codex/windows-feature-parity`

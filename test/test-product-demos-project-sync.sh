@@ -10,8 +10,8 @@ DEPLOY_SCRIPT="${ROOT_DIR}/addons/product-demos-base/deploy.sh"
 
 sync_block=$(sed -n '/# A project create\/patch/,/# REGISTER EXECUTION ENVIRONMENT/p' "$DEPLOY_SCRIPT")
 
-if ! grep -Fq -- '-X POST' <<<"$sync_block" || \
-   ! grep -Fq '/projects/${PROJECT_ID}/update/' <<<"$sync_block"; then
+if ! grep -Fq -- '-X POST' <<<"$sync_block" \
+  || ! grep -Fq '/projects/${PROJECT_ID}/update/' <<<"$sync_block"; then
   echo "FAIL: product-demos must trigger an explicit AAP project update" >&2
   exit 1
 fi

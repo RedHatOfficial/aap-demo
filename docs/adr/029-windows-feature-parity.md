@@ -1,5 +1,7 @@
 # ADR-029: Windows Feature Parity Strategy
 
+<!-- markdownlint-disable MD013 -->
+
 **Status**: Proposed
 
 **Date**: 2026-09-26
@@ -8,13 +10,21 @@
 
 ## Context
 
-aap-demo maintains a Bash CLI for macOS/Linux and a PowerShell CLI for Windows. The earlier Windows parity work tracked [PR #95](https://github.com/RedHatOfficial/aap-demo/pull/95), but the repository has since added several addon families and lifecycle behaviors:
+aap-demo maintains a Bash CLI for macOS/Linux and a PowerShell CLI for
+Windows. The earlier Windows parity work tracked [PR #95](https://github.com/RedHatOfficial/aap-demo/pull/95),
+but the repository has since added several addon families and lifecycle
+behaviors:
 
 - AO GA, LLM provider selection, auto-wiring, and agentic workflow model binding;
 - APME, local-cache, Product Demos, OPA, Ollama, and the operator-based portal;
 - CRC version checks, catalog fallbacks, readiness handling, and newer status paths.
 
-The PowerShell registry and dispatcher have not kept pace. The Windows CLI advertises `start` without a handler, has no `wire` command, exposes only a subset of addons, and invokes Bash addon scripts without a single supported contract for Windows paths, environment variables, arguments, or cleanup options. A full native rewrite of every addon would delay parity and duplicate complex Bash logic.
+The PowerShell registry and dispatcher have not kept pace. The Windows CLI
+advertises `start` without a handler, has no `wire` command, exposes only a
+subset of addons, and invokes Bash addon scripts without a single supported
+contract for Windows paths, environment variables, arguments, or cleanup
+options. A full native rewrite of every addon would delay parity and duplicate
+complex Bash logic.
 
 Fleet is optional host-side VM infrastructure with a separate lifecycle and is intentionally excluded from this parity increment.
 
@@ -22,14 +32,33 @@ Fleet is optional host-side VM infrastructure with a separate lifecycle and is i
 
 Keep the two platform entry points, but define a clear ownership boundary:
 
-1. **PowerShell owns the core Windows lifecycle.** Cluster creation, start/stop, kubeconfig synchronization, deploy, status, diagnostics, cleanup, and repair remain native PowerShell operations.
-2. **A single PowerShell addon adapter runs non-fleet addon deployment scripts.** Addons continue to own their Bash implementation, while the adapter supplies Git Bash discovery, kubeconfig and CA propagation, Windows-to-Git-Bash path conversion, argument forwarding, exit-code handling, and safe addon-state persistence.
-3. **The Windows addon registry mirrors the current Bash addon surface, excluding fleet.** It includes the AO alias, APME, local-cache, Product Demos base/aggregate/domain addons, OPA, Ollama, MCP, both portal paths, and PAH setup. Dependencies and purge flags are forwarded instead of reimplemented in the dispatcher.
-4. **`start` and `wire` are first-class PowerShell commands.** `start` restores cluster access and DNS state; `wire` runs the same idempotent integration setup used after deploy, watch, and addon enablement.
-5. **Status and diagnostics report parity-oriented state.** They show the expanded addon registry, route/readiness hints, wiring failures, CRC compatibility, and actionable missing-tool errors without printing credentials.
-6. **Fleet remains out of scope.** No fleet registry entry, QEMU prerequisite flow, fleet lifecycle hook, or Windows fleet implementation is part of this decision.
+1. **PowerShell owns the core Windows lifecycle.** Cluster creation, start/stop,
+   kubeconfig synchronization, deploy, status, diagnostics, cleanup, and
+   repair remain native PowerShell operations.
+2. **A single PowerShell addon adapter runs non-fleet addon deployment scripts.**
+   Addons continue to own their Bash implementation, while the adapter supplies
+   Git Bash discovery, kubeconfig and CA propagation, Windows-to-Git-Bash path
+   conversion, argument forwarding, exit-code handling, and safe addon-state
+   persistence.
+3. **The Windows addon registry mirrors the current Bash addon surface, excluding
+   fleet.** It includes the AO alias, APME, local-cache, Product Demos
+   base/aggregate/domain addons, OPA, Ollama, MCP, both portal paths, and PAH
+   setup. Dependencies and purge flags are forwarded instead of reimplemented
+   in the dispatcher.
+4. **`start` and `wire` are first-class PowerShell commands.** `start` restores
+   cluster access and DNS state; `wire` runs the same idempotent integration
+   setup used after deploy, watch, and addon enablement.
+5. **Status and diagnostics report parity-oriented state.** They show the
+   expanded addon registry, route/readiness hints, wiring failures, CRC
+   compatibility, and actionable missing-tool errors without printing
+   credentials.
+6. **Fleet remains out of scope.** No fleet registry entry, QEMU prerequisite
+   flow, fleet lifecycle hook, or Windows fleet implementation is part of this
+   decision.
 
-This keeps the critical Windows path native, avoids a second implementation of addon business logic, and gives future native addon ports a stable adapter boundary.
+This keeps the critical Windows path native, avoids a second implementation of
+addon business logic, and gives future native addon ports a stable adapter
+boundary.
 
 ## Consequences
 
@@ -46,7 +75,8 @@ This keeps the critical Windows path native, avoids a second implementation of a
 - Git Bash remains a prerequisite for addon scripts that have no native PowerShell implementation.
 - Two CLI implementations still require coordinated changes and parity tests.
 - Windows path and quoting conversion at the Bash boundary adds adapter complexity.
-- Some addons, especially APME, portal-operator, and Ollama, still need Windows/CRC integration coverage before they can be treated as stable.
+- Some addons, especially APME, portal-operator, and Ollama, still need
+  Windows/CRC integration coverage before they can be treated as stable.
 
 ### Neutral
 
@@ -58,23 +88,31 @@ This keeps the critical Windows path native, avoids a second implementation of a
 
 ### Port every addon to native PowerShell immediately
 
-Rejected for this increment. It duplicates substantial shell, API, Helm, Ansible, and credential logic and would delay the parity work while increasing long-term drift.
+Rejected for this increment. It duplicates substantial shell, API, Helm,
+Ansible, and credential logic and would delay the parity work while increasing
+long-term drift.
 
 ### Run the entire Bash CLI through Git Bash on Windows
 
-Rejected. It would remove native PowerShell lifecycle behavior, weaken Windows path and certificate handling, and make CRC/Hyper-V failures harder to diagnose.
+Rejected. It would remove native PowerShell lifecycle behavior, weaken Windows
+path and certificate handling, and make CRC/Hyper-V failures harder to
+diagnose.
 
 ### Generate the PowerShell registry dynamically from Bash at runtime
 
-Rejected. Runtime parsing couples user-facing help and validation to Bash implementation details and makes failures harder to reason about. The registry should be explicit and reviewed when addons change.
+Rejected. Runtime parsing couples user-facing help and validation to Bash
+implementation details and makes failures harder to reason about. The registry
+should be explicit and reviewed when addons change.
 
 ### Include fleet in the parity branch
 
-Rejected. Fleet has host-side QEMU lifecycle, image, SSH, and AAP registration concerns that need a separate Windows design and validation plan.
+Rejected. Fleet has host-side QEMU lifecycle, image, SSH, and AAP registration
+concerns that need a separate Windows design and validation plan.
 
 ## References
 
-- [PR #95 — bring PowerShell CLI and Windows addons to Bash parity](https://github.com/RedHatOfficial/aap-demo/pull/95)
+- [PR #95 — bring PowerShell CLI and Windows addons to Bash
+  parity](https://github.com/RedHatOfficial/aap-demo/pull/95)
 - [ADR-010 — Cross-Platform CLI](010-cross-platform-cli.md)
 - [ADR-014 — CLI Testing Strategy](014-testing-strategy.md)
 - [ADR-021 — Local Cache Addon](021-local-cache-addon.md)

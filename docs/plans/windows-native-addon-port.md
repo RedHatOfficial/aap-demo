@@ -1,5 +1,7 @@
 # Native PowerShell Addon Port Plan
 
+<!-- markdownlint-disable MD013 -->
+
 **Branch:** `codex/windows-native-addons`
 
 **Parent:** `codex/windows-feature-parity`

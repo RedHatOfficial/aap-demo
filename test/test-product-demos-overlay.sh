@@ -14,20 +14,20 @@ if ! grep -Fq 'kubectl cp' <<<"$overlay_block"; then
   exit 1
 fi
 
-if ! grep -Fq 'awx-manage shell -c' <<<"$overlay_block" || \
-   ! grep -Fq 'sys.stdin.buffer.read' <<<"$overlay_block"; then
+if ! grep -Fq 'awx-manage shell -c' <<<"$overlay_block" \
+  || ! grep -Fq 'sys.stdin.buffer.read' <<<"$overlay_block"; then
   echo "FAIL: overlay copy must have a controller-native Python fallback" >&2
   exit 1
 fi
 
-if ! grep -Fq 'cygpath -w "$KUBECONFIG"' <<<"$lib_source" || \
-   ! grep -Fq 'apd_kubectl_remote' <<<"$overlay_block"; then
+if ! grep -Fq 'cygpath -w "$KUBECONFIG"' <<<"$lib_source" \
+  || ! grep -Fq 'apd_kubectl_remote' <<<"$overlay_block"; then
   echo "FAIL: Windows overlay commands must preserve the kubeconfig when disabling MSYS path conversion" >&2
   exit 1
 fi
 
-if ! grep -Fq 'Direct overlay copy failed' <<<"$overlay_block" || \
-   ! grep -Fq 'kubectl cp fallback failed' <<<"$overlay_block"; then
+if ! grep -Fq 'Direct overlay copy failed' <<<"$overlay_block" \
+  || ! grep -Fq 'kubectl cp fallback failed' <<<"$overlay_block"; then
   echo "FAIL: overlay copy failures must include actionable remote errors" >&2
   exit 1
 fi
