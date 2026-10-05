@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -127,6 +128,7 @@ def test_sync_drops_the_file_form_certificate_authority(
     assert cluster == {"server": "https://127.0.0.1:6443", "insecure-skip-tls-verify": True}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not store Unix mode 0600")
 def test_write_private_never_exposes_the_file_at_the_process_umask(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -152,6 +154,7 @@ def test_write_private_never_exposes_the_file_at_the_process_umask(
     assert [p.name for p in destination.parent.iterdir()] == ["kubeconfig"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows does not store Unix mode 0600")
 def test_sync_writes_the_file_with_owner_only_permissions(
     fake_runner: FakeRunner, ssh_key: Path, tmp_path: Path
 ) -> None:

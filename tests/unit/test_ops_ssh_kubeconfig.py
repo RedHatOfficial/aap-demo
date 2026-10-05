@@ -153,6 +153,7 @@ def test_oc_exec_sets_kubeconfig_and_hides_the_home_directory(tmp_path: Path) ->
         ["cluster-info"],
         env={"HOME": str(tmp_path / "home"), "PATH": "/usr/bin"},
         exec_func=exec_func,
+        is_windows=False,
     )
     assert seen["argv"] == ["oc", "cluster-info"]
     assert seen["kubeconfig"] == str(secret)

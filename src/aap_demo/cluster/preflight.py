@@ -79,10 +79,16 @@ def _apply_context(ctx: AppContext) -> None:
 
 
 def setup_kubeconfig(
-    ctx: AppContext, *, which: Callable[[str], Optional[str]] = shutil.which
+    ctx: AppContext, *, which: Optional[Callable[[str], Optional[str]]] = None
 ) -> Path:
-    """Ports ``setup_kubeconfig`` (aap-demo.sh:264-307). Returns the path in use."""
-    if which("kubectl") is None:
+    """Ports ``setup_kubeconfig`` (aap-demo.sh:264-307). Returns the path in use.
+
+    ``which`` is resolved on each call. A default argument would capture
+    ``shutil.which`` at import, so a test patch — and a kubectl installed
+    later on PATH — would never be seen.
+    """
+    finder = shutil.which if which is None else which
+    if finder("kubectl") is None:
         raise PrerequisiteError(
             "kubectl not found",
             hint="Install kubectl and make sure it is on PATH: "

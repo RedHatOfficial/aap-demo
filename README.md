@@ -15,13 +15,7 @@ Deploy AAP to a local MicroShift cluster in minutes.
   [scripts/README.md](scripts/README.md))
 - **Pull secret** — download from the
   [Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
-  The Python install path is in [Install](#install). The bash installer expects
-  `~/.aap-demo/pull-secret.txt`:
-
-```bash
-mkdir -p ~/.aap-demo
-cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
-```
+  Save it as described in [Install](#install).
 
 On Windows, the PowerShell launcher runs the maintained Bash CLI through Git
 for Windows. Windows deploys and AO/Product Demo enablement also require `jq`
@@ -51,7 +45,7 @@ pip install aap-demo
 uv tool install aap-demo
 ```
 
-The shell installer is still here. It installs the bash CLI, which uses `~/.aap-demo` instead of the paths below:
+The shell installer is still here. It installs the bash CLI:
 
 ```bash
 git clone https://github.com/RedHatOfficial/aap-demo.git && cd aap-demo && ./install.sh && aap-demo deploy
@@ -62,22 +56,15 @@ Both installers put a command named `aap-demo` on your PATH. If both are install
 `aap-demo create` provisions the MicroShift VM only. `aap-demo deploy` installs OLM and AAP
 (use `deploy` for the typical path; `create` alone is for cluster-only setup).
 
-The Python CLI stores the pull secret at `~/.local/state/aap-demo/pull-secret.txt` and the
+The CLI stores the pull secret at `~/.local/state/aap-demo/pull-secret.txt` and the
 cluster credentials at `~/.local/state/aap-demo/kubeconfig.microshift`. Those files are **not**
-merged into `~/.kube/config`.
+merged into `~/.kube/config`. The first Python run migrates cluster state out of an
+older `~/.aap-demo` directory into that state directory.
 
 ```bash
 mkdir -p ~/.local/state/aap-demo
 cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
 export KUBECONFIG=~/.local/state/aap-demo/kubeconfig.microshift
-# or: aap-demo kubeconfig   # refresh file and print export command
-```
-
-The bash CLI stores cluster credentials at `~/.aap-demo/kubeconfig.microshift`, also not merged
-into `~/.kube/config`:
-
-```bash
-export KUBECONFIG=~/.aap-demo/kubeconfig.microshift
 # or: aap-demo kubeconfig   # refresh file and print export command
 ```
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+import os
 import tarfile
 from pathlib import Path
 
@@ -66,7 +67,7 @@ def test_install_linux_tarball_verifies_the_checksum_and_prefers_the_binary(
 
     assert (install_dir / "crc").read_bytes() == b"#!/bin/sh\n"
     assert (tmp_path / ".local" / "bin" / "crc").read_bytes() == b"#!/bin/sh\n"
-    assert app_ctx.env["PATH"].split(":")[0] == str(install_dir)
+    assert app_ctx.env["PATH"].split(os.pathsep)[0] == str(install_dir)
     assert managed_crc_release() in str(install_dir)
 
 

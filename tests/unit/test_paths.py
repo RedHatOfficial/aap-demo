@@ -22,7 +22,8 @@ def test_display_path_hides_the_home_directory(tmp_path: Path) -> None:
     secret = tmp_path / "pull-secret.txt"
     secret.write_text("x")
     assert display_path(secret, tmp_path) == "~/pull-secret.txt"
-    assert display_path(Path("/etc/hosts"), tmp_path) == "/etc/hosts"
+    outside = tmp_path.parent / "outside-home"
+    assert display_path(outside, tmp_path) == str(outside)
 
 
 def test_native_roots_are_absolute() -> None:

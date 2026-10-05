@@ -116,7 +116,13 @@ def test_operator_sdk_already_on_path_is_not_downloaded(app_ctx) -> None:
     assert runner.calls == []
 
 
-def test_operator_sdk_is_downloaded_to_local_bin(app_ctx, tmp_path) -> None:
+def _linux(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sdk.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(sdk.platform, "machine", lambda: "x86_64")
+
+
+def test_operator_sdk_is_downloaded_to_local_bin(app_ctx, tmp_path, monkeypatch) -> None:
+    _linux(monkeypatch)
     app_ctx.env = {"HOME": str(tmp_path), "PATH": "/usr/bin"}
     runner = FakeRunner()
     runner.register(
@@ -133,7 +139,10 @@ def test_operator_sdk_is_downloaded_to_local_bin(app_ctx, tmp_path) -> None:
     assert "Add to PATH" in app_ctx.console.stdout
 
 
-def test_operator_sdk_download_failure_is_fatal_with_the_url(app_ctx, tmp_path) -> None:
+def test_operator_sdk_download_failure_is_fatal_with_the_url(
+    app_ctx, tmp_path, monkeypatch
+) -> None:
+    _linux(monkeypatch)
     app_ctx.env = {"HOME": str(tmp_path)}
     app_ctx.runner = FakeRunner().fail("curl")
     with pytest.raises(AapDemoError) as excinfo:
