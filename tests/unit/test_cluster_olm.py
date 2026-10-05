@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import pytest
@@ -134,7 +135,8 @@ def test_operator_sdk_is_downloaded_to_local_bin(app_ctx, tmp_path, monkeypatch)
 
     path = sdk.ensure_available(app_ctx, which=_which())
     assert path == tmp_path / ".local" / "bin" / "operator-sdk"
-    assert path.stat().st_mode & 0o111
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o111
     assert sdk.SDK_VERSION in runner.commands[0]
     assert "Add to PATH" in app_ctx.console.stdout
 

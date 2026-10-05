@@ -13,6 +13,7 @@ working exactly as it does for the bash tool.
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 from pathlib import Path
@@ -87,7 +88,7 @@ def ensure_available(
             return system_path
 
     ctx.console.out(f"✓ operator-sdk installed to {dest}")
-    if str(bin_dir) not in (ctx.env.get("PATH") or "").split(":"):
+    if str(bin_dir) not in (ctx.env.get("PATH") or "").split(os.pathsep):
         ctx.console.out("NOTE: Add to PATH: export PATH=$HOME/.local/bin:$PATH")
     ctx.console.out("")
     return dest
