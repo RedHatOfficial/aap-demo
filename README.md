@@ -6,30 +6,6 @@ Deploy AAP to a local MicroShift cluster in minutes.
 
 **aap-demo is a LOCAL DEVELOPMENT tool and must NEVER be used in production.**
 
-## Prerequisites
-
-- **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
-- **16 GB RAM minimum** — default VM allocation is 16 GB (override with
-  `CRC_MEMORY=24576 aap-demo create` for 24 GB). On Linux, `aap-demo create`
-  prompts for optional temp swap on memory-constrained hosts (see
-  [scripts/README.md](scripts/README.md))
-- **Pull secret** — download from the
-  [Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
-  Save it as described in [Install](#install).
-
-On Windows, the PowerShell launcher runs the maintained Bash CLI through Git
-for Windows. Windows deploys and AO/Product Demo enablement also require `jq`
-and a working Python runtime for shell wiring and demo provisioning. The
-Windows preflight installs them with winget when they are missing:
-
-```powershell
-winget install --id jqlang.jq -e --source winget
-winget install --id Python.Python.3.12 -e --source winget
-```
-
-Linux and macOS keep their existing prerequisite behavior; Python remains
-optional there when demo provisioning is not requested.
-
 ## Install
 
 Python 3.9 or newer. [pipx](https://pipx.pypa.io/) keeps the command isolated from the rest of your Python packages:
@@ -45,21 +21,11 @@ pip install aap-demo
 uv tool install aap-demo
 ```
 
-The shell installer is still here. It installs the bash CLI:
-
-```bash
-git clone https://github.com/RedHatOfficial/aap-demo.git && cd aap-demo && ./install.sh && aap-demo deploy
-```
-
-Both installers put a command named `aap-demo` on your PATH. If both are installed, the one that appears first is the one that runs.
-
-`aap-demo create` provisions the MicroShift VM only. `aap-demo deploy` installs OLM and AAP
-(use `deploy` for the typical path; `create` alone is for cluster-only setup).
-
-The CLI stores the pull secret at `~/.local/state/aap-demo/pull-secret.txt` and the
-cluster credentials at `~/.local/state/aap-demo/kubeconfig.microshift`. Those files are **not**
-merged into `~/.kube/config`. The first Python run migrates cluster state out of an
-older `~/.aap-demo` directory into that state directory.
+Download a pull secret from the
+[Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
+The CLI stores it at `~/.local/state/aap-demo/pull-secret.txt`. Cluster
+credentials live at `~/.local/state/aap-demo/kubeconfig.microshift`. Those
+files are **not** merged into `~/.kube/config`.
 
 ```bash
 mkdir -p ~/.local/state/aap-demo
@@ -67,6 +33,17 @@ cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
 export KUBECONFIG=~/.local/state/aap-demo/kubeconfig.microshift
 # or: aap-demo kubeconfig   # refresh file and print export command
 ```
+
+`aap-demo create` provisions the MicroShift VM only. `aap-demo deploy` installs OLM and AAP
+(use `deploy` for the typical path; `create` alone is for cluster-only setup).
+
+## Prerequisites
+
+- **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
+- **16 GB RAM minimum** — default VM allocation is 16 GB (override with
+  `CRC_MEMORY=24576 aap-demo create` for 24 GB). On Linux, `aap-demo create`
+  prompts for optional temp swap on memory-constrained hosts (see
+  [scripts/README.md](scripts/README.md))
 
 ## Status
 
@@ -220,8 +197,7 @@ On MicroShift 4.22+, `aap-demo deploy` relaxes container signature verification 
 ```bash
 aap-demo clean         # Remove AAP (keep cluster)
 aap-demo destroy       # Delete everything
-pipx uninstall aap-demo   # Remove the Python CLI
-./install.sh --uninstall  # Remove the bash CLI
+pipx uninstall aap-demo   # Remove the CLI
 ```
 
 ## Documentation

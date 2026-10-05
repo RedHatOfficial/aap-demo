@@ -86,86 +86,51 @@ Swap files are not added to `/etc/fstab`. Remove after deploy with
 `./scripts/enable-temp-swap.sh disable` or `aap-demo destroy`.
 See [scripts/README.md](../scripts/README.md) for Linux-only details.
 
-### macOS / Linux
+### Install
 
-#### Download your pull secret from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret) and save it
-
-```bash
-mkdir -p ~/.aap-demo
-cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
-```
-
-#### Install
+Python 3.9 or newer. [pipx](https://pipx.pypa.io/) keeps the command isolated from the rest of your Python packages:
 
 ```bash
-git clone https://github.com/RedHatOfficial/aap-demo.git
-cd aap-demo && ./install.sh
+pipx install aap-demo
 ```
 
-#### Deploy
+pip and uv install the same package:
 
 ```bash
-aap-demo deploy        # Deploy AAP 2.7
-aap-demo status        # Check deployment status
+pip install aap-demo
+uv tool install aap-demo
 ```
-
-### Windows
-
-See the **[Windows installer guide](powershell/README.md)** for full install and usage
-instructions. Summary:
 
 #### Save your pull secret
 
-Download from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret) and save as:
+Download from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret).
+The CLI reads `~/.local/state/aap-demo/pull-secret.txt`. Cluster credentials
+live at `~/.local/state/aap-demo/kubeconfig.microshift` and are not merged
+into `~/.kube/config`.
 
-```powershell
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.aap-demo"
-Copy-Item "$env:USERPROFILE\Downloads\pull-secret.txt" "$env:USERPROFILE\.aap-demo\pull-secret.txt"
+```bash
+mkdir -p ~/.local/state/aap-demo
+cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
+export KUBECONFIG=~/.local/state/aap-demo/kubeconfig.microshift
 ```
 
-#### Install
+On Windows the same paths are under your user profile:
 
 ```powershell
-git clone https://github.com/RedHatOfficial/aap-demo.git
-cd aap-demo
-.\powershell\install.ps1
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.local\state\aap-demo"
+Copy-Item "$env:USERPROFILE\Downloads\pull-secret.txt" "$env:USERPROFILE\.local\state\aap-demo\pull-secret.txt"
 ```
-
-This registers the repo path, installs the `aap-demo` launcher to
-`%USERPROFILE%\.local\bin`, adds that directory to your user PATH, and downloads
-`operator-sdk` if needed.
-
-Open a **new** PowerShell window after install so PATH changes take effect.
 
 #### Deploy
 
-```powershell
-aap-demo create        # Create the cluster
+```bash
 aap-demo deploy        # Deploy AAP 2.7
 aap-demo status        # Check deployment status
 ```
 
-#### Uninstall
-
-```powershell
-.\powershell\install.ps1 -Uninstall
-```
-
-This removes the wrapper and PATH entry. It does not delete `%USERPROFILE%\.crc\` or
-other cluster data.
-
-#### Windows notes
-
-- Kubeconfig default: `%USERPROFILE%\.crc\machines\crc\kubeconfig`
-- Config file: `%USERPROFILE%\.aap-demo\config`
-- If `aap-demo` is not recognized, confirm `%USERPROFILE%\.local\bin` is on PATH and
-  restart PowerShell
-- `create`, `deploy`, and `status` are PowerShell-native; install Git for Windows for
-  other commands (`diagnose`, `test`, `watch`, …)
-- See [powershell/README.md](powershell/README.md) for full Windows install and usage
-
-The Windows wrapper currently defers Fleet and local image caching. Both remain
-available through the Linux/macOS Bash workflow.
+Config lives at `~/.config/aap-demo/config.yaml`. Credentials such as the
+Galaxy token go in the OS keyring (`aap-demo config secrets set galaxy-token`),
+not in a file under your home directory.
 
 Once deployed, `aap-demo status` shows routes, credentials, and cluster health:
 
@@ -223,8 +188,8 @@ aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local (MicroShift)
 
 aap-demo automatically configures Ansible Galaxy authentication for downloading certified and private collections:
 
-- **Red Hat Certified Collections**: Offline token from console.redhat.com in `~/.aap-demo/galaxy-token`
-- **Private Automation Hub**: Configure URL and credentials in `~/.aap-demo/pah-config.yml`
+- **Red Hat Certified Collections**: offline token from console.redhat.com, stored with `aap-demo config secrets set galaxy-token`
+- **Private Automation Hub**: `aap-demo config secrets set pah-token`
 - **Priority-based fallback**: PAH → console.redhat.com → galaxy.ansible.com (community)
 
 Collections are installed automatically during deployment from `config/requirements.yml`. Skip with `SKIP_COLLECTIONS=true`.
