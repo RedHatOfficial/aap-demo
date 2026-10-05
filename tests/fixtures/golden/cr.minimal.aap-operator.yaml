@@ -1,0 +1,49 @@
+---
+apiVersion: aap.ansible.com/v1alpha1
+kind: AnsibleAutomationPlatform
+metadata:
+  name: aap
+spec:
+  no_log: false
+
+  controller:
+    disabled: false
+    # Fix git "dubious ownership" and collection download permissions
+    # Ensure all AWX operations run as awx user (996) to prevent root-owned artifacts
+    security_context_settings:
+      runAsUser: 996   # awx UID — all container processes run as awx user
+      fsGroup: 996     # awx GID — group ownership on project volume
+    # GIT_CONFIG vars allow git to access repos regardless of ownership (safety fallback)
+    task_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: safe.directory
+      - name: GIT_CONFIG_VALUE_0
+        value: "*"
+    ee_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: safe.directory
+      - name: GIT_CONFIG_VALUE_0
+        value: "*"
+
+  eda:
+    disabled: false
+    activation_worker:
+      replicas: 1
+    default_worker:
+      replicas: 1
+
+  hub:
+    disabled: false
+    storage_type: file
+    route_host: aap-hub-aap-operator.apps.127.0.0.1.nip.io
+    file_storage_storage_class: nfs-local-rwx
+    file_storage_access_mode: ReadWriteMany
+    file_storage_size: 5Gi
+    content:
+      replicas: 1
+    worker:
+      replicas: 1

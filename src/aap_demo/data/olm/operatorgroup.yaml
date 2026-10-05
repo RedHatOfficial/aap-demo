@@ -1,0 +1,15 @@
+# OperatorGroup for AAP namespace
+# Required for OLM to install operators in this namespace
+#
+# Placeholders substituted at runtime:
+#   namespace: aap -> actual namespace
+#   - aap -> actual namespace (targetNamespaces)
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: aap-og
+  namespace: aap
+spec:
+  targetNamespaces:
+    - aap

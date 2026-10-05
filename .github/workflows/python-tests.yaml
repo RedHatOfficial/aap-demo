@@ -1,0 +1,90 @@
+---
+name: Python Unit Tests
+
+on:
+  pull_request:
+    branches: [main, master, v2, v1-python-rewrite]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-tests.yaml'
+  push:
+    branches: [main, master, v2, v1-python-rewrite]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'pyproject.toml'
+      - '.github/workflows/python-tests.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # RHEL 9's system python3 is the floor (design §8.1), so 3.9 is checked
+        # on all three OSes. macos-13 rather than macos-latest because
+        # actions/setup-python publishes no arm64 build of CPython 3.9.
+        include:
+          - os: ubuntu-latest
+            python-version: '3.9'
+          - os: macos-13
+            python-version: '3.9'
+          - os: windows-latest
+            python-version: '3.9'
+          - os: ubuntu-latest
+            python-version: '3.13'
+          - os: macos-latest
+            python-version: '3.13'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package and test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Run unit tests
+        # The default marker selection excludes `integration` and `slow`, so no
+        # cluster and no network are required (design §7.3).
+        run: python -m pytest tests/unit -q
+
+      - name: Verify the CLI entry point starts
+        run: python -m aap_demo --help
+
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install package and dev dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Ruff check
+        run: python -m ruff check src tests
+
+      - name: Ruff format check
+        run: python -m ruff format --check src tests

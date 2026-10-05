@@ -1,0 +1,78 @@
+# OpenShift Local (CRC) VM sizing and preset — design §5.3 `crc:` block, §9.3 worked example.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aap-demo/crc"
+type: object
+additionalProperties: false
+title: Cluster
+properties:
+  preset:
+    type: string
+    enum: [microshift, openshift]
+    default: microshift
+    title: Preset
+    description: OpenShift Local preset. microshift is the v1 target; openshift lands in phase 4b.
+    x-cli: {flag: "--preset"}
+    x-env: CRC_PRESET
+    x-config: crc.preset
+    x-gui: {group: cluster, widget: select}
+    x-order: 10
+
+  cpus:
+    type: integer
+    minimum: 2
+    maximum: 64
+    default: 8
+    title: CPUs
+    description: vCPUs allocated to the OpenShift Local VM.
+    x-cli: {flag: "--cpus"}
+    x-env: CRC_CPUS
+    x-config: crc.cpus
+    x-gui: {group: cluster, widget: number, step: 2}
+    x-order: 20
+
+  memory_mb:
+    type: integer
+    minimum: 8192
+    default: 24576
+    title: Memory (MB)
+    description: Memory in MB allocated to the OpenShift Local VM.
+    x-cli: {flag: "--memory"}
+    x-env: CRC_MEMORY
+    x-config: crc.memory_mb
+    x-gui: {group: cluster, widget: number, step: 1024}
+    x-order: 30
+
+  disk_gb:
+    type: integer
+    minimum: 60
+    default: 120
+    title: Disk (GB)
+    description: Virtual disk size in GB for the OpenShift Local VM.
+    x-cli: {flag: "--disk"}
+    x-env: CRC_DISK
+    x-config: crc.disk_gb
+    x-gui: {group: cluster, widget: number, step: 10}
+    x-order: 40
+
+  pv_size_gb:
+    type: integer
+    minimum: 10
+    default: 100
+    title: PV size (GB)
+    description: Size in GB of the LVMS-backed persistent volume pool.
+    x-cli: {flag: "--pv-size"}
+    x-env: CRC_PV_SIZE
+    x-config: crc.pv_size_gb
+    x-gui: {group: cluster, widget: number, step: 10}
+    x-order: 50
+
+  version:
+    type: string
+    default: ""
+    title: CRC version
+    description: Pin a specific OpenShift Local version. Empty means no pin.
+    x-cli: {flag: "--crc-version"}
+    x-env: CRC_VERSION
+    x-config: crc.version
+    x-gui: {group: cluster, widget: text}
+    x-order: 60

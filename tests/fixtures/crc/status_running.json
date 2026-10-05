@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "crcStatus": "Running",
+  "openshiftStatus": "Running",
+  "openshiftVersion": "4.15.0",
+  "diskUse": 32212254720,
+  "diskSize": 107374182400,
+  "ramUse": 8589934592,
+  "ramSize": 25769803776,
+  "preset": "microshift"
+}

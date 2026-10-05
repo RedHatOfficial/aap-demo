@@ -1,3 +1,92 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aap-demo"
+description = "Deploy Ansible Automation Platform 2.7 to OpenShift Local (MicroShift or OpenShift preset)"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+dynamic = ["version"]
+authors = [{ name = "Red Hat" }]
+keywords = ["ansible", "aap", "openshift", "crc", "microshift"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    # CLI parsing is stdlib argparse (design §3.1) — no Click, no Typer, no Pydantic.
+    "pyyaml>=6.0",        # config, manifests, --output yaml. Pure-Python loaders only (§5.1).
+    "jsonschema>=4.0",    # config / manifest validation against the schema documents (§9.3)
+    "keyring>=24.0",      # OS-native credential storage (§5.5)
+    "argcomplete>=3.0",   # bash/zsh completion over the argparse parser (§3.1)
+    "rich>=13.0",         # live terminal presentation (--output rich)
+    # No platformdirs: config/cache/state dirs are hand-rolled strict XDG paths
+    # on every OS right now, not native-per-OS. See core/paths.py's docstring.
+]
+
+[project.optional-dependencies]
+gui = ["fastapi>=0.110", "uvicorn>=0.29"]
+desktop = ["aap-demo[gui]", "toga>=0.4.7"]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "mypy",
+    "ruff",
+    "commitizen",
+    "types-PyYAML",
+]
+
+[project.scripts]
+aap-demo = "aap_demo.cli.main:main"
+
+[project.urls]
+Homepage = "https://github.com/RedHatOfficial/aap-demo"
+Source = "https://github.com/RedHatOfficial/aap-demo"
+
+[tool.hatch.version]
+path = "src/aap_demo/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aap_demo"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: requires a real CRC cluster; destructive; not run in PR CI",
+    "slow: hits the network (Red Hat status RSS, GitHub releases)",
+    "windows_only: platform-specific trust store paths",
+    "posix_only: sudo / resolver / execvp paths",
+]
+addopts = "-m 'not integration and not slow'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = ["docs/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# The 3.9 floor (§8.1) forbids PEP 585/604 syntax in any runtime-evaluated
+# position -- type aliases, TypeVar bounds, dataclass field types without
+# `from __future__ import annotations`. Rather than allow it in some files and
+# not others, the whole family stays off until the floor moves to 3.10.
+ignore = ["UP006", "UP007", "UP035", "UP037", "UP045"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_unused_ignores = true
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 tag_format = "v$version"

@@ -1,0 +1,59 @@
+# Core settings — design §5.3 `core:` block.
+# Authored as YAML because a human maintains it and the comments are the field docs (§9.3).
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aap-demo/core"
+type: object
+additionalProperties: false
+title: Core
+properties:
+  namespace:
+    type: string
+    minLength: 1
+    default: aap-operator
+    title: Namespace
+    description: Kubernetes namespace AAP is deployed into.
+    x-cli: {flags: ["-n", "--namespace"]}
+    x-env: AAP_DEMO_NAMESPACE
+    x-env-legacy: NAMESPACE
+    x-config: core.namespace
+    x-gui: {group: core, widget: text}
+    x-order: 10
+
+  infra:
+    type: string
+    enum: [crc]
+    default: crc
+    title: Infrastructure
+    description: Infrastructure backend. Only OpenShift Local (crc) is supported today.
+    x-cli: false
+    x-env: INFRA
+    x-config: core.infra
+    x-gui: {group: core, widget: select}
+    x-order: 20
+
+  output:
+    type: string
+    enum: [rich, basic, json, yaml]
+    default: rich
+    title: Output format
+    description: >
+      rich is the live terminal (default). basic is a plain professional log.
+      json and yaml are structured machine output.
+    # --output is a genuinely CLI-shaped option and is hand-written on the global
+    # parser (§3.1 allowlist); the schema owns only its persisted default.
+    x-cli: false
+    x-env: AAP_DEMO_OUTPUT
+    x-config: core.output
+    x-gui: {group: core, widget: select}
+    x-order: 30
+
+  quiet:
+    type: boolean
+    default: false
+    title: Quiet
+    description: Silence all output. Destructive confirmations are skipped.
+    x-cli: false
+    x-env: QUIET
+    x-config: core.quiet
+    x-gui: {group: core, widget: switch}
+    x-order: 40
