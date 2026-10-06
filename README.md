@@ -1,5 +1,7 @@
 # AAP Demo Quick Start
 
+**v2 is a beta.** This branch is the Python rewrite while it is still in development. It is not an official release. The supported release line remains `main`.
+
 Deploy AAP to a local MicroShift cluster in minutes.
 
 ## SECURITY NOTICE — DEVELOPMENT ENVIRONMENT ONLY
