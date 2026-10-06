@@ -232,7 +232,13 @@ def test_no_aap_cr_means_no_gateway_work(app_ctx) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _readiness_runner(conditions, password="s3cret") -> FakeRunner:
+def _readiness_runner(
+    conditions,
+    password="s3cret",
+    *,
+    deploys="aap-controller 0/1 1 0 6m\naap-gateway 1/1 1 1 6m\n",
+    controller_ready=False,
+) -> FakeRunner:
     it = iter(conditions)
     runner = FakeRunner()
     runner.register(
@@ -249,7 +255,44 @@ def _readiness_runner(conditions, password="s3cret") -> FakeRunner:
     )
     runner.ok(
         ["kubectl", "get", "deploy", "-n", NS, "--no-headers"],
-        stdout="aap-controller 0/1 1 0 6m\naap-gateway 1/1 1 1 6m\n",
+        stdout=deploys,
+    )
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "aap", "-o", "json"],
+        stdout=json.dumps(
+            {
+                "spec": {"controller": {"disabled": False}},
+                "status": {
+                    "conditions": [
+                        {
+                            "type": "Running",
+                            "status": "True",
+                            "reason": "Running",
+                            "message": "Running reconciliation",
+                        }
+                    ]
+                },
+            }
+        ),
+    )
+    controller_condition = (
+        {
+            "type": "Successful",
+            "status": "True",
+            "reason": "Successful",
+            "message": "Last reconciliation succeeded",
+        }
+        if controller_ready
+        else {
+            "type": "Running",
+            "status": "True",
+            "reason": "Running",
+            "message": "Running reconciliation",
+        }
+    )
+    runner.ok(
+        ["kubectl", "get", "automationcontroller", "-n", NS, "-o", "json"],
+        stdout=json.dumps({"items": [{"status": {"conditions": [controller_condition]}}]}),
     )
     runner.ok(
         [
@@ -318,6 +361,41 @@ def _readiness_runner(conditions, password="s3cret") -> FakeRunner:
     return runner
 
 
+def test_a_terminal_reconcile_checks_off_even_when_successful_is_false() -> None:
+    rows = aap_mod.build_component_rows(
+        {"controller": {"disabled": False}, "hub": {"disabled": True}},
+        [
+            {
+                "type": "Successful",
+                "status": "False",
+                "reason": "Successful",
+                "message": "Last reconciliation succeeded",
+            },
+            {
+                "type": "Running",
+                "status": "True",
+                "reason": "Running",
+                "message": "Running reconciliation",
+            },
+            {"type": "Failure", "status": "False"},
+        ],
+        {
+            "controller": [
+                {
+                    "type": "Successful",
+                    "status": "False",
+                    "reason": "Successful",
+                    "message": "Last reconciliation succeeded",
+                },
+                {"type": "Running", "status": "True", "message": "Running reconciliation"},
+                {"type": "Failure", "status": "False"},
+            ]
+        },
+        "aap-controller-task 1/1 1 1 6m\naap-gateway 1/1 1 1 6m\n",
+    )
+    assert rows == [("gateway", "done", ""), ("controller", "done", "")]
+
+
 def test_condition_line_uses_the_newest_condition() -> None:
     older = {
         "type": "Successful",
@@ -355,12 +433,17 @@ def test_wait_ready_reports_the_live_condition(app_ctx) -> None:
         app_ctx, namespace=NS, timeout=20, interval=5, sleep=clock.sleep, clock=clock
     )
     reported = " ".join(app_ctx.events.sink.texts("progress"))
-    assert "Status: Running reconciliation (controller 0/1)" in reported
+    assert "controller" in reported and "0/1" in reported
+    assert "gateway" in reported
 
 
 def test_wait_ready_returns_credentials_and_route_on_success(app_ctx) -> None:
     clock = Clock()
-    app_ctx.runner = _readiness_runner(["", "", "True"])
+    app_ctx.runner = _readiness_runner(
+        ["", "", "True"],
+        deploys="aap-controller 1/1 1 1 6m\naap-gateway 1/1 1 1 6m\n",
+        controller_ready=True,
+    )
     result = aap_mod.wait_ready(
         app_ctx, namespace=NS, timeout=100, interval=5, sleep=clock.sleep, clock=clock
     )

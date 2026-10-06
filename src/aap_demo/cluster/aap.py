@@ -29,7 +29,7 @@ import base64
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -424,6 +424,206 @@ def deployment_line(table: str) -> str:
     return ", ".join(shown)
 
 
+# Platform components the gateway operator reconciles, in display order.
+# Gateway is the AnsibleAutomationPlatform CR itself. The others are child CRs
+# created when that section of the spec is present and not disabled.
+_COMPONENTS = (
+    ("gateway", ""),
+    ("controller", "automationcontroller"),
+    ("hub", "automationhub"),
+    ("eda", "eda"),
+    ("metrics", "metricsservice"),
+)
+
+
+def _enabled_components(spec: Dict[str, Any]) -> List[str]:
+    enabled = ["gateway"]
+    for name, _kind in _COMPONENTS[1:]:
+        section = spec.get(name)
+        if not isinstance(section, dict):
+            continue
+        if section.get("disabled") is True:
+            continue
+        enabled.append(name)
+    return enabled
+
+
+def _conditions_by_type(conditions: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    typed: Dict[str, Dict[str, Any]] = {}
+    for condition in conditions:
+        kind = str(condition.get("type") or "")
+        if kind:
+            typed[kind] = condition
+    return typed
+
+
+def reconciliation_state(conditions: List[Dict[str, Any]]) -> str:
+    """``done``, ``failed``, or ``active`` from one component's conditions.
+
+    AAP 2.7 reports a finished reconcile as Successful=False with reason
+    Successful while Running=True. Hub omits those two and instead marks each
+    Ready/Finished condition True.
+    """
+    typed = _conditions_by_type(conditions)
+    if (typed.get("Failure") or {}).get("status") == "True":
+        return "failed"
+    successful = typed.get("Successful") or {}
+    running = typed.get("Running") or {}
+    if successful.get("status") == "True":
+        return "done"
+    if (
+        successful.get("status") == "False"
+        and successful.get("reason") == "Successful"
+        and running.get("status") == "True"
+    ):
+        return "done"
+    others = [
+        condition
+        for condition in conditions
+        if str(condition.get("type") or "") not in {"Failure", "Running", "Successful"}
+    ]
+    if others and all(condition.get("status") == "True" for condition in others):
+        return "done"
+    if not conditions:
+        return "pending"
+    return "active"
+
+
+def _component_deploy(name: str, component: str) -> bool:
+    if "operator" in name:
+        return False
+    if component == "gateway":
+        return name == "aap-gateway" or name.startswith("aap-gateway-")
+    prefix = f"aap-{component}"
+    return name == prefix or name.startswith(prefix + "-")
+
+
+def _pending_deploys(table: str, component: str) -> List[str]:
+    pending: List[str] = []
+    prefix = f"aap-{component}-"
+    for raw in table.splitlines():
+        parts = raw.split()
+        if len(parts) < 2 or "/" not in parts[1]:
+            continue
+        name, counts = parts[0], parts[1]
+        if not _component_deploy(name, component):
+            continue
+        have, _, want = counts.partition("/")
+        if want != "0" and have == want:
+            continue
+        label = name[len(prefix) :] if name.startswith(prefix) else name.removeprefix("aap-")
+        pending.append(f"{label} {counts}")
+    return pending
+
+
+def _status_detail(conditions: List[Dict[str, Any]], pending: List[str]) -> str:
+    working = [
+        condition
+        for condition in conditions
+        if condition.get("status") == "False" and condition.get("type") != "Failure"
+    ]
+    chosen = working[0] if working else _newest_condition(conditions)
+    message = ""
+    if chosen:
+        message = str(chosen.get("message") or chosen.get("reason") or "").strip()
+        if not message:
+            message = str(chosen.get("type") or "")
+    if not pending:
+        return message
+    loads = ", ".join(pending[:3])
+    if message and message not in loads:
+        return f"{message} ({loads})"
+    return loads or message
+
+
+def build_component_rows(
+    spec: Dict[str, Any],
+    platform_conditions: List[Dict[str, Any]],
+    children: Dict[str, List[Dict[str, Any]]],
+    deploy_table: str,
+) -> List[Tuple[str, str, str]]:
+    """``(name, state, detail)`` for each enabled component."""
+    rows: List[Tuple[str, str, str]] = []
+    for name, _kind in _COMPONENTS:
+        if name not in _enabled_components(spec):
+            continue
+        conditions = platform_conditions if name == "gateway" else children.get(name)
+        if conditions is None:
+            rows.append((name, "pending", "Waiting to be created"))
+            continue
+        pending = _pending_deploys(deploy_table, name)
+        state = reconciliation_state(conditions)
+        if state == "done" and pending:
+            state = "active"
+        detail = "" if state == "done" else _status_detail(conditions, pending)
+        rows.append((name, state, detail))
+    return rows
+
+
+def _kubectl_json(ctx: AppContext, *args: str) -> Any:
+    result = ctx.runner.run(["kubectl", "get", *args, "-o", "json"])
+    if not result.ok or not (result.stdout or "").strip():
+        return None
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return parsed
+
+
+def _component_rows(ctx: AppContext, namespace: str) -> Optional[List[Tuple[str, str, str]]]:
+    name = instance_name(ctx, namespace) or "aap"
+    document = _kubectl_json(ctx, "aap", "-n", namespace, name)
+    if not isinstance(document, dict):
+        return None
+    spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
+    status = document.get("status") if isinstance(document.get("status"), dict) else {}
+    raw_conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []
+    conditions = [item for item in raw_conditions if isinstance(item, dict)]
+    if successful_condition(ctx, namespace) == "True":
+        conditions = [item for item in conditions if item.get("type") != "Successful"]
+        conditions.append(
+            {
+                "type": "Successful",
+                "status": "True",
+                "reason": "Successful",
+                "message": "Last reconciliation succeeded",
+            }
+        )
+    children: Dict[str, Optional[List[Dict[str, Any]]]] = {}
+    enabled = set(_enabled_components(spec))
+    for component, kind in _COMPONENTS:
+        if component == "gateway" or component not in enabled:
+            continue
+        listed = _kubectl_json(ctx, kind, "-n", namespace)
+        items = listed.get("items") if isinstance(listed, dict) else None
+        if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+            children[component] = None
+            continue
+        child_status = items[0].get("status")
+        child_status = child_status if isinstance(child_status, dict) else {}
+        child_conditions = child_status.get("conditions")
+        if not isinstance(child_conditions, list):
+            children[component] = []
+            continue
+        children[component] = [item for item in child_conditions if isinstance(item, dict)]
+    deploys = ctx.runner.run(["kubectl", "get", "deploy", "-n", namespace, "--no-headers"])
+    table = deploys.stdout if deploys.ok else ""
+    return build_component_rows(spec, conditions, children, table)
+
+
+def _component_progress(rows: List[Tuple[str, str, str]]) -> str:
+    parts = []
+    for name, state, detail in rows:
+        if state == "done":
+            parts.append(f"{name} ready")
+        elif detail:
+            parts.append(f"{name} {detail}")
+        else:
+            parts.append(name)
+    return "Status: " + ", ".join(parts)
+
+
 def wait_status(deployments: str, message: str) -> str:
     """``Status: <message> (<deployments>)`` for the nested wait line."""
     status = message or "Waiting for AAP status"
@@ -515,11 +715,24 @@ def wait_ready(
 
     reconcile_pull_secret()
 
+    showed_components = False
+
     def attempt(_n: int) -> bool:
-        return successful_condition(ctx, ns) == "True"
+        nonlocal showed_components
+        rows = _component_rows(ctx, ns)
+        if rows is None:
+            showed_components = False
+            return successful_condition(ctx, ns) == "True"
+        showed_components = True
+        ctx.events.progress(_component_progress(rows))
+        ctx.console.set_children(rows)
+        return all(state == "done" for _name, state, _detail in rows)
 
     def progress(n: int, elapsed: float, _value: Any) -> None:
         reconcile_pull_secret()
+        if showed_components:
+            del n, elapsed
+            return
         detail = wait_status(
             deployment_status(ctx, ns),
             condition_message(read_conditions(ctx, ns)),

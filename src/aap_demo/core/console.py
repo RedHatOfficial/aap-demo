@@ -124,11 +124,20 @@ def _crc_status(message: str) -> str:
 
 
 @dataclass
+class _Child:
+    title: str
+    state: str = "pending"
+    detail: str = ""
+    started: float = 0.0
+
+
+@dataclass
 class _Task:
     title: str
     state: str = "pending"
     note: str = ""
     notes: List[str] = field(default_factory=list)
+    children: List[_Child] = field(default_factory=list)
 
 
 class _Travel:
@@ -369,7 +378,14 @@ class Console:
             sub.add_row(mark, label)
             for note in task.notes:
                 sub.add_row("", self._nested_line(note))
-            if index == self._active and self._detail and task.state == "active":
+            for child in task.children:
+                sub.add_row("", self._child_line(child))
+            if (
+                index == self._active
+                and self._detail
+                and task.state == "active"
+                and not task.children
+            ):
                 sub.add_row("", self._nested_line(self._detail, animate=True))
         body = Padding(sub, (0, 0, 0, len(_TASK_INDENT)))
         if not self._title:
@@ -629,6 +645,31 @@ class Console:
     def info(self, text: str) -> None:
         self.out(f"{self.glyphs['info']} {text}")
 
+    def set_children(self, rows: Sequence[Tuple[str, str, str]]) -> None:
+        """Nested component rows on the active step.
+
+        Each row is ``(title, state, detail)`` with state ``active``, ``done``,
+        ``failed``, or ``pending``. When every row is done the list is cleared,
+        so a finished wait collapses back to the parent step.
+        """
+        if self.quiet or self._active is None:
+            return
+        task = self._tasks[self._active]
+        now = time.monotonic()
+        previous = {child.title: child for child in task.children}
+        children: List[_Child] = []
+        for title, state, detail in rows:
+            started = now
+            prior = previous.get(title)
+            if prior is not None and prior.state == state:
+                started = prior.started
+            children.append(_Child(title, state, detail, started))
+        if children and all(child.state == "done" for child in children):
+            children = []
+        task.children = children
+        self._detail = ""
+        self._refresh_tasks()
+
     def progress(self, text: str) -> None:
         """Update the live step in place.
 
@@ -681,6 +722,30 @@ class Console:
 
     def _child_mark(self) -> str:
         return "".join(self._nest_chars())
+
+    def _child_line(self, child: _Child) -> object:
+        """One component under the active step: a check, a spinner, or a box."""
+        detail = f"  {child.detail}" if child.detail else ""
+        if child.state == "done":
+            line = Text("  ")
+            line.append(f"{self.glyphs['ok']} ", style=ANSIBLE_TEAL)
+            line.append(child.title, style=ANSIBLE_TEAL)
+            if detail:
+                line.append(detail, style=ANSIBLE_TEAL_DARK)
+            return line
+        if child.state == "failed":
+            line = Text("  ")
+            line.append(f"{self.glyphs['fail']} ", style="red")
+            line.append(child.title + detail, style="red")
+            return line
+        if child.state == "active":
+            return _NestedFlash(
+                f"{child.title}{detail}",
+                self._nest_chars(),
+                started=child.started,
+            )
+        box = "☐" if self.glyphs is UNICODE_GLYPHS else "[ ]"
+        return Text(f"  {box} {child.title}{detail}", style="dim")
 
     def _child_note(self, text: str) -> str:
         """Label-column text for a line that belongs to the step above it."""

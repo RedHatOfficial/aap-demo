@@ -152,6 +152,24 @@ def test_finished_steps_are_primary_teal_and_the_active_step_is_bold() -> None:
     assert ANSIBLE_TEAL.lower() in str(active.style).lower()
 
 
+def test_component_rows_check_off_and_then_collapse() -> None:
+    console = RecordingConsole()
+    console.tasks(["Waiting for AAP"])
+    console.step("Waiting for AAP")
+    console.set_children(
+        [
+            ("gateway", "done", ""),
+            ("controller", "active", "Running reconciliation (task 0/1)"),
+        ]
+    )
+    children = console._tasks[0].children
+    assert [child.title for child in children] == ["gateway", "controller"]
+    assert children[0].state == "done"
+    assert children[1].state == "active"
+    console.set_children([("gateway", "done", ""), ("controller", "done", "")])
+    assert console._tasks[0].children == []
+
+
 def test_wait_ticks_update_the_active_step_instead_of_scrolling() -> None:
     console = RecordingConsole()
 
