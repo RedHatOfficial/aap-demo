@@ -88,18 +88,26 @@ See [scripts/README.md](../scripts/README.md) for Linux-only details.
 
 ### Install
 
-Python 3.9 or newer. [pipx](https://pipx.pypa.io/) keeps the command isolated from the rest of your Python packages:
+Python 3.9 or newer. While `v2` is in development, install that branch directly. No checkout is required. [pipx](https://pipx.pypa.io/) keeps the command isolated from the rest of your Python packages:
 
 ```bash
-pipx install aap-demo
+pipx install "git+https://github.com/RedHatOfficial/aap-demo.git@v2"
 ```
 
-pip and uv install the same package:
+Pull the latest `v2` commit the same way:
 
 ```bash
-pip install aap-demo
-uv tool install aap-demo
+pipx install --force "git+https://github.com/RedHatOfficial/aap-demo.git@v2"
 ```
+
+pip and uv install the same branch:
+
+```bash
+pip install "git+https://github.com/RedHatOfficial/aap-demo.git@v2"
+uv tool install "git+https://github.com/RedHatOfficial/aap-demo.git@v2"
+```
+
+`pipx install aap-demo` replaces the git URL after the package is published. Check out `v2` only if you are changing the code.
 
 #### Save your pull secret
 
