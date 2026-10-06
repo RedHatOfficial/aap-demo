@@ -68,6 +68,8 @@ _ingress_ca_installed_fingerprint_macos() {
 
 _ingress_ca_in_trust_store() {
   local path="$1"
+  local leaf_path="${2:-}"
+  local hostname="${3:-}"
   local fingerprint installed_fingerprint
 
   [ -f "$path" ] || return 1
@@ -77,6 +79,10 @@ _ingress_ca_in_trust_store() {
   [ -n "$fingerprint" ] || return 1
 
   if [[ "$(uname)" == "Darwin" ]]; then
+    if [ -n "$leaf_path" ] && [ -n "$hostname" ]; then
+      _ingress_ca_macos_server_certificate_trusted "$path" "$leaf_path" "$hostname"
+      return $?
+    fi
     installed_fingerprint=$(_ingress_ca_installed_fingerprint_macos)
   else
     installed_fingerprint=$(_ingress_ca_installed_fingerprint_linux)
@@ -86,6 +92,37 @@ _ingress_ca_in_trust_store() {
   fi
 
   [ -n "$installed_fingerprint" ] && [ "$fingerprint" = "$installed_fingerprint" ]
+}
+
+_ingress_ca_macos_verification_host() {
+  local leaf="$1"
+  local san
+
+  san=$(openssl x509 -in "$leaf" -noout -text 2>/dev/null | awk '
+    /X509v3 Subject Alternative Name/ {
+      if (getline > 0 && match($0, /DNS:[^, ]+/)) {
+        print substr($0, RSTART + 4, RLENGTH - 4)
+        exit
+      }
+    }
+  ')
+  [ -n "$san" ] || return 1
+
+  case "$san" in
+    \*.*) printf 'aap-demo-cert-check.%s\n' "${san#*.}" ;;
+    *) printf '%s\n' "$san" ;;
+  esac
+}
+
+_ingress_ca_macos_server_certificate_trusted() {
+  local ca_path="$1"
+  local leaf_path="$2"
+  local hostname="$3"
+
+  [ -f "$ca_path" ] && [ -f "$leaf_path" ] && [ -n "$hostname" ] || return 1
+  openssl verify -CAfile "$ca_path" "$leaf_path" >/dev/null 2>&1 || return 1
+  security verify-cert -L -c "$leaf_path" -p ssl -s "$hostname" \
+    -k /Library/Keychains/System.keychain >/dev/null 2>&1
 }
 
 _ingress_ca_nss_db_paths() {
@@ -138,11 +175,14 @@ _ingress_ca_in_nss_store() {
 
 _ingress_ca_fully_trusted() {
   local path="$1"
+  local leaf_path="${2:-}"
+  local hostname="${3:-}"
 
-  _ingress_ca_in_trust_store "$path" || return 1
   if [[ "$(uname)" == "Darwin" ]]; then
-    return 0
+    _ingress_ca_macos_server_certificate_trusted "$path" "$leaf_path" "$hostname"
+    return $?
   fi
+  _ingress_ca_in_trust_store "$path" || return 1
   _ingress_ca_in_nss_store "$path" || return 1
 }
 
@@ -179,6 +219,8 @@ _ingress_ca_export_standalone() {
 
 _ingress_ca_export_env() {
   local ca_path="$1"
+  local leaf_path="${2:-}"
+  local hostname="${3:-}"
   local combined sys_bundle
 
   [ -f "$ca_path" ] || return 0
@@ -186,7 +228,7 @@ _ingress_ca_export_env() {
   # CURL_CA_BUNDLE / SSL_CERT_FILE replace OpenSSL's default store. After
   # update-ca-trust on Fedora/RHEL the ingress CA is already in that store, so
   # exporting the standalone PEM breaks public HTTPS (e.g. GitHub operator-sdk).
-  if _ingress_ca_in_trust_store "$ca_path"; then
+  if _ingress_ca_in_trust_store "$ca_path" "$leaf_path" "$hostname"; then
     unset CURL_CA_BUNDLE SSL_CERT_FILE REQUESTS_CA_BUNDLE
     return 0
   fi
@@ -212,6 +254,7 @@ _ingress_ca_export_env() {
 
 _fetch_ingress_ca_from_cluster() {
   local dest="$1"
+  local leaf_dest="${2:-}"
 
   # Primary: extract the CA from the router-certs-default secret chain (works without SSH)
   if command -v kubectl &>/dev/null; then
@@ -219,6 +262,13 @@ _fetch_ingress_ca_from_cluster() {
     chain=$(kubectl get secret router-certs-default -n openshift-ingress \
       -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null)
     if [ -n "$chain" ]; then
+      if [ -n "$leaf_dest" ]; then
+        echo "$chain" | awk '
+          /BEGIN CERTIFICATE/ { p=1; n++ }
+          p { print }
+          /END CERTIFICATE/ { if (p) exit }
+        ' >"$leaf_dest"
+      fi
       # The chain is leaf + CA; extract the last cert (the self-signed ingress-ca)
       echo "$chain" | awk '
         /BEGIN CERTIFICATE/ { p=1; buf="" }
@@ -318,18 +368,31 @@ _import_ingress_ca_nss() {
 
 _import_ingress_ca_macos() {
   local path="$1"
+  local leaf_path="${2:-}"
+  local hostname="${3:-}"
 
-  while sudo security delete-certificate -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null; do :; done
-  if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$path"; then
-    if security find-certificate -a -c "ingress-ca" /Library/Keychains/System.keychain &>/dev/null; then
+  if [ ! -f "$leaf_path" ] || [ -z "$hostname" ]; then
+    echo "  Cannot verify macOS TLS trust without the live router certificate" >&2
+    return 1
+  fi
+
+  if command -v osascript >/dev/null 2>&1 \
+    && osascript - "$path" <<'APPLESCRIPT'; then
+on run argv
+  set certPath to quoted form of (item 1 of argv)
+  set shellCommand to "while /usr/bin/security delete-certificate -c ingress-ca /Library/Keychains/System.keychain >/dev/null 2>&1; do :; done; /usr/bin/security add-trusted-cert -d -r trustRoot -p ssl -k /Library/Keychains/System.keychain " & certPath
+  do shell script shellCommand with administrator privileges
+end run
+APPLESCRIPT
+    if _ingress_ca_macos_server_certificate_trusted "$path" "$leaf_path" "$hostname"; then
       echo "  ✓ Ingress CA trusted (macOS keychain)"
       echo "  Fully quit Safari/Chrome and reopen the AAP URL if it still shows untrusted"
       return 0
     fi
   fi
 
-  echo "  Could not add CA to macOS keychain (admin password required)" >&2
-  echo "  Manual import: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ${path}" >&2
+  echo "  macOS does not trust the ingress CA for the live SSL certificate (authorization was cancelled or failed)" >&2
+  echo "  Retry Fix SSL (aap-demo trust-ca) to authorize the update, or remove the old ingress-ca item and trust this certificate in Keychain Access" >&2
   return 1
 }
 
@@ -361,22 +424,26 @@ _purge_ingress_ca_trust() {
 import_ingress_ca_certificate() {
   local path="$1"
   local force="${2:-false}"
+  local leaf_path="${3:-}"
+  local hostname="${4:-}"
 
   [ -f "$path" ] || return 1
   grep -q 'BEGIN CERTIFICATE' "$path" || return 1
 
-  if [ "$force" != "true" ] && _ingress_ca_fully_trusted "$path"; then
+  if [ "$force" != "true" ] && _ingress_ca_fully_trusted "$path" "$leaf_path" "$hostname"; then
     echo "  ✓ Ingress CA already trusted"
     return 0
   fi
 
-  if [ "$force" = "true" ]; then
+  # On macOS, certificate removal and replacement must share the native
+  # administrator-authorization prompt used by _import_ingress_ca_macos.
+  if [ "$force" = "true" ] && [[ "$(uname)" != "Darwin" ]]; then
     _purge_ingress_ca_trust
   fi
 
   local ok=true
   if [[ "$(uname)" == "Darwin" ]]; then
-    _import_ingress_ca_macos "$path" || ok=false
+    _import_ingress_ca_macos "$path" "$leaf_path" "$hostname" || ok=false
   else
     _ingress_ca_in_trust_store "$path" || _import_ingress_ca_linux "$path" || ok=false
     _ingress_ca_in_nss_store "$path" || _import_ingress_ca_nss "$path" || ok=false
@@ -388,16 +455,31 @@ ingress_ca_trust_status() {
   local ca_path="$1"
   local system_status="missing"
   local browser_status="n/a"
+  local live_ca_path="" leaf_path="" hostname=""
 
   if [ ! -f "$ca_path" ] || ! grep -q 'BEGIN CERTIFICATE' "$ca_path"; then
     printf "  %-18s %s\n" "Ingress CA file:" "not saved"
-    printf "  %-18s %s\n" "Browser trust:" "unknown (run aap-demo deploy or create)"
+    printf "  %-18s %s\n" "Browser trust:" "unknown (run aap-demo trust-ca)"
     return 1
   fi
 
   printf "  %-18s %s\n" "Ingress CA file:" "$ca_path"
 
-  if _ingress_ca_in_trust_store "$ca_path"; then
+  if [[ "$(uname)" == "Darwin" ]]; then
+    live_ca_path=$(mktemp)
+    leaf_path=$(mktemp)
+    if _fetch_ingress_ca_from_cluster "$live_ca_path" "$leaf_path"; then
+      hostname=$(_ingress_ca_macos_verification_host "$leaf_path" 2>/dev/null || true)
+      if [ -n "$hostname" ] && _ingress_ca_macos_server_certificate_trusted "$ca_path" "$leaf_path" "$hostname"; then
+        system_status="trusted"
+      else
+        system_status="not trusted"
+      fi
+    else
+      system_status="unknown"
+    fi
+    rm -f "$live_ca_path" "$leaf_path"
+  elif _ingress_ca_in_trust_store "$ca_path"; then
     system_status="trusted"
   else
     system_status="not trusted"
@@ -416,8 +498,8 @@ ingress_ca_trust_status() {
   printf "  %-18s %s\n" "System trust:" "$system_status"
   printf "  %-18s %s\n" "Browser trust:" "$browser_status"
 
-  if [ "$system_status" = "not trusted" ] || [[ "$browser_status" == not\ trusted* ]]; then
-    echo "  Run: aap-demo deploy   # re-import ingress CA"
+  if [ "$system_status" != "trusted" ] || [[ "$browser_status" == not\ trusted* ]]; then
+    echo "  Run: aap-demo trust-ca   # re-import ingress CA"
     if [[ "$(uname)" != "Darwin" ]]; then
       echo "  Linux browsers (Chrome/Firefox) need NSS trust — ensure nss-tools is installed"
       echo "  Manual: certutil -d sql:\$HOME/.pki/nssdb -A -t \"C,,\" -n crc-ingress-ca -i $ca_path"
@@ -428,10 +510,31 @@ ingress_ca_trust_status() {
   return 0
 }
 
+fix_ingress_ca_trust() {
+  if [ "${AAP_DEMO_TRUST_CA:-true}" = "false" ]; then
+    echo "Ingress CA trust is disabled (AAP_DEMO_TRUST_CA=false); enable trust to fix SSL." >&2
+    return 1
+  fi
+
+  case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*)
+      # The PowerShell entrypoint imports the CA into the Windows trust store
+      # after the Git Bash command succeeds.
+      echo "Windows ingress CA trust will be updated by the PowerShell wrapper."
+      return 0
+      ;;
+  esac
+
+  echo "Checking and fixing ingress certificate trust..."
+  install_ingress_ca_trust
+  ingress_ca_trust_status "$(get_ingress_ca_cert_path)"
+}
+
 _ingress_ca_cluster_fingerprint() {
+  local leaf_path="${1:-}"
   local tmp fingerprint
   tmp=$(mktemp)
-  if ! _fetch_ingress_ca_from_cluster "$tmp"; then
+  if ! _fetch_ingress_ca_from_cluster "$tmp" "$leaf_path"; then
     rm -f "$tmp"
     return 1
   fi
@@ -443,9 +546,10 @@ _ingress_ca_cluster_fingerprint() {
 
 _ingress_ca_refresh_from_cluster() {
   local ca_path="$1"
+  local leaf_path="${2:-}"
   local tmp
   tmp=$(mktemp)
-  if ! _fetch_ingress_ca_from_cluster "$tmp"; then
+  if ! _fetch_ingress_ca_from_cluster "$tmp" "$leaf_path"; then
     rm -f "$tmp"
     return 1
   fi
@@ -456,14 +560,21 @@ _ingress_ca_refresh_from_cluster() {
 
 install_ingress_ca_trust() {
   if [ "${AAP_DEMO_TRUST_CA:-true}" = "false" ]; then
+    echo "  Ingress CA trust skipped (AAP_DEMO_TRUST_CA=false)"
     return 0
   fi
 
-  local ca_path cluster_fp saved_fp=""
+  local ca_path cluster_fp saved_fp="" leaf_path="" hostname=""
   ca_path=$(get_ingress_ca_cert_path)
   mkdir -p "$(dirname "$ca_path")"
 
-  cluster_fp=$(_ingress_ca_cluster_fingerprint 2>/dev/null || true)
+  if [[ "$(uname)" == "Darwin" ]]; then
+    leaf_path=$(mktemp)
+  fi
+  cluster_fp=$(_ingress_ca_cluster_fingerprint "$leaf_path" 2>/dev/null || true)
+  if [ -n "$leaf_path" ] && [ -s "$leaf_path" ]; then
+    hostname=$(_ingress_ca_macos_verification_host "$leaf_path" 2>/dev/null || true)
+  fi
   if [ -f "$ca_path" ]; then
     saved_fp=$(_ingress_ca_fingerprint "$ca_path")
   fi
@@ -471,9 +582,13 @@ install_ingress_ca_trust() {
   # Cluster recreate issues a new ingress CA — re-trust when fingerprints differ.
   if [ -n "$cluster_fp" ] && [ "$cluster_fp" != "$saved_fp" ]; then
     echo "Trusting ingress CA..."
-    if ! _ingress_ca_refresh_from_cluster "$ca_path"; then
+    if ! _ingress_ca_refresh_from_cluster "$ca_path" "$leaf_path"; then
       echo "  Could not fetch ingress CA from cluster" >&2
+      [ -z "$leaf_path" ] || rm -f "$leaf_path"
       return 0
+    fi
+    if [ -n "$leaf_path" ] && [ -s "$leaf_path" ]; then
+      hostname=$(_ingress_ca_macos_verification_host "$leaf_path" 2>/dev/null || true)
     fi
     local import_ok=true
     case "$(uname -s)" in
@@ -482,19 +597,22 @@ install_ingress_ca_trust() {
         return 0
         ;;
     esac
-    import_ingress_ca_certificate "$ca_path" true || import_ok=false
-    _ingress_ca_export_env "$ca_path"
+    import_ingress_ca_certificate "$ca_path" true "$leaf_path" "$hostname" || import_ok=false
+    _ingress_ca_export_env "$ca_path" "$leaf_path" "$hostname"
     if [ "$import_ok" = false ]; then
       echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
       if [ -n "${CURL_CA_BUNDLE:-}" ]; then
         echo "  CLI tools can use CURL_CA_BUNDLE=$CURL_CA_BUNDLE; browsers may still warn until imported" >&2
       fi
     fi
+    [ -z "$leaf_path" ] || rm -f "$leaf_path"
     return 0
   fi
 
-  if [ -f "$ca_path" ] && _ingress_ca_fully_trusted "$ca_path"; then
-    _ingress_ca_export_env "$ca_path"
+  if [ -f "$ca_path" ] && _ingress_ca_fully_trusted "$ca_path" "$leaf_path" "$hostname"; then
+    echo "  ✓ Ingress CA already trusted"
+    _ingress_ca_export_env "$ca_path" "$leaf_path" "$hostname"
+    [ -z "$leaf_path" ] || rm -f "$leaf_path"
     return 0
   fi
 
@@ -502,13 +620,17 @@ install_ingress_ca_trust() {
 
   local tmp
   tmp=$(mktemp)
-  if _fetch_ingress_ca_from_cluster "$tmp"; then
+  if _fetch_ingress_ca_from_cluster "$tmp" "$leaf_path"; then
     mv "$tmp" "$ca_path"
     chmod 644 "$ca_path"
+    if [ -n "$leaf_path" ] && [ -s "$leaf_path" ]; then
+      hostname=$(_ingress_ca_macos_verification_host "$leaf_path" 2>/dev/null || true)
+    fi
   else
     rm -f "$tmp"
     if [ ! -f "$ca_path" ] || ! grep -q 'BEGIN CERTIFICATE' "$ca_path"; then
       echo "  Could not fetch ingress CA from cluster" >&2
+      [ -z "$leaf_path" ] || rm -f "$leaf_path"
       return 0
     fi
   fi
@@ -521,13 +643,14 @@ install_ingress_ca_trust() {
   esac
 
   local import_ok=true
-  import_ingress_ca_certificate "$ca_path" || import_ok=false
-  _ingress_ca_export_env "$ca_path"
+  import_ingress_ca_certificate "$ca_path" false "$leaf_path" "$hostname" || import_ok=false
+  _ingress_ca_export_env "$ca_path" "$leaf_path" "$hostname"
   if [ "$import_ok" = false ]; then
     echo "  ⚠ Ingress CA saved to $ca_path but automatic trust import failed" >&2
     if [ -n "${CURL_CA_BUNDLE:-}" ]; then
       echo "  CLI tools can use CURL_CA_BUNDLE=$CURL_CA_BUNDLE; browsers may still warn until imported" >&2
     fi
   fi
+  [ -z "$leaf_path" ] || rm -f "$leaf_path"
   return 0
 }

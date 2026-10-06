@@ -156,6 +156,7 @@ aap-demo diagnose            # Quick health check (cluster, storage, SCCs, pods)
 aap-demo must-gather         # Collect full diagnostics (AAP + cluster)
 aap-demo must-gather /tmp/d  # Collect to specific directory
 aap-demo repair              # Fix after sleep/wake issues
+aap-demo trust-ca            # Fix ingress certificate trust without cluster repair
 
 # Maintenance
 aap-demo clean               # Remove AAP deployment (keeps cluster)

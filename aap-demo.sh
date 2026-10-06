@@ -144,7 +144,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
@@ -602,6 +602,7 @@ COMMANDS:
     start           Start stopped cluster (re-applies CoreDNS config)
     ssh             SSH into cluster node
     repair          Repair cluster after crash
+    trust-ca        Repair ingress certificate trust only
     setup           Run setup only (storage, coredns, mkcert)
     kubeconfig      Extract and merge kubeconfig
     redeploy-all    Destroy cluster and redeploy fresh
@@ -683,6 +684,12 @@ cmd_repair() {
   echo ""
   echo "If issues persist (ImagePullBackOff, NFS/storage, wedged VM):"
   echo "  crc stop && crc start"
+}
+
+cmd_trust_ca() {
+  NAMESPACE="${NAMESPACE:-aap-operator}"
+  export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}"
+  fix_ingress_ca_trust
 }
 
 # Shared function: display cluster info for warnings
@@ -3374,6 +3381,9 @@ case "$COMMAND" in
     ;;
   repair)
     cmd_repair
+    ;;
+  trust-ca)
+    cmd_trust_ca
     ;;
   clean)
     cmd_clean
