@@ -27,6 +27,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aap_demo.cluster import aap as aap_mod
 from aap_demo.cluster import catalog_signature, coredns, olm
 from aap_demo.cluster import namespace as namespace_mod
+from aap_demo.core.console import format_elapsed
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, ClusterUnreachableError
 from aap_demo.exec import kubectl
@@ -162,12 +163,16 @@ def run(
             result.aap_name = existing
             result.skipped_existing = True
             if wait:
+                ctx.console.step("Waiting for AAP", timed=True)
+                aap_started = clock()
                 readiness = aap_mod.wait_ready(ctx, namespace=ns, sleep=sleep, clock=clock)
+                aap_elapsed = clock() - aap_started
                 result.ready, result.route, result.csv = (
                     readiness.ready,
                     readiness.route,
                     readiness.csv,
                 )
+                _report_times(ctx, None, aap_elapsed)
             return result
 
     ctx.console.step("Installing OLM")
@@ -207,7 +212,8 @@ def run(
     olm.apply_catalogsource(ctx, ns, ocp_version)
     _await_catalog(ctx, ns, sleep=sleep, clock=clock)
 
-    ctx.console.step("Installing the AAP operator")
+    ctx.console.step("Installing the AAP operator", timed=True)
+    operator_started = clock()
     ctx.console.progress(f"AAP 2.7 in {ns}")
     olm.apply_operatorgroup(ctx, ns)
     olm.apply_subscription(ctx, ns, channel)
@@ -226,19 +232,22 @@ def run(
         result.warnings.append(f"csv {csv_name} not Succeeded")
 
     ctx.console.checkpoint("AAP operator is installed")
+    operator_elapsed = clock() - operator_started
     ctx.console.step("Creating the AAP instance")
     result.aap_name = aap_mod.create_instance(ctx, cr_name=cr_name, namespace=ns, sleep=sleep)
     ctx.console.checkpoint("AAP instance created")
 
     if wait:
-        ctx.console.step("Waiting for AAP")
+        ctx.console.step("Waiting for AAP", timed=True)
+        aap_started = clock()
         readiness = aap_mod.wait_ready(ctx, namespace=ns, sleep=sleep, clock=clock)
+        aap_elapsed = clock() - aap_started
         result.ready, result.route, result.csv = (
             readiness.ready,
             readiness.route,
             readiness.csv or result.csv,
         )
-        _report_readiness(ctx, readiness, ns)
+        _report_readiness(ctx, readiness, ns, operator_elapsed, aap_elapsed)
 
     return result
 
@@ -277,7 +286,29 @@ def _await_catalog(
     )
 
 
-def _report_readiness(ctx: AppContext, readiness: aap_mod.AapReadiness, ns: str) -> None:
+def _report_times(
+    ctx: AppContext, operator_elapsed: Optional[float], aap_elapsed: Optional[float]
+) -> None:
+    """Operator install, AAP reconcile, and the sum of those two."""
+    if operator_elapsed is None and aap_elapsed is None:
+        return
+    ctx.console.out("Installation time")
+    if operator_elapsed is not None:
+        ctx.console.out(f"  Operator  {format_elapsed(operator_elapsed)}")
+    if aap_elapsed is not None:
+        ctx.console.out(f"  AAP       {format_elapsed(aap_elapsed)}")
+    measured = [value for value in (operator_elapsed, aap_elapsed) if value is not None]
+    ctx.console.out(f"  Total     {format_elapsed(sum(measured))}")
+    ctx.console.out("")
+
+
+def _report_readiness(
+    ctx: AppContext,
+    readiness: aap_mod.AapReadiness,
+    ns: str,
+    operator_elapsed: Optional[float] = None,
+    aap_elapsed: Optional[float] = None,
+) -> None:
     """Ports ``watch_aap``'s terminal summary (aap-demo.sh:2607-2634)."""
     if readiness.ready:
         ctx.console.success("AAP deployment successful!")
@@ -285,6 +316,7 @@ def _report_readiness(ctx: AppContext, readiness: aap_mod.AapReadiness, ns: str)
         ctx.console.warn("Deployment not complete after 60 minutes")
         ctx.console.out("The AAP instance is installed. Its Successful condition was not True.")
     ctx.console.out("")
+    _report_times(ctx, operator_elapsed, aap_elapsed)
     if readiness.version:
         ctx.console.out(f"Version: {readiness.version}")
     if readiness.csv:
