@@ -21,8 +21,8 @@ from aap_demo.cli import gui as gui_cli
 from aap_demo.cli._schema_args import add_schema_arguments, collect_overrides
 from aap_demo.cluster import preflight
 from aap_demo.cluster import pull_secret as pull_secret_mod
+from aap_demo.core import bash_v1, migration, schema
 from aap_demo.core import config as config_mod
-from aap_demo.core import migration, schema
 from aap_demo.core import output as output_mod
 from aap_demo.core.console import Console
 from aap_demo.core.context import AppContext
@@ -474,6 +474,7 @@ def run(
     paths = resolve_paths(environ)
     console = Console(quiet=bool(environ.get("QUIET")), env=environ)
     secrets = SecretStore()
+    bash_v1.maybe_offer(environ)
 
     # The one-time legacy migration runs before config is read, and is cheap on
     # every subsequent invocation because it checks for config.yaml first (§12.2).

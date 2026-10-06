@@ -109,6 +109,22 @@ uv tool install "git+https://github.com/RedHatOfficial/aap-demo.git@v2"
 
 `pipx install aap-demo` replaces the git URL after the package is published. Check out `v2` only if you are changing the code.
 
+`./install.sh` links `~/.local/bin/aap-demo` to the bash script. pipx installs v2 at that same path, so move or remove the old command before installing v2.
+
+```bash
+mv ~/.local/bin/aap-demo ~/.local/bin/aap-demo-v1
+```
+
+Or remove it without deleting cluster data:
+
+```bash
+rm -f ~/.local/bin/aap-demo \
+  ~/.zsh/completions/_aap-demo \
+  ~/.local/share/bash-completion/completions/aap-demo
+```
+
+If a bash `aap-demo` is still earlier on `PATH`, the first v2 command asks whether to uninstall it or rename it to `aap-demo-v1`.
+
 #### Save your pull secret
 
 Download from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret).
