@@ -15,7 +15,7 @@
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(?m)^(\s+pahCollections:\n\s+enabled:) false$'
     replace: '\1 true'
-  when: apme_pah_collections_sync_enabled | default(false) | bool
+  when: (apme_pah_collections_sync_enabled | default(false) | bool) == true
 
 - name: Note PAH collection sync left disabled  # noqa: var-naming[no-role-prefix]
   ansible.builtin.debug:
