@@ -419,6 +419,21 @@ def test_condition_line_uses_the_newest_condition() -> None:
     assert aap_mod.condition_line([]) == ""
 
 
+def test_metrics_pending_deployments_include_both_name_prefixes() -> None:
+    table = "\n".join(
+        [
+            "aap-metrics-web 0/1 1 0 1m",
+            "aap-automationmetricsservice-web 0/2 2 0 1m",
+            "automationmetricsservice-operator-controller-manager 1/1 1 1 1m",
+            "aap-gateway 1/1 1 1 1m",
+        ]
+    )
+    pending = aap_mod._pending_deploys(table, "metrics")
+    assert "web 0/1" in pending
+    assert any(item.endswith("0/2") for item in pending)
+    assert all("operator" not in item for item in pending)
+
+
 def test_deployment_line_names_workloads_that_are_not_ready() -> None:
     table = "aap-controller 0/1 1 0 6m\naap-gateway 1/1 1 1 6m\naap-web 0/2 2 0 6m\n"
     assert aap_mod.deployment_line(table) == "controller 0/1, web 0/2"

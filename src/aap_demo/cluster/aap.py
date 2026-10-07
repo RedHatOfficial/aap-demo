@@ -489,11 +489,25 @@ def reconciliation_state(conditions: List[Dict[str, Any]]) -> str:
     return "active"
 
 
+# Metrics workloads are named aap-metrics-* on some releases and
+# aap-automationmetricsservice-* on others. Operator deployments are excluded
+# by the "operator" check below.
+_METRICS_DEPLOY_PREFIXES = (
+    "aap-metrics",
+    "aap-metricsservice",
+    "aap-automationmetricsservice",
+)
+
+
 def _component_deploy(name: str, component: str) -> bool:
     if "operator" in name:
         return False
     if component == "gateway":
         return name == "aap-gateway" or name.startswith("aap-gateway-")
+    if component == "metrics":
+        return any(
+            name == prefix or name.startswith(prefix + "-") for prefix in _METRICS_DEPLOY_PREFIXES
+        )
     prefix = f"aap-{component}"
     return name == prefix or name.startswith(prefix + "-")
 

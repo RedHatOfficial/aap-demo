@@ -474,7 +474,6 @@ def run(
     paths = resolve_paths(environ)
     console = Console(quiet=bool(environ.get("QUIET")), env=environ)
     secrets = SecretStore()
-    bash_v1.maybe_offer(environ)
 
     # The one-time legacy migration runs before config is read, and is cheap on
     # every subsequent invocation because it checks for config.yaml first (§12.2).
@@ -518,6 +517,8 @@ def run(
     )
 
     quiet = bool(getattr(args, "quiet", False)) or bool(config.get("core.quiet"))
+    if not quiet:
+        bash_v1.maybe_offer(environ)
     presented = output_mod.normalize(getattr(args, "output", "rich") or "rich")
     style = "basic" if output_mod.is_structured(presented) else presented
     console = Console(quiet=quiet, style=style, env=environ)

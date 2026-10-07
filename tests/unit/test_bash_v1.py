@@ -127,6 +127,19 @@ def test_keep_is_remembered_and_not_asked_again(tmp_path: Path, monkeypatch) -> 
     assert launcher.is_file()
 
 
+def test_help_and_quiet_do_not_offer_to_remove_bash_v1(tmp_path: Path, monkeypatch) -> None:
+    from aap_demo.cli.main import run
+
+    called = []
+    monkeypatch.setattr(
+        "aap_demo.cli.main.bash_v1.maybe_offer", lambda *args, **kwargs: called.append(1)
+    )
+    env = {"HOME": str(tmp_path), "AAP_DEMO_DIR": str(tmp_path)}
+    assert run(["help"], env=env) == 0
+    assert run(["--quiet", "version"], env=env) == 0
+    assert called == []
+
+
 def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:
     launcher = tmp_path / "bin" / "aap-demo"
     launcher.parent.mkdir()
