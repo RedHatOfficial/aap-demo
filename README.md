@@ -49,7 +49,7 @@ rm -f ~/.local/bin/aap-demo \
   ~/.local/share/bash-completion/completions/aap-demo
 ```
 
-If a bash `aap-demo` is still earlier on `PATH` after install, the first v2 command asks whether to uninstall it or rename it to `aap-demo-v1`. Set `AAP_DEMO_KEEP_BASH=1` to skip that prompt.
+If a bash `aap-demo` is still earlier on `PATH` after install, the first v2 command asks whether to uninstall it or rename it to `aap-demo-v1`. Choosing keep is remembered. Set `AAP_DEMO_KEEP_BASH=1` to skip that prompt.
 
 Download a pull secret from the
 [Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
