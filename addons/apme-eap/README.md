@@ -229,6 +229,36 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 - **apme_helm_chart_version** - Override APME gateway chart version
 - **devspaces_base_url** - Enable "Open in DevSpaces" actions
 
+### Local Registry and Plugin Archives
+
+The addon publishes the bundled APME dynamic-plugin archive to the in-cluster registry before
+installing the portal Helm release. On OpenShift Local, that registry is exposed through an
+OpenShift Route, so the registry API can return redirects during blob and manifest operations.
+The publisher follows those redirects automatically.
+
+The archive is stored under the repository path expected by the portal's runtime installer:
+
+```text
+registry.apps.127.0.0.1.nip.io/apme/apme-prototype-plugins:<version>
+```
+
+This path is part of the deployment contract. If the archive is pushed to only `apme:<version>`,
+the portal can start successfully but its dynamic-plugin init container will fail with a
+`manifest unknown` error because it requests `apme/apme-prototype-plugins:<version>`.
+
+When troubleshooting a failed enablement, check the APME deployment report for the first
+registry or portal error, then verify the archive and portal rollout:
+
+```bash
+kubectl get pods -n apme
+kubectl rollout status deployment/redhat-rhaap-portal -n apme
+```
+
+The addon also uses explicit boolean comparisons for standalone Ansible `when` expressions and
+`kubectl exec` for gateway seeding. These choices keep the playbooks compatible with the strict
+conditional handling in newer Ansible releases and avoid the unavailable `kubernetes.core.k8s_exec`
+client path in the APME execution environment.
+
 ## Differences from Bash Addon
 
 | Feature | Bash Addon | Playbook Addon |
