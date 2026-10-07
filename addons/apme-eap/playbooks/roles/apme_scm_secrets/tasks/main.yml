@@ -26,14 +26,14 @@
       GitHub token configured but OAuth/App credentials not provided.
       Repository scanning will work, but OAuth authentication will not be available.
       See docs/apme-eap.md for full GitHub integration setup.
-  when: not github_full_config | bool
+  when: (github_full_config | bool) == false
 
 - name: Read GitHub App private key (full config mode)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.slurp:
     src: "{{ github_app_private_key_path }}"
   register: github_app_private_key_file
   no_log: true
-  when: github_full_config | bool
+  when: (github_full_config | bool) == true
 
 - name: Create or update secrets-scm (token-only mode)  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
@@ -52,7 +52,7 @@
       stringData:
         github-token: "{{ github_token }}"
   no_log: true
-  when: not github_full_config | bool
+  when: (github_full_config | bool) == false
 
 - name: Create or update secrets-scm (full config mode)  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
@@ -77,4 +77,4 @@
         github-app-private-key: "{{ github_app_private_key_file.content | b64decode }}"
         github-token: "{{ github_token }}"
   no_log: true
-  when: github_full_config | bool
+  when: (github_full_config | bool) == true
