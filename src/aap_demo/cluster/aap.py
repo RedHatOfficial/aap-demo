@@ -572,10 +572,14 @@ def _kubectl_json(ctx: AppContext, *args: str) -> Any:
 
 
 def _component_rows(ctx: AppContext, namespace: str) -> Optional[List[Tuple[str, str, str]]]:
-    name = instance_name(ctx, namespace) or "aap"
-    document = _kubectl_json(ctx, "aap", "-n", namespace, name)
-    if not isinstance(document, dict):
+    # List form, same as the jsonpath reads. A named get would first have to
+    # resolve metadata.name, and a short test stub for ``-o`` can answer that
+    # query with a condition value such as ``True``.
+    listed = _kubectl_json(ctx, "aap", "-n", namespace)
+    items = listed.get("items") if isinstance(listed, dict) else None
+    if not isinstance(items, list) or not items or not isinstance(items[0], dict):
         return None
+    document = items[0]
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
     status = document.get("status") if isinstance(document.get("status"), dict) else {}
     raw_conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []

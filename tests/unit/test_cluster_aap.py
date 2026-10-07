@@ -258,20 +258,24 @@ def _readiness_runner(
         stdout=deploys,
     )
     runner.ok(
-        ["kubectl", "get", "aap", "-n", NS, "aap", "-o", "json"],
+        ["kubectl", "get", "aap", "-n", NS, "-o", "json"],
         stdout=json.dumps(
             {
-                "spec": {"controller": {"disabled": False}},
-                "status": {
-                    "conditions": [
-                        {
-                            "type": "Running",
-                            "status": "True",
-                            "reason": "Running",
-                            "message": "Running reconciliation",
-                        }
-                    ]
-                },
+                "items": [
+                    {
+                        "spec": {"controller": {"disabled": False}},
+                        "status": {
+                            "conditions": [
+                                {
+                                    "type": "Running",
+                                    "status": "True",
+                                    "reason": "Running",
+                                    "message": "Running reconciliation",
+                                }
+                            ]
+                        },
+                    }
+                ]
             }
         ),
     )
