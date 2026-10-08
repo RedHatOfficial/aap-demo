@@ -64,6 +64,25 @@ export REDHAT_SUBSCRIPTION_PASSWORD="your-password"
 aap-demo deploy
 ```
 
+### Choose Subscription Interactively
+
+If you have multiple AAP subscriptions and want to choose which one to attach:
+
+```bash
+export SUBSCRIPTION_INTERACTIVE=true
+aap-demo deploy
+
+# You'll see:
+# Available Red Hat Ansible Automation Platform subscriptions:
+#
+# 1) Employee SKU (ID: 18571101)
+# 2) Red Hat Developer Subscription for Individuals (ID: 24674773)
+#
+# Select subscription number [1-2]: 2
+```
+
+**Default behavior**: Automatically selects "Red Hat Developer Subscription for Individuals" if available, otherwise uses the first valid AAP subscription.
+
 ### Non-Interactive Mode
 
 For CI/CD pipelines, use QUIET mode to skip prompts:
@@ -176,9 +195,12 @@ kubectl get pods -n aap-operator
 The addon uses direct AAP API calls to attach subscriptions - no Ansible collections or playbooks required.
 
 **API Workflow**:
-1. **PATCH** `/api/controller/v2/settings/system/` with `SUBSCRIPTIONS_USERNAME` and `SUBSCRIPTIONS_PASSWORD`
-2. AAP automatically contacts Red Hat subscription service
-3. AAP retrieves and attaches the first available Red Hat Ansible Automation Platform subscription
+1. **POST** `/api/controller/v2/config/subscriptions/` with `subscriptions_username` and `subscriptions_password`
+   - AAP contacts Red Hat subscription service
+   - Returns array of available subscriptions
+2. **Select subscription**: Filter for first "Red Hat Ansible Automation Platform" subscription with `valid_key: true`
+3. **POST** `/api/controller/v2/config/attach/` with `subscription_id`
+   - Attaches the selected subscription to AAP
 4. **GET** `/api/controller/v2/config/` to verify `license_info.valid_key == true`
 
 **Why API instead of Ansible Collection:**
@@ -201,8 +223,12 @@ aap_demo_wire() {
 
 ### API Endpoints
 
-- **Configure Credentials**: `PATCH /api/controller/v2/settings/system/`
-  - Fields: `SUBSCRIPTIONS_USERNAME`, `SUBSCRIPTIONS_PASSWORD`
+- **List Subscriptions**: `POST /api/controller/v2/config/subscriptions/`
+  - Payload: `{"subscriptions_username": "email@example.com", "subscriptions_password": "..."}`
+  - Response: Array of available subscriptions from Red Hat account
+- **Attach Subscription**: `POST /api/controller/v2/config/attach/`
+  - Payload: `{"subscription_id": "12345678"}`
+  - Response: Attaches the selected subscription to AAP
 - **Check Status**: `GET /api/controller/v2/config/`
   - Returns: `license_info` object with `valid_key`, `license_type`, `subscription_name`
 
