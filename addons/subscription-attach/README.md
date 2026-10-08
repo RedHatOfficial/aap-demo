@@ -75,8 +75,8 @@ aap-demo deploy
 # You'll see:
 # Available Red Hat Ansible Automation Platform subscriptions:
 #
-# 1) Employee SKU (ID: 18571101)
-# 2) Red Hat Developer Subscription for Individuals (ID: 24674773)
+# 1) Employee SKU (ID: 1111111)
+# 2) Red Hat Developer Subscription for Individuals (ID: 123456)
 #
 # Select subscription number [1-2]: 2
 ```
