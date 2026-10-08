@@ -30,7 +30,7 @@ The addon owns:
    ServiceAccount for explicit operator-led MCP inspection.
 3. An AAP Project and two Job Templates: one local plaibook-result bridge and
    one publication-only template, synchronized on launch and executed with the shared
-   `quay.io/cferman/plaibook-ee:latest` image. The bridge fetches the public
+   `quay.io/aknochow/plaibook-ee:latest` image. The bridge fetches the public
    `https://github.com/aknochow/ansible-plaibook.git` source at runtime from a
    tested immutable revision by default,
    invokes its `review.yml`, reads the run-scoped JSON summary, and publishes
@@ -45,7 +45,7 @@ The addon owns:
    - a separate publication node that consumes the bridge's `artifacts` and
      retries GitHub delivery without rerunning the model review.
 5. A public AAP execution environment registration for
-   `quay.io/cferman/plaibook-ee:latest`, managed idempotently by the addon so
+   `quay.io/aknochow/plaibook-ee:latest`, managed idempotently by the addon so
    PR-related AAP job templates can use the shared image without a registry
    credential. The image name and EE name are overrideable through
    `AO_PR_TESTING_EE_IMAGE` and `AO_PR_TESTING_EE_NAME`.
@@ -100,7 +100,7 @@ documentation.
 The implementation provisions the following AAP resources idempotently:
 
 - execution environment `plaibook-ee`, using the public
-  `quay.io/cferman/plaibook-ee:latest` image;
+  `quay.io/aknochow/plaibook-ee:latest` image;
 - project `aap-demo Plaibook Review`, synchronized from the aap-demo bridge
   repository; and
 - Job Template `aap-demo | Plaibook PR Review` running

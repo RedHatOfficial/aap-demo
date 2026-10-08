@@ -6,7 +6,7 @@ ao addon.
 
 The addon:
 
-- registers the public `quay.io/cferman/plaibook-ee:latest` execution
+- registers the public `quay.io/aknochow/plaibook-ee:latest` execution
   environment in AAP as `plaibook-ee` so PR checks can use the shared image
   without a local build or registry credential;
 - creates or updates an AAP Project and Job Template for the local
