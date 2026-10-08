@@ -64,7 +64,17 @@ security() {
   esac
 }
 
-# Simulate the native authorization operation changing macOS TLS trust.
+# Simulate the terminal authorization operation changing macOS keychain state.
+SUDO_CALLS=0
+sudo() {
+  SUDO_CALLS=$((SUDO_CALLS + 1))
+  case "${2:-}" in
+    delete-certificate) return 1 ;;
+    add-trusted-cert) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 osascript() {
   OSASCRIPT_CALLS=$((OSASCRIPT_CALLS + 1))
   cat >/dev/null
@@ -84,20 +94,27 @@ check() {
 }
 
 install_ingress_ca_trust >"$TMPDIR/untrusted-output" 2>&1
-check "present but TLS-untrusted CA triggers native authorization" test "$OSASCRIPT_CALLS" -eq 1
+check "present but TLS-untrusted CA triggers sudo authorization" test "$SUDO_CALLS" -eq 2
 check "repair reports that it is updating ingress CA trust" \
   grep -Fq 'Trusting ingress CA...' "$TMPDIR/untrusted-output"
-check "repair confirms trust only after TLS verification succeeds" \
-  grep -Fq 'Ingress CA trusted (macOS keychain)' "$TMPDIR/untrusted-output"
-check "TLS verification uses SSL policy and a hostname covered by the wildcard SAN" \
+if grep -Fq 'Ingress CA trusted (macOS keychain)' "$TMPDIR/untrusted-output"; then
+  check "repair does not report TLS trust for a Keychain-only CA" false
+else
+  check "repair does not report TLS trust for a Keychain-only CA" true
+fi
+check "repair reports the failed live TLS trust verification" \
+  grep -Fq 'automatic trust import failed' "$TMPDIR/untrusted-output"
+check "repair verifies the live certificate with SSL policy and wildcard hostname" \
   grep -Fxq '<-p>' "$VERIFY_ARGS" && grep -Fxq '<ssl>' "$VERIFY_ARGS" \
   && grep -Fxq '<-s>' "$VERIFY_ARGS" \
   && grep -Fxq '<aap-demo-cert-check.apps.127.0.0.1.nip.io>' "$VERIFY_ARGS"
 
 OSASCRIPT_CALLS=0
+SUDO_CALLS=0
 TEST_OS_TRUSTED=true
 install_ingress_ca_trust >"$TMPDIR/trusted-output" 2>&1
 check "TLS-trusted CA does not prompt again" test "$OSASCRIPT_CALLS" -eq 0
+check "TLS-trusted CA does not invoke sudo again" test "$SUDO_CALLS" -eq 0
 check "repair reports already-trusted CA instead of silently skipping" \
   grep -Fq 'Ingress CA already trusted' "$TMPDIR/trusted-output"
 
