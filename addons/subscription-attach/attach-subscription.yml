@@ -1,0 +1,120 @@
+---
+# Attach Red Hat Subscription to AAP
+#
+# Uses the infra.aap_configuration.controller_license role to automatically
+# lookup and attach a Red Hat subscription using developer account credentials.
+#
+# Environment variables required:
+#   AAP_HOSTNAME - AAP controller URL
+#   AAP_USERNAME - AAP admin username
+#   AAP_PASSWORD - AAP admin password
+#   REDHAT_SUBSCRIPTION_USERNAME - Red Hat account email
+#   REDHAT_SUBSCRIPTION_PASSWORD - Red Hat account password
+
+- name: Attach Red Hat Subscription to AAP
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    aap_hostname: '{{ lookup("env", "AAP_HOSTNAME") }}'
+    aap_username: '{{ lookup("env", "AAP_USERNAME") }}'
+    aap_password: '{{ lookup("env", "AAP_PASSWORD") }}'
+    aap_validate_certs: false
+
+    redhat_subscription_username: '{{ lookup("env", "REDHAT_SUBSCRIPTION_USERNAME") }}'
+    redhat_subscription_password: '{{ lookup("env", "REDHAT_SUBSCRIPTION_PASSWORD") }}'
+
+    # controller_license configuration for infra.aap_configuration role
+    controller_license:
+      use_lookup: true
+      # Default filter targets Red Hat Ansible Automation Platform with Self-Support
+      # These can be customized via environment variables if needed:
+      # subscription_name: "{{ lookup('env', 'SUBSCRIPTION_NAME') | default('Red Hat Ansible Automation Platform', true) }}"
+      # support_level: "{{ lookup('env', 'SUBSCRIPTION_SUPPORT_LEVEL') | default('Self-Support', true) }}"
+
+  tasks:
+    - name: Verify AAP credentials are set
+      ansible.builtin.assert:
+        that:
+          - aap_hostname is defined
+          - aap_hostname | length > 0
+          - aap_username is defined
+          - aap_username | length > 0
+          - aap_password is defined
+          - aap_password | length > 0
+        fail_msg: "AAP credentials not set. Please export AAP_HOSTNAME, AAP_USERNAME, AAP_PASSWORD"
+        quiet: true
+
+    - name: Verify Red Hat subscription credentials are set
+      ansible.builtin.assert:
+        that:
+          - redhat_subscription_username is defined
+          - redhat_subscription_username | length > 0
+          - redhat_subscription_password is defined
+          - redhat_subscription_password | length > 0
+        fail_msg: "Red Hat credentials not set. Please export REDHAT_SUBSCRIPTION_USERNAME, REDHAT_SUBSCRIPTION_PASSWORD"
+        quiet: true
+
+    - name: Check current subscription status
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/controller/v2/config/"
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        method: GET
+        validate_certs: "{{ aap_validate_certs }}"
+        force_basic_auth: true
+        status_code: [200, 401, 403, -1]
+      register: aap_config
+      failed_when: false
+      no_log: true
+
+    - name: Display current subscription status
+      ansible.builtin.debug:
+        msg: >-
+          AAP subscription status:
+          valid_key={{ aap_config.json.license_info.valid_key | default(false) }},
+          license_type={{ aap_config.json.license_info.license_type | default('UNLICENSED') }}
+      when:
+        - aap_config.json is defined
+        - aap_config.json.license_info is defined
+
+    - name: Skip if valid subscription already exists
+      ansible.builtin.debug:
+        msg: "✓ AAP already has a valid subscription - skipping attachment"
+      when:
+        - aap_config.json is defined
+        - aap_config.json.license_info is defined
+        - aap_config.json.license_info.valid_key | default(false)
+        - aap_config.json.license_info.license_type | default('UNLICENSED') != "UNLICENSED"
+
+    - name: Attach subscription using controller_license role
+      ansible.builtin.include_role:
+        name: infra.aap_configuration.controller_license
+      when: >
+        aap_config.json is not defined or
+        aap_config.json.license_info is not defined or
+        not (aap_config.json.license_info.valid_key | default(false)) or
+        aap_config.json.license_info.license_type | default('UNLICENSED') == "UNLICENSED"
+
+    - name: Verify subscription was attached successfully
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/controller/v2/config/"
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        method: GET
+        validate_certs: "{{ aap_validate_certs }}"
+        force_basic_auth: true
+      register: aap_config_final
+      failed_when: false
+      no_log: true
+
+    - name: Display final subscription status
+      ansible.builtin.debug:
+        msg: >-
+          ✓ Subscription attached successfully:
+          license_type={{ aap_config_final.json.license_info.license_type | default('UNKNOWN') }},
+          subscription_name={{ aap_config_final.json.license_info.subscription_name | default('N/A') }}
+      when:
+        - aap_config_final.json is defined
+        - aap_config_final.json.license_info is defined
+        - aap_config_final.json.license_info.valid_key | default(false)
