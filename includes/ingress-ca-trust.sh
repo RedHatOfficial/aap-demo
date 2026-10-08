@@ -371,28 +371,19 @@ _import_ingress_ca_macos() {
   local leaf_path="${2:-}"
   local hostname="${3:-}"
 
-  if [ ! -f "$leaf_path" ] || [ -z "$hostname" ]; then
-    echo "  Cannot verify macOS TLS trust without the live router certificate" >&2
-    return 1
-  fi
-
-  if command -v osascript >/dev/null 2>&1 \
-    && osascript - "$path" <<'APPLESCRIPT'; then
-on run argv
-  set certPath to quoted form of (item 1 of argv)
-  set shellCommand to "while /usr/bin/security delete-certificate -c ingress-ca /Library/Keychains/System.keychain >/dev/null 2>&1; do :; done; /usr/bin/security add-trusted-cert -d -r trustRoot -p ssl -k /Library/Keychains/System.keychain " & certPath
-  do shell script shellCommand with administrator privileges
-end run
-APPLESCRIPT
-    if _ingress_ca_macos_server_certificate_trusted "$path" "$leaf_path" "$hostname"; then
+  while sudo security delete-certificate -c "ingress-ca" /Library/Keychains/System.keychain 2>/dev/null; do :; done
+  if sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$path"; then
+    if security find-certificate -a -c "ingress-ca" /Library/Keychains/System.keychain &>/dev/null \
+      && { [ -z "$leaf_path" ] || [ -z "$hostname" ] \
+        || _ingress_ca_macos_server_certificate_trusted "$path" "$leaf_path" "$hostname"; }; then
       echo "  ✓ Ingress CA trusted (macOS keychain)"
       echo "  Fully quit Safari/Chrome and reopen the AAP URL if it still shows untrusted"
       return 0
     fi
   fi
 
-  echo "  macOS does not trust the ingress CA for the live SSL certificate (authorization was cancelled or failed)" >&2
-  echo "  Retry Fix SSL (aap-demo trust-ca) to authorize the update, or remove the old ingress-ca item and trust this certificate in Keychain Access" >&2
+  echo "  Could not add CA to macOS keychain (admin password required)" >&2
+  echo "  Manual import: sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ${path}" >&2
   return 1
 }
 
