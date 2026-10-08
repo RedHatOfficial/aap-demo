@@ -29,8 +29,7 @@ This addon eliminates the manual step of logging into AAP UI and registering a s
 
 - AAP deployed via `aap-demo deploy`
 - Red Hat developer account (free at [developers.redhat.com/register](https://developers.redhat.com/register))
-- Ansible collection `infra.aap_configuration` installed (automatically installed with `aap-demo`)
-- Tools: `ansible-playbook`, `kubectl`, `curl`, `jq`
+- Tools: `kubectl`, `curl`, `jq` (already required by aap-demo)
 
 ## Usage
 
@@ -157,39 +156,36 @@ If AAP already has a valid subscription, the addon skips attachment:
 
 **Solution**: Register for a free developer subscription at [developers.redhat.com/register](https://developers.redhat.com/register)
 
-### Collection Not Found
+### API Request Failed
 
 ```
-❌ ERROR: infra.aap_configuration collection not found
+❌ ERROR: Failed to configure subscription credentials in AAP
+⚠  API request failed - check AAP status
 ```
 
-**Solution**:
+**Solution**: Verify AAP is running and accessible:
 ```bash
-ansible-galaxy collection install -r requirements.yml
-```
-
-### Ansible Playbook Not Found
-
-```
-❌ ERROR: ansible-playbook not found
-```
-
-**Solution**:
-```bash
-pip install ansible-core
+aap-demo status
+kubectl get pods -n aap-operator
 ```
 
 ## Technical Details
 
-### Ansible Collection
+### AAP Subscription API
 
-The addon uses the `infra.aap_configuration.controller_license` role from the [redhat-cop/infra.aap_configuration](https://github.com/redhat-cop/infra.aap_configuration) collection.
+The addon uses direct AAP API calls to attach subscriptions - no Ansible collections or playbooks required.
 
-**Role Features**:
-- Built-in Red Hat authentication
-- Subscription lookup with configurable filters
-- Automatic manifest download and upload
-- Support for username/password or service account credentials
+**API Workflow**:
+1. **PATCH** `/api/controller/v2/settings/system/` with `SUBSCRIPTIONS_USERNAME` and `SUBSCRIPTIONS_PASSWORD`
+2. AAP automatically contacts Red Hat subscription service
+3. AAP retrieves and attaches the first available Red Hat Ansible Automation Platform subscription
+4. **GET** `/api/controller/v2/config/` to verify `license_info.valid_key == true`
+
+**Why API instead of Ansible Collection:**
+- No external dependencies (no `infra.aap_configuration` collection required)
+- Simpler implementation (direct curl calls vs. playbook execution)
+- Faster execution (no ansible-playbook overhead)
+- AAP handles all Red Hat authentication and subscription retrieval automatically
 
 ### Integration Point
 
@@ -203,24 +199,19 @@ aap_demo_wire() {
 }
 ```
 
-### Subscription Filters
-
-Default filters (can be customized in `attach-subscription.yml`):
-- **Product Name**: "Red Hat Ansible Automation Platform"
-- **Support Level**: "Self-Support" (developer subscriptions)
-
 ### API Endpoints
 
-- **Subscription Status**: `GET /api/controller/v2/config/`
-- **License Attachment**: Handled by `controller_license` role (uses internal AAP APIs)
+- **Configure Credentials**: `PATCH /api/controller/v2/settings/system/`
+  - Fields: `SUBSCRIPTIONS_USERNAME`, `SUBSCRIPTIONS_PASSWORD`
+- **Check Status**: `GET /api/controller/v2/config/`
+  - Returns: `license_info` object with `valid_key`, `license_type`, `subscription_name`
 
 ## Files
 
 ```
 addons/subscription-attach/
-├── deploy.sh                    # Main script with credential prompting
-├── attach-subscription.yml      # Ansible playbook using controller_license role
-└── README.md                    # This file
+├── deploy.sh    # Main script with credential prompting and API calls
+└── README.md    # This file
 ```
 
 **Note**: This addon is auto-enabled via `includes/addon-wire.sh` integration and does not appear in `aap-demo enable` list.
@@ -241,20 +232,16 @@ bash addons/subscription-attach/deploy.sh
 
 # Test non-interactive mode
 QUIET=true bash addons/subscription-attach/deploy.sh
-```
 
-### Playbook Syntax Check
-
-```bash
-ansible-playbook --syntax-check addons/subscription-attach/attach-subscription.yml
+# Syntax check
+bash -n addons/subscription-attach/deploy.sh
 ```
 
 ## Related Documentation
 
 - [AAP Subscription Management](https://access.redhat.com/documentation/en-us/red_hat_ansible_automation_platform)
 - [Red Hat Developer Program](https://developers.redhat.com)
-- [infra.aap_configuration Collection](https://github.com/redhat-cop/infra.aap_configuration)
-- [controller_license Role Documentation](https://github.com/redhat-cop/infra.aap_configuration/tree/devel/roles/controller_license)
+- [AAP API Documentation](https://docs.ansible.com/automation-controller/latest/html/controllerapi/)
 
 ## License
 

@@ -74,12 +74,7 @@ for tool in curl jq kubectl; do
   fi
 done
 
-# Check for ansible-playbook
-if ! command -v ansible-playbook &>/dev/null; then
-  error "ansible-playbook not found"
-  warn "Please install Ansible: pip install ansible-core"
-  exit 1
-fi
+# No additional tool requirements - uses curl and jq (already checked above)
 
 # ==============================================================================
 # CREDENTIAL MANAGEMENT
@@ -233,7 +228,9 @@ check_subscription_status() {
 # ==============================================================================
 
 attach_subscription() {
-  local aap_route aap_url aap_username aap_password playbook_path
+  local aap_route aap_url aap_username aap_password
+  local patch_payload patch_response config_response
+  local valid_key license_type subscription_name
 
   info "Attaching Red Hat subscription to AAP..."
 
@@ -253,35 +250,80 @@ attach_subscription() {
     return 1
   fi
 
-  # Export environment variables for Ansible playbook
-  export AAP_HOSTNAME="$aap_url"
-  export AAP_USERNAME="$aap_username"
-  export AAP_PASSWORD="$aap_password"
-  export REDHAT_SUBSCRIPTION_USERNAME
-  export REDHAT_SUBSCRIPTION_PASSWORD
+  # PATCH /api/controller/v2/settings/system/ with Red Hat credentials
+  info "Configuring Red Hat subscription credentials in AAP..."
 
-  # Run Ansible playbook
-  playbook_path="${SCRIPT_DIR}/attach-subscription.yml"
+  patch_payload=$(jq -n \
+    --arg username "$REDHAT_SUBSCRIPTION_USERNAME" \
+    --arg password "$REDHAT_SUBSCRIPTION_PASSWORD" \
+    '{
+      SUBSCRIPTIONS_USERNAME: $username,
+      SUBSCRIPTIONS_PASSWORD: $password
+    }')
 
-  if [ ! -f "$playbook_path" ]; then
-    error "Playbook not found: $playbook_path"
+  patch_response=$(curl -sk -u "${aap_username}:${aap_password}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "$patch_payload" \
+    "${aap_url}/api/controller/v2/settings/system/" 2>/dev/null || echo "")
+
+  if [ -z "$patch_response" ]; then
+    error "Failed to configure subscription credentials in AAP"
+    warn "API request failed - check AAP status"
     return 1
   fi
 
-  info "Running subscription attachment playbook..."
-  echo ""
-
-  if ansible-playbook "$playbook_path"; then
-    echo ""
-    info "✓ Subscription attachment complete"
-    return 0
-  else
-    echo ""
-    error "Subscription attachment failed"
-    warn "You can attach a subscription manually in AAP UI: ${aap_url}"
-    warn "Navigate to: Settings → Subscription"
+  # Check if the PATCH request was successful
+  if echo "$patch_response" | jq -e '.detail' >/dev/null 2>&1; then
+    local error_detail
+    error_detail=$(echo "$patch_response" | jq -r '.detail' 2>/dev/null || echo "Unknown error")
+    error "Failed to configure subscription credentials"
+    warn "API error: $error_detail"
     return 1
   fi
+
+  info "✓ Credentials configured - AAP is contacting Red Hat subscription service..."
+
+  # Wait for AAP to contact Red Hat and retrieve subscription
+  # This happens asynchronously, so we need to poll for the license to appear
+  info "Waiting for subscription retrieval (this may take 10-30 seconds)..."
+
+  local attempt max_attempts=15 sleep_interval=2
+  for attempt in $(seq 1 $max_attempts); do
+    sleep $sleep_interval
+
+    config_response=$(curl -sk -u "${aap_username}:${aap_password}" \
+      --connect-timeout 10 --max-time 30 \
+      "${aap_url}/api/controller/v2/config/" 2>/dev/null || echo "")
+
+    valid_key=$(echo "$config_response" | jq -r '.license_info.valid_key // false' 2>/dev/null)
+    license_type=$(echo "$config_response" | jq -r '.license_info.license_type // "UNLICENSED"' 2>/dev/null)
+
+    if [ "$valid_key" = "true" ] && [ "$license_type" != "UNLICENSED" ]; then
+      subscription_name=$(echo "$config_response" | jq -r '.license_info.subscription_name // "Unknown"' 2>/dev/null)
+      echo ""
+      info "✓ Subscription attached successfully!"
+      info "  Type: $license_type"
+      info "  Subscription: $subscription_name"
+      return 0
+    fi
+
+    # Show progress indicator
+    if [ $((attempt % 3)) -eq 0 ]; then
+      info "  Still waiting... (attempt $attempt/$max_attempts)"
+    fi
+  done
+
+  # Timeout reached
+  warn "Subscription retrieval timed out after $((max_attempts * sleep_interval)) seconds"
+  warn "This can happen if:"
+  warn "  - Red Hat credentials are incorrect"
+  warn "  - No subscription is available for this account"
+  warn "  - Network connectivity issues to Red Hat services"
+  warn ""
+  warn "You can attach a subscription manually in AAP UI: ${aap_url}"
+  warn "Navigate to: Settings → Subscription"
+  return 1
 }
 
 # ==============================================================================
