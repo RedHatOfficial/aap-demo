@@ -73,6 +73,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [029](029-windows-feature-parity.md) | Windows Feature Parity Strategy | Proposed |
 | [030](030-windows-native-addon-execution.md) | Native PowerShell Addon Execution | Superseded |
 | [031](031-windows-git-bash-wrapper.md) | Windows Git Bash Command Wrapper | Accepted |
+| [032](032-apme-local-oci-plugin-publishing.md) | APME Local OCI Plugin Publishing | Accepted |
 
 ## Creating a New ADR
 

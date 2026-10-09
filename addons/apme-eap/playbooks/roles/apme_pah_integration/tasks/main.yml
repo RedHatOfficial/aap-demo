@@ -29,13 +29,13 @@
   register: apme_pah_config_slurp
   delegate_to: localhost
   become: false
-  when: apme_pah_has_pah_config | bool
+  when: (apme_pah_has_pah_config | bool) == true
 
 - name: Parse external PAH config  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     apme_pah_external_url: "{{ (apme_pah_config_slurp.content | b64decode | from_yaml).url | default('') | trim }}"
     apme_pah_external_token: "{{ (apme_pah_config_slurp.content | b64decode | from_yaml).token | default('') | trim }}"
-  when: apme_pah_has_pah_config | bool
+  when: (apme_pah_has_pah_config | bool) == true
   no_log: true
 
 - name: Warn when setup-pah credentials are missing  # noqa: var-naming[no-role-prefix]
@@ -44,7 +44,7 @@
       No ~/.aap-demo/galaxy-token or pah-config.yml found — skipping setup-pah.
       Portal will still use AAP Automation Hub via ansible.rhaap; run
       `aap-demo enable setup-pah` to sync rh-certified collections.
-  when: not (apme_pah_credentials_available | bool)
+  when: (apme_pah_credentials_available | bool) == false
 
 - name: Configure AAP Private Automation Hub remotes (setup-pah)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.command:
@@ -58,8 +58,8 @@
   changed_when: apme_pah_setup_result.rc == 0
   failed_when: apme_pah_setup_result.rc != 0
   when:
-    - apme_pah_run_setup_pah | bool
-    - apme_pah_has_galaxy_token | bool
+    - (apme_pah_run_setup_pah | bool) == true
+    - (apme_pah_has_galaxy_token | bool) == true
 
 - name: Display setup-pah result  # noqa: var-naming[no-role-prefix]
   ansible.builtin.debug:

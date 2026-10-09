@@ -166,8 +166,8 @@ aap-demo help                # Full command reference
 
 ## Architecture
 
-Architecture decisions are documented in [docs/adr/](docs/adr/README.md) (14 ADRs covering CLI
-design, storage, OLM, addons, and cross-platform support).
+Architecture decisions are documented in [docs/adr/](docs/adr/README.md), covering CLI design,
+storage, OLM, addons, and cross-platform support.
 
 ### macOS / Linux / Windows
 

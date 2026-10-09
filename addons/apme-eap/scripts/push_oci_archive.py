@@ -14,6 +14,8 @@ import ssl
 import tarfile
 import urllib.parse
 
+REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -53,31 +55,117 @@ def request(scheme, host, port, method, path, headers=None, body=None, verify_tl
         conn.close()
 
 
+def resolve_location(scheme, host, port, location):
+    parsed = urllib.parse.urlparse(location)
+    if parsed.scheme and parsed.hostname:
+        resolved_scheme = parsed.scheme
+        resolved_host = parsed.hostname
+        resolved_port = parsed.port or (443 if resolved_scheme == "https" else 80)
+        resolved_path = parsed.path or "/"
+    else:
+        resolved_scheme = scheme
+        resolved_host = host
+        resolved_port = port
+        resolved_path = parsed.path or location
+    if parsed.query:
+        resolved_path += "?" + parsed.query
+    return resolved_scheme, resolved_host, resolved_port, resolved_path
+
+
+def redirect_location(headers):
+    return headers.get("Location") or headers.get("location")
+
+
+def request_with_redirects(scheme, host, port, method, path, headers=None, body=None, verify_tls=False):
+    current_scheme = scheme
+    current_host = host
+    current_port = port
+    current_path = path
+    for _ in range(5):
+        status, response_headers, content = request(
+            current_scheme,
+            current_host,
+            current_port,
+            method,
+            current_path,
+            headers=headers,
+            body=body,
+            verify_tls=verify_tls,
+        )
+        if status not in REDIRECT_STATUSES:
+            return status, response_headers, content
+        location = redirect_location(response_headers)
+        if not location:
+            raise RuntimeError("registry redirect did not include Location")
+        current_scheme, current_host, current_port, current_path = resolve_location(
+            current_scheme,
+            current_host,
+            current_port,
+            location,
+        )
+    raise RuntimeError("registry request redirected too many times")
+
+
 def blob_member_name(digest):
     return "blobs/sha256/" + digest.split(":", 1)[1]
 
 
 def blob_exists(scheme, host, port, path, digest, verify_tls):
-    status, _, _ = request(scheme, host, port, "HEAD", path + "/blobs/" + digest, verify_tls=verify_tls)
+    status, _, _ = request_with_redirects(
+        scheme,
+        host,
+        port,
+        "HEAD",
+        path + "/blobs/" + digest,
+        verify_tls=verify_tls,
+    )
     return status == 200
 
 
 def upload_blob(scheme, host, port, base, digest, tar, member, size, verify_tls):
     if blob_exists(scheme, host, port, base, digest, verify_tls):
         return
-    status, headers, _ = request(scheme, host, port, "POST", base + "/blobs/uploads/", headers={"Content-Length": "0"}, verify_tls=verify_tls)
+    upload_start_scheme = scheme
+    upload_start_host = host
+    upload_start_port = port
+    upload_start_path = base + "/blobs/uploads/"
+    for _ in range(5):
+        status, headers, _ = request(
+            upload_start_scheme,
+            upload_start_host,
+            upload_start_port,
+            "POST",
+            upload_start_path,
+            headers={"Content-Length": "0"},
+            verify_tls=verify_tls,
+        )
+        if status not in REDIRECT_STATUSES:
+            break
+        location = redirect_location(headers)
+        if not location:
+            raise RuntimeError("registry upload redirect did not include Location")
+        upload_start_scheme, upload_start_host, upload_start_port, upload_start_path = resolve_location(
+            upload_start_scheme,
+            upload_start_host,
+            upload_start_port,
+            location,
+        )
+    else:
+        raise RuntimeError("registry upload start redirected too many times")
     if status not in (201, 202):
         raise RuntimeError("registry upload start failed with HTTP %s" % status)
-    location = headers.get("Location") or headers.get("location")
+    location = redirect_location(headers)
     if not location:
         raise RuntimeError("registry upload response did not include Location")
-    parsed = urllib.parse.urlparse(location)
-    upload_path = parsed.path or location
-    if parsed.query:
-        upload_path += "?" + parsed.query
+    upload_scheme, upload_host, upload_port, upload_path = resolve_location(
+        upload_start_scheme,
+        upload_start_host,
+        upload_start_port,
+        location,
+    )
     upload_path += ("&" if "?" in upload_path else "?") + "digest=" + urllib.parse.quote(digest, safe=":")
 
-    conn = connection(scheme, host, port, verify_tls)
+    conn = connection(upload_scheme, upload_host, upload_port, verify_tls)
     try:
         conn.putrequest("PUT", upload_path)
         conn.putheader("Content-Length", str(size))
@@ -112,7 +200,14 @@ def main():
         manifest = json.loads(manifest_data)
         force = args.force or os.environ.get("APME_OCI_PUSH_FORCE", "").lower() in ("1", "true", "yes")
         if not force:
-            status, _, _ = request(scheme, host, port, "HEAD", base + "/manifests/" + args.tag, verify_tls=args.tls_verify)
+            status, _, _ = request_with_redirects(
+                scheme,
+                host,
+                port,
+                "HEAD",
+                base + "/manifests/" + args.tag,
+                verify_tls=args.tls_verify,
+            )
             if status == 200:
                 print("Image already exists: %s:%s" % (repository, args.tag))
                 return 0
@@ -122,7 +217,16 @@ def main():
             info = tar.getmember(member)
             upload_blob(scheme, host, port, base, digest, tar, member, info.size, args.tls_verify)
         headers = {"Content-Type": manifest_descriptor.get("mediaType", "application/vnd.oci.image.manifest.v1+json")}
-        status, _, _ = request(scheme, host, port, "PUT", base + "/manifests/" + args.tag, headers=headers, body=manifest_data, verify_tls=args.tls_verify)
+        status, _, _ = request_with_redirects(
+            scheme,
+            host,
+            port,
+            "PUT",
+            base + "/manifests/" + args.tag,
+            headers=headers,
+            body=manifest_data,
+            verify_tls=args.tls_verify,
+        )
         if status not in (200, 201, 202):
             raise RuntimeError("registry manifest upload failed with HTTP %s" % status)
     print("Published %s:%s" % (repository, args.tag))

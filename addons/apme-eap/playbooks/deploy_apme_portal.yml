@@ -92,7 +92,7 @@
       when: not (skip_plugin_push | default(false) | bool)
     - role: apme_helm_values
     - role: apme_scm_secrets
-      when: configure_github_secrets | default(false) | bool
+      when: (configure_github_secrets | default(false) | bool) == true
     - role: portal_helm_install
     - role: apme_gateway_helm
 
