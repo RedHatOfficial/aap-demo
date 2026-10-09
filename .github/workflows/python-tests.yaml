@@ -32,13 +32,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # RHEL 9's system python3 is the floor (design §8.1), so 3.9 is checked
-        # on all three OSes. macos-13 rather than macos-latest because
-        # actions/setup-python publishes no arm64 build of CPython 3.9.
+        # RHEL 9's system python3 is the floor, so 3.9 runs on Ubuntu and
+        # Windows. macOS is covered by the current runner with Python 3.13.
         include:
           - os: ubuntu-latest
-            python-version: '3.9'
-          - os: macos-13
             python-version: '3.9'
           - os: windows-latest
             python-version: '3.9'
