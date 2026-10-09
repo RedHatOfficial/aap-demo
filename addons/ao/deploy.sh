@@ -10,6 +10,8 @@ source "${SCRIPT_DIR}/lib/admin-password.sh"
 source "${SCRIPT_DIR}/lib/replica-profile.sh"
 # shellcheck source=lib/install-plan-approval.sh
 source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
+# shellcheck source=lib/operator-controller.sh
+source "${SCRIPT_DIR}/lib/operator-controller.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -464,23 +466,19 @@ resolve_cluster_domain() {
 }
 
 operator_controller_namespace() {
-  local _ns
-  for _ns in "${OLM_NAMESPACE:-}" "$NAMESPACE"; do
-    [ -z "$_ns" ] && continue
-    if kubectl get deployment automation-orchestrator-operator-controller-manager \
-      -n "$_ns" &>/dev/null; then
-      echo "$_ns"
-      return 0
-    fi
-  done
-  echo "${OLM_NAMESPACE:-$NAMESPACE}"
+  ao_operator_controller_namespace "$NAMESPACE" "${OLM_NAMESPACE:-}" "${AAP_NAMESPACE:-}"
+}
+
+operator_controller_deployment() {
+  ao_operator_controller_deployment "$NAMESPACE" "${OLM_NAMESPACE:-}" "${AAP_NAMESPACE:-}"
 }
 
 operator_is_available() {
-  local _ns
+  local _ns _deployment
   _ns=$(operator_controller_namespace)
+  _deployment=$(operator_controller_deployment)
   kubectl wait --for=condition=Available \
-    deployment/automation-orchestrator-operator-controller-manager \
+    "deployment/${_deployment}" \
     -n "$_ns" --timeout=5s &>/dev/null 2>&1
 }
 
@@ -1698,23 +1696,26 @@ done
 echo ""
 
 echo "Waiting for operator to become available..."
+_operator_ns=$(operator_controller_namespace)
+_operator_deployment=$(operator_controller_deployment)
 if ! kubectl wait --for=condition=Available \
-  deployment/automation-orchestrator-operator-controller-manager \
-  -n "$(operator_controller_namespace)" --timeout=300s 2>/dev/null; then
+  "deployment/${_operator_deployment}" \
+  -n "${_operator_ns}" --timeout=300s 2>/dev/null; then
   echo "ERROR: Operator deployment not Available after 5 minutes."
   kubectl get pods -n "$OLM_NAMESPACE" 2>/dev/null || true
   kubectl get pods -n "$NAMESPACE" 2>/dev/null || true
+  kubectl get pods -n "${_operator_ns}" 2>/dev/null || true
   exit 1
 fi
 echo "✓ Operator running"
 
 link_ao_pull_secrets_to_operator
-if kubectl get deployment automation-orchestrator-operator-controller-manager \
-  -n "$(operator_controller_namespace)" &>/dev/null; then
-  kubectl rollout restart deployment/automation-orchestrator-operator-controller-manager \
-    -n "$(operator_controller_namespace)" 2>/dev/null || true
-  kubectl rollout status deployment/automation-orchestrator-operator-controller-manager \
-    -n "$(operator_controller_namespace)" --timeout=5m 2>/dev/null || true
+if kubectl get deployment "${_operator_deployment}" \
+  -n "${_operator_ns}" &>/dev/null; then
+  kubectl rollout restart "deployment/${_operator_deployment}" \
+    -n "${_operator_ns}" 2>/dev/null || true
+  kubectl rollout status "deployment/${_operator_deployment}" \
+    -n "${_operator_ns}" --timeout=5m 2>/dev/null || true
 fi
 
 # --- Instance deploy (AutomationOrchestrator CR from GitOps manifest) ---
