@@ -4,7 +4,9 @@ Automatically attaches a Red Hat subscription to Ansible Automation Platform (AA
 
 ## Overview
 
-This addon eliminates the manual step of logging into AAP UI and registering a subscription (Settings → Subscription). It uses the `infra.aap_configuration.controller_license` role to automatically lookup and attach a Red Hat developer subscription.
+This addon eliminates the manual step of logging into AAP UI and registering a subscription (Settings → Subscription).
+It uses the `infra.aap_configuration.controller_license` role to automatically look up and attach a Red Hat
+developer subscription.
 
 ## Features
 
@@ -21,8 +23,10 @@ This addon eliminates the manual step of logging into AAP UI and registering a s
    - Saved credentials file (`~/.aap-demo/redhat-subscription-credentials`)
    - Environment variables (`REDHAT_SUBSCRIPTION_USERNAME`, `REDHAT_SUBSCRIPTION_PASSWORD`)
    - Interactive prompt (if terminal is interactive and not in QUIET mode)
-3. **Subscription Lookup**: Uses `infra.aap_configuration.controller_license` role with `use_lookup: true` to query Red Hat subscription API
-4. **Automatic Attachment**: Attaches the first matching "Red Hat Ansible Automation Platform" subscription with "Self-Support" level
+3. **Subscription Lookup**: Uses `infra.aap_configuration.controller_license` role with `use_lookup: true` to query
+   the Red Hat subscription API
+4. **Automatic Attachment**: Attaches the first matching "Red Hat Ansible Automation Platform" subscription with
+   "Self-Support" level
 5. **Verification**: Confirms subscription was attached successfully
 
 ## Prerequisites
@@ -60,7 +64,9 @@ Skip interactive prompts by setting environment variables:
 
 ```bash
 export REDHAT_SUBSCRIPTION_USERNAME="your-email@example.com"
-export REDHAT_SUBSCRIPTION_PASSWORD="your-password"
+read -r -s -p "Red Hat password: " REDHAT_SUBSCRIPTION_PASSWORD
+export REDHAT_SUBSCRIPTION_PASSWORD
+echo
 aap-demo deploy
 ```
 
@@ -81,7 +87,8 @@ aap-demo deploy
 # Select subscription number [1-2]: 2
 ```
 
-**Default behavior**: Automatically selects "Red Hat Developer Subscription for Individuals" if available, otherwise uses the first valid AAP subscription.
+**Default behavior**: Automatically selects "Red Hat Developer Subscription for Individuals" if available;
+otherwise, it uses the first valid AAP subscription.
 
 ### Non-Interactive Mode
 
@@ -183,6 +190,7 @@ If AAP already has a valid subscription, the addon skips attachment:
 ```
 
 **Solution**: Verify AAP is running and accessible:
+
 ```bash
 aap-demo status
 kubectl get pods -n aap-operator
@@ -195,6 +203,7 @@ kubectl get pods -n aap-operator
 The addon uses direct AAP API calls to attach subscriptions - no Ansible collections or playbooks required.
 
 **API Workflow**:
+
 1. **POST** `/api/controller/v2/config/subscriptions/` with `subscriptions_username` and `subscriptions_password`
    - AAP contacts Red Hat subscription service
    - Returns array of available subscriptions
@@ -204,6 +213,7 @@ The addon uses direct AAP API calls to attach subscriptions - no Ansible collect
 4. **GET** `/api/controller/v2/config/` to verify `license_info.valid_key == true`
 
 **Why API instead of Ansible Collection:**
+
 - No external dependencies (no `infra.aap_configuration` collection required)
 - Simpler implementation (direct curl calls vs. playbook execution)
 - Faster execution (no ansible-playbook overhead)
@@ -253,7 +263,9 @@ bash addons/subscription-attach/deploy.sh
 
 # Test with environment variables
 export REDHAT_SUBSCRIPTION_USERNAME="test@example.com"
-export REDHAT_SUBSCRIPTION_PASSWORD="test-password"
+read -r -s -p "Red Hat password: " REDHAT_SUBSCRIPTION_PASSWORD
+export REDHAT_SUBSCRIPTION_PASSWORD
+echo
 bash addons/subscription-attach/deploy.sh
 
 # Test non-interactive mode
