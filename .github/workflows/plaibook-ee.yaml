@@ -112,8 +112,7 @@ jobs:
           from pathlib import Path
           import re
 
-          requirements_path = Path("build/requirements.yml")
-          requirements = requirements_path.read_text(encoding="utf-8")
+          generated_files = {}
           for prefix in (
               "aknochow-openshell",
               "aknochow-claude",
@@ -123,14 +122,21 @@ jobs:
               packages = sorted(Path("build/collections").glob(f"{prefix}-*.tar.gz"))
               if len(packages) != 1:
                   raise SystemExit(f"expected one generated package for {prefix}: {packages}")
-              requirements, replacements = re.subn(
-                  rf"collections/{re.escape(prefix)}-[^\s]+\.tar\.gz",
-                  f"collections/{packages[0].name}",
-                  requirements,
-              )
-              if replacements != 1:
-                  raise SystemExit(f"expected one requirements entry for {prefix}, got {replacements}")
-          requirements_path.write_text(requirements, encoding="utf-8")
+              generated_files[prefix] = packages[0].name
+
+          for target in (Path("build/requirements.yml"), Path("execution-environment.yml")):
+              content = target.read_text(encoding="utf-8")
+              for prefix, filename in generated_files.items():
+                  content, replacements = re.subn(
+                      rf"{re.escape(prefix)}-[^\s]+\.tar\.gz",
+                      filename,
+                      content,
+                  )
+                  if replacements != 1:
+                      raise SystemExit(
+                          f"expected one {prefix} entry in {target}, got {replacements}"
+                      )
+              target.write_text(content, encoding="utf-8")
           PY
 
       - name: Generate container build context
