@@ -92,10 +92,14 @@ load_redhat_credentials_from_file() {
   if command -v yq &>/dev/null 2>&1; then
     REDHAT_SUBSCRIPTION_USERNAME=$(yq eval '.username' "$creds_file" 2>/dev/null || echo "")
     REDHAT_SUBSCRIPTION_PASSWORD=$(yq eval '.password' "$creds_file" 2>/dev/null || echo "")
+  elif command -v python3 &>/dev/null 2>&1; then
+    # Python fallback - safer than grep/sed for arbitrary input
+    REDHAT_SUBSCRIPTION_USERNAME=$(python3 -c "import yaml; print(yaml.safe_load(open('$creds_file')).get('username', ''))" 2>/dev/null || echo "")
+    REDHAT_SUBSCRIPTION_PASSWORD=$(python3 -c "import yaml; print(yaml.safe_load(open('$creds_file')).get('password', ''))" 2>/dev/null || echo "")
   else
-    # Fallback to grep/sed if yq not available
-    REDHAT_SUBSCRIPTION_USERNAME=$(grep -E '^username:' "$creds_file" | sed 's/^username: *//' || echo "")
-    REDHAT_SUBSCRIPTION_PASSWORD=$(grep -E '^password:' "$creds_file" | sed 's/^password: *//' || echo "")
+    warn "Neither yq nor python3 available for safe credential parsing"
+    warn "Install yq (brew install yq) or ensure python3 with PyYAML is available"
+    return 1
   fi
 
   if [ -n "$REDHAT_SUBSCRIPTION_USERNAME" ] && [ -n "$REDHAT_SUBSCRIPTION_PASSWORD" ]; then
@@ -144,14 +148,22 @@ prompt_redhat_credentials() {
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
-  read -r -p "Red Hat username (email) [leave empty to skip]: " REDHAT_SUBSCRIPTION_USERNAME
+  read -r -t 60 -p "Red Hat username (email) [leave empty to skip, 60s timeout]: " REDHAT_SUBSCRIPTION_USERNAME || {
+    echo ""
+    info "Prompt timed out - skipping subscription attachment"
+    return 1
+  }
 
   if [ -z "$REDHAT_SUBSCRIPTION_USERNAME" ]; then
     info "Skipping subscription attachment - you can attach manually in AAP UI (Settings → Subscription)"
     return 1
   fi
 
-  read -r -s -p "Red Hat password: " REDHAT_SUBSCRIPTION_PASSWORD
+  read -r -s -t 60 -p "Red Hat password: " REDHAT_SUBSCRIPTION_PASSWORD || {
+    echo ""
+    warn "Prompt timed out - skipping subscription attachment"
+    return 1
+  }
   echo ""
 
   if [ -z "$REDHAT_SUBSCRIPTION_PASSWORD" ]; then
@@ -316,7 +328,36 @@ attach_subscription() {
     done
 
     echo ""
-    read -r -p "Select subscription number [1-${sub_count}]: " selection
+    read -r -t 60 -p "Select subscription number [1-${sub_count}] (60s timeout): " selection || {
+      echo ""
+      warn "Selection timed out - using default (Developer subscription)"
+      selection=""
+    }
+
+    # If timeout or empty, fall back to automatic selection
+    if [ -z "$selection" ]; then
+      subscription_id=$(echo "$subscriptions_response" | jq -r '
+        ([.[] | select(
+          .product_name == "Red Hat Ansible Automation Platform" and
+          .valid_key == true and
+          (.subscription_name | contains("Developer"))
+        )] | .[0].subscription_id) //
+        ([.[] | select(
+          .product_name == "Red Hat Ansible Automation Platform" and
+          .valid_key == true
+        )] | .[0].subscription_id) //
+        empty
+      ' 2>/dev/null)
+      if [ -n "$subscription_id" ]; then
+        selected_name=$(echo "$subscriptions_response" | jq -r --arg id "$subscription_id" '.[] | select(.subscription_id == $id) | .subscription_name' 2>/dev/null)
+        info "Auto-selected: $selected_name"
+        # Skip to attach step
+        return 0
+      else
+        error "No valid subscription available"
+        return 1
+      fi
+    fi
 
     if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "$sub_count" ]; then
       error "Invalid selection: $selection"
