@@ -17,7 +17,14 @@ if grep -A4 -F 'ansible-builder create' "$WORKFLOW" | grep -Fq -- '--container-r
 fi
 grep -Fq 'quay.io/aapdemo/plaibook-ee' "$WORKFLOW"
 grep -Fq 'docker/login-action@v3' "$WORKFLOW"
-grep -Fq 'push: ${{ github.event_name != '\''pull_request'\'' }}' "$WORKFLOW"
+grep -Fq 'docker build' "$WORKFLOW"
+grep -Fq 'docker push' "$WORKFLOW"
+if grep -Eq 'docker/(setup-buildx|build-push)-action' "$WORKFLOW"; then
+  echo 'EE CI must use the runner Docker engine without external BuildKit bootstrap' >&2
+  exit 1
+fi
+grep -Fq 'GITHUB_EVENT_NAME' "$WORKFLOW"
+grep -Fq "[[ \"\$GITHUB_EVENT_NAME\" != 'pull_request' ]]" "$WORKFLOW"
 grep -Fq 'secrets.QUAY_TOKEN' "$WORKFLOW"
 
 if grep -R -E 'quay.io/(aknochow|cferman)/plaibook-ee' \
