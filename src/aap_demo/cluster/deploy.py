@@ -172,6 +172,7 @@ def run(
                     readiness.route,
                     readiness.csv,
                 )
+                _finish_wait(ctx, readiness)
                 _report_times(ctx, None, aap_elapsed)
             return result
 
@@ -247,6 +248,7 @@ def run(
             readiness.route,
             readiness.csv or result.csv,
         )
+        _finish_wait(ctx, readiness)
         _report_readiness(ctx, readiness, ns, operator_elapsed, aap_elapsed)
 
     return result
@@ -284,6 +286,12 @@ def _await_catalog(
         f"CatalogSource not ready after {catalog_signature.timeout_seconds(ctx)}s",
         hint=(f"Check: kubectl describe pod -n {ns} -l {catalog_signature.CATALOG_SELECTOR}"),
     )
+
+
+def _finish_wait(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:
+    """Check off the timed wait so its duration freezes when ``wait_ready`` returns."""
+    note = "AAP is ready" if readiness.ready else "AAP did not become ready"
+    ctx.console.checkpoint(note)
 
 
 def _report_times(
