@@ -734,9 +734,11 @@ class Console:
                 index = len(self._tasks) - 1
             task = self._tasks[index]
             task.state = "active"
-            if timed:
-                task.timed = True
-                task.started = time.monotonic()
+            # The same title can be started again. timed=False must drop a
+            # previous run's clock, or the spinner keeps the old duration.
+            task.timed = timed
+            task.elapsed = 0.0
+            task.started = time.monotonic() if timed else 0.0
             self._active = index
             self._detail = ""
             # Paint the spinner before the next blocking command.

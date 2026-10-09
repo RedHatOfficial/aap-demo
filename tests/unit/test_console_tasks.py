@@ -174,6 +174,22 @@ def test_timed_step_keeps_elapsed_on_the_spinner_and_the_finished_line() -> None
     assert "1m 0" in done.plain
 
 
+def test_step_without_timed_clears_a_previous_clock() -> None:
+    console = RecordingConsole()
+    console.tasks(["Installing the AAP operator"])
+    console.step("Installing the AAP operator", timed=True)
+    console._tasks[0].started = time.monotonic() - 65
+    console.checkpoint("AAP operator is installed")
+    console.step("Installing the AAP operator")
+    active = console._task_mark(console._tasks[0])[1]
+    assert "Installing the AAP operator" in active.plain
+    assert "m " not in active.plain
+    assert not console._tasks[0].timed
+    console.checkpoint("AAP operator is installed")
+    done = console._task_mark(console._tasks[0])[1]
+    assert "m " not in done.plain
+
+
 def test_installation_time_reports_operator_aap_and_total(app_ctx) -> None:
     from aap_demo.cluster.deploy import _report_times
 
