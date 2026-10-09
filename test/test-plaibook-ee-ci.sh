@@ -15,6 +15,7 @@ grep -Fq 'Prepare generated EE build assets' "$WORKFLOW"
 grep -Fq 'ansible-galaxy collection build' "$WORKFLOW"
 grep -Fq 'ssh_proxy.py' "$WORKFLOW"
 grep -Fq 'build/requirements.yml' "$WORKFLOW"
+grep -Fq 'execution-environment.yml' "$WORKFLOW"
 if grep -A4 -F 'ansible-builder create' "$WORKFLOW" | grep -Fq -- '--container-runtime'; then
   echo 'ansible-builder create must not receive --container-runtime' >&2
   exit 1
