@@ -104,6 +104,42 @@ def test_offer_rename_and_keep(tmp_path: Path) -> None:
     assert any("aap-demo-v1" in line for line in output)
 
 
+def test_keep_is_remembered_and_not_asked_again(tmp_path: Path, monkeypatch) -> None:
+    launcher = tmp_path / "bin" / "aap-demo"
+    launcher.parent.mkdir()
+    _bash_script(launcher)
+    monkeypatch.setattr(bash_v1.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(bash_v1.sys.stdout, "isatty", lambda: True)
+    calls = {"n": 0}
+    real = bash_v1.offer_cleanup
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(bash_v1, "offer_cleanup", counting)
+    env = {"PATH": str(launcher.parent), "HOME": str(tmp_path)}
+    bash_v1.maybe_offer(env, input_func=lambda _prompt: "k")
+    bash_v1.maybe_offer(env, input_func=lambda _prompt: "k")
+
+    assert calls["n"] == 1
+    assert bash_v1.keep_marker(env).is_file()
+    assert launcher.is_file()
+
+
+def test_help_and_quiet_do_not_offer_to_remove_bash_v1(tmp_path: Path, monkeypatch) -> None:
+    from aap_demo.cli.main import run
+
+    called = []
+    monkeypatch.setattr(
+        "aap_demo.cli.main.bash_v1.maybe_offer", lambda *args, **kwargs: called.append(1)
+    )
+    env = {"HOME": str(tmp_path), "AAP_DEMO_DIR": str(tmp_path)}
+    assert run(["help"], env=env) == 0
+    assert run(["--quiet", "version"], env=env) == 0
+    assert called == []
+
+
 def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:
     launcher = tmp_path / "bin" / "aap-demo"
     launcher.parent.mkdir()

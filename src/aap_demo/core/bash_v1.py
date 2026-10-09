@@ -114,21 +114,40 @@ def offer_cleanup(
                 stream.write(f"Renamed {shown} to {_display(destination, home)}\n")
                 log.append(f"renamed {destination}")
         else:
-            stream.write(f"Left {shown} on PATH\n")
+            stream.write(f"Left {shown} on PATH. This choice is remembered.\n")
             log.append(f"kept {launcher}")
     return log
 
 
-def maybe_offer(env: Mapping[str, str], *, our: Optional[Path] = None) -> None:
+def keep_marker(env: Mapping[str, str]) -> Path:
+    """Set when the user chooses to leave the bash v1 command on PATH."""
+    from aap_demo.core.paths import resolve_paths
+
+    return resolve_paths(env).state_dir / "bash-v1-kept"
+
+
+def maybe_offer(
+    env: Mapping[str, str],
+    *,
+    our: Optional[Path] = None,
+    input_func: Callable[[str], str] = input,
+) -> None:
     """Prompt on an interactive terminal. Quiet and non-tty runs do nothing."""
     if env.get("QUIET") or env.get("AAP_DEMO_KEEP_BASH"):
+        return
+    if keep_marker(env).is_file():
         return
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         return
     home = Path(env.get("HOME") or Path.home())
     launchers = bash_launchers(env, our=our if our is not None else Path(sys.argv[0]))
-    if launchers:
-        offer_cleanup(launchers, home)
+    if not launchers:
+        return
+    log = offer_cleanup(launchers, home, input_func=input_func)
+    if any(entry.startswith("kept ") for entry in log):
+        marker = keep_marker(env)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("kept\n", encoding="utf-8")
 
 
 def destination_of(path: Path) -> Path:

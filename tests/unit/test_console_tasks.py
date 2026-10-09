@@ -167,6 +167,8 @@ def test_component_rows_check_off_and_then_collapse() -> None:
     assert children[0].state == "done"
     assert children[1].state == "active"
     console.set_children([("gateway", "done", ""), ("controller", "done", "")])
+    assert [child.state for child in console._tasks[0].children] == ["done", "done"]
+    console.checkpoint("AAP deployment successful!")
     assert console._tasks[0].children == []
 
 

@@ -258,20 +258,25 @@ def _readiness_runner(
         stdout=deploys,
     )
     runner.ok(
-        ["kubectl", "get", "aap", "-n", NS, "aap", "-o", "json"],
+        ["kubectl", "get", "aap", "-n", NS, "-o", "json"],
         stdout=json.dumps(
             {
-                "spec": {"controller": {"disabled": False}},
-                "status": {
-                    "conditions": [
-                        {
-                            "type": "Running",
-                            "status": "True",
-                            "reason": "Running",
-                            "message": "Running reconciliation",
-                        }
-                    ]
-                },
+                "items": [
+                    {
+                        "metadata": {"name": "aap"},
+                        "spec": {"controller": {"disabled": False}},
+                        "status": {
+                            "conditions": [
+                                {
+                                    "type": "Running",
+                                    "status": "True",
+                                    "reason": "Running",
+                                    "message": "Running reconciliation",
+                                }
+                            ]
+                        },
+                    }
+                ]
             }
         ),
     )
@@ -361,6 +366,121 @@ def _readiness_runner(
     return runner
 
 
+def test_component_rows_follow_the_named_instance_not_list_order(app_ctx) -> None:
+    runner = FakeRunner()
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "json"],
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "other"},
+                        "spec": {"hub": {"disabled": False}},
+                        "status": {"conditions": []},
+                    },
+                    {
+                        "metadata": {"name": "aap"},
+                        "spec": {"controller": {"disabled": False}},
+                        "status": {
+                            "conditions": [
+                                {
+                                    "type": "Running",
+                                    "status": "True",
+                                    "message": "Running reconciliation",
+                                }
+                            ]
+                        },
+                    },
+                ]
+            }
+        ),
+    )
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "jsonpath={.items[0].metadata.name}"],
+        stdout="aap",
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "aap",
+            "-n",
+            NS,
+            "-o",
+            'jsonpath={.items[0].status.conditions[?(@.type=="Successful")].status}',
+        ],
+        stdout="False",
+    )
+    runner.ok(
+        ["kubectl", "get", "automationcontroller", "-n", NS, "-o", "json"],
+        stdout=json.dumps({"items": []}),
+    )
+    runner.ok(["kubectl", "get", "deploy", "-n", NS, "--no-headers"], stdout="")
+    app_ctx.runner = runner
+
+    rows = aap_mod._component_rows(app_ctx, NS)
+
+    assert [name for name, _state, _detail in rows or []] == ["gateway", "controller"]
+
+
+def test_component_rows_default_to_aap_when_the_name_lookup_is_empty(app_ctx) -> None:
+    runner = FakeRunner()
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "json"],
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "other"},
+                        "spec": {"hub": {"disabled": False}},
+                        "status": {"conditions": []},
+                    },
+                    {
+                        "metadata": {"name": "aap"},
+                        "spec": {"controller": {"disabled": False}},
+                        "status": {
+                            "conditions": [
+                                {
+                                    "type": "Running",
+                                    "status": "True",
+                                    "message": "Running reconciliation",
+                                }
+                            ]
+                        },
+                    },
+                ]
+            }
+        ),
+    )
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "jsonpath={.items[0].metadata.name}"],
+        stdout="",
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "aap",
+            "-n",
+            NS,
+            "-o",
+            'jsonpath={.items[0].status.conditions[?(@.type=="Successful")].status}',
+        ],
+        stdout="False",
+    )
+    runner.ok(
+        ["kubectl", "get", "automationcontroller", "-n", NS, "-o", "json"],
+        stdout=json.dumps({"items": []}),
+    )
+    runner.ok(["kubectl", "get", "deploy", "-n", NS, "--no-headers"], stdout="")
+    app_ctx.runner = runner
+
+    rows = aap_mod._component_rows(app_ctx, NS)
+
+    assert rows is not None
+    assert [name for name, _state, _detail in rows] == ["gateway", "controller"]
+
+
 def test_a_terminal_reconcile_checks_off_even_when_successful_is_false() -> None:
     rows = aap_mod.build_component_rows(
         {"controller": {"disabled": False}, "hub": {"disabled": True}},
@@ -413,6 +533,21 @@ def test_condition_line_uses_the_newest_condition() -> None:
     }
     assert aap_mod.condition_line([older, newer]) == "Running: Running reconciliation"
     assert aap_mod.condition_line([]) == ""
+
+
+def test_metrics_pending_deployments_include_both_name_prefixes() -> None:
+    table = "\n".join(
+        [
+            "aap-metrics-web 0/1 1 0 1m",
+            "aap-automationmetricsservice-web 0/2 2 0 1m",
+            "automationmetricsservice-operator-controller-manager 1/1 1 1 1m",
+            "aap-gateway 1/1 1 1 1m",
+        ]
+    )
+    pending = aap_mod._pending_deploys(table, "metrics")
+    assert "web 0/1" in pending
+    assert any(item.endswith("0/2") for item in pending)
+    assert all("operator" not in item for item in pending)
 
 
 def test_deployment_line_names_workloads_that_are_not_ready() -> None:

@@ -489,11 +489,25 @@ def reconciliation_state(conditions: List[Dict[str, Any]]) -> str:
     return "active"
 
 
+# Metrics workloads are named aap-metrics-* on some releases and
+# aap-automationmetricsservice-* on others. Operator deployments are excluded
+# by the "operator" check below.
+_METRICS_DEPLOY_PREFIXES = (
+    "aap-metrics",
+    "aap-metricsservice",
+    "aap-automationmetricsservice",
+)
+
+
 def _component_deploy(name: str, component: str) -> bool:
     if "operator" in name:
         return False
     if component == "gateway":
         return name == "aap-gateway" or name.startswith("aap-gateway-")
+    if component == "metrics":
+        return any(
+            name == prefix or name.startswith(prefix + "-") for prefix in _METRICS_DEPLOY_PREFIXES
+        )
     prefix = f"aap-{component}"
     return name == prefix or name.startswith(prefix + "-")
 
@@ -571,10 +585,31 @@ def _kubectl_json(ctx: AppContext, *args: str) -> Any:
     return parsed
 
 
+def _aap_named(items: List[Any], name: str) -> Optional[Dict[str, Any]]:
+    """The list entry for ``name``. List order is not the selected instance."""
+    if not name:
+        return None
+    matches = [
+        item
+        for item in items
+        if isinstance(item, dict) and str((item.get("metadata") or {}).get("name") or "") == name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def _component_rows(ctx: AppContext, namespace: str) -> Optional[List[Tuple[str, str, str]]]:
-    name = instance_name(ctx, namespace) or "aap"
-    document = _kubectl_json(ctx, "aap", "-n", namespace, name)
-    if not isinstance(document, dict):
+    # List, then pick ``instance_name``. A named get would use that string as
+    # the resource name, and a short test stub for ``-o`` can answer the name
+    # query with a condition value such as ``True``.
+    listed = _kubectl_json(ctx, "aap", "-n", namespace)
+    items = listed.get("items") if isinstance(listed, dict) else None
+    if not isinstance(items, list):
+        return None
+    # An empty name lookup keeps the previous default resource, ``aap``.
+    document = _aap_named(items, instance_name(ctx, namespace) or "aap")
+    if document is None:
         return None
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
     status = document.get("status") if isinstance(document.get("status"), dict) else {}

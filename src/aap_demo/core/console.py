@@ -481,6 +481,9 @@ class Console:
         if task.state == "active":
             task.state = "done"
             task.note = note or task.title
+            # The component list is only for the live wait. Checking the parent
+            # off collapses it.
+            task.children = []
         self._detail = ""
         self._active = None
 
@@ -649,8 +652,8 @@ class Console:
         """Nested component rows on the active step.
 
         Each row is ``(title, state, detail)`` with state ``active``, ``done``,
-        ``failed``, or ``pending``. When every row is done the list is cleared,
-        so a finished wait collapses back to the parent step.
+        ``failed``, or ``pending``. Finished rows stay visible until the parent
+        step is checked off, which collapses the list.
         """
         if self.quiet or self._active is None:
             return
@@ -664,8 +667,6 @@ class Console:
             if prior is not None and prior.state == state:
                 started = prior.started
             children.append(_Child(title, state, detail, started))
-        if children and all(child.state == "done" for child in children):
-            children = []
         task.children = children
         self._detail = ""
         self._refresh_tasks()
