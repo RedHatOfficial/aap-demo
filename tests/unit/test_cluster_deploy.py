@@ -193,13 +193,17 @@ def test_unreachable_cluster_fails_before_any_mutation(app_ctx, healthy) -> None
 
 
 def test_existing_instance_short_circuits_unless_forced(app_ctx, healthy) -> None:
-    healthy._rules.insert(
-        0,
-        (
-            ("kubectl", "get", "aap", "-n", NS),
-            CompletedCommand(argv=(), returncode=0, stdout="NAME   STATUS\naap    Successful\n"),
-        ),
+    listing = (
+        ("kubectl", "get", "aap", "-n", NS),
+        CompletedCommand(argv=(), returncode=0, stdout="NAME   STATUS\naap    Successful\n"),
     )
+    # Behind the jsonpath rules, so those reads keep their own stdout.
+    bare = next(
+        i
+        for i, (prefix, _result) in enumerate(healthy._rules)
+        if prefix == ("kubectl", "get", "aap")
+    )
+    healthy._rules.insert(bare, listing)
     result = _run(app_ctx)
     assert result.skipped_existing is True
     assert result.aap_name == "aap"
