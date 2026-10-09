@@ -60,7 +60,7 @@ upstream `aknochow/ansible-plaibook` execution-environment definition and
 publishes `latest`, an upstream source SHA tag, and a UTC build tag to
 `quay.io/aapdemo/plaibook-ee`. It runs for relevant changes, checks upstream
 `main` daily, and can be run manually with a different upstream ref. Configure
-the repository secrets `QUAY_USERNAME` and `QUAY_TOKEN` for Quay.io; pull
+the repository secrets `QUAY_USERNAME` and `QUAY_PASSWORD` for Quay.io; pull
 requests build without publishing.
 
 The bridge project and Job Template can also be overridden. The bridge project
