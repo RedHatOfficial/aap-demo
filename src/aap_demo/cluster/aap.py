@@ -607,7 +607,8 @@ def _component_rows(ctx: AppContext, namespace: str) -> Optional[List[Tuple[str,
     items = listed.get("items") if isinstance(listed, dict) else None
     if not isinstance(items, list):
         return None
-    document = _aap_named(items, instance_name(ctx, namespace))
+    # An empty name lookup keeps the previous default resource, ``aap``.
+    document = _aap_named(items, instance_name(ctx, namespace) or "aap")
     if document is None:
         return None
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}

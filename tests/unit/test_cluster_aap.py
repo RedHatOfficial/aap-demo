@@ -423,6 +423,64 @@ def test_component_rows_follow_the_named_instance_not_list_order(app_ctx) -> Non
     assert [name for name, _state, _detail in rows or []] == ["gateway", "controller"]
 
 
+def test_component_rows_default_to_aap_when_the_name_lookup_is_empty(app_ctx) -> None:
+    runner = FakeRunner()
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "json"],
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "other"},
+                        "spec": {"hub": {"disabled": False}},
+                        "status": {"conditions": []},
+                    },
+                    {
+                        "metadata": {"name": "aap"},
+                        "spec": {"controller": {"disabled": False}},
+                        "status": {
+                            "conditions": [
+                                {
+                                    "type": "Running",
+                                    "status": "True",
+                                    "message": "Running reconciliation",
+                                }
+                            ]
+                        },
+                    },
+                ]
+            }
+        ),
+    )
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "jsonpath={.items[0].metadata.name}"],
+        stdout="",
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "aap",
+            "-n",
+            NS,
+            "-o",
+            'jsonpath={.items[0].status.conditions[?(@.type=="Successful")].status}',
+        ],
+        stdout="False",
+    )
+    runner.ok(
+        ["kubectl", "get", "automationcontroller", "-n", NS, "-o", "json"],
+        stdout=json.dumps({"items": []}),
+    )
+    runner.ok(["kubectl", "get", "deploy", "-n", NS, "--no-headers"], stdout="")
+    app_ctx.runner = runner
+
+    rows = aap_mod._component_rows(app_ctx, NS)
+
+    assert rows is not None
+    assert [name for name, _state, _detail in rows] == ["gateway", "controller"]
+
+
 def test_a_terminal_reconcile_checks_off_even_when_successful_is_false() -> None:
     rows = aap_mod.build_component_rows(
         {"controller": {"disabled": False}, "hub": {"disabled": True}},
