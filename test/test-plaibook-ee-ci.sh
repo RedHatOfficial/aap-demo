@@ -25,7 +25,7 @@ if grep -Eq 'docker/(setup-buildx|build-push)-action' "$WORKFLOW"; then
 fi
 grep -Fq 'GITHUB_EVENT_NAME' "$WORKFLOW"
 grep -Fq "[[ \"\$GITHUB_EVENT_NAME\" != 'pull_request' ]]" "$WORKFLOW"
-grep -Fq 'secrets.QUAY_TOKEN' "$WORKFLOW"
+grep -Fq 'secrets.QUAY_PASSWORD' "$WORKFLOW"
 
 if grep -R -E 'quay.io/(aknochow|cferman)/plaibook-ee' \
   "$ROOT_DIR/addons/ao-pr-testing" "$ROOT_DIR/docs/adr/024-ao-pr-testing-addon.md"; then
