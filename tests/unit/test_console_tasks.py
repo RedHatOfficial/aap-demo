@@ -152,6 +152,55 @@ def test_finished_steps_are_primary_teal_and_the_active_step_is_bold() -> None:
     assert ANSIBLE_TEAL.lower() in str(active.style).lower()
 
 
+def test_format_elapsed_compacts_hours_minutes_and_seconds() -> None:
+    from aap_demo.core.console import format_elapsed
+
+    assert format_elapsed(0) == "0s"
+    assert format_elapsed(65) == "1m 05s"
+    assert format_elapsed(3661) == "1h 01m 01s"
+
+
+def test_timed_step_keeps_elapsed_on_the_spinner_and_the_finished_line() -> None:
+    console = RecordingConsole()
+    console.tasks(["Installing the AAP operator", "Waiting for AAP"])
+    console.step("Installing the AAP operator", timed=True)
+    console._tasks[0].started = time.monotonic() - 65
+    active = console._task_mark(console._tasks[0])[1]
+    assert "Installing the AAP operator" in active.plain
+    assert "1m 0" in active.plain
+    console.checkpoint("AAP operator is installed")
+    done = console._task_mark(console._tasks[0])[1]
+    assert "AAP operator is installed" in done.plain
+    assert "1m 0" in done.plain
+
+
+def test_step_without_timed_clears_a_previous_clock() -> None:
+    console = RecordingConsole()
+    console.tasks(["Installing the AAP operator"])
+    console.step("Installing the AAP operator", timed=True)
+    console._tasks[0].started = time.monotonic() - 65
+    console.checkpoint("AAP operator is installed")
+    console.step("Installing the AAP operator")
+    active = console._task_mark(console._tasks[0])[1]
+    assert "Installing the AAP operator" in active.plain
+    assert "m " not in active.plain
+    assert not console._tasks[0].timed
+    console.checkpoint("AAP operator is installed")
+    done = console._task_mark(console._tasks[0])[1]
+    assert "m " not in done.plain
+
+
+def test_installation_time_reports_operator_aap_and_total(app_ctx) -> None:
+    from aap_demo.cluster.deploy import _report_times
+
+    _report_times(app_ctx, 90, 125)
+    text = app_ctx.console.stdout
+    assert "Installation time" in text
+    assert "Operator  1m 30s" in text
+    assert "AAP       2m 05s" in text
+    assert "Total     3m 35s" in text
+
+
 def test_component_rows_check_off_and_then_collapse() -> None:
     console = RecordingConsole()
     console.tasks(["Waiting for AAP"])

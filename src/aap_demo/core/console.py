@@ -131,6 +131,18 @@ class _Child:
     started: float = 0.0
 
 
+def format_elapsed(seconds: float) -> str:
+    """Compact duration: ``12s``, ``4m 02s``, or ``1h 03m 04s``."""
+    total = max(0, int(seconds))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
 @dataclass
 class _Task:
     title: str
@@ -138,6 +150,9 @@ class _Task:
     note: str = ""
     notes: List[str] = field(default_factory=list)
     children: List[_Child] = field(default_factory=list)
+    timed: bool = False
+    started: float = 0.0
+    elapsed: float = 0.0
 
 
 class _Travel:
@@ -346,12 +361,20 @@ class Console:
             )
         return (self._spinner("parent"), Text(self._title, style=ANSIBLE_TEAL))
 
+    def _timed_label(self, task: "_Task", text: str, *, style: str) -> Text:
+        label = Text(text, style=style)
+        if not task.timed or not task.started:
+            return label
+        seconds = task.elapsed if task.state == "done" else time.monotonic() - task.started
+        label.append(f"  {format_elapsed(seconds)}", style=ANSIBLE_TEAL)
+        return label
+
     def _task_mark(self, task: "_Task") -> Tuple[object, object]:
         if task.state == "done":
             # Finished steps stay primary teal, and they are not bold.
             return (
                 Text(self.glyphs["ok"], style=ANSIBLE_TEAL),
-                Text(task.note or task.title, style=ANSIBLE_TEAL),
+                self._timed_label(task, task.note or task.title, style=ANSIBLE_TEAL),
             )
         if task.state == "failed":
             return (
@@ -359,7 +382,10 @@ class Console:
                 Text(task.note or task.title, style="red"),
             )
         if task.state == "active":
-            return (self._spinner("active"), Text(task.title, style=_TEAL_BOLD))
+            return (
+                self._spinner("active"),
+                self._timed_label(task, task.title, style=_TEAL_BOLD),
+            )
         box = "☐" if self.glyphs is UNICODE_GLYPHS else "[ ]"
         return (Text(box, style="dim"), Text(task.title, style="dim"))
 
@@ -484,6 +510,8 @@ class Console:
             # The component list is only for the live wait. Checking the parent
             # off collapses it.
             task.children = []
+            if task.timed and task.started:
+                task.elapsed = time.monotonic() - task.started
         self._detail = ""
         self._active = None
 
@@ -695,7 +723,7 @@ class Console:
             return
         self.info(text)
 
-    def step(self, text: str) -> None:
+    def step(self, text: str, *, timed: bool = False) -> None:
         if self.quiet:
             return
         if self._tasks:
@@ -704,7 +732,13 @@ class Console:
             if index is None:
                 self._tasks.append(_Task(text))
                 index = len(self._tasks) - 1
-            self._tasks[index].state = "active"
+            task = self._tasks[index]
+            task.state = "active"
+            # The same title can be started again. timed=False must drop a
+            # previous run's clock, or the spinner keeps the old duration.
+            task.timed = timed
+            task.elapsed = 0.0
+            task.started = time.monotonic() if timed else 0.0
             self._active = index
             self._detail = ""
             # Paint the spinner before the next blocking command.

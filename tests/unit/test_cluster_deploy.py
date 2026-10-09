@@ -123,6 +123,10 @@ def _run(app_ctx, **kwargs):
     return deploy_mod.run(app_ctx, sleep=clock.sleep, clock=clock, **kwargs)
 
 
+def _wait_task(app_ctx):
+    return next(task for task in app_ctx.console._tasks if task.title == "Waiting for AAP")
+
+
 # ---------------------------------------------------------------------------
 # Happy path and ordering
 # ---------------------------------------------------------------------------
@@ -135,6 +139,8 @@ def test_healthy_deploy_reaches_a_ready_aap(app_ctx, healthy) -> None:
     assert result.csv == "aap-operator.v2.7.0"
     assert result.route == "aap-aap-operator.apps.127.0.0.1.nip.io"
     assert "AAP deployment successful" in app_ctx.console.stdout
+    assert ("Waiting for AAP", "done") in app_ctx.console.task_states()
+    assert _wait_task(app_ctx).note == "AAP is ready"
 
 
 def test_deploy_order_is_bashs(app_ctx, healthy) -> None:
@@ -187,18 +193,24 @@ def test_unreachable_cluster_fails_before_any_mutation(app_ctx, healthy) -> None
 
 
 def test_existing_instance_short_circuits_unless_forced(app_ctx, healthy) -> None:
-    healthy._rules.insert(
-        0,
-        (
-            ("kubectl", "get", "aap", "-n", NS),
-            CompletedCommand(argv=(), returncode=0, stdout="NAME   STATUS\naap    Successful\n"),
-        ),
+    listing = (
+        ("kubectl", "get", "aap", "-n", NS),
+        CompletedCommand(argv=(), returncode=0, stdout="NAME   STATUS\naap    Successful\n"),
     )
+    # Behind the jsonpath rules, so those reads keep their own stdout.
+    bare = next(
+        i
+        for i, (prefix, _result) in enumerate(healthy._rules)
+        if prefix == ("kubectl", "get", "aap")
+    )
+    healthy._rules.insert(bare, listing)
     result = _run(app_ctx)
     assert result.skipped_existing is True
     assert result.aap_name == "aap"
     assert not healthy.called("kubectl create namespace")
     assert "already exists" in app_ctx.console.stdout
+    assert ("Waiting for AAP", "done") in app_ctx.console.task_states()
+    assert _wait_task(app_ctx).note == "AAP is ready"
 
 
 def test_force_reinstalls_over_an_existing_instance(app_ctx, healthy) -> None:
@@ -285,6 +297,8 @@ def test_aap_that_never_becomes_successful_is_reported_as_a_timeout(app_ctx, hea
     result = _run(app_ctx, cr_name="controller")
     assert result.ready is False
     assert "not complete after 60 minutes" in app_ctx.console.stderr
+    assert ("Waiting for AAP", "done") in app_ctx.console.task_states()
+    assert _wait_task(app_ctx).note == "AAP did not become ready"
     assert "Username: admin" in app_ctx.console.stdout
     assert "Password:" in app_ctx.console.stdout
 
