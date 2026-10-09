@@ -11,6 +11,10 @@ grep -Fq "$EXPECTED_IMAGE" "$ROOT_DIR/docs/adr/024-ao-pr-testing-addon.md"
 
 grep -Fq 'repository: aknochow/ansible-plaibook' "$WORKFLOW"
 grep -Fq 'ansible-builder create' "$WORKFLOW"
+grep -Fq 'Prepare generated EE build assets' "$WORKFLOW"
+grep -Fq 'ansible-galaxy collection build' "$WORKFLOW"
+grep -Fq 'ssh_proxy.py' "$WORKFLOW"
+grep -Fq 'build/requirements.yml' "$WORKFLOW"
 if grep -A4 -F 'ansible-builder create' "$WORKFLOW" | grep -Fq -- '--container-runtime'; then
   echo 'ansible-builder create must not receive --container-runtime' >&2
   exit 1
