@@ -11,6 +11,10 @@ grep -Fq "$EXPECTED_IMAGE" "$ROOT_DIR/docs/adr/024-ao-pr-testing-addon.md"
 
 grep -Fq 'repository: aknochow/ansible-plaibook' "$WORKFLOW"
 grep -Fq 'ansible-builder create' "$WORKFLOW"
+if grep -A4 -F 'ansible-builder create' "$WORKFLOW" | grep -Fq -- '--container-runtime'; then
+  echo 'ansible-builder create must not receive --container-runtime' >&2
+  exit 1
+fi
 grep -Fq 'quay.io/aapdemo/plaibook-ee' "$WORKFLOW"
 grep -Fq 'docker/login-action@v3' "$WORKFLOW"
 grep -Fq 'push: ${{ github.event_name != '\''pull_request'\'' }}' "$WORKFLOW"

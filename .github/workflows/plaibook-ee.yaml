@@ -70,7 +70,6 @@ jobs:
       - name: Generate container build context
         run: >-
           ansible-builder create
-          --container-runtime docker
           --file execution-environment.yml
           --context context
           --output-filename Dockerfile
