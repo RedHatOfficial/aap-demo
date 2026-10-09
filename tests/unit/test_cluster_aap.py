@@ -263,6 +263,7 @@ def _readiness_runner(
             {
                 "items": [
                     {
+                        "metadata": {"name": "aap"},
                         "spec": {"controller": {"disabled": False}},
                         "status": {
                             "conditions": [
@@ -363,6 +364,63 @@ def _readiness_runner(
     runner.ok("kubectl get route", stdout="aap-aap-operator.apps.127.0.0.1.nip.io")
     runner.ok("kubectl get csv", stdout="aap-operator.v2.7.0")
     return runner
+
+
+def test_component_rows_follow_the_named_instance_not_list_order(app_ctx) -> None:
+    runner = FakeRunner()
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "json"],
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "other"},
+                        "spec": {"hub": {"disabled": False}},
+                        "status": {"conditions": []},
+                    },
+                    {
+                        "metadata": {"name": "aap"},
+                        "spec": {"controller": {"disabled": False}},
+                        "status": {
+                            "conditions": [
+                                {
+                                    "type": "Running",
+                                    "status": "True",
+                                    "message": "Running reconciliation",
+                                }
+                            ]
+                        },
+                    },
+                ]
+            }
+        ),
+    )
+    runner.ok(
+        ["kubectl", "get", "aap", "-n", NS, "-o", "jsonpath={.items[0].metadata.name}"],
+        stdout="aap",
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "aap",
+            "-n",
+            NS,
+            "-o",
+            'jsonpath={.items[0].status.conditions[?(@.type=="Successful")].status}',
+        ],
+        stdout="False",
+    )
+    runner.ok(
+        ["kubectl", "get", "automationcontroller", "-n", NS, "-o", "json"],
+        stdout=json.dumps({"items": []}),
+    )
+    runner.ok(["kubectl", "get", "deploy", "-n", NS, "--no-headers"], stdout="")
+    app_ctx.runner = runner
+
+    rows = aap_mod._component_rows(app_ctx, NS)
+
+    assert [name for name, _state, _detail in rows or []] == ["gateway", "controller"]
 
 
 def test_a_terminal_reconcile_checks_off_even_when_successful_is_false() -> None:

@@ -585,15 +585,31 @@ def _kubectl_json(ctx: AppContext, *args: str) -> Any:
     return parsed
 
 
+def _aap_named(items: List[Any], name: str) -> Optional[Dict[str, Any]]:
+    """The list entry for ``name``. List order is not the selected instance."""
+    if not name:
+        return None
+    matches = [
+        item
+        for item in items
+        if isinstance(item, dict) and str((item.get("metadata") or {}).get("name") or "") == name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def _component_rows(ctx: AppContext, namespace: str) -> Optional[List[Tuple[str, str, str]]]:
-    # List form, same as the jsonpath reads. A named get would first have to
-    # resolve metadata.name, and a short test stub for ``-o`` can answer that
+    # List, then pick ``instance_name``. A named get would use that string as
+    # the resource name, and a short test stub for ``-o`` can answer the name
     # query with a condition value such as ``True``.
     listed = _kubectl_json(ctx, "aap", "-n", namespace)
     items = listed.get("items") if isinstance(listed, dict) else None
-    if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+    if not isinstance(items, list):
         return None
-    document = items[0]
+    document = _aap_named(items, instance_name(ctx, namespace))
+    if document is None:
+        return None
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
     status = document.get("status") if isinstance(document.get("status"), dict) else {}
     raw_conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []
