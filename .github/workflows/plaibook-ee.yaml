@@ -1,0 +1,101 @@
+name: Build and publish Plaibook EE
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/plaibook-ee.yaml'
+      - 'addons/ao-pr-testing/**'
+      - 'docs/adr/024-ao-pr-testing-addon.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/plaibook-ee.yaml'
+      - 'addons/ao-pr-testing/**'
+      - 'docs/adr/024-ao-pr-testing-addon.md'
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      plaibook_ref:
+        description: Git ref in the upstream plaibook repository to build
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plaibook-ee-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: quay.io/aapdemo/plaibook-ee
+  SOURCE_REPOSITORY: aknochow/ansible-plaibook
+
+jobs:
+  build-and-publish:
+    name: Build and publish execution environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plaibook source
+        uses: actions/checkout@v4
+        with:
+          repository: aknochow/ansible-plaibook
+          ref: ${{ inputs.plaibook_ref || 'main' }}
+
+      - name: Resolve image tags
+        id: source
+        shell: bash
+        run: |
+          source_sha=$(git rev-parse --short=12 HEAD)
+          build_tag=$(date -u +%Y%m%d-%H%M%S)
+          {
+            echo "source_sha=$source_sha"
+            echo 'tags<<EOF'
+            echo "${IMAGE_NAME}:latest"
+            echo "${IMAGE_NAME}:sha-${source_sha}"
+            echo "${IMAGE_NAME}:build-${build_tag}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-builder
+        run: python -m pip install --upgrade 'ansible-builder>=3,<4'
+
+      - name: Generate container build context
+        run: >-
+          ansible-builder create
+          --container-runtime docker
+          --file execution-environment.yml
+          --context context
+          --output-filename Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Quay.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_TOKEN }}
+
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: context
+          file: context/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.source.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ env.SOURCE_REPOSITORY }}
+            org.opencontainers.image.revision=${{ steps.source.outputs.source_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
