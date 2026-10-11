@@ -29,7 +29,7 @@ pip install "git+https://github.com/RedHatOfficial/aap-demo.git@v2"
 uv tool install "git+https://github.com/RedHatOfficial/aap-demo.git@v2"
 ```
 
-`pipx install aap-demo` replaces the git URL after the package is published. Check out `v2` only if you are changing the code.
+The publish workflow uploads this beta to PyPI as a `.dev` release so the `aap-demo` name is reserved. `pip install aap-demo` does not install a `.dev` release. Keep using the git URL above. `pipx install aap-demo` is the command after the 2.0.0 release. Check out `v2` only if you are changing the code.
 
 ### Replace the bash v1 command
 
