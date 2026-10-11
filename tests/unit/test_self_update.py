@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
@@ -101,4 +102,33 @@ def test_update_requires_a_pipx_install(app_ctx, monkeypatch) -> None:
     app_ctx.runner = FakeRunner().ok([PIPX, "list", "--json"], stdout='{"venvs": {}}')
 
     with pytest.raises(AapDemoError, match="not installed with pipx"):
+        self_update.run(app_ctx)
+
+
+def test_update_reports_a_pipx_list_timeout(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: _info())
+    runner = FakeRunner()
+    runner.register(
+        [PIPX, "list", "--json"],
+        AapDemoError("command timed out after 60s: /usr/bin/pipx list --json"),
+    )
+    app_ctx.runner = runner
+
+    with pytest.raises(AapDemoError, match="pipx list timed out after 60s"):
+        self_update.run(app_ctx)
+
+
+def test_update_reports_a_pipx_upgrade_timeout(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: _info())
+    runner = FakeRunner()
+    runner.ok([PIPX, "list", "--json"], stdout=_listing())
+    runner.register(
+        [PIPX, "upgrade", "aap-demo"],
+        subprocess.TimeoutExpired(cmd=[PIPX, "upgrade", "aap-demo"], timeout=600),
+    )
+    app_ctx.runner = runner
+
+    with pytest.raises(AapDemoError, match="pipx upgrade timed out after 600s"):
         self_update.run(app_ctx)

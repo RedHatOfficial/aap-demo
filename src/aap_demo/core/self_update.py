@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 import shutil
-from typing import Any, Optional
+import subprocess
+from typing import Any, Optional, Sequence
 
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, PrerequisiteError
@@ -43,16 +44,48 @@ def run(ctx: AppContext) -> int:
         ctx.console.out("The published release is: pipx install --force aap-demo")
 
     ctx.console.out("Upgrading the pipx install...")
-    result = ctx.runner.run([pipx, "upgrade", PACKAGE], capture=False, timeout=UPGRADE_TIMEOUT)
+    result = _run_pipx(
+        ctx,
+        [pipx, "upgrade", PACKAGE],
+        timeout=UPGRADE_TIMEOUT,
+        capture=False,
+        action="upgrade",
+    )
     if result.returncode != 0:
         return result.returncode
     ctx.console.out("Update complete. Run `aap-demo version` to see the installed release.")
     return 0
 
 
+def _run_pipx(
+    ctx: AppContext,
+    argv: Sequence[str],
+    *,
+    timeout: float,
+    action: str,
+    capture: bool = True,
+):
+    """Run one pipx step. A stall becomes an ``aap-demo update`` error."""
+    try:
+        return ctx.runner.run(list(argv), capture=capture, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise _timeout_error(action, timeout) from exc
+    except AapDemoError as exc:
+        if "timed out" not in str(exc):
+            raise
+        raise _timeout_error(action, timeout) from exc
+
+
+def _timeout_error(action: str, timeout: float) -> AapDemoError:
+    return AapDemoError(
+        f"pipx {action} timed out after {int(timeout)}s",
+        hint="Check the network, then run aap-demo update again.",
+    )
+
+
 def _installed_source(ctx: AppContext, pipx: str) -> str:
     """``package_or_url`` for the pipx app, or raise when pipx did not install it."""
-    listing = ctx.runner.run([pipx, "list", "--json"], timeout=LIST_TIMEOUT)
+    listing = _run_pipx(ctx, [pipx, "list", "--json"], timeout=LIST_TIMEOUT, action="list")
     if not listing.ok:
         detail = (listing.stderr or listing.stdout or "").strip()
         raise AapDemoError("Could not read the pipx install list", hint=detail or None)
