@@ -94,11 +94,13 @@ Python 3.9 or newer. [pipx](https://pipx.pypa.io/) keeps the command isolated fr
 pipx install aap-demo
 ```
 
-Upgrade to the latest published release:
+Update the installed command with:
 
 ```bash
-pipx upgrade aap-demo
+aap-demo update
 ```
+
+That checks how this command was installed, then runs `pipx upgrade aap-demo`.
 
 pip and uv install the same release:
 
@@ -255,7 +257,7 @@ aap-demo must-gather /tmp/d  # Collect to specific directory
 
 # Maintenance
 aap-demo clean               # Remove AAP deployment (keeps cluster)
-aap-demo update              # Pull latest code and reinstall
+aap-demo update              # Update the pipx install to the latest release
 aap-demo help                # Full command reference
 ```
 
