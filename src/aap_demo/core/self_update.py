@@ -15,6 +15,7 @@ from typing import Any, Optional, Sequence
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, PrerequisiteError
 from aap_demo.core.version import version_info
+from aap_demo.exec.runner import CompletedCommand
 
 PACKAGE = "aap-demo"
 LIST_TIMEOUT = 60.0
@@ -64,7 +65,7 @@ def _run_pipx(
     timeout: float,
     action: str,
     capture: bool = True,
-):
+) -> CompletedCommand:
     """Run one pipx step. A stall becomes an ``aap-demo update`` error."""
     try:
         return ctx.runner.run(list(argv), capture=capture, timeout=timeout)
@@ -93,19 +94,27 @@ def _installed_source(ctx: AppContext, pipx: str) -> str:
         payload = json.loads(listing.stdout or "")
     except json.JSONDecodeError as exc:
         raise AapDemoError("Could not read the pipx install list") from exc
-    source = _package_or_url(payload)
+    source, gaps = _package_record(payload)
     if source is None:
         raise AapDemoError(
             "aap-demo is not installed with pipx",
             hint="Install the published release with: pipx install aap-demo",
         )
+    if gaps:
+        missing = " and ".join(gaps)
+        ctx.console.warn(f"pipx did not report {missing} for aap-demo")
+        ctx.console.out(
+            "The install is being treated as the published release. "
+            "If it tracks a git URL or a path, switch with: pipx install --force aap-demo"
+        )
     return source
 
 
-def _package_or_url(payload: Any) -> Optional[str]:
+def _package_record(payload: Any) -> tuple[Optional[str], list[str]]:
+    """``(package_or_url, missing field names)`` for the aap-demo pipx app."""
     venvs = payload.get("venvs") if isinstance(payload, dict) else None
     if not isinstance(venvs, dict):
-        return None
+        return None, []
     for name, env in venvs.items():
         if not isinstance(env, dict):
             continue
@@ -113,12 +122,19 @@ def _package_or_url(payload: Any) -> Optional[str]:
         metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         raw_main = metadata.get("main_package")
         main = raw_main if isinstance(raw_main, dict) else {}
-        package = str(main.get("package") or name)
-        if package != PACKAGE and name != PACKAGE:
+        package_name = main.get("package")
+        gaps: list[str] = []
+        if not package_name:
+            gaps.append("package")
+            package_name = name
+        if str(package_name) != PACKAGE and name != PACKAGE:
             continue
         spec = main.get("package_or_url")
-        return str(spec) if spec else PACKAGE
-    return None
+        if not spec:
+            gaps.append("package_or_url")
+            spec = PACKAGE
+        return str(spec), gaps
+    return None, []
 
 
 def _is_direct_source(spec: str) -> bool:

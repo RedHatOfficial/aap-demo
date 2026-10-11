@@ -78,6 +78,22 @@ def test_update_warns_for_a_relative_path_install(app_ctx, monkeypatch) -> None:
     assert "pipx install --force aap-demo" in app_ctx.console.stdout
 
 
+def test_update_warns_when_pipx_omits_package_or_url(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: _info())
+    payload = {"venvs": {"aap-demo": {"metadata": {"main_package": {"package": "aap-demo"}}}}}
+    runner = FakeRunner()
+    runner.ok([PIPX, "list", "--json"], stdout=json.dumps(payload))
+    runner.ok([PIPX, "upgrade", "aap-demo"])
+    app_ctx.runner = runner
+
+    assert self_update.run(app_ctx) == 0
+
+    assert "did not report package_or_url" in app_ctx.console.stderr
+    assert "treated as the published release" in app_ctx.console.stdout
+    assert runner.called([PIPX, "upgrade", "aap-demo"])
+
+
 def test_update_says_when_this_command_is_a_checkout(app_ctx, monkeypatch) -> None:
     monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
     monkeypatch.setattr(self_update, "version_info", lambda _runner: _info("checkout"))
