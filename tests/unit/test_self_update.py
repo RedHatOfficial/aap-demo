@@ -46,6 +46,10 @@ def test_update_upgrades_a_pypi_pipx_install(app_ctx, monkeypatch) -> None:
     assert self_update.run(app_ctx) == 0
 
     assert app_ctx.runner.called([PIPX, "upgrade", "aap-demo"])
+    assert [call.timeout for call in app_ctx.runner.calls] == [
+        self_update.LIST_TIMEOUT,
+        self_update.UPGRADE_TIMEOUT,
+    ]
     assert "Current: 2.0.0.dev0" in app_ctx.console.stdout
     assert "Update complete" in app_ctx.console.stdout
 
@@ -60,6 +64,17 @@ def test_update_warns_when_pipx_tracks_a_git_url(app_ctx, monkeypatch) -> None:
     assert "tracks git+https://" in app_ctx.console.stderr
     assert "pipx install --force aap-demo" in app_ctx.console.stdout
     assert app_ctx.runner.called([PIPX, "upgrade", "aap-demo"])
+
+
+def test_update_warns_for_a_relative_path_install(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: _info())
+    app_ctx.runner = _runner("path/to/aap-demo")
+
+    assert self_update.run(app_ctx) == 0
+
+    assert "tracks path/to/aap-demo" in app_ctx.console.stderr
+    assert "pipx install --force aap-demo" in app_ctx.console.stdout
 
 
 def test_update_says_when_this_command_is_a_checkout(app_ctx, monkeypatch) -> None:

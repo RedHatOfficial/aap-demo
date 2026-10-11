@@ -16,6 +16,8 @@ from aap_demo.core.errors import AapDemoError, PrerequisiteError
 from aap_demo.core.version import version_info
 
 PACKAGE = "aap-demo"
+LIST_TIMEOUT = 60.0
+UPGRADE_TIMEOUT = 600.0
 
 
 def run(ctx: AppContext) -> int:
@@ -41,7 +43,9 @@ def run(ctx: AppContext) -> int:
         ctx.console.out("The published release is: pipx install --force aap-demo")
 
     ctx.console.out("Upgrading the pipx install...")
-    result = ctx.runner.run([pipx, "upgrade", PACKAGE], capture=False)
+    result = ctx.runner.run(
+        [pipx, "upgrade", PACKAGE], capture=False, timeout=UPGRADE_TIMEOUT
+    )
     if result.returncode != 0:
         return result.returncode
     ctx.console.out("Update complete. Run `aap-demo version` to see the installed release.")
@@ -50,7 +54,7 @@ def run(ctx: AppContext) -> int:
 
 def _installed_source(ctx: AppContext, pipx: str) -> str:
     """``package_or_url`` for the pipx app, or raise when pipx did not install it."""
-    listing = ctx.runner.run([pipx, "list", "--json"])
+    listing = ctx.runner.run([pipx, "list", "--json"], timeout=LIST_TIMEOUT)
     if not listing.ok:
         detail = (listing.stderr or listing.stdout or "").strip()
         raise AapDemoError("Could not read the pipx install list", hint=detail or None)
@@ -90,4 +94,4 @@ def _is_direct_source(spec: str) -> bool:
     text = spec.strip()
     if text in {"", PACKAGE}:
         return False
-    return "://" in text or text.startswith(("/", ".", "~"))
+    return "://" in text or "/" in text or text.startswith((".", "~"))
