@@ -43,9 +43,7 @@ def run(ctx: AppContext) -> int:
         ctx.console.out("The published release is: pipx install --force aap-demo")
 
     ctx.console.out("Upgrading the pipx install...")
-    result = ctx.runner.run(
-        [pipx, "upgrade", PACKAGE], capture=False, timeout=UPGRADE_TIMEOUT
-    )
+    result = ctx.runner.run([pipx, "upgrade", PACKAGE], capture=False, timeout=UPGRADE_TIMEOUT)
     if result.returncode != 0:
         return result.returncode
     ctx.console.out("Update complete. Run `aap-demo version` to see the installed release.")
@@ -78,7 +76,8 @@ def _package_or_url(payload: Any) -> Optional[str]:
     for name, env in venvs.items():
         if not isinstance(env, dict):
             continue
-        metadata = env.get("metadata") if isinstance(env.get("metadata"), dict) else {}
+        raw_metadata = env.get("metadata")
+        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
         raw_main = metadata.get("main_package")
         main = raw_main if isinstance(raw_main, dict) else {}
         package = str(main.get("package") or name)
