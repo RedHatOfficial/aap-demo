@@ -129,9 +129,11 @@ echo "  (This may take several minutes — model is ~2GB)"
 # Pull from a Ready pod. During a rollout, the first pod returned by the API
 # can still be the terminating old replica even after rollout status succeeds.
 OLLAMA_POD=""
+_ollama_found_candidate=0
 for _ollama_attempt in $(seq 1 30); do
   while read -r _ollama_candidate; do
     [ -n "$_ollama_candidate" ] || continue
+    _ollama_found_candidate=1
     if kubectl wait --for=condition=ready "pod/${_ollama_candidate}" \
       -n aap-demo-ollama --timeout=10s >/dev/null 2>&1 \
       && kubectl exec -n aap-demo-ollama "$_ollama_candidate" -- ollama pull "${OLLAMA_MODEL}"; then
@@ -146,8 +148,17 @@ done
 
 if [ -n "$OLLAMA_POD" ]; then
   echo "  ✓ Model ${OLLAMA_MODEL} ready"
+elif [ "$_ollama_found_candidate" -eq 1 ]; then
+  echo "  ERROR: Ollama pod was found, but model ${OLLAMA_MODEL} could not be pulled." >&2
+  echo "  Check pod logs and retry: kubectl logs -n aap-demo-ollama -l app=ollama" >&2
+  kubectl get pod -n aap-demo-ollama -l app=ollama -o wide >&2 || true
+  kubectl get events -n aap-demo-ollama --sort-by=.lastTimestamp >&2 || true
+  exit 1
 else
-  echo "  ERROR: Could not find Ollama pod — retry: aap-demo enable ollama" >&2
+  echo "  ERROR: No Ollama pod matched label app=ollama after the deployment became ready." >&2
+  echo "  Check the deployment and retry: aap-demo enable ollama" >&2
+  kubectl get deployment,pod -n aap-demo-ollama -o wide >&2 || true
+  kubectl get events -n aap-demo-ollama --sort-by=.lastTimestamp >&2 || true
   exit 1
 fi
 
