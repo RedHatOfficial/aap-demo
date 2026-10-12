@@ -435,6 +435,14 @@ verify_cluster_type() {
 # -----------------------------------------------------------------------------
 # Preflight: mkcert CA check (macOS and Linux)
 # -----------------------------------------------------------------------------
+_path_match_exists() {
+  local _path
+  for _path in "$@"; do
+    [ -e "$_path" ] && return 0
+  done
+  return 1
+}
+
 check_mkcert_ca() {
   # Skip if mkcert is disabled
   [ "${AAP_DEMO_MKCERT:-true}" != "true" ] && return 0
@@ -455,10 +463,9 @@ check_mkcert_ca() {
     CAROOT="$(mkcert -CAROOT 2>/dev/null)"
     if [ -f "$CAROOT/rootCA.pem" ]; then
       # Check if it's been added to system trust
-      # shellcheck disable=SC2144
-      if compgen -G "/etc/ssl/certs/mkcert*" >/dev/null \
-        || compgen -G "/usr/local/share/ca-certificates/mkcert*" >/dev/null \
-        || compgen -G "/etc/pki/ca-trust/source/anchors/mkcert*" >/dev/null; then
+      if _path_match_exists /etc/ssl/certs/mkcert* \
+        /usr/local/share/ca-certificates/mkcert* \
+        /etc/pki/ca-trust/source/anchors/mkcert*; then
         CA_INSTALLED=true
       elif trust list 2>/dev/null | grep -q "mkcert"; then
         CA_INSTALLED=true
@@ -1642,9 +1649,18 @@ cmd_kubeconfig() {
   client_cert=$(KUBECONFIG="$TEMP_KUBECONFIG" kubectl config view --raw -o jsonpath='{.users[?(@.name=="user")].user.client-certificate-data}' 2>/dev/null)
   client_key=$(KUBECONFIG="$TEMP_KUBECONFIG" kubectl config view --raw -o jsonpath='{.users[?(@.name=="user")].user.client-key-data}' 2>/dev/null)
   if [ -n "$client_cert" ]; then
+    local cert_tmp key_tmp
+    cert_tmp=$(mktemp)
+    key_tmp=$(mktemp)
+    TEMP_FILES+=("$cert_tmp" "$key_tmp")
+    if ! printf '%s' "$client_cert" | base64 -d >"$cert_tmp" \
+      || ! printf '%s' "$client_key" | base64 -d >"$key_tmp"; then
+      echo "  ERROR: Failed to decode kubeconfig client credentials"
+      exit 1
+    fi
     KUBECONFIG="$TEMP_KUBECONFIG" kubectl config set-credentials "$ctx_name" \
-      --client-certificate=<(echo "$client_cert" | base64 -d) \
-      --client-key=<(echo "$client_key" | base64 -d) \
+      --client-certificate="$cert_tmp" \
+      --client-key="$key_tmp" \
       --embed-certs=true >/dev/null 2>&1
     KUBECONFIG="$TEMP_KUBECONFIG" kubectl config unset users.user >/dev/null 2>&1 || true
   fi
