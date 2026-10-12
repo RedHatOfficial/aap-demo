@@ -31,6 +31,10 @@ pre-commit run --all-files
 
 ### Using Make
 
+The Make targets lint tracked repository files. This prevents installed
+virtual environments, dependency trees, and generated files in a developer
+checkout from being mistaken for project sources.
+
 ```bash
 # Run all linters
 make lint
@@ -70,7 +74,7 @@ Analyzes shell scripts for common mistakes and best practices.
 
 ```bash
 shellcheck script.sh
-find . -name "*.sh" -exec shellcheck {} \;
+git ls-files '*.sh' | while read -r file; do shellcheck "$file"; done
 ```
 
 **Disable specific warnings**:
@@ -98,7 +102,6 @@ Validates YAML files for syntax and formatting.
 **Run manually**:
 
 ```bash
-yamllint .
 yamllint config/manifests/
 ```
 

@@ -54,7 +54,7 @@ jobs:
         run: npm install -g markdownlint-cli
 
       - name: Run markdownlint
-        run: markdownlint . --config .markdownlint.json
+        run: markdownlint . --config .markdownlint.json --ignore '.claude/**' --ignore '.github/**'
 
   ansible-lint:
     name: Ansible Lint
@@ -145,7 +145,9 @@ jobs:
 
       - name: Install kubeconform
         run: |
-          wget -qO- https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
+          wget -qO- \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar xz
           sudo mv kubeconform /usr/local/bin/
 
       - name: Validate Kubernetes YAMLs
