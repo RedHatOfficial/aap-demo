@@ -232,6 +232,25 @@ else
   fail "pvc_honors_ollama_storage_size_override"
 fi
 
+# Bare numeric sizes are interpreted as GiB instead of Kubernetes bytes.
+if OLLAMA_MODEL=qwen2.5:3b OLLAMA_STORAGE_SIZE=20 \
+  "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && grep -q 'storage: 20Gi' "$MOCK_APPLY_FILE"; then
+  pass "pvc_normalizes_bare_size_to_gib"
+else
+  fail "pvc_normalizes_bare_size_to_gib"
+fi
+
+# Invalid or zero sizes must fail before applying a manifest.
+rm -f "$MOCK_APPLY_FILE"
+if ! OLLAMA_MODEL=qwen2.5:3b OLLAMA_STORAGE_SIZE=0 \
+  "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && [ ! -e "$MOCK_APPLY_FILE" ]; then
+  pass "pvc_rejects_invalid_storage_size"
+else
+  fail "pvc_rejects_invalid_storage_size"
+fi
+
 # ---------------------------------------------------------------------------
 # CPU request stays burstable so Ollama schedules beside AAP
 # ---------------------------------------------------------------------------
