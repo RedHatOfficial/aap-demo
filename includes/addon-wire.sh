@@ -1243,6 +1243,258 @@ wire_ao_ollama() {
   wire_log "  ✓ Ollama wired as LLM provider"
 }
 
+wire_ao_oauth_app() {
+  # Creates or reuses OAuth2 application in AAP Gateway for AO OIDC authentication
+  # Follows portal addon pattern (addons/portal/deploy.sh:412-500)
+  # Returns: Sets WIRE_AO_OAUTH_APP_ID, WIRE_AO_CLIENT_ID, WIRE_AO_CLIENT_SECRET
+
+  local aap_route aap_pass org_id
+  aap_route=$(wire_aap_route_host) || return 1
+  aap_pass=$(wire_aap_admin_password) || return 1
+
+  if [ -z "$aap_route" ] || [ -z "$aap_pass" ]; then
+    wire_warn "AAP route or admin password unavailable"
+    return 1
+  fi
+
+  # Get AAP organization ID (first available)
+  local orgs_json org_id
+  orgs_json=$(curl -sk -u "admin:$aap_pass" \
+    "https://${aap_route}/api/gateway/v1/organizations/" \
+    -H "Content-Type: application/json" 2>/dev/null)
+  org_id=$(echo "$orgs_json" | jq -r '.results[0].id // empty' 2>/dev/null)
+
+  if [ -z "$org_id" ] || [ "$org_id" = "null" ]; then
+    wire_warn "Could not retrieve AAP organization ID"
+    return 1
+  fi
+
+  # Ensure credential directory exists
+  local ao_dir="${HOME}/.aap-demo/ao"
+  mkdir -p "$ao_dir"
+  chmod 700 "$ao_dir"
+  local oauth_credentials_file="${ao_dir}/oauth_credentials.json"
+
+  # Check if OAuth app already exists in AAP
+  local encoded_app_name
+  encoded_app_name=$(jq -rn --arg n "$WIRE_AAP_OAUTH_APP_NAME" '$n|@uri')
+  local existing_app
+  existing_app=$(curl -sk -u "admin:$aap_pass" \
+    "https://${aap_route}/api/gateway/v1/applications/?name=${encoded_app_name}" \
+    -H "Content-Type: application/json" 2>/dev/null)
+
+  local existing_count
+  existing_count=$(echo "$existing_app" | jq -r '.count // 0' 2>/dev/null)
+
+  local oauth_app_id client_id client_secret
+
+  if [ "$existing_count" -gt 0 ]; then
+    oauth_app_id=$(echo "$existing_app" | jq -r '.results[0].id')
+    client_id=$(echo "$existing_app" | jq -r '.results[0].client_id')
+    client_secret=""
+
+    # AAP only returns client_secret at creation time — check saved credentials
+    if [ -f "$oauth_credentials_file" ]; then
+      local saved_id saved_secret
+      saved_id=$(jq -r '.oauth_app_id // empty' "$oauth_credentials_file" 2>/dev/null)
+      saved_secret=$(jq -r '.client_secret // empty' "$oauth_credentials_file" 2>/dev/null)
+      if [ "$saved_id" = "$oauth_app_id" ] && [ -n "$saved_secret" ]; then
+        client_secret="$saved_secret"
+        wire_log "  Using saved OAuth client credentials for existing app"
+      fi
+    fi
+
+    # No saved secret — delete and recreate the OAuth app
+    if [ -z "$client_secret" ]; then
+      wire_log "  OAuth app exists but client secret unavailable — recreating..."
+      curl -sk -u "admin:$aap_pass" \
+        -X DELETE "https://${aap_route}/api/gateway/v1/applications/${oauth_app_id}/" \
+        -H "Content-Type: application/json" &>/dev/null || true
+      existing_count=0
+    fi
+  fi
+
+  # Create new OAuth app with placeholder redirect URI
+  if [ "$existing_count" -eq 0 ]; then
+    wire_log "  Creating OAuth application in AAP Gateway..."
+    local oauth_response
+    oauth_response=$(curl -sk -u "admin:$aap_pass" \
+      -X POST "https://${aap_route}/api/gateway/v1/applications/" \
+      -H "Content-Type: application/json" \
+      -d "$(jq -n \
+        --arg name "$WIRE_AAP_OAUTH_APP_NAME" \
+        --arg org "$org_id" \
+        '{
+          name: $name,
+          organization: ($org | tonumber),
+          authorization_grant_type: "authorization-code",
+          client_type: "confidential",
+          redirect_uris: "https://example.com"
+        }')" 2>/dev/null)
+
+    oauth_app_id=$(echo "$oauth_response" | jq -r '.id // empty')
+    client_id=$(echo "$oauth_response" | jq -r '.client_id // empty')
+    client_secret=$(echo "$oauth_response" | jq -r '.client_secret // empty')
+
+    if [ -z "$oauth_app_id" ] || [ "$oauth_app_id" = "null" ]; then
+      wire_warn "Failed to create OAuth application in AAP"
+      echo "$oauth_response" | jq '.' 2>/dev/null || echo "$oauth_response" >&2
+      return 1
+    fi
+
+    if [ -z "$client_secret" ] || [ "$client_secret" = "null" ]; then
+      wire_warn "Failed to obtain OAuth client_secret from AAP"
+      return 1
+    fi
+
+    # Persist credentials — AAP will not return client_secret on subsequent reads
+    jq -n \
+      --arg oauth_app_id "$oauth_app_id" \
+      --arg client_id "$client_id" \
+      --arg client_secret "$client_secret" \
+      '{oauth_app_id: $oauth_app_id, client_id: $client_id, client_secret: $client_secret}' \
+      >"$oauth_credentials_file"
+    chmod 600 "$oauth_credentials_file"
+  fi
+
+  # Update redirect URI with actual AO route
+  local ao_route
+  ao_route=$(wire_ao_route_host) || return 1
+  if [ -z "$ao_route" ]; then
+    wire_warn "AO route unavailable — cannot update OAuth redirect URI"
+    return 1
+  fi
+
+  local redirect_uri="https://${ao_route}/api/v1/auth/oidc/callback"
+  curl -sk -u "admin:$aap_pass" \
+    -X PATCH "https://${aap_route}/api/gateway/v1/applications/${oauth_app_id}/" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg uri "$redirect_uri" '{redirect_uris: $uri}')" \
+    &>/dev/null
+
+  # Export credentials for use by wire_ao_oidc_provider
+  WIRE_AO_OAUTH_APP_ID="$oauth_app_id"
+  WIRE_AO_CLIENT_ID="$client_id"
+  WIRE_AO_CLIENT_SECRET="$client_secret"
+
+  wire_log "  ✓ OAuth app ready (ID: ${oauth_app_id})"
+  wire_log "    Redirect URI: ${redirect_uri}"
+  return 0
+}
+
+wire_ao_oidc_provider() {
+  # Configures AAP as OIDC identity provider in AO
+  # Requires: WIRE_AO_CLIENT_ID, WIRE_AO_CLIENT_SECRET (from wire_ao_oauth_app)
+
+  if [ -z "$WIRE_AO_CLIENT_ID" ] || [ -z "$WIRE_AO_CLIENT_SECRET" ]; then
+    wire_warn "OAuth client credentials not available"
+    return 1
+  fi
+
+  local aap_route
+  aap_route=$(wire_aap_route_host) || return 1
+  if [ -z "$aap_route" ]; then
+    wire_warn "AAP route unavailable"
+    return 1
+  fi
+
+  # Check if OIDC provider already exists
+  local provider_name="Ansible Automation Platform"
+  local providers existing_id
+  providers=$(wire_ao_api GET "/identity-providers/?limit=${WIRE_AO_LIST_LIMIT}" 2>/dev/null)
+  existing_id=$(echo "$providers" | wire_ao_list_items | \
+    jq -r --arg name "$provider_name" '[.[] | select(.name == $name)] | .[0].id // empty' 2>/dev/null)
+
+  if [ -n "$existing_id" ]; then
+    wire_log "  OIDC provider '${provider_name}' already exists (ID: ${existing_id})"
+    return 0
+  fi
+
+  # Create OIDC identity provider with AAP template
+  wire_log "  Creating OIDC identity provider in AO..."
+  local issuer_url="https://${aap_route}/o/"
+  local provider_payload
+  provider_payload=$(jq -n \
+    --arg name "$provider_name" \
+    --arg issuer "$issuer_url" \
+    --arg client_id "$WIRE_AO_CLIENT_ID" \
+    --arg client_secret "$WIRE_AO_CLIENT_SECRET" \
+    '{
+      name: $name,
+      enabled: true,
+      template: "ansible_automation_platform",
+      issuer_url: $issuer,
+      use_oidc_discovery: true,
+      client_id: $client_id,
+      client_secret: $client_secret,
+      scopes: "read write openid roles",
+      disable_tls_verification: true,
+      enable_rp_initiated_logout: true,
+      map_aap_system_roles_to_groups: true,
+      allow_all_authenticated: true
+    }')
+
+  local result provider_id
+  result=$(wire_ao_api POST "/identity-providers/" "$provider_payload" 2>/dev/null)
+
+  if wire_ao_response_is_error "$result"; then
+    wire_warn "Failed to create OIDC identity provider in AO"
+    echo "$result" | jq '.' 2>/dev/null || echo "$result" >&2
+    return 1
+  fi
+
+  provider_id=$(echo "$result" | jq -r '.id // empty' 2>/dev/null)
+  if [ -z "$provider_id" ] || [ "$provider_id" = "null" ]; then
+    wire_warn "OIDC provider created but ID unavailable"
+    return 1
+  fi
+
+  wire_log "  ✓ OIDC provider configured (ID: ${provider_id})"
+  wire_log "    Issuer: ${issuer_url}"
+  wire_log "    Template: ansible_automation_platform"
+  return 0
+}
+
+wire_ao_oauth_sso() {
+  # Orchestrates OAuth2 app creation and OIDC provider configuration for AAP/AO SSO
+
+  if ! wire_aap_deployed; then
+    return 0
+  fi
+
+  if ! wire_ao_deployed; then
+    return 0
+  fi
+
+  wire_log ""
+  wire_log "Configuring OAuth2 SSO: AAP <-> AO..."
+
+  # Create/reuse OAuth app in AAP Gateway
+  wire_ao_oauth_app || {
+    wire_warn "Failed to configure OAuth app in AAP"
+    return 1
+  }
+
+  # Configure OIDC provider in AO
+  wire_ao_oidc_provider || {
+    wire_warn "Failed to configure OIDC provider in AO"
+    return 1
+  }
+
+  # Verify provider was created
+  local ao_route
+  ao_route=$(wire_ao_route_host)
+
+  wire_log ""
+  wire_log "  ✓ OAuth SSO configured: AAP <-> AO"
+  wire_log "    Users can log in to AO with AAP credentials"
+  wire_log "    AO login: https://${ao_route}/"
+  wire_log "    Click 'Log in with Ansible Automation Platform'"
+  wire_log ""
+
+  return 0
+}
+
 aap_demo_wire() {
   wire_require_tools || return 1
   if ! wire_cluster_ready; then
@@ -1264,6 +1516,7 @@ aap_demo_wire() {
     wire_ao_aap || return 1
     wire_ao_mcp || return 1
     wire_ao_llm || wire_warn "AO LLM provider wiring skipped"
+    wire_ao_oauth_sso || wire_warn "AAP/AO OAuth SSO configuration skipped"
     wire_ao_rebind_agentic_workflows || wire_warn "AO workflow model rebinding skipped"
   fi
 

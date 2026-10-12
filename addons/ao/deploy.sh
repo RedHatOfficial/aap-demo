@@ -1225,6 +1225,42 @@ cleanup_ao_fallback_catalog() {
   remove_fallback_catalog_source "$_catalog_ns"
 }
 
+cleanup_ao_oauth_app() {
+  # Delete OAuth2 application from AAP Gateway if it exists
+  local ao_dir="${HOME}/.aap-demo/ao"
+  local oauth_file="${ao_dir}/oauth_credentials.json"
+
+  if [ ! -f "$oauth_file" ]; then
+    return 0
+  fi
+
+  local app_id
+  app_id=$(jq -r '.oauth_app_id // empty' "$oauth_file" 2>/dev/null)
+
+  if [ -z "$app_id" ]; then
+    rm -f "$oauth_file"
+    return 0
+  fi
+
+  # Get AAP route and admin password
+  local aap_route aap_pass
+  aap_route=$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+  if [ -n "$aap_route" ]; then
+    aap_pass=$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" \
+      -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || echo "")
+
+    if [ -n "$aap_pass" ]; then
+      echo "  Deleting OAuth app from AAP Gateway..."
+      curl -sk -u "admin:${aap_pass}" \
+        -X DELETE "https://${aap_route}/api/gateway/v1/applications/${app_id}/" \
+        -H "Content-Type: application/json" &>/dev/null || true
+      echo "  ✓ OAuth app deleted"
+    fi
+  fi
+
+  rm -f "$oauth_file"
+}
+
 # --- Delete ---
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   echo "Removing Automation Orchestrator..."
@@ -1258,6 +1294,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
 
   cleanup_ao_fallback_catalog
   cleanup_legacy_ea_resources
+  cleanup_ao_oauth_app
 
   kubectl delete namespace "$NAMESPACE" --wait=false 2>/dev/null || true
 
