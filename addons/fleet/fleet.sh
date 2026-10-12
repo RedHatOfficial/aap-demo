@@ -195,6 +195,31 @@ fleet_check_prereqs() {
   return 0
 }
 
+fleet_install_prereqs() {
+  case "$(uname -s)" in
+    Darwin)
+      if ! command -v brew >/dev/null 2>&1; then
+        _err "Homebrew is required to install Fleet prerequisites on macOS"
+        echo "  Install Homebrew: https://brew.sh/"
+        return 1
+      fi
+      brew install qemu cdrtools
+      ;;
+    Linux)
+      if ! command -v dnf >/dev/null 2>&1; then
+        _err "dnf is required to install Fleet prerequisites automatically on Linux"
+        echo "  Install qemu-kvm, qemu-img, and genisoimage with your distribution package manager"
+        return 1
+      fi
+      sudo dnf install -y qemu-kvm qemu-img genisoimage
+      ;;
+    *)
+      _err "Cannot install Fleet prerequisites automatically on $(uname -s)"
+      return 1
+      ;;
+  esac
+}
+
 _fleet_validate_image() {
   local image_path="$1"
 

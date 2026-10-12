@@ -48,8 +48,26 @@ if fleet_check_prereqs; then
   echo "✓ Fleet addon enabled — prerequisites verified"
 else
   echo ""
-  echo "⚠ Fleet addon enabled — some prerequisites missing (see above)"
-  echo "  Install missing tools before creating VMs"
+  echo "⚠ Fleet prerequisites are missing."
+  if [ "${QUIET:-false}" = true ] || [ ! -t 0 ]; then
+    echo "  Automatic installation is disabled in quiet or non-interactive mode."
+    echo "  Re-run interactively to be offered automatic installation."
+  else
+    read -r -p "  Install the missing Fleet prerequisites now? [y/N] " _install_prereqs
+    case "$_install_prereqs" in
+      y | Y | yes | YES)
+        if fleet_install_prereqs && fleet_check_prereqs; then
+          echo "  ✓ Fleet prerequisites installed and verified"
+        else
+          echo "  ERROR: Fleet prerequisites are still incomplete" >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "  Install missing tools before creating VMs"
+        ;;
+    esac
+  fi
 fi
 
 echo ""
