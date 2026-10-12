@@ -27,3 +27,79 @@ aap_demo_resolve_kubeconfig() {
     echo "$AAP_DEMO_KUBECONFIG"
   fi
 }
+
+aap_demo_offer_kubeconfig_shell_setup() {
+  local quiet="${1:-false}"
+  local inherited_kubeconfig="${2:-}"
+  local marker="${AAP_DEMO_DIR}/.kubeconfig-shell-setup"
+  local shell_path shell_name profile escaped_path export_line
+
+  [ "$quiet" = true ] || [ -n "$inherited_kubeconfig" ] || [ ! -t 0 ] || return 0
+  [ -s "$AAP_DEMO_KUBECONFIG" ] || return 0
+  [ -e "$marker" ] && return 0
+
+  shell_path="${SHELL:-$(ps -p $$ -o command= 2>/dev/null | awk '{print $1}')}"
+  shell_name="${shell_path##*/}"
+  case "$shell_name" in
+    bash)
+      if [ "$(uname -s)" = Darwin ] && [ -f "$HOME/.bash_profile" ]; then
+        profile="$HOME/.bash_profile"
+      else
+        profile="$HOME/.bashrc"
+      fi
+      ;;
+    zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
+    fish) profile="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
+    pwsh | powershell)
+      profile="${PROFILE:-$HOME/Documents/PowerShell/Microsoft.PowerShell_profile.ps1}"
+      ;;
+    *)
+      touch "$marker"
+      return 0
+      ;;
+  esac
+
+  echo ""
+  echo "Kubeconfig saved to: $AAP_DEMO_KUBECONFIG"
+  read -r -p "Add KUBECONFIG to ${profile}? [y/N] " _answer
+  touch "$marker"
+  case "$_answer" in
+    y | Y | yes | YES) ;;
+    *)
+      echo "  Run this in the current shell when needed:"
+      echo "    export KUBECONFIG=\"$AAP_DEMO_KUBECONFIG\""
+      return 0
+      ;;
+  esac
+
+  mkdir -p "$(dirname "$profile")" 2>/dev/null || true
+  if [ ! -f "$profile" ]; then
+    touch "$profile" 2>/dev/null || true
+  fi
+  if [ ! -w "$profile" ]; then
+    echo "  WARNING: Cannot write $profile"
+    echo "  Run this in the current shell instead:"
+    echo "    export KUBECONFIG=\"$AAP_DEMO_KUBECONFIG\""
+    return 0
+  fi
+
+  escaped_path="${AAP_DEMO_KUBECONFIG//\\/\\\\}"
+  escaped_path="${escaped_path//\"/\\\"}"
+  case "$shell_name" in
+    fish) export_line="set -gx KUBECONFIG \"$escaped_path\"" ;;
+    pwsh | powershell) export_line="\$env:KUBECONFIG = \"$escaped_path\"" ;;
+    *) export_line="export KUBECONFIG=\"$escaped_path\"" ;;
+  esac
+
+  if ! grep -Fq "$AAP_DEMO_KUBECONFIG" "$profile" 2>/dev/null; then
+    {
+      echo ""
+      echo "# aap-demo kubeconfig"
+      echo "$export_line"
+    } >>"$profile"
+    echo "  ✓ Added KUBECONFIG to $profile"
+  else
+    echo "  ✓ KUBECONFIG is already configured in $profile"
+  fi
+  echo "  Restart your shell or source $profile to apply it."
+}

@@ -74,6 +74,7 @@ _NAMESPACE_EXPLICIT="${NAMESPACE:+true}"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 QUIET="${QUIET:-false}"
 FORCE="${FORCE:-false}"
+_AAP_DEMO_KUBECONFIG_FROM_ENV="${KUBECONFIG+x}"
 
 # Config file for persistent settings
 AAP_DEMO_CONFIG="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
@@ -413,6 +414,10 @@ setup_kubeconfig() {
       kubectl config get-contexts -o name 2>/dev/null | sed 's/^/  /' || echo "  (none)"
       exit 1
     fi
+  fi
+
+  if [ -z "$KUBECTL_KUBECONFIG" ]; then
+    aap_demo_offer_kubeconfig_shell_setup "$QUIET" "$_AAP_DEMO_KUBECONFIG_FROM_ENV"
   fi
 }
 
