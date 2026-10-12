@@ -121,6 +121,25 @@ AAP_PASSWORD=$(kubectl get secret aap-admin-password -n aap-operator -o jsonpath
 #    Password: $AAP_PASSWORD
 ```
 
+## MCP credentials and RBAC
+
+The MCP server is intended for local aap-demo development. Using the generated
+admin credential is acceptable for that isolated sandbox, but it must not be
+treated as the default for shared or production environments.
+
+- **Local demo:** the AAP admin credential is acceptable when the cluster and
+  MCP client are controlled by one developer.
+- **Shared environments:** use a named account with only the organization,
+  team, inventory, and job permissions required for the demo.
+- **CI/CD:** use a dedicated service account or token with least-privilege
+  access, and rotate it through the CI secret store.
+- **Production:** never configure MCP with the AAP admin credential; use
+  scoped RBAC and review the allowed operations before connecting a client.
+
+Treat credentials printed by `aap-demo status` as local development secrets.
+Do not copy them into source control, issue reports, or reusable MCP
+configuration.
+
 ## Deprecated Tools
 
 ### NEVER use awx-cli
@@ -155,6 +174,47 @@ ansible-playbook -i inventory playbook.yml
 1. **For automation**: Use `ansible.controller` collection modules
 2. **For testing**: Use `curl` with gateway API endpoints
 3. **For CLI workflows**: Use `aap-demo` commands or write shell scripts around the API
+
+## Ansible modules and configuration as code
+
+For AAP configuration-as-code workflows, prefer the Red Hat Community of
+Practice `infra.aap_configuration` collection and its `dispatch` role. Use
+certified collections such as `ansible.controller`, `ansible.eda`, or
+`ansible.hub` when a dispatch operation does not cover the required resource or
+when a module-specific API is the supported interface.
+
+Before running a playbook, verify the required collections are installed:
+
+```bash
+ansible-galaxy collection list \
+  | grep -E 'infra.aap_configuration|ansible.platform|ansible.controller|ansible.eda|ansible.hub'
+```
+
+Declare dependencies in `collections/requirements.yml` (or the repository's
+equivalent requirements file) instead of relying on a developer's global
+collection cache:
+
+```yaml
+collections:
+  - name: infra.aap_configuration
+  - name: ansible.platform
+  - name: ansible.controller
+  - name: ansible.eda
+  - name: ansible.hub
+```
+
+Install them before running the playbook:
+
+```bash
+ansible-galaxy collection install -r collections/requirements.yml
+```
+
+If installation fails, check the configured Galaxy/Private Automation Hub or
+console.redhat.com credentials in `docs/collection-authentication.md`, confirm
+the collection source is reachable, and report the exact collection and
+version. Do not silently replace `infra.aap_configuration` with an unrelated
+collection; choose a certified fallback only when the dispatch role is
+insufficient for the operation.
 
 ## Common Integration Patterns
 
