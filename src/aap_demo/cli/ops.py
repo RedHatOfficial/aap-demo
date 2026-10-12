@@ -17,7 +17,6 @@ from aap_demo.core.context import AppContext
 from aap_demo.core.errors import (
     AapDemoError,
     ClusterUnreachableError,
-    NotImplementedYetError,
     UsageError,
 )
 from aap_demo.core.output import is_structured
@@ -375,4 +374,8 @@ def idle(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def update(ctx: AppContext, args: argparse.Namespace) -> int:
-    raise NotImplementedYetError("update")
+    """Upgrade the pipx install of aap-demo."""
+    del args
+    from aap_demo.core import self_update
+
+    return self_update.run(ctx)
