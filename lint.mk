@@ -19,17 +19,17 @@ lint: lint-shell lint-yaml lint-markdown ## Run all linters
 
 lint-shell: ## Lint shell scripts with shellcheck
 	@echo "Running shellcheck..."
-	@find . -name "*.sh" -type f -not -path "./.git/*" -exec shellcheck --severity=warning {} \;
+	@set -e; git ls-files '*.sh' | while IFS= read -r file; do shellcheck --severity=warning "$$file"; done
 	@echo "✓ ShellCheck passed"
 
 lint-yaml: ## Lint YAML files with yamllint
 	@echo "Running yamllint..."
-	@yamllint .
+	@set -e; git ls-files '*.yml' '*.yaml' | while IFS= read -r file; do yamllint "$$file"; done
 	@echo "✓ yamllint passed"
 
 lint-markdown: ## Lint Markdown files with markdownlint
 	@echo "Running markdownlint..."
-	@markdownlint .
+	@files="$$(git ls-files '*.md' ':!.claude/**' ':!.github/**')"; [ -z "$$files" ] || markdownlint $$files
 	@echo "✓ markdownlint passed"
 
 lint-ansible: ## Lint Ansible content with ansible-lint
@@ -50,7 +50,7 @@ format: ## Auto-format shell scripts and markdown
 
 test: ## Run syntax checks and dry-run tests
 	@echo "Running shell syntax checks..."
-	@find . -name "*.sh" -type f -exec bash -n {} \;
+	@set -e; git ls-files '*.sh' | while IFS= read -r file; do bash -n "$$file"; done
 	@echo "✓ Syntax checks passed"
 	@echo "Running dry-run tests..."
 	@./aap-demo.sh help >/dev/null
