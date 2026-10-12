@@ -107,6 +107,13 @@ else
   fail "deployment_allows_slow_image_pull_and_fails_incomplete_setup"
 fi
 
+if grep -q 'Ollama pod was found, but model' "$OLLAMA_DEPLOY" \
+  && grep -q 'No Ollama pod matched label app=ollama' "$OLLAMA_DEPLOY"; then
+  pass "deployment_distinguishes_missing_pod_from_model_pull_failure"
+else
+  fail "deployment_distinguishes_missing_pod_from_model_pull_failure"
+fi
+
 WIRE_SH="${REPO_ROOT}/includes/addon-wire.sh"
 if awk '/^wire_ao_route_hosts_json\(\)/,/^}/' "$WIRE_SH" | grep -q 'wire_ollama_route_host'; then
   pass "ao_host_aliases_include_ollama_route"
