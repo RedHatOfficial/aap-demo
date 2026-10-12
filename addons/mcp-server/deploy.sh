@@ -71,6 +71,45 @@ else
 fi
 MCP_ROUTE="aap-mcp-${NAMESPACE}.${CLUSTER_DOMAIN}"
 
+_mcp_route_resolves() {
+  local _host="$1"
+
+  if command -v getent >/dev/null 2>&1; then
+    getent hosts "$_host" >/dev/null 2>&1
+    return
+  fi
+  if command -v dscacheutil >/dev/null 2>&1; then
+    dscacheutil -q host -a name "$_host" | grep -q '^ip_address:'
+    return
+  fi
+  if command -v host >/dev/null 2>&1; then
+    host "$_host" >/dev/null 2>&1
+    return
+  fi
+  return 2
+}
+
+_mcp_report_route_resolution() {
+  local _route_host="$1"
+  if _mcp_route_resolves "$_route_host"; then
+    echo "  ✓ MCP route hostname resolves on this host: ${_route_host}"
+  else
+    case "$?" in
+      2)
+        echo "  ⚠ Cannot check MCP route DNS: install getent, dscacheutil, or host"
+        ;;
+      *)
+        echo "  ⚠ MCP route hostname does not resolve on this host: ${_route_host}"
+        echo "    The Route is configured, but Claude Code needs host-side DNS."
+        echo "    Check the cluster and CoreDNS wiring with: aap-demo status"
+        echo "    Re-apply local route wiring with: aap-demo start"
+        echo "    Then retry: aap-demo enable mcp-server"
+        ;;
+    esac
+    return 1
+  fi
+}
+
 # MCP server validates bearer tokens by calling back to AAP. On MicroShift, pods
 # cannot reach external nip.io routes (they resolve to 127.0.0.1). Use the
 # in-cluster AAP service URL instead.
@@ -282,10 +321,10 @@ if [ -n "$MCP_TOKEN" ]; then
           echo "  ✓ MCP server is connected and ready"
         elif echo "$MCP_STATUS" | grep -q "✗ Failed to connect"; then
           echo "  ⚠ MCP server configured but connection failed"
-          # DEBUG
-          echo "CA path: ${CA_PATH}"
+          _mcp_report_route_resolution "$MCP_ROUTE" || true
         else
           echo "  ⓘ MCP server configured (connection status unknown)"
+          _mcp_report_route_resolution "$MCP_ROUTE" || true
         fi
       fi
     else

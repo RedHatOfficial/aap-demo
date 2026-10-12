@@ -50,6 +50,13 @@ The addon automatically:
 5. Registers the MCP server in Automation Orchestrator when the `ao` addon is installed
    (via `includes/addon-wire.sh`; runs automatically after enable and deploy)
 
+After Claude Code is configured, the addon checks whether the MCP route
+hostname resolves on the host. A Route object can be admitted inside the
+cluster while the host resolver still cannot resolve a `crc.testing` or
+`nip.io` hostname. In that case the output identifies DNS as the blocker and
+suggests checking the cluster with `aap-demo status`, re-applying local route
+wiring with `aap-demo start`, and retrying the enable command.
+
 ## Configuration
 
 The MCP server connects to your AAP deployment using:
