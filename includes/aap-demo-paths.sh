@@ -34,8 +34,11 @@ aap_demo_offer_kubeconfig_shell_setup() {
   local marker="${AAP_DEMO_DIR}/.kubeconfig-shell-setup"
   local shell_path shell_name profile escaped_path export_line
 
-  [ "$quiet" = true ] || [ -n "$inherited_kubeconfig" ] || [ ! -t 0 ] || return 0
-  [ -s "$AAP_DEMO_KUBECONFIG" ] || return 0
+  # Return early if any skip condition is met
+  [ "$quiet" = true ] && return 0
+  [ -n "$inherited_kubeconfig" ] && return 0
+  [ ! -t 0 ] && return 0
+  [ ! -s "$AAP_DEMO_KUBECONFIG" ] && return 0
   [ -e "$marker" ] && return 0
 
   shell_path="${SHELL:-$(ps -p $$ -o command= 2>/dev/null | awk '{print $1}')}"
@@ -51,10 +54,13 @@ aap_demo_offer_kubeconfig_shell_setup() {
     zsh) profile="${ZDOTDIR:-$HOME}/.zshrc" ;;
     fish) profile="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish" ;;
     pwsh | powershell)
-      profile="${PROFILE:-$HOME/Documents/PowerShell/Microsoft.PowerShell_profile.ps1}"
+      if [ "$(uname -s)" = Darwin ] || [ "$(uname -s)" = Linux ]; then
+        profile="${PROFILE:-${XDG_CONFIG_HOME:-$HOME/.config}/powershell/Microsoft.PowerShell_profile.ps1}"
+      else
+        profile="${PROFILE:-$HOME/Documents/PowerShell/Microsoft.PowerShell_profile.ps1}"
+      fi
       ;;
     *)
-      touch "$marker"
       return 0
       ;;
   esac
@@ -62,10 +68,10 @@ aap_demo_offer_kubeconfig_shell_setup() {
   echo ""
   echo "Kubeconfig saved to: $AAP_DEMO_KUBECONFIG"
   read -r -p "Add KUBECONFIG to ${profile}? [y/N] " _answer
-  touch "$marker"
   case "$_answer" in
     y | Y | yes | YES) ;;
     *)
+      touch "$marker"
       echo "  Run this in the current shell when needed:"
       echo "    export KUBECONFIG=\"$AAP_DEMO_KUBECONFIG\""
       return 0
@@ -85,6 +91,7 @@ aap_demo_offer_kubeconfig_shell_setup() {
 
   escaped_path="${AAP_DEMO_KUBECONFIG//\\/\\\\}"
   escaped_path="${escaped_path//\"/\\\"}"
+  escaped_path="${escaped_path//\'/\\\'}"
   case "$shell_name" in
     fish) export_line="set -gx KUBECONFIG \"$escaped_path\"" ;;
     pwsh | powershell) export_line="\$env:KUBECONFIG = \"$escaped_path\"" ;;
@@ -102,4 +109,5 @@ aap_demo_offer_kubeconfig_shell_setup() {
     echo "  ✓ KUBECONFIG is already configured in $profile"
   fi
   echo "  Restart your shell or source $profile to apply it."
+  touch "$marker"
 }

@@ -8,7 +8,7 @@ cli="${repo_root}/aap-demo.sh"
 
 grep -Fq 'aap_demo_offer_kubeconfig_shell_setup' "$paths_file" "$cli"
 grep -Fq 'KUBECONFIG_FROM_ENV' "$cli"
-grep -Fq 'QUIET' "$paths_file"
+grep -Fq 'quiet' "$paths_file"
 grep -Fq 'zsh' "$paths_file"
 grep -Fq 'fish' "$paths_file"
 grep -Fq 'powershell' "$paths_file"
