@@ -13,15 +13,17 @@ if grep -Fq 'client-certificate=<' "$cli" || grep -Fq 'client-key=<' "$cli"; the
   echo "FAIL: kubeconfig credential setup still uses process substitution" >&2
   exit 1
 fi
-if ! grep -Fq 'client-certificate="$cert_tmp"' "$cli" \
-  || ! grep -Fq 'client-key="$key_tmp"' "$cli"; then
+client_cert_pattern="client-certificate=\"\$cert_tmp\""
+client_key_pattern="client-key=\"\$key_tmp\""
+if ! grep -Fq "$client_cert_pattern" "$cli" \
+  || ! grep -Fq "$client_key_pattern" "$cli"; then
   echo "FAIL: kubeconfig credential setup does not use temporary files" >&2
   exit 1
 fi
-cleanup_pattern='rm -f "$cert_tmp" "$key_tmp"'
-tracking_pattern='TEMP_FILES=("$TEMP_KUBECONFIG")'
-cert_mktemp_pattern='cert_tmp=$(mktemp) || {'
-key_mktemp_pattern='key_tmp=$(mktemp) || {'
+cleanup_pattern="rm -f \"\$cert_tmp\" \"\$key_tmp\""
+tracking_pattern="TEMP_FILES=(\"\$TEMP_KUBECONFIG\")"
+cert_mktemp_pattern="cert_tmp=\$(mktemp) || {"
+key_mktemp_pattern="key_tmp=\$(mktemp) || {"
 
 if ! grep -Fq "$cleanup_pattern" "$cli" \
   || ! grep -Fq "$tracking_pattern" "$cli"; then
