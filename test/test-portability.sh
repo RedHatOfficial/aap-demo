@@ -18,13 +18,18 @@ if ! grep -Fq 'client-certificate="$cert_tmp"' "$cli" \
   echo "FAIL: kubeconfig credential setup does not use temporary files" >&2
   exit 1
 fi
-if ! grep -Fq 'rm -f "$cert_tmp" "$key_tmp"' "$cli" \
-  || ! grep -Fq 'TEMP_FILES=("$TEMP_KUBECONFIG")' "$cli"; then
+cleanup_pattern='rm -f "$cert_tmp" "$key_tmp"'
+tracking_pattern='TEMP_FILES=("$TEMP_KUBECONFIG")'
+cert_mktemp_pattern='cert_tmp=$(mktemp) || {'
+key_mktemp_pattern='key_tmp=$(mktemp) || {'
+
+if ! grep -Fq "$cleanup_pattern" "$cli" \
+  || ! grep -Fq "$tracking_pattern" "$cli"; then
   echo "FAIL: decoded kubeconfig credentials are not removed after embedding" >&2
   exit 1
 fi
-if ! grep -Fq 'cert_tmp=$(mktemp) || {' "$cli" \
-  || ! grep -Fq 'key_tmp=$(mktemp) || {' "$cli"; then
+if ! grep -Fq "$cert_mktemp_pattern" "$cli" \
+  || ! grep -Fq "$key_mktemp_pattern" "$cli"; then
   echo "FAIL: kubeconfig temp-file creation lacks explicit error handling" >&2
   exit 1
 fi
