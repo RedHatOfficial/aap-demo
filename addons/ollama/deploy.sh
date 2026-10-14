@@ -33,6 +33,30 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   exit 0
 fi
 
+_ollama_normalize_storage_size() {
+  local _size="$1" _number
+
+  _size=$(printf '%s' "$_size" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')
+  if [[ "$_size" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%sGi\n' "$_size"
+    return 0
+  fi
+
+  # Match the Kubernetes quantity grammar: decimal, binary, and exponent
+  # suffixes are all valid, but the value must still be positive.
+  if [[ "$_size" =~ ^[+]?(0|[1-9][0-9]*)([.]([0-9]+)?)?([eE][+-]?[0-9]+|m|Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$ ||
+    "$_size" =~ ^[+]?([.][0-9]+)([eE][+-]?[0-9]+|m|Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$ ]]; then
+    _number="$_size"
+    if awk -v value="$_number" 'BEGIN { exit !(value > 0) }'; then
+      printf '%s\n' "$_size"
+      return 0
+    fi
+  fi
+
+  echo "ERROR: OLLAMA_STORAGE_SIZE must be a positive integer (GiB implied) or a positive Kubernetes quantity such as 20Gi." >&2
+  return 1
+}
+
 if ! kubectl cluster-info >/dev/null 2>&1; then
   echo "ERROR: kubectl not connected to cluster"
   exit 1
@@ -93,6 +117,10 @@ echo "  StorageClass: ${_ollama_sc}"
 if [ -z "$_ollama_storage_size_explicit" ] && [ -t 0 ]; then
   read -r -p "  PVC size [${OLLAMA_STORAGE_SIZE}] (e.g. 20Gi for multiple/larger models): " _input_size
   [ -n "$_input_size" ] && OLLAMA_STORAGE_SIZE="$_input_size"
+fi
+
+if ! OLLAMA_STORAGE_SIZE="$(_ollama_normalize_storage_size "$OLLAMA_STORAGE_SIZE")"; then
+  exit 1
 fi
 echo "  PVC size:     ${OLLAMA_STORAGE_SIZE}"
 
