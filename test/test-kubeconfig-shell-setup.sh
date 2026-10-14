@@ -12,6 +12,7 @@ grep -Fq 'quiet' "$paths_file"
 grep -Fq 'zsh' "$paths_file"
 grep -Fq 'fish' "$paths_file"
 grep -Fq 'powershell' "$paths_file"
+grep -Fq './test/test-kubeconfig-shell-setup.sh' "${repo_root}/.github/workflows/test.yaml"
 
 test_home="$(mktemp -d)"
 trap 'rm -rf "$test_home"' EXIT
@@ -33,13 +34,14 @@ run_interactive() {
   export TEST_QUIET="$quiet"
   set +o pipefail
   # shellcheck disable=SC2016
-  printf '%s\n' "$answer" | {
-    sleep 0.1
-    cat
+  {
+    sleep 0.2
+    printf '%s\n' "$answer"
+    sleep 0.2
   } \
     | script -q /dev/null bash -c \
       'source "$TEST_PATHS_FILE"; aap_demo_offer_kubeconfig_shell_setup "$TEST_QUIET" "$TEST_INHERITED" < /dev/tty' 2>&1
-  local status=${PIPESTATUS[2]}
+  local status=${PIPESTATUS[1]}
   set -o pipefail
   return "$status"
 }
@@ -65,22 +67,49 @@ printf 'apiVersion: v1\n' >"$AAP_DEMO_KUBECONFIG"
 
 run_interactive y >/dev/null
 profile="$HOME/.bashrc"
-expected_export="export KUBECONFIG=\"$AAP_DEMO_KUBECONFIG\""
+printf -v escaped_path '%q' "$AAP_DEMO_KUBECONFIG"
+expected_export="export KUBECONFIG=$escaped_path"
 grep -Fqx "$expected_export" "$profile"
 actual_kubeconfig="$(bash -c 'unset KUBECONFIG; source "$1"; printf "%s" "$KUBECONFIG"' _ "$profile")"
 [ "$actual_kubeconfig" = "$AAP_DEMO_KUBECONFIG" ]
+
+prepare_case shell-metacharacters
+export SHELL=/bin/bash
+export AAP_DEMO_KUBECONFIG="$test_home/kube\$config-\$(touch pwned)"
+mkdir -p "$(dirname "$AAP_DEMO_KUBECONFIG")"
+printf 'apiVersion: v1\n' >"$AAP_DEMO_KUBECONFIG"
+run_interactive y >/dev/null
+profile="$HOME/.bashrc"
+actual_kubeconfig="$(cd "$test_home" && bash -c 'unset KUBECONFIG; source "$1"; printf "%s" "$KUBECONFIG"' _ "$profile")"
+[ "$actual_kubeconfig" = "$AAP_DEMO_KUBECONFIG" ]
+[ ! -e "$test_home/pwned" ]
+
+prepare_case preconfigured
+export SHELL=/bin/bash
+printf 'export KUBECONFIG="%s"\n' "$AAP_DEMO_KUBECONFIG" >"$HOME/.bashrc"
+preconfigured_output="$(run_interactive n)"
+[[ "$preconfigured_output" != *"Add KUBECONFIG to"* ]]
+[ -e "$AAP_DEMO_DIR/.kubeconfig-shell-setup" ]
 
 prepare_case zsh
 export SHELL=/bin/zsh
 export ZDOTDIR="$test_home/zsh"
 run_interactive y >/dev/null
-grep -Fqx "export KUBECONFIG=\"$AAP_DEMO_KUBECONFIG\"" "$ZDOTDIR/.zshrc"
+printf -v escaped_path '%q' "$AAP_DEMO_KUBECONFIG"
+grep -Fqx "export KUBECONFIG=$escaped_path" "$ZDOTDIR/.zshrc"
+zsh_kubeconfig="$(zsh -f -c 'unset KUBECONFIG; source "$1"; print -r -- "$KUBECONFIG"' _ "$ZDOTDIR/.zshrc")"
+[ "$zsh_kubeconfig" = "$AAP_DEMO_KUBECONFIG" ]
 
 prepare_case fish
 export SHELL=/usr/bin/fish
 export XDG_CONFIG_HOME="$test_home/fish-config"
+export AAP_DEMO_KUBECONFIG="$test_home/fish/kube'\\config"
+mkdir -p "$(dirname "$AAP_DEMO_KUBECONFIG")"
+printf 'apiVersion: v1\n' >"$AAP_DEMO_KUBECONFIG"
 run_interactive y >/dev/null
-grep -Fqx "set -gx KUBECONFIG \"$AAP_DEMO_KUBECONFIG\"" \
+fish_path="${AAP_DEMO_KUBECONFIG//\\/\\\\}"
+fish_path="${fish_path//\'/\\\'}"
+grep -Fqx "set -gx KUBECONFIG '$fish_path'" \
   "$XDG_CONFIG_HOME/fish/config.fish"
 
 prepare_case powershell
@@ -92,6 +121,10 @@ printf 'apiVersion: v1\n' >"$AAP_DEMO_KUBECONFIG"
 run_interactive y >/dev/null
 powershell_path="${AAP_DEMO_KUBECONFIG//\'/\'\'}"
 grep -Fqx "\$env:KUBECONFIG = '$powershell_path'" "$PROFILE"
+
+rm -f "$AAP_DEMO_DIR/.kubeconfig-shell-setup"
+run_interactive y >/dev/null
+[ "$(grep -Fc '# aap-demo kubeconfig' "$PROFILE")" -eq 1 ]
 
 prepare_case declined
 export SHELL=/bin/bash

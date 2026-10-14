@@ -38,6 +38,9 @@ jobs:
       - name: Run ingress CA export tests
         run: ./test/test-ingress-ca-export.sh
 
+      - name: Run kubeconfig shell setup tests
+        run: ./test/test-kubeconfig-shell-setup.sh
+
       - name: Run installer tests
         run: ./test/test-install.sh
 

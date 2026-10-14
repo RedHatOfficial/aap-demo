@@ -32,7 +32,7 @@ aap_demo_offer_kubeconfig_shell_setup() {
   local quiet="${1:-false}"
   local inherited_kubeconfig="${2:-}"
   local marker="${AAP_DEMO_DIR}/.kubeconfig-shell-setup"
-  local shell_path shell_name profile escaped_path powershell_path export_line
+  local shell_path shell_name profile escaped_path fish_path powershell_path export_line
 
   # Return early if any skip condition is met
   [ "$quiet" = true ] && return 0
@@ -65,6 +65,31 @@ aap_demo_offer_kubeconfig_shell_setup() {
       ;;
   esac
 
+  case "$shell_name" in
+    bash | zsh)
+      printf -v escaped_path '%q' "$AAP_DEMO_KUBECONFIG"
+      export_line="export KUBECONFIG=$escaped_path"
+      ;;
+    fish)
+      fish_path="${AAP_DEMO_KUBECONFIG//\\/\\\\}"
+      fish_path="${fish_path//\'/\\\'}"
+      export_line="set -gx KUBECONFIG '$fish_path'"
+      ;;
+    pwsh | powershell)
+      powershell_path="${AAP_DEMO_KUBECONFIG//\'/\'\'}"
+      export_line="\$env:KUBECONFIG = '$powershell_path'"
+      ;;
+    *) return 0 ;;
+  esac
+
+  if [ -f "$profile" ] && {
+    grep -Fq "$export_line" "$profile" || grep -Fq "$AAP_DEMO_KUBECONFIG" "$profile"
+  }; then
+    echo "  ✓ KUBECONFIG is already configured in $profile"
+    touch "$marker"
+    return 0
+  fi
+
   echo ""
   echo "Kubeconfig saved to: $AAP_DEMO_KUBECONFIG"
   read -r -p "Add KUBECONFIG to ${profile}? [y/N] " _answer
@@ -89,20 +114,8 @@ aap_demo_offer_kubeconfig_shell_setup() {
     return 0
   fi
 
-  escaped_path="${AAP_DEMO_KUBECONFIG//\\/\\\\}"
-  escaped_path="${escaped_path//\"/\\\"}"
-  # POSIX shells and fish use double-quoted values; PowerShell uses a
-  # single-quoted value below, where embedded single quotes are doubled.
-  case "$shell_name" in
-    fish) export_line="set -gx KUBECONFIG \"$escaped_path\"" ;;
-    pwsh | powershell)
-      powershell_path="${AAP_DEMO_KUBECONFIG//\'/\'\'}"
-      export_line="\$env:KUBECONFIG = '$powershell_path'"
-      ;;
-    *) export_line="export KUBECONFIG=\"$escaped_path\"" ;;
-  esac
-
-  if ! grep -Fq "$AAP_DEMO_KUBECONFIG" "$profile" 2>/dev/null; then
+  if ! grep -Fq "$export_line" "$profile" 2>/dev/null \
+    && ! grep -Fq "$AAP_DEMO_KUBECONFIG" "$profile" 2>/dev/null; then
     {
       echo ""
       echo "# aap-demo kubeconfig"
