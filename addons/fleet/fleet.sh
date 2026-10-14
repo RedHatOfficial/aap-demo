@@ -3,6 +3,12 @@
 # fleet.sh — QEMU VM lifecycle for AAP fleet nodes
 # =============================================================================
 
+# fleet.sh is also sourced directly by deploy.sh, so provide the shared error
+# helper when it was not loaded through the main aap-demo script.
+if ! command -v _err >/dev/null 2>&1; then
+  _err() { printf '\033[0;31mERROR:\033[0m %s\n' "$*" >&2; }
+fi
+
 if [ -n "${_FLEET_LOADED:-}" ]; then return 0; fi
 _FLEET_LOADED=1
 
