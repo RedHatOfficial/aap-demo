@@ -42,8 +42,11 @@ _ollama_normalize_storage_size() {
     return 0
   fi
 
-  if [[ "$_size" =~ ^([0-9]+([.][0-9]+)?)(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)$ ]]; then
-    _number="${BASH_REMATCH[1]}"
+  # Match the Kubernetes quantity grammar: decimal, binary, and exponent
+  # suffixes are all valid, but the value must still be positive.
+  if [[ "$_size" =~ ^[+]?(0|[1-9][0-9]*)([.]([0-9]+)?)?([eE][+-]?[0-9]+|m|Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$ \
+    || "$_size" =~ ^[+]?([.][0-9]+)([eE][+-]?[0-9]+|m|Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$ ]]; then
+    _number="$_size"
     if awk -v value="$_number" 'BEGIN { exit !(value > 0) }'; then
       printf '%s\n' "$_size"
       return 0

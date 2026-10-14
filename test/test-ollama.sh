@@ -241,6 +241,23 @@ else
   fail "pvc_normalizes_bare_size_to_gib"
 fi
 
+# Kubernetes decimal-milli and exponent quantities remain valid overrides.
+if OLLAMA_MODEL=qwen2.5:3b OLLAMA_STORAGE_SIZE=100m \
+  "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && grep -q 'storage: 100m' "$MOCK_APPLY_FILE"; then
+  pass "pvc_accepts_decimal_milli_quantity"
+else
+  fail "pvc_accepts_decimal_milli_quantity"
+fi
+
+if OLLAMA_MODEL=qwen2.5:3b OLLAMA_STORAGE_SIZE=1e3 \
+  "$OLLAMA_DEPLOY" >/dev/null 2>&1 \
+  && grep -q 'storage: 1e3' "$MOCK_APPLY_FILE"; then
+  pass "pvc_accepts_exponent_quantity"
+else
+  fail "pvc_accepts_exponent_quantity"
+fi
+
 # Invalid or zero sizes must fail before applying a manifest.
 rm -f "$MOCK_APPLY_FILE"
 if ! OLLAMA_MODEL=qwen2.5:3b OLLAMA_STORAGE_SIZE=0 \
