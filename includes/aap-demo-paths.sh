@@ -32,7 +32,7 @@ aap_demo_offer_kubeconfig_shell_setup() {
   local quiet="${1:-false}"
   local inherited_kubeconfig="${2:-}"
   local marker="${AAP_DEMO_DIR}/.kubeconfig-shell-setup"
-  local shell_path shell_name profile escaped_path export_line
+  local shell_path shell_name profile escaped_path powershell_path export_line
 
   # Return early if any skip condition is met
   [ "$quiet" = true ] && return 0
@@ -91,10 +91,14 @@ aap_demo_offer_kubeconfig_shell_setup() {
 
   escaped_path="${AAP_DEMO_KUBECONFIG//\\/\\\\}"
   escaped_path="${escaped_path//\"/\\\"}"
-  escaped_path="${escaped_path//\'/\\\'}"
+  # POSIX shells and fish use double-quoted values; PowerShell uses a
+  # single-quoted value below, where embedded single quotes are doubled.
   case "$shell_name" in
     fish) export_line="set -gx KUBECONFIG \"$escaped_path\"" ;;
-    pwsh | powershell) export_line="\$env:KUBECONFIG = \"$escaped_path\"" ;;
+    pwsh | powershell)
+      powershell_path="${AAP_DEMO_KUBECONFIG//\'/\'\'}"
+      export_line="\$env:KUBECONFIG = '$powershell_path'"
+      ;;
     *) export_line="export KUBECONFIG=\"$escaped_path\"" ;;
   esac
 
