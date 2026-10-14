@@ -259,6 +259,10 @@ The addon also uses explicit boolean comparisons for standalone Ansible `when` e
 conditional handling in newer Ansible releases and avoid the unavailable `kubernetes.core.k8s_exec`
 client path in the APME execution environment.
 
+For detailed registry troubleshooting, set `APME_OCI_PUSH_DEBUG=1` before enabling the addon. The
+publisher then writes redirect chains, contacted endpoints, and progress for large blob uploads to
+stderr without changing the normal output or registry behavior.
+
 ## Differences from Bash Addon
 
 | Feature | Bash Addon | Playbook Addon |

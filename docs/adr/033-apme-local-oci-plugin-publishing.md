@@ -18,9 +18,10 @@ image name. Publishing the archive to a shorter repository such as `apme:<versio
 portal requesting a different reference, `apme/apme-prototype-plugins:<version>`, and the portal
 init container fails with `manifest unknown`.
 
-The deployment must also work with newer Ansible versions. Standalone boolean values in Ansible
-`when` expressions are subject to stricter conditional handling, and the `kubernetes.core.k8s_exec`
-module is not usable in the APME execution environment used by this addon.
+The deployment must also work with newer Ansible versions. Ansible 2.21 and later enforce stricter
+boolean evaluation in standalone `when` expressions, requiring explicit `== true` or `== false`
+comparisons. The `kubernetes.core.k8s_exec` module is also not usable in the APME execution
+environment used by this addon.
 
 ## Decision
 

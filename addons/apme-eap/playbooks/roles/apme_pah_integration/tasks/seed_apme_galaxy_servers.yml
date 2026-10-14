@@ -9,7 +9,9 @@
 
 - name: Normalize AAP host URL for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    aap_api_host_normalized: "{{ aap_api_host_normalized | default(aap_api_host | default(aap_host) | regex_replace('/$', '')) }}"
+    aap_api_host_normalized: >-
+      {{ aap_api_host_normalized | default(aap_api_host | default(aap_host)
+      | regex_replace('/$', '')) }}
   when:
     - (apme_pah_seed_apme_galaxy_servers | bool) == true
       - aap_api_host_normalized is not defined or aap_api_host_normalized | length == 0
@@ -76,6 +78,29 @@
   when:
     - (apme_pah_seed_apme_galaxy_servers | bool) == true
     - apme_pah_gateway_pod_name is not defined
+
+- name: Verify kubectl is available for gateway seeding  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - version
+      - --client
+  environment:
+    KUBECONFIG: "{{ apme_oci_kubeconfig | default(ansible_env.KUBECONFIG | default(''), true) }}"
+  register: apme_pah_kubectl_check
+  changed_when: false
+  failed_when: false
+  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+
+- name: Fail when kubectl is unavailable  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: >-
+      kubectl is required for APME gateway seeding but was not found in PATH.
+      The addon uses kubectl exec to seed galaxy servers in the APME gateway.
+      Please ensure kubectl is installed and available before enabling apme-eap.
+  when:
+    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_kubectl_check.rc != 0
 
 - name: Wait for APME gateway to accept HTTP requests  # noqa: var-naming[no-role-prefix]
   ansible.builtin.command:

@@ -19,6 +19,51 @@ SPEC.loader.exec_module(PUSH_OCI_ARCHIVE)
 
 
 class RedirectingRegistryTests(unittest.TestCase):
+    def test_missing_redirect_location_includes_request_context(self):
+        with mock.patch.object(
+            PUSH_OCI_ARCHIVE,
+            "request",
+            return_value=(302, {}, b""),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                r"registry redirect did not include Location header for PUT "
+                r"/v2/apme/manifests/8593383 \(HTTP 302\)",
+            ):
+                PUSH_OCI_ARCHIVE.request_with_redirects(
+                    "https",
+                    "registry.example.test",
+                    443,
+                    "PUT",
+                    "/v2/apme/manifests/8593383",
+                    verify_tls=True,
+                )
+
+    def test_debug_logging_is_opt_in(self):
+        with mock.patch.dict(os.environ, {PUSH_OCI_ARCHIVE.DEBUG_ENV: "1"}), mock.patch(
+            "builtins.print"
+        ) as print_mock, mock.patch.object(
+            PUSH_OCI_ARCHIVE,
+            "request",
+            return_value=(200, {}, b""),
+        ):
+            PUSH_OCI_ARCHIVE.request_with_redirects(
+                "https",
+                "registry.example.test",
+                443,
+                "HEAD",
+                "/v2/apme/manifests/8593383",
+                verify_tls=True,
+            )
+
+        self.assertTrue(
+            any(
+                "request HEAD https://registry.example.test:443/v2/apme/manifests/8593383"
+                in call.args[0]
+                for call in print_mock.call_args_list
+            )
+        )
+
     def test_registry_request_follows_route_redirect(self):
         with mock.patch.object(
             PUSH_OCI_ARCHIVE,

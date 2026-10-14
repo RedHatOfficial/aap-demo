@@ -11,10 +11,17 @@ import http.client
 import json
 import os
 import ssl
+import sys
 import tarfile
 import urllib.parse
 
 REDIRECT_STATUSES = (301, 302, 303, 307, 308)
+DEBUG_ENV = "APME_OCI_PUSH_DEBUG"
+
+
+def debug(message):
+    if os.environ.get(DEBUG_ENV, "").lower() in ("1", "true", "yes"):
+        print("[apme-oci-push] %s" % message, file=sys.stderr)
 
 
 def parse_args():
@@ -82,6 +89,10 @@ def request_with_redirects(scheme, host, port, method, path, headers=None, body=
     current_port = port
     current_path = path
     for _ in range(5):
+        debug(
+            "request %s %s://%s:%s%s"
+            % (method, current_scheme, current_host, current_port, current_path)
+        )
         status, response_headers, content = request(
             current_scheme,
             current_host,
@@ -92,18 +103,25 @@ def request_with_redirects(scheme, host, port, method, path, headers=None, body=
             body=body,
             verify_tls=verify_tls,
         )
+        debug("response HTTP %s for %s %s" % (status, method, current_path))
         if status not in REDIRECT_STATUSES:
             return status, response_headers, content
         location = redirect_location(response_headers)
         if not location:
-            raise RuntimeError("registry redirect did not include Location")
+            raise RuntimeError(
+                "registry redirect did not include Location header for %s %s (HTTP %s)"
+                % (method, current_path, status)
+            )
+        debug("following redirect to %s" % location)
         current_scheme, current_host, current_port, current_path = resolve_location(
             current_scheme,
             current_host,
             current_port,
             location,
         )
-    raise RuntimeError("registry request redirected too many times")
+    raise RuntimeError(
+        "registry request redirected too many times for %s %s (limit 5)" % (method, path)
+    )
 
 
 def blob_member_name(digest):
@@ -130,6 +148,10 @@ def upload_blob(scheme, host, port, base, digest, tar, member, size, verify_tls)
     upload_start_port = port
     upload_start_path = base + "/blobs/uploads/"
     for _ in range(5):
+        debug(
+            "request POST %s://%s:%s%s"
+            % (upload_start_scheme, upload_start_host, upload_start_port, upload_start_path)
+        )
         status, headers, _ = request(
             upload_start_scheme,
             upload_start_host,
@@ -139,11 +161,16 @@ def upload_blob(scheme, host, port, base, digest, tar, member, size, verify_tls)
             headers={"Content-Length": "0"},
             verify_tls=verify_tls,
         )
+        debug("response HTTP %s for POST %s" % (status, upload_start_path))
         if status not in REDIRECT_STATUSES:
             break
         location = redirect_location(headers)
         if not location:
-            raise RuntimeError("registry upload redirect did not include Location")
+            raise RuntimeError(
+                "registry upload redirect did not include Location header for POST %s (HTTP %s)"
+                % (upload_start_path, status)
+            )
+        debug("following upload redirect to %s" % location)
         upload_start_scheme, upload_start_host, upload_start_port, upload_start_path = resolve_location(
             upload_start_scheme,
             upload_start_host,
@@ -151,12 +178,21 @@ def upload_blob(scheme, host, port, base, digest, tar, member, size, verify_tls)
             location,
         )
     else:
-        raise RuntimeError("registry upload start redirected too many times")
+        raise RuntimeError(
+            "registry upload start redirected too many times for POST %s (limit 5)"
+            % upload_start_path
+        )
     if status not in (201, 202):
-        raise RuntimeError("registry upload start failed with HTTP %s" % status)
+        raise RuntimeError(
+            "registry upload start failed with HTTP %s for POST %s"
+            % (status, upload_start_path)
+        )
     location = redirect_location(headers)
     if not location:
-        raise RuntimeError("registry upload response did not include Location")
+        raise RuntimeError(
+            "registry upload response did not include Location header for POST %s (HTTP %s)"
+            % (upload_start_path, status)
+        )
     upload_scheme, upload_host, upload_port, upload_path = resolve_location(
         upload_start_scheme,
         upload_start_host,
@@ -167,22 +203,36 @@ def upload_blob(scheme, host, port, base, digest, tar, member, size, verify_tls)
 
     conn = connection(upload_scheme, upload_host, upload_port, verify_tls)
     try:
+        debug(
+            "uploading blob %s (%s bytes) to %s://%s:%s%s"
+            % (digest, size, upload_scheme, upload_host, upload_port, upload_path)
+        )
         conn.putrequest("PUT", upload_path)
         conn.putheader("Content-Length", str(size))
         conn.putheader("Content-Type", "application/octet-stream")
         conn.endheaders()
         source = tar.extractfile(member)
         remaining = size
+        uploaded = 0
+        progress_interval = 10 * 1024 * 1024
+        next_progress = progress_interval
         while remaining:
             chunk = source.read(min(1024 * 1024, remaining))
             if not chunk:
                 raise RuntimeError("unexpected end of archive while uploading %s" % digest)
             conn.send(chunk)
+            uploaded += len(chunk)
             remaining -= len(chunk)
+            if size > 1024 * 1024 and (uploaded >= next_progress or not remaining):
+                debug("blob %s upload progress: %s/%s bytes" % (digest, uploaded, size))
+                next_progress += progress_interval
         response = conn.getresponse()
         response.read()
         if response.status not in (201, 202):
-            raise RuntimeError("registry blob upload failed with HTTP %s" % response.status)
+            raise RuntimeError(
+                "registry blob upload failed with HTTP %s for PUT %s"
+                % (response.status, upload_path)
+            )
     finally:
         conn.close()
 
@@ -228,7 +278,10 @@ def main():
             verify_tls=args.tls_verify,
         )
         if status not in (200, 201, 202):
-            raise RuntimeError("registry manifest upload failed with HTTP %s" % status)
+            raise RuntimeError(
+                "registry manifest upload failed with HTTP %s for PUT %s"
+                % (status, base + "/manifests/" + args.tag)
+            )
     print("Published %s:%s" % (repository, args.tag))
     return 0
 
