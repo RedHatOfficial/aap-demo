@@ -3,6 +3,12 @@
 # fleet.sh — QEMU VM lifecycle for AAP fleet nodes
 # =============================================================================
 
+# fleet.sh is also sourced directly by deploy.sh, so provide the shared error
+# helper when it was not loaded through the main aap-demo script.
+if ! command -v _err >/dev/null 2>&1; then
+  _err() { printf '\033[0;31mERROR:\033[0m %s\n' "$*" >&2; }
+fi
+
 if [ -n "${_FLEET_LOADED:-}" ]; then return 0; fi
 _FLEET_LOADED=1
 
@@ -193,6 +199,31 @@ fleet_check_prereqs() {
     return 1
   fi
   return 0
+}
+
+fleet_install_prereqs() {
+  case "$(uname -s)" in
+    Darwin)
+      if ! command -v brew >/dev/null 2>&1; then
+        _err "Homebrew is required to install Fleet prerequisites on macOS"
+        echo "  Install Homebrew: https://brew.sh/"
+        return 1
+      fi
+      brew install qemu cdrtools
+      ;;
+    Linux)
+      if ! command -v dnf >/dev/null 2>&1; then
+        _err "dnf is required to install Fleet prerequisites automatically on Linux"
+        echo "  Install qemu-kvm, qemu-img, and genisoimage with your distribution package manager"
+        return 1
+      fi
+      sudo dnf install -y qemu-kvm qemu-img genisoimage
+      ;;
+    *)
+      _err "Cannot install Fleet prerequisites automatically on $(uname -s)"
+      return 1
+      ;;
+  esac
 }
 
 _fleet_validate_image() {
