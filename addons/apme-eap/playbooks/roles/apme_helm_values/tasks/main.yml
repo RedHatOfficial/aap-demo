@@ -114,11 +114,11 @@
 # MicroShift / CRC workarounds for self-signed certs and DNS resolution
 - name: Check if using nip.io domain  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    is_nip_io_domain: "{{ 'nip.io' in openshift_cluster_domain }}"
+    is_nip_io_domain: "{{ (openshift_cluster_domain | lower) is match('(^|.*\\.)nip\\.io$') }}"
 
 - name: Check if using the default CRC domain  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    is_crc_domain: "{{ 'crc.testing' in openshift_cluster_domain }}"
+    is_crc_domain: "{{ (openshift_cluster_domain | lower) is match('(^|.*\\.)crc\\.testing$') }}"
 
 - name: Check if using a MicroShift route domain  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
@@ -169,12 +169,15 @@
       OAuth authentication will fail. Check router deployment.
   when: is_nip_io_domain and (router_service.resources | length == 0 or router_cluster_ip is not defined)
 
-- name: Warn if AAP service not found for CRC hostAliases  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.debug:
-    msg: >-
-      WARNING: AAP service not found in {{ apme_pah_aap_namespace | default('aap-operator') }}.
-      hostAliases cannot be configured - in-pod OAuth token exchange may fail.
-  when: is_crc_domain and (aap_service.resources | length == 0 or aap_service_cluster_ip is not defined)
+- name: Require AAP service for CRC hostAliases  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - (aap_service.resources | default([]) | length) > 0
+      - (aap_service_cluster_ip | default('') | length) > 0
+    fail_msg: >-
+      AAP Service not found in {{ apme_pah_aap_namespace | default('aap-operator') }}.
+      Cannot configure the CRC hostAlias required for in-pod OAuth token exchange.
+  when: is_crc_domain
 
 - name: Disable SSL verification for self-signed certs (CRC / MicroShift)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
@@ -208,13 +211,22 @@
     microshift_host_alias_ip: "{{ router_cluster_ip }}"
   when: is_nip_io_domain and router_cluster_ip is defined and router_cluster_ip | length > 0
 
-- name: Add hostAliases for MicroShift route resolution  # noqa: var-naming[no-role-prefix]
+- name: Add AAP hostAlias for CRC route resolution  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(      - emptyDir: \{\}\n        name: apme-data\n)      hostAliases: \[\]'
+    replace: '\1      hostAliases:\n      - ip: "{{ microshift_host_alias_ip }}"\n        hostnames:\n        - "{{ aap_hostname }}"'  # yamllint disable-line rule:line-length
+  when:
+    - is_crc_domain
+    - microshift_host_alias_ip is defined and microshift_host_alias_ip | length > 0
+
+- name: Add AAP and registry hostAliases for nip.io route resolution  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(      - emptyDir: \{\}\n        name: apme-data\n)      hostAliases: \[\]'
     replace: '\1      hostAliases:\n      - ip: "{{ microshift_host_alias_ip }}"\n        hostnames:\n        - "{{ aap_hostname }}"\n        - "registry.{{ openshift_cluster_domain }}"'  # yamllint disable-line rule:line-length
   when:
-    - is_microshift_domain
+    - is_nip_io_domain
     - microshift_host_alias_ip is defined and microshift_host_alias_ip | length > 0
 
 - name: Remove GitHub integration when not configured  # noqa: var-naming[no-role-prefix]

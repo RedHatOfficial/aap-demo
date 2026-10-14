@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 # Return the URL that APME pods should use for AAP API and OAuth calls.
-# CRC/MicroShift exposes AAP on the in-cluster HTTP service port; browsers
-# continue to use the external HTTPS route.
+# CRC exposes AAP on the in-cluster HTTP service port. MicroShift's nip.io
+# routes continue to use the external HTTPS router route.
 apme_aap_portal_host_url() {
   local aap_host="$1"
   local cluster_domain
@@ -12,7 +12,7 @@ apme_aap_portal_host_url() {
   aap_hostname="${aap_hostname%/}"
 
   case "$cluster_domain" in
-    crc.testing | *.crc.testing | nip.io | *.nip.io)
+    crc.testing | *.crc.testing)
       printf 'http://%s\n' "$aap_hostname"
       ;;
     *)

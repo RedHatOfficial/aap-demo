@@ -24,9 +24,9 @@ assert_equals \
   'uses HTTP for the default CRC route domain'
 
 assert_equals \
-  'http://aap-aap-operator.apps.127.0.0.1.nip.io' \
+  'https://aap-aap-operator.apps.127.0.0.1.nip.io' \
   "$(apme_aap_portal_host_url 'https://aap-aap-operator.apps.127.0.0.1.nip.io' 'apps.127.0.0.1.nip.io')" \
-  'uses HTTP for nip.io MicroShift routes'
+  'preserves HTTPS for nip.io router routes'
 
 assert_equals \
   'https://aap.example.test' \

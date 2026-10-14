@@ -394,10 +394,12 @@ kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_passw
 
 ### OAuth login fails on CRC or MicroShift
 
-The portal uses the external HTTPS AAP route for browser access. On CRC and
-MicroShift, its backend uses `http://<aap-route>` for the in-cluster token
-exchange and receives a `hostAliases` entry for the AAP Service. This applies
-to the default `apps.crc.testing` domain as well as `nip.io` routes.
+The portal uses the external HTTPS AAP route for browser access. On CRC, its
+backend uses `http://<aap-route>` for the in-cluster token exchange and
+receives a `hostAliases` entry for the AAP Service. On MicroShift, `nip.io`
+routes continue to use HTTPS through the router and receive router aliases for
+the AAP and registry routes. This applies to the default `apps.crc.testing`
+domain and `nip.io` routes respectively.
 
 If login still fails, check the generated values and portal environment:
 
