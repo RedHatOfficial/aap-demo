@@ -1650,8 +1650,15 @@ cmd_kubeconfig() {
   client_key=$(KUBECONFIG="$TEMP_KUBECONFIG" kubectl config view --raw -o jsonpath='{.users[?(@.name=="user")].user.client-key-data}' 2>/dev/null)
   if [ -n "$client_cert" ]; then
     local cert_tmp key_tmp
-    cert_tmp=$(mktemp)
-    key_tmp=$(mktemp)
+    cert_tmp=$(mktemp) || {
+      echo "  ERROR: Failed to create temporary file for client certificate" >&2
+      exit 1
+    }
+    key_tmp=$(mktemp) || {
+      rm -f "$cert_tmp"
+      echo "  ERROR: Failed to create temporary file for client key" >&2
+      exit 1
+    }
     TEMP_FILES+=("$cert_tmp" "$key_tmp")
     if ! printf '%s' "$client_cert" | base64 -d >"$cert_tmp" \
       || ! printf '%s' "$client_key" | base64 -d >"$key_tmp"; then
@@ -1662,6 +1669,8 @@ cmd_kubeconfig() {
       --client-certificate="$cert_tmp" \
       --client-key="$key_tmp" \
       --embed-certs=true >/dev/null 2>&1
+    rm -f "$cert_tmp" "$key_tmp"
+    TEMP_FILES=("$TEMP_KUBECONFIG")
     KUBECONFIG="$TEMP_KUBECONFIG" kubectl config unset users.user >/dev/null 2>&1 || true
   fi
   KUBECONFIG="$TEMP_KUBECONFIG" kubectl config use-context "$ctx_name" >/dev/null 2>&1
