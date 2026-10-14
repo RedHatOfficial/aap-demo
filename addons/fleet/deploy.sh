@@ -123,7 +123,9 @@ _fleet_save_image_config "$_fleet_image"
 
 if ! fleet_register_aap; then
   echo "ERROR: AAP registration failed; removing the VMs created by this enable operation" >&2
-  fleet_destroy_all
+  for _fleet_index in "${FLEET_CREATED_INDICES[@]}"; do
+    fleet_node_delete "$_fleet_index" 2>/dev/null || true
+  done
   exit 1
 fi
 
