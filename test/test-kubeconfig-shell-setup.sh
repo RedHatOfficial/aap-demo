@@ -36,14 +36,17 @@ run_interactive() {
 
   export TEST_INHERITED="$inherited"
   export TEST_QUIET="$quiet"
+  export TEST_TTY_COMMAND="$tty_command"
   set +o pipefail
   # shellcheck disable=SC2016
   {
     sleep 0.2
-    printf '%s\n' "$answer"
+    printf '%s\n' "$answer" || true
     sleep 0.2
   } \
-    | if script -q -c true /dev/null </dev/null >/dev/null 2>&1; then
+    | if command -v python3 >/dev/null 2>&1; then
+      python3 -c 'import os, pty, sys; status = pty.spawn(["bash", "-c", os.environ["TEST_TTY_COMMAND"]]); sys.exit(os.waitstatus_to_exitcode(status))'
+    elif script -q -c true /dev/null </dev/null >/dev/null 2>&1; then
       script -q -c "bash -c $quoted_tty_command" /dev/null
     else
       script -q /dev/null bash -c "$tty_command"
