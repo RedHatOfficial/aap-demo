@@ -8,7 +8,7 @@ This addon installs the foundation for Ansible Product Demos (APD) in your AAP e
 - **Bootstrap project**: "APD Bootstrap Project" (Default org) — SCM source for `install-apd.yml`
   and domain `setup_demo.yml` runs
 - **APD project**: "Ansible Product Demos" (APD org) — created inside the APD organization by the install job
-- **Execution Environment**: Product Demos EE (`quay.io/ansible-product-demos/apd-ee-26:latest`)
+- **Execution Environment**: Product Demos EE (`quay.io/ansible-product-demos/apd-ee-27:latest`)
 - **Inventory**: "Ansible Product Demos Inventory"
 - **Credentials**:
   - AAP Credential (for managing AAP itself)
@@ -239,7 +239,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ### Image pull failures
 
-The APD execution environment (`quay.io/ansible-product-demos/apd-ee-26:latest`) is public, but ensure:
+The APD execution environment (`quay.io/ansible-product-demos/apd-ee-27:latest`) is public, but ensure:
 
 - Podman or Docker is running
 - Network access to quay.io is available
