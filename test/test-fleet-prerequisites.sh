@@ -13,4 +13,9 @@ grep -Fq 'sudo dnf install -y qemu-kvm qemu-img genisoimage' "$fleet" "$deploy" 
 grep -Fq 'QUIET' "$deploy"
 grep -Fq 'non-interactive' "$readme"
 
+# fleet.sh must provide _err when sourced without aap-demo.sh.
+test_home="$(mktemp -d)"
+trap 'rm -rf "$test_home"' EXIT
+HOME="$test_home" bash -c 'source "$1"; declare -F _err >/dev/null' _ "$fleet"
+
 echo "PASS: Fleet prerequisite installation is explicit and non-interactive-safe"
