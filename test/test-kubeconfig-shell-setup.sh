@@ -41,7 +41,7 @@ run_interactive() {
   # shellcheck disable=SC2016
   {
     sleep 0.2
-    printf '%s\n' "$answer" || true
+    printf '%s\n' "$answer" 2>/dev/null || true
     sleep 0.2
   } \
     | if command -v python3 >/dev/null 2>&1; then
@@ -107,8 +107,10 @@ export ZDOTDIR="$test_home/zsh"
 run_interactive y >/dev/null
 printf -v escaped_path '%q' "$AAP_DEMO_KUBECONFIG"
 grep -Fqx "export KUBECONFIG=$escaped_path" "$ZDOTDIR/.zshrc"
-zsh_kubeconfig="$(zsh -f -c 'unset KUBECONFIG; source "$1"; print -r -- "$KUBECONFIG"' _ "$ZDOTDIR/.zshrc")"
-[ "$zsh_kubeconfig" = "$AAP_DEMO_KUBECONFIG" ]
+if command -v zsh >/dev/null 2>&1; then
+  zsh_kubeconfig="$(zsh -f -c 'unset KUBECONFIG; source "$1"; print -r -- "$KUBECONFIG"' _ "$ZDOTDIR/.zshrc")"
+  [ "$zsh_kubeconfig" = "$AAP_DEMO_KUBECONFIG" ]
+fi
 
 prepare_case fish
 export SHELL=/usr/bin/fish
