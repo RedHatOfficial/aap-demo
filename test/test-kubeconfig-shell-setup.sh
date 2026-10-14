@@ -29,6 +29,10 @@ run_interactive() {
   local answer=$1
   local inherited=${2:-}
   local quiet=${3:-false}
+  local tty_command='source "$TEST_PATHS_FILE"; aap_demo_offer_kubeconfig_shell_setup "$TEST_QUIET" "$TEST_INHERITED" < /dev/tty'
+  local quoted_tty_command
+
+  printf -v quoted_tty_command '%q' "$tty_command"
 
   export TEST_INHERITED="$inherited"
   export TEST_QUIET="$quiet"
@@ -39,8 +43,11 @@ run_interactive() {
     printf '%s\n' "$answer"
     sleep 0.2
   } \
-    | script -q /dev/null bash -c \
-      'source "$TEST_PATHS_FILE"; aap_demo_offer_kubeconfig_shell_setup "$TEST_QUIET" "$TEST_INHERITED" < /dev/tty' 2>&1
+    | if script -q -c true /dev/null </dev/null >/dev/null 2>&1; then
+      script -q -c "bash -c $quoted_tty_command" /dev/null
+    else
+      script -q /dev/null bash -c "$tty_command"
+    fi 2>&1
   local status=${PIPESTATUS[1]}
   set -o pipefail
   return "$status"
