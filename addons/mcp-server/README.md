@@ -52,7 +52,7 @@ The addon automatically:
 
 After Claude Code is configured, the addon checks whether the MCP route
 hostname resolves on the host. A Route object can be admitted inside the
-cluster while the host resolver still cannot resolve a `crc.testing` or
+cluster while the host-side DNS resolver still cannot resolve a `crc.testing` or
 `nip.io` hostname. In that case the output identifies DNS as the blocker and
 suggests checking the cluster with `aap-demo status`, re-applying local route
 wiring with `aap-demo start`, and retrying the enable command.

@@ -75,26 +75,35 @@ _mcp_route_resolves() {
   local _host="$1"
 
   if command -v getent >/dev/null 2>&1; then
-    getent hosts "$_host" >/dev/null 2>&1
-    return
+    if getent hosts "$_host" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   fi
   if command -v dscacheutil >/dev/null 2>&1; then
-    dscacheutil -q host -a name "$_host" | grep -q '^ip_address:'
-    return
+    if dscacheutil -q host -a name "$_host" | grep -q '^ip_address:'; then
+      return 0
+    fi
+    return 1
   fi
   if command -v host >/dev/null 2>&1; then
-    host "$_host" >/dev/null 2>&1
-    return
+    if host "$_host" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   fi
   return 2
 }
 
 _mcp_report_route_resolution() {
   local _route_host="$1"
+  local _resolution_status
+
   if _mcp_route_resolves "$_route_host"; then
     echo "  ✓ MCP route hostname resolves on this host: ${_route_host}"
   else
-    case "$?" in
+    _resolution_status=$?
+    case "$_resolution_status" in
       2)
         echo "  ⚠ Cannot check MCP route DNS: install getent, dscacheutil, or host"
         ;;
