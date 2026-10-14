@@ -17,6 +17,8 @@ FLEET_DIR="${HOME}/.aap-demo/fleet"
 FLEET_NODE_MEM="${FLEET_NODE_MEM:-1024}"
 FLEET_NODE_CPUS="${FLEET_NODE_CPUS:-2}"
 FLEET_NODE_PORT_BASE=2200
+# Indices created by the current fleet_create_all invocation.
+FLEET_CREATED_INDICES=()
 
 # -----------------------------------------------------------------------------
 # Migration from seed-nodes → fleet (one-time)
@@ -594,6 +596,8 @@ fleet_create_all() {
   local count="$1"
   local image_path="$2"
 
+  FLEET_CREATED_INDICES=()
+
   if [ -z "$count" ] || [ "$count" -lt 1 ] 2>/dev/null; then
     _err "Count must be a positive integer"
     return 1
@@ -619,6 +623,7 @@ fleet_create_all() {
     index=$(_fleet_next_index)
     if fleet_node_create "$image_path" "$index"; then
       created=$((created + 1))
+      FLEET_CREATED_INDICES+=("$index")
     fi
   done
 
