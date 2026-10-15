@@ -105,6 +105,7 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo destroy`             | Delete CRC cluster (`--reset` clears saved preset)                 |
 | `aap-demo stop`                | Stop CRC cluster                                                   |
 | `aap-demo start`               | Start CRC and refresh MicroShift DNS                               |
+| `aap-demo trust-ca`            | Repair ingress certificate trust without repairing cluster           |
 | `aap-demo status`              | Cluster health, namespaces, routes, admin password                 |
 | `aap-demo diagnose`            | Environment health checks                                          |
 | `aap-demo watch`               | Monitor AAP deployment until Successful                            |
@@ -143,6 +144,13 @@ Set in PowerShell before running commands, or add to
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |
 | `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |
 | `AAP_DEMO_TRUST_CA` | `true` (implicit)                            | Set to `false` to skip automatic ingress CA import |
+| `AO_LLM_PROVIDER`    | `ollama` when unset                           | AO provider: `ollama`, `external`, or `none`      |
+| `AO_LLM_BASE_URL`    | `https://api.openai.com/v1` for `external`     | External LLM API base URL                         |
+| `AO_LLM_MODEL`       | `gpt-5.6-luna` for `external`                 | External LLM model; `luna` is an alias            |
+| `AO_LLM_API_KEY_FILE` | `%USERPROFILE%\.aap-demo\ao\llm-api-key`  | File used to save/reuse the external API key      |
+| `OPENAI_API_KEY`     | unset                                         | One-shot external provider key; never a CLI arg   |
+| `GALAXY_TOKEN_FILE`  | `%USERPROFILE%\.aap-demo\galaxy-token`      | Red Hat Galaxy/Automation Hub offline token file  |
+| `PAH_CONFIG_FILE`    | `%USERPROFILE%\.aap-demo\pah-config.yml`    | Private Automation Hub URL and credentials        |
 
 Example:
 
@@ -151,6 +159,28 @@ $env:CRC_MEMORY = 20480
 $env:NAMESPACE = 'aap-operator'
 aap-demo create
 ```
+
+### AO and credential ownership
+
+The Windows wrapper forwards the caller's environment to the Git Bash CLI as
+environment data; values are not appended to command arguments. AO provider
+settings are read with environment precedence, then from the saved
+`%USERPROFILE%\.aap-demo\config` file. `includes/ao-llm.sh` owns the external
+provider key file and defaults it to `%USERPROFILE%\.aap-demo\ao\llm-api-key`;
+`OPENAI_API_KEY` can seed that file but is never printed or added to a command
+line. The Bash writer uses a temporary file and restrictive permissions before
+replacement.
+
+The Windows PowerShell collection module owns the Galaxy token file and defaults
+it to `%USERPROFILE%\.aap-demo\galaxy-token`. `setup-pah` writes the token and
+applies a user-only Windows DACL when the platform permits it. Set
+`GALAXY_TOKEN_FILE` or `PAH_CONFIG_FILE` to use an existing supported location.
+
+`aap-demo start` restores the CRC kubeconfig, refreshes the MicroShift DNS
+configuration, and restores the saved ingress CA environment. `aap-demo trust-ca`
+runs the targeted ingress trust repair without invoking cluster repair; after the
+Git Bash command succeeds, the Windows wrapper imports the CA into the browser
+trust store and reports a warning if that import cannot be completed.
 
 ## File locations
 

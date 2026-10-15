@@ -21,6 +21,19 @@ if ($parseErrors.Count -gt 0) {
 }
 
 $module = Import-Module (Join-Path $repoRoot 'powershell/native/AapDemo.psm1') -Force -PassThru
+$wrapperSource = Get-Content (Join-Path $repoRoot 'powershell/aap-demo.ps1') -Raw
+if ($wrapperSource -notmatch "'start'" -or $wrapperSource -notmatch "'trust-ca'") {
+  throw 'Windows wrapper must expose start and trust-ca commands'
+}
+if ($wrapperSource -notmatch '\$trustCommands\s*=.*trust-ca') {
+  throw 'Windows wrapper must apply certificate trust handling after trust-ca'
+}
+$readmeSource = Get-Content (Join-Path $repoRoot 'powershell/README.md') -Raw
+foreach ($contractName in @('AO_LLM_PROVIDER', 'AO_LLM_API_KEY_FILE', 'OPENAI_API_KEY', 'GALAXY_TOKEN_FILE', 'PAH_CONFIG_FILE')) {
+  if ($readmeSource -notmatch [regex]::Escape($contractName)) {
+    throw "Windows README is missing credential contract variable: $contractName"
+  }
+}
 $addons = & $module { @($Script:AapAvailableAddons) }
 $required = @(
   'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
@@ -53,6 +66,12 @@ try {
   if (-not $runner.Success -or $runner.Stdout.Trim() -ne 'native argument with spaces') {
     throw 'Native process runner did not preserve an argument containing spaces'
   }
+$environmentRunner = Invoke-AapNativeProcess -FilePath $hostCommand.Source -ArgumentList @(
+  '-NoProfile', '-Command', '[Environment]::GetEnvironmentVariable("AAP_WINDOWS_CONTRACT_TEST")'
+) -Environment @{ AAP_WINDOWS_CONTRACT_TEST = 'environment-forwarded' }
+if (-not $environmentRunner.Success -or $environmentRunner.Stdout.Trim() -ne 'environment-forwarded') {
+  throw 'Native process runner did not forward environment values to the child'
+}
 } finally {
   Remove-Item -LiteralPath $echoScript -Force -ErrorAction SilentlyContinue
 }
