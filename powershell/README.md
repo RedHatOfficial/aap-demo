@@ -130,8 +130,10 @@ domain aliases remain unavailable through the Windows wrapper.
 
 ## Environment variables
 
-Set in PowerShell before running commands, or add to
-`%USERPROFILE%\.aap-demo\config` as `KEY=value` lines.
+Set in PowerShell before running commands, or add non-secret settings to
+`%USERPROFILE%\.aap-demo\config` as `KEY=value` lines. Credential values must
+not be stored in this shared config file; use the dedicated files below or a
+one-shot process environment variable.
 
 | Variable            | Default                                      | Description                                        |
 | ------------------- | -------------------------------------------- | -------------------------------------------------- |
@@ -148,7 +150,7 @@ Set in PowerShell before running commands, or add to
 | `AO_LLM_BASE_URL`    | `https://api.openai.com/v1` for `external`     | External LLM API base URL                         |
 | `AO_LLM_MODEL`       | `gpt-5.6-luna` for `external`                 | External LLM model; `luna` is an alias            |
 | `AO_LLM_API_KEY_FILE` | `%USERPROFILE%\.aap-demo\ao\llm-api-key`  | File used to save/reuse the external API key      |
-| `OPENAI_API_KEY`     | unset                                         | One-shot external provider key; never a CLI arg   |
+| `OPENAI_API_KEY`     | unset                                         | One-shot external provider key; never in config or a CLI arg |
 | `GALAXY_TOKEN_FILE`  | `%USERPROFILE%\.aap-demo\galaxy-token`      | Red Hat Galaxy/Automation Hub offline token file  |
 | `PAH_CONFIG_FILE`    | `%USERPROFILE%\.aap-demo\pah-config.yml`    | Private Automation Hub URL and credentials        |
 
@@ -162,19 +164,24 @@ aap-demo create
 
 ### AO and credential ownership
 
-The Windows wrapper forwards the caller's environment to the Git Bash CLI as
-environment data; values are not appended to command arguments. AO provider
-settings are read with environment precedence, then from the saved
+The Windows wrapper forwards the documented runtime settings and explicit addon
+values to the Git Bash CLI; unrelated caller environment variables are not
+inherited. Values are not appended to command arguments. AO provider settings
+are read with environment precedence, then from the saved
 `%USERPROFILE%\.aap-demo\config` file. `includes/ao-llm.sh` owns the external
 provider key file and defaults it to `%USERPROFILE%\.aap-demo\ao\llm-api-key`;
 `OPENAI_API_KEY` can seed that file but is never printed or added to a command
 line. The Bash writer uses a temporary file and restrictive permissions before
 replacement.
 
-The Windows PowerShell collection module owns the Galaxy token file and defaults
-it to `%USERPROFILE%\.aap-demo\galaxy-token`. `setup-pah` writes the token and
-applies a user-only Windows DACL when the platform permits it. Set
-`GALAXY_TOKEN_FILE` or `PAH_CONFIG_FILE` to use an existing supported location.
+The public Windows `setup-pah` compatibility command points to the
+`aap-demo enable setup-pah` Git Bash workflow. That workflow reads an existing
+`GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE`; it does not write a PAH config file
+or apply PowerShell ACLs. The native PowerShell
+collection helper protects token and PAH files with a user-only Windows DACL
+and fails closed if that protection cannot be applied. Set
+`GALAXY_TOKEN_FILE` or `PAH_CONFIG_FILE` to use an existing supported location;
+the path must support Windows ACLs.
 
 `aap-demo start` restores the CRC kubeconfig, refreshes the MicroShift DNS
 configuration, and restores the saved ingress CA environment. `aap-demo trust-ca`

@@ -72,6 +72,24 @@ $environmentRunner = Invoke-AapNativeProcess -FilePath $hostCommand.Source -Argu
 if (-not $environmentRunner.Success -or $environmentRunner.Stdout.Trim() -ne 'environment-forwarded') {
   throw 'Native process runner did not forward environment values to the child'
 }
+
+$oldUnsafeSecret = [Environment]::GetEnvironmentVariable('AAP_WINDOWS_UNSAFE_SECRET')
+$env:AAP_WINDOWS_UNSAFE_SECRET = 'must-not-reach-addon'
+try {
+  $bashEnvironment = & $module {
+    Invoke-AapGitBash -Command 'printf "%s|%s" "$AAP_WINDOWS_SAFE_VALUE" "$AAP_WINDOWS_UNSAFE_SECRET"' `
+      -Environment @{ AAP_WINDOWS_SAFE_VALUE = 'safe-value' }
+  }
+  if (-not $bashEnvironment.Success -or $bashEnvironment.Stdout.Trim() -ne 'safe-value|') {
+    throw "Git Bash bridge inherited an unrelated secret or lost an explicit value: $($bashEnvironment.Stdout)"
+  }
+} finally {
+  if ($null -eq $oldUnsafeSecret) {
+    Remove-Item Env:AAP_WINDOWS_UNSAFE_SECRET -ErrorAction SilentlyContinue
+  } else {
+    $env:AAP_WINDOWS_UNSAFE_SECRET = $oldUnsafeSecret
+  }
+}
 } finally {
   Remove-Item -LiteralPath $echoScript -Force -ErrorAction SilentlyContinue
 }

@@ -12,6 +12,22 @@ function Get-AapPahConfigFilePath {
   return Join-Path $Script:AapDemoConfigDir 'pah-config.yml'
 }
 
+function Protect-AapCredentialFile {
+  param([Parameter(Mandatory)][string]$Path)
+
+  try {
+    $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $acl.SetAccessRuleProtection($true, $false)
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+      $identity, 'FullControl', 'Allow')
+    $acl.SetAccessRule($rule)
+    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+  } catch {
+    throw "Could not restrict credential file permissions for '$Path': $($_.Exception.Message)"
+  }
+}
+
 function Get-AapYamlScalar {
   param(
     [Parameter(Mandatory)][string[]]$Lines,
@@ -42,6 +58,7 @@ function Get-AapGalaxyCredentials {
 
   $pahFile = Get-AapPahConfigFilePath
   if (Test-Path -LiteralPath $pahFile) {
+    Protect-AapCredentialFile -Path $pahFile
     $lines = Get-Content -LiteralPath $pahFile
     $creds.PahUrl = Get-AapYamlScalar -Lines $lines -Key 'url'
     $creds.PahToken = Get-AapYamlScalar -Lines $lines -Key 'token'
@@ -123,15 +140,10 @@ function Save-AapGalaxyTokenFile {
   Set-Content -LiteralPath $tokenFile -Value $Token.Trim() -NoNewline -Encoding ascii
 
   try {
-    $acl = Get-Acl -LiteralPath $tokenFile
-    $acl.SetAccessRuleProtection($true, $false)
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-      $identity, 'FullControl', 'Allow')
-    $acl.SetAccessRule($rule)
-    Set-Acl -LiteralPath $tokenFile -AclObject $acl
+    Protect-AapCredentialFile -Path $tokenFile
   } catch {
-    Write-AapWarn 'Could not restrict token file permissions'
+    Remove-Item -LiteralPath $tokenFile -Force -ErrorAction SilentlyContinue
+    throw
   }
 }
 
@@ -152,6 +164,7 @@ function Initialize-AapGalaxyToken {
   $tokenUrl = 'https://console.redhat.com/ansible/automation-hub/token'
 
   if (Test-Path -LiteralPath $tokenFile) {
+    Protect-AapCredentialFile -Path $tokenFile
     $existing = (Get-Content -LiteralPath $tokenFile -Raw).Trim()
     if (Test-AapGalaxyTokenFormat -Token $existing) {
       if (-not [string]::IsNullOrWhiteSpace($existing)) {

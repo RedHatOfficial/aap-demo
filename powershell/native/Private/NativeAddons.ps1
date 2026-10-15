@@ -24,6 +24,53 @@ function Get-AapGitBashExecutable {
   throw 'Git Bash is required for Windows addon commands. Install Git for Windows and ensure bash.exe is available.'
 }
 
+function Get-AapGitBashEnvironment {
+  param([hashtable]$Environment = @{})
+
+  # Git Bash needs the normal Windows runtime values, while addon commands only
+  # need the documented aap-demo settings. Do not pass the caller's complete
+  # environment: that would expose unrelated credentials to every Bash addon.
+  $allowedNames = @(
+    'Path', 'HOME', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'TEMP', 'TMP',
+    'SystemRoot', 'WINDIR', 'ComSpec', 'PATHEXT', 'ProgramFiles',
+    'ProgramFiles(x86)', 'ProgramW6432', 'LOCALAPPDATA', 'APPDATA',
+    'CommonProgramFiles', 'CommonProgramFiles(x86)', 'CommonProgramW6432',
+    'PUBLIC', 'OS', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_ARCHITEW6432',
+    'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION',
+    'NUMBER_OF_PROCESSORS', 'USERNAME', 'USERDOMAIN', 'COMPUTERNAME',
+    'TERM', 'TERM_PROGRAM', 'LANG', 'LC_ALL', 'CI', 'GIT_CONFIG_NOSYSTEM',
+    'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'SSH_AUTH_SOCK',
+    'AAP_DEMO_CONFIG', 'AAP_DEMO_DIR', 'AAP_DEMO_GIT_BRANCH',
+    'AAP_DEMO_SKIP_CACHE', 'AAP_DEMO_WIRE_AFTER_DEPLOY', 'CRC_CPUS',
+    'CRC_MEMORY', 'CRC_DISK', 'CRC_PV_SIZE', 'CRC_PRESET', 'CRC_VERSION',
+    'CRC_SSH_KEY', 'NFS_BACKING_STORAGE_SIZE', 'NAMESPACE', 'QUIET', 'FORCE',
+    'KUBECONFIG', 'PULL_SECRET_PATH', 'AAP_DEMO_TRUST_CA', 'SKIP_COLLECTIONS',
+    'GALAXY_TOKEN_FILE', 'PAH_CONFIG_FILE', 'AO_LLM_PROVIDER',
+    'AO_LLM_BASE_URL', 'AO_LLM_MODEL', 'AO_LLM_API_KEY_FILE', 'OPENAI_API_KEY',
+    'AO_IMPORT_DEMOS', 'AO_DEMOS_REF', 'AO_DEMOS_REPOSITORY',
+    'AO_INSTALL_PLAN_APPROVAL', 'AO_OPERATOR_CHANNEL', 'AO_OPERATOR_TIMEOUT',
+    'AO_CATALOG_TIMEOUT', 'AO_INSTANCE_TIMEOUT', 'AO_STORAGE_CLASS',
+    'AO_REPLICA_COUNT', 'AO_PULL_SECRET_NAME', 'AO_NAMESPACE', 'AO_STATE_DIR',
+    'AO_AGENT_CREDENTIAL_ID', 'AO_AGENT_INTEGRATION_ID', 'OLLAMA_MODEL',
+    'OLLAMA_STORAGE_CLASS', 'OLLAMA_STORAGE_SIZE', 'OLLAMA_ROLLOUT_TIMEOUT'
+  )
+
+  $result = @{}
+  $current = [Environment]::GetEnvironmentVariables()
+  foreach ($entry in $current.GetEnumerator()) {
+    $name = [string]$entry.Key
+    if ($allowedNames -contains $name) {
+      $result[$name] = [string]$entry.Value
+    }
+  }
+  foreach ($key in $Environment.Keys) {
+    # Explicit values are intentional caller input (for example, test hooks or
+    # addon-specific paths), so preserve them exactly.
+    $result[[string]$key] = [string]$Environment[$key]
+  }
+  return $result
+}
+
 function Invoke-AapGitBash {
   param(
     [Parameter(Mandatory)][string]$Command,
@@ -33,11 +80,11 @@ function Invoke-AapGitBash {
   )
 
   $bash = Get-AapGitBashExecutable
-  $bashEnvironment = @{}
-  foreach ($key in $Environment.Keys) { $bashEnvironment[$key] = $Environment[$key] }
+  $bashEnvironment = Get-AapGitBashEnvironment -Environment $Environment
   if ($Interactive) { $bashEnvironment.AAP_DEMO_INTERACTIVE = '1' }
   $result = Invoke-AapNativeProcess -FilePath $bash -ArgumentList (@('-lc', $Command, '--') + @($Arguments)) `
-    -Environment $bashEnvironment -WorkingDirectory $Script:AapDemoRepoRoot -Interactive:$Interactive
+    -Environment $bashEnvironment -WorkingDirectory $Script:AapDemoRepoRoot `
+    -ClearEnvironment -Interactive:$Interactive
   return $result
 }
 

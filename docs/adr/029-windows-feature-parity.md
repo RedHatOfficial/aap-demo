@@ -65,11 +65,15 @@ Keep the two platform entry points, but define a clear ownership boundary:
    through command arguments.
 8. **Credential ownership is explicit.** `includes/ao-llm.sh` owns
    `AO_LLM_API_KEY_FILE` (default `%USERPROFILE%\.aap-demo\ao\llm-api-key`) and
-   the AO provider settings in the shared config. The PowerShell collection
-   module owns `GALAXY_TOKEN_FILE` (default `%USERPROFILE%\.aap-demo\galaxy-token`)
-   and `PAH_CONFIG_FILE`; its token writer applies a user-only Windows DACL when
-   possible. Existing paths can be supplied through the documented environment
-   variables.
+   non-secret AO provider settings. The shared config loader rejects inline
+   API keys, tokens, passwords, and secrets. The public Windows `setup-pah`
+   compatibility command points to the `enable setup-pah` Git Bash workflow,
+   which reads existing `GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE` values.
+   Native PowerShell
+   collection helpers protect those files with a user-only Windows DACL and
+   fail closed when ACL protection is unavailable. Existing paths can be
+   supplied through the documented environment variables only when they
+   support Windows ACLs.
 
 This keeps the critical Windows path native, avoids a second implementation of
 addon business logic, and gives future native addon ports a stable adapter
