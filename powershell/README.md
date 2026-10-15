@@ -177,7 +177,8 @@ replacement.
 The public Windows `setup-pah` compatibility command points to the
 `aap-demo enable setup-pah` Git Bash workflow. That workflow reads an existing
 `GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE`; it does not write a PAH config file
-or apply PowerShell ACLs. The native PowerShell
+but applies restrictive file permissions before reading either credential file.
+The native PowerShell
 collection helper protects token and PAH files with a user-only Windows DACL
 and fails closed if that protection cannot be applied. Set
 `GALAXY_TOKEN_FILE` or `PAH_CONFIG_FILE` to use an existing supported location;

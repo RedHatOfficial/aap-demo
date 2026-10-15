@@ -68,8 +68,8 @@ Keep the two platform entry points, but define a clear ownership boundary:
    non-secret AO provider settings. The shared config loader rejects inline
    API keys, tokens, passwords, and secrets. The public Windows `setup-pah`
    compatibility command points to the `enable setup-pah` Git Bash workflow,
-   which reads existing `GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE` values.
-   Native PowerShell
+   which reads existing `GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE` values after
+   applying restrictive file permissions. Native PowerShell
    collection helpers protect those files with a user-only Windows DACL and
    fail closed when ACL protection is unavailable. Existing paths can be
    supplied through the documented environment variables only when they
