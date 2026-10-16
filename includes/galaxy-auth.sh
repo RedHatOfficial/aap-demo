@@ -66,7 +66,7 @@ configure_pah_remotes() {
   fi
 
   # Detect credentials
-  detect_galaxy_credentials
+  detect_galaxy_credentials || return 1
 
   # Get AAP route and admin password
   local aap_route

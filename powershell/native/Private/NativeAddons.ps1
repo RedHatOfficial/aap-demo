@@ -88,13 +88,35 @@ function Invoke-AapGitBash {
   return $result
 }
 
+function Get-AapGitBashCliEnvironment {
+  param(
+    [Parameter(Mandatory)][string[]]$Arguments,
+    [hashtable]$Environment = @{}
+  )
+
+  $bashEnvironment = @{}
+  $isPortalEnable = $Arguments.Count -ge 2 -and
+    $Arguments[0].ToLowerInvariant() -eq 'enable' -and
+    $Arguments[1].ToLowerInvariant() -eq 'portal'
+  if ($isPortalEnable) {
+    foreach ($name in @('REGISTRY_USERNAME', 'REGISTRY_PASSWORD')) {
+      $value = [Environment]::GetEnvironmentVariable($name)
+      if ($null -ne $value) { $bashEnvironment[$name] = $value }
+    }
+  }
+  foreach ($key in $Environment.Keys) { $bashEnvironment[$key] = $Environment[$key] }
+  return $bashEnvironment
+}
+
 function Invoke-AapGitBashCli {
   param(
     [Parameter(Mandatory)][string[]]$Arguments,
     [switch]$Interactive
   )
 
-  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $Arguments -Interactive:$Interactive
+  $bashEnvironment = Get-AapGitBashCliEnvironment -Arguments $Arguments
+  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $Arguments `
+    -Environment $bashEnvironment -Interactive:$Interactive
   if ($result.Output) { Write-Host $result.Output.TrimEnd() }
   return $result
 }

@@ -174,13 +174,13 @@ provider key file and defaults it to `%USERPROFILE%\.aap-demo\ao\llm-api-key`;
 line. The Bash writer uses a temporary file and restrictive permissions before
 replacement.
 
-The public Windows `setup-pah` compatibility command points to the
-`aap-demo enable setup-pah` Git Bash workflow. That workflow reads an existing
-`GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE`; it does not write a PAH config file
-but applies restrictive file permissions before reading either credential file.
-The native PowerShell
-collection helper protects token and PAH files with a user-only Windows DACL
-and fails closed if that protection cannot be applied. Set
+The public Windows launcher delegates `setup-pah` to Git Bash; Git Bash prints
+the compatibility guidance to use `aap-demo enable setup-pah`. That workflow
+reads an existing `GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE`; it does not write
+a PAH config file but applies restrictive file permissions before reading either
+credential file. The module-level native PowerShell collection helper protects
+token and PAH files with a user-only Windows DACL and fails closed if that
+protection cannot be applied. Set
 `GALAXY_TOKEN_FILE` or `PAH_CONFIG_FILE` to use an existing supported location;
 the path must support Windows ACLs.
 
@@ -189,6 +189,10 @@ configuration, and restores the saved ingress CA environment. `aap-demo trust-ca
 runs the targeted ingress trust repair without invoking cluster repair; after the
 Git Bash command succeeds, the Windows wrapper imports the CA into the browser
 trust store and reports a warning if that import cannot be completed.
+
+For `aap-demo enable portal`, `REGISTRY_USERNAME` and `REGISTRY_PASSWORD` may
+be supplied as process environment variables; the wrapper forwards them only to
+that portal deployment.
 
 ## File locations
 

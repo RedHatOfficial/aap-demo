@@ -18,11 +18,22 @@ function Protect-AapCredentialFile {
   try {
     $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
     $acl.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($acl.Access)) {
+      $acl.RemoveAccessRuleSpecific($existingRule)
+    }
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
       $identity, 'FullControl', 'Allow')
     $acl.SetAccessRule($rule)
     Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+    $verifiedAcl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+    $unexpectedRules = @($verifiedAcl.Access | Where-Object {
+        $_.AccessControlType -ne 'Allow' -or
+        $_.IdentityReference.Value -ne $identity
+      })
+    if ($unexpectedRules.Count -gt 0) {
+      throw 'Credential file ACL still contains an unexpected access rule'
+    }
   } catch {
     throw "Could not restrict credential file permissions for '$Path': $($_.Exception.Message)"
   }
@@ -53,6 +64,7 @@ function Get-AapGalaxyCredentials {
 
   $tokenFile = Get-AapGalaxyTokenFilePath
   if (Test-Path -LiteralPath $tokenFile) {
+    Protect-AapCredentialFile -Path $tokenFile
     $creds.GalaxyToken = (Get-Content -LiteralPath $tokenFile -Raw).Trim()
   }
 
