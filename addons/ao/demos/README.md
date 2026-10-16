@@ -28,3 +28,8 @@ The normal synchronization path is the `Sync AO Workflows from TMM` job template
 the `AAP Demo Control Plane` project. It runs
 [`playbooks/sync-ao-demos.yml`](../playbooks/sync-ao-demos.yml) from AAP and uses the
 same pinned upstream source as the addon bootstrap fallback.
+
+The upstream exports are downloaded at synchronization time and are not copied
+into Git. The separate checked-in export in
+[`../workflows/`](../workflows/) is the local aap-demo workflow for selecting and
+validating one Ansible UI Playwright test case at a time.

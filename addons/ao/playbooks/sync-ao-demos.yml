@@ -14,6 +14,7 @@
     ao_agent_credential_id: ""
     ao_agent_integration_id: ""
     ao_agent_model_id: ""
+    ao_tool_agent_model_id: ""
     ao_mcp_integration_id: ""
     ao_mcp_credential_id: ""
   pre_tasks:
@@ -107,11 +108,60 @@
              | sort(attribute='path')
              | list }}
 
+    - name: Locate checked-in aap-demo AO workflows
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../workflows"
+        patterns: "*.json"
+        file_type: file
+      register: __ao_local_workflow_files
+
+    - name: Append checked-in local workflow exports
+      ansible.builtin.set_fact:
+        __ao_sources: "{{ __ao_sources + (__ao_local_workflow_files.files | sort(attribute='path') | list) }}"
+
     - name: Ensure upstream exports were found
       ansible.builtin.assert:
         that:
           - __ao_sources | length > 0
         fail_msg: "No AO workflow JSON files were found in the upstream archive."
+
+    - name: Read AO MCP tool catalog
+      ansible.builtin.uri:
+        url: "{{ ao_api_url }}/tools?limit=100"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ao_api_token }}"
+          Host: "{{ ao_api_host }}"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: __ao_tools_page_one
+      no_log: true
+
+    - name: Read the next AO MCP tool catalog page
+      ansible.builtin.uri:
+        url: "{{ ao_api_url }}/tools?limit=100&cursor={{ __ao_tools_page_one.json.next | urlencode }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ ao_api_token }}"
+          Host: "{{ ao_api_host }}"
+        validate_certs: false
+        use_proxy: false
+        return_content: true
+      register: __ao_tools_page_two
+      no_log: true
+      when: __ao_tools_page_one.json.next | default('') | length > 0
+
+    - name: Build portable AO MCP tool name map
+      ansible.builtin.set_fact:
+        __ao_tool_id_by_name: "{{ __ao_tool_id_by_name | default({}) | combine({__ao_tool.name: __ao_tool.id}) }}"
+      loop: >-
+        {{ (__ao_tools_page_one.json.resources | default(__ao_tools_page_one.json.results | default([])))
+           + ((__ao_tools_page_two.json.resources | default(__ao_tools_page_two.json.results | default([])))
+              if __ao_tools_page_two is defined else []) }}
+      loop_control:
+        loop_var: __ao_tool
+      no_log: true
 
     - name: Read upstream workflow names
       ansible.builtin.set_fact:
@@ -141,8 +191,13 @@
         ao_agent_credential_id: "{{ ao_agent_credential_id }}"
         ao_agent_integration_id: "{{ ao_agent_integration_id }}"
         ao_agent_model_id: "{{ ao_agent_model_id }}"
+        ao_tool_agent_model_id: "{{ ao_tool_agent_model_id }}"
         ao_mcp_integration_id: "{{ ao_mcp_integration_id }}"
         ao_mcp_credential_id: "{{ ao_mcp_credential_id }}"
+        ao_tool_id_by_name: "{{ __ao_tool_id_by_name | default({}) }}"
+        ao_sync_source_label: >-
+          {{ 'aap-demo' if (__ao_worker_source.path | regex_search('/workflows/[^/]+\\.json$'))
+             else 'ansible-tmm/aap-orchestrator-demos' }}
       loop: "{{ __ao_sources }}"
       loop_control:
         loop_var: __ao_worker_source
@@ -161,6 +216,7 @@
       vars:
         __ao_source: "{{ ao_sync_source }}"
         __ao_source_names: "{{ ao_sync_source_names }}"
+        __ao_source_label: "{{ ao_sync_source_label }}"
 
 - name: Remove temporary AO workflow source directory
   hosts: localhost
