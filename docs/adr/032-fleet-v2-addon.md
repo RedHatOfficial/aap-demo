@@ -23,7 +23,8 @@ v2 fleet nodes are pods in namespace `fleet`, one per distro, SSH as user `ansib
 
 ### Negative
 
-- Deleting the pod discards the writable layer.
+- `aap-demo disable fleet` stops the pods by setting replicas to 0. The namespace and the AAP inventory stay.
+- `aap-demo fleet destroy` deletes Controller objects first, then the namespace.
 - ADR-026 still describes the bash QEMU fleet. This record does not replace it.
 
 ### Neutral

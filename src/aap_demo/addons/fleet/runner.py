@@ -134,12 +134,11 @@ def provision(
     public_key: str,
     state: str = "present",
     scope: str = "all",
+    replicas: int = 1,
 ) -> None:
-    run_playbook(
-        ctx,
-        resources.playbook("provision.yml"),
-        base_vars(ctx, nodes, state=state, scope=scope, public_key=public_key),
-    )
+    extra = base_vars(ctx, nodes, state=state, scope=scope, public_key=public_key)
+    extra["replicas"] = replicas
+    run_playbook(ctx, resources.playbook("provision.yml"), extra)
 
 
 def import_nodes(

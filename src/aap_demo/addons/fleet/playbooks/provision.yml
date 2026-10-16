@@ -93,9 +93,9 @@
             labels:
               app.kubernetes.io/name: fleet-node
               app.kubernetes.io/instance: "{{ item.name }}"
-          spec:
-            replicas: 1
-            selector:
+            spec:
+              replicas: "{{ replicas | default(1) | int }}"
+              selector:
               matchLabels:
                 app.kubernetes.io/name: fleet-node
                 app.kubernetes.io/instance: "{{ item.name }}"

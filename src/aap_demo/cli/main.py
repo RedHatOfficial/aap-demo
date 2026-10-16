@@ -267,6 +267,12 @@ def build_parser(
     )
     fleet_remove.add_argument("name")
     fleet_remove.set_defaults(func=_fleet_remove)
+    fleet_destroy = fleet_sub.add_parser(
+        "destroy",
+        help="Delete the fleet namespace and its AAP inventory",
+        parents=[globals_parser],
+    )
+    fleet_destroy.set_defaults(func=_fleet_destroy)
     p.set_defaults(func=_fleet_list)
 
     p = add("addon", "List, inspect, and scaffold addons")
@@ -483,6 +489,12 @@ def _fleet_remove(ctx: AppContext, args: argparse.Namespace) -> int:
     from aap_demo.addons import get
 
     return int(get("fleet").remove(ctx, args) or 0)
+
+
+def _fleet_destroy(ctx: AppContext, args: argparse.Namespace) -> int:
+    from aap_demo.addons import get
+
+    return int(get("fleet").destroy(ctx, args) or 0)
 
 
 def _preflight(ctx: AppContext, command: str, args: argparse.Namespace) -> None:

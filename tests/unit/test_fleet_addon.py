@@ -156,7 +156,24 @@ def test_add_named_node_runs_both_playbooks(app_ctx, monkeypatch) -> None:
     assert any(node["name"] == "extra-debian" for node in nodes)
 
 
-def test_disable_removes_controller_objects_before_the_namespace(app_ctx, monkeypatch) -> None:
+def test_disable_stops_pods_and_leaves_the_inventory(app_ctx, monkeypatch) -> None:
+    _pull_secret(app_ctx)
+    _install_bins(monkeypatch, "ansible-playbook", "ssh-keygen")
+    app_ctx.runner = _play_runner([])
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    captured = []
+    app_ctx.runner = _play_runner(captured)
+
+    get("fleet").disable(app_ctx, argparse.Namespace(addon="fleet"))
+
+    assert [name for name, _text in captured] == ["provision.yml"]
+    provision = captured[0][1]
+    assert "replicas: 0" in provision
+    assert "state: present" in provision
+    assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
+
+
+def test_destroy_removes_controller_objects_before_the_namespace(app_ctx, monkeypatch) -> None:
     _pull_secret(app_ctx)
     _install_bins(monkeypatch, "ansible-playbook", "ssh-keygen")
     app_ctx.runner = _play_runner([])
@@ -168,7 +185,7 @@ def test_disable_removes_controller_objects_before_the_namespace(app_ctx, monkey
     captured = []
     app_ctx.runner = _play_runner(captured)
 
-    get("fleet").disable(app_ctx, argparse.Namespace(addon="fleet"))
+    get("fleet").destroy(app_ctx, argparse.Namespace())
 
     assert [name for name, _text in captured] == ["import.yml", "provision.yml"]
     imported, provision = (text for _name, text in captured)

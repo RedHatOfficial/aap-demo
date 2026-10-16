@@ -42,6 +42,20 @@ class FleetAddon:
         return 0
 
     def disable(self, ctx: AppContext, args) -> int:
+        """Stop the pods. The namespace and the AAP inventory stay."""
+        del args
+        runner.ansible_playbook()
+        _private, public = sshkey.load_or_create(ctx)
+        nodes = nodes_of(ctx)
+        if not nodes:
+            ctx.console.out("Fleet has no nodes to stop")
+            return 0
+        runner.provision(ctx, nodes, public_key=public, state="present", scope="all", replicas=0)
+        ctx.console.out("Fleet pods stopped")
+        return 0
+
+    def destroy(self, ctx: AppContext, args) -> int:
+        """Delete Controller objects, then the fleet namespace."""
         del args
         runner.ansible_playbook()
         private, public = sshkey.load_or_create(ctx)
@@ -55,7 +69,7 @@ class FleetAddon:
         fleet["nodes"] = []
         set_enabled(ctx, False)
         save_options(ctx, fleet)
-        ctx.console.out("Fleet disabled")
+        ctx.console.out("Fleet destroyed")
         return 0
 
     def list(self, ctx: AppContext, args) -> int:
