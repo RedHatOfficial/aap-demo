@@ -21,6 +21,19 @@ if ($parseErrors.Count -gt 0) {
 }
 
 $module = Import-Module (Join-Path $repoRoot 'powershell/native/AapDemo.psm1') -Force -PassThru
+$wrapperSource = Get-Content (Join-Path $repoRoot 'powershell/aap-demo.ps1') -Raw
+if ($wrapperSource -notmatch "'start'" -or $wrapperSource -notmatch "'trust-ca'") {
+  throw 'Windows wrapper must expose start and trust-ca commands'
+}
+if ($wrapperSource -notmatch '\$trustCommands\s*=.*trust-ca') {
+  throw 'Windows wrapper must apply certificate trust handling after trust-ca'
+}
+$readmeSource = Get-Content (Join-Path $repoRoot 'powershell/README.md') -Raw
+foreach ($contractName in @('AO_LLM_PROVIDER', 'AO_LLM_API_KEY_FILE', 'OPENAI_API_KEY', 'GALAXY_TOKEN_FILE', 'PAH_CONFIG_FILE')) {
+  if ($readmeSource -notmatch [regex]::Escape($contractName)) {
+    throw "Windows README is missing credential contract variable: $contractName"
+  }
+}
 $addons = & $module { @($Script:AapAvailableAddons) }
 $required = @(
   'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
@@ -53,6 +66,58 @@ try {
   if (-not $runner.Success -or $runner.Stdout.Trim() -ne 'native argument with spaces') {
     throw 'Native process runner did not preserve an argument containing spaces'
   }
+$environmentRunner = Invoke-AapNativeProcess -FilePath $hostCommand.Source -ArgumentList @(
+  '-NoProfile', '-Command', '[Environment]::GetEnvironmentVariable("AAP_WINDOWS_CONTRACT_TEST")'
+) -Environment @{ AAP_WINDOWS_CONTRACT_TEST = 'environment-forwarded' }
+if (-not $environmentRunner.Success -or $environmentRunner.Stdout.Trim() -ne 'environment-forwarded') {
+  throw 'Native process runner did not forward environment values to the child'
+}
+
+$oldUnsafeSecret = [Environment]::GetEnvironmentVariable('AAP_WINDOWS_UNSAFE_SECRET')
+$oldRegistryUsername = [Environment]::GetEnvironmentVariable('REGISTRY_USERNAME')
+$oldRegistryPassword = [Environment]::GetEnvironmentVariable('REGISTRY_PASSWORD')
+$env:AAP_WINDOWS_UNSAFE_SECRET = 'must-not-reach-addon'
+$env:REGISTRY_USERNAME = 'portal-user'
+$env:REGISTRY_PASSWORD = 'portal-password'
+try {
+  $bashEnvironment = & $module {
+    Invoke-AapGitBash -Command 'printf "%s|%s" "$AAP_WINDOWS_SAFE_VALUE" "$AAP_WINDOWS_UNSAFE_SECRET"' `
+      -Environment @{ AAP_WINDOWS_SAFE_VALUE = 'safe-value' }
+  }
+  if (-not $bashEnvironment.Success -or $bashEnvironment.Stdout.Trim() -ne 'safe-value|') {
+    throw "Git Bash bridge inherited an unrelated secret or lost an explicit value: $($bashEnvironment.Stdout)"
+  }
+  $portalEnvironment = & $module {
+    Get-AapGitBashCliEnvironment -Arguments @('enable', 'portal')
+  }
+  if ($portalEnvironment.REGISTRY_USERNAME -ne 'portal-user' -or
+      $portalEnvironment.REGISTRY_PASSWORD -ne 'portal-password') {
+    throw 'Portal environment contract did not preserve documented registry credentials'
+  }
+  $otherEnvironment = & $module {
+    Get-AapGitBashCliEnvironment -Arguments @('enable', 'ao')
+  }
+  if ($otherEnvironment.ContainsKey('REGISTRY_USERNAME') -or
+      $otherEnvironment.ContainsKey('REGISTRY_PASSWORD')) {
+    throw 'Portal registry credentials leaked into an unrelated addon environment'
+  }
+} finally {
+  if ($null -eq $oldUnsafeSecret) {
+    Remove-Item Env:AAP_WINDOWS_UNSAFE_SECRET -ErrorAction SilentlyContinue
+  } else {
+    $env:AAP_WINDOWS_UNSAFE_SECRET = $oldUnsafeSecret
+  }
+  if ($null -eq $oldRegistryUsername) {
+    Remove-Item Env:REGISTRY_USERNAME -ErrorAction SilentlyContinue
+  } else {
+    $env:REGISTRY_USERNAME = $oldRegistryUsername
+  }
+  if ($null -eq $oldRegistryPassword) {
+    Remove-Item Env:REGISTRY_PASSWORD -ErrorAction SilentlyContinue
+  } else {
+    $env:REGISTRY_PASSWORD = $oldRegistryPassword
+  }
+}
 } finally {
   Remove-Item -LiteralPath $echoScript -Force -ErrorAction SilentlyContinue
 }

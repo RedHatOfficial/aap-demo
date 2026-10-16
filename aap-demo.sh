@@ -80,11 +80,34 @@ _AAP_DEMO_KUBECONFIG_FROM_ENV="${KUBECONFIG+x}"
 AAP_DEMO_CONFIG="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
 AAP_DEMO_CONFIG_FILE="$AAP_DEMO_CONFIG"
 
+# Values in the shared config are inherited by every addon. Keep credentials in
+# dedicated files or one-shot process environment variables instead of making
+# them persistent in this broadly readable settings file.
+aap_demo_config_key_allowed() {
+  case "$1" in
+    *_FILE | *_PATH)
+      return 0
+      ;;
+  esac
+  local upper_key
+  upper_key="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  case "$upper_key" in
+    *API_KEY* | *ACCESS_KEY* | *PRIVATE_KEY* | *TOKEN* | *PASSWORD* | *SECRET* | *CREDENTIAL*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 # Source config file (command-line env vars take precedence)
 if [ -f "$AAP_DEMO_CONFIG" ]; then
   while IFS='=' read -r key value || [ -n "$key" ]; do
     # Skip comments and empty lines
     [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    aap_demo_config_key_allowed "$key" || continue
     # Only set if not already set in environment
     if [ -z "${!key+x}" ]; then
       export "$key=$value"

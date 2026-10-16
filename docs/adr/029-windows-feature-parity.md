@@ -56,6 +56,26 @@ Keep the two platform entry points, but define a clear ownership boundary:
    flow, fleet lifecycle hook, or Windows fleet implementation is part of this
    decision.
 
+7. **The Windows wrapper publishes a stable command and credential contract.**
+   `start` restores CRC access, kubeconfig, MicroShift DNS, and the saved
+   ingress CA environment. `trust-ca` delegates the targeted Bash trust repair
+   and then invokes the Windows certificate-store import. Both commands remain
+   separate from cluster repair. The wrapper passes AO, pull-secret, and
+   Automation Hub settings to Git Bash through the child environment, never
+   through command arguments.
+8. **Credential ownership is explicit.** `includes/ao-llm.sh` owns
+   `AO_LLM_API_KEY_FILE` (default `%USERPROFILE%\.aap-demo\ao\llm-api-key`) and
+   non-secret AO provider settings. The shared config loader rejects inline
+   API keys, tokens, passwords, and secrets. The public Windows `setup-pah`
+   compatibility command is delegated to Git Bash, which prints help showing
+   `enable setup-pah`; that workflow reads existing `GALAXY_TOKEN_FILE` and
+   `PAH_CONFIG_FILE` values after applying restrictive file permissions.
+   Module-level native PowerShell collection helpers protect those files with a
+   user-only Windows DACL and fail closed when ACL protection is unavailable.
+   Existing paths can be
+   supplied through the documented environment variables only when they
+   support Windows ACLs.
+
 This keeps the critical Windows path native, avoids a second implementation of
 addon business logic, and gives future native addon ports a stable adapter
 boundary.
