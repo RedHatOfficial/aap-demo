@@ -8,6 +8,9 @@ from __future__ import annotations
 
 NAMESPACE = "fleet"
 
+#: Small on purpose. A package update has to fit; raise it with disk_size.
+DISK_SIZE = "2Gi"
+
 IMAGES = {
     "ubi9": "registry.access.redhat.com/ubi9/ubi:9.6",
     "fedora": "quay.io/fedora/fedora:41",

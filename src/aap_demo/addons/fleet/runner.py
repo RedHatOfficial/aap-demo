@@ -66,7 +66,11 @@ def base_vars(
     scope: str,
     public_key: str,
 ) -> Dict[str, Any]:
-    from aap_demo.addons.fleet.state import namespace_for
+    from aap_demo.addons.fleet.state import (
+        disk_size_for,
+        namespace_for,
+        storage_class_for,
+    )
 
     pull = ""
     secret = ctx.paths.pull_secret
@@ -81,6 +85,8 @@ def base_vars(
         "scope": scope,
         "pull_secret_path": pull,
         "entrypoint_path": str(resources.entrypoint()),
+        "disk_size": disk_size_for(ctx),
+        "storage_class": storage_class_for(ctx),
     }
 
 

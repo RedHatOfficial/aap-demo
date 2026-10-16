@@ -89,6 +89,8 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert [name for name, _text in captured] == ["provision.yml", "import.yml"]
     provision, imported = (text for _name, text in captured)
     assert "namespace: fleet" in provision
+    assert "disk_size: 2Gi" in provision
+    assert "storage_class: ''" in provision or 'storage_class: ""' in provision
     assert "fleet-ubi9" in provision and "fleet-fedora" in provision and "fleet-debian" in provision
     assert "registry.access.redhat.com/ubi9/ubi:9.6" in provision
     assert "PRIVATE-KEY" not in provision
@@ -97,6 +99,23 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     leftover = list(app_ctx.paths.addon_dir("fleet").glob("extra-vars.yml"))
     assert leftover == []
     assert "fleet" in app_ctx.config.get("addons.enabled")
+
+
+def test_disk_size_and_storage_class_come_from_fleet_options(app_ctx, monkeypatch) -> None:
+    _pull_secret(app_ctx)
+    _install_bins(monkeypatch, "ansible-playbook", "ssh-keygen")
+    app_ctx.config.set(
+        "addons.options",
+        {"fleet": {"disk_size": "1Gi", "storage_class": "topolvm-provisioner"}},
+    )
+    captured = []
+    app_ctx.runner = _play_runner(captured)
+
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+
+    provision = captured[0][1]
+    assert "disk_size: 1Gi" in provision
+    assert "storage_class: topolvm-provisioner" in provision
 
 
 def test_no_import_skips_the_controller_playbook(app_ctx, monkeypatch) -> None:
@@ -170,6 +189,7 @@ def test_disable_stops_pods_and_leaves_the_inventory(app_ctx, monkeypatch) -> No
     provision = captured[0][1]
     assert "replicas: 0" in provision
     assert "state: present" in provision
+    assert "disk_size:" in provision
     assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
 
 
@@ -214,6 +234,23 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert "kubernetes.core.k8s" in provision
     assert "{{ namespace }}" in provision
     assert "aap-demo-fleet" not in provision
+    assert "kind: PersistentVolumeClaim" in provision
+    plays = yaml.safe_load(provision)
+    deploy = next(
+        task["kubernetes.core.k8s"]["definition"]
+        for task in plays[0]["tasks"]
+        if isinstance(task.get("kubernetes.core.k8s", {}).get("definition"), dict)
+        and task["kubernetes.core.k8s"]["definition"].get("kind") == "Deployment"
+    )
+    assert "spec" not in deploy["metadata"]
+    mounts = deploy["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    mounted = {item["mountPath"]: item.get("subPath") for item in mounts}
+    assert mounted["/usr"] == "usr"
+    assert mounted["/var"] == "var"
+    assert deploy["spec"]["strategy"]["type"] == "Recreate"
+    disk = next(task for task in plays[0]["tasks"] if task["name"] == "Node disk")
+    assert disk["when"] == "state == 'present' or scope == 'node'"
+    assert "2Gi" in disk["vars"]["disk_body"]["spec"]["resources"]["requests"]["storage"]
     for module in (
         "ansible.controller.inventory",
         "ansible.controller.host",

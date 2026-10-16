@@ -33,6 +33,18 @@ def namespace_for(ctx: AppContext) -> str:
     return text or images.NAMESPACE
 
 
+def disk_size_for(ctx: AppContext) -> str:
+    raw = fleet_options(ctx).get("disk_size")
+    text = str(raw).strip() if raw else ""
+    return text or images.DISK_SIZE
+
+
+def storage_class_for(ctx: AppContext) -> str:
+    """Empty means the cluster default StorageClass. The playbook omits the field."""
+    raw = fleet_options(ctx).get("storage_class")
+    return str(raw).strip() if raw else ""
+
+
 def nodes_of(ctx: AppContext) -> List[Dict[str, str]]:
     raw = fleet_options(ctx).get("nodes") or []
     if not isinstance(raw, list):

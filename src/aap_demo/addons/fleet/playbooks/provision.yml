@@ -1,6 +1,8 @@
 ---
-# namespace, nodes, images, ssh_public_key, state, and scope come from extra-vars.
-# Nothing here hardcodes the namespace.
+# namespace, nodes, images, ssh_public_key, state, scope, replicas,
+# disk_size, and storage_class come from extra-vars.
+# Nothing here hardcodes the namespace. An empty storage_class uses the
+# cluster default StorageClass.
 - name: Fleet nodes
   hosts: localhost
   connection: local
@@ -79,6 +81,35 @@
           data:
             entrypoint.sh: "{{ lookup('file', entrypoint_path) }}"
 
+    - name: Node disk
+      when: state == 'present' or scope == 'node'
+      vars:
+        disk_body:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: "{{ item.name }}"
+            namespace: "{{ namespace }}"
+            labels:
+              app.kubernetes.io/name: fleet-node
+              app.kubernetes.io/instance: "{{ item.name }}"
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: "{{ disk_size | default('2Gi') }}"
+        disk_class: >-
+          {{
+            {'spec': {'storageClassName': storage_class}}
+            if (storage_class | default('') | length) > 0
+            else {}
+          }}
+      kubernetes.core.k8s:
+        state: "{{ state }}"
+        definition: "{{ disk_body | combine(disk_class, recursive=True) }}"
+      loop: "{{ nodes }}"
+
     - name: Node deployment
       when: state == 'present' or scope == 'node'
       kubernetes.core.k8s:
@@ -93,9 +124,11 @@
             labels:
               app.kubernetes.io/name: fleet-node
               app.kubernetes.io/instance: "{{ item.name }}"
-            spec:
-              replicas: "{{ replicas | default(1) | int }}"
-              selector:
+          spec:
+            replicas: "{{ replicas | default(1) | int }}"
+            strategy:
+              type: Recreate
+            selector:
               matchLabels:
                 app.kubernetes.io/name: fleet-node
                 app.kubernetes.io/instance: "{{ item.name }}"
@@ -108,13 +141,29 @@
               spec:
                 restartPolicy: Always
                 imagePullSecrets: "{{ [{'name': 'pull-secret'}] if item.os == 'ubi9' else [] }}"
+                initContainers:
+                  - name: seed
+                    image: "{{ images[item.os] }}"
+                    securityContext:
+                      runAsUser: 0
+                    command:
+                      - /bin/bash
+                      - /entrypoint/entrypoint.sh
+                      - seed
+                    volumeMounts:
+                      - name: entrypoint
+                        mountPath: /entrypoint
+                      - name: disk
+                        mountPath: /mnt/disk
                 containers:
                   - name: node
                     image: "{{ images[item.os] }}"
                     securityContext:
                       readOnlyRootFilesystem: false
                       runAsUser: 0
-                    command: ["/bin/bash", "/entrypoint/entrypoint.sh"]
+                    command:
+                      - /bin/bash
+                      - /entrypoint/entrypoint.sh
                     ports:
                       - containerPort: 22
                     readinessProbe:
@@ -128,6 +177,12 @@
                         mountPath: /entrypoint
                       - name: ssh
                         mountPath: /etc/fleet
+                      - name: disk
+                        mountPath: /usr
+                        subPath: usr
+                      - name: disk
+                        mountPath: /var
+                        subPath: var
                 volumes:
                   - name: entrypoint
                     configMap:
@@ -139,6 +194,9 @@
                       items:
                         - key: ssh-publickey
                           path: authorized_keys
+                  - name: disk
+                    persistentVolumeClaim:
+                      claimName: "{{ item.name }}"
       loop: "{{ nodes }}"
 
     - name: Node service
