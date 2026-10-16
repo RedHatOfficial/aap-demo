@@ -9,7 +9,7 @@
 # Environment variables:
 #   PRODUCT_DEMOS_REPO   - Git repository URL (default: https://github.com/ansible/product-demos)
 #   PRODUCT_DEMOS_BRANCH - Git branch to use (default: main)
-#   PRODUCT_DEMOS_EE     - Product Demos EE image (default: quay.io/.../apd-ee-26:latest)
+#   PRODUCT_DEMOS_EE     - Product Demos EE image (default: quay.io/.../apd-ee-27:latest)
 #   APD_AAP_VERSION      - Pinned AAP version for installer (default: 2.7, skips version ping)
 #
 # Usage:
@@ -27,7 +27,7 @@ ACTION="${1:-deploy}"
 # Product demos configuration
 PRODUCT_DEMOS_REPO="${PRODUCT_DEMOS_REPO:-https://github.com/ansible/product-demos}"
 PRODUCT_DEMOS_BRANCH="${PRODUCT_DEMOS_BRANCH:-main}"
-PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-26:latest}"
+PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-27:latest}"
 APD_BOOTSTRAP_PROJECT_NAME="${APD_BOOTSTRAP_PROJECT_NAME:-APD Bootstrap Project}"
 PRODUCT_DEMOS_EE_NAME="${PRODUCT_DEMOS_EE_NAME:-Product Demos EE}"
 APD_INSTALL_PLAYBOOK="${APD_INSTALL_PLAYBOOK:-install-apd-aap-demo.yml}"

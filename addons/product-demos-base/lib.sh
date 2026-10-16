@@ -2,9 +2,10 @@
 # Shared helpers for product-demos addons.
 
 APD_AAP_VERSION="${APD_AAP_VERSION:-2.7}"
+PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-27:latest}"
 
 apd_common_extra_vars_yaml() {
-  local ee_image="${1:-quay.io/ansible-product-demos/apd-ee-26:latest}"
+  local ee_image="${1:-${PRODUCT_DEMOS_EE}}"
   jq -r -n \
     --arg version "$APD_AAP_VERSION" \
     --arg ee_image "$ee_image" \
@@ -154,7 +155,7 @@ apd_domain_template_name() {
 
 apd_domain_extra_vars_yaml() {
   local demo="$1"
-  local ee_image="${2:-quay.io/ansible-product-demos/apd-ee-26:latest}"
+  local ee_image="${2:-${PRODUCT_DEMOS_EE}}"
   jq -r -n \
     --arg demo "$demo" \
     --arg version "$APD_AAP_VERSION" \
