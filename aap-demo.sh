@@ -1931,18 +1931,42 @@ cmd_status() {
   done
   echo ""
 
-  # Show fleet nodes (addon)
+  # Show both fleet backends. Bash v1 stores QEMU nodes on the host; Python v2
+  # stores pod-backed nodes in Kubernetes, so neither state can be inferred
+  # from the other's config or filesystem.
+  echo "Fleet:"
+  echo "------"
+
+  local _fleet_v2_rows _fleet_v2_total _fleet_v2_ready
+  _fleet_v2_rows=$(kubectl get pods -A \
+    -l app.kubernetes.io/name=fleet-node \
+    --no-headers \
+    -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
+    2>/dev/null || true)
+  if [ -n "$_fleet_v2_rows" ]; then
+    _fleet_v2_total=$(printf '%s\n' "$_fleet_v2_rows" | awk 'NF {count++} END {print count + 0}')
+    _fleet_v2_ready=$(printf '%s\n' "$_fleet_v2_rows" | awk '$3 == "true" {count++} END {print count + 0}')
+    echo "Python v2 Fleet:"
+    printf "  %s/%s pod nodes ready\n" "$_fleet_v2_ready" "$_fleet_v2_total"
+    printf '%s\n' "$_fleet_v2_rows" | sed 's/^/  /'
+  else
+    echo "Python v2 Fleet: no pod nodes"
+  fi
+
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
     local _node_count
     _node_count=$(fleet_count 2>/dev/null || echo "0")
     if [ "$_node_count" -gt 0 ] 2>/dev/null; then
-      echo "Fleet:"
-      echo "-----------"
-      fleet_list
-      echo ""
+      echo "Legacy Bash v1 Fleet:"
+      fleet_list | sed 's/^/  /'
+    else
+      echo "Legacy Bash v1 Fleet: no QEMU nodes"
     fi
+  else
+    echo "Legacy Bash v1 Fleet: no QEMU nodes"
   fi
+  echo ""
 }
 
 cmd_redeploy() {

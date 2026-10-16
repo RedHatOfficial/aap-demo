@@ -157,6 +157,14 @@ def test_bash_help_labels_fleet_as_legacy_qemu_and_points_to_v2() -> None:
     assert "Python v2 fleet: aap-demo fleet list" in result.stdout
 
 
+def test_bash_status_has_a_python_v2_fleet_report() -> None:
+    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+
+    assert "Python v2 Fleet:" in source
+    assert "kubectl get pods -A" in source
+    assert "app.kubernetes.io/name=fleet-node" in source
+
+
 def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:
     launcher = tmp_path / "bin" / "aap-demo"
     launcher.parent.mkdir()
