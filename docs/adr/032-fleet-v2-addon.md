@@ -29,6 +29,10 @@ KubeVirt and QEMU are out of v2.
 The bash addon under `addons/fleet/` is untouched and is not the implementation.
 AAP objects are created by `import.yml` using `ansible.controller` against the gateway,
 with `ansible.platform` installed beside it.
+Those playbooks run as a Kubernetes Job using the `ee-supported` image already
+running in the cluster. The laptop does not install ansible-core or collections.
+The Job's service account is cluster-admin, the same power as the kubeconfig.
+The fleet SSH key is a Secret in the AAP namespace, not a keychain item.
 The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-playbooks`.
 
 ## Consequences

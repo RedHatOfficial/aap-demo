@@ -2,60 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
-import yaml
-
 from aap_demo.addons.fleet import images, resources
+from aap_demo.addons.fleet.job import run_playbook as run_in_cluster
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import PrerequisiteError
-
-
-def ansible_playbook() -> str:
-    binary = shutil.which("ansible-playbook")
-    if not binary:
-        raise PrerequisiteError(
-            "ansible-playbook is required for the fleet addon.\n"
-            "pip install ansible-core\n"
-            f"ansible-galaxy collection install -r {resources.requirements()}",
-        )
-    return binary
-
-
-def run_playbook(
-    ctx: AppContext,
-    playbook: Path,
-    extra: Dict[str, Any],
-) -> None:
-    """Write extra-vars mode 0600, run the playbook, then delete the file."""
-    directory = ctx.paths.addon_dir("fleet")
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / "extra-vars.yml"
-    text = yaml.safe_dump(extra, sort_keys=False)
-    try:
-        path.write_text(text, encoding="utf-8")
-        os.chmod(path, 0o600)
-        binary = ansible_playbook()
-        env = dict(ctx.env)
-        env["KUBECONFIG"] = str(ctx.paths.kubeconfig)
-        env.pop("ANSIBLE_CONFIG", None)
-        result = ctx.runner.run(
-            [binary, str(playbook), "-e", f"@{path}"],
-            env=env,
-            capture=False,
-        )
-        if not result.ok:
-            from aap_demo.core.errors import AddonError
-
-            raise AddonError(
-                f"playbook failed: {playbook.name}",
-                hint=(result.stderr or result.stdout or "").strip() or None,
-            )
-    finally:
-        path.unlink(missing_ok=True)
 
 
 def base_vars(
@@ -131,6 +83,15 @@ def import_vars(
         "job_template_name": images.JOB_TEMPLATE,
         "import_enabled": True,
     }
+
+
+def run_playbook(
+    ctx: AppContext,
+    playbook: Path,
+    extra: Dict[str, Any],
+) -> None:
+    """Run the playbook inside the cluster execution environment."""
+    run_in_cluster(ctx, playbook, extra)
 
 
 def provision(

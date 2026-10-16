@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from aap_demo.addons.fleet import images, runner, sshkey
+from aap_demo.addons.fleet.ee import discover_image
 from aap_demo.addons.fleet.state import (
     enabled_names,
     fleet_options,
@@ -23,8 +24,7 @@ class FleetAddon:
     name = "fleet"
 
     def enable(self, ctx: AppContext, args) -> int:
-        # Fail before kubectl or ssh-keygen when the playbook runner is missing.
-        runner.ansible_playbook()
+        discover_image(ctx)
         no_import = bool(getattr(args, "no_import", False))
         private, public = sshkey.load_or_create(ctx)
         fleet = fleet_options(ctx)
@@ -44,7 +44,7 @@ class FleetAddon:
     def disable(self, ctx: AppContext, args) -> int:
         """Stop the pods. The namespace and the AAP inventory stay."""
         del args
-        runner.ansible_playbook()
+        discover_image(ctx)
         _private, public = sshkey.load_or_create(ctx)
         nodes = nodes_of(ctx)
         if not nodes:
@@ -57,7 +57,7 @@ class FleetAddon:
     def destroy(self, ctx: AppContext, args) -> int:
         """Delete Controller objects, then the fleet namespace."""
         del args
-        runner.ansible_playbook()
+        discover_image(ctx)
         private, public = sshkey.load_or_create(ctx)
         nodes = nodes_of(ctx)
         if nodes:
@@ -111,7 +111,7 @@ class FleetAddon:
                 f"node {name} already exists",
                 hint="Pass --name to add another node with that OS.",
             )
-        runner.ansible_playbook()
+        discover_image(ctx)
         nodes.append({"name": name, "os": os_id})
         require_pull_secret(ctx, [nodes[-1]])
         private, public = sshkey.load_or_create(ctx)
@@ -130,7 +130,7 @@ class FleetAddon:
         match = [node for node in nodes if node["name"] == name]
         if not match:
             raise UsageError(f"no fleet node named {name}")
-        runner.ansible_playbook()
+        discover_image(ctx)
         private, public = sshkey.load_or_create(ctx)
         if fleet_options(ctx).get("import", True) is not False:
             runner.import_nodes(
