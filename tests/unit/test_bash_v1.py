@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from aap_demo.core import bash_v1
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _bash_script(path: Path) -> None:
@@ -138,6 +141,20 @@ def test_help_and_quiet_do_not_offer_to_remove_bash_v1(tmp_path: Path, monkeypat
     assert run(["help"], env=env) == 0
     assert run(["--quiet", "version"], env=env) == 0
     assert called == []
+
+
+def test_bash_help_labels_fleet_as_legacy_qemu_and_points_to_v2() -> None:
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "aap-demo.sh"), "help"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "(legacy Bash v1; local QEMU VMs only)" in result.stdout
+    assert "Python v2 fleet: aap-demo fleet list" in result.stdout
 
 
 def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:

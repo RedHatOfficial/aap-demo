@@ -519,11 +519,13 @@ Addons:
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
   enable mcp-server  Enable MCP server for AI assistants
 
-Fleet commands (requires: enable fleet):
+Fleet commands (legacy Bash v1; local QEMU VMs only; requires: enable fleet):
   fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
   fleet list                    List running fleet node VMs
   fleet remove [N|name]         Remove fleet node VMs
   fleet destroy                 Remove all VMs and AAP resources
+
+Python v2 fleet: aap-demo fleet list  (Kubernetes pod-backed nodes)
 
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
@@ -583,6 +585,8 @@ COMMANDS (all infrastructure types):
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
+    (legacy Bash v1; local QEMU VMs only)
+    Python v2 fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
     enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, fleet)
                     portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
@@ -2956,7 +2960,7 @@ cmd_fleet() {
       ;;
     list)
       echo ""
-      printf "\033[1mFleet Nodes\033[0m\n"
+      printf "\033[1mLegacy QEMU Fleet Nodes (Bash v1)\033[0m\n"
       echo ""
       fleet_list
       ;;
