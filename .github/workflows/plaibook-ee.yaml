@@ -1,0 +1,179 @@
+name: Build and publish Plaibook EE
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/plaibook-ee.yaml'
+      - 'addons/ao-pr-testing/**'
+      - 'docs/adr/024-ao-pr-testing-addon.md'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/plaibook-ee.yaml'
+      - 'addons/ao-pr-testing/**'
+      - 'docs/adr/024-ao-pr-testing-addon.md'
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      plaibook_ref:
+        description: Git ref in the upstream plaibook repository to build
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plaibook-ee-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAME: quay.io/aapdemo/plaibook-ee
+  SOURCE_REPOSITORY: aknochow/ansible-plaibook
+
+jobs:
+  build-and-publish:
+    name: Build and publish execution environment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout plaibook source
+        uses: actions/checkout@v4
+        with:
+          repository: aknochow/ansible-plaibook
+          ref: ${{ inputs.plaibook_ref || 'main' }}
+
+      - name: Resolve image tags
+        id: source
+        shell: bash
+        run: |
+          source_sha=$(git rev-parse --short=12 HEAD)
+          build_tag=$(date -u +%Y%m%d-%H%M%S)
+          {
+            echo "source_sha=$source_sha"
+            echo 'tags<<EOF'
+            echo "${IMAGE_NAME}:latest"
+            echo "${IMAGE_NAME}:sha-${source_sha}"
+            echo "${IMAGE_NAME}:build-${build_tag}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ansible-builder
+        run: python -m pip install --upgrade 'ansible-builder>=3,<4' 'ansible-core>=2.15,<2.19'
+
+      - name: Prepare generated EE build assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_root="${RUNNER_TEMP}/plaibook-ee-assets"
+          mkdir -p "$asset_root" build/collections build/scripts
+
+          clone_at() {
+            local repository=$1
+            local revision=$2
+            local destination=$3
+            git clone --quiet --no-checkout "https://github.com/${repository}.git" "$destination"
+            if ! git -C "$destination" fetch --quiet --depth 1 origin "$revision"; then
+              echo "Unable to fetch ${repository} at ${revision}" >&2
+              return 1
+            fi
+            git -C "$destination" checkout --quiet --detach "$revision"
+          }
+
+          clone_at aknochow/ansible-openshell \
+            6314f0f7df7eb22557489fcff0087dd398031a41 \
+            "$asset_root/ansible-openshell"
+          clone_at aknochow/ansible-claude \
+            92c3faef91f9f10e9c7d57aafde6e4e03cba9e1e \
+            "$asset_root/ansible-claude"
+          clone_at aknochow/ansible-openai \
+            79c1ab3ce5b3a047ca88e30f23422f9fadbdb401 \
+            "$asset_root/ansible-openai"
+          clone_at ansible-collections/kubernetes.core \
+            0f472b53e2ee73e11b5f9067ab0826d76183c157 \
+            "$asset_root/kubernetes.core"
+
+          cp "$asset_root/ansible-openshell/scripts/ssh_proxy.py" build/scripts/ssh_proxy.py
+          for collection in \
+            "$asset_root/ansible-openshell" \
+            "$asset_root/ansible-claude" \
+            "$asset_root/ansible-openai" \
+            "$asset_root/kubernetes.core"; do
+            ansible-galaxy collection build "$collection" --output-path build/collections
+          done
+
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          generated_files = {}
+          for prefix in (
+              "aknochow-openshell",
+              "aknochow-claude",
+              "aknochow-openai",
+              "kubernetes-core",
+          ):
+              packages = sorted(Path("build/collections").glob(f"{prefix}-*.tar.gz"))
+              if len(packages) != 1:
+                  raise SystemExit(f"expected one generated package for {prefix}: {packages}")
+              generated_files[prefix] = packages[0].name
+
+          for target in (Path("build/requirements.yml"), Path("execution-environment.yml")):
+              content = target.read_text(encoding="utf-8")
+              for prefix, filename in generated_files.items():
+                  content, replacements = re.subn(
+                      rf"{re.escape(prefix)}-[^\s]+\.tar\.gz",
+                      filename,
+                      content,
+                  )
+                  if replacements != 1:
+                      raise SystemExit(
+                          f"expected one {prefix} entry in {target}, got {replacements}"
+                      )
+              target.write_text(content, encoding="utf-8")
+          PY
+
+      - name: Generate container build context
+        run: >-
+          ansible-builder create
+          --file execution-environment.yml
+          --context context
+          --output-filename Dockerfile
+
+      - name: Log in to Quay.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build and publish image
+        env:
+          IMAGE_TAGS: ${{ steps.source.outputs.tags }}
+        shell: bash
+        run: |
+          mapfile -t tags <<< "$IMAGE_TAGS"
+          docker build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.source=https://github.com/${SOURCE_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${{ steps.source.outputs.source_sha }}" \
+            --tag "${tags[0]}" \
+            --file context/Dockerfile \
+            context
+
+          for tag in "${tags[@]:1}"; do
+            docker tag "${tags[0]}" "$tag"
+          done
+
+          if [[ "$GITHUB_EVENT_NAME" != 'pull_request' ]]; then
+            for tag in "${tags[@]}"; do
+              docker push "$tag"
+            done
+          fi
