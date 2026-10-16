@@ -67,8 +67,8 @@ Keep the two platform entry points, but define a clear ownership boundary:
    `AO_LLM_API_KEY_FILE` (default `%USERPROFILE%\.aap-demo\ao\llm-api-key`) and
    non-secret AO provider settings. The shared config loader rejects inline
    API keys, tokens, passwords, and secrets. The public Windows `setup-pah`
-   compatibility command is delegated to Git Bash, which prints guidance to
-   use `enable setup-pah`; that workflow reads existing `GALAXY_TOKEN_FILE` and
+   compatibility command is delegated to Git Bash, which prints help showing
+   `enable setup-pah`; that workflow reads existing `GALAXY_TOKEN_FILE` and
    `PAH_CONFIG_FILE` values after applying restrictive file permissions.
    Module-level native PowerShell collection helpers protect those files with a
    user-only Windows DACL and fail closed when ACL protection is unavailable.

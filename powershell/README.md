@@ -175,7 +175,7 @@ line. The Bash writer uses a temporary file and restrictive permissions before
 replacement.
 
 The public Windows launcher delegates `setup-pah` to Git Bash; Git Bash prints
-the compatibility guidance to use `aap-demo enable setup-pah`. That workflow
+help showing the supported `aap-demo enable setup-pah` command. That workflow
 reads an existing `GALAXY_TOKEN_FILE` and `PAH_CONFIG_FILE`; it does not write
 a PAH config file but applies restrictive file permissions before reading either
 credential file. The module-level native PowerShell collection helper protects
