@@ -336,6 +336,11 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert "{{ namespace }}" in provision
     assert "aap-demo-fleet" not in provision
     assert "kind: PersistentVolumeClaim" in provision
+    # Keep numeric Kubernetes fields literal; use the scale module for the
+    # disable path rather than templating an integer into a YAML string.
+    assert "replicas: 1" in provision
+    assert "kubernetes.core.k8s_scale" in provision
+    assert "replicas: 0" in provision
     plays = yaml.safe_load(provision)
     deploy = next(
         task["kubernetes.core.k8s"]["definition"]

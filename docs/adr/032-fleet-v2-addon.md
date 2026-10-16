@@ -25,6 +25,12 @@ An empty value leaves `storageClassName` off the claim so the cluster default is
 Both are extra-vars, and both can be set under `addons.options.fleet`.
 `/etc` stays on the image so the pod keeps cluster DNS.
 
+Deployment replicas are kept as YAML integer literals. The AAP execution
+environment serializes a Jinja-templated numeric value as a string, which
+Kubernetes rejects for `Deployment.spec.replicas`. The `disable` path scales
+the existing Deployments to zero with `kubernetes.core.k8s_scale`, preserving
+the intended lifecycle without changing the Deployment schema.
+
 KubeVirt and QEMU are out of v2.
 The bash addon under `addons/fleet/` is untouched and is not the implementation.
 AAP objects are created by `import.yml` using `ansible.controller` against the gateway,
@@ -42,6 +48,7 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
 - One variable moves the namespace, the DNS name, and the SCC subject together.
 - Package files under `/usr` and `/var` survive `disable` and `enable`.
 - `disk_size` and `storage_class` change the claim without editing the playbook.
+- Enable creates schema-valid Deployments, and disable preserves the pods' disks while scaling them to zero.
 
 ### Negative
 
@@ -56,6 +63,11 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
 ### Neutral
 
 - Controller inventory, credential, and project stay named `aap-demo-fleet`.
+
+### Validation
+
+- Fleet unit tests cover the literal replica field and scale-to-zero task.
+- The three-node Fleet deployment was exercised on MicroShift/CRC; all node pods became Ready.
 
 ## Alternatives Considered
 

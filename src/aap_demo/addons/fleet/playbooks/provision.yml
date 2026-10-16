@@ -125,7 +125,9 @@
               app.kubernetes.io/name: fleet-node
               app.kubernetes.io/instance: "{{ item.name }}"
           spec:
-            replicas: "{{ replicas | default(1) | int }}"
+            # Keep this Kubernetes integer literal. A Jinja expression here
+            # is serialized by the AAP execution environment as a string.
+            replicas: 1
             strategy:
               type: Recreate
             selector:
@@ -197,6 +199,17 @@
                   - name: disk
                     persistentVolumeClaim:
                       claimName: "{{ item.name }}"
+      loop: "{{ nodes }}"
+
+    - name: Stop node deployments
+      when: state == 'present' and (replicas | default(1) | int) == 0
+      kubernetes.core.k8s_scale:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ item.name }}"
+        namespace: "{{ namespace }}"
+        replicas: 0
+        wait: true
       loop: "{{ nodes }}"
 
     - name: Node service
