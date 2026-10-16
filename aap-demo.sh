@@ -89,7 +89,8 @@ aap_demo_config_key_allowed() {
       return 0
       ;;
   esac
-  local upper_key="${1^^}"
+  local upper_key
+  upper_key="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   case "$upper_key" in
     *API_KEY* | *ACCESS_KEY* | *PRIVATE_KEY* | *TOKEN* | *PASSWORD* | *SECRET* | *CREDENTIAL*)
       return 1
