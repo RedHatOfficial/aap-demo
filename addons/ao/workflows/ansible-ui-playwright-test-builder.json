@@ -1,0 +1,490 @@
+{
+  "schema_version": "2.0.0",
+  "name": "Ansible UI Playwright Test Builder",
+  "description": "Analyze one ansible-ui Playwright test case and assess it against AAP.",
+  "triggers": [
+    {
+      "id": "trigger_manual",
+      "name": "Run one Playwright test",
+      "type": "manual_trigger",
+      "position": {"x": 0, "y": 700},
+      "parameters": {
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "required": ["test_path", "test_title"],
+          "properties": {
+            "ref": {
+              "type": "string",
+              "default": "devel",
+              "description": "ansible-ui Git ref to inspect."
+            },
+            "test_path": {
+              "type": "string",
+              "default": "playwright/tests/integration/automation-execution/workflow-job-templates/workflow-job-templates.spec.ts",
+              "description": "Path to a Playwright spec in ansible/ansible-ui."
+            },
+            "test_title": {
+              "type": "string",
+              "description": "Exact Playwright test title to analyze."
+            },
+            "target_name": {
+              "type": "string",
+              "default": "ao-playwright-validation",
+              "description": "Prefix for isolated resources when mutations are enabled."
+            },
+            "execute_mutations": {
+              "type": "boolean",
+              "default": false,
+              "description": "When false, discovery is read-only; when true, isolated supported mutations may run."
+            }
+          }
+        }
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "fetch_chunk_1",
+      "name": "Fetch Playwright source chunk 1",
+      "type": "http_request",
+      "position": {"x": 300, "y": 100},
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
+        "method": "GET",
+        "headers": {"Range": "bytes=0-6999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "query_params": {"ao_chunk": "1"}
+      }
+    },
+    {
+      "id": "fetch_chunk_2",
+      "name": "Fetch Playwright source chunk 2",
+      "type": "http_request",
+      "position": {"x": 300, "y": 220},
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
+        "method": "GET",
+        "headers": {"Range": "bytes=7000-13999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "query_params": {"ao_chunk": "2"}
+      }
+    },
+    {
+      "id": "fetch_chunk_3",
+      "name": "Fetch Playwright source chunk 3",
+      "type": "http_request",
+      "position": {"x": 300, "y": 340},
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
+        "method": "GET",
+        "headers": {"Range": "bytes=14000-20999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "query_params": {"ao_chunk": "3"}
+      }
+    },
+    {
+      "id": "fetch_chunk_4",
+      "name": "Fetch Playwright source chunk 4",
+      "type": "http_request",
+      "position": {"x": 300, "y": 460},
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
+        "method": "GET",
+        "headers": {"Range": "bytes=21000-27999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "query_params": {"ao_chunk": "4"}
+      }
+    },
+    {
+      "id": "fetch_chunk_5",
+      "name": "Fetch Playwright source chunk 5",
+      "type": "http_request",
+      "position": {"x": 300, "y": 580},
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
+        "method": "GET",
+        "headers": {"Range": "bytes=28000-34999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "query_params": {"ao_chunk": "5"}
+      }
+    },
+    {
+      "id": "converge_fetches",
+      "name": "Wait for all source chunks",
+      "type": "converge",
+      "position": {"x": 550, "y": 340},
+      "parameters": {"strategy": "all"}
+    },
+    {
+      "id": "fetch_gate",
+      "name": "Did all source chunks fetch",
+      "type": "condition",
+      "position": {"x": 760, "y": 340},
+      "parameters": {
+        "condition": "(${fetch_chunk_1.status_code} == 206 and ${fetch_chunk_2.status_code} == 206 and ${fetch_chunk_3.status_code} == 206 and ${fetch_chunk_4.status_code} == 206 and ${fetch_chunk_5.status_code} == 206)"
+      }
+    },
+    {
+      "id": "analyze_chunk_1",
+      "name": "Analyze Playwright chunk 1",
+      "type": "agentic",
+      "position": {"x": 1000, "y": 100},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "You are a concise Playwright test analyst. This is source chunk 1. Extract test titles, nearby setup or teardown hooks, UI actions, API assertions, cleanup, and explicit capability gaps. Preserve evidence and do not invent missing context. Return only compact JSON.\n\nSource chunk:\n${fetch_chunk_1.body}",
+        "response_schema": {
+          "type": "object",
+          "required": ["chunk_index", "test_titles", "findings", "actions", "hooks"],
+          "properties": {
+            "chunk_index": {"type": "integer"},
+            "test_titles": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 240}},
+            "findings": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "actions": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "hooks": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "analyze_chunk_2",
+      "name": "Analyze Playwright chunk 2",
+      "type": "agentic",
+      "position": {"x": 1000, "y": 220},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "You are a concise Playwright test analyst. This is source chunk 2. Extract test titles, nearby setup or teardown hooks, UI actions, API assertions, cleanup, and explicit capability gaps. Preserve evidence and do not invent missing context. Return only compact JSON.\n\nSource chunk:\n${fetch_chunk_2.body}",
+        "response_schema": {
+          "type": "object",
+          "required": ["chunk_index", "test_titles", "findings", "actions", "hooks"],
+          "properties": {
+            "chunk_index": {"type": "integer"},
+            "test_titles": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 240}},
+            "findings": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "actions": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "hooks": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "analyze_chunk_3",
+      "name": "Analyze Playwright chunk 3",
+      "type": "agentic",
+      "position": {"x": 1000, "y": 340},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "You are a concise Playwright test analyst. This is source chunk 3. Extract test titles, nearby setup or teardown hooks, UI actions, API assertions, cleanup, and explicit capability gaps. Preserve evidence and do not invent missing context. Return only compact JSON.\n\nSource chunk:\n${fetch_chunk_3.body}",
+        "response_schema": {
+          "type": "object",
+          "required": ["chunk_index", "test_titles", "findings", "actions", "hooks"],
+          "properties": {
+            "chunk_index": {"type": "integer"},
+            "test_titles": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 240}},
+            "findings": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "actions": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "hooks": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "analyze_chunk_4",
+      "name": "Analyze Playwright chunk 4",
+      "type": "agentic",
+      "position": {"x": 1000, "y": 460},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "You are a concise Playwright test analyst. This is source chunk 4. Extract test titles, nearby setup or teardown hooks, UI actions, API assertions, cleanup, and explicit capability gaps. Preserve evidence and do not invent missing context. Return only compact JSON.\n\nSource chunk:\n${fetch_chunk_4.body}",
+        "response_schema": {
+          "type": "object",
+          "required": ["chunk_index", "test_titles", "findings", "actions", "hooks"],
+          "properties": {
+            "chunk_index": {"type": "integer"},
+            "test_titles": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 240}},
+            "findings": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "actions": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "hooks": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "analyze_chunk_5",
+      "name": "Analyze Playwright chunk 5",
+      "type": "agentic",
+      "position": {"x": 1000, "y": 580},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "You are a concise Playwright test analyst. This is source chunk 5. Extract test titles, nearby setup or teardown hooks, UI actions, API assertions, cleanup, and explicit capability gaps. Preserve evidence and do not invent missing context. Return only compact JSON.\n\nSource chunk:\n${fetch_chunk_5.body}",
+        "response_schema": {
+          "type": "object",
+          "required": ["chunk_index", "test_titles", "findings", "actions", "hooks"],
+          "properties": {
+            "chunk_index": {"type": "integer"},
+            "test_titles": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 240}},
+            "findings": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "actions": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}},
+            "hooks": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "converge_analysis",
+      "name": "Wait for all chunk analyses",
+      "type": "converge",
+      "position": {"x": 1250, "y": 340},
+      "parameters": {"strategy": "all"}
+    },
+    {
+      "id": "select_test_case",
+      "name": "Select one Playwright test case",
+      "type": "agentic",
+      "position": {"x": 1500, "y": 340},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "Select exactly one Playwright test case matching the requested title. Use the five chunk reports below. Include only the nearest applicable beforeEach/afterEach setup and teardown hooks; exclude unrelated test blocks. If the title is missing or does not uniquely match, set match_count to 0 or 2 and return the candidate titles without inventing actions. Return only structured JSON.\n\nRequested title:\n${trigger.test_title}\n\nChunk 1:\n${analyze_chunk_1.result.content}\n\nChunk 2:\n${analyze_chunk_2.result.content}\n\nChunk 3:\n${analyze_chunk_3.result.content}\n\nChunk 4:\n${analyze_chunk_4.result.content}\n\nChunk 5:\n${analyze_chunk_5.result.content}",
+        "response_schema": {
+          "type": "object",
+          "required": ["match_count", "selected_title", "setup_actions", "test_actions", "verification_actions", "cleanup_actions", "unsupported_operations"],
+          "properties": {
+            "match_count": {"type": "integer", "minimum": 0, "maximum": 2},
+            "selected_title": {"type": "string", "maxLength": 240},
+            "setup_actions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "test_actions": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 220}},
+            "verification_actions": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 220}},
+            "cleanup_actions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "unsupported_operations": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "test_selection_gate",
+      "name": "Was exactly one test selected",
+      "type": "condition",
+      "position": {"x": 1740, "y": 340},
+      "parameters": {"condition": "${select_test_case.result.content.match_count} == 1"}
+    },
+    {
+      "id": "selection_error",
+      "name": "Report test selection error",
+      "type": "agentic",
+      "position": {"x": 1980, "y": 500},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "Report why the requested Playwright test title could not be uniquely selected. Return the selector result as compact JSON and do not call tools.\n\nSelector result:\n${select_test_case.result.content}",
+        "response_schema": {
+          "type": "object",
+          "required": ["status", "selected_title", "unsupported_operations"],
+          "properties": {
+            "status": {"type": "string", "maxLength": 80},
+            "selected_title": {"type": "string", "maxLength": 240},
+            "unsupported_operations": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "synthesize_playwright",
+      "name": "Synthesize one Playwright scenario",
+      "type": "agentic",
+      "position": {"x": 1980, "y": 280},
+      "parameters": {
+        "model_role": "reasoning",
+        "prompt": "Synthesize the selected Playwright test case into a bounded AAP scenario. Preserve setup, test actions, API assertions, cleanup, required resources, and capability gaps. Do not include unrelated tests. Return only structured JSON.\n\nSelected test:\n${select_test_case.result.content}",
+        "response_schema": {
+          "type": "object",
+          "required": ["scenario_name", "test_intent", "setup_actions", "mutation_actions", "verification_actions", "cleanup_actions", "capability_gaps"],
+          "properties": {
+            "scenario_name": {"type": "string", "maxLength": 300},
+            "test_intent": {"type": "string", "maxLength": 600},
+            "setup_actions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "mutation_actions": {"type": "array", "maxItems": 20, "items": {"type": "string", "maxLength": 220}},
+            "verification_actions": {"type": "array", "maxItems": 16, "items": {"type": "string", "maxLength": 220}},
+            "cleanup_actions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "capability_gaps": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "NONE"
+      }
+    },
+    {
+      "id": "analysis_gate",
+      "name": "Did scenario synthesis succeed",
+      "type": "condition",
+      "position": {"x": 2220, "y": 280},
+      "parameters": {"condition": "${synthesize_playwright.result.content.scenario_name} != \"\""}
+    },
+    {
+      "id": "execution_switch",
+      "name": "Select read-only or mutation mode",
+      "type": "switch",
+      "position": {"x": 2460, "y": 280},
+      "parameters": {
+        "cases": [
+          {"port": "mutate", "label": "Mutations enabled", "condition": "${trigger.execute_mutations} == True"},
+          {"port": "readonly", "label": "Read-only", "condition": "${trigger.execute_mutations} == False"}
+        ],
+        "default_port": "default"
+      }
+    },
+    {
+      "id": "execute_aap_mutations",
+      "name": "Execute isolated AAP scenario",
+      "type": "agentic",
+      "position": {"x": 2720, "y": 180},
+      "parameters": {
+        "model_role": "tool",
+        "prompt": "Use the selected Playwright scenario below. Mutations are explicitly enabled. Perform only isolated AAP MCP mutations whose names begin with ${trigger.target_name}. Create, update, verify, and clean up resources only when the selected MCP tool set supports the operation. Never modify pre-existing resources. Report unsupported operations explicitly and return compact structured JSON.\n\nScenario:\n${synthesize_playwright.result.content}",
+        "response_schema": {
+          "type": "object",
+          "required": ["status", "execution_mode", "discovered_resources", "created_resources", "verified_fields", "unsupported_operations", "cleanup_actions"],
+          "properties": {
+            "status": {"type": "string", "maxLength": 120},
+            "execution_mode": {"type": "string", "maxLength": 120},
+            "discovered_resources": {"type": "array", "maxItems": 12, "items": {"type": "object", "additionalProperties": true}},
+            "created_resources": {"type": "array", "maxItems": 12, "items": {"type": "object", "additionalProperties": true}},
+            "verified_fields": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "unsupported_operations": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "cleanup_actions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "SELECTED",
+        "tool_selection_names": [
+          "organizations_list", "organizations_retrieve", "organizations_create", "organizations_update", "organizations_destroy",
+          "inventories_list", "inventories_create",
+          "projects_list", "projects_playbooks_retrieve", "projects_create",
+          "job_templates_list", "job_templates_retrieve", "job_templates_create", "job_templates_launch_create",
+          "workflow_job_templates_list", "workflow_job_templates_retrieve", "workflow_job_templates_launch_create"
+        ]
+      }
+    },
+    {
+      "id": "execute_aap_readonly",
+      "name": "Discover AAP scenario read-only",
+      "type": "agentic",
+      "position": {"x": 2720, "y": 380},
+      "parameters": {
+        "model_role": "tool",
+        "prompt": "Use the selected Playwright scenario in read-only mode. Do not create, update, launch, or delete anything. Inspect relevant AAP organizations, inventories, projects, job templates, and workflow job templates with MCP tools, then report what the test would require and which operations are unsupported. Return compact structured JSON.\n\nScenario:\n${synthesize_playwright.result.content}",
+        "response_schema": {
+          "type": "object",
+          "required": ["status", "execution_mode", "discovered_resources", "created_resources", "verified_fields", "unsupported_operations", "cleanup_actions"],
+          "properties": {
+            "status": {"type": "string", "maxLength": 120},
+            "execution_mode": {"type": "string", "maxLength": 120},
+            "discovered_resources": {"type": "array", "maxItems": 12, "items": {"type": "object", "additionalProperties": true}},
+            "created_resources": {"type": "array", "maxItems": 12, "items": {"type": "object", "additionalProperties": true}},
+            "verified_fields": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "unsupported_operations": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "cleanup_actions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "SELECTED",
+        "tool_selection_names": [
+          "organizations_list", "organizations_retrieve", "inventories_list",
+          "projects_list", "projects_playbooks_retrieve", "job_templates_list", "job_templates_retrieve",
+          "workflow_job_templates_list", "workflow_job_templates_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "audit_readonly",
+      "name": "Audit read-only Playwright assertions",
+      "type": "agentic",
+      "position": {"x": 2980, "y": 380},
+      "parameters": {
+        "model_role": "tool",
+        "prompt": "Audit the selected Playwright intent against the read-only executor report. Use AAP MCP tools read-only to verify reported resources. Return compact JSON with pass, fail, or blocked status, verified assertions, findings, and cleanup reminders. Do not mutate or delete resources.\n\nScenario:\n${synthesize_playwright.result.content}\n\nExecutor report:\n${execute_aap_readonly.result.content}",
+        "response_schema": {
+          "type": "object",
+          "required": ["status", "verified_assertions", "findings", "cleanup_reminders"],
+          "properties": {
+            "status": {"type": "string", "maxLength": 80},
+            "verified_assertions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "findings": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "cleanup_reminders": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "SELECTED",
+        "tool_selection_names": [
+          "organizations_list", "organizations_retrieve", "inventories_list",
+          "projects_list", "projects_playbooks_retrieve", "job_templates_list", "job_templates_retrieve",
+          "workflow_job_templates_list", "workflow_job_templates_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "audit_mutations",
+      "name": "Audit mutation Playwright assertions",
+      "type": "agentic",
+      "position": {"x": 2980, "y": 180},
+      "parameters": {
+        "model_role": "tool",
+        "prompt": "Audit the selected Playwright intent against the mutation executor report. Use AAP MCP tools read-only to verify reported resources and cleanup. Return compact JSON with pass, fail, or blocked status, verified assertions, findings, and cleanup reminders. Do not mutate or delete resources.\n\nScenario:\n${synthesize_playwright.result.content}\n\nExecutor report:\n${execute_aap_mutations.result.content}",
+        "response_schema": {
+          "type": "object",
+          "required": ["status", "verified_assertions", "findings", "cleanup_reminders"],
+          "properties": {
+            "status": {"type": "string", "maxLength": 80},
+            "verified_assertions": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "findings": {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 220}},
+            "cleanup_reminders": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 220}}
+          }
+        },
+        "tool_selection_strategy": "SELECTED",
+        "tool_selection_names": [
+          "organizations_list", "organizations_retrieve", "inventories_list",
+          "projects_list", "projects_playbooks_retrieve", "job_templates_list", "job_templates_retrieve",
+          "workflow_job_templates_list", "workflow_job_templates_retrieve"
+        ]
+      }
+    },
+    {
+      "id": "converge_audit",
+      "name": "Converge selected audit",
+      "type": "converge",
+      "position": {"x": 3240, "y": 280},
+      "parameters": {"strategy": "any", "n_required": 1}
+    }
+  ],
+  "edges": [
+    {"from": "trigger_manual", "to": "fetch_chunk_1"},
+    {"from": "trigger_manual", "to": "fetch_chunk_2"},
+    {"from": "trigger_manual", "to": "fetch_chunk_3"},
+    {"from": "trigger_manual", "to": "fetch_chunk_4"},
+    {"from": "trigger_manual", "to": "fetch_chunk_5"},
+    {"from": "fetch_chunk_1", "to": "converge_fetches"},
+    {"from": "fetch_chunk_2", "to": "converge_fetches"},
+    {"from": "fetch_chunk_3", "to": "converge_fetches"},
+    {"from": "fetch_chunk_4", "to": "converge_fetches"},
+    {"from": "fetch_chunk_5", "to": "converge_fetches"},
+    {"from": "converge_fetches", "to": "fetch_gate"},
+    {"from": "fetch_gate", "to": "analyze_chunk_1", "from_port": "true"},
+    {"from": "fetch_gate", "to": "analyze_chunk_2", "from_port": "true"},
+    {"from": "fetch_gate", "to": "analyze_chunk_3", "from_port": "true"},
+    {"from": "fetch_gate", "to": "analyze_chunk_4", "from_port": "true"},
+    {"from": "fetch_gate", "to": "analyze_chunk_5", "from_port": "true"},
+    {"from": "analyze_chunk_1", "to": "converge_analysis"},
+    {"from": "analyze_chunk_2", "to": "converge_analysis"},
+    {"from": "analyze_chunk_3", "to": "converge_analysis"},
+    {"from": "analyze_chunk_4", "to": "converge_analysis"},
+    {"from": "analyze_chunk_5", "to": "converge_analysis"},
+    {"from": "converge_analysis", "to": "select_test_case"},
+    {"from": "select_test_case", "to": "test_selection_gate"},
+    {"from": "test_selection_gate", "to": "synthesize_playwright", "from_port": "true"},
+    {"from": "test_selection_gate", "to": "selection_error", "from_port": "false"},
+    {"from": "synthesize_playwright", "to": "analysis_gate"},
+    {"from": "analysis_gate", "to": "execution_switch", "from_port": "true"},
+    {"from": "execution_switch", "to": "execute_aap_mutations", "from_port": "mutate"},
+    {"from": "execution_switch", "to": "execute_aap_readonly", "from_port": "readonly"},
+    {"from": "execute_aap_mutations", "to": "audit_mutations"},
+    {"from": "execute_aap_readonly", "to": "audit_readonly"},
+    {"from": "audit_mutations", "to": "converge_audit"},
+    {"from": "audit_readonly", "to": "converge_audit"}
+  ]
+}

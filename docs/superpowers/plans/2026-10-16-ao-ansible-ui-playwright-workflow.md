@@ -122,7 +122,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-python3 -m unittest test/test-ao-playwright-workflow.py -v
+python3 test/test-ao-playwright-workflow.py -v
 ```
 
 Expected: FAIL with `FileNotFoundError` for `addons/ao/workflows/ansible-ui-playwright-test-builder.json`.
@@ -170,7 +170,7 @@ Give every chunk and synthesis agent a response schema with bounded arrays and s
 Run:
 
 ```bash
-python3 -m unittest test/test-ao-playwright-workflow.py -v
+python3 test/test-ao-playwright-workflow.py -v
 ```
 
 Expected: PASS for schema, trigger, node, tool-selection, and model-role assertions.
@@ -230,7 +230,7 @@ Add these tests:
 Run:
 
 ```bash
-python3 -m unittest test/test-ao-playwright-workflow.py -v
+python3 test/test-ao-playwright-workflow.py -v
 ```
 
 Expected: FAIL until the selector agent, selection gate, direct audit references, and boolean switch are present.
@@ -273,7 +273,7 @@ Connect `execute_aap_readonly` directly to `audit_readonly` and `execute_aap_mut
 Run:
 
 ```bash
-python3 -m unittest test/test-ao-playwright-workflow.py -v
+python3 test/test-ao-playwright-workflow.py -v
 ```
 
 Expected: PASS, including the direct audit branch and boolean switch assertions.
@@ -521,7 +521,7 @@ class RunnerPayloadTests(unittest.TestCase):
 Run:
 
 ```bash
-python3 -m unittest test/test-ao-playwright-workflow.py -v
+python3 test/test-ao-playwright-workflow.py -v
 ```
 
 Expected: FAIL because the runner module and `build_execution_payload()` do not exist.
@@ -637,7 +637,8 @@ Update `addons/ao/demos/README.md` to distinguish upstream downloaded exports fr
 Run:
 
 ```bash
-python3 -m unittest test/test-ao-playwright-workflow.py test/test-ao-import-demos.py -v
+python3 test/test-ao-playwright-workflow.py -v
+python3 test/test-ao-import-demos.py -v
 bash test/test-ao-llm-workflow-binding.sh
 python3 -m py_compile addons/ao/scripts/import-demos.py addons/ao/scripts/run-playwright-workflow.py
 bash -n addons/ao/deploy.sh

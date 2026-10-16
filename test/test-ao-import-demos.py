@@ -1,6 +1,7 @@
 """Focused normalization tests for the AO demo importer."""
 
 import importlib.util
+import tempfile
 from pathlib import Path
 import subprocess
 import unittest
@@ -116,6 +117,56 @@ class ExistingWorkflowProjectTests(unittest.TestCase):
             {"id": "workflow-id", "project_id": "target-project"},
             "target-project",
         )
+
+
+class LocalWorkflowOverlayTests(unittest.TestCase):
+    def test_collect_workflow_sources_appends_checked_in_workflows(self):
+        with tempfile.TemporaryDirectory() as root:
+            upstream = Path(root) / "upstream" / "nested" / "ao"
+            local = Path(root) / "local"
+            upstream.mkdir(parents=True)
+            local.mkdir()
+            (upstream / "upstream.json").write_text("{}")
+            (local / "local.json").write_text("{}")
+            sources = IMPORT_DEMOS.collect_workflow_sources(upstream.parents[1], local)
+        self.assertEqual(sources[-1][0].name, "local.json")
+        self.assertEqual(sources[-1][1], "aap-demo")
+
+    def test_normalize_keeps_selected_tools_and_uses_tool_model_role(self):
+        workflow = {
+            "nodes": [{
+                "type": "agentic",
+                "parameters": {
+                    "model_role": "tool",
+                    "tool_selection_strategy": "SELECTED",
+                    "tool_selections": ["tool-id"],
+                },
+            }],
+        }
+        normalized = IMPORT_DEMOS.normalize(
+            workflow,
+            "aap-credential",
+            agent_credential_id="reasoning-credential",
+            agent_integration_id="llm-integration",
+            agent_model_id="reasoning-model",
+            tool_agent_model_id="tool-model",
+        )
+        parameters = normalized["nodes"][0]["parameters"]
+        self.assertEqual(parameters["tool_selection_strategy"], "SELECTED")
+        self.assertEqual(parameters["tool_selections"], ["tool-id"])
+        self.assertEqual(parameters["llm_model_id"], "tool-model")
+
+    def test_resolves_selected_tool_names_from_paged_catalog(self):
+        pages = [
+            {"resources": [{"name": "one", "id": "tool-one"}], "next": "cursor-2"},
+            {"resources": [{"name": "two", "id": "tool-two"}]},
+        ]
+        with mock.patch.object(IMPORT_DEMOS, "request", side_effect=pages) as request:
+            resolved = IMPORT_DEMOS.resolve_tool_selections(
+                "https://ao.example/api/v1", "token", {"one", "two"}
+            )
+        self.assertEqual(resolved, {"one": "tool-one", "two": "tool-two"})
+        self.assertEqual(request.call_args_list[1].args[3], "/tools?limit=100&cursor=cursor-2")
 
 
 class DownloadArchiveTests(unittest.TestCase):

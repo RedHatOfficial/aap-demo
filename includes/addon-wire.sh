@@ -979,8 +979,29 @@ wire_ao_llm_agent_model_id() {
   printf '%s\n' "$model_id"
 }
 
+wire_ao_llm_agent_tool_model_id() {
+  local integration_name model integration_id models model_id
+  if [ -n "${AO_AGENT_TOOL_MODEL_ID:-}" ]; then
+    printf '%s\n' "$AO_AGENT_TOOL_MODEL_ID"
+    return 0
+  fi
+  integration_name=$(wire_ao_llm_integration_name) || return 1
+  model="${AO_AGENT_TOOL_MODEL:-gpt-4.1}"
+  integration_id="${1:-}"
+  if [ -z "$integration_id" ]; then
+    integration_id=$(wire_ao_find_integration_by_name "$integration_name" 2>/dev/null || true)
+  fi
+  [ -n "$integration_id" ] || return 1
+  models=$(wire_ao_api GET "/integrations/${integration_id}/models?limit=50" 2>/dev/null) || return 1
+  model_id=$(printf '%s' "$models" | wire_ao_list_items \
+    | jq -r --arg m "$model" \
+      '[.[] | select(.model_id == $m)] | .[0].id // empty' 2>/dev/null) || return 1
+  [ -n "$model_id" ] || return 1
+  printf '%s\n' "$model_id"
+}
+
 wire_ao_rebind_agentic_workflows() {
-  local agent_credential_id agent_integration_id agent_model_id workflows workflow workflow_id definition agent_count updated payload result
+  local agent_credential_id agent_integration_id agent_model_id tool_agent_model_id workflows workflow workflow_id definition agent_count updated payload result
 
   if [ "${AO_LLM_PROVIDER:-ollama}" = none ]; then
     wire_log "Skipping AO workflow model rebinding (none selected)"
@@ -996,6 +1017,7 @@ wire_ao_rebind_agentic_workflows() {
     agent_integration_id=$(wire_ao_llm_agent_integration_id 2>/dev/null || true)
   fi
   agent_model_id=$(wire_ao_llm_agent_model_id "$agent_integration_id" 2>/dev/null || true)
+  tool_agent_model_id=$(wire_ao_llm_agent_tool_model_id "$agent_integration_id" 2>/dev/null || true)
   if [ -z "$agent_credential_id" ] || [ -z "$agent_integration_id" ] || [ -z "$agent_model_id" ]; then
     wire_warn "Could not determine the AO LLM credential/integration/model; workflow rebinding skipped"
     return 0
@@ -1019,13 +1041,14 @@ wire_ao_rebind_agentic_workflows() {
         --arg credential_id "$agent_credential_id" \
         --arg integration_id "$agent_integration_id" \
         --arg model_id "$agent_model_id" \
+        --arg tool_model_id "$tool_agent_model_id" \
         '.nodes = [(.nodes // [])[] |
         if .type == "agentic" then
           .parameters = ((.parameters // {})
             | del(.model)
             | .credential_id = $credential_id
             | .integration_id = $integration_id
-            | .llm_model_id = $model_id)
+            | .llm_model_id = (if .model_role == "tool" and $tool_model_id != "" then $tool_model_id else $model_id end))
         else .
         end]' 2>/dev/null) || continue
       payload=$(jq -n \
