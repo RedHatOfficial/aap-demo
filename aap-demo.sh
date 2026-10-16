@@ -85,13 +85,13 @@ AAP_DEMO_CONFIG_FILE="$AAP_DEMO_CONFIG"
 # them persistent in this broadly readable settings file.
 aap_demo_config_key_allowed() {
   case "$1" in
-    *_FILE|*_PATH)
+    *_FILE | *_PATH)
       return 0
       ;;
   esac
   local upper_key="${1^^}"
   case "$upper_key" in
-    *API_KEY*|*ACCESS_KEY*|*PRIVATE_KEY*|*TOKEN*|*PASSWORD*|*SECRET*|*CREDENTIAL*)
+    *API_KEY* | *ACCESS_KEY* | *PRIVATE_KEY* | *TOKEN* | *PASSWORD* | *SECRET* | *CREDENTIAL*)
       return 1
       ;;
     *)
