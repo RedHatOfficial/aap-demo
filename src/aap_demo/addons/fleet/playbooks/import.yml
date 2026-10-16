@@ -1,0 +1,78 @@
+---
+# ansible-doc -l ansible.platform listed no modules here, so gateway
+# reachability is ansible.builtin.uri against /api/gateway/v1/ping/.
+# ansible.platform stays in requirements.yml because controller on AAP 2.7
+# imports it. Controller modules use the play vars below; they do not fall
+# back to the environment.
+- name: Register fleet nodes in AAP
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    state: "{{ state | default('present') }}"
+    manage_inventory: "{{ manage_inventory | default(true) }}"
+    aap_hostname: "{{ aap_hostname }}"
+    aap_username: "{{ aap_username }}"
+    aap_password: "{{ aap_password }}"
+    aap_validate_certs: false
+  tasks:
+    - name: Gateway reachability
+      when: state == 'present'
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/gateway/v1/ping/"
+        validate_certs: false
+        status_code: [200, 401, 403]
+
+    - name: Inventory
+      when: manage_inventory | bool
+      ansible.controller.inventory:
+        name: "{{ inventory_name }}"
+        organization: Default
+        state: "{{ state }}"
+
+    - name: Hosts
+      ansible.controller.host:
+        name: "{{ item.name }}"
+        inventory: "{{ inventory_name }}"
+        state: "{{ state }}"
+        variables:
+          ansible_host: "{{ item.name }}.{{ namespace }}.svc"
+          ansible_port: 22
+          ansible_user: ansible
+      loop: "{{ nodes }}"
+
+    - name: Machine credential
+      when: manage_inventory | bool
+      ansible.controller.credential:
+        name: "{{ credential_name }}"
+        organization: Default
+        credential_type: Machine
+        state: "{{ state }}"
+        inputs:
+          username: ansible
+          ssh_key_data: "{{ ssh_private_key | default('') }}"
+      no_log: true
+
+    - name: Project
+      when: manage_inventory | bool
+      ansible.controller.project:
+        name: "{{ project_name }}"
+        organization: Default
+        state: "{{ state }}"
+        scm_type: git
+        scm_url: "{{ scm_url }}"
+        scm_branch: "{{ scm_branch }}"
+        scm_update_on_launch: true
+
+    - name: Ping job template
+      when: manage_inventory | bool
+      ansible.controller.job_template:
+        name: "{{ job_template_name }}"
+        organization: Default
+        state: "{{ state }}"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: src/aap_demo/addons/fleet/playbooks/ping.yml
+        credentials:
+          - "{{ credential_name }}"
+        ask_variables_on_launch: false

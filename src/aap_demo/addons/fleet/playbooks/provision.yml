@@ -1,0 +1,164 @@
+---
+# namespace, nodes, images, ssh_public_key, state, and scope come from extra-vars.
+# Nothing here hardcodes the namespace.
+- name: Fleet nodes
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    state: "{{ state | default('present') }}"
+    scope: "{{ scope | default('all') }}"
+  tasks:
+    - name: Namespace
+      when: scope == 'all'
+      kubernetes.core.k8s:
+        state: "{{ state }}"
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ namespace }}"
+
+    - name: Bind anyuid to this namespace
+      when: scope == 'all' and state == 'present'
+      kubernetes.core.k8s:
+        state: present
+        force: false
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: fleet-anyuid
+            namespace: "{{ namespace }}"
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: system:openshift:scc:anyuid
+          subjects:
+            - kind: Group
+              apiGroup: rbac.authorization.k8s.io
+              name: "system:serviceaccounts:{{ namespace }}"
+
+    - name: Pull secret
+      when: state == 'present' and (pull_secret_path | default('') | length) > 0
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          type: kubernetes.io/dockerconfigjson
+          metadata:
+            name: pull-secret
+            namespace: "{{ namespace }}"
+          data:
+            .dockerconfigjson: "{{ lookup('file', pull_secret_path) | b64encode }}"
+
+    - name: SSH public key
+      when: state == 'present'
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: fleet-ssh
+            namespace: "{{ namespace }}"
+          stringData:
+            ssh-publickey: "{{ ssh_public_key }}"
+
+    - name: Entrypoint
+      when: state == 'present'
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: fleet-entrypoint
+            namespace: "{{ namespace }}"
+          data:
+            entrypoint.sh: "{{ lookup('file', entrypoint_path) }}"
+
+    - name: Node deployment
+      when: state == 'present' or scope == 'node'
+      kubernetes.core.k8s:
+        state: "{{ state }}"
+        force: false
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ item.name }}"
+            namespace: "{{ namespace }}"
+            labels:
+              app.kubernetes.io/name: fleet-node
+              app.kubernetes.io/instance: "{{ item.name }}"
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: fleet-node
+                app.kubernetes.io/instance: "{{ item.name }}"
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: fleet-node
+                  app.kubernetes.io/instance: "{{ item.name }}"
+                  aap-demo/os: "{{ item.os }}"
+              spec:
+                restartPolicy: Always
+                imagePullSecrets: "{{ [{'name': 'pull-secret'}] if item.os == 'ubi9' else [] }}"
+                containers:
+                  - name: node
+                    image: "{{ images[item.os] }}"
+                    securityContext:
+                      readOnlyRootFilesystem: false
+                      runAsUser: 0
+                    command: ["/bin/bash", "/entrypoint/entrypoint.sh"]
+                    ports:
+                      - containerPort: 22
+                    readinessProbe:
+                      tcpSocket:
+                        port: 22
+                      initialDelaySeconds: 5
+                      periodSeconds: 10
+                      failureThreshold: 30
+                    volumeMounts:
+                      - name: entrypoint
+                        mountPath: /entrypoint
+                      - name: ssh
+                        mountPath: /etc/fleet
+                volumes:
+                  - name: entrypoint
+                    configMap:
+                      name: fleet-entrypoint
+                      defaultMode: 0755
+                  - name: ssh
+                    secret:
+                      secretName: fleet-ssh
+                      items:
+                        - key: ssh-publickey
+                          path: authorized_keys
+      loop: "{{ nodes }}"
+
+    - name: Node service
+      when: state == 'present' or scope == 'node'
+      kubernetes.core.k8s:
+        state: "{{ state }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: "{{ item.name }}"
+            namespace: "{{ namespace }}"
+            labels:
+              app.kubernetes.io/name: fleet-node
+              app.kubernetes.io/instance: "{{ item.name }}"
+          spec:
+            selector:
+              app.kubernetes.io/name: fleet-node
+              app.kubernetes.io/instance: "{{ item.name }}"
+            ports:
+              - port: 22
+                targetPort: 22
+      loop: "{{ nodes }}"
