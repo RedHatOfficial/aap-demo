@@ -22,9 +22,12 @@ fi
 # their files under /usr and /var, so config that the package dropped in
 # /etc has to be restored before sshd and sudo can run again.
 if [[ ${ID} == debian ]]; then
-  if ! command -v sshd >/dev/null 2>&1 || [[ ! -f /etc/ssh/sshd_config ]] || [[ ! -d /etc/sudoers.d ]]; then
+  if ! command -v sshd >/dev/null 2>&1; then
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server python3 sudo
+  elif [[ ! -f /etc/ssh/sshd_config || ! -d /etc/sudoers.d ]]; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall openssh-server sudo
   fi
 else
   if ! command -v sshd >/dev/null 2>&1; then
