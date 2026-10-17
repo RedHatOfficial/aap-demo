@@ -258,6 +258,6 @@ def test_unported_commands_skip_the_preflight(
     """A stub must still say "not yet implemented", not fail on kubectl."""
     monkeypatch.setattr(preflight.shutil, "which", lambda name: None)
     monkeypatch.setenv("AAP_DEMO_DIR", str(tmp_path / "home"))
-    rc = main_mod.main(["enable", "--config", str(tmp_path / "c.yaml")], runner=FakeRunner())
+    rc = main_mod.main(["gui", "--config", str(tmp_path / "c.yaml")], runner=FakeRunner())
     assert rc == 1
     assert "not yet implemented" in capsys.readouterr().err

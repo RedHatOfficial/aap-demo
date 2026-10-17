@@ -1,0 +1,7 @@
+---
+- name: Fleet ping
+  hosts: all
+  gather_facts: true
+  tasks:
+    - name: Ping
+      ansible.builtin.ping:

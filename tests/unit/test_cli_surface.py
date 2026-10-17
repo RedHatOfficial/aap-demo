@@ -51,7 +51,7 @@ BASH_COMMANDS = [
 BASH_ALIASES = {"rh-status": "redhat-status", "deploy-all": "deploy"}
 
 #: New in the rewrite (§3.3 "New commands").
-NEW_COMMANDS = ["addon", "playbooks", "gui", "completion", "oc"]
+NEW_COMMANDS = ["addon", "playbooks", "gui", "completion", "oc", "fleet"]
 
 
 @pytest.fixture(scope="module")
@@ -225,7 +225,7 @@ def test_version_command_supports_json(tmp_path, capsys) -> None:
     "command",
     # deploy/redeploy/clean/setup left this list in phase 3; they now reach a
     # real cluster and are covered by tests/unit/test_cluster_deploy.py.
-    ["enable", "gui"],
+    ["gui"],
 )
 def test_unported_commands_fail_cleanly(command: str, tmp_path, capsys) -> None:
     """A skeleton command must say so, not pretend to succeed."""

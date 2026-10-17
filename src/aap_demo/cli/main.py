@@ -244,6 +244,7 @@ def build_parser(
     p.add_argument(
         "--refresh-catalog", action="store_true", help="Refresh the operator catalog first"
     )
+    p.add_argument("--no-import", action="store_true", help="Skip registering fleet nodes in AAP")
     p.set_defaults(func=addons_cli.enable)
 
     p = add("disable", "Disable an addon")
@@ -252,6 +253,27 @@ def build_parser(
         "--purge-creds", action="store_true", help="Also remove stored addon credentials"
     )
     p.set_defaults(func=addons_cli.disable)
+
+    p = add("fleet", "Manage mock Linux nodes registered in AAP")
+    fleet_sub = p.add_subparsers(dest="fleet_action", metavar="<ACTION>")
+    fleet_list = fleet_sub.add_parser("list", help="List fleet nodes", parents=[globals_parser])
+    fleet_list.set_defaults(func=_fleet_list)
+    fleet_add = fleet_sub.add_parser("add", help="Add one fleet node", parents=[globals_parser])
+    fleet_add.add_argument("--os", required=True, help="ubi9, fedora, or debian")
+    fleet_add.add_argument("--name", help="Node name (default fleet-<os>)")
+    fleet_add.set_defaults(func=_fleet_add)
+    fleet_remove = fleet_sub.add_parser(
+        "remove", help="Remove one fleet node", parents=[globals_parser]
+    )
+    fleet_remove.add_argument("name")
+    fleet_remove.set_defaults(func=_fleet_remove)
+    fleet_destroy = fleet_sub.add_parser(
+        "destroy",
+        help="Delete the fleet namespace and its AAP inventory",
+        parents=[globals_parser],
+    )
+    fleet_destroy.set_defaults(func=_fleet_destroy)
+    p.set_defaults(func=_fleet_list)
 
     p = add("addon", "List, inspect, and scaffold addons")
     addon_sub = p.add_subparsers(dest="addon_action", metavar="<ACTION>")
@@ -451,8 +473,36 @@ CLUSTER_COMMANDS = frozenset(
 SELF_MANAGED_COMMANDS = frozenset({"deploy", "deploy-all", "redeploy", "create"})
 
 
-def _preflight(ctx: AppContext, command: str) -> None:
+def _fleet_list(ctx: AppContext, args: argparse.Namespace) -> int:
+    from aap_demo.addons import get
+
+    return int(get("fleet").list(ctx, args) or 0)
+
+
+def _fleet_add(ctx: AppContext, args: argparse.Namespace) -> int:
+    from aap_demo.addons import get
+
+    return int(get("fleet").add(ctx, args) or 0)
+
+
+def _fleet_remove(ctx: AppContext, args: argparse.Namespace) -> int:
+    from aap_demo.addons import get
+
+    return int(get("fleet").remove(ctx, args) or 0)
+
+
+def _fleet_destroy(ctx: AppContext, args: argparse.Namespace) -> int:
+    from aap_demo.addons import get
+
+    return int(get("fleet").destroy(ctx, args) or 0)
+
+
+def _preflight(ctx: AppContext, command: str, args: argparse.Namespace) -> None:
     """Bash's pre-dispatch ``setup_kubeconfig`` + ``verify_cluster_type``."""
+    if _fleet_needs_cluster(command, args):
+        preflight.setup_kubeconfig(ctx)
+        preflight.warn_cluster_state(ctx)
+        return
     if command in SELF_MANAGED_COMMANDS:
         preflight.setup_kubeconfig(ctx)
         return
@@ -460,6 +510,15 @@ def _preflight(ctx: AppContext, command: str) -> None:
         return
     preflight.setup_kubeconfig(ctx)
     preflight.warn_cluster_state(ctx)
+
+
+def _fleet_needs_cluster(command: str, args: argparse.Namespace) -> bool:
+    """Kubeconfig preflight for fleet only. ``enable portal`` stays an addon error."""
+    if command == "fleet":
+        return True
+    if command in {"enable", "disable"} and getattr(args, "addon", None) == "fleet":
+        return True
+    return False
 
 
 def run(
@@ -543,7 +602,7 @@ def run(
     # KUBECONFIG/context preflight, before the command runs a single
     # subprocess — bash does the same from its dispatch block.
     try:
-        _preflight(ctx, str(getattr(args, "command", "") or ""))
+        _preflight(ctx, str(getattr(args, "command", "") or ""), args)
         return int(func(ctx, args) or 0)
     finally:
         ctx.console.finish()

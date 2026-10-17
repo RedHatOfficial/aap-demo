@@ -519,11 +519,13 @@ Addons:
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
   enable mcp-server  Enable MCP server for AI assistants
 
-Fleet commands (requires: enable fleet):
+Fleet commands (legacy Bash v1; local QEMU VMs only; requires: enable fleet):
   fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
   fleet list                    List running fleet node VMs
   fleet remove [N|name]         Remove fleet node VMs
   fleet destroy                 Remove all VMs and AAP resources
+
+Python v2 fleet: aap-demo fleet list  (Kubernetes pod-backed nodes)
 
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
@@ -583,6 +585,8 @@ COMMANDS (all infrastructure types):
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
+    (legacy Bash v1; local QEMU VMs only)
+    Python v2 fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
     enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, fleet)
                     portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
@@ -1927,18 +1931,42 @@ cmd_status() {
   done
   echo ""
 
-  # Show fleet nodes (addon)
+  # Show both fleet backends. Bash v1 stores QEMU nodes on the host; Python v2
+  # stores pod-backed nodes in Kubernetes, so neither state can be inferred
+  # from the other's config or filesystem.
+  echo "Fleet:"
+  echo "------"
+
+  local _fleet_v2_rows _fleet_v2_total _fleet_v2_ready
+  _fleet_v2_rows=$(kubectl get pods -A \
+    -l app.kubernetes.io/name=fleet-node \
+    --no-headers \
+    -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
+    2>/dev/null || true)
+  if [ -n "$_fleet_v2_rows" ]; then
+    _fleet_v2_total=$(printf '%s\n' "$_fleet_v2_rows" | awk 'NF {count++} END {print count + 0}')
+    _fleet_v2_ready=$(printf '%s\n' "$_fleet_v2_rows" | awk '$3 == "true" {count++} END {print count + 0}')
+    echo "Python v2 Fleet:"
+    printf "  %s/%s pod nodes ready\n" "$_fleet_v2_ready" "$_fleet_v2_total"
+    printf '%s\n' "$_fleet_v2_rows" | sed 's/^/  /'
+  else
+    echo "Python v2 Fleet: no pod nodes"
+  fi
+
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
     local _node_count
     _node_count=$(fleet_count 2>/dev/null || echo "0")
     if [ "$_node_count" -gt 0 ] 2>/dev/null; then
-      echo "Fleet:"
-      echo "-----------"
-      fleet_list
-      echo ""
+      echo "Legacy Bash v1 Fleet:"
+      fleet_list | sed 's/^/  /'
+    else
+      echo "Legacy Bash v1 Fleet: no QEMU nodes"
     fi
+  else
+    echo "Legacy Bash v1 Fleet: no QEMU nodes"
   fi
+  echo ""
 }
 
 cmd_redeploy() {
@@ -2956,7 +2984,7 @@ cmd_fleet() {
       ;;
     list)
       echo ""
-      printf "\033[1mFleet Nodes\033[0m\n"
+      printf "\033[1mLegacy QEMU Fleet Nodes (Bash v1)\033[0m\n"
       echo ""
       fleet_list
       ;;
