@@ -395,6 +395,7 @@ def test_playbooks_parse_and_name_their_modules() -> None:
         "ansible.controller.host",
         "ansible.controller.credential",
         "ansible.controller.project",
+        "ansible.controller.project_update",
         "ansible.controller.job_template",
     ):
         assert module in imported

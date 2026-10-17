@@ -66,6 +66,15 @@
         scm_branch: "{{ scm_branch }}"
         scm_update_on_launch: true
 
+    - name: Update the project
+      when: state == 'present' and manage_inventory | bool
+      ansible.controller.project_update:
+        name: "{{ project_name }}"
+        organization: Default
+        wait: true
+        interval: 5
+        timeout: 300
+
     - name: Ping job template
       when: manage_inventory | bool
       ansible.controller.job_template:
