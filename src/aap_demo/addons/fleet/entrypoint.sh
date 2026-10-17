@@ -18,9 +18,52 @@ fi
 
 . /etc/os-release
 
-# /etc comes from the image on every start. Packages installed later keep
-# their files under /usr and /var, so config that the package dropped in
-# /etc has to be restored before sshd and sudo can run again.
+# /etc stays off the disk mount so the pod keeps cluster DNS. A copy of
+# everything else in /etc lives under /var, which is on the disk.
+ETC_SAVE=/var/lib/fleet-etc
+
+restore_etc() {
+  [[ -d ${ETC_SAVE} ]] || return 0
+  cp -a /etc/resolv.conf /tmp/fleet-resolv.conf
+  cp -a /etc/hosts /tmp/fleet-hosts
+  if [[ -f /etc/hostname ]]; then
+    cp -a /etc/hostname /tmp/fleet-hostname
+  fi
+  cp -a "${ETC_SAVE}/." /etc/
+  cp -a /tmp/fleet-resolv.conf /etc/resolv.conf
+  cp -a /tmp/fleet-hosts /etc/hosts
+  if [[ -f /tmp/fleet-hostname ]]; then
+    cp -a /tmp/fleet-hostname /etc/hostname
+  fi
+}
+
+save_etc() {
+  mkdir -p "${ETC_SAVE}"
+  find "${ETC_SAVE}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  tar -C /etc \
+    --exclude=resolv.conf \
+    --exclude=hosts \
+    --exclude=hostname \
+    --exclude=fleet \
+    -cf - . | tar -C "${ETC_SAVE}" -xpf -
+}
+
+# dpkg's statoverride file is on the disk, but the groups it names were
+# created in /etc and disappeared with the previous pod.
+fix_debian_overrides() {
+  [[ ${ID} == debian && -f /var/lib/dpkg/statoverride ]] || return 0
+  while read -r user group _mode _path; do
+    [[ -z ${group} || ${group} == \#* ]] && continue
+    getent group "${group}" >/dev/null 2>&1 || groupadd --system "${group}" || true
+    if [[ -n ${user} && ${user} != root ]] && ! id "${user}" >/dev/null 2>&1; then
+      useradd --system --no-create-home --gid "${group}" "${user}" || true
+    fi
+  done < /var/lib/dpkg/statoverride
+}
+
+restore_etc
+fix_debian_overrides
+
 if [[ ${ID} == debian ]]; then
   if ! command -v sshd >/dev/null 2>&1; then
     apt-get update
@@ -52,4 +95,5 @@ chmod 600 /home/ansible/.ssh/authorized_keys
 
 ssh-keygen -A
 mkdir -p /run/sshd
+save_etc
 exec /usr/sbin/sshd -D -e

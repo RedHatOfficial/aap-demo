@@ -355,6 +355,8 @@ def test_packaged_files_load_through_importlib() -> None:
     script = resources.read_text("entrypoint.sh")
     assert "dnf reinstall -y openssh-server sudo" in script
     assert "apt-get install -y --reinstall openssh-server sudo" in script
+    assert "ETC_SAVE=/var/lib/fleet-etc" in script
+    assert "groupadd --system" in script
     assert "mkdir -p /etc/ssh /etc/sudoers.d" in script
 
 
