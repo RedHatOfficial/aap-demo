@@ -352,6 +352,9 @@ def test_packaged_files_load_through_importlib() -> None:
         "entrypoint.sh",
     ):
         assert resources.read_text(name)
+    script = resources.read_text("entrypoint.sh")
+    assert "rpm --restore openssh-server" in script
+    assert "mkdir -p /etc/sudoers.d" in script
 
 
 def test_playbooks_parse_and_name_their_modules() -> None:

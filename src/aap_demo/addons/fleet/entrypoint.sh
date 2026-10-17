@@ -18,17 +18,26 @@ fi
 
 . /etc/os-release
 
-if ! command -v sshd >/dev/null 2>&1; then
-  case "${ID}" in
-    debian)
-      apt-get update
-      DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server python3 sudo
-      ;;
-    *)
-      dnf install -y openssh-server python3 sudo
-      ;;
-  esac
+# /etc comes from the image on every start. Packages installed later keep
+# their files under /usr and /var, so config that the package dropped in
+# /etc has to be restored before sshd and sudo can run again.
+if [[ ${ID} == debian ]]; then
+  if ! command -v sshd >/dev/null 2>&1 || [[ ! -f /etc/ssh/sshd_config ]] || [[ ! -d /etc/sudoers.d ]]; then
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y openssh-server python3 sudo
+  fi
+else
+  if ! command -v sshd >/dev/null 2>&1; then
+    dnf install -y openssh-server python3 sudo
+  fi
+  if [[ ! -f /etc/ssh/sshd_config ]]; then
+    rpm --restore openssh-server
+  fi
+  if [[ ! -d /etc/sudoers.d ]]; then
+    rpm --restore sudo
+  fi
 fi
+mkdir -p /etc/sudoers.d
 
 if ! id ansible >/dev/null 2>&1; then
   useradd -m -s /bin/bash ansible
