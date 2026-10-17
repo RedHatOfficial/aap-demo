@@ -8,7 +8,7 @@
   connection: local
   gather_facts: false
   module_defaults:
-    group/ansible.controller.auth:
+    group/ansible.controller.controller:
       controller_host: "{{ aap_hostname }}"
       controller_username: "{{ aap_username }}"
       controller_password: "{{ aap_password }}"
