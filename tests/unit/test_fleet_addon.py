@@ -285,6 +285,20 @@ def test_destroy_removes_controller_objects_before_the_namespace(app_ctx, monkey
     assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
 
 
+def test_destroy_skips_controller_when_import_was_disabled(app_ctx, monkeypatch) -> None:
+    _pull_secret(app_ctx)
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    app_ctx.runner = _cluster_runner()
+
+    get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    runs = _playbook_runs(app_ctx.runner)
+    assert [name for name, _text, _job in runs] == ["provision.yml"]
+    assert "state: absent" in runs[0][1]
+
+
 def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
     routes = {
         "items": [
@@ -341,6 +355,10 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert "replicas: 1" in provision
     assert "kubernetes.core.k8s_scale" in provision
     assert "replicas: 0" in provision
+    assert "(replicas | default(1) | int) != 0" in provision
+    assert 'controller_host: "{{ aap_hostname }}"' in imported
+    assert 'controller_username: "{{ aap_username }}"' in imported
+    assert 'controller_password: "{{ aap_password }}"' in imported
     plays = yaml.safe_load(provision)
     deploy = next(
         task["kubernetes.core.k8s"]["definition"]

@@ -2,25 +2,27 @@
 # ansible-doc -l ansible.platform listed no modules here, so gateway
 # reachability is ansible.builtin.uri against /api/gateway/v1/ping/.
 # ansible.platform stays in requirements.yml because controller on AAP 2.7
-# imports it. Controller modules use the play vars below; they do not fall
-# back to the environment.
+# imports it. ansible.controller reads controller_host, not aap_hostname.
 - name: Register fleet nodes in AAP
   hosts: localhost
   connection: local
   gather_facts: false
+  module_defaults:
+    group/ansible.controller.auth:
+      controller_host: "{{ aap_hostname }}"
+      controller_username: "{{ aap_username }}"
+      controller_password: "{{ aap_password }}"
+      validate_certs: "{{ aap_validate_certs | bool }}"
   vars:
     state: "{{ state | default('present') }}"
     manage_inventory: "{{ manage_inventory | default(true) }}"
-    aap_hostname: "{{ aap_hostname }}"
-    aap_username: "{{ aap_username }}"
-    aap_password: "{{ aap_password }}"
-    aap_validate_certs: false
+    aap_validate_certs: "{{ aap_validate_certs | default(false) | bool }}"
   tasks:
     - name: Gateway reachability
       when: state == 'present'
       ansible.builtin.uri:
         url: "{{ aap_hostname }}/api/gateway/v1/ping/"
-        validate_certs: false
+        validate_certs: "{{ aap_validate_certs | bool }}"
         status_code: [200, 401, 403]
 
     - name: Inventory

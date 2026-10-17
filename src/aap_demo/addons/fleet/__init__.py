@@ -60,7 +60,8 @@ class FleetAddon:
         discover_image(ctx)
         private, public = sshkey.load_or_create(ctx)
         nodes = nodes_of(ctx)
-        if nodes:
+        imported = fleet_options(ctx).get("import", True) is not False
+        if nodes and imported:
             runner.import_nodes(
                 ctx, nodes, private_key=private, state="absent", manage_inventory=True
             )

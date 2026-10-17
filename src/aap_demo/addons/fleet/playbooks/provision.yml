@@ -111,7 +111,9 @@
       loop: "{{ nodes }}"
 
     - name: Node deployment
-      when: state == 'present' or scope == 'node'
+      when:
+        - state == 'absent' or (replicas | default(1) | int) != 0
+        - state == 'present' or scope == 'node'
       kubernetes.core.k8s:
         state: "{{ state }}"
         force: false

@@ -27,9 +27,9 @@ Both are extra-vars, and both can be set under `addons.options.fleet`.
 
 Deployment replicas are kept as YAML integer literals. The AAP execution
 environment serializes a Jinja-templated numeric value as a string, which
-Kubernetes rejects for `Deployment.spec.replicas`. The `disable` path scales
-the existing Deployments to zero with `kubernetes.core.k8s_scale`, preserving
-the intended lifecycle without changing the Deployment schema.
+Kubernetes rejects for `Deployment.spec.replicas`. The `disable` path does
+not apply that Deployment again. It scales the existing Deployments to zero
+with `kubernetes.core.k8s_scale`.
 
 KubeVirt and QEMU are out of v2.
 The bash addon under `addons/fleet/` is untouched and is not the implementation.
