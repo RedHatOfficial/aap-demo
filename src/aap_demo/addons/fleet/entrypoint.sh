@@ -29,15 +29,12 @@ if [[ ${ID} == debian ]]; then
 else
   if ! command -v sshd >/dev/null 2>&1; then
     dnf install -y openssh-server python3 sudo
-  fi
-  if [[ ! -f /etc/ssh/sshd_config ]]; then
-    rpm --restore openssh-server
-  fi
-  if [[ ! -d /etc/sudoers.d ]]; then
-    rpm --restore sudo
+  elif [[ ! -f /etc/ssh/sshd_config || ! -d /etc/sudoers.d ]]; then
+    # rpm --restore only resets ownership. Reinstall puts the config files back.
+    dnf reinstall -y openssh-server sudo
   fi
 fi
-mkdir -p /etc/sudoers.d
+mkdir -p /etc/ssh /etc/sudoers.d
 
 if ! id ansible >/dev/null 2>&1; then
   useradd -m -s /bin/bash ansible
