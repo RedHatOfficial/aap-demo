@@ -191,6 +191,21 @@ def test_disk_size_and_storage_class_come_from_fleet_options(app_ctx, monkeypatc
     assert "storage_class: topolvm-provisioner" in provision
 
 
+def test_ubi_uses_the_txt_pull_secret(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.config.set("deploy.pull_secret_path", "")
+    text = app_ctx.paths.state_dir / "pull-secret.txt"
+    text.parent.mkdir(parents=True, exist_ok=True)
+    text.write_text('{"auths":{}}\n', encoding="utf-8")
+    app_ctx.runner = _cluster_runner()
+
+    assert get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True)) == 0
+
+    provision = _playbook_runs(app_ctx.runner)[0][1]
+    assert "/opt/fleet/extra/pull-secret.json" in provision
+    assert "pull-secret.txt" not in provision
+
+
 def test_no_import_skips_the_controller_playbook(app_ctx, monkeypatch) -> None:
     _pull_secret(app_ctx)
     _install_bins(monkeypatch)

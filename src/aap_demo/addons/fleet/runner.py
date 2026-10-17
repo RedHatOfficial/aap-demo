@@ -23,10 +23,11 @@ def base_vars(
         namespace_for,
         storage_class_for,
     )
+    from aap_demo.cluster.pull_secret import discover
 
     pull = ""
-    secret = ctx.paths.pull_secret
-    if secret.is_file() and any(node["os"] == "ubi9" for node in nodes):
+    secret = discover(ctx)
+    if secret is not None and any(node["os"] == "ubi9" for node in nodes):
         pull = str(secret)
     return {
         "namespace": namespace_for(ctx),

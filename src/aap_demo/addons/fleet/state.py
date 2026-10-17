@@ -81,8 +81,10 @@ def require_os(os_id: str) -> None:
 
 
 def require_pull_secret(ctx: AppContext, nodes: List[Dict[str, str]]) -> None:
-    if any(node["os"] == "ubi9" for node in nodes) and not ctx.paths.pull_secret.is_file():
+    from aap_demo.cluster.pull_secret import discover, unset_hint
+
+    if any(node["os"] == "ubi9" for node in nodes) and discover(ctx) is None:
         raise PrerequisiteError(
             "UBI nodes need a pull secret",
-            hint=f"Save the pull secret at {ctx.paths.pull_secret}",
+            hint=unset_hint(ctx),
         )
