@@ -55,6 +55,10 @@ def _cluster_runner() -> FakeRunner:
     runner = FakeRunner()
     runner.register(["/usr/bin/ssh-keygen"], _keygen)
     runner.ok(["kubectl", "get", "pods"], stdout=EE_PODS)
+    runner.ok(
+        ["kubectl", "get", "namespace"],
+        stdout='{"metadata":{"labels":{"aap-demo/fleet":"true"}}}',
+    )
     runner.ok(["kubectl", "get", "svc", "router-default"], stdout="10.43.72.238")
 
     def get_secret(argv):

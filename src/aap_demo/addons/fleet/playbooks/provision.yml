@@ -12,14 +12,16 @@
     scope: "{{ scope | default('all') }}"
   tasks:
     - name: Namespace
-      when: scope == 'all'
+      when: scope == 'all' and state == 'present'
       kubernetes.core.k8s:
-        state: "{{ state }}"
+        state: present
         definition:
           apiVersion: v1
           kind: Namespace
           metadata:
             name: "{{ namespace }}"
+            labels:
+              aap-demo/fleet: "true"
 
     - name: Fleet node service account
       when: scope == 'all' and state == 'present'

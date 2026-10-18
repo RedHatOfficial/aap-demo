@@ -14,7 +14,7 @@ def names() -> list:
     return sorted(_REGISTRY)
 
 
-def get(name: str):
+def get(name: str) -> FleetAddon:
     addon = _REGISTRY.get(name)
     if addon is None:
         raise AddonError(f"unknown addon {name!r}; only fleet is implemented")
