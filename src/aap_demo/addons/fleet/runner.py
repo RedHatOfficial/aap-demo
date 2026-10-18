@@ -47,7 +47,12 @@ def import_vars(
     manage_inventory: bool,
 ) -> Dict[str, Any]:
     from aap_demo.addons.fleet import gateway
-    from aap_demo.addons.fleet.state import fleet_options, namespace_for
+    from aap_demo.addons.fleet.state import (
+        ca_path_for,
+        fleet_options,
+        namespace_for,
+        validate_certs_for,
+    )
     from aap_demo.cluster import aap as aap_mod
     from aap_demo.core.errors import AddonError
 
@@ -70,7 +75,8 @@ def import_vars(
         "aap_hostname": hostname,
         "aap_username": "admin",
         "aap_password": password,
-        "aap_validate_certs": False,
+        "aap_validate_certs": validate_certs_for(ctx),
+        "aap_ca_path": ca_path_for(ctx),
         "scm_url": str(options.get("scm_url") or images.SCM_URL),
         "scm_branch": str(options.get("scm_branch") or images.SCM_BRANCH),
         "inventory_name": images.INVENTORY,

@@ -77,6 +77,7 @@ def _cluster_runner() -> FakeRunner:
         return CompletedCommand(argv=tuple(argv), returncode=1, stderr="NotFound")
 
     runner.register(["kubectl", "get", "secret"], get_secret)
+    runner.ok(["kubectl", "get", "secrets"], stdout="")
     runner.ok(["kubectl", "apply"])
     runner.ok(["kubectl", "wait"])
     runner.ok(["kubectl", "delete"])
@@ -165,6 +166,10 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert "pull_secret_path: ''" in provision or 'pull_secret_path: ""' in provision
     assert "PRIVATE-KEY" in imported
     assert "namespace: fleet" in imported
+    assert "aap_validate_certs: true" in imported
+    applied = "\n".join(call.input or "" for call in app_ctx.runner.calls)
+    assert "cluster-admin" not in applied
+    assert "kind: ClusterRole" in applied
     image = provision_job["spec"]["template"]["spec"]["containers"][0]["image"]
     assert image == EE_IMAGE
     assert "hostAliases" not in provision_job["spec"]["template"]["spec"]
@@ -310,6 +315,25 @@ def test_destroy_skips_controller_when_import_was_disabled(app_ctx, monkeypatch)
     assert "state: absent" in runs[0][1]
 
 
+def test_no_import_after_import_still_destroys_controller_objects(app_ctx, monkeypatch) -> None:
+    _pull_secret(app_ctx)
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    monkeypatch.setattr(
+        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+    )
+    monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=False))
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    assert app_ctx.config.get("addons.options")["fleet"]["import"] is True
+    app_ctx.runner = _cluster_runner()
+
+    get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    runs = _playbook_runs(app_ctx.runner)
+    assert [name for name, _text, _job in runs] == ["import.yml", "provision.yml"]
+
+
 def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
     routes = {
         "items": [
@@ -376,6 +400,9 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert 'controller_host: "{{ aap_hostname }}"' in imported
     assert 'controller_username: "{{ aap_username }}"' in imported
     assert 'controller_password: "{{ aap_password }}"' in imported
+    assert "system:serviceaccounts" not in provision
+    assert "name: fleet-node" in provision
+    assert "aap_validate_certs | default(true)" in imported
     plays = yaml.safe_load(provision)
     deploy = next(
         task["kubernetes.core.k8s"]["definition"]

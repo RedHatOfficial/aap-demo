@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 
 from aap_demo.addons.fleet import images, runner, sshkey
@@ -22,7 +23,7 @@ from aap_demo.core.errors import UsageError
 class FleetAddon:
     name = "fleet"
 
-    def enable(self, ctx: AppContext, args) -> int:
+    def enable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         discover_image(ctx)
         no_import = bool(getattr(args, "no_import", False))
         private, public = sshkey.load_or_create(ctx)
@@ -30,7 +31,9 @@ class FleetAddon:
         nodes = nodes_of(ctx) or [dict(node) for node in images.DEFAULT_NODES]
         fleet["namespace"] = namespace_for(ctx)
         fleet["nodes"] = nodes
-        fleet["import"] = not no_import
+        # A later --no-import must not forget that Controller objects exist.
+        if not (no_import and fleet.get("import") is True):
+            fleet["import"] = not no_import
         set_enabled(ctx, True)
         save_options(ctx, fleet)
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
@@ -39,7 +42,7 @@ class FleetAddon:
         ctx.console.out(f"Fleet enabled in namespace {fleet['namespace']}")
         return 0
 
-    def disable(self, ctx: AppContext, args) -> int:
+    def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         """Stop the pods. The namespace and the AAP inventory stay."""
         del args
         discover_image(ctx)
@@ -52,7 +55,7 @@ class FleetAddon:
         ctx.console.out("Fleet pods stopped")
         return 0
 
-    def destroy(self, ctx: AppContext, args) -> int:
+    def destroy(self, ctx: AppContext, args: argparse.Namespace) -> int:
         """Delete Controller objects, then the fleet namespace."""
         del args
         discover_image(ctx)
@@ -71,7 +74,7 @@ class FleetAddon:
         ctx.console.out("Fleet destroyed")
         return 0
 
-    def list(self, ctx: AppContext, args) -> int:
+    def list(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
         namespace = namespace_for(ctx)
         result = ctx.runner.run(
@@ -95,7 +98,7 @@ class FleetAddon:
             ctx.console.out(f"{name:<16} {os_id:<8} {ready}")
         return 0
 
-    def add(self, ctx: AppContext, args) -> int:
+    def add(self, ctx: AppContext, args: argparse.Namespace) -> int:
         os_id = str(getattr(args, "os", "") or "")
         require_os(os_id)
         if "fleet" not in enabled_names(ctx):
@@ -122,7 +125,7 @@ class FleetAddon:
         ctx.console.out(f"Added {name}")
         return 0
 
-    def remove(self, ctx: AppContext, args) -> int:
+    def remove(self, ctx: AppContext, args: argparse.Namespace) -> int:
         name = str(getattr(args, "name", "") or "")
         nodes = nodes_of(ctx)
         match = [node for node in nodes if node["name"] == name]

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 from aap_demo.core import bash_v1
 
@@ -143,6 +146,7 @@ def test_help_and_quiet_do_not_offer_to_remove_bash_v1(tmp_path: Path, monkeypat
     assert called == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh is the Unix launcher")
 def test_bash_help_labels_fleet_as_legacy_qemu_and_points_to_v2() -> None:
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "aap-demo.sh"), "help"],
@@ -150,6 +154,7 @@ def test_bash_help_labels_fleet_as_legacy_qemu_and_points_to_v2() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
 
     assert result.returncode == 0

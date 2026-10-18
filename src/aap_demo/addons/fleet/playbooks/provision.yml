@@ -21,11 +21,23 @@
           metadata:
             name: "{{ namespace }}"
 
-    - name: Bind anyuid to this namespace
+    - name: Fleet node service account
       when: scope == 'all' and state == 'present'
       kubernetes.core.k8s:
         state: present
-        force: false
+        definition:
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: fleet-node
+            namespace: "{{ namespace }}"
+          automountServiceAccountToken: false
+
+    - name: Bind anyuid to the fleet node account
+      when: scope == 'all' and state == 'present'
+      kubernetes.core.k8s:
+        state: present
+        force: true
         definition:
           apiVersion: rbac.authorization.k8s.io/v1
           kind: RoleBinding
@@ -37,9 +49,9 @@
             kind: ClusterRole
             name: system:openshift:scc:anyuid
           subjects:
-            - kind: Group
-              apiGroup: rbac.authorization.k8s.io
-              name: "system:serviceaccounts:{{ namespace }}"
+            - kind: ServiceAccount
+              name: fleet-node
+              namespace: "{{ namespace }}"
 
     - name: Pull secret
       when: state == 'present' and (pull_secret_path | default('') | length) > 0
@@ -143,6 +155,8 @@
                   app.kubernetes.io/instance: "{{ item.name }}"
                   aap-demo/os: "{{ item.os }}"
               spec:
+                serviceAccountName: fleet-node
+                automountServiceAccountToken: false
                 restartPolicy: Always
                 initContainers:
                   - name: seed

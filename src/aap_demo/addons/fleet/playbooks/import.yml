@@ -12,17 +12,18 @@
       controller_host: "{{ aap_hostname }}"
       controller_username: "{{ aap_username }}"
       controller_password: "{{ aap_password }}"
-      validate_certs: "{{ aap_validate_certs | bool }}"
+      validate_certs: "{{ aap_validate_certs | default(true) | bool }}"
   vars:
     state: "{{ state | default('present') }}"
     manage_inventory: "{{ manage_inventory | default(true) }}"
-    aap_validate_certs: "{{ aap_validate_certs | default(false) | bool }}"
+    aap_validate_certs: "{{ aap_validate_certs | default(true) | bool }}"
   tasks:
     - name: Gateway reachability
       when: state == 'present'
       ansible.builtin.uri:
         url: "{{ aap_hostname }}/api/gateway/v1/ping/"
         validate_certs: "{{ aap_validate_certs | bool }}"
+        ca_path: "{{ aap_ca_path if (aap_ca_path | default('') | length) > 0 else omit }}"
         status_code: [200, 401, 403]
 
     - name: Inventory

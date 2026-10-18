@@ -72,6 +72,19 @@ def set_enabled(ctx: AppContext, present: bool) -> None:
     ctx.config.set("addons.enabled", names)
 
 
+def validate_certs_for(ctx: AppContext) -> bool:
+    """Certificate checks stay on unless the operator turns them off."""
+    raw = fleet_options(ctx).get("validate_certs", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no"}
+    return bool(raw)
+
+
+def ca_path_for(ctx: AppContext) -> str:
+    path = ctx.paths.ingress_ca
+    return str(path) if path.is_file() else ""
+
+
 def require_os(os_id: str) -> None:
     if os_id not in images.IMAGES:
         raise UsageError(

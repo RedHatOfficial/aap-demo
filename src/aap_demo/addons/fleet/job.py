@@ -27,13 +27,19 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     namespace = aap_namespace(ctx)
     _ensure_runner(ctx, namespace)
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
-    rewritten, pull_secret = _rewrite_extra(extra)
+    rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
     aliases = _aliases_for(ctx, rewritten)
+    pull_name = _ee_pull_secret(ctx, namespace)
     ctx.console.progress(f"Running {playbook.name} in the execution environment")
     try:
         kubectl.apply_stdin(ctx.runner, _configmap(name, namespace, playbook, rewritten))
-        kubectl.apply_stdin(ctx.runner, _extra_secret(name, namespace, rewritten, pull_secret))
-        kubectl.apply_stdin(ctx.runner, _job(name, namespace, image, playbook.name, aliases))
+        kubectl.apply_stdin(
+            ctx.runner, _extra_secret(name, namespace, rewritten, pull_secret, ca_bundle)
+        )
+        kubectl.apply_stdin(
+            ctx.runner,
+            _job(name, namespace, image, playbook.name, aliases, pull_name, bool(ca_bundle)),
+        )
         waited = ctx.runner.run(
             [
                 "kubectl",
@@ -71,11 +77,54 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
 
 
 def _ensure_runner(ctx: AppContext, namespace: str) -> None:
-    """The Job's service account is cluster-admin, same as the laptop kubeconfig."""
+    """Replace any old cluster-admin binding with a role that only runs fleet."""
+    ctx.runner.run(
+        ["kubectl", "delete", "clusterrolebinding", RUNNER_ACCOUNT, "--ignore-not-found"]
+    )
     account = {
         "apiVersion": "v1",
         "kind": "ServiceAccount",
         "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
+    }
+    role = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRole",
+        "metadata": {"name": RUNNER_ACCOUNT},
+        "rules": [
+            {
+                "apiGroups": [""],
+                "resources": ["namespaces"],
+                "verbs": ["get", "create", "update", "patch", "delete"],
+            },
+            {
+                "apiGroups": [""],
+                "resources": [
+                    "secrets",
+                    "configmaps",
+                    "services",
+                    "serviceaccounts",
+                    "persistentvolumeclaims",
+                    "pods",
+                ],
+                "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
+            },
+            {
+                "apiGroups": ["apps"],
+                "resources": ["deployments", "deployments/scale"],
+                "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
+            },
+            {
+                "apiGroups": ["rbac.authorization.k8s.io"],
+                "resources": ["rolebindings"],
+                "verbs": ["get", "list", "create", "update", "patch", "delete"],
+            },
+            {
+                "apiGroups": ["rbac.authorization.k8s.io"],
+                "resources": ["clusterroles"],
+                "resourceNames": ["system:openshift:scc:anyuid"],
+                "verbs": ["bind"],
+            },
+        ],
     }
     binding = {
         "apiVersion": "rbac.authorization.k8s.io/v1",
@@ -84,13 +133,13 @@ def _ensure_runner(ctx: AppContext, namespace: str) -> None:
         "roleRef": {
             "apiGroup": "rbac.authorization.k8s.io",
             "kind": "ClusterRole",
-            "name": "cluster-admin",
+            "name": RUNNER_ACCOUNT,
         },
         "subjects": [
             {"kind": "ServiceAccount", "name": RUNNER_ACCOUNT, "namespace": namespace},
         ],
     }
-    kubectl.apply_stdin(ctx.runner, yaml.safe_dump_all([account, binding], sort_keys=False))
+    kubectl.apply_stdin(ctx.runner, yaml.safe_dump_all([account, role, binding], sort_keys=False))
 
 
 def _rewrite_extra(extra: Dict[str, Any]) -> tuple:
@@ -104,9 +153,39 @@ def _rewrite_extra(extra: Dict[str, Any]) -> tuple:
             rewritten["pull_secret_path"] = f"{_EXTRA_ROOT}/pull-secret.json"
         else:
             rewritten["pull_secret_path"] = ""
+    ca_bundle = ""
+    host_ca = str(rewritten.get("aap_ca_path") or "")
+    if host_ca:
+        ca_path = Path(host_ca)
+        if ca_path.is_file():
+            ca_bundle = ca_path.read_text(encoding="utf-8")
+            rewritten["aap_ca_path"] = f"{_EXTRA_ROOT}/ca.crt"
+        else:
+            rewritten["aap_ca_path"] = ""
     if rewritten.get("entrypoint_path"):
         rewritten["entrypoint_path"] = f"{_PLAYBOOK_ROOT}/entrypoint.sh"
-    return rewritten, pull_secret
+    return rewritten, pull_secret, ca_bundle
+
+
+def _ee_pull_secret(ctx: AppContext, namespace: str) -> str:
+    """Use a docker config already in the AAP namespace, when one exists."""
+    result = ctx.runner.run(
+        [
+            "kubectl",
+            "get",
+            "secrets",
+            "-n",
+            namespace,
+            "-o",
+            "jsonpath={.items[?(@.type=='kubernetes.io/dockerconfigjson')].metadata.name}",
+        ]
+    )
+    if not result.ok:
+        return ""
+    names = (result.stdout or "").split()
+    if "redhat-operators-pull-secret" in names:
+        return "redhat-operators-pull-secret"
+    return names[0] if names else ""
 
 
 def _configmap(name: str, namespace: str, playbook: Path, extra: Dict[str, Any]) -> str:
@@ -122,10 +201,18 @@ def _configmap(name: str, namespace: str, playbook: Path, extra: Dict[str, Any])
     return yaml.safe_dump(body, sort_keys=False)
 
 
-def _extra_secret(name: str, namespace: str, extra: Dict[str, Any], pull_secret: str) -> str:
+def _extra_secret(
+    name: str,
+    namespace: str,
+    extra: Dict[str, Any],
+    pull_secret: str,
+    ca_bundle: str,
+) -> str:
     string_data = {"extra-vars.yml": yaml.safe_dump(extra, sort_keys=False)}
     if pull_secret:
         string_data["pull-secret.json"] = pull_secret
+    if ca_bundle:
+        string_data["ca.crt"] = ca_bundle
     body = {
         "apiVersion": "v1",
         "kind": "Secret",
@@ -141,32 +228,40 @@ def _job(
     image: str,
     playbook_name: str,
     aliases: List[Dict[str, Any]],
+    pull_secret_name: str,
+    use_ca: bool,
 ) -> str:
+    container: Dict[str, Any] = {
+        "name": "ansible",
+        "image": image,
+        "imagePullPolicy": "IfNotPresent",
+        "command": [
+            "/usr/local/bin/ansible-playbook",
+            f"{_PLAYBOOK_ROOT}/{playbook_name}",
+            "-e",
+            f"@{_EXTRA_ROOT}/extra-vars.yml",
+        ],
+        "volumeMounts": [
+            {"name": "playbooks", "mountPath": _PLAYBOOK_ROOT},
+            {"name": "extra", "mountPath": _EXTRA_ROOT, "readOnly": True},
+        ],
+    }
+    if use_ca:
+        container["env"] = [
+            {"name": "REQUESTS_CA_BUNDLE", "value": f"{_EXTRA_ROOT}/ca.crt"},
+            {"name": "SSL_CERT_FILE", "value": f"{_EXTRA_ROOT}/ca.crt"},
+        ]
     pod: Dict[str, Any] = {
         "restartPolicy": "Never",
         "serviceAccountName": RUNNER_ACCOUNT,
-        "containers": [
-            {
-                "name": "ansible",
-                "image": image,
-                "imagePullPolicy": "IfNotPresent",
-                "command": [
-                    "/usr/local/bin/ansible-playbook",
-                    f"{_PLAYBOOK_ROOT}/{playbook_name}",
-                    "-e",
-                    f"@{_EXTRA_ROOT}/extra-vars.yml",
-                ],
-                "volumeMounts": [
-                    {"name": "playbooks", "mountPath": _PLAYBOOK_ROOT},
-                    {"name": "extra", "mountPath": _EXTRA_ROOT, "readOnly": True},
-                ],
-            }
-        ],
+        "containers": [container],
         "volumes": [
             {"name": "playbooks", "configMap": {"name": name}},
             {"name": "extra", "secret": {"secretName": name}},
         ],
     }
+    if pull_secret_name:
+        pod["imagePullSecrets"] = [{"name": pull_secret_name}]
     if aliases:
         pod["hostAliases"] = aliases
     body = {
