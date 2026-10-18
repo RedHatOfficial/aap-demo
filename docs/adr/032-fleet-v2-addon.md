@@ -44,8 +44,8 @@ only the fleet namespace. It is not cluster-admin and it cannot bind SCCs.
 anyuid is bound to the fleet-node account with the operator kubeconfig,
 and only in the fleet namespace this install created.
 A token on each namespace is required before Fleet will use or delete it.
-The gateway host is the route that targets a service whose selector is
-only `app.kubernetes.io/component=aap-gateway`.
+The gateway host is a route whose endpoints are pods of the AAP-owned
+gateway deployment. A ReplicaSet outside that chain is ignored.
 Certificate checks stay on unless addons.options.fleet.validate_certs is false.
 The fleet SSH key is a Secret in the AAP namespace, not a keychain item.
 The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-playbooks`.

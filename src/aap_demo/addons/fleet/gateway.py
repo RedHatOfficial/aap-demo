@@ -14,50 +14,77 @@ def aap_namespace(ctx: AppContext) -> str:
 
 def gateway_url(ctx: AppContext) -> str:
     namespace = aap_namespace(ctx)
-    service, host = _route_fronting_gateway(ctx, namespace)
-    if not host or not service:
+    pods = _operator_gateway_pods(ctx, namespace)
+    if not pods:
+        raise AddonError(
+            "gateway deployment not found",
+            hint=f"kubectl get deploy -n {namespace}",
+        )
+    host = _route_for_pods(ctx, namespace, pods)
+    if not host:
         raise AddonError(
             "gateway route not found",
             hint=f"kubectl get route -n {namespace}",
         )
-    _require_operator_endpoints(ctx, namespace, service)
     return f"https://{host}"
 
 
-def _route_fronting_gateway(ctx: AppContext, namespace: str) -> tuple:
-    """Return the service and host for a route that selects only gateway pods."""
-    names = set()
-    for item in _items(ctx, "svc", namespace):
-        name = _gateway_service_name(item)
-        if name:
-            names.add(name)
-    if not names:
-        return "", ""
+def _operator_gateway_pods(ctx: AppContext, namespace: str) -> set:
+    """Pods in the ReplicaSet chain owned by the AAP gateway deployment."""
+    deployments = {
+        name
+        for name, item in _named(ctx, "deploy", namespace)
+        if _controller_owner(item, "AnsibleAutomationPlatform")
+        and _match_labels(item).get("app.kubernetes.io/component") == "aap-gateway"
+        and _match_labels(item).get("app.kubernetes.io/managed-by") == "aap-operator"
+    }
+    if not deployments:
+        return set()
+    replica_sets = {
+        name
+        for name, item in _named(ctx, "rs", namespace)
+        if _controller_owner(item, "Deployment") in deployments
+    }
+    return {
+        name
+        for name, item in _named(ctx, "pods", namespace)
+        if _controller_owner(item, "ReplicaSet") in replica_sets and _ready(item)
+    }
+
+
+def _route_for_pods(ctx: AppContext, namespace: str, pods: set) -> str:
+    services = set()
+    for name, item in _named(ctx, "svc", namespace):
+        selector = _service_selector(item)
+        if selector.get("app.kubernetes.io/component") != "aap-gateway":
+            continue
+        if selector.get("app.kubernetes.io/managed-by") != "aap-operator":
+            continue
+        endpoints = _endpoint_pods(ctx, namespace, name)
+        if endpoints and endpoints <= pods:
+            services.add(name)
+    if not services:
+        return ""
     for item in _items(ctx, "route", namespace):
         spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
         target = spec.get("to") if isinstance(spec.get("to"), dict) else {}
-        service = str(target.get("name") or "")
-        if service not in names:
+        if str(target.get("name") or "") not in services:
             continue
         host = str(spec.get("host") or "").strip()
         if host:
-            return service, host
-    return "", ""
+            return host
+    return ""
 
 
-def _require_operator_endpoints(ctx: AppContext, namespace: str, service: str) -> None:
-    """Refuse the route when a gateway endpoint is not an operator ReplicaSet pod."""
+def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> set:
     result = ctx.runner.run(["kubectl", "get", "endpoints", service, "-n", namespace, "-o", "json"])
     if not result.ok or not (result.stdout or "").strip():
-        raise AddonError(
-            "could not read gateway endpoints",
-            hint=f"kubectl get endpoints {service} -n {namespace}",
-        )
+        return set()
     try:
         document = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise AddonError("could not read gateway endpoints", hint=str(exc)) from exc
-    pods = []
+    except json.JSONDecodeError:
+        return set()
+    names = set()
     for subset in document.get("subsets") or []:
         if not isinstance(subset, dict):
             continue
@@ -67,47 +94,64 @@ def _require_operator_endpoints(ctx: AppContext, namespace: str, service: str) -
             target = address.get("targetRef") if isinstance(address.get("targetRef"), dict) else {}
             name = str(target.get("name") or "")
             if target.get("kind") != "Pod" or not name:
-                raise AddonError(
-                    "refusing to use the gateway route",
-                    hint="A gateway endpoint is not a pod.",
-                )
-            pods.append(name)
-    if not pods:
-        raise AddonError(
-            "refusing to use the gateway route",
-            hint="The gateway service has no ready pods.",
-        )
-    for name in pods:
-        pod = ctx.runner.run(["kubectl", "get", "pod", name, "-n", namespace, "-o", "json"])
-        if not pod.ok or not _replicaset_owned(pod.stdout or ""):
-            raise AddonError(
-                "refusing to use the gateway route",
-                hint="A gateway endpoint is not owned by the operator.",
-            )
+                return set()
+            names.add(name)
+    return names
 
 
-def _replicaset_owned(payload: str) -> bool:
-    try:
-        document = json.loads(payload or "{}")
-    except json.JSONDecodeError:
-        return False
-    meta = document.get("metadata") if isinstance(document, dict) else {}
-    refs = (meta or {}).get("ownerReferences")
+def _named(ctx: AppContext, kind: str, namespace: str):
+    for item in _items(ctx, kind, namespace):
+        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        name = str(meta.get("name") or "")
+        if name:
+            yield name, item
+
+
+def _controller_owner(item: dict, kind: str) -> str:
+    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    refs = meta.get("ownerReferences")
     if not isinstance(refs, list):
+        return ""
+    for ref in refs:
+        if (
+            isinstance(ref, dict)
+            and ref.get("kind") == kind
+            and ref.get("controller") is True
+            and ref.get("name")
+        ):
+            return str(ref["name"])
+    return ""
+
+
+def _match_labels(item: dict) -> dict:
+    spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
+    selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
+    labels = selector.get("matchLabels") if isinstance(selector.get("matchLabels"), dict) else {}
+    return labels
+
+
+def _service_selector(item: dict) -> dict:
+    spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
+    selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
+    return selector
+
+
+def _ready(item: dict) -> bool:
+    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    if meta.get("deletionTimestamp"):
+        return False
+    status = item.get("status") if isinstance(item.get("status"), dict) else {}
+    if status.get("phase") != "Running":
+        return False
+    conditions = status.get("conditions")
+    if not isinstance(conditions, list):
         return False
     return any(
-        isinstance(ref, dict) and ref.get("kind") == "ReplicaSet" and ref.get("controller") is True
-        for ref in refs
+        isinstance(condition, dict)
+        and condition.get("type") == "Ready"
+        and condition.get("status") == "True"
+        for condition in conditions
     )
-
-
-def _gateway_service_name(service: dict) -> str:
-    spec = service.get("spec") if isinstance(service.get("spec"), dict) else {}
-    selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
-    if selector != {"app.kubernetes.io/component": "aap-gateway"}:
-        return ""
-    meta = service.get("metadata") if isinstance(service.get("metadata"), dict) else {}
-    return str(meta.get("name") or "")
 
 
 def _items(ctx: AppContext, kind: str, namespace: str) -> list:

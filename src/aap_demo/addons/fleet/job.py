@@ -96,6 +96,10 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
             ]
         )
     if playbook_error is not None:
+        if not deleted.ok:
+            cleanup = (deleted.stderr or deleted.stdout or "").strip()
+            hint = "\n".join(part for part in (playbook_error.hint, cleanup) if part)
+            playbook_error = AddonError(playbook_error.message, hint=hint or None)
         raise playbook_error
     if not deleted.ok:
         raise AddonError(

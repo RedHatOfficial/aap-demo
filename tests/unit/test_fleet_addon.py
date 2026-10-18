@@ -115,31 +115,89 @@ def _cluster_runner(
     return runner
 
 
-def _gateway_endpoints(runner: FakeRunner, *, owned: bool = True) -> None:
-    endpoints = {
-        "subsets": [
+def _gateway_chain(*, owned: bool = True, spoof_route: bool = False) -> FakeRunner:
+    labels = {
+        "app.kubernetes.io/component": "aap-gateway",
+        "app.kubernetes.io/managed-by": "aap-operator",
+    }
+    owner_kind = "AnsibleAutomationPlatform" if owned else "ReplicaSet"
+    deploy = {
+        "items": [
             {
-                "addresses": [
-                    {
-                        "ip": "10.0.0.8",
-                        "targetRef": {
-                            "kind": "Pod",
-                            "name": "gateway-0",
-                            "namespace": "aap-operator",
-                        },
-                    }
-                ]
+                "metadata": {
+                    "name": "aap-gateway",
+                    "ownerReferences": [{"kind": owner_kind, "name": "aap", "controller": True}],
+                },
+                "spec": {"selector": {"matchLabels": labels}},
             }
         ]
     }
-    refs = (
-        [{"kind": "ReplicaSet", "name": "gateway", "controller": True}]
-        if owned
-        else [{"kind": "Pod", "name": "planted"}]
-    )
-    pod = {"metadata": {"name": "gateway-0", "ownerReferences": refs}}
+    replica_sets = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "aap-gateway-rs",
+                    "ownerReferences": [
+                        {"kind": "Deployment", "name": "aap-gateway", "controller": True}
+                    ],
+                }
+            }
+        ]
+    }
+    pods = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "gateway-0",
+                    "ownerReferences": [
+                        {"kind": "ReplicaSet", "name": "aap-gateway-rs", "controller": True}
+                    ],
+                },
+                "status": {
+                    "phase": "Running",
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                },
+            }
+        ]
+    }
+    services = {
+        "items": [
+            {
+                "metadata": {"name": "aap"},
+                "spec": {"selector": {**labels, "app.kubernetes.io/part-of": "aap"}},
+            }
+        ]
+    }
+    routes = [
+        {
+            "metadata": {"name": "aap"},
+            "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
+        }
+    ]
+    if spoof_route:
+        routes.insert(
+            0,
+            {
+                "metadata": {
+                    "name": "evil-gateway",
+                    "labels": {"app.kubernetes.io/name": "gateway"},
+                },
+                "spec": {"host": "evil.example", "to": {"name": "evil"}},
+            },
+        )
+    endpoints = {
+        "subsets": [
+            {"addresses": [{"ip": "10.0.0.8", "targetRef": {"kind": "Pod", "name": "gateway-0"}}]}
+        ]
+    }
+    runner = FakeRunner()
+    runner.ok(["kubectl", "get", "deploy"], stdout=json.dumps(deploy))
+    runner.ok(["kubectl", "get", "rs"], stdout=json.dumps(replica_sets))
+    runner.ok(["kubectl", "get", "pods"], stdout=json.dumps(pods))
+    runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
     runner.ok(["kubectl", "get", "endpoints"], stdout=json.dumps(endpoints))
-    runner.ok(["kubectl", "get", "pod"], stdout=json.dumps(pod))
+    runner.ok(["kubectl", "get", "route"], stdout=json.dumps({"items": routes}))
+    return runner
 
 
 def _owned_runner(app_ctx) -> FakeRunner:
@@ -430,30 +488,7 @@ def test_no_import_after_import_still_destroys_controller_objects(app_ctx, monke
 
 
 def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
-    routes = {
-        "items": [
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
-            }
-        ]
-    }
-    services = {
-        "items": [
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
-            }
-        ]
-    }
-    app_ctx.runner = FakeRunner()
-    app_ctx.runner.ok(
-        ["kubectl", "get", "route", "-n", "aap-operator", "-l"],
-        stdout="",
-    )
-    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
-    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
-    _gateway_endpoints(app_ctx.runner)
+    app_ctx.runner = _gateway_chain()
 
     from aap_demo.addons.fleet.gateway import gateway_url
 
@@ -461,74 +496,7 @@ def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
 
 
 def test_gateway_ignores_a_route_that_is_only_named_gateway(app_ctx) -> None:
-    routes = {
-        "items": [
-            {
-                "metadata": {"name": "evil-gateway"},
-                "spec": {"host": "evil.example", "to": {"name": "evil"}},
-            },
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
-            },
-        ]
-    }
-    services = {
-        "items": [
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
-            }
-        ]
-    }
-    app_ctx.runner = FakeRunner()
-    app_ctx.runner.ok(["kubectl", "get", "route", "-n", "aap-operator", "-l"], stdout="")
-    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
-    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
-    _gateway_endpoints(app_ctx.runner)
-
-    from aap_demo.addons.fleet.gateway import gateway_url
-
-    assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
-
-
-def test_gateway_ignores_a_selector_with_extra_keys(app_ctx) -> None:
-    services = {
-        "items": [
-            {
-                "metadata": {"name": "spoof"},
-                "spec": {
-                    "selector": {
-                        "app.kubernetes.io/component": "aap-gateway",
-                        "evil": "yes",
-                    }
-                },
-            },
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
-            },
-        ]
-    }
-    routes = {
-        "items": [
-            {
-                "metadata": {
-                    "name": "spoof",
-                    "labels": {"app.kubernetes.io/name": "gateway"},
-                },
-                "spec": {"host": "evil.example", "to": {"name": "spoof"}},
-            },
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
-            },
-        ]
-    }
-    app_ctx.runner = FakeRunner()
-    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
-    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
-    _gateway_endpoints(app_ctx.runner)
+    app_ctx.runner = _gateway_chain(spoof_route=True)
 
     from aap_demo.addons.fleet.gateway import gateway_url
 
@@ -536,50 +504,21 @@ def test_gateway_ignores_a_selector_with_extra_keys(app_ctx) -> None:
 
 
 def test_gateway_refuses_a_name_suffix_without_the_service(app_ctx) -> None:
-    routes = {
-        "items": [
-            {
-                "metadata": {"name": "evil-gateway"},
-                "spec": {"host": "evil.example", "to": {"name": "evil"}},
-            }
-        ]
-    }
     app_ctx.runner = FakeRunner()
-    app_ctx.runner.ok(["kubectl", "get", "route", "-n", "aap-operator", "-l"], stdout="")
-    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout='{"items":[]}')
-    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+    app_ctx.runner.ok(["kubectl", "get", "deploy"], stdout='{"items":[]}')
 
     from aap_demo.addons.fleet.gateway import gateway_url
 
-    with pytest.raises(AddonError, match="gateway route not found"):
+    with pytest.raises(AddonError, match="gateway deployment not found"):
         gateway_url(app_ctx)
 
 
-def test_gateway_refuses_an_endpoint_pod_the_operator_does_not_own(app_ctx) -> None:
-    services = {
-        "items": [
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
-            }
-        ]
-    }
-    routes = {
-        "items": [
-            {
-                "metadata": {"name": "aap"},
-                "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
-            }
-        ]
-    }
-    app_ctx.runner = FakeRunner()
-    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
-    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
-    _gateway_endpoints(app_ctx.runner, owned=False)
+def test_gateway_refuses_a_replicaset_the_operator_does_not_own(app_ctx) -> None:
+    app_ctx.runner = _gateway_chain(owned=False)
 
     from aap_demo.addons.fleet.gateway import gateway_url
 
-    with pytest.raises(AddonError, match="refusing to use the gateway route"):
+    with pytest.raises(AddonError, match="gateway deployment not found"):
         gateway_url(app_ctx)
 
 
