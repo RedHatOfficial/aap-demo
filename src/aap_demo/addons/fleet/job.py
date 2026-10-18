@@ -48,12 +48,10 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     try:
         used_pull = _stage_pull_secret(ctx, aap_namespace(ctx), job_ns, pull_name)
         aliases = _aliases_for(ctx, rewritten)
-        kubectl.apply_stdin(ctx.runner, _configmap(name, job_ns, playbook, rewritten))
-        kubectl.apply_stdin(
-            ctx.runner, _extra_secret(name, job_ns, rewritten, pull_secret, ca_bundle)
-        )
-        kubectl.apply_stdin(
-            ctx.runner,
+        _apply_checked(ctx, _configmap(name, job_ns, playbook, rewritten))
+        _apply_checked(ctx, _extra_secret(name, job_ns, rewritten, pull_secret, ca_bundle))
+        _apply_checked(
+            ctx,
             _job(name, job_ns, image, playbook.name, aliases, used_pull, bool(ca_bundle)),
         )
         waited = ctx.runner.run(
@@ -98,6 +96,15 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
         raise AddonError(
             "could not delete the fleet playbook secret",
             hint=(deleted.stderr or deleted.stdout or "").strip() or None,
+        )
+
+
+def _apply_checked(ctx: AppContext, manifest: str) -> None:
+    applied = kubectl.apply_stdin(ctx.runner, manifest)
+    if not applied.ok:
+        raise AddonError(
+            "could not apply the fleet playbook job",
+            hint=(applied.stderr or applied.stdout or "").strip() or None,
         )
 
 
@@ -178,7 +185,7 @@ def _apply_node_access(
             ]
         )
         documents.extend([_node_account(namespace), _anyuid_binding(namespace)])
-    kubectl.apply_stdin(ctx.runner, yaml.safe_dump_all(documents, sort_keys=False))
+    _apply_checked(ctx, yaml.safe_dump_all(documents, sort_keys=False))
 
 
 def _apply_runner_access(ctx: AppContext, job_ns: str, token: str) -> None:
@@ -205,7 +212,7 @@ def _apply_runner_access(ctx: AppContext, job_ns: str, token: str) -> None:
         },
         _role_binding(job_ns, job_ns),
     ]
-    kubectl.apply_stdin(ctx.runner, yaml.safe_dump_all(documents, sort_keys=False))
+    _apply_checked(ctx, yaml.safe_dump_all(documents, sort_keys=False))
 
 
 def _namespace_body(namespace: str, token: str) -> Dict[str, Any]:
@@ -372,7 +379,7 @@ def _stage_pull_secret(ctx: AppContext, source_ns: str, dest_ns: str, secret_nam
         "metadata": {"name": secret_name, "namespace": dest_ns},
         "data": {".dockerconfigjson": docker},
     }
-    kubectl.apply_stdin(ctx.runner, yaml.safe_dump(body, sort_keys=False))
+    _apply_checked(ctx, yaml.safe_dump(body, sort_keys=False))
     return secret_name
 
 

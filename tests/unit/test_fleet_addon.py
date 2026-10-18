@@ -19,7 +19,17 @@ from aap_demo.exec.runner import CompletedCommand, FakeRunner
 
 EE_IMAGE = "registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9@sha256:abc"
 EE_PODS = json.dumps(
-    {"items": [{"spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]}}]}
+    {
+        "items": [
+            {
+                "status": {
+                    "phase": "Running",
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                },
+                "spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]},
+            }
+        ]
+    }
 )
 
 
@@ -446,18 +456,20 @@ def test_gateway_ignores_a_route_that_is_only_named_gateway(app_ctx) -> None:
     assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
 
 
-def test_gateway_prefers_the_operator_owned_service(app_ctx) -> None:
+def test_gateway_ignores_a_selector_with_extra_keys(app_ctx) -> None:
     services = {
         "items": [
             {
                 "metadata": {"name": "spoof"},
-                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
+                "spec": {
+                    "selector": {
+                        "app.kubernetes.io/component": "aap-gateway",
+                        "evil": "yes",
+                    }
+                },
             },
             {
-                "metadata": {
-                    "name": "aap",
-                    "ownerReferences": [{"kind": "AnsibleAutomationPlatform", "name": "aap"}],
-                },
+                "metadata": {"name": "aap"},
                 "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
             },
         ]
@@ -512,6 +524,10 @@ def test_ee_image_rejects_a_lookalike() -> None:
     lookalike = {
         "items": [
             {
+                "status": {
+                    "phase": "Running",
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                },
                 "spec": {
                     "containers": [
                         {"name": "evil", "image": "registry.redhat.io/x/ee-supported-rhel9:latest"},
@@ -520,13 +536,26 @@ def test_ee_image_rejects_a_lookalike() -> None:
                             "image": "quay.io/someone/ee-supported-rhel9:latest",
                         },
                     ]
-                }
+                },
             }
         ]
     }
     assert _ee_image(json.dumps(lookalike)) == ""
     trusted = {
-        "items": [{"spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]}}]
+        "items": [
+            {
+                "metadata": {"deletionTimestamp": "2026-10-18T00:00:00Z"},
+                "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]},
+                "spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]},
+            },
+            {
+                "status": {
+                    "phase": "Running",
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                },
+                "spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]},
+            },
+        ]
     }
     assert _ee_image(json.dumps(trusted)) == EE_IMAGE
 

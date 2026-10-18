@@ -44,7 +44,7 @@ def _ee_image(payload: str) -> str:
             continue
         spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
         containers = spec.get("containers")
-        if not isinstance(containers, list):
+        if not isinstance(containers, list) or not _running(item):
             continue
         for container in containers:
             if not isinstance(container, dict):
@@ -52,6 +52,22 @@ def _ee_image(payload: str) -> str:
             if _trusted_ee(container):
                 return str(container.get("image") or "")
     return ""
+
+
+def _running(pod: dict) -> bool:
+    meta = pod.get("metadata") if isinstance(pod.get("metadata"), dict) else {}
+    if meta.get("deletionTimestamp"):
+        return False
+    status = pod.get("status") if isinstance(pod.get("status"), dict) else {}
+    if status.get("phase") != "Running":
+        return False
+    conditions = status.get("conditions")
+    if not isinstance(conditions, list):
+        return False
+    return any(
+        isinstance(item, dict) and item.get("type") == "Ready" and item.get("status") == "True"
+        for item in conditions
+    )
 
 
 def _trusted_ee(container: dict) -> bool:

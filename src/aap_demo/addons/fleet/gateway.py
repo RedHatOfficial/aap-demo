@@ -24,19 +24,12 @@ def gateway_url(ctx: AppContext) -> str:
 
 
 def _route_fronting_gateway(ctx: AppContext, namespace: str) -> str:
-    """Use a route that targets the operator-owned gateway service."""
-    services = _items(ctx, "svc", namespace)
-    owned: list[str] = []
-    selected: list[str] = []
-    for item in services:
+    """Use a route whose service selects only the gateway pods."""
+    names = set()
+    for item in _items(ctx, "svc", namespace):
         name = _gateway_service_name(item)
-        if not name:
-            continue
-        if _owned_by_aap(item):
-            owned.append(name)
-        else:
-            selected.append(name)
-    names = set(owned or selected)
+        if name:
+            names.add(name)
     if not names:
         return ""
     for item in _items(ctx, "route", namespace):
@@ -53,20 +46,10 @@ def _route_fronting_gateway(ctx: AppContext, namespace: str) -> str:
 def _gateway_service_name(service: dict) -> str:
     spec = service.get("spec") if isinstance(service.get("spec"), dict) else {}
     selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
-    if selector.get("app.kubernetes.io/component") != "aap-gateway":
+    if selector != {"app.kubernetes.io/component": "aap-gateway"}:
         return ""
     meta = service.get("metadata") if isinstance(service.get("metadata"), dict) else {}
     return str(meta.get("name") or "")
-
-
-def _owned_by_aap(service: dict) -> bool:
-    meta = service.get("metadata") if isinstance(service.get("metadata"), dict) else {}
-    refs = meta.get("ownerReferences")
-    if not isinstance(refs, list):
-        return False
-    return any(
-        isinstance(ref, dict) and ref.get("kind") == "AnsibleAutomationPlatform" for ref in refs
-    )
 
 
 def _items(ctx: AppContext, kind: str, namespace: str) -> list:
