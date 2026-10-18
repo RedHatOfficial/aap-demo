@@ -66,6 +66,12 @@ def import_vars(
             "admin password was empty",
             hint="kubectl get secret -n " + gateway.aap_namespace(ctx),
         )
+    scm_url = str(options.get("scm_url") or images.SCM_URL)
+    if scm_url != images.SCM_URL:
+        raise AddonError(
+            "fleet scm_url must be the official repository",
+            hint=images.SCM_URL,
+        )
     return {
         "namespace": namespace_for(ctx),
         "nodes": nodes,
@@ -77,7 +83,7 @@ def import_vars(
         "aap_password": password,
         "aap_validate_certs": validate_certs_for(ctx),
         "aap_ca_path": ca_path_for(ctx),
-        "scm_url": str(options.get("scm_url") or images.SCM_URL),
+        "scm_url": scm_url,
         "scm_branch": str(options.get("scm_branch") or images.SCM_BRANCH),
         "inventory_name": images.INVENTORY,
         "credential_name": images.CREDENTIAL,

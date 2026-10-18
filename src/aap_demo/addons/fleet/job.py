@@ -114,27 +114,74 @@ def _apply_checked(ctx: AppContext, manifest: str) -> None:
 
 
 def _retire_cluster_rights(ctx: AppContext, aap_ns: str) -> None:
-    """Drop the old cluster-scoped runner, including one left in the AAP namespace."""
-    commands = [
+    """Drop the old cluster-scoped runner when it is still our binding."""
+    binding = _read("clusterrolebinding", RUNNER_ACCOUNT, ctx)
+    if binding is None:
+        _delete_our_clusterrole(ctx)
+        _delete_our_account(ctx, aap_ns)
+        return
+    role_ref = binding.get("roleRef") if isinstance(binding.get("roleRef"), dict) else {}
+    if role_ref.get("name") not in {"cluster-admin", RUNNER_ACCOUNT}:
+        return
+    _delete_ok(
+        ctx,
         ["kubectl", "delete", "clusterrolebinding", RUNNER_ACCOUNT, "--ignore-not-found"],
-        ["kubectl", "delete", "clusterrole", RUNNER_ACCOUNT, "--ignore-not-found"],
+    )
+    _delete_our_clusterrole(ctx)
+    _delete_our_account(ctx, aap_ns)
+
+
+def _delete_our_clusterrole(ctx: AppContext) -> None:
+    if _read("clusterrole", RUNNER_ACCOUNT, ctx) is None:
+        return
+    _delete_ok(ctx, ["kubectl", "delete", "clusterrole", RUNNER_ACCOUNT, "--ignore-not-found"])
+
+
+def _delete_our_account(ctx: AppContext, namespace: str) -> None:
+    if _read("serviceaccount", RUNNER_ACCOUNT, ctx, namespace=namespace) is None:
+        return
+    _delete_ok(
+        ctx,
         [
             "kubectl",
             "delete",
             "serviceaccount",
             RUNNER_ACCOUNT,
             "-n",
-            aap_ns,
+            namespace,
             "--ignore-not-found",
         ],
-    ]
-    for argv in commands:
-        deleted = ctx.runner.run(argv)
-        if not deleted.ok:
-            raise AddonError(
-                "could not remove the old fleet runner role",
-                hint=(deleted.stderr or deleted.stdout or "").strip() or None,
-            )
+    )
+
+
+def _read(kind: str, name: str, ctx: AppContext, *, namespace: str = "") -> dict | None:
+    argv = ["kubectl", "get", kind, name]
+    if namespace:
+        argv.extend(["-n", namespace])
+    argv.extend(["-o", "json"])
+    result = ctx.runner.run(argv)
+    if not result.ok:
+        detail = result.stderr or result.stdout or ""
+        if _missing(detail):
+            return None
+        raise AddonError(
+            f"could not read {kind} {name}",
+            hint=detail.strip() or None,
+        )
+    try:
+        document = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise AddonError(f"could not read {kind} {name}", hint=str(exc)) from exc
+    return document if isinstance(document, dict) else None
+
+
+def _delete_ok(ctx: AppContext, argv: list) -> None:
+    deleted = ctx.runner.run(argv)
+    if not deleted.ok:
+        raise AddonError(
+            "could not remove the old fleet runner role",
+            hint=(deleted.stderr or deleted.stdout or "").strip() or None,
+        )
 
 
 def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_anyuid: bool) -> bool:

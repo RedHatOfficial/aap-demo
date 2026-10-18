@@ -110,6 +110,9 @@ def _cluster_runner(
 ) -> FakeRunner:
     runner = FakeRunner()
     runner.register(["/usr/bin/ssh-keygen"], _keygen)
+    runner.fail(["kubectl", "get", "clusterrolebinding"], stderr="NotFound")
+    runner.fail(["kubectl", "get", "clusterrole", "aap-demo-fleet-runner"], stderr="NotFound")
+    runner.fail(["kubectl", "get", "serviceaccount", "aap-demo-fleet-runner"], stderr="NotFound")
     runner.ok(["kubectl", "get", "pods"], stdout=EE_PODS)
     runner.ok(["kubectl", "get", "rs"], stdout=EE_REPLICA_SETS)
     runner.ok(["kubectl", "get", "deploy"], stdout=EE_DEPLOYMENTS)
@@ -627,6 +630,22 @@ def test_enable_refuses_a_namespace_it_does_not_own(app_ctx, monkeypatch) -> Non
         get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
 
     assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
+
+
+def test_import_rejects_a_custom_scm_url(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    monkeypatch.setattr(
+        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+    )
+    monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
+    app_ctx.config.set(
+        "addons.options",
+        {"fleet": {"scm_url": "https://evil.example/repo.git"}},
+    )
+    app_ctx.runner = _cluster_runner()
+
+    with pytest.raises(AddonError, match="official repository"):
+        get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=False))
 
 
 def test_enable_does_not_record_success_when_the_playbook_fails(app_ctx, monkeypatch) -> None:
