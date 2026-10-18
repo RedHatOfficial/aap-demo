@@ -406,20 +406,20 @@ def _stage_pull_secret(ctx: AppContext, source_ns: str, dest_ns: str, secret_nam
 
 def _ee_pull_secret(ctx: AppContext, namespace: str) -> str:
     """Use a docker config already in the AAP namespace, when one exists."""
-    result = ctx.runner.run(
-        [
-            "kubectl",
-            "get",
-            "secrets",
-            "-n",
-            namespace,
-            "-o",
-            "jsonpath={.items[?(@.type=='kubernetes.io/dockerconfigjson')].metadata.name}",
-        ]
-    )
-    if not result.ok:
+    result = ctx.runner.run(["kubectl", "get", "secrets", "-n", namespace, "-o", "json"])
+    if not result.ok or not (result.stdout or "").strip():
         return ""
-    names = (result.stdout or "").split()
+    try:
+        document = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ""
+    names = []
+    for item in document.get("items") or []:
+        if not isinstance(item, dict) or item.get("type") != "kubernetes.io/dockerconfigjson":
+            continue
+        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        if meta.get("name"):
+            names.append(str(meta["name"]))
     if "redhat-operators-pull-secret" in names:
         return "redhat-operators-pull-secret"
     return names[0] if names else ""

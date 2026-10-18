@@ -22,11 +22,46 @@ EE_PODS = json.dumps(
     {
         "items": [
             {
+                "metadata": {
+                    "ownerReferences": [
+                        {
+                            "kind": "ReplicaSet",
+                            "name": "aap-controller-task-rs",
+                            "controller": True,
+                        }
+                    ]
+                },
                 "status": {
                     "phase": "Running",
                     "conditions": [{"type": "Ready", "status": "True"}],
                 },
                 "spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]},
+            }
+        ]
+    }
+)
+EE_REPLICA_SETS = json.dumps(
+    {
+        "items": [
+            {
+                "metadata": {
+                    "name": "aap-controller-task-rs",
+                    "ownerReferences": [
+                        {"kind": "Deployment", "name": "aap-controller-task", "controller": True}
+                    ],
+                }
+            }
+        ]
+    }
+)
+EE_DEPLOYMENTS = json.dumps(
+    {
+        "items": [
+            {
+                "metadata": {
+                    "name": "aap-controller-task",
+                    "ownerReferences": [{"kind": "AutomationController", "name": "aap-controller"}],
+                }
             }
         ]
     }
@@ -76,6 +111,8 @@ def _cluster_runner(
     runner = FakeRunner()
     runner.register(["/usr/bin/ssh-keygen"], _keygen)
     runner.ok(["kubectl", "get", "pods"], stdout=EE_PODS)
+    runner.ok(["kubectl", "get", "rs"], stdout=EE_REPLICA_SETS)
+    runner.ok(["kubectl", "get", "deploy"], stdout=EE_DEPLOYMENTS)
     if namespace_error:
         runner.fail(["kubectl", "get", "namespace"], stderr=namespace_error)
     elif namespace_stdout is None:
@@ -564,20 +601,21 @@ def test_ee_image_rejects_a_lookalike() -> None:
     trusted = {
         "items": [
             {
-                "metadata": {"deletionTimestamp": "2026-10-18T00:00:00Z"},
-                "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]},
-                "spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]},
-            },
-            {
+                "metadata": {
+                    "ownerReferences": [
+                        {"kind": "ReplicaSet", "name": "aap-controller-task-rs", "controller": True}
+                    ]
+                },
                 "status": {
                     "phase": "Running",
                     "conditions": [{"type": "Ready", "status": "True"}],
                 },
                 "spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]},
-            },
+            }
         ]
     }
-    assert _ee_image(json.dumps(trusted)) == EE_IMAGE
+    assert _ee_image(json.dumps(trusted), EE_REPLICA_SETS, EE_DEPLOYMENTS) == EE_IMAGE
+    assert _ee_image(json.dumps(trusted)) == ""
 
 
 def test_enable_refuses_a_namespace_it_does_not_own(app_ctx, monkeypatch) -> None:
