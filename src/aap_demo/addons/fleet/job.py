@@ -115,11 +115,9 @@ def _apply_checked(ctx: AppContext, manifest: str) -> None:
 
 def _retire_cluster_rights(ctx: AppContext, aap_ns: str) -> None:
     """Drop the old cluster-scoped runner, including one left in the AAP namespace."""
-    ctx.runner.run(
-        ["kubectl", "delete", "clusterrolebinding", RUNNER_ACCOUNT, "--ignore-not-found"]
-    )
-    ctx.runner.run(["kubectl", "delete", "clusterrole", RUNNER_ACCOUNT, "--ignore-not-found"])
-    ctx.runner.run(
+    commands = [
+        ["kubectl", "delete", "clusterrolebinding", RUNNER_ACCOUNT, "--ignore-not-found"],
+        ["kubectl", "delete", "clusterrole", RUNNER_ACCOUNT, "--ignore-not-found"],
         [
             "kubectl",
             "delete",
@@ -128,8 +126,15 @@ def _retire_cluster_rights(ctx: AppContext, aap_ns: str) -> None:
             "-n",
             aap_ns,
             "--ignore-not-found",
-        ]
-    )
+        ],
+    ]
+    for argv in commands:
+        deleted = ctx.runner.run(argv)
+        if not deleted.ok:
+            raise AddonError(
+                "could not remove the old fleet runner role",
+                hint=(deleted.stderr or deleted.stdout or "").strip() or None,
+            )
 
 
 def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_anyuid: bool) -> bool:
