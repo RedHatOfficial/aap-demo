@@ -17,7 +17,7 @@ import yaml
 
 from aap_demo.addons.fleet.gateway import aap_namespace
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import AapDemoError, PrerequisiteError
+from aap_demo.core.errors import AapDemoError, AddonError, PrerequisiteError
 from aap_demo.exec import kubectl
 
 SECRET = "aap-demo-fleet-ssh"
@@ -52,19 +52,27 @@ def _read(ctx: AppContext) -> tuple:
     result = ctx.runner.run(
         ["kubectl", "get", "secret", SECRET, "-n", namespace, "-o", "json"],
     )
-    if not result.ok or not (result.stdout or "").strip():
-        return ()
+    if not result.ok:
+        detail = result.stderr or result.stdout or ""
+        if "notfound" in detail.lower() or "not found" in detail.lower():
+            return ()
+        raise AddonError(
+            "could not read the fleet SSH key",
+            hint=detail.strip() or None,
+        )
+    if not (result.stdout or "").strip():
+        raise AddonError("could not read the fleet SSH key")
     try:
         payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return ()
+    except json.JSONDecodeError as exc:
+        raise AddonError("could not read the fleet SSH key", hint=str(exc)) from exc
     data = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(data, dict):
-        return ()
+        raise AddonError("could not read the fleet SSH key")
     private = _b64(data.get("ssh-privatekey"))
     public = _b64(data.get("ssh-publickey"))
     if not private or not public:
-        return ()
+        raise AddonError("fleet SSH key secret is incomplete")
     return private, public
 
 

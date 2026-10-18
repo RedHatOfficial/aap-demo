@@ -632,6 +632,18 @@ def test_enable_refuses_a_namespace_it_does_not_own(app_ctx, monkeypatch) -> Non
     assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
 
 
+def test_ssh_key_read_failure_does_not_create_a_new_key(app_ctx) -> None:
+    from aap_demo.addons.fleet import sshkey
+
+    app_ctx.runner = FakeRunner()
+    app_ctx.runner.fail(["kubectl", "get", "secret"], stderr="connection timed out")
+
+    with pytest.raises(AddonError, match="could not read the fleet SSH key"):
+        sshkey.load_or_create(app_ctx)
+
+    assert [call.argv[1] for call in app_ctx.runner.calls] == ["get"]
+
+
 def test_import_rejects_a_custom_scm_url(app_ctx, monkeypatch) -> None:
     _install_bins(monkeypatch)
     monkeypatch.setattr(
