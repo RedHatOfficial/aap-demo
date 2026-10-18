@@ -38,12 +38,12 @@ with `ansible.platform` installed beside it.
 Those playbooks run as a Kubernetes Job using the `ee-supported-rhel` image
 from the `aap-controller-ee` container already running in the cluster.
 The laptop does not install ansible-core or collections.
-The Job and its service account live in the fleet namespace.
-That account can manage only that namespace. It is not cluster-admin
-and it cannot bind SCCs.
+The Job runs in `<namespace>-runner`, a second namespace this install creates.
+Its service account lives there, away from the node pods, and can manage
+only the fleet namespace. It is not cluster-admin and it cannot bind SCCs.
 anyuid is bound to the fleet-node account with the operator kubeconfig,
-and only for a namespace this install created.
-A token on the namespace is required before Fleet will use or delete it.
+and only in the fleet namespace this install created.
+A token on each namespace is required before Fleet will use or delete it.
 Certificate checks stay on unless addons.options.fleet.validate_certs is false.
 The fleet SSH key is a Secret in the AAP namespace, not a keychain item.
 The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-playbooks`.

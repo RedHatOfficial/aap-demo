@@ -195,20 +195,30 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
         if document.get("kind") == "ServiceAccount"
         and document["metadata"]["name"] == "aap-demo-fleet-runner"
     )
-    assert runner_account["metadata"]["namespace"] == "fleet"
+    assert runner_account["metadata"]["namespace"] == "fleet-runner"
     assert runner_account["automountServiceAccountToken"] is False
     binding = next(
         document
         for document in applied
         if document.get("kind") == "RoleBinding"
         and document["metadata"]["name"] == "aap-demo-fleet-runner"
+        and document["metadata"]["namespace"] == "fleet"
     )
-    assert binding["subjects"][0]["namespace"] == "fleet"
+    assert binding["subjects"][0]["namespace"] == "fleet-runner"
+    runner_role = next(
+        document
+        for document in applied
+        if document.get("kind") == "Role" and document["metadata"]["namespace"] == "fleet-runner"
+    )
+    assert runner_role["rules"] == [
+        {"apiGroups": [""], "resources": ["secrets", "configmaps"], "verbs": ["get"]}
+    ]
     anyuid = next(
         document for document in applied if document["metadata"]["name"] == "fleet-anyuid"
     )
+    assert anyuid["metadata"]["namespace"] == "fleet"
     assert anyuid["subjects"][0]["name"] == "fleet-node"
-    assert provision_job["metadata"]["namespace"] == "fleet"
+    assert provision_job["metadata"]["namespace"] == "fleet-runner"
     image = provision_job["spec"]["template"]["spec"]["containers"][0]["image"]
     assert image == EE_IMAGE
     assert "hostAliases" not in provision_job["spec"]["template"]["spec"]
@@ -428,6 +438,46 @@ def test_gateway_ignores_a_route_that_is_only_named_gateway(app_ctx) -> None:
     }
     app_ctx.runner = FakeRunner()
     app_ctx.runner.ok(["kubectl", "get", "route", "-n", "aap-operator", "-l"], stdout="")
+    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
+    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+
+    from aap_demo.addons.fleet.gateway import gateway_url
+
+    assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
+
+
+def test_gateway_prefers_the_operator_owned_service(app_ctx) -> None:
+    services = {
+        "items": [
+            {
+                "metadata": {"name": "spoof"},
+                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
+            },
+            {
+                "metadata": {
+                    "name": "aap",
+                    "ownerReferences": [{"kind": "AnsibleAutomationPlatform", "name": "aap"}],
+                },
+                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
+            },
+        ]
+    }
+    routes = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "spoof",
+                    "labels": {"app.kubernetes.io/name": "gateway"},
+                },
+                "spec": {"host": "evil.example", "to": {"name": "spoof"}},
+            },
+            {
+                "metadata": {"name": "aap"},
+                "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
+            },
+        ]
+    }
+    app_ctx.runner = FakeRunner()
     app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
     app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
 

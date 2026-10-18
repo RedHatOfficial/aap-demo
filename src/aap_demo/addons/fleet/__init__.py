@@ -7,7 +7,7 @@ import json
 
 from aap_demo.addons.fleet import images, runner, sshkey
 from aap_demo.addons.fleet.ee import discover_image
-from aap_demo.addons.fleet.job import delete_owned_namespace
+from aap_demo.addons.fleet.job import delete_owned_namespace, runner_namespace
 from aap_demo.addons.fleet.state import (
     enabled_names,
     fleet_options,
@@ -68,7 +68,9 @@ class FleetAddon:
                 ctx, nodes, private_key=private, state="absent", manage_inventory=True
             )
         runner.provision(ctx, nodes, public_key=public, state="absent", scope="all")
-        delete_owned_namespace(ctx, namespace_for(ctx))
+        namespace = namespace_for(ctx)
+        delete_owned_namespace(ctx, namespace)
+        delete_owned_namespace(ctx, runner_namespace(namespace))
         fleet = fleet_options(ctx)
         fleet["nodes"] = []
         fleet.pop("namespace_token", None)

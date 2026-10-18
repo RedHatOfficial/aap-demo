@@ -14,22 +14,7 @@ def aap_namespace(ctx: AppContext) -> str:
 
 def gateway_url(ctx: AppContext) -> str:
     namespace = aap_namespace(ctx)
-    listed = ctx.runner.run(
-        [
-            "kubectl",
-            "get",
-            "route",
-            "-n",
-            namespace,
-            "-l",
-            "app.kubernetes.io/name=gateway",
-            "-o",
-            "jsonpath={.items[0].spec.host}",
-        ]
-    )
-    host = listed.stdout.strip() if listed.ok else ""
-    if not host:
-        host = _route_fronting_gateway(ctx, namespace)
+    host = _route_fronting_gateway(ctx, namespace)
     if not host:
         raise AddonError(
             "gateway route not found",
@@ -39,16 +24,19 @@ def gateway_url(ctx: AppContext) -> str:
 
 
 def _route_fronting_gateway(ctx: AppContext, namespace: str) -> str:
-    """AAP 2.6 publishes the gateway on the platform route, not ``*-gateway``."""
+    """Use a route that targets the operator-owned gateway service."""
     services = _items(ctx, "svc", namespace)
-    names = set()
+    owned: list[str] = []
+    selected: list[str] = []
     for item in services:
-        spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
-        selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
-        if selector.get("app.kubernetes.io/component") == "aap-gateway":
-            meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-            if meta.get("name"):
-                names.add(str(meta["name"]))
+        name = _gateway_service_name(item)
+        if not name:
+            continue
+        if _owned_by_aap(item):
+            owned.append(name)
+        else:
+            selected.append(name)
+    names = set(owned or selected)
     if not names:
         return ""
     for item in _items(ctx, "route", namespace):
@@ -60,6 +48,25 @@ def _route_fronting_gateway(ctx: AppContext, namespace: str) -> str:
         if host:
             return host
     return ""
+
+
+def _gateway_service_name(service: dict) -> str:
+    spec = service.get("spec") if isinstance(service.get("spec"), dict) else {}
+    selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
+    if selector.get("app.kubernetes.io/component") != "aap-gateway":
+        return ""
+    meta = service.get("metadata") if isinstance(service.get("metadata"), dict) else {}
+    return str(meta.get("name") or "")
+
+
+def _owned_by_aap(service: dict) -> bool:
+    meta = service.get("metadata") if isinstance(service.get("metadata"), dict) else {}
+    refs = meta.get("ownerReferences")
+    if not isinstance(refs, list):
+        return False
+    return any(
+        isinstance(ref, dict) and ref.get("kind") == "AnsibleAutomationPlatform" for ref in refs
+    )
 
 
 def _items(ctx: AppContext, kind: str, namespace: str) -> list:
