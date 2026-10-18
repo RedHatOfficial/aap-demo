@@ -40,6 +40,21 @@ def remember_namespace_token(ctx: AppContext, token: str) -> None:
     save_options(ctx, fleet)
 
 
+def namespace_uid_for(ctx: AppContext, key: str) -> str:
+    return str(fleet_options(ctx).get(key) or "")
+
+
+def remember_namespace_uid(ctx: AppContext, key: str, uid: str) -> None:
+    """Record the API server UID. It cannot be copied onto another namespace."""
+    if not uid:
+        return
+    fleet = fleet_options(ctx)
+    if fleet.get(key) == uid:
+        return
+    fleet[key] = uid
+    save_options(ctx, fleet)
+
+
 def namespace_for(ctx: AppContext) -> str:
     raw = fleet_options(ctx).get("namespace")
     text = str(raw).strip() if raw else ""

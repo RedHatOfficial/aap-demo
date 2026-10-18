@@ -675,6 +675,30 @@ def test_destroy_refuses_an_unowned_namespace(app_ctx, monkeypatch) -> None:
     assert not app_ctx.runner.called(["kubectl", "delete", "namespace"])
 
 
+def test_destroy_refuses_a_copied_namespace_token(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    fleet = dict(app_ctx.config.get("addons.options")["fleet"])
+    fleet["namespace_uid"] = "uid-1"
+    app_ctx.config.set("addons.options", {"fleet": fleet})
+    app_ctx.config.set("addons.enabled", ["fleet"])
+    stolen = json.dumps(
+        {
+            "metadata": {
+                "uid": "uid-2",
+                "annotations": {"aap-demo/fleet-token": fleet["namespace_token"]},
+            }
+        }
+    )
+    app_ctx.runner = _cluster_runner(namespace_stdout=stolen)
+
+    with pytest.raises(AddonError, match="refusing to use namespace"):
+        get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
+
+
 def test_destroy_keeps_state_when_the_namespace_cannot_be_read(app_ctx, monkeypatch) -> None:
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()

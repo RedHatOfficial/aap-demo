@@ -15,7 +15,12 @@ import yaml
 from aap_demo.addons.fleet.ee import discover_image
 from aap_demo.addons.fleet.gateway import aap_namespace
 from aap_demo.addons.fleet.resources import read_text
-from aap_demo.addons.fleet.state import namespace_token_for, remember_namespace_token
+from aap_demo.addons.fleet.state import (
+    namespace_token_for,
+    namespace_uid_for,
+    remember_namespace_token,
+    remember_namespace_uid,
+)
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
@@ -186,18 +191,20 @@ def _delete_ok(ctx: AppContext, argv: list) -> None:
 
 def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_anyuid: bool) -> bool:
     """Own the node namespace and the separate namespace that runs the Job."""
-    token = _token_for(ctx, namespace, create=create)
+    token = _token_for(ctx, namespace, create=create, uid_key="namespace_uid")
     if token is None:
         return False
     job_ns = runner_namespace(namespace)
-    if _token_for(ctx, job_ns, create=create) is None:
+    if _token_for(ctx, job_ns, create=create, uid_key="runner_namespace_uid") is None:
         return False
     _apply_node_access(ctx, namespace, job_ns, token, bind_anyuid=bind_anyuid)
     _apply_runner_access(ctx, job_ns, token)
+    _capture_uid(ctx, namespace, "namespace_uid")
+    _capture_uid(ctx, job_ns, "runner_namespace_uid")
     return True
 
 
-def _token_for(ctx: AppContext, namespace: str, *, create: bool) -> str | None:
+def _token_for(ctx: AppContext, namespace: str, *, create: bool, uid_key: str) -> str | None:
     stored = namespace_token_for(ctx)
     existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
     if not existing.ok:
@@ -211,7 +218,7 @@ def _token_for(ctx: AppContext, namespace: str, *, create: bool) -> str | None:
         token = stored or secrets.token_hex(16)
         remember_namespace_token(ctx, token)
         return token
-    return _require_owned(namespace, existing.stdout or "", stored)
+    return _require_owned(namespace, existing.stdout or "", stored, namespace_uid_for(ctx, uid_key))
 
 
 def _missing(detail: str) -> bool:
@@ -363,8 +370,8 @@ def _anyuid_binding(namespace: str) -> Dict[str, Any]:
     }
 
 
-def delete_owned_namespace(ctx: AppContext, namespace: str) -> None:
-    """Delete a namespace only when its token matches this install."""
+def delete_owned_namespace(ctx: AppContext, namespace: str, *, uid_key: str) -> None:
+    """Delete a namespace only when its API UID matches this install."""
     existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
     if not existing.ok:
         detail = existing.stderr or existing.stdout or ""
@@ -374,7 +381,12 @@ def delete_owned_namespace(ctx: AppContext, namespace: str) -> None:
             f"could not read namespace {namespace}",
             hint=detail.strip() or None,
         )
-    _require_owned(namespace, existing.stdout or "", namespace_token_for(ctx))
+    _require_owned(
+        namespace,
+        existing.stdout or "",
+        namespace_token_for(ctx),
+        namespace_uid_for(ctx, uid_key),
+    )
     deleted = ctx.runner.run(["kubectl", "delete", "namespace", namespace])
     if not deleted.ok:
         raise AddonError(
@@ -383,7 +395,7 @@ def delete_owned_namespace(ctx: AppContext, namespace: str) -> None:
         )
 
 
-def _require_owned(namespace: str, payload: str, token: str) -> str:
+def _require_owned(namespace: str, payload: str, token: str, uid: str = "") -> str:
     try:
         document = json.loads(payload or "{}")
     except json.JSONDecodeError as exc:
@@ -391,7 +403,16 @@ def _require_owned(namespace: str, payload: str, token: str) -> str:
             f"could not read namespace {namespace}",
             hint=str(exc),
         ) from exc
-    annotations = (document.get("metadata") or {}).get("annotations") or {}
+    meta = document.get("metadata") if isinstance(document.get("metadata"), dict) else {}
+    live_uid = str((meta or {}).get("uid") or "")
+    if uid:
+        if live_uid != uid:
+            raise AddonError(
+                f"refusing to use namespace {namespace}",
+                hint="The namespace UID does not match this install.",
+            )
+        return token
+    annotations = (meta or {}).get("annotations") or {}
     found = str(annotations.get(TOKEN_ANNOTATION) or "")
     if not token or found != token:
         raise AddonError(
@@ -402,6 +423,27 @@ def _require_owned(namespace: str, payload: str, token: str) -> str:
             ),
         )
     return token
+
+
+def _capture_uid(ctx: AppContext, namespace: str, key: str) -> None:
+    existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
+    if not existing.ok or not (existing.stdout or "").strip():
+        return
+    try:
+        document = json.loads(existing.stdout)
+    except json.JSONDecodeError:
+        return
+    meta = document.get("metadata") if isinstance(document, dict) else {}
+    uid = str((meta or {}).get("uid") or "")
+    if not uid:
+        return
+    stored = namespace_uid_for(ctx, key)
+    if stored and stored != uid:
+        raise AddonError(
+            f"refusing to use namespace {namespace}",
+            hint="The namespace UID does not match this install.",
+        )
+    remember_namespace_uid(ctx, key, uid)
 
 
 def _rewrite_extra(extra: Dict[str, Any]) -> tuple:

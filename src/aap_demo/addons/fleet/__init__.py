@@ -70,11 +70,13 @@ class FleetAddon:
             )
         runner.provision(ctx, nodes, public_key=public, state="absent", scope="all")
         namespace = namespace_for(ctx)
-        delete_owned_namespace(ctx, namespace)
-        delete_owned_namespace(ctx, runner_namespace(namespace))
+        delete_owned_namespace(ctx, namespace, uid_key="namespace_uid")
+        delete_owned_namespace(ctx, runner_namespace(namespace), uid_key="runner_namespace_uid")
         fleet = fleet_options(ctx)
         fleet["nodes"] = []
         fleet.pop("namespace_token", None)
+        fleet.pop("namespace_uid", None)
+        fleet.pop("runner_namespace_uid", None)
         set_enabled(ctx, False)
         save_options(ctx, fleet)
         ctx.console.out("Fleet destroyed")
@@ -157,10 +159,11 @@ class FleetAddon:
 
 
 def _commit_fleet(ctx: AppContext, fleet: dict) -> None:
-    """Persist options after the playbooks succeed, without dropping the namespace token."""
-    token = fleet_options(ctx).get("namespace_token")
-    if token:
-        fleet["namespace_token"] = token
+    """Persist options after the playbooks succeed, without dropping ownership."""
+    current = fleet_options(ctx)
+    for key in ("namespace_token", "namespace_uid", "runner_namespace_uid"):
+        if current.get(key):
+            fleet[key] = current[key]
     save_options(ctx, fleet)
 
 
