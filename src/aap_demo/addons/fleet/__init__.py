@@ -36,6 +36,7 @@ class FleetAddon:
         if not (no_import and fleet.get("import") is True):
             fleet["import"] = not no_import
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
+        _commit_fleet(ctx, fleet)
         if not no_import:
             runner.import_nodes(ctx, nodes, private_key=private, state="present")
         set_enabled(ctx, True)
@@ -62,8 +63,8 @@ class FleetAddon:
         discover_image(ctx)
         private, public = sshkey.load_or_create(ctx)
         nodes = nodes_of(ctx)
-        imported = fleet_options(ctx).get("import", True) is not False
-        if nodes and imported:
+        imported = "import" in fleet_options(ctx) and fleet_options(ctx).get("import") is not False
+        if imported:
             runner.import_nodes(
                 ctx, nodes, private_key=private, state="absent", manage_inventory=True
             )
@@ -124,6 +125,7 @@ class FleetAddon:
         fleet = fleet_options(ctx)
         fleet["nodes"] = nodes
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
+        _commit_fleet(ctx, fleet)
         if fleet.get("import", True) is not False:
             runner.import_nodes(ctx, nodes, private_key=private, state="present")
         _commit_fleet(ctx, fleet)

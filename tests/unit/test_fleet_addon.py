@@ -67,11 +67,18 @@ def _namespace_stdout(token: str) -> str:
     )
 
 
-def _cluster_runner(*, namespace_stdout: str | None = None, wait_ok: bool = True) -> FakeRunner:
+def _cluster_runner(
+    *,
+    namespace_stdout: str | None = None,
+    namespace_error: str | None = None,
+    wait_ok: bool = True,
+) -> FakeRunner:
     runner = FakeRunner()
     runner.register(["/usr/bin/ssh-keygen"], _keygen)
     runner.ok(["kubectl", "get", "pods"], stdout=EE_PODS)
-    if namespace_stdout is None:
+    if namespace_error:
+        runner.fail(["kubectl", "get", "namespace"], stderr=namespace_error)
+    elif namespace_stdout is None:
         runner.fail(["kubectl", "get", "namespace"], stderr="NotFound")
     else:
         runner.ok(["kubectl", "get", "namespace"], stdout=namespace_stdout)
@@ -106,6 +113,33 @@ def _cluster_runner(*, namespace_stdout: str | None = None, wait_ok: bool = True
     runner.ok(["kubectl", "delete"])
     runner.ok(["kubectl", "logs"], stdout="boom")
     return runner
+
+
+def _gateway_endpoints(runner: FakeRunner, *, owned: bool = True) -> None:
+    endpoints = {
+        "subsets": [
+            {
+                "addresses": [
+                    {
+                        "ip": "10.0.0.8",
+                        "targetRef": {
+                            "kind": "Pod",
+                            "name": "gateway-0",
+                            "namespace": "aap-operator",
+                        },
+                    }
+                ]
+            }
+        ]
+    }
+    refs = (
+        [{"kind": "ReplicaSet", "name": "gateway", "controller": True}]
+        if owned
+        else [{"kind": "Pod", "name": "planted"}]
+    )
+    pod = {"metadata": {"name": "gateway-0", "ownerReferences": refs}}
+    runner.ok(["kubectl", "get", "endpoints"], stdout=json.dumps(endpoints))
+    runner.ok(["kubectl", "get", "pod"], stdout=json.dumps(pod))
 
 
 def _owned_runner(app_ctx) -> FakeRunner:
@@ -419,6 +453,7 @@ def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
     )
     app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
     app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+    _gateway_endpoints(app_ctx.runner)
 
     from aap_demo.addons.fleet.gateway import gateway_url
 
@@ -450,6 +485,7 @@ def test_gateway_ignores_a_route_that_is_only_named_gateway(app_ctx) -> None:
     app_ctx.runner.ok(["kubectl", "get", "route", "-n", "aap-operator", "-l"], stdout="")
     app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
     app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+    _gateway_endpoints(app_ctx.runner)
 
     from aap_demo.addons.fleet.gateway import gateway_url
 
@@ -492,6 +528,7 @@ def test_gateway_ignores_a_selector_with_extra_keys(app_ctx) -> None:
     app_ctx.runner = FakeRunner()
     app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
     app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+    _gateway_endpoints(app_ctx.runner)
 
     from aap_demo.addons.fleet.gateway import gateway_url
 
@@ -516,6 +553,43 @@ def test_gateway_refuses_a_name_suffix_without_the_service(app_ctx) -> None:
 
     with pytest.raises(AddonError, match="gateway route not found"):
         gateway_url(app_ctx)
+
+
+def test_gateway_refuses_an_endpoint_pod_the_operator_does_not_own(app_ctx) -> None:
+    services = {
+        "items": [
+            {
+                "metadata": {"name": "aap"},
+                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
+            }
+        ]
+    }
+    routes = {
+        "items": [
+            {
+                "metadata": {"name": "aap"},
+                "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
+            }
+        ]
+    }
+    app_ctx.runner = FakeRunner()
+    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
+    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+    _gateway_endpoints(app_ctx.runner, owned=False)
+
+    from aap_demo.addons.fleet.gateway import gateway_url
+
+    with pytest.raises(AddonError, match="refusing to use the gateway route"):
+        gateway_url(app_ctx)
+
+
+def test_runner_namespace_stays_within_the_dns_limit() -> None:
+    from aap_demo.addons.fleet.job import runner_namespace
+
+    assert runner_namespace("fleet") == "fleet-runner"
+    name = runner_namespace("n" * 63)
+    assert len(name) <= 63
+    assert name.startswith("fleet-runner-")
 
 
 def test_ee_image_rejects_a_lookalike() -> None:
@@ -596,6 +670,38 @@ def test_destroy_refuses_an_unowned_namespace(app_ctx, monkeypatch) -> None:
 
     assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
     assert not app_ctx.runner.called(["kubectl", "delete", "namespace"])
+
+
+def test_destroy_keeps_state_when_the_namespace_cannot_be_read(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    app_ctx.runner = _cluster_runner(namespace_error="connection timed out")
+
+    with pytest.raises(AddonError, match="could not read namespace"):
+        get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
+
+
+def test_destroy_removes_controller_objects_after_the_last_node(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    monkeypatch.setattr(
+        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+    )
+    monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
+    app_ctx.config.set(
+        "addons.options",
+        {"fleet": {"import": True, "nodes": [], "namespace": "fleet", "namespace_token": "tok"}},
+    )
+    app_ctx.config.set("addons.enabled", ["fleet"])
+    app_ctx.runner = _cluster_runner(namespace_stdout=_namespace_stdout("tok"))
+
+    get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    runs = [name for name, _text, _job in _playbook_runs(app_ctx.runner)]
+    assert runs[0] == "import.yml"
+    assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
 
 
 def test_packaged_files_load_through_importlib() -> None:

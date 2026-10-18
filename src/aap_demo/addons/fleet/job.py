@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import uuid
@@ -28,7 +29,11 @@ _EXTRA_ROOT = "/opt/fleet/extra"
 
 def runner_namespace(fleet_ns: str) -> str:
     """Jobs and credentials stay out of the namespace that runs the nodes."""
-    return f"{fleet_ns}-runner"
+    candidate = f"{fleet_ns}-runner"
+    if len(candidate) <= 63:
+        return candidate
+    digest = hashlib.sha256(fleet_ns.encode()).hexdigest()[:8]
+    return f"fleet-runner-{digest}"
 
 
 def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None:
@@ -144,12 +149,22 @@ def _token_for(ctx: AppContext, namespace: str, *, create: bool) -> str | None:
     stored = namespace_token_for(ctx)
     existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
     if not existing.ok:
+        if not _missing(existing.stderr or existing.stdout or ""):
+            raise AddonError(
+                f"could not read namespace {namespace}",
+                hint=(existing.stderr or existing.stdout or "").strip() or None,
+            )
         if not create:
             return None
         token = stored or secrets.token_hex(16)
         remember_namespace_token(ctx, token)
         return token
     return _require_owned(namespace, existing.stdout or "", stored)
+
+
+def _missing(detail: str) -> bool:
+    text = detail.lower()
+    return "notfound" in text or "not found" in text
 
 
 def _apply_node_access(
@@ -300,7 +315,13 @@ def delete_owned_namespace(ctx: AppContext, namespace: str) -> None:
     """Delete a namespace only when its token matches this install."""
     existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
     if not existing.ok:
-        return
+        detail = existing.stderr or existing.stdout or ""
+        if _missing(detail):
+            return
+        raise AddonError(
+            f"could not read namespace {namespace}",
+            hint=detail.strip() or None,
+        )
     _require_owned(namespace, existing.stdout or "", namespace_token_for(ctx))
     deleted = ctx.runner.run(["kubectl", "delete", "namespace", namespace])
     if not deleted.ok:
