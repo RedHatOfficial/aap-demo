@@ -27,7 +27,7 @@
         status_code: [200, 401, 403]
 
     - name: Inventory
-      when: manage_inventory | bool
+      when: manage_inventory | bool and state == 'present'
       ansible.controller.inventory:
         name: "{{ inventory_name }}"
         organization: Default
@@ -88,3 +88,10 @@
         credentials:
           - "{{ credential_name }}"
         ask_variables_on_launch: false
+
+    - name: Remove inventory
+      when: manage_inventory | bool and state == 'absent'
+      ansible.controller.inventory:
+        name: "{{ inventory_name }}"
+        organization: Default
+        state: absent

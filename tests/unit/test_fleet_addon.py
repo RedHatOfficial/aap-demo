@@ -328,6 +328,13 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert alias["ip"] == "10.43.72.238"
     assert alias["hostnames"] == ["gw.example"]
     assert any(call.argv[1] == "delete" for call in app_ctx.runner.calls)
+    cleanup = next(
+        call.argv
+        for call in app_ctx.runner.calls
+        if call.argv[1] == "delete" and any(arg.startswith("job/") for arg in call.argv)
+    )
+    assert any(arg.startswith("configmap/") for arg in cleanup)
+    assert any(arg.startswith("secret/") for arg in cleanup)
     assert "fleet" in app_ctx.config.get("addons.enabled")
 
 
@@ -710,6 +717,11 @@ def test_playbooks_parse_and_name_their_modules() -> None:
         assert module in imported
     assert "{{ namespace }}" in imported
     assert "ansible.builtin.ping" in ping
+    imported_tasks = yaml.safe_load(imported)[0]["tasks"]
+    imported_names = [task["name"] for task in imported_tasks]
+    assert imported_names.index("Inventory") < imported_names.index("Hosts")
+    assert imported_names.index("Ping job template") < imported_names.index("Remove inventory")
+    assert imported_names.index("Hosts") < imported_names.index("Remove inventory")
 
 
 def test_help_lists_enable_disable_and_fleet() -> None:

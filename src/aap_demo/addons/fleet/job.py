@@ -82,17 +82,13 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
             [
                 "kubectl",
                 "delete",
-                "job",
-                name,
-                "configmap",
-                name,
-                "secret",
-                name,
-                "secret",
-                pull_name,
                 "-n",
                 job_ns,
                 "--ignore-not-found",
+                f"job/{name}",
+                f"configmap/{name}",
+                f"secret/{name}",
+                f"secret/{pull_name}",
             ]
         )
     if playbook_error is not None:
