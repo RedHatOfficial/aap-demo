@@ -78,7 +78,12 @@ def _route_for_pods(ctx: AppContext, namespace: str, pods: set) -> str:
 
 def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> set:
     result = ctx.runner.run(["kubectl", "get", "endpoints", service, "-n", namespace, "-o", "json"])
-    if not result.ok or not (result.stdout or "").strip():
+    if not result.ok:
+        raise AddonError(
+            "could not read gateway endpoints",
+            hint=(result.stderr or result.stdout or "").strip() or None,
+        )
+    if not (result.stdout or "").strip():
         return set()
     try:
         document = json.loads(result.stdout)
@@ -156,7 +161,12 @@ def _ready(item: dict) -> bool:
 
 def _items(ctx: AppContext, kind: str, namespace: str) -> list:
     result = ctx.runner.run(["kubectl", "get", kind, "-n", namespace, "-o", "json"])
-    if not result.ok or not (result.stdout or "").strip():
+    if not result.ok:
+        raise AddonError(
+            f"could not list {kind} in {namespace}",
+            hint=(result.stderr or result.stdout or "").strip() or None,
+        )
+    if not (result.stdout or "").strip():
         return []
     try:
         payload = json.loads(result.stdout)
