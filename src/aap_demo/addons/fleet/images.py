@@ -11,10 +11,10 @@ NAMESPACE = "fleet"
 #: Small on purpose. A package update has to fit; raise it with disk_size.
 DISK_SIZE = "2Gi"
 
+# Public UBI on registry.access.redhat.com. No pull secret.
 IMAGES = {
     "ubi9": "registry.access.redhat.com/ubi9/ubi:9.6",
-    "fedora": "quay.io/fedora/fedora:41",
-    "debian": "public.ecr.aws/docker/library/debian:bookworm",
+    "ubi10": "registry.access.redhat.com/ubi10/ubi:10.2",
 }
 
 OS_IDS = tuple(IMAGES)

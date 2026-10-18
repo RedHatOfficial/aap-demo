@@ -144,7 +144,6 @@
                   aap-demo/os: "{{ item.os }}"
               spec:
                 restartPolicy: Always
-                imagePullSecrets: "{{ [{'name': 'pull-secret'}] if item.os == 'ubi9' else [] }}"
                 initContainers:
                   - name: seed
                     image: "{{ images[item.os] }}"

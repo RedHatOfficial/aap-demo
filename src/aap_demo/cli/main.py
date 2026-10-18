@@ -259,7 +259,7 @@ def build_parser(
     fleet_list = fleet_sub.add_parser("list", help="List fleet nodes", parents=[globals_parser])
     fleet_list.set_defaults(func=_fleet_list)
     fleet_add = fleet_sub.add_parser("add", help="Add one fleet node", parents=[globals_parser])
-    fleet_add.add_argument("--os", required=True, help="ubi9, fedora, or debian")
+    fleet_add.add_argument("--os", required=True, help="ubi9 or ubi10")
     fleet_add.add_argument("--name", help="Node name (default fleet-<os>)")
     fleet_add.set_defaults(func=_fleet_add)
     fleet_remove = fleet_sub.add_parser(

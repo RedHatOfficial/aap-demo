@@ -158,11 +158,11 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert "namespace: fleet" in provision
     assert "disk_size: 2Gi" in provision
     assert "storage_class: ''" in provision or 'storage_class: ""' in provision
-    assert "fleet-ubi9" in provision and "fleet-fedora" in provision and "fleet-debian" in provision
+    assert "fleet-ubi9" in provision and "fleet-ubi10" in provision
     assert "registry.access.redhat.com/ubi9/ubi:9.6" in provision
+    assert "registry.access.redhat.com/ubi10/ubi:10.2" in provision
     assert "PRIVATE-KEY" not in provision
-    assert str(app_ctx.paths.pull_secret) not in provision
-    assert "/opt/fleet/extra/pull-secret.json" in provision
+    assert "pull_secret_path: ''" in provision or 'pull_secret_path: ""' in provision
     assert "PRIVATE-KEY" in imported
     assert "namespace: fleet" in imported
     image = provision_job["spec"]["template"]["spec"]["containers"][0]["image"]
@@ -191,19 +191,15 @@ def test_disk_size_and_storage_class_come_from_fleet_options(app_ctx, monkeypatc
     assert "storage_class: topolvm-provisioner" in provision
 
 
-def test_ubi_uses_the_txt_pull_secret(app_ctx, monkeypatch) -> None:
+def test_enable_does_not_need_a_pull_secret(app_ctx, monkeypatch) -> None:
     _install_bins(monkeypatch)
     app_ctx.config.set("deploy.pull_secret_path", "")
-    text = app_ctx.paths.state_dir / "pull-secret.txt"
-    text.parent.mkdir(parents=True, exist_ok=True)
-    text.write_text('{"auths":{}}\n', encoding="utf-8")
     app_ctx.runner = _cluster_runner()
 
     assert get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True)) == 0
 
     provision = _playbook_runs(app_ctx.runner)[0][1]
-    assert "/opt/fleet/extra/pull-secret.json" in provision
-    assert "pull-secret.txt" not in provision
+    assert "pull_secret_path: ''" in provision or 'pull_secret_path: ""' in provision
 
 
 def test_no_import_skips_the_controller_playbook(app_ctx, monkeypatch) -> None:
@@ -239,7 +235,7 @@ def test_add_rejects_a_duplicate_default_name(app_ctx, monkeypatch) -> None:
     app_ctx.runner = _cluster_runner()
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
     with pytest.raises(UsageError, match="already exists"):
-        get("fleet").add(app_ctx, argparse.Namespace(os="debian", name=None))
+        get("fleet").add(app_ctx, argparse.Namespace(os="ubi10", name=None))
 
 
 def test_add_named_node_runs_both_playbooks(app_ctx, monkeypatch) -> None:
@@ -253,12 +249,12 @@ def test_add_named_node_runs_both_playbooks(app_ctx, monkeypatch) -> None:
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=False))
     app_ctx.runner = _cluster_runner()
 
-    get("fleet").add(app_ctx, argparse.Namespace(os="debian", name="extra-debian"))
+    get("fleet").add(app_ctx, argparse.Namespace(os="ubi10", name="extra-ubi10"))
 
     names_run = [name for name, _text, _job in _playbook_runs(app_ctx.runner)]
     assert names_run == ["provision.yml", "import.yml"]
     nodes = app_ctx.config.get("addons.options")["fleet"]["nodes"]
-    assert any(node["name"] == "extra-debian" for node in nodes)
+    assert any(node["name"] == "extra-ubi10" for node in nodes)
 
 
 def test_disable_stops_pods_and_leaves_the_inventory(app_ctx, monkeypatch) -> None:

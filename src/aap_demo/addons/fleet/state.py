@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from aap_demo.addons.fleet import images
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import PrerequisiteError, UsageError
+from aap_demo.core.errors import UsageError
 
 
 def fleet_options(ctx: AppContext) -> Dict[str, Any]:
@@ -77,14 +77,4 @@ def require_os(os_id: str) -> None:
         raise UsageError(
             f"unknown OS {os_id!r}",
             hint="OS ids: " + ", ".join(images.OS_IDS),
-        )
-
-
-def require_pull_secret(ctx: AppContext, nodes: List[Dict[str, str]]) -> None:
-    from aap_demo.cluster.pull_secret import discover, unset_hint
-
-    if any(node["os"] == "ubi9" for node in nodes) and discover(ctx) is None:
-        raise PrerequisiteError(
-            "UBI nodes need a pull secret",
-            hint=unset_hint(ctx),
         )

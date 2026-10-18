@@ -23,12 +23,7 @@ def base_vars(
         namespace_for,
         storage_class_for,
     )
-    from aap_demo.cluster.pull_secret import discover
 
-    pull = ""
-    secret = discover(ctx)
-    if secret is not None and any(node["os"] == "ubi9" for node in nodes):
-        pull = str(secret)
     return {
         "namespace": namespace_for(ctx),
         "nodes": nodes,
@@ -36,7 +31,7 @@ def base_vars(
         "ssh_public_key": public_key,
         "state": state,
         "scope": scope,
-        "pull_secret_path": pull,
+        "pull_secret_path": "",
         "entrypoint_path": str(resources.entrypoint()),
         "disk_size": disk_size_for(ctx),
         "storage_class": storage_class_for(ctx),

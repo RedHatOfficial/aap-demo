@@ -12,7 +12,6 @@ from aap_demo.addons.fleet.state import (
     namespace_for,
     nodes_of,
     require_os,
-    require_pull_secret,
     save_options,
     set_enabled,
 )
@@ -32,7 +31,6 @@ class FleetAddon:
         fleet["namespace"] = namespace_for(ctx)
         fleet["nodes"] = nodes
         fleet["import"] = not no_import
-        require_pull_secret(ctx, nodes)
         set_enabled(ctx, True)
         save_options(ctx, fleet)
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
@@ -114,7 +112,6 @@ class FleetAddon:
             )
         discover_image(ctx)
         nodes.append({"name": name, "os": os_id})
-        require_pull_secret(ctx, [nodes[-1]])
         private, public = sshkey.load_or_create(ctx)
         fleet = fleet_options(ctx)
         fleet["nodes"] = nodes
