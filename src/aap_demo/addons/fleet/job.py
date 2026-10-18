@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List
@@ -13,12 +14,15 @@ import yaml
 from aap_demo.addons.fleet.ee import discover_image
 from aap_demo.addons.fleet.gateway import aap_namespace
 from aap_demo.addons.fleet.resources import read_text
+from aap_demo.addons.fleet.state import namespace_token_for, remember_namespace_token
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
 
 RUNNER_ACCOUNT = "aap-demo-fleet-runner"
 FLEET_LABEL = "aap-demo/fleet"
+TOKEN_ANNOTATION = "aap-demo/fleet-token"
+EE_PULL_SECRET = "aap-demo-fleet-ee-pull"
 _PLAYBOOK_ROOT = "/opt/fleet/playbooks"
 _EXTRA_ROOT = "/opt/fleet/extra"
 
@@ -26,23 +30,25 @@ _EXTRA_ROOT = "/opt/fleet/extra"
 def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None:
     """Apply the playbook with the cluster's ee-supported image, then delete the Job."""
     image = discover_image(ctx)
-    namespace = aap_namespace(ctx)
-    _ensure_runner(ctx, namespace)
-    _ensure_namespace(ctx, str(extra.get("namespace") or "fleet"))
+    fleet_ns = str(extra.get("namespace") or "fleet")
+    present = str(extra.get("state") or "present") != "absent"
+    _retire_cluster_rights(ctx, aap_namespace(ctx))
+    # Create when missing so Controller cleanup still runs after the namespace is gone.
+    _prepare_namespace(ctx, fleet_ns, create=True, bind_anyuid=present)
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
     rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
     aliases = _aliases_for(ctx, rewritten)
-    pull_name = _ee_pull_secret(ctx, namespace)
+    pull_name = _stage_pull_secret(ctx, aap_namespace(ctx), fleet_ns)
     ctx.console.progress(f"Running {playbook.name} in the execution environment")
     playbook_error: AddonError | None = None
     try:
-        kubectl.apply_stdin(ctx.runner, _configmap(name, namespace, playbook, rewritten))
+        kubectl.apply_stdin(ctx.runner, _configmap(name, fleet_ns, playbook, rewritten))
         kubectl.apply_stdin(
-            ctx.runner, _extra_secret(name, namespace, rewritten, pull_secret, ca_bundle)
+            ctx.runner, _extra_secret(name, fleet_ns, rewritten, pull_secret, ca_bundle)
         )
         kubectl.apply_stdin(
             ctx.runner,
-            _job(name, namespace, image, playbook.name, aliases, pull_name, bool(ca_bundle)),
+            _job(name, fleet_ns, image, playbook.name, aliases, pull_name, bool(ca_bundle)),
         )
         waited = ctx.runner.run(
             [
@@ -51,12 +57,12 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
                 "--for=condition=complete",
                 f"job/{name}",
                 "-n",
-                namespace,
+                fleet_ns,
                 "--timeout=600s",
             ]
         )
         if not waited.ok:
-            logs = ctx.runner.run(["kubectl", "logs", f"job/{name}", "-n", namespace])
+            logs = ctx.runner.run(["kubectl", "logs", f"job/{name}", "-n", fleet_ns])
             detail = (logs.stdout or logs.stderr or waited.stderr or "").strip()
             playbook_error = AddonError(
                 f"playbook failed: {playbook.name}",
@@ -73,8 +79,10 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
                 name,
                 "secret",
                 name,
+                "secret",
+                EE_PULL_SECRET,
                 "-n",
-                namespace,
+                fleet_ns,
                 "--ignore-not-found",
             ]
         )
@@ -87,119 +95,140 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
         )
 
 
-def _ensure_runner(ctx: AppContext, namespace: str) -> None:
-    """Replace any old cluster-admin binding with a role that only runs fleet."""
+def _retire_cluster_rights(ctx: AppContext, aap_ns: str) -> None:
+    """Drop the old cluster-scoped runner, including one left in the AAP namespace."""
     ctx.runner.run(
         ["kubectl", "delete", "clusterrolebinding", RUNNER_ACCOUNT, "--ignore-not-found"]
     )
-    account = {
-        "apiVersion": "v1",
-        "kind": "ServiceAccount",
-        "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
-        "automountServiceAccountToken": False,
-    }
-    role = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "ClusterRole",
-        "metadata": {"name": RUNNER_ACCOUNT},
-        "rules": [
-            {
-                "apiGroups": [""],
-                "resources": ["namespaces"],
-                "verbs": ["get"],
-            },
-            {
-                "apiGroups": ["rbac.authorization.k8s.io"],
-                "resources": ["clusterroles"],
-                "resourceNames": ["system:openshift:scc:anyuid"],
-                "verbs": ["bind"],
-            },
-        ],
-    }
-    binding = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "ClusterRoleBinding",
-        "metadata": {"name": RUNNER_ACCOUNT},
-        "roleRef": {
-            "apiGroup": "rbac.authorization.k8s.io",
-            "kind": "ClusterRole",
-            "name": RUNNER_ACCOUNT,
-        },
-        "subjects": [
-            {"kind": "ServiceAccount", "name": RUNNER_ACCOUNT, "namespace": namespace},
-        ],
-    }
-    kubectl.apply_stdin(ctx.runner, yaml.safe_dump_all([account, role, binding], sort_keys=False))
-
-
-def _ensure_namespace(ctx: AppContext, namespace: str) -> None:
-    """Create the fleet namespace if needed, and keep workload rights inside it."""
-    existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
-    if existing.ok:
-        _require_fleet_namespace(namespace, existing.stdout or "")
-    account_namespace = aap_namespace(ctx)
-    namespace_body = {
-        "apiVersion": "v1",
-        "kind": "Namespace",
-        "metadata": {"name": namespace, "labels": {FLEET_LABEL: "true"}},
-    }
-    role = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "Role",
-        "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
-        "rules": [
-            {
-                "apiGroups": [""],
-                "resources": [
-                    "secrets",
-                    "configmaps",
-                    "services",
-                    "serviceaccounts",
-                    "persistentvolumeclaims",
-                    "pods",
-                ],
-                "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
-            },
-            {
-                "apiGroups": ["apps"],
-                "resources": ["deployments", "deployments/scale"],
-                "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
-            },
-            {
-                "apiGroups": ["rbac.authorization.k8s.io"],
-                "resources": ["rolebindings"],
-                "verbs": ["get", "list", "create", "update", "patch", "delete"],
-            },
-        ],
-    }
-    binding = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "RoleBinding",
-        "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
-        "roleRef": {
-            "apiGroup": "rbac.authorization.k8s.io",
-            "kind": "Role",
-            "name": RUNNER_ACCOUNT,
-        },
-        "subjects": [
-            {
-                "kind": "ServiceAccount",
-                "name": RUNNER_ACCOUNT,
-                "namespace": account_namespace,
-            }
-        ],
-    }
-    kubectl.apply_stdin(
-        ctx.runner, yaml.safe_dump_all([namespace_body, role, binding], sort_keys=False)
+    ctx.runner.run(["kubectl", "delete", "clusterrole", RUNNER_ACCOUNT, "--ignore-not-found"])
+    ctx.runner.run(
+        [
+            "kubectl",
+            "delete",
+            "serviceaccount",
+            RUNNER_ACCOUNT,
+            "-n",
+            aap_ns,
+            "--ignore-not-found",
+        ]
     )
 
 
+def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_anyuid: bool) -> bool:
+    """Own the fleet namespace. A missing namespace is created only when create is set."""
+    stored = namespace_token_for(ctx)
+    existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
+    if not existing.ok:
+        if not create:
+            return False
+        token = stored or secrets.token_hex(16)
+        remember_namespace_token(ctx, token)
+    else:
+        token = _require_owned(namespace, existing.stdout or "", stored)
+    _apply_access(ctx, namespace, token, bind_anyuid=bind_anyuid)
+    return True
+
+
+def _apply_access(ctx: AppContext, namespace: str, token: str, *, bind_anyuid: bool) -> None:
+    """Workload rights stay inside the fleet namespace. anyuid is bound by the operator."""
+    documents: List[Dict[str, Any]] = [
+        {
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": {
+                "name": namespace,
+                "labels": {FLEET_LABEL: "true"},
+                "annotations": {TOKEN_ANNOTATION: token},
+            },
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
+            "automountServiceAccountToken": False,
+        },
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "Role",
+            "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
+            "rules": [
+                {
+                    "apiGroups": [""],
+                    "resources": [
+                        "secrets",
+                        "configmaps",
+                        "services",
+                        "serviceaccounts",
+                        "persistentvolumeclaims",
+                        "pods",
+                    ],
+                    "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
+                },
+                {
+                    "apiGroups": ["apps"],
+                    "resources": ["deployments", "deployments/scale"],
+                    "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
+                },
+            ],
+        },
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "RoleBinding",
+            "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
+            "roleRef": {
+                "apiGroup": "rbac.authorization.k8s.io",
+                "kind": "Role",
+                "name": RUNNER_ACCOUNT,
+            },
+            "subjects": [
+                {"kind": "ServiceAccount", "name": RUNNER_ACCOUNT, "namespace": namespace}
+            ],
+        },
+    ]
+    if bind_anyuid:
+        ctx.runner.run(
+            [
+                "kubectl",
+                "delete",
+                "rolebinding",
+                "fleet-anyuid",
+                "-n",
+                namespace,
+                "--ignore-not-found",
+            ]
+        )
+        documents.extend(
+            [
+                {
+                    "apiVersion": "v1",
+                    "kind": "ServiceAccount",
+                    "metadata": {"name": "fleet-node", "namespace": namespace},
+                    "automountServiceAccountToken": False,
+                },
+                {
+                    "apiVersion": "rbac.authorization.k8s.io/v1",
+                    "kind": "RoleBinding",
+                    "metadata": {"name": "fleet-anyuid", "namespace": namespace},
+                    "roleRef": {
+                        "apiGroup": "rbac.authorization.k8s.io",
+                        "kind": "ClusterRole",
+                        "name": "system:openshift:scc:anyuid",
+                    },
+                    "subjects": [
+                        {"kind": "ServiceAccount", "name": "fleet-node", "namespace": namespace}
+                    ],
+                },
+            ]
+        )
+    kubectl.apply_stdin(ctx.runner, yaml.safe_dump_all(documents, sort_keys=False))
+
+
 def delete_owned_namespace(ctx: AppContext, namespace: str) -> None:
-    """Delete a namespace only when this addon labeled it."""
+    """Delete a namespace only when its token matches this install."""
     existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
     if not existing.ok:
         return
-    _require_fleet_namespace(namespace, existing.stdout or "")
+    _require_owned(namespace, existing.stdout or "", namespace_token_for(ctx))
     deleted = ctx.runner.run(["kubectl", "delete", "namespace", namespace])
     if not deleted.ok:
         raise AddonError(
@@ -208,7 +237,7 @@ def delete_owned_namespace(ctx: AppContext, namespace: str) -> None:
         )
 
 
-def _require_fleet_namespace(namespace: str, payload: str) -> None:
+def _require_owned(namespace: str, payload: str, token: str) -> str:
     try:
         document = json.loads(payload or "{}")
     except json.JSONDecodeError as exc:
@@ -216,12 +245,17 @@ def _require_fleet_namespace(namespace: str, payload: str) -> None:
             f"could not read namespace {namespace}",
             hint=str(exc),
         ) from exc
-    labels = (document.get("metadata") or {}).get("labels") or {}
-    if labels.get(FLEET_LABEL) != "true":
+    annotations = (document.get("metadata") or {}).get("annotations") or {}
+    found = str(annotations.get(TOKEN_ANNOTATION) or "")
+    if not token or found != token:
         raise AddonError(
             f"refusing to use namespace {namespace}",
-            hint="It is not labeled aap-demo/fleet=true.",
+            hint=(
+                "Fleet did not create this namespace. "
+                "Choose another namespace, or delete it yourself."
+            ),
         )
+    return token
 
 
 def _rewrite_extra(extra: Dict[str, Any]) -> tuple:
@@ -247,6 +281,33 @@ def _rewrite_extra(extra: Dict[str, Any]) -> tuple:
     if rewritten.get("entrypoint_path"):
         rewritten["entrypoint_path"] = f"{_PLAYBOOK_ROOT}/entrypoint.sh"
     return rewritten, pull_secret, ca_bundle
+
+
+def _stage_pull_secret(ctx: AppContext, source_ns: str, dest_ns: str) -> str:
+    """Copy the EE pull secret into the fleet namespace so the Job can use it."""
+    name = _ee_pull_secret(ctx, source_ns)
+    if not name:
+        return ""
+    result = ctx.runner.run(["kubectl", "get", "secret", name, "-n", source_ns, "-o", "json"])
+    if not result.ok or not (result.stdout or "").strip():
+        return ""
+    try:
+        document = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ""
+    data = document.get("data") if isinstance(document, dict) else None
+    docker = (data or {}).get(".dockerconfigjson") if isinstance(data, dict) else None
+    if not docker:
+        return ""
+    body = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "type": "kubernetes.io/dockerconfigjson",
+        "metadata": {"name": EE_PULL_SECRET, "namespace": dest_ns},
+        "data": {".dockerconfigjson": docker},
+    }
+    kubectl.apply_stdin(ctx.runner, yaml.safe_dump(body, sort_keys=False))
+    return EE_PULL_SECRET
 
 
 def _ee_pull_secret(ctx: AppContext, namespace: str) -> str:

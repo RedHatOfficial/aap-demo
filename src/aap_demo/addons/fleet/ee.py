@@ -49,7 +49,17 @@ def _ee_image(payload: str) -> str:
         for container in containers:
             if not isinstance(container, dict):
                 continue
-            image = str(container.get("image") or "")
-            if "/ee-supported" in image:
-                return image
+            if _trusted_ee(container):
+                return str(container.get("image") or "")
     return ""
+
+
+def _trusted_ee(container: dict) -> bool:
+    """The controller EE, from Red Hat's registry, and no other image."""
+    name = str(container.get("name") or "")
+    image = str(container.get("image") or "")
+    return (
+        name == "aap-controller-ee"
+        and image.startswith("registry.redhat.io/")
+        and "/ee-supported-rhel" in image
+    )

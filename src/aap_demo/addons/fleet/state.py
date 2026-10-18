@@ -27,6 +27,19 @@ def save_options(ctx: AppContext, fleet: Dict[str, Any]) -> None:
     ctx.config.save()
 
 
+def namespace_token_for(ctx: AppContext) -> str:
+    return str(fleet_options(ctx).get("namespace_token") or "")
+
+
+def remember_namespace_token(ctx: AppContext, token: str) -> None:
+    """Record the token without marking Fleet enabled or rewriting its nodes."""
+    fleet = fleet_options(ctx)
+    if fleet.get("namespace_token") == token:
+        return
+    fleet["namespace_token"] = token
+    save_options(ctx, fleet)
+
+
 def namespace_for(ctx: AppContext) -> str:
     raw = fleet_options(ctx).get("namespace")
     text = str(raw).strip() if raw else ""

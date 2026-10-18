@@ -51,14 +51,20 @@ def _install_bins(monkeypatch) -> None:
     )
 
 
-def _cluster_runner() -> FakeRunner:
+def _namespace_stdout(token: str) -> str:
+    return json.dumps(
+        {"metadata": {"name": "fleet", "annotations": {"aap-demo/fleet-token": token}}}
+    )
+
+
+def _cluster_runner(*, namespace_stdout: str | None = None, wait_ok: bool = True) -> FakeRunner:
     runner = FakeRunner()
     runner.register(["/usr/bin/ssh-keygen"], _keygen)
     runner.ok(["kubectl", "get", "pods"], stdout=EE_PODS)
-    runner.ok(
-        ["kubectl", "get", "namespace"],
-        stdout='{"metadata":{"labels":{"aap-demo/fleet":"true"}}}',
-    )
+    if namespace_stdout is None:
+        runner.fail(["kubectl", "get", "namespace"], stderr="NotFound")
+    else:
+        runner.ok(["kubectl", "get", "namespace"], stdout=namespace_stdout)
     runner.ok(["kubectl", "get", "svc", "router-default"], stdout="10.43.72.238")
 
     def get_secret(argv):
@@ -83,10 +89,18 @@ def _cluster_runner() -> FakeRunner:
     runner.register(["kubectl", "get", "secret"], get_secret)
     runner.ok(["kubectl", "get", "secrets"], stdout="")
     runner.ok(["kubectl", "apply"])
-    runner.ok(["kubectl", "wait"])
+    if wait_ok:
+        runner.ok(["kubectl", "wait"])
+    else:
+        runner.fail(["kubectl", "wait"], stderr="timed out")
     runner.ok(["kubectl", "delete"])
-    runner.ok(["kubectl", "logs"])
+    runner.ok(["kubectl", "logs"], stdout="boom")
     return runner
+
+
+def _owned_runner(app_ctx) -> FakeRunner:
+    token = app_ctx.config.get("addons.options")["fleet"]["namespace_token"]
+    return _cluster_runner(namespace_stdout=_namespace_stdout(token))
 
 
 def _applied(runner: FakeRunner) -> list:
@@ -171,9 +185,30 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert "PRIVATE-KEY" in imported
     assert "namespace: fleet" in imported
     assert "aap_validate_certs: true" in imported
-    applied = "\n".join(call.input or "" for call in app_ctx.runner.calls)
-    assert "cluster-admin" not in applied
-    assert "kind: ClusterRole" in applied
+    applied = _applied(app_ctx.runner)
+    kinds = [document.get("kind") for document in applied]
+    assert "ClusterRole" not in kinds
+    assert "ClusterRoleBinding" not in kinds
+    runner_account = next(
+        document
+        for document in applied
+        if document.get("kind") == "ServiceAccount"
+        and document["metadata"]["name"] == "aap-demo-fleet-runner"
+    )
+    assert runner_account["metadata"]["namespace"] == "fleet"
+    assert runner_account["automountServiceAccountToken"] is False
+    binding = next(
+        document
+        for document in applied
+        if document.get("kind") == "RoleBinding"
+        and document["metadata"]["name"] == "aap-demo-fleet-runner"
+    )
+    assert binding["subjects"][0]["namespace"] == "fleet"
+    anyuid = next(
+        document for document in applied if document["metadata"]["name"] == "fleet-anyuid"
+    )
+    assert anyuid["subjects"][0]["name"] == "fleet-node"
+    assert provision_job["metadata"]["namespace"] == "fleet"
     image = provision_job["spec"]["template"]["spec"]["containers"][0]["image"]
     assert image == EE_IMAGE
     assert "hostAliases" not in provision_job["spec"]["template"]["spec"]
@@ -293,7 +328,7 @@ def test_destroy_removes_controller_objects_before_the_namespace(app_ctx, monkey
     )
     monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=False))
-    app_ctx.runner = _cluster_runner()
+    app_ctx.runner = _owned_runner(app_ctx)
 
     get("fleet").destroy(app_ctx, argparse.Namespace())
 
@@ -303,6 +338,8 @@ def test_destroy_removes_controller_objects_before_the_namespace(app_ctx, monkey
     assert "state: absent" in imported
     assert "state: absent" in provision
     assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
+    assert app_ctx.runner.called(["kubectl", "delete", "namespace"])
+    assert "namespace_token" not in (app_ctx.config.get("addons.options")["fleet"])
 
 
 def test_destroy_skips_controller_when_import_was_disabled(app_ctx, monkeypatch) -> None:
@@ -310,7 +347,7 @@ def test_destroy_skips_controller_when_import_was_disabled(app_ctx, monkeypatch)
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
-    app_ctx.runner = _cluster_runner()
+    app_ctx.runner = _owned_runner(app_ctx)
 
     get("fleet").destroy(app_ctx, argparse.Namespace())
 
@@ -330,7 +367,7 @@ def test_no_import_after_import_still_destroys_controller_objects(app_ctx, monke
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=False))
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
     assert app_ctx.config.get("addons.options")["fleet"]["import"] is True
-    app_ctx.runner = _cluster_runner()
+    app_ctx.runner = _owned_runner(app_ctx)
 
     get("fleet").destroy(app_ctx, argparse.Namespace())
 
@@ -366,6 +403,120 @@ def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
     from aap_demo.addons.fleet.gateway import gateway_url
 
     assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
+
+
+def test_gateway_ignores_a_route_that_is_only_named_gateway(app_ctx) -> None:
+    routes = {
+        "items": [
+            {
+                "metadata": {"name": "evil-gateway"},
+                "spec": {"host": "evil.example", "to": {"name": "evil"}},
+            },
+            {
+                "metadata": {"name": "aap"},
+                "spec": {"host": "aap.apps.127.0.0.1.nip.io", "to": {"name": "aap"}},
+            },
+        ]
+    }
+    services = {
+        "items": [
+            {
+                "metadata": {"name": "aap"},
+                "spec": {"selector": {"app.kubernetes.io/component": "aap-gateway"}},
+            }
+        ]
+    }
+    app_ctx.runner = FakeRunner()
+    app_ctx.runner.ok(["kubectl", "get", "route", "-n", "aap-operator", "-l"], stdout="")
+    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout=json.dumps(services))
+    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+
+    from aap_demo.addons.fleet.gateway import gateway_url
+
+    assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
+
+
+def test_gateway_refuses_a_name_suffix_without_the_service(app_ctx) -> None:
+    routes = {
+        "items": [
+            {
+                "metadata": {"name": "evil-gateway"},
+                "spec": {"host": "evil.example", "to": {"name": "evil"}},
+            }
+        ]
+    }
+    app_ctx.runner = FakeRunner()
+    app_ctx.runner.ok(["kubectl", "get", "route", "-n", "aap-operator", "-l"], stdout="")
+    app_ctx.runner.ok(["kubectl", "get", "svc"], stdout='{"items":[]}')
+    app_ctx.runner.ok(["kubectl", "get", "route"], stdout=json.dumps(routes))
+
+    from aap_demo.addons.fleet.gateway import gateway_url
+
+    with pytest.raises(AddonError, match="gateway route not found"):
+        gateway_url(app_ctx)
+
+
+def test_ee_image_rejects_a_lookalike() -> None:
+    from aap_demo.addons.fleet.ee import _ee_image
+
+    lookalike = {
+        "items": [
+            {
+                "spec": {
+                    "containers": [
+                        {"name": "evil", "image": "registry.redhat.io/x/ee-supported-rhel9:latest"},
+                        {
+                            "name": "aap-controller-ee",
+                            "image": "quay.io/someone/ee-supported-rhel9:latest",
+                        },
+                    ]
+                }
+            }
+        ]
+    }
+    assert _ee_image(json.dumps(lookalike)) == ""
+    trusted = {
+        "items": [{"spec": {"containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}]}}]
+    }
+    assert _ee_image(json.dumps(trusted)) == EE_IMAGE
+
+
+def test_enable_refuses_a_namespace_it_does_not_own(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    labeled = json.dumps({"metadata": {"labels": {"aap-demo/fleet": "true"}}})
+    app_ctx.runner = _cluster_runner(namespace_stdout=labeled)
+
+    with pytest.raises(AddonError, match="refusing to use namespace"):
+        get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+
+    assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
+
+
+def test_enable_does_not_record_success_when_the_playbook_fails(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner(wait_ok=False)
+
+    with pytest.raises(AddonError, match="playbook failed"):
+        get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+
+    assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
+    fleet = (app_ctx.config.get("addons.options") or {}).get("fleet") or {}
+    assert not fleet.get("nodes")
+    assert fleet.get("namespace_token")
+
+
+def test_destroy_refuses_an_unowned_namespace(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    foreign = json.dumps({"metadata": {"annotations": {"aap-demo/fleet-token": "someone-else"}}})
+    app_ctx.runner = _cluster_runner(namespace_stdout=foreign)
+
+    with pytest.raises(AddonError, match="refusing to use namespace"):
+        get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
+    assert not app_ctx.runner.called(["kubectl", "delete", "namespace"])
 
 
 def test_packaged_files_load_through_importlib() -> None:
@@ -405,6 +556,7 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert 'controller_username: "{{ aap_username }}"' in imported
     assert 'controller_password: "{{ aap_password }}"' in imported
     assert "system:serviceaccounts" not in provision
+    assert "scc:anyuid" not in provision
     assert "name: fleet-node" in provision
     assert "aap_validate_certs | default(true)" in imported
     plays = yaml.safe_load(provision)

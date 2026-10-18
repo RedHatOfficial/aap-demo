@@ -21,5 +21,5 @@ def get(name: str) -> FleetAddon:
     return addon
 
 
-def registry() -> Dict[str, object]:
+def registry() -> Dict[str, FleetAddon]:
     return dict(_REGISTRY)

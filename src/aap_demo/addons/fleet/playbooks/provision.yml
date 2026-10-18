@@ -11,18 +11,6 @@
     state: "{{ state | default('present') }}"
     scope: "{{ scope | default('all') }}"
   tasks:
-    - name: Namespace
-      when: scope == 'all' and state == 'present'
-      kubernetes.core.k8s:
-        state: present
-        definition:
-          apiVersion: v1
-          kind: Namespace
-          metadata:
-            name: "{{ namespace }}"
-            labels:
-              aap-demo/fleet: "true"
-
     - name: Fleet node service account
       when: scope == 'all' and state == 'present'
       kubernetes.core.k8s:
@@ -34,26 +22,6 @@
             name: fleet-node
             namespace: "{{ namespace }}"
           automountServiceAccountToken: false
-
-    - name: Bind anyuid to the fleet node account
-      when: scope == 'all' and state == 'present'
-      kubernetes.core.k8s:
-        state: present
-        force: true
-        definition:
-          apiVersion: rbac.authorization.k8s.io/v1
-          kind: RoleBinding
-          metadata:
-            name: fleet-anyuid
-            namespace: "{{ namespace }}"
-          roleRef:
-            apiGroup: rbac.authorization.k8s.io
-            kind: ClusterRole
-            name: system:openshift:scc:anyuid
-          subjects:
-            - kind: ServiceAccount
-              name: fleet-node
-              namespace: "{{ namespace }}"
 
     - name: Pull secret
       when: state == 'present' and (pull_secret_path | default('') | length) > 0

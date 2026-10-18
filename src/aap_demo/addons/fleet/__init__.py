@@ -35,11 +35,11 @@ class FleetAddon:
         # A later --no-import must not forget that Controller objects exist.
         if not (no_import and fleet.get("import") is True):
             fleet["import"] = not no_import
-        set_enabled(ctx, True)
-        save_options(ctx, fleet)
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
         if not no_import:
             runner.import_nodes(ctx, nodes, private_key=private, state="present")
+        set_enabled(ctx, True)
+        _commit_fleet(ctx, fleet)
         ctx.console.out(f"Fleet enabled in namespace {fleet['namespace']}")
         return 0
 
@@ -71,6 +71,7 @@ class FleetAddon:
         delete_owned_namespace(ctx, namespace_for(ctx))
         fleet = fleet_options(ctx)
         fleet["nodes"] = []
+        fleet.pop("namespace_token", None)
         set_enabled(ctx, False)
         save_options(ctx, fleet)
         ctx.console.out("Fleet destroyed")
@@ -120,10 +121,10 @@ class FleetAddon:
         private, public = sshkey.load_or_create(ctx)
         fleet = fleet_options(ctx)
         fleet["nodes"] = nodes
-        save_options(ctx, fleet)
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
         if fleet.get("import", True) is not False:
             runner.import_nodes(ctx, nodes, private_key=private, state="present")
+        _commit_fleet(ctx, fleet)
         ctx.console.out(f"Added {name}")
         return 0
 
@@ -149,6 +150,14 @@ class FleetAddon:
         save_options(ctx, fleet)
         ctx.console.out(f"Removed {name}")
         return 0
+
+
+def _commit_fleet(ctx: AppContext, fleet: dict) -> None:
+    """Persist options after the playbooks succeed, without dropping the namespace token."""
+    token = fleet_options(ctx).get("namespace_token")
+    if token:
+        fleet["namespace_token"] = token
+    save_options(ctx, fleet)
 
 
 def _pod_rows(payload: str) -> list:
