@@ -21,9 +21,5 @@ def entrypoint() -> Path:
     return packaged("entrypoint.sh")
 
 
-def requirements() -> Path:
-    return packaged("requirements.yml")
-
-
 def read_text(name: str) -> str:
     return files(_PACKAGE).joinpath(name).read_text(encoding="utf-8")
