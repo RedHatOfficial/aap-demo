@@ -74,6 +74,7 @@ _NAMESPACE_EXPLICIT="${NAMESPACE:+true}"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 QUIET="${QUIET:-false}"
 FORCE="${FORCE:-false}"
+FLEET_BACKEND="${FLEET_BACKEND:-qemu}"
 
 # Config file for persistent settings
 AAP_DEMO_CONFIG="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
@@ -119,6 +120,9 @@ for arg in "$@"; do
       kubeconfig)
         KUBECTL_KUBECONFIG="$arg"
         ;;
+      backend)
+        FLEET_BACKEND="$arg"
+        ;;
     esac
     PENDING_FLAG=""
     continue
@@ -143,6 +147,12 @@ for arg in "$@"; do
       ;;
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
+      ;;
+    --backend=*)
+      FLEET_BACKEND="${arg#*=}"
+      ;;
+    --backend)
+      PENDING_FLAG="backend"
       ;;
     deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
       case "$arg" in
@@ -520,12 +530,13 @@ Addons:
   enable mcp-server  Enable MCP server for AI assistants
 
 Fleet commands (legacy Bash v1; local QEMU VMs only; requires: enable fleet):
+  fleet --backend qemu|kube-native|all <action>
   fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
   fleet list                    List running fleet node VMs
   fleet remove [N|name]         Remove fleet node VMs
   fleet destroy                 Remove all VMs and AAP resources
 
-Python v2 fleet: aap-demo fleet list  (Kubernetes pod-backed nodes)
+Kubernetes-native fleet: aap-demo fleet list  (Kubernetes pod-backed nodes)
 
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
@@ -581,12 +592,13 @@ COMMANDS (all infrastructure types):
                     Output saved to must-gather.local.<timestamp> (or specified dir)
     enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
+    fleet --backend qemu|kube-native|all <action>
     fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
     (legacy Bash v1; local QEMU VMs only)
-    Python v2 fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
+    Kubernetes-native fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
     enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, fleet)
                     portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
@@ -1946,11 +1958,11 @@ cmd_status() {
   if [ -n "$_fleet_v2_rows" ]; then
     _fleet_v2_total=$(printf '%s\n' "$_fleet_v2_rows" | awk 'NF {count++} END {print count + 0}')
     _fleet_v2_ready=$(printf '%s\n' "$_fleet_v2_rows" | awk '$3 == "true" {count++} END {print count + 0}')
-    echo "Python v2 Fleet:"
+    echo "Kubernetes-native Fleet:"
     printf "  %s/%s pod nodes ready\n" "$_fleet_v2_ready" "$_fleet_v2_total"
     printf '%s\n' "$_fleet_v2_rows" | sed 's/^/  /'
   else
-    echo "Python v2 Fleet: no pod nodes"
+    echo "Kubernetes-native Fleet: no pod nodes"
   fi
 
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
@@ -2909,7 +2921,51 @@ watch_aap() {
 # Fleet nodes: managed RHEL VMs for AAP demos (addon)
 # ---------------------------------------------------------------------------
 
-cmd_fleet() {
+_fleet_delegate_kube_native() {
+  local python_bin=""
+  local candidate
+
+  if [ -n "${AAP_DEMO_PYTHON:-}" ] && command -v "$AAP_DEMO_PYTHON" >/dev/null 2>&1; then
+    if "$AAP_DEMO_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+      python_bin="$AAP_DEMO_PYTHON"
+    fi
+  fi
+
+  for candidate in "${SCRIPT_DIR}/.venv/bin/python" "${SCRIPT_DIR}/.venv/bin/python3"; do
+    if [ -z "$python_bin" ] && [ -x "$candidate" ] && "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+      python_bin="$candidate"
+    fi
+  done
+
+  if [ -z "$python_bin" ]; then
+    candidate=$(command -v aap-demo 2>/dev/null || true)
+    if [ -n "$candidate" ] && ! head -1 "$candidate" 2>/dev/null | grep -qi bash; then
+      "$candidate" fleet --backend kube-native "$@"
+      return
+    fi
+  fi
+
+  if [ -z "$python_bin" ] && command -v python3 >/dev/null 2>&1 \
+    && python3 -c 'import yaml' >/dev/null 2>&1; then
+    python_bin="$(command -v python3)"
+  fi
+
+  if [ -z "$python_bin" ]; then
+    _err "Python is required for the Kubernetes-native Fleet backend"
+    echo "  Install the project dependencies or set AAP_DEMO_PYTHON=/path/to/python3"
+    return 1
+  fi
+  if [ ! -d "${SCRIPT_DIR}/src/aap_demo" ]; then
+    _err "Kubernetes-native Fleet backend is not available from this checkout"
+    echo "  Install the Python aap-demo package or run the v2 checkout"
+    return 1
+  fi
+
+  PYTHONPATH="${SCRIPT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    "$python_bin" -m aap_demo fleet --backend kube-native "$@"
+}
+
+cmd_fleet_qemu() {
   local fleet_dir="${SCRIPT_DIR}/addons/fleet"
   if [ ! -f "${fleet_dir}/fleet.sh" ]; then
     _err "Fleet addon not found"
@@ -3011,6 +3067,32 @@ cmd_fleet() {
       echo "  aap-demo fleet list"
       echo "  aap-demo fleet remove 1"
       echo "  aap-demo fleet destroy"
+      ;;
+  esac
+}
+
+cmd_fleet() {
+  local backend="${FLEET_BACKEND:-qemu}"
+  case "$backend" in
+    qemu)
+      cmd_fleet_qemu "$@"
+      ;;
+    kube-native)
+      _fleet_delegate_kube_native "$@"
+      ;;
+    all)
+      if [ "${1:-}" != "list" ]; then
+        _err "Fleet backend 'all' is read-only"
+        echo "  Use --backend qemu or --backend kube-native for mutations"
+        return 2
+      fi
+      _fleet_delegate_kube_native "$@" || return
+      cmd_fleet_qemu "$@"
+      ;;
+    *)
+      _err "Unknown Fleet backend: $backend"
+      echo "  Choose: qemu, kube-native, or all"
+      return 2
       ;;
   esac
 }

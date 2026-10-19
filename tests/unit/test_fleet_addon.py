@@ -283,6 +283,14 @@ def test_registry_is_only_fleet() -> None:
     assert names() == ["fleet"]
 
 
+def test_fleet_parser_accepts_the_kubernetes_native_backend() -> None:
+    before_action = build_parser().parse_args(["fleet", "--backend", "kube-native", "list"])
+    after_action = build_parser().parse_args(["fleet", "list", "--backend", "kube-native"])
+
+    assert before_action.backend == "kube-native"
+    assert after_action.backend == "kube-native"
+
+
 def test_enable_portal_is_an_addon_error(app_ctx) -> None:
     with pytest.raises(AddonError, match="fleet"):
         addons_cli.enable(app_ctx, argparse.Namespace(addon="portal"))

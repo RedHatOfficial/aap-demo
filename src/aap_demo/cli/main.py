@@ -255,15 +255,30 @@ def build_parser(
     p.set_defaults(func=addons_cli.disable)
 
     p = add("fleet", "Manage mock Linux nodes registered in AAP")
+    p.add_argument(
+        "--backend",
+        choices=("kube-native",),
+        default="kube-native",
+        help="Fleet backend (Python v2 supports kube-native)",
+    )
     fleet_sub = p.add_subparsers(dest="fleet_action", metavar="<ACTION>")
     fleet_list = fleet_sub.add_parser("list", help="List fleet nodes", parents=[globals_parser])
+    fleet_list.add_argument(
+        "--backend", choices=("kube-native",), default=argparse.SUPPRESS, help=argparse.SUPPRESS
+    )
     fleet_list.set_defaults(func=_fleet_list)
     fleet_add = fleet_sub.add_parser("add", help="Add one fleet node", parents=[globals_parser])
+    fleet_add.add_argument(
+        "--backend", choices=("kube-native",), default=argparse.SUPPRESS, help=argparse.SUPPRESS
+    )
     fleet_add.add_argument("--os", required=True, help="ubi9 or ubi10")
     fleet_add.add_argument("--name", help="Node name (default fleet-<os>)")
     fleet_add.set_defaults(func=_fleet_add)
     fleet_remove = fleet_sub.add_parser(
         "remove", help="Remove one fleet node", parents=[globals_parser]
+    )
+    fleet_remove.add_argument(
+        "--backend", choices=("kube-native",), default=argparse.SUPPRESS, help=argparse.SUPPRESS
     )
     fleet_remove.add_argument("name")
     fleet_remove.set_defaults(func=_fleet_remove)
@@ -271,6 +286,9 @@ def build_parser(
         "destroy",
         help="Delete the fleet namespace and its AAP inventory",
         parents=[globals_parser],
+    )
+    fleet_destroy.add_argument(
+        "--backend", choices=("kube-native",), default=argparse.SUPPRESS, help=argparse.SUPPRESS
     )
     fleet_destroy.set_defaults(func=_fleet_destroy)
     p.set_defaults(func=_fleet_list)

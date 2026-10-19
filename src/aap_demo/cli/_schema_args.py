@@ -59,6 +59,7 @@ CLI_ONLY_OPTIONS = frozenset(
         "--no-import",
         "--os",
         "--name",
+        "--backend",
         "--extra-vars",
         "-e",
         "--stdin",
