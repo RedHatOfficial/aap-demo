@@ -29,6 +29,7 @@ RUNNER_ACCOUNT = "aap-demo-fleet-runner"
 FLEET_LABEL = "aap-demo/fleet"
 TOKEN_ANNOTATION = "aap-demo/fleet-token"
 _PLAYBOOK_ROOT = "/opt/fleet/playbooks"
+_JOB_TIMEOUT_SECONDS = 600
 _EXTRA_ROOT = "/opt/fleet/extra"
 
 
@@ -53,7 +54,7 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
     pull_name = f"{name}-pull"
     rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
-    ctx.console.progress(f"Running {playbook.name} in the execution environment")
+    ctx.console.progress(f"Submitting {playbook.name} to the AAP execution environment")
     playbook_error: AddonError | None = None
     try:
         used_pull = _stage_pull_secret(ctx, aap_namespace(ctx), job_ns, pull_name)
@@ -64,6 +65,10 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
             ctx,
             _job(name, job_ns, image, playbook.name, aliases, used_pull, bool(ca_bundle)),
         )
+        ctx.console.progress(
+            f"{playbook.name} submitted in {job_ns}; waiting up to "
+            f"{_JOB_TIMEOUT_SECONDS // 60} minutes for completion"
+        )
         waited = ctx.runner.run(
             [
                 "kubectl",
@@ -72,7 +77,7 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
                 f"job/{name}",
                 "-n",
                 job_ns,
-                "--timeout=600s",
+                f"--timeout={_JOB_TIMEOUT_SECONDS}s",
             ]
         )
         if not waited.ok:
