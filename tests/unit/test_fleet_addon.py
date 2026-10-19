@@ -155,18 +155,23 @@ def _cluster_runner(
     return runner
 
 
-def _gateway_chain(*, owned: bool = True, spoof_route: bool = False) -> FakeRunner:
+def _gateway_chain(
+    *, owned: bool = True, spoof_route: bool = False, deployment_controller: bool = True
+) -> FakeRunner:
     labels = {
         "app.kubernetes.io/component": "aap-gateway",
         "app.kubernetes.io/managed-by": "aap-operator",
     }
     owner_kind = "AnsibleAutomationPlatform" if owned else "ReplicaSet"
+    deployment_owner = {"kind": owner_kind, "name": "aap"}
+    if deployment_controller:
+        deployment_owner["controller"] = True
     deploy = {
         "items": [
             {
                 "metadata": {
                     "name": "aap-gateway",
-                    "ownerReferences": [{"kind": owner_kind, "name": "aap", "controller": True}],
+                    "ownerReferences": [deployment_owner],
                 },
                 "spec": {"selector": {"matchLabels": labels}},
             }
@@ -544,6 +549,14 @@ def test_no_import_after_import_still_destroys_controller_objects(app_ctx, monke
 
 def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
     app_ctx.runner = _gateway_chain()
+
+    from aap_demo.addons.fleet.gateway import gateway_url
+
+    assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
+
+
+def test_gateway_accepts_operator_owner_without_controller_flag(app_ctx) -> None:
+    app_ctx.runner = _gateway_chain(deployment_controller=False)
 
     from aap_demo.addons.fleet.gateway import gateway_url
 

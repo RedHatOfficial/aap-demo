@@ -121,8 +121,13 @@ def _controller_owner(item: dict, kind: str) -> str:
         if (
             isinstance(ref, dict)
             and ref.get("kind") == kind
-            and ref.get("controller") is True
             and ref.get("name")
+            and (
+                ref.get("controller") is True
+                # AAP 2.7 gateway Deployments may omit this optional field
+                # while still being owned by the AnsibleAutomationPlatform CR.
+                or (kind == "AnsibleAutomationPlatform" and "controller" not in ref)
+            )
         ):
             return str(ref["name"])
     return ""
