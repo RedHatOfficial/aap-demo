@@ -105,9 +105,16 @@ KUBECTL_KUBECONFIG=""
 # Parse command line arguments
 COMMAND=""
 EXTRA_ARGS=()
+V2_ARGS=()
+V2_MODE=false
 PENDING_FLAG=""
 
 for arg in "$@"; do
+  if [ "$V2_MODE" = true ]; then
+    V2_ARGS+=("$arg")
+    continue
+  fi
+
   # Handle pending flag value
   if [ -n "$PENDING_FLAG" ]; then
     case "$PENDING_FLAG" in
@@ -154,9 +161,13 @@ for arg in "$@"; do
     --backend)
       PENDING_FLAG="backend"
       ;;
-    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | v2 | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
+        v2)
+          COMMAND="v2"
+          V2_MODE=true
+          ;;
         *) COMMAND="$arg" ;;
       esac
       ;;
@@ -516,6 +527,7 @@ Commands:
   idle [true|false] Scale down/up AAP to save resources
   diagnose [--ai] Check environment health (--ai for Claude analysis)
   must-gather      Collect diagnostic info (AAP + cluster)
+  v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
   clean           Remove AAP deployment
 
 Cluster management:
@@ -590,6 +602,7 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
+    v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
     enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
     fleet --backend qemu|kube-native|all <action>
@@ -2921,7 +2934,7 @@ watch_aap() {
 # Fleet nodes: managed RHEL VMs for AAP demos (addon)
 # ---------------------------------------------------------------------------
 
-_fleet_delegate_kube_native() {
+_fleet_delegate_v2() {
   local python_bin=""
   local candidate
 
@@ -2940,7 +2953,7 @@ _fleet_delegate_kube_native() {
   if [ -z "$python_bin" ]; then
     candidate=$(command -v aap-demo 2>/dev/null || true)
     if [ -n "$candidate" ] && ! head -1 "$candidate" 2>/dev/null | grep -qi bash; then
-      "$candidate" fleet --backend kube-native "$@"
+      "$candidate" "$@"
       return
     fi
   fi
@@ -2951,18 +2964,22 @@ _fleet_delegate_kube_native() {
   fi
 
   if [ -z "$python_bin" ]; then
-    _err "Python is required for the Kubernetes-native Fleet backend"
+    _err "Python is required for the v2 CLI"
     echo "  Install the project dependencies or set AAP_DEMO_PYTHON=/path/to/python3"
     return 1
   fi
   if [ ! -d "${SCRIPT_DIR}/src/aap_demo" ]; then
-    _err "Kubernetes-native Fleet backend is not available from this checkout"
+    _err "Python v2 CLI is not available from this checkout"
     echo "  Install the Python aap-demo package or run the v2 checkout"
     return 1
   fi
 
   PYTHONPATH="${SCRIPT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-    "$python_bin" -m aap_demo fleet --backend kube-native "$@"
+    "$python_bin" -m aap_demo "$@"
+}
+
+_fleet_delegate_kube_native() {
+  _fleet_delegate_v2 fleet --backend kube-native "$@"
 }
 
 cmd_fleet_qemu() {
@@ -3461,7 +3478,7 @@ esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in
-  help | --help | -h | config | update | version | "" | destroy | status)
+  help | --help | -h | config | update | version | v2 | "" | destroy | status)
     # These commands don't need cluster access
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
@@ -3521,6 +3538,9 @@ case "$COMMAND" in
     ;;
   version | --version | -V)
     cmd_version
+    ;;
+  v2)
+    _fleet_delegate_v2 "${V2_ARGS[@]}"
     ;;
   config)
     cmd_config "${EXTRA_ARGS[@]}"

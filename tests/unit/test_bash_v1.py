@@ -160,6 +160,7 @@ def test_bash_help_labels_fleet_as_legacy_qemu_and_points_to_v2() -> None:
     assert result.returncode == 0
     assert "(legacy Bash v1; local QEMU VMs only)" in result.stdout
     assert "Kubernetes-native fleet: aap-demo fleet list" in result.stdout
+    assert "v2 [args...]" in result.stdout
 
 
 def test_bash_status_has_a_python_v2_fleet_report() -> None:
@@ -174,9 +175,26 @@ def test_bash_fleet_source_has_explicit_backend_delegation() -> None:
     source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
 
     assert "--backend qemu|kube-native|all" in source
+    assert "_fleet_delegate_v2" in source
     assert "_fleet_delegate_kube_native" in source
     assert ".venv/bin/python" in source
     assert "import yaml" in source
+
+
+def test_bash_can_dispatch_the_python_v2_cli() -> None:
+    env = {"AAP_DEMO_PYTHON": str(REPO_ROOT / ".venv/bin/python"), "CI": "true"}
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "aap-demo.sh"), "v2", "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "usage: aap-demo" in result.stdout
+    assert "fleet" in result.stdout
 
 
 def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:
