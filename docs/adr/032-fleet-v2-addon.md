@@ -8,7 +8,10 @@
 
 ## Context
 
-Issue #196 asked whether fleet nodes would be writable. The bash addon under `addons/fleet/` builds QEMU VMs. v2 needs a first Python addon without taking that path.
+Issue #196 asked whether fleet nodes would be writable. The Bash addon under
+`addons/fleet/` builds QEMU VMs, while v2 needs a first Python addon without
+taking that path. During the transition, both command implementations must be
+available without making the lifecycle verb ambiguous.
 
 ## Decision
 
@@ -32,7 +35,33 @@ not apply that Deployment again. It scales the existing Deployments to zero
 with `kubernetes.core.k8s_scale`.
 
 KubeVirt and QEMU are out of v2.
-The bash addon under `addons/fleet/` is untouched and is not the implementation.
+The Bash addon under `addons/fleet/` remains the v1 QEMU implementation and is
+not the v2 implementation. The Python addon is the canonical v2 implementation.
+
+Fleet follows the addon lifecycle: `enable fleet` deploys or enables the Fleet
+resources, and `fleet list|add|remove|destroy` performs day-two operations.
+`deploy` remains the AAP platform deployment command; it is not the Fleet v2
+entrypoint.
+
+The canonical Python v2 commands are:
+
+```text
+aap-demo enable fleet
+aap-demo fleet list
+```
+
+The Bash wrapper exposes the same lifecycle in two explicit forms:
+
+```text
+aap-demo.sh v2 enable fleet
+aap-demo.sh enable fleet --backend kube-native
+```
+
+`aap-demo.sh enable fleet --backend qemu` (and the existing default without a
+backend) continues to use the Bash v1 implementation. The `v2` wrapper is a
+runtime bridge, not a separate addon. `--backend all` is supported only for
+read-only Fleet listing and is not valid for `enable`.
+
 AAP objects are created by `import.yml` using `ansible.controller` against the gateway,
 with `ansible.platform` installed beside it.
 Those playbooks run as a Kubernetes Job using the `ee-supported-rhel` image
@@ -58,6 +87,8 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
 - Package files under `/usr` and `/var` survive `disable` and `enable`.
 - `disk_size` and `storage_class` change the claim without editing the playbook.
 - Enable creates schema-valid Deployments, and disable preserves the pods' disks while scaling them to zero.
+- The v2 lifecycle is available from the installed Python CLI and from the Bash
+  wrapper, allowing gradual migration without renaming the addon.
 
 ### Negative
 
@@ -67,7 +98,8 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
   Deleting the namespace deletes the disks.
 - `/etc` is rebuilt on each start (sudoers, host keys). Cluster DNS stays intact.
 - The default disk is 2Gi. A large update needs a larger `disk_size` before the first create.
-- ADR-026 still describes the bash QEMU fleet. This record does not replace it.
+- Users must choose the Python v2 or Bash v1 backend when both are available.
+- ADR-026 describes the Bash QEMU fleet. This record does not replace it.
 
 ### Neutral
 
@@ -77,6 +109,8 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
 
 - Fleet unit tests cover the literal replica field and scale-to-zero task.
 - The three-node Fleet deployment was exercised on MicroShift/CRC; all node pods became Ready.
+- CLI tests cover the Python v2 lifecycle and the Bash backend bridge for both
+  `v2 enable fleet` and `enable fleet --backend kube-native`.
 
 ## Alternatives Considered
 
