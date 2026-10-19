@@ -164,6 +164,20 @@ for arg in "$@"; do
     deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | v2 | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
+        fleet)
+          if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
+            EXTRA_ARGS+=("$arg")
+          else
+            COMMAND="fleet"
+          fi
+          ;;
+        --help | -h)
+          if [ "$COMMAND" = "enable" ]; then
+            EXTRA_ARGS+=("$arg")
+          else
+            COMMAND="help"
+          fi
+          ;;
         v2)
           COMMAND="v2"
           V2_MODE=true
@@ -538,6 +552,7 @@ Cluster management:
 
 Addons:
   enable fleet       Enable Fleet managed VMs for demos (requires AAP)
+                      Use --backend kube-native for the Python v2 Fleet addon
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
   enable mcp-server  Enable MCP server for AI assistants
 
@@ -604,6 +619,7 @@ COMMANDS (all infrastructure types):
                     Output saved to must-gather.local.<timestamp> (or specified dir)
     v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
     enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
+                    Fleet backends: --backend qemu|kube-native
     disable [addon] Disable an addon
     fleet --backend qemu|kube-native|all <action>
     fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
@@ -3283,6 +3299,27 @@ cmd_enable() {
     return 0
   fi
 
+  if [ "$addon" = "fleet" ]; then
+    case "${FLEET_BACKEND:-qemu}" in
+      kube-native)
+        _fleet_delegate_v2 enable fleet "$@"
+        return
+        ;;
+      qemu)
+        ;;
+      all)
+        _err "Fleet backend 'all' cannot be enabled"
+        echo "  Choose: qemu or kube-native"
+        return 2
+        ;;
+      *)
+        _err "Unknown Fleet backend: ${FLEET_BACKEND}"
+        echo "  Choose: qemu or kube-native"
+        return 2
+        ;;
+    esac
+  fi
+
   local addon_dir="${SCRIPT_DIR}/addons/${addon}"
   if [ ! -d "$addon_dir" ]; then
     echo "Unknown addon: $addon"
@@ -3477,9 +3514,25 @@ case "$COMMAND" in
 esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
+_ENABLE_HELP=false
+if [ "$COMMAND" = "enable" ]; then
+  for _arg in "${EXTRA_ARGS[@]}"; do
+    if [ "$_arg" = "--help" ] || [ "$_arg" = "-h" ]; then
+      _ENABLE_HELP=true
+      break
+    fi
+  done
+fi
+
 case "$COMMAND" in
   help | --help | -h | config | update | version | v2 | "" | destroy | status)
     # These commands don't need cluster access
+    ;;
+  enable)
+    if [ "$_ENABLE_HELP" != true ]; then
+      setup_kubeconfig
+      verify_cluster_type || exit 1
+    fi
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
     # These handle their own cluster state (auto-start if stopped)
