@@ -31,6 +31,10 @@ TOKEN_ANNOTATION = "aap-demo/fleet-token"
 _PLAYBOOK_ROOT = "/opt/fleet/playbooks"
 _JOB_TIMEOUT_SECONDS = 600
 _EXTRA_ROOT = "/opt/fleet/extra"
+_PLAYBOOK_PURPOSES = {
+    "provision.yml": "creating/updating Fleet node pods and persistent storage",
+    "import.yml": "registering Fleet nodes in AAP inventory and creating the ping job template",
+}
 
 
 def runner_namespace(fleet_ns: str) -> str:
@@ -54,7 +58,8 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
     pull_name = f"{name}-pull"
     rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
-    ctx.console.progress(f"Submitting {playbook.name} to the AAP execution environment")
+    purpose = _playbook_purpose(playbook)
+    ctx.console.progress(f"Submitting Fleet job: {purpose}")
     playbook_error: AddonError | None = None
     try:
         used_pull = _stage_pull_secret(ctx, aap_namespace(ctx), job_ns, pull_name)
@@ -66,7 +71,7 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
             _job(name, job_ns, image, playbook.name, aliases, used_pull, bool(ca_bundle)),
         )
         ctx.console.progress(
-            f"{playbook.name} submitted in {job_ns}; waiting up to "
+            f"Fleet job submitted to {job_ns}: {purpose}; waiting up to "
             f"{_JOB_TIMEOUT_SECONDS // 60} minutes for completion"
         )
         waited = ctx.runner.run(
@@ -112,6 +117,10 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
             "could not delete the fleet playbook secret",
             hint=(deleted.stderr or deleted.stdout or "").strip() or None,
         )
+
+
+def _playbook_purpose(playbook: Path) -> str:
+    return _PLAYBOOK_PURPOSES.get(playbook.name, f"running {playbook.name}")
 
 
 def _apply_checked(ctx: AppContext, manifest: str) -> None:

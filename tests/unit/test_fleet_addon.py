@@ -326,6 +326,8 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
 
     assert "waiting up to 10 minutes" in app_ctx.console.stdout
     assert "fleet-runner" in app_ctx.console.stdout
+    assert "registering Fleet nodes in AAP inventory" in app_ctx.console.stdout
+    assert "ping job template" in app_ctx.console.stdout
     runs = _playbook_runs(app_ctx.runner)
     assert [name for name, _text, _job in runs] == ["provision.yml", "import.yml"]
     provision, imported = (text for _name, text, _job in runs)
