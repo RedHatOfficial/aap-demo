@@ -26,6 +26,9 @@ SECRETS = (
     "api-key-value",
     "exception-password",
     "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "opaque-pod-log-value",
 )
 
 
@@ -61,6 +64,11 @@ class FakeAap:
             "token": "bearer-live-token",
             "nested": {"password": "correct-horse-battery-staple"},
             "opaque": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "github_token": "github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "openai_project_key": "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "X-API-Key": "api-key-value",
+            "x-access-token": "bearer-live-token",
+            "raw_headers": "X-API-Key: api-key-value; x-access-token=bearer-live-token; github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         }
 
     def job_status(self, job_id):
@@ -101,6 +109,10 @@ class FakeCommandRunner:
         self.calls.append(args)
         if args[:3] == ["git", "rev-parse", "HEAD"]:
             return CommandResult(0, "0123456789abcdef\n", "")
+        if args[:3] == ["kubectl", "get", "pods"]:
+            return CommandResult(0, "pod/ao-backend-0\n", "")
+        if args[:2] == ["kubectl", "logs"]:
+            return CommandResult(0, "opaque-pod-log-value X-API-Key: api-key-value", "")
         return CommandResult(
             0,
             "api_key=api-key-value Bearer bearer-live-token password=correct-horse-battery-staple ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -139,7 +151,7 @@ class ArtifactSafetyTests(unittest.TestCase):
             self.assertNotIn(secret, text)
 
     def test_collector_redacts_api_command_probe_and_exception_diagnostics(self):
-        # Break caught: changing a collector write to use its raw observation.
+        # Break caught: persisting an untrusted command/log stream or raw API fields.
         collector = artifacts.ArtifactCollector(now=lambda: "20261020T120000Z")
         bundle = collector.collect_failure(
             self.config,
@@ -155,6 +167,23 @@ class ArtifactSafetyTests(unittest.TestCase):
         self.assertIn("0123456789abcdef", text)
         for secret in SECRETS:
             self.assertNotIn(secret, text)
+
+    def test_collector_omits_oversized_api_payload_before_write(self):
+        # Break caught: removing the per-observation diagnostic payload bound.
+        class OversizedAap(FakeAap):
+            def get(self, path):
+                return {"payload": "x" * 65537}
+
+        bundle = artifacts.ArtifactCollector(now=lambda: "20261020T120000Z").collect_failure(
+            self.config,
+            [check()],
+            {"aap": OversizedAap(), "ao": FakeAo(), "probes": FakeProbe()},
+            FakeCommandRunner(),
+        )
+
+        api_text = (bundle / "api.json").read_text()
+        self.assertIn("diagnostic truncated", api_text)
+        self.assertNotIn("x" * 128, api_text)
 
 
 class RunnerArtifactIntegrationTests(unittest.TestCase):
@@ -201,6 +230,8 @@ class RunnerArtifactIntegrationTests(unittest.TestCase):
         for result in (
             check(CheckStatus.BLOCKED, FailureClass.PREREQUISITE),
             check(CheckStatus.FAIL, FailureClass.PREREQUISITE),
+            check(CheckStatus.SKIP, None),
+            runner._scenario_failure(ValueError("invalid scenario"), Path("scenario.json")),
         ):
             with self.subTest(status=result.status, failure_class=result.failure_class):
                 with (
@@ -210,6 +241,17 @@ class RunnerArtifactIntegrationTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()),
                 ):
                     self.assertEqual(runner.main([]), 2)
+
+    def test_main_returns_two_when_no_check_executed(self):
+        run_result = self._run_result(check(CheckStatus.PASS, None))
+        run_result["results"] = []
+        run_result["_check_results"] = []
+        with (
+            mock.patch.object(runner, "parse_args", return_value=self.config),
+            mock.patch.object(runner, "_run", return_value=run_result),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(runner.main([]), 2)
 
     def test_diagnostic_collection_error_keeps_original_check_exit_code(self):
         failed = check()

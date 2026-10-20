@@ -260,8 +260,8 @@ class LiveRunnerTests(unittest.TestCase):
 
 
 class RunnerExitTests(unittest.TestCase):
-    def test_dry_run_returns_success(self):
-        self.assertEqual(runner.main(["--dry-run"]), 0)
+    def test_dry_run_is_not_a_successful_acceptance_run(self):
+        self.assertEqual(runner.main(["--dry-run"]), 2)
 
     def test_fail_result_returns_failure_exit_code(self):
         result = model.CheckResult(

@@ -18,9 +18,10 @@ except ImportError:  # Direct execution via run.sh or python runner.py.
     from redaction import redact, redact_text
 
 
-_MAX_TEXT = 65536
+MAX_PAYLOAD_BYTES = 65536
 _MAX_PODS = 5
 _POD_NAME = re.compile(r"^pod/[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+_GIT_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
 
 
 def _result_dict(result: CheckResult | dict[str, object]) -> dict[str, object]:
@@ -31,7 +32,7 @@ def _result_dict(result: CheckResult | dict[str, object]) -> dict[str, object]:
 
 def _safe_json(value: object) -> str:
     """Serialize only a recursively-redacted diagnostic value."""
-    return json.dumps(redact(value), indent=2, sort_keys=True, default=lambda _: "[diagnostic omitted: unsafe value]") + "\n"
+    return json.dumps(redact(_bounded_payload(value)), indent=2, sort_keys=True, default=lambda _: "[diagnostic omitted: unsafe value]") + "\n"
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -74,8 +75,20 @@ def _config_metadata(config: RunConfig) -> dict[str, object]:
     return metadata
 
 
-def _bounded_text(value: object) -> str:
-    return redact_text(str(value))[:_MAX_TEXT]
+def _bounded_payload(value: object) -> object:
+    """Fail closed when a single structured diagnostic exceeds its byte budget."""
+    try:
+        encoded = json.dumps(value, default=lambda _: "[diagnostic omitted: unsafe value]").encode("utf-8")
+    except (TypeError, ValueError, OverflowError):
+        return "[diagnostic omitted: payload cannot be safely serialized]"
+    if len(encoded) > MAX_PAYLOAD_BYTES:
+        return f"[diagnostic truncated: payload exceeds {MAX_PAYLOAD_BYTES} bytes]"
+    return value
+
+
+def _omitted_text(value: object) -> str:
+    """Never persist an unstructured command, log, or scenario text stream."""
+    return f"[diagnostic omitted: untrusted free-form text ({len(str(value))} characters)]"
 
 
 class ArtifactCollector:
@@ -113,14 +126,25 @@ class ArtifactCollector:
         return candidate
 
     def _collect_metadata(self, bundle: Path, config: RunConfig, runner: CommandRunner) -> None:
-        commit = self._command(runner, ["git", "rev-parse", "HEAD"], config.timeout_seconds)
+        commit = self._repository_commit(runner, config.timeout_seconds)
         metadata = {"config": _config_metadata(config), "repository_commit": commit}
         _write_json(bundle / "metadata.json", metadata)
         try:
-            scenario = config.scenario_file.read_text(encoding="utf-8")[:_MAX_TEXT]
+            scenario = _omitted_text(config.scenario_file.read_text(encoding="utf-8"))
         except OSError as error:
             scenario = f"[diagnostic omitted: scenario metadata unavailable: {redact_text(str(error))}]"
-        _write_text(bundle / "scenario.json", scenario)
+        _write_json(bundle / "scenario.json", {"path": str(config.scenario_file), "content": scenario})
+
+    @staticmethod
+    def _repository_commit(runner: CommandRunner, timeout: int) -> str:
+        try:
+            result = runner.run(["git", "rev-parse", "HEAD"], timeout=timeout)
+        except Exception:
+            return "[diagnostic omitted: repository commit unavailable]"
+        value = str(getattr(result, "stdout", "")).strip()
+        if getattr(result, "returncode", 1) == 0 and _GIT_COMMIT.fullmatch(value):
+            return value
+        return "[diagnostic omitted: repository commit unavailable]"
 
     def _collect_api(self, bundle: Path, results: list[CheckResult], clients: dict) -> None:
         aap = clients.get("aap")
@@ -210,8 +234,8 @@ class ArtifactCollector:
         except Exception as error:
             return f"[diagnostic omitted: observation failed: {redact_text(str(error))}]"
         if is_dataclass(result):
-            return asdict(result)
-        return result
+            result = asdict(result)
+        return _bounded_payload(result)
 
     @staticmethod
     def _command(runner: CommandRunner, args: list[str], timeout: int) -> dict[str, object]:
@@ -222,6 +246,6 @@ class ArtifactCollector:
         return {
             "args": args,
             "returncode": getattr(result, "returncode", "[diagnostic omitted: invalid command result]"),
-            "stdout": _bounded_text(getattr(result, "stdout", "")),
-            "stderr": _bounded_text(getattr(result, "stderr", "")),
+            "stdout": _omitted_text(getattr(result, "stdout", "")),
+            "stderr": _omitted_text(getattr(result, "stderr", "")),
         }

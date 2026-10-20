@@ -8,9 +8,11 @@ _SECRET_KEYS = {
     "token", "password", "secret", "apikey", "authorization", "accesstoken",
     "clientsecret", "credential", "credentials", "bearer",
 }
-_SECRET_NAME = r"(?:(?:[a-z0-9]+[-_])*)(?:token|password|secret|api[-_]?key|access[-_]?token|client[-_]?secret|credentials?|bearer)"
+_SECRET_NAME = r"(?:[a-z0-9]+(?:[-_][a-z0-9]+)*[-_])?(?:token|password|secret|api[-_]?key|access[-_]?token|client[-_]?secret|credentials?|bearer)"
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[^\s,;\"'}]+")
-_OPAQUE_SECRET = re.compile(r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{16,})\b")
+_OPAQUE_SECRET = re.compile(
+    r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{16,}|(?:api|provider)[-_]?(?:key|secret|token)[-_][A-Za-z0-9_-]{12,})\b"
+)
 _SECRET_VALUE = re.compile(
     rf"(?i)(?P<prefix>[\"']?{_SECRET_NAME}[\"']?\s*[:=]\s*)(?P<value>\[REDACTED\]|\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}}\]&;]*)"
 )

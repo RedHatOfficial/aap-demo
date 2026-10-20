@@ -362,15 +362,17 @@ def _check_results(run_result: dict[str, object]) -> list[CheckResult]:
 
 def _exit_code(results: list[CheckResult]) -> int:
     """Classify outcomes without letting diagnostic collection affect the result."""
+    if not results:
+        return 2
     if any(
         result.status == CheckStatus.BLOCKED
         or result.failure_class == FailureClass.PREREQUISITE
+        or result.status == CheckStatus.SKIP
+        or result.check_id == "workflow.manifest"
         for result in results
     ):
         return 2
-    if any(result.status == CheckStatus.FAIL for result in results):
-        return 1
-    return 0
+    return 0 if all(result.status == CheckStatus.PASS for result in results) else 1
 
 
 def main(argv: list[str]) -> int:
