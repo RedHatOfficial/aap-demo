@@ -9,13 +9,27 @@ import sys
 try:
     from .model import CheckResult, CheckStatus, RunConfig
     from .environment import CommandRunner, TargetInspector, prepare_target, validate_target
+    from .inventory import build_inventory
+    from .checks import readiness, wiring
 except ImportError:  # Direct execution via run.sh or python runner.py.
     from model import CheckResult, CheckStatus, RunConfig
     from environment import CommandRunner, TargetInspector, prepare_target, validate_target
+    from inventory import build_inventory
+    from checks import readiness, wiring
 
 
 DEFAULT_ARTIFACT_DIR = Path("artifacts/ao-acceptance")
 DEFAULT_SCENARIO_FILE = Path("test/ao-acceptance/scenarios/critical-path.json")
+DEFAULT_MANAGED_MARKERS = {key: "aap-demo" for key in (
+    "organizations",
+    "projects",
+    "inventories",
+    "credentials",
+    "job_templates",
+    "execution_environments",
+    "ao_integrations",
+    "ao_workflows",
+)}
 
 
 def parse_args(argv: list[str]) -> RunConfig:
@@ -73,6 +87,17 @@ def _config_dict(config: RunConfig) -> dict[str, object]:
     values["artifact_dir"] = str(config.artifact_dir)
     values["scenario_file"] = str(config.scenario_file)
     return values
+
+
+def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None = None) -> list[CheckResult]:
+    """Build a redacted managed-resource inventory and run read-only checks.
+
+    Client construction remains outside this helper so the runner does not read
+    or print credentials.  The eventual live configuration layer supplies the
+    authenticated clients explicitly.
+    """
+    inventory = build_inventory(aap, ao, managed_markers or DEFAULT_MANAGED_MARKERS)
+    return [*readiness.run(inventory, probes), *wiring.run(inventory)]
 
 
 def _run(config: RunConfig) -> dict[str, object]:
