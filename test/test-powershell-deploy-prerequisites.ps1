@@ -42,6 +42,7 @@ if ($wrapperSource -notmatch '\$isDemoEnable' -or
 }
 $prerequisiteSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Prerequisites.ps1') -Raw
 $helperSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Helpers.ps1') -Raw
+$deploySource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Deploy.ps1') -Raw
 if ($prerequisiteSource -notmatch 'Ensure-AapJq' -or
     $prerequisiteSource -notmatch 'Ensure-AapPython' -or
     $helperSource -notmatch "'python3', 'python', 'py'" -or
@@ -50,6 +51,17 @@ if ($prerequisiteSource -notmatch 'Ensure-AapJq' -or
     $prerequisiteSource -notmatch 'jqlang\.jq' -or
     $prerequisiteSource -notmatch 'Python\.Python\.3\.12') {
   throw 'Windows deploy preflight must discover installed Python and attempt winget installation when needed'
+}
+
+$deployFunctionStart = $deploySource.IndexOf('function Invoke-AapDemoDeploy')
+$deployFunction = $deploySource.Substring($deployFunctionStart)
+$storageCheckIndex = $deployFunction.IndexOf('Assert-AapStoragePrerequisites -CrName $CrName')
+$olmInstallIndex = $deployFunction.IndexOf('Install-AapOlm')
+if ($storageCheckIndex -lt 0 -or $olmInstallIndex -lt 0 -or $storageCheckIndex -ge $olmInstallIndex) {
+  throw 'PowerShell deploy must validate AAP storage before installing OLM'
+}
+if ($deploySource -match 'nfs-local-rwx missing - applying CR with ReadWriteOnce fallback') {
+  throw 'PowerShell deploy must fail clearly instead of silently changing the requested storage mode'
 }
 
 Write-Output 'PowerShell deploy prerequisite checks passed'
