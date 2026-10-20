@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 _TERMINAL_STATES = {"successful", "failed", "error", "canceled", "cancelled"}
 _DEFAULT_EVIDENCE_FIELDS = ("stdout", "output", "result")
+_EXECUTION_EVIDENCE_FIELDS = frozenset((*_DEFAULT_EVIDENCE_FIELDS, "status"))
 
 
 def _result(
@@ -152,7 +153,10 @@ def _linked_jobs(payload: object) -> list[dict[str, object]]:
         if isinstance(value, dict):
             for key, item in value.items():
                 normalized = str(key).casefold()
-                if normalized in {"jobs", "aap_jobs"} and isinstance(item, list):
+                if normalized in {"job_ids", "aap_job_ids"} and isinstance(item, list):
+                    for job in item:
+                        add({"job_id": job})
+                elif normalized in {"jobs", "aap_jobs"} and isinstance(item, list):
                     for job in item:
                         add(job)
                 elif normalized in {"job_id", "aap_job_id"}:
@@ -181,10 +185,11 @@ def _contains_markers(
     """Match markers only against declared execution-output fields."""
     if not markers:
         return True
+    allowed_fields = tuple(field for field in evidence_fields if field in _EXECUTION_EVIDENCE_FIELDS)
     observed = "\n".join(
         str(value).casefold()
         for payload in payloads
-        for field in evidence_fields
+        for field in allowed_fields
         for value in _path_values(payload, field)
     )
     return all(marker.casefold() in observed for marker in markers)

@@ -40,6 +40,8 @@ _REQUIRED_FIELDS = (
     "blocked_reason",
 )
 
+_EXECUTION_EVIDENCE_FIELDS = frozenset({"stdout", "output", "result", "status"})
+
 
 def _strings(value: object, field: str, *, allow_empty: bool = False) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
@@ -77,6 +79,13 @@ def _scenario(value: object) -> Scenario:
         raise ValueError("a non-read-only non-launchable scenario requires blocked_reason")
     success_markers = _strings(value["success_markers"], "success_markers", allow_empty=True)
     success_marker_fields = _strings(value["success_marker_fields"], "success_marker_fields", allow_empty=True)
+    unsupported_evidence_fields = set(success_marker_fields) - _EXECUTION_EVIDENCE_FIELDS
+    if unsupported_evidence_fields:
+        raise ValueError(
+            "scenario success_marker_fields must contain only explicit execution evidence fields "
+            f"({', '.join(sorted(_EXECUTION_EVIDENCE_FIELDS))}); unsupported: "
+            f"{', '.join(sorted(unsupported_evidence_fields))}"
+        )
     if success_markers and not success_marker_fields:
         raise ValueError("scenario success_marker_fields must declare execution evidence fields when success_markers are set")
     return Scenario(

@@ -3,7 +3,7 @@
     {
       "scenario_id": "ao-certificate-lifecycle-contract",
       "component": "workflow:ao-wiring",
-      "workflow_name": "Intelligent Cert Lifecycle",
+      "workflow_name": "Cert Demo 101 - Manual Reactive Renewal",
       "job_template_names": [
         "Renew Certificate",
         "Renew Java Keystore Certificate",
@@ -18,12 +18,12 @@
       "launch": false,
       "read_only": false,
       "success_marker_fields": ["stdout", "output", "result"],
-      "blocked_reason": "The AO addon does not provision a read-only certificate-lifecycle representative; this workflow can renew certificates."
+      "blocked_reason": "Cert Demo 101 - Manual Reactive Renewal can renew certificates, so this imported workflow is contract-only until a read-only representative is provisioned."
     },
     {
       "scenario_id": "ao-disk-remediation-contract",
       "component": "workflow:aap-disk",
-      "workflow_name": "Disk Utilization & Remediation",
+      "workflow_name": "disk-demo-101",
       "job_template_names": [
         "Disk Utilization Check",
         "Linux - Remediate - Disk Cleanup",
@@ -40,7 +40,7 @@
       "launch": false,
       "read_only": false,
       "success_marker_fields": ["stdout", "output", "result"],
-      "blocked_reason": "Disk cleanup and expansion are remediation actions, so this AO workflow is contract-only until a read-only representative is provisioned."
+      "blocked_reason": "disk-demo-101 can clean up or expand disks, so this imported workflow is contract-only until a read-only representative is provisioned."
     },
     {
       "scenario_id": "product-demos-read-only-representative-required",
@@ -60,7 +60,7 @@
     {
       "scenario_id": "ao-incident-triage-contract",
       "component": "workflow:mcp",
-      "workflow_name": "AI Incident Triage",
+      "workflow_name": "ServiceNow Incident - AI Triage and Response",
       "job_template_names": ["SNOW - Auto Remediation"],
       "timeout_seconds": 180,
       "poll_seconds": 5,
@@ -70,7 +70,7 @@
       "launch": false,
       "read_only": false,
       "success_marker_fields": ["stdout", "output", "result"],
-      "blocked_reason": "AI Incident Triage can invoke ServiceNow auto-remediation, so it is contract-only and never default-launched."
+      "blocked_reason": "ServiceNow Incident - AI Triage and Response can invoke ServiceNow auto-remediation, so it is contract-only and never default-launched."
     }
   ]
 }

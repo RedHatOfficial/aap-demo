@@ -115,6 +115,13 @@ class ScenarioManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "success_marker_fields"):
             scenarios.load(self.write_manifest({"scenarios": [payload]}))
 
+    def test_load_rejects_static_metadata_as_success_marker_evidence(self):
+        payload = scenario().__dict__.copy()
+        payload["success_marker_fields"] = ["workflow_name"]
+
+        with self.assertRaisesRegex(ValueError, "execution evidence"):
+            scenarios.load(self.write_manifest({"scenarios": [payload]}))
+
     def test_default_scenarios_are_explicitly_blocked_and_never_invent_resources(self):
         manifest = ACCEPTANCE_DIR / "scenarios" / "critical-path.json"
 
@@ -124,6 +131,15 @@ class ScenarioManifestTests(unittest.TestCase):
         self.assertTrue(all(not item.launch and not item.read_only for item in loaded))
         self.assertTrue(all(item.blocked_reason for item in loaded))
         self.assertNotIn("Product Demos Read-Only Diagnostic", manifest.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [item.workflow_name for item in loaded],
+            [
+                "Cert Demo 101 - Manual Reactive Renewal",
+                "disk-demo-101",
+                None,
+                "ServiceNow Incident - AI Triage and Response",
+            ],
+        )
 
 
 class WorkflowExecutionTests(unittest.TestCase):
@@ -296,6 +312,48 @@ class RunnerScenarioTests(unittest.TestCase):
         failed = checks[0]
         self.assertEqual(failed.failure_class, FailureClass.CONTRACT_DRIFT)
         self.assertEqual(failed.details["job_ids"], [])
+        self.assertEqual(aap.polled, [])
+
+    def test_all_runtime_linked_job_fields_are_enforced_before_aap_polling(self):
+        inventory = ManagedResourceInventory(
+            ao_workflows=[{
+                "id": "workflow-1",
+                "name": "Certificate Renewal",
+                "aap_job_template_nodes": [],
+            }],
+            job_templates=[],
+        )
+        ao = FakeAoClient([{
+            "status": "successful",
+            "job_ids": [42],
+            "aap_job_ids": [43],
+            "jobs": [{"id": 44}],
+            "aap_jobs": [{"id": 45}],
+        }])
+        aap = FakeAapClient()
+
+        checks = workflows.run(
+            [scenario(job_template_names=[], success_markers=[])], inventory, ao, aap,
+        )
+
+        failed = checks[0]
+        self.assertEqual(failed.failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(failed.details["job_ids"], [42, 43, 44, 45])
+        self.assertEqual(aap.polled, [])
+
+    def test_bare_runtime_job_ids_fail_against_the_declared_template_allowlist(self):
+        ao = FakeAoClient([{
+            "status": "successful",
+            "job_ids": [42],
+            "aap_job_ids": [43],
+        }])
+        aap = FakeAapClient()
+
+        checks = workflows.run([scenario(success_markers=[])], managed_inventory(), ao, aap)
+
+        failed = checks[0]
+        self.assertEqual(failed.failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(failed.details["job_ids"], [42, 43])
         self.assertEqual(aap.polled, [])
 
     def test_scenario_deadline_is_shared_by_ao_and_linked_aap_jobs(self):
