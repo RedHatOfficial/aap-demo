@@ -68,6 +68,13 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn(secret, json_text)
         self.assertNotIn(secret, assignment_text)
 
+    def test_preserves_unquoted_assignment_and_query_delimiters(self):
+        query_text = redact_text("https://aap.example.test/api?token=abc&status=ok")
+        assignment_text = redact_text("token=abc;status=ok")
+
+        self.assertEqual(query_text, "https://aap.example.test/api?token=[REDACTED]&status=ok")
+        self.assertEqual(assignment_text, "token=[REDACTED];status=ok")
+
 
 class JsonClientTests(unittest.TestCase):
     def setUp(self):
@@ -102,6 +109,13 @@ class JsonClientTests(unittest.TestCase):
         self.assertEqual(request.get_header("Content-type"), "application/json")
         self.assertEqual(request.data, b'{"name":"demo"}')
         self.assertEqual(self.opener.open.call_args.kwargs["timeout"], 60)
+
+    def test_decodes_top_level_json_list_response(self):
+        self.opener.open.return_value = FakeResponse('[{"id": "one"}]')
+
+        response = self.client.request("GET", "/api/v1/workflows")
+
+        self.assertEqual(response, [{"id": "one"}])
 
     def test_non_success_response_raises_redacted_bounded_api_error(self):
         body = b'{"password":"password-value","detail":"Bearer token-value"}' + b"x" * 5000
@@ -238,6 +252,13 @@ class ResourceClientTests(unittest.TestCase):
         self.assertEqual(request.call_args_list[1].args, ("POST", "/api/v1/workflows/workflow-3/launch"))
         self.assertEqual(request.call_args_list[1].kwargs["payload"], {"inputs": {"token": "value"}})
         self.assertEqual(request.call_args_list[2].args, ("GET", "/api/v1/executions/execution-7"))
+
+    def test_ao_list_all_accepts_a_direct_list_through_json_transport(self):
+        client = AoClient("https://ao.example.test", "token-value")
+        with patch.object(client._opener, "open", return_value=FakeResponse('[{"id": "one"}]')):
+            workflows = client.list_all("/api/v1/workflows")
+
+        self.assertEqual(workflows, [{"id": "one"}])
 
 
 if __name__ == "__main__":

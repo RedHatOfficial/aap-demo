@@ -8,9 +8,9 @@ REDACTED = "[REDACTED]"
 _SECRET_KEYS = {"token", "password", "secret", "api_key", "authorization"}
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[^\s,;\"'}]+")
 _SECRET_VALUE = re.compile(
-    r"(?i)(?P<prefix>[\"']?(?:token|password|secret|api_key)[\"']?\s*[:=]\s*)(?P<value>\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}\]]*)"
+    r"(?i)(?P<prefix>[\"']?(?:token|password|secret|api_key)[\"']?\s*[:=]\s*)(?P<value>\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}\]&;]*)"
 )
-_QUERY_SECRET = re.compile(r"(?i)([?&](?:token|password|secret|api_key)=)[^\r\n&#]*")
+_QUERY_SECRET = re.compile(r"(?i)([?&](?:token|password|secret|api_key)=)[^\r\n&#;]*")
 
 
 def redact_text(text: str) -> str:

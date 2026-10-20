@@ -55,7 +55,7 @@ class JsonClient:
         *,
         payload: dict | None = None,
         timeout: int = 60,
-    ) -> dict:
+    ) -> dict | list[object]:
         url = self._url_for(path)
         data = None
         headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
@@ -83,8 +83,8 @@ class JsonClient:
             decoded = json.loads(body)
         except json.JSONDecodeError:
             raise ApiError(method.upper(), url, None, "response was not valid JSON") from None
-        if not isinstance(decoded, dict):
-            raise ApiError(method.upper(), url, None, "response JSON must be an object")
+        if not isinstance(decoded, (dict, list)):
+            raise ApiError(method.upper(), url, None, "response JSON must be an object or list")
         return decoded
 
     def _url_for(self, path: str) -> str:

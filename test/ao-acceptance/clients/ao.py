@@ -10,15 +10,22 @@ class AoClient(JsonClient):
     """Read, launch, and poll AO workflows."""
 
     def get(self, path: str) -> dict:
-        return self.request("GET", path)
+        response = self.request("GET", path)
+        if not isinstance(response, dict):
+            raise ApiError("GET", path, None, "resource response must be an object")
+        return response
 
     def list_all(self, path: str) -> list[dict]:
         items: list[dict] = []
         next_path: str | None = path
         while next_path:
-            page = self.get(next_path)
-            page_items = page.get("results", page.get("items", []))
-            next_value = page.get("next")
+            page = self.request("GET", next_path)
+            if isinstance(page, list):
+                page_items = page
+                next_value = None
+            else:
+                page_items = page.get("results", page.get("items", []))
+                next_value = page.get("next")
             if not isinstance(page_items, list) or not all(isinstance(item, dict) for item in page_items):
                 raise ApiError("GET", next_path, None, "list response did not contain object results")
             items.extend(page_items)
