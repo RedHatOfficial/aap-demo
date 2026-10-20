@@ -1,0 +1,48 @@
+{
+  "scenarios": [
+    {
+      "scenario_id": "ao-wiring-smoke",
+      "component": "workflow:ao-wiring",
+      "workflow_name": "Disk Utilization & Remediation",
+      "job_template_names": [],
+      "timeout_seconds": 120,
+      "poll_seconds": 5,
+      "expected_workflow_states": ["successful"],
+      "expected_job_states": ["successful"],
+      "success_markers": ["completed"]
+    },
+    {
+      "scenario_id": "aap-backed-certificate-renewal",
+      "component": "workflow:aap-certificate",
+      "workflow_name": "Intelligent Cert Lifecycle",
+      "job_template_names": ["Renew Certificate", "Validate Cert Renewal"],
+      "timeout_seconds": 300,
+      "poll_seconds": 5,
+      "expected_workflow_states": ["successful"],
+      "expected_job_states": ["successful"],
+      "success_markers": ["certificate"]
+    },
+    {
+      "scenario_id": "product-demos-read-only",
+      "component": "workflow:product-demos",
+      "workflow_name": "Product Demos Read-Only Diagnostic",
+      "job_template_names": ["AAP-Demo Acceptance | Product Demos Read-Only Diagnostic"],
+      "timeout_seconds": 180,
+      "poll_seconds": 5,
+      "expected_workflow_states": ["successful"],
+      "expected_job_states": ["successful"],
+      "success_markers": ["product demos"]
+    },
+    {
+      "scenario_id": "mcp-operation-smoke",
+      "component": "workflow:mcp",
+      "workflow_name": "AI Incident Triage",
+      "job_template_names": [],
+      "timeout_seconds": 180,
+      "poll_seconds": 5,
+      "expected_workflow_states": ["successful"],
+      "expected_job_states": ["successful"],
+      "success_markers": ["mcp"]
+    }
+  ]
+}

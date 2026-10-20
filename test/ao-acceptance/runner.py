@@ -13,18 +13,20 @@ try:
     from .model import CheckResult, CheckStatus, FailureClass, RunConfig
     from .environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from .inventory import build_inventory
-    from .checks import execution_environments, readiness, security, wiring
+    from .checks import execution_environments, readiness, security, wiring, workflows
     from .clients import AapClient, AoClient
     from .probes import McpToolsClient, ProbeSet
     from .redaction import redact_text
+    from . import scenarios as scenario_manifest
 except ImportError:  # Direct execution via run.sh or python runner.py.
     from model import CheckResult, CheckStatus, FailureClass, RunConfig
     from environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from inventory import build_inventory
-    from checks import execution_environments, readiness, security, wiring
+    from checks import execution_environments, readiness, security, wiring, workflows
     from clients import AapClient, AoClient
     from probes import McpToolsClient, ProbeSet
     from redaction import redact_text
+    import scenarios as scenario_manifest
 
 
 DEFAULT_ARTIFACT_DIR = Path("artifacts/ao-acceptance")
@@ -98,7 +100,14 @@ def _config_dict(config: RunConfig) -> dict[str, object]:
     return values
 
 
-def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None = None, command_runner: CommandRunner | None = None) -> list[CheckResult]:
+def run_managed_checks(
+    aap,
+    ao,
+    probes,
+    scenarios=None,
+    managed_markers: dict[str, str] | None = None,
+    command_runner: CommandRunner | None = None,
+) -> list[CheckResult]:
     """Build a redacted managed-resource inventory and run read-only checks.
 
     Client construction remains outside this helper so the runner does not read
@@ -107,12 +116,21 @@ def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None =
     """
     inventory = build_inventory(aap, ao, managed_markers or DEFAULT_MANAGED_MARKERS)
     command_runner = command_runner or getattr(probes, "runner", None) or CommandRunner()
-    return [
+    results = [
         *readiness.run(inventory, probes),
         *wiring.run(inventory),
         *security.run(inventory, probes),
-        *execution_environments.run(inventory, aap, command_runner),
     ]
+    if any(result.status in (CheckStatus.FAIL, CheckStatus.BLOCKED) for result in results):
+        return results
+    if scenarios is not None:
+        workflow_results = workflows.run(scenarios, inventory, ao, aap)
+        results.extend(workflow_results)
+        # Contract drift must stop all live launches, including EE checks.
+        if any(result.failure_class == FailureClass.CONTRACT_DRIFT for result in workflow_results):
+            return results
+    results.extend(execution_environments.run(inventory, aap, command_runner))
+    return results
 
 
 def _route_url(
@@ -204,6 +222,28 @@ def _prerequisite_failure(check_id: str, summary: str, *, details: dict[str, obj
     )
 
 
+def _scenario_failure(error: Exception, scenario_file: Path) -> CheckResult:
+    now = datetime.now(UTC).isoformat()
+    return CheckResult(
+        check_id="workflow.manifest",
+        component="workflow",
+        status=CheckStatus.FAIL,
+        failure_class=FailureClass.CONTRACT_DRIFT,
+        summary="scenario manifest is invalid; no workflow or job was launched",
+        started_at=now,
+        finished_at=now,
+        duration_seconds=0.0,
+        details={
+            "scenario_id": None,
+            "workflow_id": None,
+            "job_template_ids": [],
+            "job_ids": [],
+            "scenario_file": str(scenario_file),
+            "error": redact_text(str(error)),
+        },
+    )
+
+
 def _run(config: RunConfig) -> dict[str, object]:
     """Create the run-level result container for the scaffold."""
     results: list[CheckResult] = []
@@ -262,13 +302,20 @@ def _run(config: RunConfig) -> dict[str, object]:
                 else:
                     aap, ao, probes = dependencies
                     try:
-                        results.extend(run_managed_checks(aap, ao, probes, command_runner=command_runner))
+                        loaded_scenarios = scenario_manifest.load(config.scenario_file)
                     except Exception as error:
-                        results.append(_prerequisite_failure(
-                            "runner.managed-checks",
-                            "managed live checks could not be initialized or observed",
-                            details={"error": redact_text(str(error))},
-                        ))
+                        results.append(_scenario_failure(error, config.scenario_file))
+                    else:
+                        try:
+                            results.extend(run_managed_checks(
+                                aap, ao, probes, scenarios=loaded_scenarios, command_runner=command_runner,
+                            ))
+                        except Exception as error:
+                            results.append(_prerequisite_failure(
+                                "runner.managed-checks",
+                                "managed live checks could not be initialized or observed",
+                                details={"error": redact_text(str(error))},
+                            ))
     return {
         "config": _config_dict(config),
         "results": [result.to_dict() for result in results],

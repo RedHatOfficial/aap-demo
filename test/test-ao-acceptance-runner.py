@@ -153,7 +153,16 @@ class LiveRunnerTests(unittest.TestCase):
         self.assertEqual(result["results"][-1]["check_id"], "security.tokens")
         self.assertEqual(command_runner.timeout_seconds, 47)
         create.assert_called_once_with(self.config, command_runner)
-        managed_checks.assert_called_once_with("aap", "ao", "probes", command_runner=command_runner)
+        managed_checks.assert_called_once()
+        args, kwargs = managed_checks.call_args
+        self.assertEqual(args, ("aap", "ao", "probes"))
+        self.assertEqual(kwargs["command_runner"], command_runner)
+        self.assertEqual([scenario.scenario_id for scenario in kwargs["scenarios"]], [
+            "ao-wiring-smoke",
+            "aap-backed-certificate-renewal",
+            "product-demos-read-only",
+            "mcp-operation-smoke",
+        ])
 
     def test_missing_live_dependencies_is_a_prerequisite_failure(self):
         preflight = model.CheckResult(
