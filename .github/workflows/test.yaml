@@ -99,6 +99,9 @@ jobs:
       - name: Run deploy cache-order tests
         run: ./test/test-deploy-cache-order.sh
 
+      - name: Run deploy storage preflight tests
+        run: ./test/test-deploy-storage-preflight.sh
+
       - name: Run AO LLM provider tests
         run: ./test/test-ao-llm-provider.sh
 
@@ -162,3 +165,18 @@ jobs:
             fi
           done
           exit $EXIT_CODE
+
+  powershell-tests:
+    name: PowerShell Deploy Tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Windows PowerShell 5.1 deploy tests
+        shell: powershell
+        run: .\test\test-powershell-deploy-prerequisites.ps1
+
+      - name: Run PowerShell 7 deploy tests
+        shell: pwsh
+        run: ./test/test-powershell-deploy-prerequisites.ps1

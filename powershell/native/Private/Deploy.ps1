@@ -44,21 +44,31 @@ PUBLIC_URL required for noingress CR.
   }
 
   Write-AapStep "Applying CR: $CrName"
-  if ((Invoke-AapOcQuiet @('get', 'sc', 'nfs-local-rwx')) -eq 0) {
-    Invoke-AapOcApplyFile -Path $crPath -Namespace $Namespace
-  } else {
-    Write-AapWarn 'nfs-local-rwx missing - applying CR with ReadWriteOnce fallback'
-    $cr = Get-Content -LiteralPath $crPath -Raw
-    $cr = $cr -replace 'file_storage_storage_class: nfs-local-rwx', '# file_storage_storage_class: (default)'
-    $cr = $cr -replace 'file_storage_access_mode: ReadWriteMany', 'file_storage_access_mode: ReadWriteOnce'
-    $temp = [System.IO.Path]::GetTempFileName()
-    try {
-      Set-AapUtf8Content -Path $temp -Value $cr
-      Invoke-AapOcApplyFile -Path $temp -Namespace $Namespace
-    } finally {
-      Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
-    }
+  Assert-AapStoragePrerequisites -CrName $CrName
+  Invoke-AapOcApplyFile -Path $crPath -Namespace $Namespace
+}
+
+function Assert-AapStoragePrerequisites {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$CrName
+  )
+
+  $crPath = Get-AapManifestPath "config/crs/aap-$CrName.yaml"
+  if (-not (Test-Path -LiteralPath $crPath)) {
+    return
   }
+
+  $requiresNfs = Select-String -LiteralPath $crPath -Pattern '^\s*file_storage_storage_class:\s*nfs-local-rwx\s*$'
+  if (-not $requiresNfs) {
+    return
+  }
+
+  if ((Invoke-AapOcQuiet @('get', 'sc', 'nfs-local-rwx')) -eq 0) {
+    return
+  }
+
+  throw "AAP CR '$CrName' requires the missing nfs-local-rwx StorageClass. Run 'aap-demo create' to provision the NFS storage layer, then retry deploy."
 }
 
 function Invoke-AapDemoDeploy {
@@ -77,8 +87,6 @@ function Invoke-AapDemoDeploy {
 
   Install-AapIngressCaTrust
 
-  Install-AapOlm
-
   if (-not $Force) {
     $existingName = Get-AapExistingCrName -Namespace $Namespace
     if ($existingName) {
@@ -89,6 +97,9 @@ function Invoke-AapDemoDeploy {
       return
     }
   }
+
+  Assert-AapStoragePrerequisites -CrName $CrName
+  Install-AapOlm
 
   Write-AapStep "Deploying AAP 2.7 to namespace $Namespace"
   Initialize-AapNamespace -Namespace $Namespace
