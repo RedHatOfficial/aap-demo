@@ -16,7 +16,8 @@ try:
     from .checks import execution_environments, readiness, security, wiring, workflows
     from .clients import AapClient, AoClient
     from .probes import McpToolsClient, ProbeSet
-    from .redaction import redact_text
+    from .redaction import redact, redact_text
+    from . import artifacts
     from . import scenarios as scenario_manifest
 except ImportError:  # Direct execution via run.sh or python runner.py.
     from model import CheckResult, CheckStatus, FailureClass, RunConfig
@@ -25,7 +26,8 @@ except ImportError:  # Direct execution via run.sh or python runner.py.
     from checks import execution_environments, readiness, security, wiring, workflows
     from clients import AapClient, AoClient
     from probes import McpToolsClient, ProbeSet
-    from redaction import redact_text
+    from redaction import redact, redact_text
+    import artifacts
     import scenarios as scenario_manifest
 
 
@@ -248,6 +250,7 @@ def _run(config: RunConfig) -> dict[str, object]:
     """Create the run-level result container for the scaffold."""
     results: list[CheckResult] = []
     mutated = False
+    diagnostic_context: dict[str, object] = {"clients": {}, "command_runner": None}
     if config.dry_run:
         results.append(
             CheckResult(
@@ -264,6 +267,7 @@ def _run(config: RunConfig) -> dict[str, object]:
         )
     else:
         command_runner = CommandRunner()
+        diagnostic_context["command_runner"] = command_runner
         # Keep the declared runner boundary while making timeout and namespace
         # observable to Task 5 checks and their injected test doubles.
         command_runner.timeout_seconds = config.timeout_seconds
@@ -301,6 +305,7 @@ def _run(config: RunConfig) -> dict[str, object]:
                     results.append(_prerequisite_failure("runner.live-dependencies", dependencies[1]))
                 else:
                     aap, ao, probes = dependencies
+                    diagnostic_context["clients"] = {"aap": aap, "ao": ao, "probes": probes}
                     try:
                         loaded_scenarios = scenario_manifest.load(config.scenario_file)
                     except Exception as error:
@@ -320,18 +325,83 @@ def _run(config: RunConfig) -> dict[str, object]:
         "config": _config_dict(config),
         "results": [result.to_dict() for result in results],
         "mutated": mutated,
+        "_check_results": results,
+        "_diagnostic_context": diagnostic_context,
     }
+
+
+def _check_results(run_result: dict[str, object]) -> list[CheckResult]:
+    """Use the private objects when available, with the old serialized seam."""
+    raw_results = run_result.get("_check_results")
+    if isinstance(raw_results, list) and all(isinstance(result, CheckResult) for result in raw_results):
+        return raw_results
+    check_results: list[CheckResult] = []
+    for raw in run_result.get("results", []):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            status = CheckStatus(raw["status"])
+            failure = raw.get("failure_class")
+            failure_class = FailureClass(failure) if failure is not None else None
+        except (KeyError, TypeError, ValueError):
+            continue
+        details = raw.get("details", {})
+        check_results.append(CheckResult(
+            check_id=str(raw.get("check_id", "unknown")),
+            component=str(raw.get("component", "unknown")),
+            status=status,
+            failure_class=failure_class,
+            summary=str(raw.get("summary", "")),
+            started_at=str(raw.get("started_at", "")),
+            finished_at=str(raw.get("finished_at", "")),
+            duration_seconds=float(raw.get("duration_seconds", 0.0)),
+            details=details if isinstance(details, dict) else {},
+        ))
+    return check_results
+
+
+def _exit_code(results: list[CheckResult]) -> int:
+    """Classify outcomes without letting diagnostic collection affect the result."""
+    if any(
+        result.status == CheckStatus.BLOCKED
+        or result.failure_class == FailureClass.PREREQUISITE
+        for result in results
+    ):
+        return 2
+    if any(result.status == CheckStatus.FAIL for result in results):
+        return 1
+    return 0
 
 
 def main(argv: list[str]) -> int:
     config = parse_args(argv)
     run_result = _run(config)
-    print(json.dumps(run_result, indent=2, sort_keys=True))
-    results = run_result["results"]
-    return 1 if any(
-        result["status"] in (CheckStatus.FAIL.value, CheckStatus.BLOCKED.value)
-        for result in results
-    ) else 0
+    results = _check_results(run_result)
+    diagnostic_context = run_result.get("_diagnostic_context", {})
+    try:
+        artifacts.write_results(config.artifact_dir / "results.json", results)
+        artifacts.write_summary(config.artifact_dir / "summary.txt", results)
+    except Exception:
+        print("acceptance result artifacts could not be written", file=sys.stderr)
+
+    exit_code = _exit_code(results)
+    command_runner = diagnostic_context.get("command_runner")
+    if exit_code and command_runner is not None:
+        try:
+            artifacts.ArtifactCollector().collect_failure(
+                config,
+                results,
+                diagnostic_context.get("clients", {}),
+                command_runner,
+            )
+        except Exception:
+            # Failure diagnostics are best-effort and must not conceal the
+            # original failure or expose details from their own exception.
+            print("acceptance failure diagnostics could not be collected", file=sys.stderr)
+
+    public_result = {key: value for key, value in run_result.items() if not key.startswith("_")}
+    print(json.dumps(redact(public_result), indent=2, sort_keys=True))
+    return exit_code
 
 
 if __name__ == "__main__":

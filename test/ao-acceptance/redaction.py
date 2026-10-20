@@ -1,7 +1,6 @@
 """Redact credentials before values become diagnostics or artifacts."""
 
 import re
-from typing import Any
 
 
 REDACTED = "[REDACTED]"
@@ -11,8 +10,9 @@ _SECRET_KEYS = {
 }
 _SECRET_NAME = r"(?:(?:[a-z0-9]+[-_])*)(?:token|password|secret|api[-_]?key|access[-_]?token|client[-_]?secret|credentials?|bearer)"
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[^\s,;\"'}]+")
+_OPAQUE_SECRET = re.compile(r"\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{16,})\b")
 _SECRET_VALUE = re.compile(
-    rf"(?i)(?P<prefix>[\"']?{_SECRET_NAME}[\"']?\s*[:=]\s*)(?P<value>\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}}\]&;]*)"
+    rf"(?i)(?P<prefix>[\"']?{_SECRET_NAME}[\"']?\s*[:=]\s*)(?P<value>\[REDACTED\]|\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}}\]&;]*)"
 )
 _QUERY_SECRET = re.compile(rf"(?i)([?&]{_SECRET_NAME}=)[^\r\n&#;]*")
 
@@ -21,11 +21,14 @@ def redact_text(text: str) -> str:
     """Replace bearer credentials and common secret values in free-form text."""
     redacted = _BEARER_TOKEN.sub(f"Bearer {REDACTED}", text)
     redacted = _SECRET_VALUE.sub(_replace_secret_value, redacted)
-    return _QUERY_SECRET.sub(rf"\1{REDACTED}", redacted)
+    redacted = _QUERY_SECRET.sub(rf"\1{REDACTED}", redacted)
+    return _OPAQUE_SECRET.sub(REDACTED, redacted)
 
 
 def _replace_secret_value(match: re.Match[str]) -> str:
     value = match.group("value")
+    if value.strip("\"'") == REDACTED:
+        return f"{match.group('prefix')}{value}"
     if value.startswith('"'):
         return f'{match.group("prefix")}"{REDACTED}"'
     if value.startswith("'"):
@@ -46,7 +49,13 @@ def redact(value: object) -> object:
         return tuple(redact(item) for item in value)
     if isinstance(value, str):
         return redact_text(value)
-    return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, BaseException):
+        return redact_text(str(value))
+    # Diagnostics must be fail-closed: an arbitrary object can expose secrets
+    # through its repr, so never serialize it merely to make a report complete.
+    return f"[diagnostic omitted unsafe value of type {type(value).__name__}]"
 
 
 def _normalized_key(key: object) -> str:

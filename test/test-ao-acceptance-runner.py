@@ -210,7 +210,7 @@ class LiveRunnerTests(unittest.TestCase):
 
         result = json.loads(output.getvalue())
         live = next(item for item in result["results"] if item["check_id"] == "runner.live-dependencies")
-        self.assertEqual(exit_code, 1)
+        self.assertEqual(exit_code, 2)
         self.assertEqual(live["status"], model.CheckStatus.FAIL.value)
         self.assertEqual(live["failure_class"], model.FailureClass.PREREQUISITE.value)
         self.assertNotIn("aap-token", json.dumps(live))
@@ -281,7 +281,7 @@ class RunnerExitTests(unittest.TestCase):
         with mock.patch.object(runner, "_run", return_value={
             "config": {}, "results": [result.to_dict()],
         }), redirect_stdout(io.StringIO()):
-            self.assertEqual(runner.main([]), 1)
+            self.assertEqual(runner.main([]), 2)
 
 
 if __name__ == "__main__":
