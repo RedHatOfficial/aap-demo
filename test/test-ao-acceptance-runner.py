@@ -1,9 +1,12 @@
 """Focused tests for the AO live acceptance runner scaffold."""
 
 import json
+from contextlib import redirect_stdout
+import io
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 ACCEPTANCE_DIR = Path(__file__).parent / "ao-acceptance"
@@ -69,7 +72,7 @@ class CheckResultSerializationTests(unittest.TestCase):
             check_id="ao.route",
             component="ao",
             status=model.CheckStatus.PASS,
-            failure_class=None,
+            failure_class=model.FailureClass.WIRING,
             summary="route is ready",
             started_at="2026-10-20T12:00:00+00:00",
             finished_at="2026-10-20T12:00:01+00:00",
@@ -81,7 +84,7 @@ class CheckResultSerializationTests(unittest.TestCase):
         decoded = json.loads(encoded)
 
         self.assertEqual(decoded["status"], "PASS")
-        self.assertIsNone(decoded["failure_class"])
+        self.assertEqual(decoded["failure_class"], "wiring")
         self.assertEqual(decoded["started_at"], "2026-10-20T12:00:00+00:00")
         self.assertEqual(decoded["finished_at"], "2026-10-20T12:00:01+00:00")
         self.assertEqual(decoded["details"], {"http_status": 200})
@@ -90,6 +93,26 @@ class CheckResultSerializationTests(unittest.TestCase):
 class RunnerExitTests(unittest.TestCase):
     def test_dry_run_returns_success(self):
         self.assertEqual(runner.main(["--dry-run"]), 0)
+
+    def test_fail_result_returns_failure_exit_code(self):
+        result = model.CheckResult(
+            "check.fail", "ao", model.CheckStatus.FAIL,
+            model.FailureClass.EXECUTION, "failed", "", "", 0.0, {},
+        )
+        with mock.patch.object(runner, "_run", return_value={
+            "config": {}, "results": [result.to_dict()],
+        }), redirect_stdout(io.StringIO()):
+            self.assertEqual(runner.main([]), 1)
+
+    def test_blocked_result_returns_failure_exit_code(self):
+        result = model.CheckResult(
+            "check.blocked", "ao", model.CheckStatus.BLOCKED,
+            model.FailureClass.PREREQUISITE, "blocked", "", "", 0.0, {},
+        )
+        with mock.patch.object(runner, "_run", return_value={
+            "config": {}, "results": [result.to_dict()],
+        }), redirect_stdout(io.StringIO()):
+            self.assertEqual(runner.main([]), 1)
 
 
 if __name__ == "__main__":
