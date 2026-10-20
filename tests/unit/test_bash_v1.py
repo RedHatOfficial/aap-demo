@@ -182,7 +182,7 @@ def test_bash_fleet_source_has_explicit_backend_delegation() -> None:
 
 
 def test_bash_can_dispatch_the_python_v2_cli() -> None:
-    env = {"AAP_DEMO_PYTHON": str(REPO_ROOT / ".venv/bin/python"), "CI": "true"}
+    env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "aap-demo.sh"), "v2", "--help"],
         cwd=REPO_ROOT,
@@ -198,7 +198,7 @@ def test_bash_can_dispatch_the_python_v2_cli() -> None:
 
 
 def test_bash_v2_can_enable_fleet() -> None:
-    env = {"AAP_DEMO_PYTHON": str(REPO_ROOT / ".venv/bin/python"), "CI": "true"}
+    env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "aap-demo.sh"), "v2", "enable", "fleet", "--help"],
         cwd=REPO_ROOT,
@@ -213,7 +213,7 @@ def test_bash_v2_can_enable_fleet() -> None:
 
 
 def test_bash_enable_fleet_can_select_kube_native_backend() -> None:
-    env = {"AAP_DEMO_PYTHON": str(REPO_ROOT / ".venv/bin/python"), "CI": "true"}
+    env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
     result = subprocess.run(
         [
             "bash",
