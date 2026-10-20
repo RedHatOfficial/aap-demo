@@ -1,48 +1,76 @@
 {
   "scenarios": [
     {
-      "scenario_id": "ao-wiring-smoke",
+      "scenario_id": "ao-certificate-lifecycle-contract",
       "component": "workflow:ao-wiring",
-      "workflow_name": "Disk Utilization & Remediation",
-      "job_template_names": [],
+      "workflow_name": "Intelligent Cert Lifecycle",
+      "job_template_names": [
+        "Renew Certificate",
+        "Renew Java Keystore Certificate",
+        "Validate Cert Renewal",
+        "Notify Mattermost"
+      ],
       "timeout_seconds": 120,
       "poll_seconds": 5,
       "expected_workflow_states": ["successful"],
       "expected_job_states": ["successful"],
-      "success_markers": ["completed"]
+      "success_markers": [],
+      "launch": false,
+      "read_only": false,
+      "success_marker_fields": ["stdout", "output", "result"],
+      "blocked_reason": "The AO addon does not provision a read-only certificate-lifecycle representative; this workflow can renew certificates."
     },
     {
-      "scenario_id": "aap-backed-certificate-renewal",
-      "component": "workflow:aap-certificate",
-      "workflow_name": "Intelligent Cert Lifecycle",
-      "job_template_names": ["Renew Certificate", "Validate Cert Renewal"],
+      "scenario_id": "ao-disk-remediation-contract",
+      "component": "workflow:aap-disk",
+      "workflow_name": "Disk Utilization & Remediation",
+      "job_template_names": [
+        "Disk Utilization Check",
+        "Linux - Remediate - Disk Cleanup",
+        "Linux - Remediate - Continue",
+        "Linux - Remediate - Disk Expand",
+        "Disk Utilization - Fallback",
+        "Notify Chatroom"
+      ],
       "timeout_seconds": 300,
       "poll_seconds": 5,
       "expected_workflow_states": ["successful"],
       "expected_job_states": ["successful"],
-      "success_markers": ["certificate"]
+      "success_markers": [],
+      "launch": false,
+      "read_only": false,
+      "success_marker_fields": ["stdout", "output", "result"],
+      "blocked_reason": "Disk cleanup and expansion are remediation actions, so this AO workflow is contract-only until a read-only representative is provisioned."
     },
     {
-      "scenario_id": "product-demos-read-only",
+      "scenario_id": "product-demos-read-only-representative-required",
       "component": "workflow:product-demos",
-      "workflow_name": "Product Demos Read-Only Diagnostic",
-      "job_template_names": ["AAP-Demo Acceptance | Product Demos Read-Only Diagnostic"],
+      "workflow_name": null,
+      "job_template_names": ["APD | Install Linux Demos"],
       "timeout_seconds": 180,
       "poll_seconds": 5,
       "expected_workflow_states": ["successful"],
       "expected_job_states": ["successful"],
-      "success_markers": ["product demos"]
+      "success_markers": [],
+      "launch": false,
+      "read_only": false,
+      "success_marker_fields": ["stdout", "output", "result"],
+      "blocked_reason": "Product Demos provisions installer templates, not a read-only representative; no invented diagnostic is accepted as a default pass path."
     },
     {
-      "scenario_id": "mcp-operation-smoke",
+      "scenario_id": "ao-incident-triage-contract",
       "component": "workflow:mcp",
       "workflow_name": "AI Incident Triage",
-      "job_template_names": [],
+      "job_template_names": ["SNOW - Auto Remediation"],
       "timeout_seconds": 180,
       "poll_seconds": 5,
       "expected_workflow_states": ["successful"],
       "expected_job_states": ["successful"],
-      "success_markers": ["mcp"]
+      "success_markers": [],
+      "launch": false,
+      "read_only": false,
+      "success_marker_fields": ["stdout", "output", "result"],
+      "blocked_reason": "AI Incident Triage can invoke ServiceNow auto-remediation, so it is contract-only and never default-launched."
     }
   ]
 }

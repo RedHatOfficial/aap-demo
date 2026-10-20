@@ -158,10 +158,10 @@ class LiveRunnerTests(unittest.TestCase):
         self.assertEqual(args, ("aap", "ao", "probes"))
         self.assertEqual(kwargs["command_runner"], command_runner)
         self.assertEqual([scenario.scenario_id for scenario in kwargs["scenarios"]], [
-            "ao-wiring-smoke",
-            "aap-backed-certificate-renewal",
-            "product-demos-read-only",
-            "mcp-operation-smoke",
+            "ao-certificate-lifecycle-contract",
+            "ao-disk-remediation-contract",
+            "product-demos-read-only-representative-required",
+            "ao-incident-triage-contract",
         ])
 
     def test_missing_live_dependencies_is_a_prerequisite_failure(self):

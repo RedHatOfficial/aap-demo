@@ -29,6 +29,10 @@ def scenario(**overrides):
         "expected_workflow_states": ["successful"],
         "expected_job_states": ["successful"],
         "success_markers": ["completed"],
+        "launch": True,
+        "read_only": True,
+        "success_marker_fields": ["stdout", "result"],
+        "blocked_reason": None,
     }
     values.update(overrides)
     return scenarios.Scenario(**values)
@@ -97,6 +101,30 @@ class ScenarioManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate"):
             scenarios.load(self.write_manifest({"scenarios": [payload, payload]}))
 
+    def test_load_rejects_a_launchable_scenario_that_is_not_declared_read_only(self):
+        payload = scenario().__dict__.copy()
+        payload.update({"launch": True, "read_only": False, "success_marker_fields": ["stdout"]})
+
+        with self.assertRaisesRegex(ValueError, "read_only"):
+            scenarios.load(self.write_manifest({"scenarios": [payload]}))
+
+    def test_load_requires_declared_execution_evidence_fields_for_markers(self):
+        payload = scenario().__dict__.copy()
+        payload["success_marker_fields"] = []
+
+        with self.assertRaisesRegex(ValueError, "success_marker_fields"):
+            scenarios.load(self.write_manifest({"scenarios": [payload]}))
+
+    def test_default_scenarios_are_explicitly_blocked_and_never_invent_resources(self):
+        manifest = ACCEPTANCE_DIR / "scenarios" / "critical-path.json"
+
+        loaded = scenarios.load(manifest)
+
+        self.assertEqual(len(loaded), 4)
+        self.assertTrue(all(not item.launch and not item.read_only for item in loaded))
+        self.assertTrue(all(item.blocked_reason for item in loaded))
+        self.assertNotIn("Product Demos Read-Only Diagnostic", manifest.read_text(encoding="utf-8"))
+
 
 class WorkflowExecutionTests(unittest.TestCase):
     def test_unknown_workflow_is_contract_drift_without_a_launch(self):
@@ -118,7 +146,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         ao = FakeAoClient([{
             "status": "successful",
             "message": "workflow completed",
-            "aap_jobs": [{"id": 42}],
+            "aap_jobs": [{"id": 42, "job_template_id": 7, "job_template_name": "Renew Certificate"}],
         }])
         aap = FakeAapClient([{"status": "successful", "stdout": "completed certificate renewal"}])
 
@@ -133,8 +161,32 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(ao.launched, ["workflow-1"])
         self.assertEqual(aap.polled, [42])
 
+    def test_contract_only_unsafe_scenario_is_blocked_without_a_launch(self):
+        ao = FakeAoClient([])
+
+        checks = workflows.run(
+            [scenario(launch=False, read_only=False, blocked_reason="no read-only representative")],
+            managed_inventory(), ao, FakeAapClient(),
+        )
+
+        self.assertEqual(checks[0].status, CheckStatus.BLOCKED)
+        self.assertEqual(checks[0].failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(ao.launched, [])
+
+    def test_unexpected_workflow_template_link_is_contract_drift_without_a_launch(self):
+        inventory = managed_inventory()
+        inventory.ao_workflows[0]["aap_job_template_nodes"].append({
+            "job_template_id": 99, "job_template_name": "Unexpected job",
+        })
+        ao = FakeAoClient([])
+
+        checks = workflows.run([scenario()], inventory, ao, FakeAapClient())
+
+        self.assertEqual(checks[0].failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(ao.launched, [])
+
     def test_ao_terminal_failure_includes_scenario_and_linked_resource_ids(self):
-        ao = FakeAoClient([{"status": "failed", "aap_jobs": [{"id": 42}]}])
+        ao = FakeAoClient([{"status": "failed", "aap_jobs": [{"id": 42, "job_template_id": 7, "job_template_name": "Renew Certificate"}]}])
 
         checks = workflows.run([scenario()], managed_inventory(), ao, FakeAapClient())
 
@@ -196,7 +248,7 @@ class RunnerScenarioTests(unittest.TestCase):
         managed_checks.assert_not_called()
 
     def test_linked_aap_job_failure_is_an_execution_failure(self):
-        ao = FakeAoClient([{"status": "successful", "aap_jobs": [{"id": 42}]}])
+        ao = FakeAoClient([{"status": "successful", "aap_jobs": [{"id": 42, "job_template_id": 7, "job_template_name": "Renew Certificate"}]}])
         aap = FakeAapClient([{"status": "failed"}])
 
         checks = workflows.run([scenario(success_markers=[])], managed_inventory(), ao, aap)
@@ -207,7 +259,7 @@ class RunnerScenarioTests(unittest.TestCase):
         self.assertEqual(failed.details["job_ids"], [42])
 
     def test_completion_marker_is_found_in_aap_job_events(self):
-        ao = FakeAoClient([{"status": "successful", "aap_jobs": [{"id": 42}]}])
+        ao = FakeAoClient([{"status": "successful", "aap_jobs": [{"id": 42, "job_template_id": 7, "job_template_name": "Renew Certificate"}]}])
         aap = FakeAapClient(
             [{"status": "successful"}],
             [{"event": "runner_on_ok", "stdout": "completion marker from job events"}],
@@ -221,9 +273,49 @@ class RunnerScenarioTests(unittest.TestCase):
         self.assertEqual(checks[0].status, CheckStatus.PASS)
         self.assertEqual(aap.event_paths, ["/api/v2/jobs/42/job_events/"])
 
+    def test_unapproved_linked_job_template_is_contract_drift_before_job_polling(self):
+        ao = FakeAoClient([{
+            "status": "successful",
+            "aap_jobs": [{"id": 42, "job_template_id": 999, "job_template_name": "Unapproved job"}],
+        }])
+        aap = FakeAapClient([{"status": "successful", "stdout": "completed"}])
+
+        checks = workflows.run([scenario()], managed_inventory(), ao, aap)
+
+        failed = checks[0]
+        self.assertEqual(failed.failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(failed.details["job_ids"], [42])
+        self.assertEqual(aap.polled, [])
+
+    def test_absent_declared_link_is_contract_drift_before_job_polling(self):
+        ao = FakeAoClient([{"status": "successful", "aap_jobs": []}])
+        aap = FakeAapClient([{"status": "successful", "stdout": "completed"}])
+
+        checks = workflows.run([scenario()], managed_inventory(), ao, aap)
+
+        failed = checks[0]
+        self.assertEqual(failed.failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(failed.details["job_ids"], [])
+        self.assertEqual(aap.polled, [])
+
+    def test_scenario_deadline_is_shared_by_ao_and_linked_aap_jobs(self):
+        ao = FakeAoClient([{
+            "status": "successful",
+            "aap_jobs": [{"id": 42, "job_template_id": 7, "job_template_name": "Renew Certificate"}],
+        }])
+        aap = FakeAapClient([{"status": "successful", "stdout": "completed"}])
+        with mock.patch.object(workflows.time, "monotonic", side_effect=[0.0, 0.0, 2.0]):
+            checks = workflows.run([scenario(timeout_seconds=1)], managed_inventory(), ao, aap)
+
+        self.assertEqual(checks[0].failure_class, FailureClass.TIMEOUT)
+        self.assertEqual(aap.polled, [])
+
+    def test_success_marker_does_not_match_workflow_metadata(self):
+        self.assertFalse(workflows._contains_markers([{"workflow_name": "completed"}], ["completed"]))
+
     def test_nonterminal_workflow_times_out_with_linked_resource_ids(self):
-        ao = FakeAoClient([{"status": "running", "aap_jobs": [{"id": 42}]}])
-        with mock.patch.object(workflows.time, "monotonic", side_effect=[0.0, 2.0]):
+        ao = FakeAoClient([{"status": "running", "aap_jobs": [{"id": 42, "job_template_id": 7, "job_template_name": "Renew Certificate"}]}])
+        with mock.patch.object(workflows.time, "monotonic", side_effect=[0.0, 0.0, 2.0]):
             checks = workflows.run([scenario(timeout_seconds=1)], managed_inventory(), ao, FakeAapClient())
 
         failed = checks[0]
@@ -234,7 +326,7 @@ class RunnerScenarioTests(unittest.TestCase):
         self.assertEqual(failed.details["job_ids"], [42])
 
     def test_missing_completion_marker_is_an_execution_failure(self):
-        ao = FakeAoClient([{"status": "successful", "aap_jobs": [{"id": 42}]}])
+        ao = FakeAoClient([{"status": "successful", "aap_jobs": [{"id": 42, "job_template_id": 7, "job_template_name": "Renew Certificate"}]}])
         aap = FakeAapClient([{"status": "successful", "stdout": "certificate renewed"}])
 
         checks = workflows.run([scenario()], managed_inventory(), ao, aap)
