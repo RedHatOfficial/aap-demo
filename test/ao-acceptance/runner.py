@@ -42,6 +42,11 @@ DEFAULT_MANAGED_MARKERS = {key: "aap-demo" for key in (
     "ao_integrations",
     "ao_workflows",
 )}
+_LIVE_TOKEN_VARIABLES = (
+    "AAP_ACCEPTANCE_AAP_TOKEN",
+    "AAP_ACCEPTANCE_AO_TOKEN",
+    "AAP_ACCEPTANCE_MCP_TOKEN",
+)
 
 
 def parse_args(argv: list[str]) -> RunConfig:
@@ -172,14 +177,10 @@ def create_live_dependencies(config: RunConfig, command_runner: CommandRunner):
     variables.  Their absence is a prerequisite failure rather than a fallback
     to Kubernetes secrets or an unauthenticated probe.
     """
-    tokens = {
-        "AAP_ACCEPTANCE_AAP_TOKEN": os.environ.get("AAP_ACCEPTANCE_AAP_TOKEN"),
-        "AAP_ACCEPTANCE_AO_TOKEN": os.environ.get("AAP_ACCEPTANCE_AO_TOKEN"),
-        "AAP_ACCEPTANCE_MCP_TOKEN": os.environ.get("AAP_ACCEPTANCE_MCP_TOKEN"),
-    }
-    missing = [name for name, value in tokens.items() if not value]
-    if missing:
-        return None, "live acceptance credentials are unavailable"
+    configuration_error = live_configuration_error()
+    if configuration_error:
+        return None, configuration_error
+    tokens = {name: os.environ[name] for name in _LIVE_TOKEN_VARIABLES}
     aap_url = _route_url(command_runner, config.aap_namespace, name="aap")
     ao_url = _route_url(command_runner, config.namespace, name="automation-orchestrator")
     mcp_url = _route_url(
@@ -211,6 +212,16 @@ def create_live_dependencies(config: RunConfig, command_runner: CommandRunner):
         mcp_client=mcp_client,
     )
     return aap, ao, probes
+
+
+def live_configuration_error() -> str | None:
+    """Return a safe prerequisite error before a run can mutate a target."""
+    if any(not os.environ.get(name) for name in _LIVE_TOKEN_VARIABLES):
+        return "live acceptance credentials are unavailable"
+    ca_file = os.environ.get("AAP_ACCEPTANCE_CA_FILE")
+    if ca_file and not Path(ca_file).is_file():
+        return "live acceptance CA file is unavailable"
+    return None
 
 
 def _prerequisite_failure(check_id: str, summary: str, *, details: dict[str, object] | None = None) -> CheckResult:
@@ -286,7 +297,11 @@ def _run(config: RunConfig) -> dict[str, object]:
             for result in preflight
             if result.check_id.startswith("target.") and result.details.get("ready") is False
         }
-        if not blocked and (config.mode == "provision" or (config.mode == "auto" and missing)):
+        preparation_requested = config.mode == "provision" or (config.mode == "auto" and missing)
+        configuration_error = None if blocked or not preparation_requested else live_configuration_error()
+        if configuration_error:
+            results.append(_prerequisite_failure("runner.live-dependencies", configuration_error))
+        if not blocked and not configuration_error and preparation_requested:
             preparation = prepare_target(config, command_runner, missing)
             results.extend(preparation)
             mutated = bool(preparation)
@@ -294,7 +309,7 @@ def _run(config: RunConfig) -> dict[str, object]:
                 preflight = validate_target(config, inspection)
                 results.extend(preflight)
         preflight_ok = bool(preflight) and all(result.status == CheckStatus.PASS for result in preflight)
-        if preflight_ok:
+        if preflight_ok and not configuration_error:
             try:
                 dependencies = create_live_dependencies(config, command_runner)
             except Exception as error:

@@ -1,8 +1,10 @@
 """Focused mode and target-preflight tests for AO live acceptance."""
 
 from pathlib import Path
+import os
 import sys
 import unittest
+from unittest import mock
 
 
 ACCEPTANCE_DIR = Path(__file__).parent / "ao-acceptance"
@@ -95,11 +97,35 @@ class RunnerModeTests(unittest.TestCase):
         self.assertFalse(result["mutated"])
         self.assertFalse(any(call[:2] == ["aap-demo", "deploy"] or call[:2] == ["aap-demo", "enable"] for call in commands.calls))
 
+    def test_auto_missing_live_credentials_blocks_before_mutation(self):
+        commands = FakeCommandRunner(readiness={
+            "aap_demo": False,
+            "ao": False,
+            "mcp": False,
+        })
+        runner.CommandRunner = lambda: commands
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            result = runner._run(config("auto"))
+
+        self.assertFalse(result["mutated"])
+        live = next(item for item in result["results"] if item["check_id"] == "runner.live-dependencies")
+        self.assertEqual(live["failure_class"], model.FailureClass.PREREQUISITE.value)
+        self.assertFalse(any(
+            call[:2] == ["aap-demo", "deploy"] or call[:2] == ["aap-demo", "enable"]
+            for call in commands.calls
+        ))
+
     def test_provision_invokes_required_commands_in_order(self):
         commands = FakeCommandRunner()
         runner.CommandRunner = lambda: commands
 
-        result = runner._run(config("provision"))
+        with mock.patch.dict(os.environ, {
+            "AAP_ACCEPTANCE_AAP_TOKEN": "aap-token",
+            "AAP_ACCEPTANCE_AO_TOKEN": "ao-token",
+            "AAP_ACCEPTANCE_MCP_TOKEN": "mcp-token",
+        }, clear=True):
+            result = runner._run(config("provision"))
 
         self.assertTrue(result["mutated"])
         self.assertEqual(

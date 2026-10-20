@@ -17,7 +17,13 @@ set -euo pipefail
 printf 'kubectl %s\n' "$*" >> "$AO_ACCEPTANCE_COMMAND_LOG"
 if [[ "$*" == "config current-context" ]]; then
   printf '%s\n' "actual-context"
+  exit 0
 fi
+if [[ "$*" == "auth can-i get namespaces" ]]; then
+  printf '%s\n' "yes"
+  exit 0
+fi
+exit 1
 EOF
 chmod +x "$fake_bin/kubectl"
 
@@ -66,11 +72,11 @@ fi
 assert_contains "$validate_output" "selected context does not match"
 assert_no_provisioning
 
-if alias_output=$(run_cli --skip-provision --context deliberately-missing 2>&1); then
-  printf 'skip-provision with a mismatched context unexpectedly succeeded\n' >&2
+if alias_output=$(run_cli --skip-provision --context actual-context 2>&1); then
+  printf 'skip-provision with a missing prerequisite unexpectedly succeeded\n' >&2
   exit 1
 fi
-assert_contains "$alias_output" "selected context does not match"
+assert_contains "$alias_output" "aap_demo is a required prerequisite"
 assert_no_provisioning
 
 printf 'AO acceptance CLI safeguards passed\n'

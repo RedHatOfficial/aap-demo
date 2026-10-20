@@ -43,25 +43,24 @@ contract drift rather than silently skipped.
 results outside the repository. The existing-cluster command is:
 
 ```bash
-./test/ao-acceptance/run.sh --mode validate --artifact-dir /tmp/aap-demo-ao-acceptance
-```
-
-Because the runner requires an explicit context, use this complete form for an
-operational existing-cluster run:
-
-```bash
 ./test/ao-acceptance/run.sh --mode validate --context "$target_context" \
   --artifact-dir /tmp/aap-demo-ao-acceptance
 ```
 
 - `auto` is the default. It reuses a healthy target and provisions only missing
-  prerequisites after context and credential preflight.
+  prerequisites after context preflight and a check that the required live
+  tokens and optional CA-file configuration are present.
 - `provision` explicitly runs the required AAP-Demo deployment and addon setup
   before validation. Use it only for a disposable target.
 - `validate` never invokes `aap-demo deploy` or `aap-demo enable`; it reports
   unavailable prerequisites and exits without provisioning.
 - `--skip-provision` is an alias for `--mode validate`, useful in scripted
   existing-cluster runs.
+
+Missing live tokens or an invalid optional `AAP_ACCEPTANCE_CA_FILE` are
+prerequisite failures. When `auto` or `provision` would otherwise prepare a
+target, the runner reports that failure before any `aap-demo deploy` or
+`aap-demo enable` command.
 
 For a controlled provisioning run, use an explicit context and a disposable
 cluster:
