@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import re
 import subprocess
 import time
 
@@ -92,8 +93,22 @@ class TargetInspector:
             ["kubectl", "wait", "--for=condition=Available", "deployment/aap-mcp-server", "-n", self.aap_namespace, f"--timeout={self.timeout}s"],
         )
         status = self.runner.run(["aap-demo", "status"], timeout=self.timeout)
-        product_demos_ready = status.returncode == 0 and "product-demos" in status.stdout and "enabled" in status.stdout
+        product_demos_ready = status.returncode == 0 and _addon_enabled(
+            status.stdout, "product-demos"
+        )
         return {"mcp": mcp_ready, "product_demos": product_demos_ready}
+
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _addon_enabled(status_output: str, addon: str) -> bool:
+    """Return whether one specific addon has an enabled status line."""
+    for raw_line in status_output.splitlines():
+        line = _ANSI_ESCAPE.sub("", raw_line).strip()
+        if line.startswith(f"{addon} "):
+            return bool(re.match(rf"^{re.escape(addon)}\s+enabled(?:\s|$)", line))
+    return False
 
 
 def _check(check_id: str, component: str, status: CheckStatus, summary: str, *, details=None) -> CheckResult:
@@ -114,6 +129,11 @@ def _check(check_id: str, component: str, status: CheckStatus, summary: str, *, 
 def validate_target(config: RunConfig, inspector: TargetInspector) -> list[CheckResult]:
     """Return context, credential, and prerequisite results without mutation."""
     results: list[CheckResult] = []
+    if not config.context:
+        return [_check(
+            "target.context", "target", CheckStatus.BLOCKED,
+            "an explicit Kubernetes context is required for a live run",
+        )]
     context = inspector.current_context()
     if not context:
         return [_check("target.context", "target", CheckStatus.BLOCKED, "unable to determine Kubernetes context")]
