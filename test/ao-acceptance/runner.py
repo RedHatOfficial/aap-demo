@@ -53,6 +53,11 @@ def parse_args(argv: list[str]) -> RunConfig:
         help="target preparation mode",
     )
     parser.add_argument(
+        "--skip-provision",
+        action="store_true",
+        help="alias for --mode validate",
+    )
+    parser.add_argument(
         "--namespace",
         default="automation-orchestrator",
         help="Kubernetes namespace containing AO",
@@ -84,7 +89,7 @@ def parse_args(argv: list[str]) -> RunConfig:
     )
     args = parser.parse_args(argv)
     return RunConfig(
-        mode=args.mode,
+        mode="validate" if args.skip_provision else args.mode,
         namespace=args.namespace,
         artifact_dir=args.artifact_dir,
         context=args.context,

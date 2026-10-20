@@ -2,6 +2,13 @@
 
 Validation tests for `aap-demo.sh` command-line interface.
 
+## AO/AAP-Demo live acceptance
+
+The AO acceptance runner is an opt-in live-cluster check. It is not run by
+pull-request CI; its fast command-line safeguard runs there instead. See
+[AO live acceptance](ao-acceptance/README.md) for target selection,
+credentials, modes, artifacts, cleanup, and dedicated-runner guidance.
+
 ## Usage
 
 ```bash
