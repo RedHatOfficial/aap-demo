@@ -143,6 +143,32 @@ class ProbeSetTests(unittest.TestCase):
         self.assertFalse(probe_set.identity_observations()["admin"])
         self.assertFalse(probe_set.token_usable({"name": "aap-demo AAP"}))
 
+    def test_identity_observations_reject_the_default_service_account_and_require_the_ao_identity(self):
+        expected = "automation-orchestrator"
+
+        class AapClient:
+            def get(self, path):
+                self.path = path
+                return {"username": "admin"}
+
+        class ServiceAccountRunner(FakeRunner):
+            def __init__(self, service_account):
+                super().__init__({})
+                self.service_account = service_account
+
+            def run(self, args, *, check=False, timeout=60):
+                if args[:4] == ["kubectl", "get", "deployment", "automation-orchestrator-backend"]:
+                    return CommandResult(0, self.service_account, "")
+                if args[:3] == ["kubectl", "get", "serviceaccount"]:
+                    return CommandResult(0, f"serviceaccount/{self.service_account}", "")
+                return super().run(args, check=check, timeout=timeout)
+
+        default_probe = probes.ProbeSet(ServiceAccountRunner("default"), aap_client=AapClient())
+        self.assertFalse(default_probe.identity_observations()["automation-orchestrator"])
+
+        named_probe = probes.ProbeSet(ServiceAccountRunner(expected), aap_client=AapClient())
+        self.assertTrue(named_probe.identity_observations()["automation-orchestrator"])
+
 
 class SecurityProbeDouble:
     def __init__(self, *, tls_ok=True, dns_ok=True, pod_ok=True, metadata=None, observations=None):

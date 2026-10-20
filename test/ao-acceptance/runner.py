@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 try:
@@ -114,16 +115,29 @@ def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None =
     ]
 
 
-def _route_url(command_runner: CommandRunner, namespace: str, *, name: str | None = None, selector: str | None = None, path: str = "") -> str | None:
+def _route_url(
+    command_runner: CommandRunner,
+    namespace: str,
+    *,
+    name: str | None = None,
+    selector: str | None = None,
+    host_pattern: str | None = None,
+    path: str = "",
+) -> str | None:
     args = ["kubectl", "get", "route"]
     if name:
         args.append(name)
     args.extend(["-n", namespace])
     if selector:
         args.extend(["-l", selector])
-    args.extend(["-o", "jsonpath={.items[0].spec.host}" if not name else "jsonpath={.spec.host}"])
+    jsonpath = "jsonpath={.spec.host}" if name else "jsonpath={.items[0].spec.host}"
+    if host_pattern:
+        jsonpath = 'jsonpath={range .items[*]}{.spec.host}{"\\n"}{end}'
+    args.extend(["-o", jsonpath])
     result = command_runner.run(args, timeout=getattr(command_runner, "timeout_seconds", 60))
     host = result.stdout.strip()
+    if host_pattern and result.returncode == 0:
+        host = next((candidate for candidate in host.splitlines() if re.search(host_pattern, candidate)), "")
     return f"https://{host}{path}" if result.returncode == 0 and host else None
 
 
@@ -147,7 +161,7 @@ def create_live_dependencies(config: RunConfig, command_runner: CommandRunner):
     mcp_url = _route_url(
         command_runner,
         config.aap_namespace,
-        selector="app.kubernetes.io/name=aap-mcp-server",
+        host_pattern=r"(?:^|[.-])(?:aap-)?mcp(?:[.-]|$)",
         path="/mcp",
     )
     if not aap_url or not ao_url or not mcp_url:
@@ -233,19 +247,28 @@ def _run(config: RunConfig) -> dict[str, object]:
                 results.extend(preflight)
         preflight_ok = bool(preflight) and all(result.status == CheckStatus.PASS for result in preflight)
         if preflight_ok:
-            dependencies = create_live_dependencies(config, command_runner)
-            if dependencies[0] is None:
-                results.append(_prerequisite_failure("runner.live-dependencies", dependencies[1]))
-            else:
-                aap, ao, probes = dependencies
-                try:
-                    results.extend(run_managed_checks(aap, ao, probes, command_runner=command_runner))
-                except Exception as error:
-                    results.append(_prerequisite_failure(
-                        "runner.managed-checks",
-                        "managed live checks could not be initialized or observed",
-                        details={"error": redact_text(str(error))},
-                    ))
+            try:
+                dependencies = create_live_dependencies(config, command_runner)
+            except Exception as error:
+                results.append(_prerequisite_failure(
+                    "runner.live-dependencies",
+                    "live acceptance dependencies could not be initialized",
+                    details={"error": redact_text(str(error))},
+                ))
+                dependencies = None
+            if dependencies is not None:
+                if dependencies[0] is None:
+                    results.append(_prerequisite_failure("runner.live-dependencies", dependencies[1]))
+                else:
+                    aap, ao, probes = dependencies
+                    try:
+                        results.extend(run_managed_checks(aap, ao, probes, command_runner=command_runner))
+                    except Exception as error:
+                        results.append(_prerequisite_failure(
+                            "runner.managed-checks",
+                            "managed live checks could not be initialized or observed",
+                            details={"error": redact_text(str(error))},
+                        ))
     return {
         "config": _config_dict(config),
         "results": [result.to_dict() for result in results],

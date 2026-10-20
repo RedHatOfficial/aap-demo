@@ -3,8 +3,10 @@
 import json
 from contextlib import redirect_stdout
 import io
+import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -169,6 +171,83 @@ class LiveRunnerTests(unittest.TestCase):
         live = next(item for item in result["results"] if item["check_id"] == "runner.live-dependencies")
         self.assertEqual(live["status"], model.CheckStatus.FAIL.value)
         self.assertEqual(live["failure_class"], model.FailureClass.PREREQUISITE.value)
+
+    def test_invalid_ca_file_is_a_redacted_prerequisite_failure_with_a_failure_exit_status(self):
+        preflight = model.CheckResult(
+            "target.context", "target", model.CheckStatus.PASS, None,
+            "ready", "", "", 0.0, {"ready": True},
+        )
+        command_runner = type("RunnerStub", (), {})()
+        environment = {
+            "AAP_ACCEPTANCE_AAP_TOKEN": "aap-token",
+            "AAP_ACCEPTANCE_AO_TOKEN": "ao-token",
+            "AAP_ACCEPTANCE_MCP_TOKEN": "mcp-token",
+            "AAP_ACCEPTANCE_CA_FILE": "/tmp/ao-acceptance-missing-ca.pem",
+        }
+        with (
+            mock.patch.object(runner, "CommandRunner", return_value=command_runner),
+            mock.patch.object(runner, "TargetInspector"),
+            mock.patch.object(runner, "validate_target", return_value=[preflight]),
+            mock.patch.object(runner, "_route_url", side_effect=[
+                "https://aap.example.test",
+                "https://ao.example.test",
+                "https://aap-mcp-aap-operator.apps.example.test/mcp",
+            ]),
+            mock.patch.object(runner, "parse_args", return_value=self.config),
+            mock.patch.dict(os.environ, environment, clear=True),
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            exit_code = runner.main([])
+
+        result = json.loads(output.getvalue())
+        live = next(item for item in result["results"] if item["check_id"] == "runner.live-dependencies")
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(live["status"], model.CheckStatus.FAIL.value)
+        self.assertEqual(live["failure_class"], model.FailureClass.PREREQUISITE.value)
+        self.assertNotIn("aap-token", json.dumps(live))
+
+    def test_discovers_an_unlabeled_mcp_route_and_lists_tools_with_authentication(self):
+        class RouteRunner:
+            def __init__(self):
+                self.calls = []
+
+            def run(self, args, *, timeout):
+                self.calls.append(args)
+                if args[:4] == ["kubectl", "get", "route", "aap"]:
+                    return SimpleNamespace(returncode=0, stdout="aap.example.test", stderr="")
+                if args[:4] == ["kubectl", "get", "route", "automation-orchestrator"]:
+                    return SimpleNamespace(returncode=0, stdout="ao.example.test", stderr="")
+                if args[:3] == ["kubectl", "get", "route"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout="aap.example.test\naap-mcp-aap-operator.apps.example.test\n",
+                        stderr="",
+                    )
+                if args[:2] == ["curl", "--fail"]:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout='{"result":{"tools":[{"name":"controller_jobs_list"}]}}',
+                        stderr="",
+                    )
+                return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
+
+        command_runner = RouteRunner()
+        config = self.config
+        with mock.patch.dict(os.environ, {
+            "AAP_ACCEPTANCE_AAP_TOKEN": "aap-token",
+            "AAP_ACCEPTANCE_AO_TOKEN": "ao-token",
+            "AAP_ACCEPTANCE_MCP_TOKEN": "mcp-token",
+        }, clear=True):
+            _, _, probe_set = runner.create_live_dependencies(config, command_runner)
+            tools = probe_set.mcp_tools({"name": "aap-demo MCP Server"})
+
+        mcp_route_lookup = next(call for call in command_runner.calls if call[:3] == ["kubectl", "get", "route"] and "aap" not in call[:4])
+        mcp_request = next(call for call in command_runner.calls if call[:2] == ["curl", "--fail"])
+        self.assertEqual(probe_set.mcp_url, "https://aap-mcp-aap-operator.apps.example.test/mcp")
+        self.assertEqual(tools, ["controller_jobs_list"])
+        self.assertNotIn("-l", mcp_route_lookup)
+        self.assertIn("Authorization: Bearer mcp-token", mcp_request)
+        self.assertIn("tools/list", " ".join(mcp_request))
 
 
 class RunnerExitTests(unittest.TestCase):

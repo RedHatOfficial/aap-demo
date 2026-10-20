@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 _CERTIFICATE_FIELD = re.compile(r"(?im)^(?:subject|issuer)\s*[:=]\s*(.+)$")
 _ERROR_LIMIT = 1024
+_AO_SERVICE_ACCOUNT_NAME = "automation-orchestrator"
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ class ProbeSet:
         ee_namespace: str = "aap-operator",
         ee_selector: str = "app.kubernetes.io/name=aap-controller-task",
         ao_namespace: str = "automation-orchestrator",
+        ao_service_account_name: str = _AO_SERVICE_ACCOUNT_NAME,
         ao_selector: str = "app.kubernetes.io/component=backend",
         ao_selectors: tuple[str, ...] | None = None,
         aap_url: str | None = None,
@@ -146,6 +148,7 @@ class ProbeSet:
         self.ee_namespace = ee_namespace
         self.ee_selector = ee_selector
         self.ao_namespace = ao_namespace
+        self.ao_service_account_name = ao_service_account_name
         self.ao_selector = ao_selector
         self.ao_selectors = ao_selectors or (
             "app.kubernetes.io/component=backend",
@@ -219,11 +222,17 @@ class ProbeSet:
         account = self.runner.run(
             ["kubectl", "get", "serviceaccount", service_account_name, "-n", self.ao_namespace, "-o", "name"],
             timeout=self.timeout_seconds,
-        ) if service_account.returncode == 0 and service_account_name else None
+        ) if (
+            service_account.returncode == 0
+            and service_account_name == self.ao_service_account_name
+            and service_account_name != "default"
+        ) else None
         return {
             "admin": admin,
             "automation-orchestrator": bool(
-                account and account.returncode == 0 and account.stdout.strip()
+                account
+                and account.returncode == 0
+                and account.stdout.strip() == f"serviceaccount/{self.ao_service_account_name}"
             ),
         }
 
