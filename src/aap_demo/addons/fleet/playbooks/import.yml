@@ -42,6 +42,10 @@
           ansible_host: "{{ item.name }}.{{ namespace }}.svc"
           ansible_port: 22
           ansible_user: ansible
+          # Fleet's / is an overlay filesystem and is omitted from
+          # ansible_mounts. The PVC-backed /var mount is reported and is the
+          # persistent disk that Linux disk workflows should inspect.
+          disk_mount: /var
       loop: "{{ nodes }}"
 
     - name: Machine credential

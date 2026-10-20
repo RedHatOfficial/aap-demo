@@ -838,6 +838,7 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert "scc:anyuid" not in provision
     assert "name: fleet-node" in provision
     assert "aap_validate_certs | default(true)" in imported
+    assert "disk_mount: /var" in imported
     plays = yaml.safe_load(provision)
     deploy = next(
         task["kubernetes.core.k8s"]["definition"]

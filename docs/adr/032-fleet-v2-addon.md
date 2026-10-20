@@ -27,6 +27,11 @@ The pod then mounts those paths, so a package update survives a new pod.
 An empty value leaves `storageClassName` off the claim so the cluster default is used.
 Both are extra-vars, and both can be set under `addons.options.fleet`.
 `/etc` stays on the image so the pod keeps cluster DNS.
+The container root filesystem is an overlay and is not exposed through
+Ansible's `ansible_mounts` fact. Fleet inventory hosts therefore set
+`disk_mount: /var`, selecting the PVC-backed filesystem used by the nodes.
+This keeps Linux disk-utilization workflows pointed at a reported,
+persistent mount instead of failing on `/`.
 
 Deployment replicas are kept as YAML integer literals. The AAP execution
 environment serializes a Jinja-templated numeric value as a string, which
@@ -122,6 +127,8 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
 - The three-node Fleet deployment was exercised on MicroShift/CRC; all node pods became Ready.
 - CLI tests cover the Python v2 lifecycle and the Bash backend bridge for both
   `v2 enable fleet` and `enable fleet --backend kube-native`.
+- AAP Disk Utilization Check template 12 completed successfully against both
+  Fleet nodes after inventory set `disk_mount: /var` (job 83 on MicroShift).
 
 ## Alternatives Considered
 
