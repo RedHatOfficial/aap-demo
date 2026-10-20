@@ -253,6 +253,20 @@ class ResourceClientTests(unittest.TestCase):
         self.assertEqual(request.call_args_list[1].kwargs["payload"], {"inputs": {"token": "value"}})
         self.assertEqual(request.call_args_list[2].args, ("GET", "/api/v1/executions/execution-7"))
 
+    def test_ao_list_all_accepts_repository_resources_envelopes(self):
+        client = AoClient("https://ao.example.test", "token-value")
+        responses = [
+            {"resources": [{"id": "one"}], "next": "https://ao.example.test/api/v1/workflows?cursor=next"},
+            {"resources": [{"id": "two"}], "next": None},
+        ]
+
+        with patch.object(client, "request", side_effect=responses) as request:
+            workflows = client.list_all("/api/v1/workflows")
+
+        self.assertEqual(workflows, [{"id": "one"}, {"id": "two"}])
+        self.assertEqual(request.call_args_list[0].args, ("GET", "/api/v1/workflows"))
+        self.assertEqual(request.call_args_list[1].args, ("GET", "https://ao.example.test/api/v1/workflows?cursor=next"))
+
     def test_ao_list_all_accepts_a_direct_list_through_json_transport(self):
         client = AoClient("https://ao.example.test", "token-value")
         with patch.object(client._opener, "open", return_value=FakeResponse('[{"id": "one"}]')):

@@ -62,6 +62,10 @@ def _resolved_id(index: dict[object, dict], value: object) -> object | None:
     return raw_id
 
 
+def _contains_id(values: set[object], value: object) -> bool:
+    return any(str(candidate) == str(_id(value)) for candidate in values)
+
+
 def _marker(managed_markers: dict[str, str], resource_type: str) -> str:
     return str(managed_markers.get(resource_type, managed_markers.get(resource_type.removeprefix("ao_"), ""))).casefold()
 
@@ -70,7 +74,7 @@ def _stable_match(resource: dict, resource_type: str) -> bool:
     name = str(resource.get("name", "")).casefold()
     description = str(resource.get("description", "")).casefold()
     if resource_type == "organizations":
-        return name == "ansible product demos (apd)"
+        return name in {"default", "ansible product demos (apd)"}
     if resource_type == "projects":
         return name in {"aap orchestrator demos", "aap demo control plane", "ansible product demos", "apd bootstrap project"}
     if resource_type == "inventories":
@@ -151,11 +155,38 @@ def build_inventory(
     projects = [_safe(item) for item in aap_resources["projects"] if _matches(item, _marker(managed_markers, "projects"), "projects")]
     projects_by_id = _index(projects)
     inventories = [_safe(item) for item in aap_resources["inventories"] if _matches(item, _marker(managed_markers, "inventories"), "inventories")]
-    credentials = [_safe(item) for item in aap_resources["credentials"] if _matches(item, _marker(managed_markers, "credentials"), "credentials")]
+    managed_templates = [
+        item
+        for item in aap_resources["job_templates"]
+        if _matches(item, _marker(managed_markers, "job_templates"), "job_templates")
+    ]
+    template_credentials = {
+        template_id: aap.list_all(f"/api/v2/job_templates/{template_id}/credentials/")
+        for template in managed_templates
+        if (template_id := _id(template.get("id"))) is not None
+    }
+    referenced_credential_ids = {
+        _id(credential.get("id"))
+        for credentials_for_template in template_credentials.values()
+        for credential in credentials_for_template
+        if isinstance(credential, dict) and _id(credential.get("id")) is not None
+    }
+    credentials = [
+        _safe(item)
+        for item in aap_resources["credentials"]
+        if _matches(item, _marker(managed_markers, "credentials"), "credentials")
+        or _contains_id(referenced_credential_ids, item.get("id"))
+    ]
+    referenced_execution_environment_ids = {
+        _id(template.get("execution_environment"))
+        for template in managed_templates
+        if _id(template.get("execution_environment")) is not None
+    }
     execution_environments = [
         _safe(item)
         for item in aap_resources["execution_environments"]
         if _matches(item, _marker(managed_markers, "execution_environments"), "execution_environments")
+        or _contains_id(referenced_execution_environment_ids, item.get("id"))
     ]
     inventories_by_id = _index(inventories)
     credentials_by_id = _index(credentials)
@@ -169,12 +200,10 @@ def build_inventory(
         normalized_projects.append(record)
 
     job_templates = []
-    for raw_template in aap_resources["job_templates"]:
-        if not _matches(raw_template, _marker(managed_markers, "job_templates"), "job_templates"):
-            continue
+    for raw_template in managed_templates:
         template = _safe(raw_template)
         template_id = template.get("id")
-        credentials_for_template = aap.list_all(f"/api/v2/job_templates/{template_id}/credentials/") if template_id is not None else []
+        credentials_for_template = template_credentials.get(template_id, [])
         project_id = _resolved_id(projects_by_id, template.get("project"))
         inventory_id = _resolved_id(inventories_by_id, template.get("inventory"))
         execution_environment_id = _resolved_id(execution_environments_by_id, template.get("execution_environment"))

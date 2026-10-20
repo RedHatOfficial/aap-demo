@@ -24,7 +24,7 @@ class AoClient(JsonClient):
                 page_items = page
                 next_value = None
             else:
-                page_items = page.get("results", page.get("items", []))
+                page_items = page.get("resources", page.get("results", page.get("items", [])))
                 next_value = page.get("next")
             if not isinstance(page_items, list) or not all(isinstance(item, dict) for item in page_items):
                 raise ApiError("GET", next_path, None, "list response did not contain object results")

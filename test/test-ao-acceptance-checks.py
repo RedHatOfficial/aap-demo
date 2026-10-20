@@ -184,6 +184,33 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in result.projects], ["AAP Orchestrator Demos"])
         self.assertEqual([item["name"] for item in result.job_templates], ["Renew Certificate"])
 
+    def test_build_inventory_includes_default_apd_and_openshift_product_demo_resources(self):
+        resources = managed_resources()
+        resources["/api/v2/organizations/"][0] = {"id": 1, "name": "Default", "description": ""}
+        resources["/api/v2/organizations/"].append(
+            {"id": 3, "name": "Ansible Product Demos (APD)", "description": ""}
+        )
+        resources["/api/v2/job_templates/"].append({
+            "id": 42,
+            "name": "APD | Install OpenShift Demos",
+            "description": "",
+            "organization": 3,
+            "project": 10,
+            "inventory": 20,
+            "execution_environment": "52",
+            "summary_fields": {"user_capabilities": {"start": True}},
+        })
+        resources["/api/v2/job_templates/42/credentials/"] = [{"id": 30}]
+        resources["/api/v2/execution_environments/"].append(
+            {"id": 52, "name": "OPENSHIFT", "description": ""}
+        )
+
+        result = inventory.build_inventory(FakeAapClient(resources), FakeAoClient(resources), MANAGED_MARKERS)
+
+        self.assertEqual([item["name"] for item in result.organizations], ["Default", "Ansible Product Demos (APD)"])
+        self.assertEqual([item["name"] for item in result.job_templates], ["Renew Certificate", "APD | Install OpenShift Demos"])
+        self.assertEqual([item["name"] for item in result.execution_environments], ["AAP-Demo EE", "OPENSHIFT"])
+
 
 class ReadinessTests(unittest.TestCase):
     def test_readiness_reports_each_live_service_with_a_prerequisite_failure(self):
@@ -236,6 +263,34 @@ class WiringTests(unittest.TestCase):
         checks = wiring.run(self.build())
 
         failed = next(check for check in checks if check.check_id == "wiring.workflow.workflow-1")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+        self.assertEqual(failed.failure_class, FailureClass.WIRING)
+
+    def test_wiring_classifies_missing_job_template_credential_as_wiring_failure(self):
+        self.resources["/api/v2/job_templates/40/credentials/"] = []
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.job-template.40.credentials")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+        self.assertEqual(failed.failure_class, FailureClass.WIRING)
+
+    def test_wiring_classifies_dangling_job_template_credential_as_wiring_failure(self):
+        self.resources["/api/v2/job_templates/40/credentials/"] = [{"id": 999}]
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.job-template.40.credentials")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+        self.assertEqual(failed.failure_class, FailureClass.WIRING)
+
+    def test_wiring_classifies_wrong_job_template_credential_type_as_wiring_failure(self):
+        credential_type = self.resources["/api/v2/credentials/"][0]["summary_fields"]["credential_type"]
+        credential_type["name"] = "Machine"
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.job-template.40.credentials")
         self.assertEqual(failed.status, CheckStatus.FAIL)
         self.assertEqual(failed.failure_class, FailureClass.WIRING)
 

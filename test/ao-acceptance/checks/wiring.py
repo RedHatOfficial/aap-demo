@@ -12,6 +12,12 @@ except ImportError:  # Direct execution via run.sh or python runner.py.
 
 
 _REQUIRED_INTEGRATIONS = ("aap-demo AAP", "aap-demo MCP Server")
+_EXPECTED_CREDENTIAL_TYPES = {
+    "aap-demo aap token": "red hat ansible automation platform",
+    "aap credential": "red hat ansible automation platform",
+    "apd installer - aap admin": "apd installer credentials",
+    "openshift credential": "openshift or kubernetes api bearer token",
+}
 
 
 def _slug(value: object) -> str:
@@ -70,6 +76,7 @@ def _job_template_checks(inventory) -> list[CheckResult]:
         return [_result("wiring.job-templates", "job_templates", False, "no managed job templates were found")]
     projects = {item.get("id") for item in inventory.projects}
     execution_environments = {item.get("id") for item in inventory.execution_environments}
+    credentials = {item.get("id"): item for item in inventory.credentials}
     checks = []
     for template in inventory.job_templates:
         resource_id = template.get("id")
@@ -84,6 +91,23 @@ def _job_template_checks(inventory) -> list[CheckResult]:
             valid,
             "job template project, execution environment, and launch permission are wired" if valid else "job template project, execution environment, or launch permission is missing",
             details={"resource_id": resource_id, "name": template.get("name"), "project_id": template.get("project_id"), "execution_environment_id": ee_id},
+        ))
+        credential_ids = template.get("credential_ids", [])
+        attached_credentials = [credentials.get(credential_id) for credential_id in credential_ids]
+        credential_types_ok = all(
+            credential
+            and credential.get("credential_type_name")
+            and _EXPECTED_CREDENTIAL_TYPES.get(str(credential.get("name", "")).casefold(), str(credential.get("credential_type_name")).casefold())
+            == str(credential.get("credential_type_name")).casefold()
+            for credential in attached_credentials
+        )
+        credentials_ok = bool(credential_ids) and len(attached_credentials) == len(credential_ids) and credential_types_ok
+        checks.append(_result(
+            f"wiring.job-template.{resource_id}.credentials",
+            "job_template",
+            credentials_ok,
+            "job template credentials are present, resolvable, and correctly typed" if credentials_ok else "job template has missing, dangling, or incorrectly typed credentials",
+            details={"resource_id": resource_id, "name": template.get("name"), "credential_ids": credential_ids},
         ))
     return checks
 
