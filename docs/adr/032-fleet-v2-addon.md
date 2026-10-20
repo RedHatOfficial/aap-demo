@@ -95,6 +95,12 @@ policy and rotates addon-owned legacy Ed25519 keys. A public-key hash on the
 node pod template forces a rollout when the key changes.
 The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-playbooks`.
 
+The Python compatibility floor remains 3.9 because RHEL 9 provides Python 3.9
+as its default system interpreter. Python 3.9 reached upstream end-of-life on
+2025-10-31, so the 3.9 CI job is a RHEL 9 compatibility check rather than a
+claim that upstream Python 3.9 remains supported. The floor can be raised
+when RHEL 9 compatibility is no longer required.
+
 ## Consequences
 
 ### Positive
@@ -127,6 +133,8 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
 - The three-node Fleet deployment was exercised on MicroShift/CRC; all node pods became Ready.
 - CLI tests cover the Python v2 lifecycle and the Bash backend bridge for both
   `v2 enable fleet` and `enable fleet --backend kube-native`.
+- The CI matrix includes Python 3.9 to protect the RHEL 9 compatibility floor;
+  newer supported Python versions are tested separately.
 - AAP Disk Utilization Check template 12 completed successfully against both
   Fleet nodes after inventory set `disk_mount: /var` (job 83 on MicroShift).
 
