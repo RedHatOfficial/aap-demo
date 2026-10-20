@@ -94,6 +94,12 @@ Fleet generates RSA keys for compatibility with the UBI/OpenSSH crypto
 policy and rotates addon-owned legacy Ed25519 keys. A public-key hash on the
 node pod template forces a rollout when the key changes.
 The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-playbooks`.
+The Fleet Controller project is pinned to the `v2` branch of this repository.
+That branch must contain the packaged Fleet playbooks before `import.yml` can
+create the Fleet ping template. A pre-merge test of an unmerged feature branch
+may update the inventory successfully but cannot create that template until
+the feature is merged into `v2` (or the project is temporarily pointed at the
+feature branch).
 
 ## Consequences
 
@@ -129,6 +135,9 @@ The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-pla
   `v2 enable fleet` and `enable fleet --backend kube-native`.
 - AAP Disk Utilization Check template 12 completed successfully against both
   Fleet nodes after inventory set `disk_mount: /var` (job 83 on MicroShift).
+- The Fleet ping template is validated after the feature branch is merged into
+  `v2`, because AAP project sync reads the configured branch rather than the
+  developer's local checkout.
 
 ## Alternatives Considered
 
