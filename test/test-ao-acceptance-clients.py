@@ -1,11 +1,13 @@
 """Contract tests for redacted AAP and AO acceptance API clients."""
 
 from io import BytesIO
+from email.message import Message
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler
 
 
 ACCEPTANCE_DIR = Path(__file__).parent / "ao-acceptance"
@@ -55,36 +57,55 @@ class RedactionTests(unittest.TestCase):
 
         self.assertEqual(sanitized, "Authorization: Bearer [REDACTED]; next")
 
+    def test_redacts_complete_quoted_and_assignment_secret_values_with_whitespace(self):
+        secret = "correct horse battery staple"
+
+        json_text = redact_text('{"password":"correct horse battery staple"}')
+        assignment_text = redact_text('api_key="correct horse battery staple"')
+
+        self.assertEqual(json_text, '{"password":"[REDACTED]"}')
+        self.assertEqual(assignment_text, 'api_key="[REDACTED]"')
+        self.assertNotIn(secret, json_text)
+        self.assertNotIn(secret, assignment_text)
+
 
 class JsonClientTests(unittest.TestCase):
     def setUp(self):
-        self.create_context = patch("clients.http.ssl.create_default_context", return_value=object())
+        self.context = object()
+        self.create_context = patch("clients.http.ssl.create_default_context", return_value=self.context)
         self.create_context.start()
+        self.create_opener = patch("clients.http.build_opener")
+        self.build_opener = self.create_opener.start()
+        self.opener = self.build_opener.return_value
         self.client = JsonClient("https://aap.example.test/", "token-value", ca_file="/tmp/ca.pem")
 
     def tearDown(self):
+        self.create_opener.stop()
         self.create_context.stop()
 
-    @patch("clients.http.urlopen")
-    def test_sends_authorized_json_request_and_decodes_response(self, urlopen):
-        urlopen.return_value = FakeResponse('{"id": 7}')
+    def test_opener_uses_the_explicit_ca_context(self):
+        handlers = self.build_opener.call_args.args
+        https_handler = next(handler for handler in handlers if hasattr(handler, "_context"))
+
+        self.assertIs(https_handler._context, self.context)
+
+    def test_sends_authorized_json_request_and_decodes_response(self):
+        self.opener.open.return_value = FakeResponse('{"id": 7}')
 
         response = self.client.request("POST", "/api/v2/items/", payload={"name": "demo"})
 
         self.assertEqual(response, {"id": 7})
-        request = urlopen.call_args.args[0]
+        request = self.opener.open.call_args.args[0]
         self.assertEqual(request.full_url, "https://aap.example.test/api/v2/items/")
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.get_header("Authorization"), "Bearer token-value")
         self.assertEqual(request.get_header("Content-type"), "application/json")
         self.assertEqual(request.data, b'{"name":"demo"}')
-        self.assertEqual(urlopen.call_args.kwargs["timeout"], 60)
-        self.assertIsNotNone(urlopen.call_args.kwargs["context"])
+        self.assertEqual(self.opener.open.call_args.kwargs["timeout"], 60)
 
-    @patch("clients.http.urlopen")
-    def test_non_success_response_raises_redacted_bounded_api_error(self, urlopen):
+    def test_non_success_response_raises_redacted_bounded_api_error(self):
         body = b'{"password":"password-value","detail":"Bearer token-value"}' + b"x" * 5000
-        urlopen.side_effect = HTTPError(
+        self.opener.open.side_effect = HTTPError(
             "https://aap.example.test/api/v2/items/",
             401,
             "Unauthorized",
@@ -103,9 +124,8 @@ class JsonClientTests(unittest.TestCase):
         self.assertIn("[REDACTED]", error.body)
         self.assertLessEqual(len(error.body), 4096)
 
-    @patch("clients.http.urlopen")
-    def test_invalid_json_and_connection_failures_are_redacted_api_errors(self, urlopen):
-        urlopen.return_value = FakeResponse("not-json")
+    def test_invalid_json_and_connection_failures_are_redacted_api_errors(self):
+        self.opener.open.return_value = FakeResponse("not-json")
 
         with self.assertRaises(ApiError) as malformed:
             self.client.request("GET", "/api/v2/items/")
@@ -113,7 +133,7 @@ class JsonClientTests(unittest.TestCase):
         self.assertIsNone(malformed.exception.status)
         self.assertNotIn("token-value", str(malformed.exception))
 
-        urlopen.side_effect = URLError("Bearer token-value")
+        self.opener.open.side_effect = URLError("Bearer token-value")
         with self.assertRaises(ApiError) as unavailable:
             self.client.request("GET", "/api/v2/items/")
 
@@ -121,9 +141,8 @@ class JsonClientTests(unittest.TestCase):
         self.assertNotIn("token-value", unavailable.exception.body)
         self.assertIn("[REDACTED]", unavailable.exception.body)
 
-    @patch("clients.http.urlopen")
-    def test_error_urls_redact_secret_shaped_query_parameters(self, urlopen):
-        urlopen.side_effect = URLError("connection refused")
+    def test_error_urls_redact_secret_shaped_query_parameters(self):
+        self.opener.open.side_effect = URLError("connection refused")
 
         with self.assertRaises(ApiError) as raised:
             self.client.request("GET", "/api/v2/items/?token=token-value")
@@ -131,6 +150,50 @@ class JsonClientTests(unittest.TestCase):
         self.assertNotIn("token-value", raised.exception.url)
         self.assertIn("token=[REDACTED]", raised.exception.url)
         self.assertNotIn("token-value", str(raised.exception))
+
+    def test_api_error_redacts_whitespace_secrets_in_url_body_and_message(self):
+        secret = "correct horse battery staple"
+        error = ApiError(
+            "GET",
+            "https://aap.example.test/api/v2/items/?token=correct horse battery staple",
+            401,
+            '{"password":"correct horse battery staple"}',
+        )
+
+        self.assertNotIn(secret, error.url)
+        self.assertNotIn(secret, error.body)
+        self.assertNotIn(secret, str(error))
+        self.assertEqual(error.body, '{"password":"[REDACTED]"}')
+
+    def test_cross_origin_redirect_is_not_followed_with_authorization(self):
+        redirect_headers = Message()
+        redirect_headers["Location"] = "https://evil.example.test/capture"
+        redirect = HTTPError(
+            "https://aap.example.test/api/v2/items/",
+            302,
+            "Found",
+            redirect_headers,
+            BytesIO(b"redirect"),
+        )
+        self.opener.open.side_effect = redirect
+
+        with self.assertRaises(ApiError) as raised:
+            self.client.request("GET", "/api/v2/items/")
+
+        request = self.opener.open.call_args.args[0]
+        handlers = self.build_opener.call_args.args
+        redirect_handler = next(
+            handler for handler in handlers if isinstance(handler, HTTPRedirectHandler)
+        )
+        self.assertEqual(self.opener.open.call_count, 1)
+        self.assertEqual(request.full_url, "https://aap.example.test/api/v2/items/")
+        self.assertEqual(request.get_header("Authorization"), "Bearer token-value")
+        self.assertEqual(raised.exception.status, 302)
+        self.assertIsNone(
+            redirect_handler.redirect_request(
+                request, None, 302, "Found", redirect_headers, redirect_headers["Location"]
+            )
+        )
 
 
 class ResourceClientTests(unittest.TestCase):
@@ -159,7 +222,7 @@ class ResourceClientTests(unittest.TestCase):
     def test_ao_normalizes_lists_and_exposes_workflow_status(self):
         client = AoClient("https://ao.example.test", "token-value")
         responses = [
-            [{"id": "one"}],
+            {"results": [{"id": "one"}], "next": None},
             {"id": "execution-7"},
             {"id": "execution-7", "status": "completed"},
         ]

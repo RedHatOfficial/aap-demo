@@ -4,7 +4,7 @@ import json
 import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPSHandler, HTTPRedirectHandler, Request, build_opener
 
 try:
     from redaction import redact_text
@@ -13,6 +13,13 @@ except ImportError:  # Package import when this directory gains a parent package
 
 
 _ERROR_BODY_LIMIT = 4096
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    """Surface redirects as API errors instead of forwarding bearer tokens."""
+
+    def redirect_request(self, request, response, code, message, headers, newurl):
+        return None
 
 
 class ApiError(RuntimeError):
@@ -39,6 +46,7 @@ class JsonClient:
         self.token = token
         self.context = ssl.create_default_context(cafile=ca_file)
         self._origin = urlparse(self.base_url)
+        self._opener = build_opener(HTTPSHandler(context=self.context), _NoRedirectHandler())
 
     def request(
         self,
@@ -56,7 +64,7 @@ class JsonClient:
             headers["Content-Type"] = "application/json"
         request = Request(url, data=data, headers=headers, method=method.upper())
         try:
-            with urlopen(request, timeout=timeout, context=self.context) as response:
+            with self._opener.open(request, timeout=timeout) as response:
                 status = getattr(response, "status", None)
                 if status is None:
                     status = response.getcode()

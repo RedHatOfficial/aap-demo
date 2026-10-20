@@ -17,12 +17,8 @@ class AoClient(JsonClient):
         next_path: str | None = path
         while next_path:
             page = self.get(next_path)
-            if isinstance(page, list):
-                page_items = page
-                next_value = None
-            else:
-                page_items = page.get("results", page.get("items", []))
-                next_value = page.get("next")
+            page_items = page.get("results", page.get("items", []))
+            next_value = page.get("next")
             if not isinstance(page_items, list) or not all(isinstance(item, dict) for item in page_items):
                 raise ApiError("GET", next_path, None, "list response did not contain object results")
             items.extend(page_items)
