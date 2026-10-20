@@ -181,6 +181,7 @@ def test_bash_fleet_source_has_explicit_backend_delegation() -> None:
     assert "import yaml" in source
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
 def test_bash_can_dispatch_the_python_v2_cli() -> None:
     env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
     result = subprocess.run(
@@ -197,6 +198,7 @@ def test_bash_can_dispatch_the_python_v2_cli() -> None:
     assert "fleet" in result.stdout
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
 def test_bash_v2_can_enable_fleet() -> None:
     env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
     result = subprocess.run(
@@ -212,6 +214,7 @@ def test_bash_v2_can_enable_fleet() -> None:
     assert "usage: aap-demo enable" in result.stdout
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
 def test_bash_enable_fleet_can_select_kube_native_backend() -> None:
     env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
     result = subprocess.run(
