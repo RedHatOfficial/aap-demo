@@ -70,13 +70,24 @@ The laptop does not install ansible-core or collections.
 The Job runs in `<namespace>-runner`, a second namespace this install creates.
 Its service account lives there, away from the node pods, and can manage
 only the fleet namespace. It is not cluster-admin and it cannot bind SCCs.
-anyuid is bound to the fleet-node account with the operator kubeconfig,
-and only in the fleet namespace this install created.
+The operator kubeconfig creates an addon-owned `aap-demo-fleet` SCC and the
+matching `system:openshift:scc:aap-demo-fleet` ClusterRole. A RoleBinding in
+the Fleet namespace grants that role only to the `fleet-node` service account.
+The SCC permits the `SYS_CHROOT` and `AUDIT_WRITE` capabilities required by
+OpenSSH privilege separation and audit logging in the container, while
+keeping privileged containers, host networking, host PID, host IPC, and host
+ports disabled. It does not grant `anyuid` or any broad cluster role. The
+runner Job itself never receives cluster-scoped rights.
+Destroy removes the addon-owned SCC, ClusterRole, and namespace RoleBinding;
+removing one node leaves them in place for the remaining nodes.
 A token on each namespace is required before Fleet will use or delete it.
 The gateway host is a route whose endpoints are pods of the AAP-owned
 gateway deployment. A ReplicaSet outside that chain is ignored.
 Certificate checks stay on unless addons.options.fleet.validate_certs is false.
 The fleet SSH key is a Secret in the AAP namespace, not a keychain item.
+Fleet generates RSA keys for compatibility with the UBI/OpenSSH crypto
+policy and rotates addon-owned legacy Ed25519 keys. A public-key hash on the
+node pod template forces a rollout when the key changes.
 The packaged playbooks ship inside `aap_demo.addons.fleet`, not in `aap-demo-playbooks`.
 
 ## Consequences

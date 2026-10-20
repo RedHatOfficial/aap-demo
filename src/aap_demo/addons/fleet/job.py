@@ -28,6 +28,9 @@ from aap_demo.exec import kubectl
 RUNNER_ACCOUNT = "aap-demo-fleet-runner"
 FLEET_LABEL = "aap-demo/fleet"
 TOKEN_ANNOTATION = "aap-demo/fleet-token"
+FLEET_SCC = "aap-demo-fleet"
+FLEET_SCC_ROLE = "system:openshift:scc:aap-demo-fleet"
+FLEET_SCC_BINDING = "fleet-ssh-scc"
 _PLAYBOOK_ROOT = "/opt/fleet/playbooks"
 _JOB_TIMEOUT_SECONDS = 600
 _EXTRA_ROOT = "/opt/fleet/extra"
@@ -52,9 +55,10 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     fleet_ns = str(extra.get("namespace") or "fleet")
     job_ns = runner_namespace(fleet_ns)
     present = str(extra.get("state") or "present") != "absent"
+    scope = str(extra.get("scope") or "all")
     _retire_cluster_rights(ctx, aap_namespace(ctx))
     # Create when missing so Controller cleanup still runs after the namespace is gone.
-    _prepare_namespace(ctx, fleet_ns, create=True, bind_anyuid=present)
+    _prepare_namespace(ctx, fleet_ns, create=True, bind_scc=present or scope == "node")
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
     pull_name = f"{name}-pull"
     rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
@@ -203,7 +207,7 @@ def _delete_ok(ctx: AppContext, argv: list) -> None:
         )
 
 
-def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_anyuid: bool) -> bool:
+def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_scc: bool) -> bool:
     """Own the node namespace and the separate namespace that runs the Job."""
     token = _token_for(ctx, namespace, create=create, uid_key="namespace_uid")
     if token is None:
@@ -211,7 +215,7 @@ def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_an
     job_ns = runner_namespace(namespace)
     if _token_for(ctx, job_ns, create=create, uid_key="runner_namespace_uid") is None:
         return False
-    _apply_node_access(ctx, namespace, job_ns, token, bind_anyuid=bind_anyuid)
+    _apply_node_access(ctx, namespace, job_ns, token, bind_scc=bind_scc)
     _apply_runner_access(ctx, job_ns, token)
     _capture_uid(ctx, namespace, "namespace_uid")
     _capture_uid(ctx, job_ns, "runner_namespace_uid")
@@ -241,9 +245,9 @@ def _missing(detail: str) -> bool:
 
 
 def _apply_node_access(
-    ctx: AppContext, namespace: str, job_ns: str, token: str, *, bind_anyuid: bool
+    ctx: AppContext, namespace: str, job_ns: str, token: str, *, bind_scc: bool
 ) -> None:
-    """Node-namespace rights for the runner account. anyuid is bound by the operator."""
+    """Namespace rights plus the narrowly scoped SCC required by Fleet sshd."""
     ctx.runner.run(
         [
             "kubectl",
@@ -260,19 +264,46 @@ def _apply_node_access(
         _node_role(namespace),
         _role_binding(namespace, job_ns),
     ]
-    if bind_anyuid:
+    ctx.runner.run(
+        [
+            "kubectl",
+            "delete",
+            "rolebinding",
+            "fleet-anyuid",
+            "-n",
+            namespace,
+            "--ignore-not-found",
+        ]
+    )
+    if bind_scc:
+        documents.extend(
+            [
+                _node_account(namespace),
+                _fleet_scc(),
+                _fleet_scc_role(),
+                _fleet_scc_binding(namespace),
+            ]
+        )
+    else:
         ctx.runner.run(
             [
                 "kubectl",
                 "delete",
                 "rolebinding",
-                "fleet-anyuid",
+                FLEET_SCC_BINDING,
                 "-n",
                 namespace,
                 "--ignore-not-found",
             ]
         )
-        documents.extend([_node_account(namespace), _anyuid_binding(namespace)])
+        _delete_ok(
+            ctx,
+            ["kubectl", "delete", "clusterrole", FLEET_SCC_ROLE, "--ignore-not-found"],
+        )
+        _delete_ok(
+            ctx,
+            ["kubectl", "delete", "scc", FLEET_SCC, "--ignore-not-found"],
+        )
     _apply_checked(ctx, yaml.safe_dump_all(documents, sort_keys=False))
 
 
@@ -370,15 +401,61 @@ def _node_account(namespace: str) -> Dict[str, Any]:
     }
 
 
-def _anyuid_binding(namespace: str) -> Dict[str, Any]:
+def _fleet_scc() -> Dict[str, Any]:
+    return {
+        "apiVersion": "security.openshift.io/v1",
+        "kind": "SecurityContextConstraints",
+        "metadata": {"name": FLEET_SCC},
+        "priority": 20,
+        "allowHostDirVolumePlugin": False,
+        "allowHostIPC": False,
+        "allowHostNetwork": False,
+        "allowHostPID": False,
+        "allowHostPorts": False,
+        "allowPrivilegedContainer": False,
+        "allowedCapabilities": ["SYS_CHROOT", "AUDIT_WRITE"],
+        "fsGroup": {"type": "RunAsAny"},
+        "readOnlyRootFilesystem": False,
+        "requiredDropCapabilities": ["MKNOD"],
+        "runAsUser": {"type": "RunAsAny"},
+        "seLinuxContext": {"type": "MustRunAs"},
+        "supplementalGroups": {"type": "RunAsAny"},
+        "volumes": [
+            "configMap",
+            "downwardAPI",
+            "emptyDir",
+            "persistentVolumeClaim",
+            "projected",
+            "secret",
+        ],
+    }
+
+
+def _fleet_scc_role() -> Dict[str, Any]:
+    return {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "ClusterRole",
+        "metadata": {"name": FLEET_SCC_ROLE},
+        "rules": [
+            {
+                "apiGroups": ["security.openshift.io"],
+                "resources": ["securitycontextconstraints"],
+                "resourceNames": [FLEET_SCC],
+                "verbs": ["use"],
+            }
+        ],
+    }
+
+
+def _fleet_scc_binding(namespace: str) -> Dict[str, Any]:
     return {
         "apiVersion": "rbac.authorization.k8s.io/v1",
         "kind": "RoleBinding",
-        "metadata": {"name": "fleet-anyuid", "namespace": namespace},
+        "metadata": {"name": FLEET_SCC_BINDING, "namespace": namespace},
         "roleRef": {
             "apiGroup": "rbac.authorization.k8s.io",
             "kind": "ClusterRole",
-            "name": "system:openshift:scc:anyuid",
+            "name": FLEET_SCC_ROLE,
         },
         "subjects": [{"kind": "ServiceAccount", "name": "fleet-node", "namespace": namespace}],
     }

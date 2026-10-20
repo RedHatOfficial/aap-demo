@@ -80,7 +80,7 @@ def _which(present):
 def _keygen(argv):
     path = Path(argv[argv.index("-f") + 1])
     path.write_text("PRIVATE-KEY\n", encoding="utf-8")
-    Path(str(path) + ".pub").write_text("ssh-ed25519 PUBLIC\n", encoding="utf-8")
+    Path(str(path) + ".pub").write_text("ssh-rsa PUBLIC\n", encoding="utf-8")
     return CompletedCommand(argv=tuple(argv), returncode=0, stdout="")
 
 
@@ -330,6 +330,8 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert "ping job template" in app_ctx.console.stdout
     runs = _playbook_runs(app_ctx.runner)
     assert [name for name, _text, _job in runs] == ["provision.yml", "import.yml"]
+    keygen = next(call for call in app_ctx.runner.calls if "ssh-keygen" in call.argv[0])
+    assert list(keygen.argv[1:5]) == ["-t", "rsa", "-b", "3072"]
     provision, imported = (text for _name, text, _job in runs)
     provision_job = runs[0][2]
     import_job = runs[1][2]
@@ -346,7 +348,8 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert "aap_validate_certs: true" in imported
     applied = _applied(app_ctx.runner)
     kinds = [document.get("kind") for document in applied]
-    assert "ClusterRole" not in kinds
+    assert "SecurityContextConstraints" in kinds
+    assert "ClusterRole" in kinds
     assert "ClusterRoleBinding" not in kinds
     runner_account = next(
         document
@@ -372,11 +375,30 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert runner_role["rules"] == [
         {"apiGroups": [""], "resources": ["secrets", "configmaps"], "verbs": ["get"]}
     ]
-    anyuid = next(
-        document for document in applied if document["metadata"]["name"] == "fleet-anyuid"
+    scc = next(
+        document for document in applied if document.get("kind") == "SecurityContextConstraints"
     )
-    assert anyuid["metadata"]["namespace"] == "fleet"
-    assert anyuid["subjects"][0]["name"] == "fleet-node"
+    assert scc["metadata"]["name"] == "aap-demo-fleet"
+    assert scc["allowedCapabilities"] == ["SYS_CHROOT", "AUDIT_WRITE"]
+    assert scc["allowPrivilegedContainer"] is False
+    scc_role = next(document for document in applied if document.get("kind") == "ClusterRole")
+    assert scc_role["metadata"]["name"] == "system:openshift:scc:aap-demo-fleet"
+    assert scc_role["rules"] == [
+        {
+            "apiGroups": ["security.openshift.io"],
+            "resources": ["securitycontextconstraints"],
+            "resourceNames": ["aap-demo-fleet"],
+            "verbs": ["use"],
+        }
+    ]
+    scc_binding = next(
+        document
+        for document in applied
+        if document.get("kind") == "RoleBinding" and document["metadata"]["name"] == "fleet-ssh-scc"
+    )
+    assert scc_binding["metadata"]["namespace"] == "fleet"
+    assert scc_binding["subjects"][0]["name"] == "fleet-node"
+    assert scc_binding["roleRef"]["name"] == "system:openshift:scc:aap-demo-fleet"
     assert provision_job["metadata"]["namespace"] == "fleet-runner"
     image = provision_job["spec"]["template"]["spec"]["containers"][0]["image"]
     assert image == EE_IMAGE
@@ -782,6 +804,7 @@ def test_packaged_files_load_through_importlib() -> None:
     assert "ETC_SAVE=/var/lib/fleet-etc" in script
     assert "groupadd --system" in script
     assert "mkdir -p /etc/ssh /etc/sudoers.d" in script
+    assert "install -d -m 755 -o ansible -g ansible /home/ansible" in script
 
 
 def test_playbooks_parse_and_name_their_modules() -> None:
@@ -801,6 +824,13 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert "kubernetes.core.k8s_scale" in provision
     assert "replicas: 0" in provision
     assert "(replicas | default(1) | int) != 0" in provision
+    assert "capabilities:" in provision
+    assert "- SYS_CHROOT" in provision
+    assert "- AUDIT_WRITE" in provision
+    assert "aap-demo/fleet-ssh-key:" in provision
+    assert "ssh_public_key | hash('sha256')" in provision
+    assert "aap-demo/fleet-entrypoint:" in provision
+    assert "lookup('file', entrypoint_path) | hash('sha256')" in provision
     assert 'controller_host: "{{ aap_hostname }}"' in imported
     assert 'controller_username: "{{ aap_username }}"' in imported
     assert 'controller_password: "{{ aap_password }}"' in imported

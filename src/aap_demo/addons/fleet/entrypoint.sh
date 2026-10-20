@@ -58,7 +58,7 @@ fix_debian_overrides() {
     if [[ -n ${user} && ${user} != root ]] && ! id "${user}" >/dev/null 2>&1; then
       useradd --system --no-create-home --gid "${group}" "${user}" || true
     fi
-  done < /var/lib/dpkg/statoverride
+  done </var/lib/dpkg/statoverride
 }
 
 restore_etc
@@ -85,6 +85,7 @@ mkdir -p /etc/ssh /etc/sudoers.d
 if ! id ansible >/dev/null 2>&1; then
   useradd -m -s /bin/bash ansible
 fi
+install -d -m 755 -o ansible -g ansible /home/ansible
 echo "ansible ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/ansible
 chmod 440 /etc/sudoers.d/ansible
 

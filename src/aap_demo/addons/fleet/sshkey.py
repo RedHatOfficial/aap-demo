@@ -2,7 +2,8 @@
 
 The macOS keychain refuses writes from a pipx Python (``-25308``).
 The key lives in the AAP namespace instead, and the playbook Job is
-the only reader of the private half.
+the only reader of the private half. RSA is used because the UBI/OpenSSH
+images may run with crypto policies that reject Ed25519 signatures.
 """
 
 from __future__ import annotations
@@ -20,13 +21,15 @@ from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, AddonError, PrerequisiteError
 from aap_demo.exec import kubectl
 
-SECRET = "aap-demo-fleet-ssh"
+SECRET = "aap-demo-fleet-ssh"  # pragma: allowlist secret
 
 
 def load_or_create(ctx: AppContext) -> tuple:
     existing = _read(ctx)
     if existing:
-        return existing
+        _private, public = existing
+        if public.startswith("ssh-rsa "):
+            return existing
     binary = shutil.which("ssh-keygen")
     if not binary:
         raise PrerequisiteError(
@@ -34,9 +37,9 @@ def load_or_create(ctx: AppContext) -> tuple:
             hint="Install OpenSSH, then run aap-demo enable fleet again.",
         )
     directory = Path(tempfile.mkdtemp(prefix="aap-demo-fleet-"))
-    key = directory / "id_ed25519"
+    key = directory / "id_rsa"
     try:
-        result = ctx.runner.run([binary, "-t", "ed25519", "-N", "", "-f", str(key)])
+        result = ctx.runner.run([binary, "-t", "rsa", "-b", "3072", "-N", "", "-f", str(key)])
         if not result.ok:
             raise AapDemoError("ssh-keygen failed", hint=(result.stderr or "").strip() or None)
         private = key.read_text(encoding="utf-8")

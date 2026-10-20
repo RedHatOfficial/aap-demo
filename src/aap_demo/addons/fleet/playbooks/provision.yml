@@ -124,6 +124,9 @@
                   app.kubernetes.io/name: fleet-node
                   app.kubernetes.io/instance: "{{ item.name }}"
                   aap-demo/os: "{{ item.os }}"
+                annotations:
+                  aap-demo/fleet-ssh-key: "{{ ssh_public_key | hash('sha256') }}"
+                  aap-demo/fleet-entrypoint: "{{ lookup('file', entrypoint_path) | hash('sha256') }}"
               spec:
                 serviceAccountName: fleet-node
                 automountServiceAccountToken: false
@@ -148,6 +151,10 @@
                     securityContext:
                       readOnlyRootFilesystem: false
                       runAsUser: 0
+                      capabilities:
+                        add:
+                          - SYS_CHROOT
+                          - AUDIT_WRITE
                     command:
                       - /bin/bash
                       - /entrypoint/entrypoint.sh
@@ -177,7 +184,7 @@
                       defaultMode: 0755
                   - name: ssh
                     secret:
-                      secretName: fleet-ssh
+                      secretName: fleet-ssh  # pragma: allowlist secret
                       items:
                         - key: ssh-publickey
                           path: authorized_keys
