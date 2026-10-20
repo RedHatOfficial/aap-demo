@@ -236,3 +236,56 @@ git diff --check
   a live runtime payload that supplies only bare linked IDs is deliberately
   classified as `contract_drift` rather than polled without an identity-backed
   allowlist.
+
+## Fix Round 3 (2026-10-20)
+
+### Changes
+
+- Explicitly blocked, non-launchable scenarios now produce `BLOCKED` results
+  with failure class `prerequisite` and their configured `blocked_reason`
+  before any inventory graph resolution.
+- Graph validation and execution continue only for scenarios that are not
+  explicitly blocked. A graph-validation failure still prevents any executable
+  scenario launch, while already blocked scenarios remain visible in the
+  result set.
+- Added regression coverage using the default manifest and imported workflow
+  nodes with stripped `job_template_id` values. It proves every configured
+  blocked scenario, including Product Demos, is returned with its configured
+  reason and that no AO workflow launches.
+
+### TDD evidence
+
+The new default-manifest regression initially failed: three blocked scenarios
+were reported as `contract_drift`, and the successfully resolved Product Demos
+scenario was omitted because validation returned its failure subset early. The
+existing contract-only regression also showed the former `contract_drift`
+classification. Both passed after blocked scenarios were partitioned before
+graph validation.
+
+### Tests and checks
+
+```text
+python3 -m unittest test/test-ao-acceptance-workflows.py -v
+Ran 24 tests in 0.004s
+OK
+
+python3 -m unittest test/test-ao-acceptance-runner.py \\
+  test/test-ao-acceptance-environment.py \\
+  test/test-ao-acceptance-clients.py \\
+  test/test-ao-acceptance-checks.py \\
+  test/test-ao-acceptance-ee-security.py \\
+  test/test-ao-acceptance-workflows.py -v
+Ran 93 tests in 0.254s
+OK
+
+python3 -m py_compile test/ao-acceptance/scenarios.py \\
+  test/ao-acceptance/checks/workflows.py test/ao-acceptance/runner.py
+python3 -m json.tool test/ao-acceptance/scenarios/critical-path.json
+git diff --check
+```
+
+### Concerns
+
+- No live cluster was contacted. This changes only the pre-launch reporting
+  path; the existing strict runtime job allowlists, execution-evidence marker
+  fields, and shared execution deadline remain covered by the focused suite.

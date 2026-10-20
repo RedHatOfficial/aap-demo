@@ -186,7 +186,53 @@ class WorkflowExecutionTests(unittest.TestCase):
         )
 
         self.assertEqual(checks[0].status, CheckStatus.BLOCKED)
-        self.assertEqual(checks[0].failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(checks[0].failure_class, FailureClass.PREREQUISITE)
+        self.assertEqual(checks[0].summary, "no read-only representative")
+        self.assertEqual(ao.launched, [])
+
+    def test_configured_blocked_scenarios_report_reasons_before_graph_validation(self):
+        loaded = scenarios.load(ACCEPTANCE_DIR / "scenarios" / "critical-path.json")
+        template_names = [
+            name
+            for item in loaded
+            for name in item.job_template_names
+        ]
+        inventory = ManagedResourceInventory(
+            ao_workflows=[
+                {
+                    "id": f"workflow-{index}",
+                    "name": item.workflow_name,
+                    "aap_job_template_nodes": [
+                        {"job_template_name": item.job_template_names[0]}
+                    ],
+                }
+                for index, item in enumerate(loaded)
+                if item.workflow_name
+            ],
+            job_templates=[
+                {"id": index, "name": name}
+                for index, name in enumerate(template_names, start=1)
+            ],
+        )
+        ao = FakeAoClient([])
+
+        checks = workflows.run(loaded, inventory, ao, FakeAapClient())
+
+        self.assertEqual(len(checks), len(loaded))
+        self.assertEqual(
+            {
+                check.details["scenario_id"]: (check.status, check.failure_class, check.summary)
+                for check in checks
+            },
+            {
+                item.scenario_id: (
+                    CheckStatus.BLOCKED,
+                    FailureClass.PREREQUISITE,
+                    item.blocked_reason,
+                )
+                for item in loaded
+            },
+        )
         self.assertEqual(ao.launched, [])
 
     def test_unexpected_workflow_template_link_is_contract_drift_without_a_launch(self):

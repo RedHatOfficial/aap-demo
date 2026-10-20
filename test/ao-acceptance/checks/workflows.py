@@ -252,11 +252,29 @@ def run(
     scenarios: list[Scenario], inventory: ManagedResourceInventory, ao: "AoClient", aap: "AapClient"
 ) -> list[CheckResult]:
     """Launch each validated read-only scenario once under a single deadline."""
-    resolved, validation_failures = _validate(scenarios, inventory)
+    blocked_results = [
+        _result(
+            scenario,
+            CheckStatus.BLOCKED,
+            FailureClass.PREREQUISITE,
+            scenario.blocked_reason,
+            workflow_id=None,
+            job_template_ids=[],
+            job_ids=[],
+        )
+        for scenario in scenarios
+        if not scenario.launch and scenario.blocked_reason
+    ]
+    executable_scenarios = [
+        scenario
+        for scenario in scenarios
+        if scenario.launch or not scenario.blocked_reason
+    ]
+    resolved, validation_failures = _validate(executable_scenarios, inventory)
     if validation_failures:
-        return validation_failures
+        return [*blocked_results, *validation_failures]
 
-    results: list[CheckResult] = []
+    results = blocked_results
     for scenario, workflow, template_records in resolved:
         workflow_id = workflow.get("id") if workflow else None
         template_ids = [record.get("id") for record in template_records]
