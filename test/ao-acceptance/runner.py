@@ -2,20 +2,28 @@
 
 import argparse
 from dataclasses import asdict
+from datetime import UTC, datetime
 import json
+import os
 from pathlib import Path
 import sys
 
 try:
-    from .model import CheckResult, CheckStatus, RunConfig
+    from .model import CheckResult, CheckStatus, FailureClass, RunConfig
     from .environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from .inventory import build_inventory
     from .checks import execution_environments, readiness, security, wiring
+    from .clients import AapClient, AoClient
+    from .probes import McpToolsClient, ProbeSet
+    from .redaction import redact_text
 except ImportError:  # Direct execution via run.sh or python runner.py.
-    from model import CheckResult, CheckStatus, RunConfig
+    from model import CheckResult, CheckStatus, FailureClass, RunConfig
     from environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from inventory import build_inventory
     from checks import execution_environments, readiness, security, wiring
+    from clients import AapClient, AoClient
+    from probes import McpToolsClient, ProbeSet
+    from redaction import redact_text
 
 
 DEFAULT_ARTIFACT_DIR = Path("artifacts/ao-acceptance")
@@ -106,6 +114,82 @@ def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None =
     ]
 
 
+def _route_url(command_runner: CommandRunner, namespace: str, *, name: str | None = None, selector: str | None = None, path: str = "") -> str | None:
+    args = ["kubectl", "get", "route"]
+    if name:
+        args.append(name)
+    args.extend(["-n", namespace])
+    if selector:
+        args.extend(["-l", selector])
+    args.extend(["-o", "jsonpath={.items[0].spec.host}" if not name else "jsonpath={.spec.host}"])
+    result = command_runner.run(args, timeout=getattr(command_runner, "timeout_seconds", 60))
+    host = result.stdout.strip()
+    return f"https://{host}{path}" if result.returncode == 0 and host else None
+
+
+def create_live_dependencies(config: RunConfig, command_runner: CommandRunner):
+    """Create authenticated, injectable live boundaries without printing credentials.
+
+    Tokens are intentionally supplied only through dedicated opt-in environment
+    variables.  Their absence is a prerequisite failure rather than a fallback
+    to Kubernetes secrets or an unauthenticated probe.
+    """
+    tokens = {
+        "AAP_ACCEPTANCE_AAP_TOKEN": os.environ.get("AAP_ACCEPTANCE_AAP_TOKEN"),
+        "AAP_ACCEPTANCE_AO_TOKEN": os.environ.get("AAP_ACCEPTANCE_AO_TOKEN"),
+        "AAP_ACCEPTANCE_MCP_TOKEN": os.environ.get("AAP_ACCEPTANCE_MCP_TOKEN"),
+    }
+    missing = [name for name, value in tokens.items() if not value]
+    if missing:
+        return None, "live acceptance credentials are unavailable"
+    aap_url = _route_url(command_runner, config.aap_namespace, name="aap")
+    ao_url = _route_url(command_runner, config.namespace, name="automation-orchestrator")
+    mcp_url = _route_url(
+        command_runner,
+        config.aap_namespace,
+        selector="app.kubernetes.io/name=aap-mcp-server",
+        path="/mcp",
+    )
+    if not aap_url or not ao_url or not mcp_url:
+        return None, "required AAP, AO, or MCP route is unavailable"
+    ca_file = os.environ.get("AAP_ACCEPTANCE_CA_FILE") or None
+    aap = AapClient(aap_url, tokens["AAP_ACCEPTANCE_AAP_TOKEN"], ca_file=ca_file)
+    ao = AoClient(ao_url, tokens["AAP_ACCEPTANCE_AO_TOKEN"], ca_file=ca_file)
+    mcp_client = McpToolsClient(
+        command_runner, mcp_url, tokens["AAP_ACCEPTANCE_MCP_TOKEN"],
+        ca_file=ca_file, timeout_seconds=config.timeout_seconds,
+    )
+    probes = ProbeSet(
+        command_runner,
+        ca_file=ca_file,
+        timeout_seconds=config.timeout_seconds,
+        ee_namespace=config.aap_namespace,
+        ao_namespace=config.namespace,
+        aap_url=aap_url,
+        ao_url=ao_url,
+        mcp_url=mcp_url,
+        aap_client=aap,
+        ao_client=ao,
+        mcp_client=mcp_client,
+    )
+    return aap, ao, probes
+
+
+def _prerequisite_failure(check_id: str, summary: str, *, details: dict[str, object] | None = None) -> CheckResult:
+    now = datetime.now(UTC).isoformat()
+    return CheckResult(
+        check_id=check_id,
+        component="runner",
+        status=CheckStatus.FAIL,
+        failure_class=FailureClass.PREREQUISITE,
+        summary=summary,
+        started_at=now,
+        finished_at=now,
+        duration_seconds=0.0,
+        details=details or {},
+    )
+
+
 def _run(config: RunConfig) -> dict[str, object]:
     """Create the run-level result container for the scaffold."""
     results: list[CheckResult] = []
@@ -126,18 +210,42 @@ def _run(config: RunConfig) -> dict[str, object]:
         )
     else:
         command_runner = CommandRunner()
+        # Keep the declared runner boundary while making timeout and namespace
+        # observable to Task 5 checks and their injected test doubles.
+        command_runner.timeout_seconds = config.timeout_seconds
+        command_runner.aap_namespace = config.aap_namespace
+        command_runner.ee_selector = "app.kubernetes.io/name=aap-controller-task"
         inspection = TargetInspector(command_runner, config)
-        results.extend(validate_target(config, inspection))
-        blocked = any(result.status == CheckStatus.BLOCKED for result in results)
+        preflight = validate_target(config, inspection)
+        results.extend(preflight)
+        blocked = any(result.status == CheckStatus.BLOCKED for result in preflight)
         missing = {
             result.component
-            for result in results
+            for result in preflight
             if result.check_id.startswith("target.") and result.details.get("ready") is False
         }
         if not blocked and (config.mode == "provision" or (config.mode == "auto" and missing)):
             preparation = prepare_target(config, command_runner, missing)
             results.extend(preparation)
             mutated = bool(preparation)
+            if all(result.status == CheckStatus.PASS for result in preparation):
+                preflight = validate_target(config, inspection)
+                results.extend(preflight)
+        preflight_ok = bool(preflight) and all(result.status == CheckStatus.PASS for result in preflight)
+        if preflight_ok:
+            dependencies = create_live_dependencies(config, command_runner)
+            if dependencies[0] is None:
+                results.append(_prerequisite_failure("runner.live-dependencies", dependencies[1]))
+            else:
+                aap, ao, probes = dependencies
+                try:
+                    results.extend(run_managed_checks(aap, ao, probes, command_runner=command_runner))
+                except Exception as error:
+                    results.append(_prerequisite_failure(
+                        "runner.managed-checks",
+                        "managed live checks could not be initialized or observed",
+                        details={"error": redact_text(str(error))},
+                    ))
     return {
         "config": _config_dict(config),
         "results": [result.to_dict() for result in results],

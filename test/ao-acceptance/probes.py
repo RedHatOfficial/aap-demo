@@ -1,6 +1,7 @@
 """Redacted network probes for the opt-in AO live acceptance suite."""
 
 from dataclasses import dataclass
+import json
 import re
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -48,6 +49,43 @@ def https_command(url: str, *, ca_file: str | None = None) -> list[str]:
     return args
 
 
+class McpToolsClient:
+    """Small injected boundary for an authenticated MCP tools/list request."""
+
+    def __init__(self, runner: "CommandRunner", endpoint: str, token: str, *, ca_file: str | None = None, timeout_seconds: int = 60):
+        self.runner = runner
+        self.endpoint = endpoint
+        self.token = token
+        self.ca_file = ca_file
+        self.timeout_seconds = timeout_seconds
+
+    def list_tools(self) -> list[str]:
+        args = [
+            "curl", "--fail", "--silent", "--show-error", "--request", "POST",
+            "--header", f"Authorization: Bearer {self.token}",
+            "--header", "Content-Type: application/json",
+            "--data", '{"jsonrpc":"2.0","id":"ao-acceptance-tools","method":"tools/list","params":{}}',
+        ]
+        if self.ca_file:
+            args.extend(["--cacert", self.ca_file])
+        args.append(self.endpoint)
+        result = self.runner.run(args, timeout=self.timeout_seconds)
+        if result.returncode != 0:
+            raise RuntimeError(_error(result.stderr, result.stdout, "MCP tools/list request failed"))
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("MCP tools/list response was not JSON") from error
+        body = payload.get("result", payload) if isinstance(payload, dict) else {}
+        tools = body.get("tools") if isinstance(body, dict) else None
+        if not isinstance(tools, list):
+            raise RuntimeError("MCP tools/list response did not contain tools")
+        names = [tool.get("name") if isinstance(tool, dict) else tool for tool in tools]
+        if not all(isinstance(name, str) and name for name in names):
+            raise RuntimeError("MCP tools/list response contained an invalid tool")
+        return names
+
+
 def _error(*texts: str) -> str:
     return redact_text("\n".join(text for text in texts if text))[:_ERROR_LIMIT]
 
@@ -90,12 +128,16 @@ class ProbeSet:
         ca_file: str | None = None,
         timeout_seconds: int = 60,
         ee_namespace: str = "aap-operator",
-        ee_selector: str = "app.kubernetes.io/component=execution-environment",
+        ee_selector: str = "app.kubernetes.io/name=aap-controller-task",
         ao_namespace: str = "automation-orchestrator",
         ao_selector: str = "app.kubernetes.io/component=backend",
+        ao_selectors: tuple[str, ...] | None = None,
         aap_url: str | None = None,
         ao_url: str | None = None,
         mcp_url: str | None = None,
+        aap_client=None,
+        ao_client=None,
+        mcp_client=None,
         metadata: dict[str, object] | None = None,
     ):
         self.runner = runner
@@ -105,9 +147,16 @@ class ProbeSet:
         self.ee_selector = ee_selector
         self.ao_namespace = ao_namespace
         self.ao_selector = ao_selector
+        self.ao_selectors = ao_selectors or (
+            "app.kubernetes.io/component=backend",
+            "app.kubernetes.io/component=worker",
+        )
         self.aap_url = aap_url
         self.ao_url = ao_url
         self.mcp_url = mcp_url
+        self.aap_client = aap_client
+        self.ao_client = ao_client
+        self.mcp_client = mcp_client
         del metadata  # Legacy constructor input is deliberately not an observation.
 
     def host_dns(self, host: str) -> ProbeResult:
@@ -135,6 +184,7 @@ class ProbeSet:
         pod_result = self.runner.run(
             [
                 "kubectl", "get", "pods", "-n", namespace, "-l", selector,
+                "--field-selector=status.phase=Running",
                 "-o", "jsonpath={.items[0].metadata.name}",
             ],
             timeout=self.timeout_seconds,
@@ -160,30 +210,57 @@ class ProbeSet:
         return bool(self.mcp_url and self.host_https(self.mcp_url).ok)
 
     def identity_observations(self) -> dict[str, bool]:
-        admin = self.runner.run(
-            ["kubectl", "get", "secret", "aap-admin-password", "-n", self.ee_namespace, "-o", "name"],
-            timeout=self.timeout_seconds,
-        )
+        admin = self._aap_admin_identity()
         service_account = self.runner.run(
             ["kubectl", "get", "deployment", "automation-orchestrator-backend", "-n", self.ao_namespace, "-o", "jsonpath={.spec.template.spec.serviceAccountName}"],
             timeout=self.timeout_seconds,
         )
+        service_account_name = service_account.stdout.strip()
+        account = self.runner.run(
+            ["kubectl", "get", "serviceaccount", service_account_name, "-n", self.ao_namespace, "-o", "name"],
+            timeout=self.timeout_seconds,
+        ) if service_account.returncode == 0 and service_account_name else None
         return {
-            "admin": admin.returncode == 0 and bool(admin.stdout.strip()),
-            "automation-orchestrator": service_account.returncode == 0 and bool(service_account.stdout.strip()),
+            "admin": admin,
+            "automation-orchestrator": bool(
+                account and account.returncode == 0 and account.stdout.strip()
+            ),
         }
 
     def token_usable(self, integration: dict) -> bool | None:
-        status = integration.get(
-            "status", integration.get("validation_status", integration.get("health", integration.get("state")))
-        )
-        if status is None:
+        name = str(integration.get("name", "")).casefold()
+        if name == "aap-demo aap":
+            return self._aap_admin_identity()
+        if name != "aap-demo mcp server" or self.mcp_client is None:
             return None
-        return str(status).casefold() in {"available", "healthy", "valid", "ready"}
+        try:
+            self.mcp_client.list_tools()
+        except Exception:
+            return False
+        return True
 
     def mcp_tools(self, integration: dict) -> list[str] | None:
-        tools = integration.get("enabled_tools", integration.get("tools"))
-        return [str(tool) for tool in tools] if isinstance(tools, list) else None
+        del integration
+        if self.mcp_client is None:
+            return None
+        try:
+            return self.mcp_client.list_tools()
+        except Exception:
+            return None
+
+    def _aap_admin_identity(self) -> bool:
+        if self.aap_client is None:
+            return False
+        try:
+            payload = self.aap_client.get("/api/gateway/v1/me/")
+        except Exception:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        username = payload.get("username", payload.get("user", payload.get("name")))
+        if isinstance(username, dict):
+            username = username.get("username", username.get("name"))
+        return isinstance(username, str) and username.casefold() == "admin"
 
     def private_network_ready(self, hostname: str) -> bool | None:
         for deployment in ("automation-orchestrator-backend", "automation-orchestrator-worker"):
@@ -195,4 +272,13 @@ class ProbeSet:
                 return None
             if hostname not in result.stdout:
                 return False
+            if hostname.endswith((".nip.io", ".crc.testing")) or hostname in {"localhost", "127.0.0.1"}:
+                aliases = self.runner.run(
+                    ["kubectl", "get", "deployment", deployment, "-n", self.ao_namespace, "-o", "jsonpath={.spec.template.spec.hostAliases[*].hostnames[*]}"],
+                    timeout=self.timeout_seconds,
+                )
+                if aliases.returncode != 0:
+                    return None
+                if hostname not in aliases.stdout:
+                    return False
         return True

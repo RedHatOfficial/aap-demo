@@ -9,7 +9,7 @@ _SECRET_KEYS = {
     "token", "password", "secret", "apikey", "authorization", "accesstoken",
     "clientsecret", "credential", "credentials", "bearer",
 }
-_SECRET_NAME = r"(?:token|password|secret|api[-_]?key|access[-_]?token|client[-_]?secret|credentials?|bearer)"
+_SECRET_NAME = r"(?:(?:[a-z0-9]+[-_])*)(?:token|password|secret|api[-_]?key|access[-_]?token|client[-_]?secret|credentials?|bearer)"
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[^\s,;\"'}]+")
 _SECRET_VALUE = re.compile(
     rf"(?i)(?P<prefix>[\"']?{_SECRET_NAME}[\"']?\s*[:=]\s*)(?P<value>\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}}\]&;]*)"
@@ -37,7 +37,7 @@ def redact(value: object) -> object:
     """Return a recursively redacted copy suitable for diagnostics."""
     if isinstance(value, dict):
         return {
-            key: REDACTED if _normalized_key(key) in _SECRET_KEYS else redact(item)
+            key: REDACTED if _is_secret_key(key) else redact(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -51,3 +51,11 @@ def redact(value: object) -> object:
 
 def _normalized_key(key: object) -> str:
     return str(key).casefold().replace("-", "").replace("_", "")
+
+
+def _is_secret_key(key: object) -> bool:
+    """Recognize both canonical fields and prefixed HTTP header names."""
+    normalized = _normalized_key(key)
+    return normalized in _SECRET_KEYS or any(
+        normalized.endswith(secret_name) for secret_name in _SECRET_KEYS
+    )

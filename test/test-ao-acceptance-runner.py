@@ -93,7 +93,7 @@ class CheckResultSerializationTests(unittest.TestCase):
 class ManagedCheckWiringTests(unittest.TestCase):
     def test_runs_security_and_execution_environment_checks_with_injected_boundaries(self):
         inventory = object()
-        command_runner = object()
+        command_runner = type("RunnerStub", (), {})()
         security_result = model.CheckResult(
             "security.tokens", "token", model.CheckStatus.PASS,
             None, "observed", "", "", 0.0, {},
@@ -114,6 +114,61 @@ class ManagedCheckWiringTests(unittest.TestCase):
         self.assertEqual(results, [security_result, ee_result])
         security_run.assert_called_once_with(inventory, "probes")
         ee_run.assert_called_once_with(inventory, "aap", command_runner)
+
+
+class LiveRunnerTests(unittest.TestCase):
+    def setUp(self):
+        self.config = model.RunConfig(
+            mode="validate",
+            namespace="automation-orchestrator",
+            artifact_dir=Path("artifacts/ao-acceptance"),
+            context=None,
+            scenario_file=Path("test/ao-acceptance/scenarios/critical-path.json"),
+            timeout_seconds=47,
+            dry_run=False,
+        )
+
+    def test_runs_managed_checks_after_successful_preflight_with_configured_timeout(self):
+        preflight = model.CheckResult(
+            "target.context", "target", model.CheckStatus.PASS, None,
+            "ready", "", "", 0.0, {"ready": True},
+        )
+        managed = model.CheckResult(
+            "security.tokens", "token", model.CheckStatus.PASS, None,
+            "observed", "", "", 0.0, {},
+        )
+        command_runner = type("RunnerStub", (), {})()
+        dependencies = ("aap", "ao", "probes")
+        with (
+            mock.patch.object(runner, "CommandRunner", return_value=command_runner),
+            mock.patch.object(runner, "TargetInspector"),
+            mock.patch.object(runner, "validate_target", return_value=[preflight]),
+            mock.patch.object(runner, "create_live_dependencies", return_value=dependencies) as create,
+            mock.patch.object(runner, "run_managed_checks", return_value=[managed]) as managed_checks,
+        ):
+            result = runner._run(self.config)
+
+        self.assertEqual(result["results"][-1]["check_id"], "security.tokens")
+        self.assertEqual(command_runner.timeout_seconds, 47)
+        create.assert_called_once_with(self.config, command_runner)
+        managed_checks.assert_called_once_with("aap", "ao", "probes", command_runner=command_runner)
+
+    def test_missing_live_dependencies_is_a_prerequisite_failure(self):
+        preflight = model.CheckResult(
+            "target.context", "target", model.CheckStatus.PASS, None,
+            "ready", "", "", 0.0, {"ready": True},
+        )
+        with (
+            mock.patch.object(runner, "CommandRunner", return_value=type("RunnerStub", (), {})()),
+            mock.patch.object(runner, "TargetInspector"),
+            mock.patch.object(runner, "validate_target", return_value=[preflight]),
+            mock.patch.object(runner, "create_live_dependencies", return_value=(None, "live credentials unavailable")),
+        ):
+            result = runner._run(self.config)
+
+        live = next(item for item in result["results"] if item["check_id"] == "runner.live-dependencies")
+        self.assertEqual(live["status"], model.CheckStatus.FAIL.value)
+        self.assertEqual(live["failure_class"], model.FailureClass.PREREQUISITE.value)
 
 
 class RunnerExitTests(unittest.TestCase):

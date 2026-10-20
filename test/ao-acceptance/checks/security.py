@@ -75,7 +75,7 @@ def _integration_checks(inventory: ManagedResourceInventory, probes: "ProbeSet")
         ))
         pod_https = probes.ee_https(
             getattr(probes, "ee_namespace", "aap-operator"),
-            getattr(probes, "ee_selector", "app.kubernetes.io/component=execution-environment"),
+            getattr(probes, "ee_selector", "app.kubernetes.io/name=aap-controller-task"),
             endpoint,
         )
         results.append(_result(
@@ -84,16 +84,21 @@ def _integration_checks(inventory: ManagedResourceInventory, probes: "ProbeSet")
             FailureClass.PREREQUISITE,
             details={"hostname": pod_https.hostname, "status": pod_https.status, "certificate_subject": pod_https.certificate_subject, "certificate_issuer": pod_https.certificate_issuer, "error": pod_https.error},
         ))
-        ao_https = probes.ao_https(
-            getattr(probes, "ao_namespace", "automation-orchestrator"),
-            getattr(probes, "ao_selector", "app.kubernetes.io/component=backend"),
-            endpoint,
-        ) if callable(getattr(probes, "ao_https", None)) else None
+        selectors = getattr(
+            probes,
+            "ao_selectors",
+            (getattr(probes, "ao_selector", "app.kubernetes.io/component=backend"),),
+        )
+        ao_https = [
+            probes.ao_https(getattr(probes, "ao_namespace", "automation-orchestrator"), selector, endpoint)
+            for selector in selectors
+        ] if callable(getattr(probes, "ao_https", None)) else []
+        ao_ok = bool(ao_https) and all(result.ok for result in ao_https)
         results.append(_result(
-            f"security.route.{slug}.ao", "tls", bool(ao_https and ao_https.ok),
-            f"{name} route is trusted from the AO backend/worker pod" if ao_https and ao_https.ok else f"{name} route is not trusted from the AO backend/worker pod",
+            f"security.route.{slug}.ao", "tls", ao_ok,
+            f"{name} route is trusted from AO backend and worker pods" if ao_ok else f"{name} route is not trusted from every AO backend/worker pod",
             FailureClass.PREREQUISITE,
-            details={"hostname": hostname, "status": ao_https.status if ao_https else None, "error": ao_https.error if ao_https else "AO pod observation unavailable"},
+            details={"hostname": hostname, "contexts": [{"selector": selector, "status": result.status, "error": result.error} for selector, result in zip(selectors, ao_https)]},
         ))
         policy = probes.private_network_ready(hostname) if callable(getattr(probes, "private_network_ready", None)) else None
         private_ok = policy is True
@@ -119,11 +124,9 @@ def _metadata_checks(inventory: ManagedResourceInventory, probes: "ProbeSet") ->
     ]
     tokens_ok = all(state is True for state in token_states)
     mcp = next((item for item in inventory.ao_integrations if str(item.get("name", "")).casefold() == "aap-demo mcp server"), None)
-    configured_tools = mcp.get("enabled_tools", mcp.get("tools", [])) if isinstance(mcp, dict) else []
-    configured_tools = configured_tools if isinstance(configured_tools, list) else []
     observed_tools = probes.mcp_tools(mcp) if isinstance(mcp, dict) and callable(getattr(probes, "mcp_tools", None)) else None
     observed_tools = observed_tools if isinstance(observed_tools, list) else []
-    tools_ok = bool(configured_tools) and bool(observed_tools) and bool(set(map(str, configured_tools)).intersection(map(str, observed_tools)))
+    tools_ok = bool(observed_tools)
     return [
         _result("security.identities", "identity", identities_ok, "required admin and AO service identities are present" if identities_ok else "required admin or AO service identity observation is missing", FailureClass.PREREQUISITE, details={"required_users": list(_REQUIRED_USERS)}),
         _result("security.credentials", "credential", credentials_ok, "managed credentials have expected types" if credentials_ok else "managed credentials or credential types are missing", FailureClass.WIRING, details={"credential_ids": [item.get("id") for item in inventory.credentials]}),

@@ -12,6 +12,7 @@ from environment import CommandResult  # noqa: E402
 from inventory import ManagedResourceInventory  # noqa: E402
 from model import CheckStatus, FailureClass  # noqa: E402
 import probes  # noqa: E402
+from redaction import REDACTED, redact  # noqa: E402
 from checks import execution_environments, security  # noqa: E402
 
 
@@ -19,19 +20,25 @@ class FakeRunner:
     def __init__(self, responses):
         self.responses = responses
         self.calls = []
+        self.timeouts = []
 
     def run(self, args, *, check=False, timeout=60):
-        del check, timeout
+        del check
         self.calls.append(args)
+        self.timeouts.append(timeout)
         key = tuple(args)
-        return self.responses.get(key, CommandResult(1, "", "unexpected command"))
+        if key in self.responses:
+            return self.responses[key]
+        if args[:3] == ["kubectl", "get", "pods"]:
+            return CommandResult(0, "aap-controller-task-0", "")
+        return CommandResult(1, "", "unexpected command")
 
 
 class ProbeSetTests(unittest.TestCase):
-    def test_default_ee_selector_is_not_a_controller_task_selector(self):
+    def test_default_ee_selector_matches_the_running_aap_controller_task_pod(self):
         probe_set = probes.ProbeSet(FakeRunner({}))
 
-        self.assertNotIn("controller-task", probe_set.ee_selector)
+        self.assertEqual(probe_set.ee_selector, "app.kubernetes.io/name=aap-controller-task")
 
     def test_host_probes_verify_dns_and_tls_without_an_insecure_fallback(self):
         host = "aap.example.test"
@@ -67,10 +74,11 @@ class ProbeSetTests(unittest.TestCase):
             ("getent", "hosts", host): CommandResult(2, "", "token=do-not-leak DNS failure"),
             (
                 "kubectl", "get", "pods", "-n", "aap-operator", "-l", selector,
+                "--field-selector=status.phase=Running",
                 "-o", "jsonpath={.items[0].metadata.name}",
             ): CommandResult(0, pod, ""),
             tuple(["kubectl", "exec", "-n", "aap-operator", pod, "--", *curl_args]): CommandResult(
-                60, "subject=CN=mcp.example.test\n-----BEGIN CERTIFICATE-----\nnot-diagnostic-data", "SSL certificate problem: api-key=do-not-leak password=still-secret token=also-secret"
+                60, "subject=CN=mcp.example.test\n-----BEGIN CERTIFICATE-----\nnot-diagnostic-data", "SSL certificate problem: api-key=do-not-leak password=still-secret token=also-secret X-API-Key: header-secret x-access-token=second-header-secret"
             ),
         })
         probe_set = probes.ProbeSet(runner)
@@ -84,9 +92,56 @@ class ProbeSetTests(unittest.TestCase):
         self.assertNotIn("do-not-leak", pod_https.error)
         self.assertNotIn("still-secret", pod_https.error)
         self.assertNotIn("also-secret", pod_https.error)
+        self.assertNotIn("header-secret", pod_https.error)
+        self.assertNotIn("second-header-secret", pod_https.error)
         self.assertNotIn("BEGIN CERTIFICATE", pod_https.error)
         self.assertEqual(pod_https.hostname, host)
         self.assertIn("certificate", pod_https.error.lower())
+
+    def test_recursively_redacts_prefixed_secret_headers(self):
+        diagnostics = redact({
+            "headers": {
+                "X-API-Key": "api-key-value",
+                "x-access-token": "access-token-value",
+                "Proxy-Authorization": "Bearer proxy-token-value",
+            },
+        })
+
+        self.assertEqual(diagnostics["headers"]["X-API-Key"], REDACTED)
+        self.assertEqual(diagnostics["headers"]["x-access-token"], REDACTED)
+        self.assertEqual(diagnostics["headers"]["Proxy-Authorization"], REDACTED)
+
+    def test_mcp_tools_are_observed_through_an_injected_mcp_client(self):
+        class McpClient:
+            def __init__(self):
+                self.calls = 0
+
+            def list_tools(self):
+                self.calls += 1
+                return ["controller_jobs_list"]
+
+        client = McpClient()
+        probe_set = probes.ProbeSet(FakeRunner({}), mcp_client=client)
+
+        tools = probe_set.mcp_tools({"enabled_tools": ["configured-but-not-observed"]})
+
+        self.assertEqual(tools, ["controller_jobs_list"])
+        self.assertEqual(client.calls, 1)
+
+    def test_identity_and_aap_token_observations_do_not_trust_constructor_metadata(self):
+        class AapClient:
+            def get(self, path):
+                self.path = path
+                return {"username": "not-admin"}
+
+        probe_set = probes.ProbeSet(
+            FakeRunner({}),
+            aap_client=AapClient(),
+            metadata={"users": {"admin": True}, "tokens": {"aap": True}},
+        )
+
+        self.assertFalse(probe_set.identity_observations()["admin"])
+        self.assertFalse(probe_set.token_usable({"name": "aap-demo AAP"}))
 
 
 class SecurityProbeDouble:
@@ -109,6 +164,10 @@ class SecurityProbeDouble:
         self.calls = []
         self.ao_namespace = "automation-orchestrator"
         self.ao_selector = "app.kubernetes.io/component=backend"
+        self.ao_selectors = (
+            "app.kubernetes.io/component=backend",
+            "app.kubernetes.io/component=worker",
+        )
 
     def host_dns(self, host):
         self.calls.append(("dns", host))
@@ -174,6 +233,7 @@ class SecurityCheckTests(unittest.TestCase):
         self.assertIn(("mcp-tools", "aap-demo MCP Server"), probe_set.calls)
         self.assertIn(("private-network", "aap.example.test"), probe_set.calls)
         self.assertIn(("ao", "automation-orchestrator", "app.kubernetes.io/component=backend", "https://aap.example.test"), probe_set.calls)
+        self.assertIn(("ao", "automation-orchestrator", "app.kubernetes.io/component=worker", "https://aap.example.test"), probe_set.calls)
 
     def test_security_checks_report_tls_and_missing_token_metadata_as_wiring_failures(self):
         metadata = {
@@ -323,6 +383,32 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         uncovered = next(check for check in checks if check.check_id == "ee.10.representative-job")
         self.assertEqual(uncovered.failure_class, FailureClass.CONTRACT_DRIFT)
         self.assertEqual(aap.launched, [])
+
+    def test_fails_representative_job_when_a_running_task_pod_cannot_be_observed(self):
+        class NoPodRunner(FakeRunner):
+            def run(self, args, *, check=False, timeout=60):
+                if args[:3] == ["kubectl", "get", "pods"]:
+                    self.calls.append(args)
+                    return CommandResult(1, "", "no running task pod")
+                return super().run(args, check=check, timeout=timeout)
+
+        aap = FakeAapClient()
+        checks = execution_environments.run(ee_inventory(), aap, NoPodRunner({}))
+
+        failed = next(check for check in checks if check.check_id == "ee.10.representative-job")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+        self.assertEqual(failed.failure_class, FailureClass.PREREQUISITE)
+
+    def test_uses_runner_timeout_and_running_aap_task_selector_for_job_observation(self):
+        runner = FakeRunner({})
+        runner.timeout_seconds = 19
+
+        execution_environments.run(ee_inventory(), FakeAapClient(), runner)
+
+        pod_command = next(call for call in runner.calls if call[:3] == ["kubectl", "get", "pods"])
+        self.assertIn("app.kubernetes.io/name=aap-controller-task", pod_command)
+        self.assertIn("--field-selector=status.phase=Running", pod_command)
+        self.assertIn(19, runner.timeouts)
 
 
 if __name__ == "__main__":

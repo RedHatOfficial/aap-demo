@@ -28,6 +28,7 @@ _SAFE_REPRESENTATIVE_TEMPLATES = {
     "openshift": {"AAP-Demo Acceptance | OpenShift Read-Only Diagnostic"},
 }
 _DEFAULT_POLL_TIMEOUT_SECONDS = 60
+_AAP_TASK_SELECTOR = "app.kubernetes.io/name=aap-controller-task"
 
 
 def _same_id(left: object, right: object) -> bool:
@@ -116,9 +117,22 @@ def run(inventory: ManagedResourceInventory, aap: "AapClient", runner: "CommandR
             results.append(_result(f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL, FailureClass.EXECUTION, "representative job could not be launched", details={"execution_environment_id": ee_id, "job_template_id": template_id, "error": redact_text(str(error))}))
             continue
         pod_result = runner.run(
-            ["kubectl", "get", "pods", "-n", getattr(runner, "aap_namespace", "aap-operator"), "-l", f"ansible_job_id={job_id}", "-o", "jsonpath={.items[0].metadata.name}"],
+            [
+                "kubectl", "get", "pods", "-n", getattr(runner, "aap_namespace", "aap-operator"),
+                "-l", getattr(runner, "ee_selector", _AAP_TASK_SELECTOR),
+                "--field-selector=status.phase=Running",
+                "-o", "jsonpath={.items[0].metadata.name}",
+            ],
             timeout=timeout_seconds,
         )
+        if pod_result.returncode != 0 or not pod_result.stdout.strip():
+            results.append(_result(
+                f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL,
+                FailureClass.PREREQUISITE,
+                "representative job launched but no running AAP controller task pod was observed",
+                details={"execution_environment_id": ee_id, "job_template_id": template_id, "job_id": job_id},
+            ))
+            continue
         status, error = _poll_job(aap, job_id, timeout_seconds, sleep)
         passed = status in _SUCCESS_STATES
         failure_class = None if passed else (FailureClass.TIMEOUT if status is None and error and "timeout" in error else FailureClass.EXECUTION)
@@ -127,6 +141,6 @@ def run(inventory: ManagedResourceInventory, aap: "AapClient", runner: "CommandR
             CheckStatus.PASS if passed else CheckStatus.FAIL,
             failure_class,
             "representative job completed successfully" if passed else "representative job did not complete successfully",
-            details={"execution_environment_id": ee_id, "job_template_id": template_id, "job_id": job_id, "job_pod_observed": pod_result.returncode == 0 and bool(pod_result.stdout.strip()), "status": status, "error": error},
+            details={"execution_environment_id": ee_id, "job_template_id": template_id, "job_id": job_id, "task_pod_observed": True, "status": status, "error": error},
         ))
     return results
