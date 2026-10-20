@@ -37,13 +37,17 @@ class UnsafeDiagnostic:
         return "UnsafeDiagnostic(password=correct-horse-battery-staple)"
 
 
-def check(status=CheckStatus.FAIL, failure_class=FailureClass.EXECUTION):
+def check(
+    status=CheckStatus.FAIL,
+    failure_class=FailureClass.EXECUTION,
+    summary="workflow failed: password=correct-horse-battery-staple",
+):
     return CheckResult(
         check_id="workflow.demo",
         component="workflow:demo",
         status=status,
         failure_class=failure_class,
-        summary="workflow failed: password=correct-horse-battery-staple",
+        summary=summary,
         started_at="2026-10-20T12:00:00+00:00",
         finished_at="2026-10-20T12:00:01+00:00",
         duration_seconds=1.0,
@@ -185,6 +189,52 @@ class ArtifactSafetyTests(unittest.TestCase):
         self.assertIn("diagnostic truncated", api_text)
         self.assertNotIn("x" * 128, api_text)
 
+    def test_final_artifacts_are_bounded_after_redaction_expands_text(self):
+        # Break caught: capping input before token redaction permits oversized files.
+        expanding_text = "token=x," * 5000
+        results_path = Path(self.tempdir.name) / "results.json"
+        summary_path = Path(self.tempdir.name) / "summary.txt"
+        artifacts.write_results(results_path, [check(summary=expanding_text)])
+        artifacts.write_summary(summary_path, [check(summary=expanding_text)])
+
+        class ExpandingAap:
+            def get(self, path):
+                return {"message": expanding_text}
+
+        api_result = check()
+        api_result.details["job_ids"] = []
+        bundle = artifacts.ArtifactCollector(now=lambda: "20261020T120000Z").collect_failure(
+            self.config,
+            [api_result],
+            {"aap": ExpandingAap()},
+            FakeCommandRunner(),
+        )
+
+        for path in (results_path, summary_path, bundle / "api.json"):
+            with self.subTest(path=path.name):
+                serialized = path.read_text()
+                self.assertLessEqual(len(serialized.encode("utf-8")), artifacts.MAX_PAYLOAD_BYTES)
+                self.assertIn("final output exceeds", serialized)
+
+    def test_collector_selects_valid_pods_in_memory_and_writes_safe_log_artifact(self):
+        # Break caught: omitting pod-list stdout before selection prevents log collection.
+        command_runner = FakeCommandRunner()
+        bundle = artifacts.ArtifactCollector(now=lambda: "20261020T120000Z").collect_failure(
+            self.config,
+            [check()],
+            {},
+            command_runner,
+        )
+
+        self.assertIn(
+            ["kubectl", "logs", "-n", self.config.namespace, "pod/ao-backend-0", "--tail=100"],
+            command_runner.calls,
+        )
+        log_text = (bundle / "ao-pod-0.log").read_text()
+        self.assertIn("diagnostic omitted", log_text)
+        self.assertNotIn("opaque-pod-log-value", log_text)
+        self.assertNotIn("api-key-value", log_text)
+
 
 class RunnerArtifactIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -225,6 +275,22 @@ class RunnerArtifactIntegrationTests(unittest.TestCase):
         self.assertTrue((self.config.artifact_dir / "results.json").is_file())
         self.assertTrue((self.config.artifact_dir / "summary.txt").is_file())
         collect.assert_called_once()
+
+    def test_main_bounds_printed_json_after_redaction_expands_text(self):
+        # Break caught: printed JSON bypasses the final artifact serialization boundary.
+        failed = check(summary="token=x," * 5000)
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(runner, "parse_args", return_value=self.config),
+            mock.patch.object(runner, "_run", return_value=self._run_result(failed)),
+            mock.patch.object(runner.artifacts.ArtifactCollector, "collect_failure", return_value=Path("bundle")),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(runner.main([]), 1)
+
+        serialized = stdout.getvalue()
+        self.assertLessEqual(len(serialized.encode("utf-8")), artifacts.MAX_PAYLOAD_BYTES)
+        self.assertIn("final output exceeds", serialized)
 
     def test_main_returns_two_for_blocked_or_prerequisite_results(self):
         for result in (

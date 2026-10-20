@@ -19,6 +19,7 @@ except ImportError:  # Direct execution via run.sh or python runner.py.
 
 
 MAX_PAYLOAD_BYTES = 65536
+_FINAL_OUTPUT_MARKER = f"[diagnostic truncated: final output exceeds {MAX_PAYLOAD_BYTES} bytes]"
 _MAX_PODS = 5
 _POD_NAME = re.compile(r"^pod/[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
@@ -30,19 +31,37 @@ def _result_dict(result: CheckResult | dict[str, object]) -> dict[str, object]:
     return dict(result)
 
 
-def _safe_json(value: object) -> str:
-    """Serialize only a recursively-redacted diagnostic value."""
-    return json.dumps(redact(_bounded_payload(value)), indent=2, sort_keys=True, default=lambda _: "[diagnostic omitted: unsafe value]") + "\n"
+def serialize_json(value: object) -> str:
+    """Return final redacted JSON that cannot exceed the artifact byte budget."""
+    serialized = json.dumps(
+        redact(_bounded_payload(value)),
+        indent=2,
+        sort_keys=True,
+        default=lambda _: "[diagnostic omitted: unsafe value]",
+    ) + "\n"
+    if len(serialized.encode("utf-8")) > MAX_PAYLOAD_BYTES:
+        return json.dumps({"diagnostic": _FINAL_OUTPUT_MARKER}, indent=2, sort_keys=True) + "\n"
+    return serialized
+
+
+def _bounded_final_text(text: str) -> str:
+    """Truncate final text on a UTF-8 boundary and retain an explicit marker."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= MAX_PAYLOAD_BYTES:
+        return text
+    marker = f"\n{_FINAL_OUTPUT_MARKER}\n"
+    prefix = encoded[:MAX_PAYLOAD_BYTES - len(marker.encode("utf-8"))].decode("utf-8", errors="ignore")
+    return prefix + marker
 
 
 def _write_text(path: Path, text: str) -> None:
     """Apply final free-form redaction at the only diagnostic write boundary."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(redact_text(text), encoding="utf-8")
+    path.write_text(_bounded_final_text(redact_text(text)), encoding="utf-8")
 
 
 def _write_json(path: Path, value: object) -> None:
-    _write_text(path, _safe_json(value))
+    _write_text(path, serialize_json(value))
 
 
 def write_results(path: Path, results: list[CheckResult]) -> None:
@@ -198,22 +217,18 @@ class ArtifactCollector:
             "ao-description.txt": ["kubectl", "describe", "automationorchestrator", "automation-orchestrator", "-n", config.namespace],
             "ao-events.txt": ["kubectl", "get", "events", "-n", config.namespace, "--sort-by=.lastTimestamp"],
             "aap-events.txt": ["kubectl", "get", "events", "-n", config.aap_namespace, "--sort-by=.lastTimestamp"],
-            "ao-pods.txt": ["kubectl", "get", "pods", "-n", config.namespace, "-l", "app.kubernetes.io/component=backend", "-o", "name"],
         }
-        pod_listing = None
         for filename, args in commands.items():
             outcome = self._command(runner, args, config.timeout_seconds)
             _write_json(bundle / filename, outcome)
-            if filename == "ao-pods.txt":
-                pod_listing = outcome
-        if isinstance(pod_listing, dict):
-            stdout = str(pod_listing.get("stdout", ""))
-            for index, pod in enumerate(stdout.splitlines()[:_MAX_PODS]):
-                if _POD_NAME.fullmatch(pod.strip()):
-                    _write_json(
-                        bundle / f"ao-pod-{index}.log",
-                        self._command(runner, ["kubectl", "logs", "-n", config.namespace, pod.strip(), "--tail=100"], config.timeout_seconds),
-                    )
+        pod_args = ["kubectl", "get", "pods", "-n", config.namespace, "-l", "app.kubernetes.io/component=backend", "-o", "name"]
+        pod_listing, pod_names = self._pod_listing(runner, pod_args, config.timeout_seconds)
+        _write_json(bundle / "ao-pods.txt", pod_listing)
+        for index, pod in enumerate(pod_names):
+            _write_json(
+                bundle / f"ao-pod-{index}.log",
+                self._command(runner, ["kubectl", "logs", "-n", config.namespace, pod, "--tail=100"], config.timeout_seconds),
+            )
 
     @staticmethod
     def _ids(results: list[CheckResult], *keys: str) -> list[object]:
@@ -243,6 +258,30 @@ class ArtifactCollector:
             result = runner.run(args, timeout=timeout)
         except Exception as error:
             return {"args": args, "diagnostic": f"[diagnostic omitted: command failed: {redact_text(str(error))}]"}
+        return ArtifactCollector._command_outcome(args, result)
+
+    @staticmethod
+    def _pod_listing(runner: CommandRunner, args: list[str], timeout: int) -> tuple[dict[str, object], list[str]]:
+        """Select validated pod names in memory while persisting no listing output."""
+        try:
+            result = runner.run(args, timeout=timeout)
+        except Exception as error:
+            return (
+                {"args": args, "diagnostic": f"[diagnostic omitted: command failed: {redact_text(str(error))}]"},
+                [],
+            )
+        stdout = getattr(result, "stdout", "")
+        pod_lines = stdout.splitlines() if isinstance(stdout, str) else []
+        pod_names = [
+            candidate.strip()
+            for candidate in pod_lines
+            if _POD_NAME.fullmatch(candidate.strip())
+        ][:_MAX_PODS]
+        return ArtifactCollector._command_outcome(args, result), pod_names
+
+    @staticmethod
+    def _command_outcome(args: list[str], result: object) -> dict[str, object]:
+        """Persist command metadata while omitting untrusted output streams."""
         return {
             "args": args,
             "returncode": getattr(result, "returncode", "[diagnostic omitted: invalid command result]"),

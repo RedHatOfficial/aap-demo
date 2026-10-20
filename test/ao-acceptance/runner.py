@@ -3,7 +3,6 @@
 import argparse
 from dataclasses import asdict
 from datetime import UTC, datetime
-import json
 import os
 from pathlib import Path
 import re
@@ -16,7 +15,7 @@ try:
     from .checks import execution_environments, readiness, security, wiring, workflows
     from .clients import AapClient, AoClient
     from .probes import McpToolsClient, ProbeSet
-    from .redaction import redact, redact_text
+    from .redaction import redact_text
     from . import artifacts
     from . import scenarios as scenario_manifest
 except ImportError:  # Direct execution via run.sh or python runner.py.
@@ -26,7 +25,7 @@ except ImportError:  # Direct execution via run.sh or python runner.py.
     from checks import execution_environments, readiness, security, wiring, workflows
     from clients import AapClient, AoClient
     from probes import McpToolsClient, ProbeSet
-    from redaction import redact, redact_text
+    from redaction import redact_text
     import artifacts
     import scenarios as scenario_manifest
 
@@ -402,7 +401,7 @@ def main(argv: list[str]) -> int:
             print("acceptance failure diagnostics could not be collected", file=sys.stderr)
 
     public_result = {key: value for key, value in run_result.items() if not key.startswith("_")}
-    print(json.dumps(redact(public_result), indent=2, sort_keys=True))
+    print(artifacts.serialize_json(public_result), end="")
     return exit_code
 
 
