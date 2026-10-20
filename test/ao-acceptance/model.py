@@ -51,3 +51,4 @@ class RunConfig:
     scenario_file: Path
     timeout_seconds: int
     dry_run: bool
+    aap_namespace: str = "aap-operator"

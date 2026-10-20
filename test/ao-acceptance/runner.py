@@ -8,8 +8,10 @@ import sys
 
 try:
     from .model import CheckResult, CheckStatus, RunConfig
+    from .environment import CommandRunner, TargetInspector, prepare_target, validate_target
 except ImportError:  # Direct execution via run.sh or python runner.py.
     from model import CheckResult, CheckStatus, RunConfig
+    from environment import CommandRunner, TargetInspector, prepare_target, validate_target
 
 
 DEFAULT_ARTIFACT_DIR = Path("artifacts/ao-acceptance")
@@ -76,6 +78,7 @@ def _config_dict(config: RunConfig) -> dict[str, object]:
 def _run(config: RunConfig) -> dict[str, object]:
     """Create the run-level result container for the scaffold."""
     results: list[CheckResult] = []
+    mutated = False
     if config.dry_run:
         results.append(
             CheckResult(
@@ -90,9 +93,24 @@ def _run(config: RunConfig) -> dict[str, object]:
                 details={},
             )
         )
+    else:
+        command_runner = CommandRunner()
+        inspection = TargetInspector(command_runner, config)
+        results.extend(validate_target(config, inspection))
+        blocked = any(result.status == CheckStatus.BLOCKED for result in results)
+        missing = {
+            result.component
+            for result in results
+            if result.check_id.startswith("target.") and result.details.get("ready") is False
+        }
+        if not blocked and (config.mode == "provision" or (config.mode == "auto" and missing)):
+            preparation = prepare_target(config, command_runner, missing)
+            results.extend(preparation)
+            mutated = bool(preparation)
     return {
         "config": _config_dict(config),
         "results": [result.to_dict() for result in results],
+        "mutated": mutated,
     }
 
 
