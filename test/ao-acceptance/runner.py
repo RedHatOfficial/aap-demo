@@ -1,0 +1,111 @@
+"""Command-line scaffold for AO/AAP-Demo live acceptance checks."""
+
+import argparse
+from dataclasses import asdict
+import json
+from pathlib import Path
+import sys
+
+try:
+    from .model import CheckResult, CheckStatus, RunConfig
+except ImportError:  # Direct execution via run.sh or python runner.py.
+    from model import CheckResult, CheckStatus, RunConfig
+
+
+DEFAULT_ARTIFACT_DIR = Path("artifacts/ao-acceptance")
+DEFAULT_SCENARIO_FILE = Path("test/ao-acceptance/scenarios/critical-path.json")
+
+
+def parse_args(argv: list[str]) -> RunConfig:
+    parser = argparse.ArgumentParser(description="Run AO live acceptance checks")
+    parser.add_argument(
+        "--mode",
+        choices=("auto", "provision", "validate"),
+        default="auto",
+        help="target preparation mode",
+    )
+    parser.add_argument(
+        "--namespace",
+        default="automation-orchestrator",
+        help="Kubernetes namespace containing AO",
+    )
+    parser.add_argument("--context", help="Kubernetes context to validate")
+    parser.add_argument(
+        "--artifact-dir",
+        type=Path,
+        default=DEFAULT_ARTIFACT_DIR,
+        help="directory for acceptance artifacts",
+    )
+    parser.add_argument(
+        "--scenario-file",
+        type=Path,
+        default=DEFAULT_SCENARIO_FILE,
+        help="JSON scenario manifest",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        dest="timeout_seconds",
+        help="per-check timeout in seconds",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="parse options and report the run without contacting a cluster",
+    )
+    args = parser.parse_args(argv)
+    return RunConfig(
+        mode=args.mode,
+        namespace=args.namespace,
+        artifact_dir=args.artifact_dir,
+        context=args.context,
+        scenario_file=args.scenario_file,
+        timeout_seconds=args.timeout_seconds,
+        dry_run=args.dry_run,
+    )
+
+
+def _config_dict(config: RunConfig) -> dict[str, object]:
+    values = asdict(config)
+    values["artifact_dir"] = str(config.artifact_dir)
+    values["scenario_file"] = str(config.scenario_file)
+    return values
+
+
+def _run(config: RunConfig) -> dict[str, object]:
+    """Create the run-level result container for the scaffold."""
+    results: list[CheckResult] = []
+    if config.dry_run:
+        results.append(
+            CheckResult(
+                check_id="runner.dry-run",
+                component="runner",
+                status=CheckStatus.SKIP,
+                failure_class=None,
+                summary="dry run requested; no live checks executed",
+                started_at="",
+                finished_at="",
+                duration_seconds=0.0,
+                details={},
+            )
+        )
+    return {
+        "config": _config_dict(config),
+        "results": [result.to_dict() for result in results],
+    }
+
+
+def main(argv: list[str]) -> int:
+    config = parse_args(argv)
+    run_result = _run(config)
+    print(json.dumps(run_result, indent=2, sort_keys=True))
+    results = run_result["results"]
+    return 1 if any(
+        result["status"] in (CheckStatus.FAIL.value, CheckStatus.BLOCKED.value)
+        for result in results
+    ) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
