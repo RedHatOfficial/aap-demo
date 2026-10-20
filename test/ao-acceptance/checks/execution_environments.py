@@ -23,6 +23,11 @@ _TERMINAL_STATES = _SUCCESS_STATES | {"failed", "error", "canceled"}
 _EXPECTED_IMAGES = {
     "product demos ee": "quay.io/ansible-product-demos/apd-ee-27:latest",
 }
+_SAFE_REPRESENTATIVE_TEMPLATES = {
+    "product demos ee": {"AAP-Demo Acceptance | Product Demos Read-Only Diagnostic"},
+    "openshift": {"AAP-Demo Acceptance | OpenShift Read-Only Diagnostic"},
+}
+_DEFAULT_POLL_TIMEOUT_SECONDS = 60
 
 
 def _same_id(left: object, right: object) -> bool:
@@ -45,15 +50,18 @@ def enumerate_supported(inventory: ManagedResourceInventory) -> list[dict]:
     return sorted(supported, key=lambda ee: _id_sort_key(ee.get("id")))
 
 
-def _template_for(inventory: ManagedResourceInventory, ee_id: object) -> dict | None:
+def _template_for(inventory: ManagedResourceInventory, ee: dict) -> dict | None:
+    allowed_names = _SAFE_REPRESENTATIVE_TEMPLATES.get(str(ee.get("name", "")).casefold(), set())
     candidates = [
         template for template in inventory.job_templates
-        if _same_id(template.get("execution_environment_id"), ee_id) and template.get("can_start") is True
+        if _same_id(template.get("execution_environment_id"), ee.get("id"))
+        and template.get("can_start") is True
+        and template.get("name") in allowed_names
     ]
     return min(candidates, key=lambda template: (str(template.get("name", "")).casefold(), str(template.get("id", ""))), default=None)
 
 
-def _poll_job(aap: "AapClient", job_id: int, timeout_seconds: int) -> tuple[str | None, str | None]:
+def _poll_job(aap: "AapClient", job_id: int, timeout_seconds: int, sleep) -> tuple[str | None, str | None]:
     deadline = time.monotonic() + max(timeout_seconds, 1)
     while True:
         try:
@@ -65,13 +73,14 @@ def _poll_job(aap: "AapClient", job_id: int, timeout_seconds: int) -> tuple[str 
             return status, None
         if time.monotonic() >= deadline:
             return None, "job did not reach a terminal state before the acceptance timeout"
-        time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+        sleep(min(2.0, max(0.0, deadline - time.monotonic())))
 
 
 def run(inventory: ManagedResourceInventory, aap: "AapClient", runner: "CommandRunner") -> list[CheckResult]:
     """Launch one deterministic, startable managed job for every supported EE."""
-    del runner  # The client is injected; no shell/API construction happens in this check.
     results: list[CheckResult] = []
+    timeout_seconds = max(int(getattr(runner, "timeout_seconds", _DEFAULT_POLL_TIMEOUT_SECONDS)), 1)
+    sleep = getattr(runner, "sleep", time.sleep)
     supported = enumerate_supported(inventory)
     referenced_ids = {template.get("execution_environment_id") for template in inventory.job_templates if template.get("execution_environment_id") is not None}
     discovered_ids = {ee.get("id") for ee in supported}
@@ -83,7 +92,7 @@ def run(inventory: ManagedResourceInventory, aap: "AapClient", runner: "CommandR
         component = f"ee:{ee.get('name', ee_id)}"
         expected_image = _EXPECTED_IMAGES.get(str(ee.get("name", "")).casefold())
         image_ok = bool(ee.get("image")) and (expected_image is None or ee.get("image") == expected_image)
-        definition_ok = bool(ee.get("name")) and image_ok and ee.get("available") is not False
+        definition_ok = bool(ee.get("name")) and image_ok and ee.get("available") is True
         results.append(_result(
             f"ee.{ee_id}.definition", component,
             CheckStatus.PASS if definition_ok else CheckStatus.FAIL,
@@ -91,7 +100,7 @@ def run(inventory: ManagedResourceInventory, aap: "AapClient", runner: "CommandR
             "managed execution environment has a name, image, and is available" if definition_ok else "managed execution environment is missing its expected name, image, or availability",
             details={"execution_environment_id": ee_id, "name": ee.get("name"), "image": ee.get("image"), "expected_image": expected_image},
         ))
-        template = _template_for(inventory, ee_id)
+        template = _template_for(inventory, ee)
         if template is None:
             results.append(_result(f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL, FailureClass.CONTRACT_DRIFT, "managed execution environment has no deterministic startable representative job", details={"execution_environment_id": ee_id, "name": ee.get("name")}))
             continue
@@ -106,7 +115,11 @@ def run(inventory: ManagedResourceInventory, aap: "AapClient", runner: "CommandR
         except Exception as error:  # Client boundaries redact their own errors.
             results.append(_result(f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL, FailureClass.EXECUTION, "representative job could not be launched", details={"execution_environment_id": ee_id, "job_template_id": template_id, "error": redact_text(str(error))}))
             continue
-        status, error = _poll_job(aap, job_id, 300)
+        pod_result = runner.run(
+            ["kubectl", "get", "pods", "-n", getattr(runner, "aap_namespace", "aap-operator"), "-l", f"ansible_job_id={job_id}", "-o", "jsonpath={.items[0].metadata.name}"],
+            timeout=timeout_seconds,
+        )
+        status, error = _poll_job(aap, job_id, timeout_seconds, sleep)
         passed = status in _SUCCESS_STATES
         failure_class = None if passed else (FailureClass.TIMEOUT if status is None and error and "timeout" in error else FailureClass.EXECUTION)
         results.append(_result(
@@ -114,6 +127,6 @@ def run(inventory: ManagedResourceInventory, aap: "AapClient", runner: "CommandR
             CheckStatus.PASS if passed else CheckStatus.FAIL,
             failure_class,
             "representative job completed successfully" if passed else "representative job did not complete successfully",
-            details={"execution_environment_id": ee_id, "job_template_id": template_id, "job_id": job_id, "status": status, "error": error},
+            details={"execution_environment_id": ee_id, "job_template_id": template_id, "job_id": job_id, "job_pod_observed": pod_result.returncode == 0 and bool(pod_result.stdout.strip()), "status": status, "error": error},
         ))
     return results

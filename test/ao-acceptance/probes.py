@@ -90,7 +90,12 @@ class ProbeSet:
         ca_file: str | None = None,
         timeout_seconds: int = 60,
         ee_namespace: str = "aap-operator",
-        ee_selector: str = "app.kubernetes.io/name=aap-controller-task",
+        ee_selector: str = "app.kubernetes.io/component=execution-environment",
+        ao_namespace: str = "automation-orchestrator",
+        ao_selector: str = "app.kubernetes.io/component=backend",
+        aap_url: str | None = None,
+        ao_url: str | None = None,
+        mcp_url: str | None = None,
         metadata: dict[str, object] | None = None,
     ):
         self.runner = runner
@@ -98,7 +103,12 @@ class ProbeSet:
         self.timeout_seconds = timeout_seconds
         self.ee_namespace = ee_namespace
         self.ee_selector = ee_selector
-        self._metadata = dict(metadata or {})
+        self.ao_namespace = ao_namespace
+        self.ao_selector = ao_selector
+        self.aap_url = aap_url
+        self.ao_url = ao_url
+        self.mcp_url = mcp_url
+        del metadata  # Legacy constructor input is deliberately not an observation.
 
     def host_dns(self, host: str) -> ProbeResult:
         result = self.runner.run(["getent", "hosts", host], timeout=self.timeout_seconds)
@@ -116,6 +126,12 @@ class ProbeSet:
         return _https_result(url, result.returncode, result.stdout, result.stderr)
 
     def ee_https(self, namespace: str, selector: str, url: str) -> ProbeResult:
+        return self._pod_https(namespace, selector, url, "execution-environment")
+
+    def ao_https(self, namespace: str, selector: str, url: str) -> ProbeResult:
+        return self._pod_https(namespace, selector, url, "AO backend/worker")
+
+    def _pod_https(self, namespace: str, selector: str, url: str, pod_kind: str) -> ProbeResult:
         pod_result = self.runner.run(
             [
                 "kubectl", "get", "pods", "-n", namespace, "-l", selector,
@@ -126,7 +142,7 @@ class ProbeSet:
         pod = pod_result.stdout.strip()
         if pod_result.returncode != 0 or not pod:
             hostname = urlparse(url).hostname or ""
-            return ProbeResult(False, None, hostname, None, None, _error(pod_result.stderr, pod_result.stdout, "no execution-environment pod found"))
+            return ProbeResult(False, None, hostname, None, None, _error(pod_result.stderr, pod_result.stdout, f"no {pod_kind} pod found"))
         curl_args = https_command(url, ca_file=self.ca_file)
         result = self.runner.run(
             ["kubectl", "exec", "-n", namespace, pod, "--", *curl_args],
@@ -134,6 +150,49 @@ class ProbeSet:
         )
         return _https_result(url, result.returncode, result.stdout, result.stderr)
 
-    def security_metadata(self) -> dict[str, object]:
-        """Return caller-supplied booleans only; token values are never read."""
-        return dict(self._metadata)
+    def aap_ready(self) -> bool:
+        return bool(self.aap_url and self.host_https(self.aap_url).ok)
+
+    def ao_ready(self) -> bool:
+        return bool(self.ao_url and self.host_https(self.ao_url).ok)
+
+    def mcp_ready(self) -> bool:
+        return bool(self.mcp_url and self.host_https(self.mcp_url).ok)
+
+    def identity_observations(self) -> dict[str, bool]:
+        admin = self.runner.run(
+            ["kubectl", "get", "secret", "aap-admin-password", "-n", self.ee_namespace, "-o", "name"],
+            timeout=self.timeout_seconds,
+        )
+        service_account = self.runner.run(
+            ["kubectl", "get", "deployment", "automation-orchestrator-backend", "-n", self.ao_namespace, "-o", "jsonpath={.spec.template.spec.serviceAccountName}"],
+            timeout=self.timeout_seconds,
+        )
+        return {
+            "admin": admin.returncode == 0 and bool(admin.stdout.strip()),
+            "automation-orchestrator": service_account.returncode == 0 and bool(service_account.stdout.strip()),
+        }
+
+    def token_usable(self, integration: dict) -> bool | None:
+        status = integration.get(
+            "status", integration.get("validation_status", integration.get("health", integration.get("state")))
+        )
+        if status is None:
+            return None
+        return str(status).casefold() in {"available", "healthy", "valid", "ready"}
+
+    def mcp_tools(self, integration: dict) -> list[str] | None:
+        tools = integration.get("enabled_tools", integration.get("tools"))
+        return [str(tool) for tool in tools] if isinstance(tools, list) else None
+
+    def private_network_ready(self, hostname: str) -> bool | None:
+        for deployment in ("automation-orchestrator-backend", "automation-orchestrator-worker"):
+            result = self.runner.run(
+                ["kubectl", "get", "deployment", deployment, "-n", self.ao_namespace, "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name==\"APP_INTEGRATION_URL_ALLOWED_HOSTS\")].value}"],
+                timeout=self.timeout_seconds,
+            )
+            if result.returncode != 0:
+                return None
+            if hostname not in result.stdout:
+                return False
+        return True

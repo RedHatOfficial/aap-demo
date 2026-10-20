@@ -90,6 +90,32 @@ class CheckResultSerializationTests(unittest.TestCase):
         self.assertEqual(decoded["details"], {"http_status": 200})
 
 
+class ManagedCheckWiringTests(unittest.TestCase):
+    def test_runs_security_and_execution_environment_checks_with_injected_boundaries(self):
+        inventory = object()
+        command_runner = object()
+        security_result = model.CheckResult(
+            "security.tokens", "token", model.CheckStatus.PASS,
+            None, "observed", "", "", 0.0, {},
+        )
+        ee_result = model.CheckResult(
+            "ee.1.representative-job", "ee:one", model.CheckStatus.PASS,
+            None, "observed", "", "", 0.0, {},
+        )
+        with (
+            mock.patch.object(runner, "build_inventory", return_value=inventory),
+            mock.patch.object(runner.readiness, "run", return_value=[]),
+            mock.patch.object(runner.wiring, "run", return_value=[]),
+            mock.patch.object(runner.security, "run", return_value=[security_result]) as security_run,
+            mock.patch.object(runner.execution_environments, "run", return_value=[ee_result]) as ee_run,
+        ):
+            results = runner.run_managed_checks("aap", "ao", "probes", command_runner=command_runner)
+
+        self.assertEqual(results, [security_result, ee_result])
+        security_run.assert_called_once_with(inventory, "probes")
+        ee_run.assert_called_once_with(inventory, "aap", command_runner)
+
+
 class RunnerExitTests(unittest.TestCase):
     def test_dry_run_returns_success(self):
         self.assertEqual(runner.main(["--dry-run"]), 0)

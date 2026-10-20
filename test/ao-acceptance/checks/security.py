@@ -23,6 +23,10 @@ def _slug(value: str) -> str:
     return "-".join("".join(character if character.isalnum() else " " for character in value.casefold()).split())
 
 
+def _is_private_route(hostname: str) -> bool:
+    return hostname.endswith(".nip.io") or hostname.endswith(".crc.testing") or hostname in {"localhost", "127.0.0.1"}
+
+
 def _result(check_id: str, component: str, valid: bool, summary: str, failure_class: FailureClass | None, *, details: dict[str, object]) -> CheckResult:
     now = datetime.now(UTC).isoformat()
     return CheckResult(
@@ -38,15 +42,9 @@ def _result(check_id: str, component: str, valid: bool, summary: str, failure_cl
     )
 
 
-def _is_private_route(hostname: str) -> bool:
-    return hostname.endswith(".nip.io") or hostname.endswith(".crc.testing") or hostname in {"localhost", "127.0.0.1"}
-
-
-def _integration_checks(inventory: ManagedResourceInventory, probes: "ProbeSet", metadata: dict[str, object]) -> list[CheckResult]:
+def _integration_checks(inventory: ManagedResourceInventory, probes: "ProbeSet") -> list[CheckResult]:
     integrations = {str(item.get("name", "")).casefold(): item for item in inventory.ao_integrations}
     results: list[CheckResult] = []
-    private_routes = metadata.get("private_network_routes", {})
-    private_routes = private_routes if isinstance(private_routes, dict) else {}
     for name in _REQUIRED_INTEGRATIONS:
         integration = integrations.get(name.casefold())
         slug = _slug(name)
@@ -77,7 +75,7 @@ def _integration_checks(inventory: ManagedResourceInventory, probes: "ProbeSet",
         ))
         pod_https = probes.ee_https(
             getattr(probes, "ee_namespace", "aap-operator"),
-            getattr(probes, "ee_selector", "app.kubernetes.io/name=aap-controller-task"),
+            getattr(probes, "ee_selector", "app.kubernetes.io/component=execution-environment"),
             endpoint,
         )
         results.append(_result(
@@ -86,7 +84,19 @@ def _integration_checks(inventory: ManagedResourceInventory, probes: "ProbeSet",
             FailureClass.PREREQUISITE,
             details={"hostname": pod_https.hostname, "status": pod_https.status, "certificate_subject": pod_https.certificate_subject, "certificate_issuer": pod_https.certificate_issuer, "error": pod_https.error},
         ))
-        private_ok = bool(private_routes.get(hostname, not _is_private_route(hostname)))
+        ao_https = probes.ao_https(
+            getattr(probes, "ao_namespace", "automation-orchestrator"),
+            getattr(probes, "ao_selector", "app.kubernetes.io/component=backend"),
+            endpoint,
+        ) if callable(getattr(probes, "ao_https", None)) else None
+        results.append(_result(
+            f"security.route.{slug}.ao", "tls", bool(ao_https and ao_https.ok),
+            f"{name} route is trusted from the AO backend/worker pod" if ao_https and ao_https.ok else f"{name} route is not trusted from the AO backend/worker pod",
+            FailureClass.PREREQUISITE,
+            details={"hostname": hostname, "status": ao_https.status if ao_https else None, "error": ao_https.error if ao_https else "AO pod observation unavailable"},
+        ))
+        policy = probes.private_network_ready(hostname) if callable(getattr(probes, "private_network_ready", None)) else None
+        private_ok = policy is True
         results.append(_result(
             f"security.private-network.{slug}", "network", private_ok,
             f"{name} private-network route policy is configured" if private_ok else f"{name} private-network route policy is missing",
@@ -96,30 +106,32 @@ def _integration_checks(inventory: ManagedResourceInventory, probes: "ProbeSet",
     return results
 
 
-def _metadata_checks(inventory: ManagedResourceInventory, metadata: dict[str, object]) -> list[CheckResult]:
-    users = metadata.get("users", {})
+def _metadata_checks(inventory: ManagedResourceInventory, probes: "ProbeSet") -> list[CheckResult]:
+    users = probes.identity_observations() if callable(getattr(probes, "identity_observations", None)) else {}
     users = users if isinstance(users, dict) else {}
     identities_ok = all(users.get(user) is True for user in _REQUIRED_USERS)
     credentials_ok = bool(inventory.credentials) and all(bool(item.get("credential_type_name")) for item in inventory.credentials)
-    tokens = metadata.get("tokens", {})
-    tokens = tokens if isinstance(tokens, dict) else {}
-    tokens_ok = tokens.get("aap") is True and tokens.get("mcp") is True
+    integrations = {str(item.get("name", "")).casefold(): item for item in inventory.ao_integrations}
+    required_integrations = [integrations.get(name.casefold()) for name in _REQUIRED_INTEGRATIONS]
+    token_states = [
+        probes.token_usable(integration) if integration and callable(getattr(probes, "token_usable", None)) else None
+        for integration in required_integrations
+    ]
+    tokens_ok = all(state is True for state in token_states)
     mcp = next((item for item in inventory.ao_integrations if str(item.get("name", "")).casefold() == "aap-demo mcp server"), None)
     configured_tools = mcp.get("enabled_tools", mcp.get("tools", [])) if isinstance(mcp, dict) else []
     configured_tools = configured_tools if isinstance(configured_tools, list) else []
-    observed_tools = metadata.get("mcp_tools", [])
+    observed_tools = probes.mcp_tools(mcp) if isinstance(mcp, dict) and callable(getattr(probes, "mcp_tools", None)) else None
     observed_tools = observed_tools if isinstance(observed_tools, list) else []
     tools_ok = bool(configured_tools) and bool(observed_tools) and bool(set(map(str, configured_tools)).intersection(map(str, observed_tools)))
     return [
-        _result("security.identities", "identity", identities_ok, "required admin and AO service identities are present" if identities_ok else "required admin or AO service identity is missing", FailureClass.WIRING, details={"required_users": list(_REQUIRED_USERS)}),
+        _result("security.identities", "identity", identities_ok, "required admin and AO service identities are present" if identities_ok else "required admin or AO service identity observation is missing", FailureClass.PREREQUISITE, details={"required_users": list(_REQUIRED_USERS)}),
         _result("security.credentials", "credential", credentials_ok, "managed credentials have expected types" if credentials_ok else "managed credentials or credential types are missing", FailureClass.WIRING, details={"credential_ids": [item.get("id") for item in inventory.credentials]}),
-        _result("security.tokens", "token", tokens_ok, "AAP and MCP token metadata confirms usable tokens" if tokens_ok else "AAP or MCP token metadata is missing or unusable", FailureClass.WIRING, details={"token_names": ["aap", "mcp"]}),
-        _result("security.mcp.tools", "mcp", tools_ok, "at least one enabled MCP tool is reachable" if tools_ok else "no enabled MCP tool is confirmed reachable", FailureClass.WIRING, details={"integration_id": mcp.get("id") if isinstance(mcp, dict) else None, "tool_count": len(observed_tools)}),
+        _result("security.tokens", "token", tokens_ok, "AAP and MCP integration observations confirm usable tokens" if tokens_ok else "AAP or MCP token usability observation is missing or failed", FailureClass.PREREQUISITE, details={"integration_names": list(_REQUIRED_INTEGRATIONS)}),
+        _result("security.mcp.tools", "mcp", tools_ok, "at least one enabled MCP tool is reachable" if tools_ok else "no enabled MCP tool observation is available", FailureClass.PREREQUISITE, details={"integration_id": mcp.get("id") if isinstance(mcp, dict) else None, "tool_count": len(observed_tools)}),
     ]
 
 
 def run(inventory: ManagedResourceInventory, probes: "ProbeSet") -> list[CheckResult]:
     """Validate route trust and redacted wiring metadata without reading secrets."""
-    metadata = probes.security_metadata() if callable(getattr(probes, "security_metadata", None)) else {}
-    metadata = metadata if isinstance(metadata, dict) else {}
-    return [*_integration_checks(inventory, probes, metadata), *_metadata_checks(inventory, metadata)]
+    return [*_integration_checks(inventory, probes), *_metadata_checks(inventory, probes)]

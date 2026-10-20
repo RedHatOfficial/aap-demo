@@ -10,12 +10,12 @@ try:
     from .model import CheckResult, CheckStatus, RunConfig
     from .environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from .inventory import build_inventory
-    from .checks import readiness, wiring
+    from .checks import execution_environments, readiness, security, wiring
 except ImportError:  # Direct execution via run.sh or python runner.py.
     from model import CheckResult, CheckStatus, RunConfig
     from environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from inventory import build_inventory
-    from checks import readiness, wiring
+    from checks import execution_environments, readiness, security, wiring
 
 
 DEFAULT_ARTIFACT_DIR = Path("artifacts/ao-acceptance")
@@ -89,7 +89,7 @@ def _config_dict(config: RunConfig) -> dict[str, object]:
     return values
 
 
-def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None = None) -> list[CheckResult]:
+def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None = None, command_runner: CommandRunner | None = None) -> list[CheckResult]:
     """Build a redacted managed-resource inventory and run read-only checks.
 
     Client construction remains outside this helper so the runner does not read
@@ -97,7 +97,13 @@ def run_managed_checks(aap, ao, probes, managed_markers: dict[str, str] | None =
     authenticated clients explicitly.
     """
     inventory = build_inventory(aap, ao, managed_markers or DEFAULT_MANAGED_MARKERS)
-    return [*readiness.run(inventory, probes), *wiring.run(inventory)]
+    command_runner = command_runner or getattr(probes, "runner", None) or CommandRunner()
+    return [
+        *readiness.run(inventory, probes),
+        *wiring.run(inventory),
+        *security.run(inventory, probes),
+        *execution_environments.run(inventory, aap, command_runner),
+    ]
 
 
 def _run(config: RunConfig) -> dict[str, object]:

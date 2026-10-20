@@ -28,6 +28,11 @@ class FakeRunner:
 
 
 class ProbeSetTests(unittest.TestCase):
+    def test_default_ee_selector_is_not_a_controller_task_selector(self):
+        probe_set = probes.ProbeSet(FakeRunner({}))
+
+        self.assertNotIn("controller-task", probe_set.ee_selector)
+
     def test_host_probes_verify_dns_and_tls_without_an_insecure_fallback(self):
         host = "aap.example.test"
         curl_args = probes.https_command(f"https://{host}/api/gateway/v1/ping/")
@@ -55,34 +60,37 @@ class ProbeSetTests(unittest.TestCase):
 
     def test_dns_and_pod_certificate_failures_are_redacted_and_distinct(self):
         host = "mcp.example.test"
-        pod = "controller-task-abc"
+        pod = "acceptance-ee-job-abc"
+        selector = "job-name=acceptance-ee-job"
         curl_args = probes.https_command(f"https://{host}/mcp")
         runner = FakeRunner({
             ("getent", "hosts", host): CommandResult(2, "", "token=do-not-leak DNS failure"),
             (
-                "kubectl", "get", "pods", "-n", "aap-operator", "-l", "app=controller-task",
+                "kubectl", "get", "pods", "-n", "aap-operator", "-l", selector,
                 "-o", "jsonpath={.items[0].metadata.name}",
             ): CommandResult(0, pod, ""),
             tuple(["kubectl", "exec", "-n", "aap-operator", pod, "--", *curl_args]): CommandResult(
-                60, "subject=CN=mcp.example.test\n-----BEGIN CERTIFICATE-----\nnot-diagnostic-data", "SSL certificate problem: token=do-not-leak"
+                60, "subject=CN=mcp.example.test\n-----BEGIN CERTIFICATE-----\nnot-diagnostic-data", "SSL certificate problem: api-key=do-not-leak password=still-secret token=also-secret"
             ),
         })
         probe_set = probes.ProbeSet(runner)
 
         dns = probe_set.host_dns(host)
-        pod_https = probe_set.ee_https("aap-operator", "app=controller-task", f"https://{host}/mcp")
+        pod_https = probe_set.ee_https("aap-operator", selector, f"https://{host}/mcp")
 
         self.assertFalse(dns.ok)
         self.assertFalse(pod_https.ok)
         self.assertNotIn("do-not-leak", dns.error)
         self.assertNotIn("do-not-leak", pod_https.error)
+        self.assertNotIn("still-secret", pod_https.error)
+        self.assertNotIn("also-secret", pod_https.error)
         self.assertNotIn("BEGIN CERTIFICATE", pod_https.error)
         self.assertEqual(pod_https.hostname, host)
         self.assertIn("certificate", pod_https.error.lower())
 
 
 class SecurityProbeDouble:
-    def __init__(self, *, tls_ok=True, dns_ok=True, pod_ok=True, metadata=None):
+    def __init__(self, *, tls_ok=True, dns_ok=True, pod_ok=True, metadata=None, observations=None):
         self.tls_ok = tls_ok
         self.dns_ok = dns_ok
         self.pod_ok = pod_ok
@@ -92,7 +100,15 @@ class SecurityProbeDouble:
             "mcp_tools": ["controller_jobs_list"],
             "private_network_routes": {},
         }
+        self.observations = observations or {
+            "users": {"admin": True, "automation-orchestrator": True},
+            "tokens": {"aap-demo AAP": True, "aap-demo MCP Server": True},
+            "mcp_tools": ["controller_jobs_list"],
+            "private_network_routes": {},
+        }
         self.calls = []
+        self.ao_namespace = "automation-orchestrator"
+        self.ao_selector = "app.kubernetes.io/component=backend"
 
     def host_dns(self, host):
         self.calls.append(("dns", host))
@@ -106,8 +122,29 @@ class SecurityProbeDouble:
         self.calls.append(("pod", namespace, selector, url))
         return probes.ProbeResult(self.pod_ok, 200 if self.pod_ok else None, url.split("/")[2], "CN=route", "CN=CA", "pod tls failed" if not self.pod_ok else "")
 
+    def ao_https(self, namespace, selector, url):
+        self.calls.append(("ao", namespace, selector, url))
+        return probes.ProbeResult(self.pod_ok, 200 if self.pod_ok else None, url.split("/")[2], "CN=route", "CN=CA", "AO pod TLS failed" if not self.pod_ok else "")
+
     def security_metadata(self):
         return self.metadata
+
+    def identity_observations(self):
+        self.calls.append(("identity",))
+        return self.observations["users"]
+
+    def token_usable(self, integration):
+        name = integration["name"]
+        self.calls.append(("token", name))
+        return self.observations["tokens"].get(name)
+
+    def mcp_tools(self, integration):
+        self.calls.append(("mcp-tools", integration["name"]))
+        return self.observations["mcp_tools"]
+
+    def private_network_ready(self, hostname):
+        self.calls.append(("private-network", hostname))
+        return self.observations["private_network_routes"].get(hostname, True)
 
 
 def security_inventory():
@@ -126,11 +163,17 @@ def security_inventory():
 
 class SecurityCheckTests(unittest.TestCase):
     def test_security_checks_require_trusted_routes_identities_tokens_and_mcp_tools(self):
-        checks = security.run(security_inventory(), SecurityProbeDouble())
+        probe_set = SecurityProbeDouble()
+        checks = security.run(security_inventory(), probe_set)
 
         self.assertTrue(all(check.status == CheckStatus.PASS for check in checks))
         self.assertTrue(any(check.check_id == "security.mcp.tools" for check in checks))
         self.assertTrue(any(check.check_id == "security.private-network.aap-demo-aap" for check in checks))
+        self.assertIn(("identity",), probe_set.calls)
+        self.assertIn(("token", "aap-demo AAP"), probe_set.calls)
+        self.assertIn(("mcp-tools", "aap-demo MCP Server"), probe_set.calls)
+        self.assertIn(("private-network", "aap.example.test"), probe_set.calls)
+        self.assertIn(("ao", "automation-orchestrator", "app.kubernetes.io/component=backend", "https://aap.example.test"), probe_set.calls)
 
     def test_security_checks_report_tls_and_missing_token_metadata_as_wiring_failures(self):
         metadata = {
@@ -139,14 +182,41 @@ class SecurityCheckTests(unittest.TestCase):
             "mcp_tools": [],
             "private_network_routes": {"aap.example.test": False, "mcp.example.test": False},
         }
-        checks = security.run(security_inventory(), SecurityProbeDouble(tls_ok=False, metadata=metadata))
+        checks = security.run(security_inventory(), SecurityProbeDouble(tls_ok=False, metadata=metadata, observations={
+            "users": {"admin": True, "automation-orchestrator": False},
+            "tokens": {"aap-demo AAP": True, "aap-demo MCP Server": False},
+            "mcp_tools": [],
+            "private_network_routes": {"aap.example.test": False, "mcp.example.test": False},
+        }))
 
         tls = next(check for check in checks if check.check_id == "security.route.aap-demo-aap.tls")
         token = next(check for check in checks if check.check_id == "security.tokens")
         self.assertEqual(tls.status, CheckStatus.FAIL)
         self.assertEqual(tls.failure_class, FailureClass.PREREQUISITE)
         self.assertEqual(token.status, CheckStatus.FAIL)
-        self.assertEqual(token.failure_class, FailureClass.WIRING)
+        self.assertEqual(token.failure_class, FailureClass.PREREQUISITE)
+
+    def test_security_rejects_constructor_metadata_when_observations_are_false(self):
+        metadata = {
+            "users": {"admin": True, "automation-orchestrator": True},
+            "tokens": {"aap": True, "mcp": True},
+            "mcp_tools": ["controller_jobs_list"],
+            "private_network_routes": {"aap.example.test": True, "mcp.example.test": True},
+        }
+        probe_set = SecurityProbeDouble(metadata=metadata, observations={
+            "users": {"admin": False, "automation-orchestrator": False},
+            "tokens": {"aap-demo AAP": False, "aap-demo MCP Server": False},
+            "mcp_tools": [],
+            "private_network_routes": {"aap.example.test": False, "mcp.example.test": False},
+        })
+
+        checks = security.run(security_inventory(), probe_set)
+
+        identities = next(check for check in checks if check.check_id == "security.identities")
+        token = next(check for check in checks if check.check_id == "security.tokens")
+        self.assertEqual(identities.status, CheckStatus.FAIL)
+        self.assertEqual(token.status, CheckStatus.FAIL)
+        self.assertEqual(token.failure_class, FailureClass.PREREQUISITE)
 
 
 class FakeAapClient:
@@ -170,8 +240,8 @@ def ee_inventory(*, second_startable=True):
             {"id": 11, "name": "OPENSHIFT", "image": "registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel8:latest", "available": True},
         ],
         job_templates=[
-            {"id": 40, "name": "APD | Read-only representative", "execution_environment_id": 10, "can_start": True},
-            {"id": 41, "name": "APD | Unstartable representative", "execution_environment_id": 11, "can_start": second_startable},
+            {"id": 40, "name": "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic", "execution_environment_id": 10, "can_start": True},
+            {"id": 41, "name": "AAP-Demo Acceptance | OpenShift Read-Only Diagnostic", "execution_environment_id": 11, "can_start": second_startable},
         ],
     )
 
@@ -213,6 +283,46 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         definition = next(check for check in checks if check.check_id == "ee.10.definition")
         self.assertEqual(definition.status, CheckStatus.FAIL)
         self.assertEqual(definition.failure_class, FailureClass.CONTRACT_DRIFT)
+
+    def test_requires_explicit_ee_availability_evidence(self):
+        inventory = ee_inventory()
+        inventory.execution_environments[0].pop("available")
+
+        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}))
+
+        definition = next(check for check in checks if check.check_id == "ee.10.definition")
+        self.assertEqual(definition.status, CheckStatus.FAIL)
+        self.assertEqual(definition.failure_class, FailureClass.CONTRACT_DRIFT)
+
+    def test_never_selects_an_arbitrary_startable_product_demos_installer(self):
+        inventory = ee_inventory()
+        inventory.job_templates.insert(0, {
+            "id": 1,
+            "name": "APD | Install Base Resources",
+            "execution_environment_id": 10,
+            "can_start": True,
+        })
+        aap = FakeAapClient()
+
+        execution_environments.run(inventory, aap, FakeRunner({}))
+
+        self.assertEqual(aap.launched, [40, 41])
+
+    def test_returns_contract_drift_when_only_an_installer_is_startable(self):
+        inventory = ee_inventory()
+        inventory.job_templates = [{
+            "id": 1,
+            "name": "APD | Install Base Resources",
+            "execution_environment_id": 10,
+            "can_start": True,
+        }]
+        aap = FakeAapClient()
+
+        checks = execution_environments.run(inventory, aap, FakeRunner({}))
+
+        uncovered = next(check for check in checks if check.check_id == "ee.10.representative-job")
+        self.assertEqual(uncovered.failure_class, FailureClass.CONTRACT_DRIFT)
+        self.assertEqual(aap.launched, [])
 
 
 if __name__ == "__main__":

@@ -5,12 +5,16 @@ from typing import Any
 
 
 REDACTED = "[REDACTED]"
-_SECRET_KEYS = {"token", "password", "secret", "api_key", "authorization"}
+_SECRET_KEYS = {
+    "token", "password", "secret", "apikey", "authorization", "accesstoken",
+    "clientsecret", "credential", "credentials", "bearer",
+}
+_SECRET_NAME = r"(?:token|password|secret|api[-_]?key|access[-_]?token|client[-_]?secret|credentials?|bearer)"
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[^\s,;\"'}]+")
 _SECRET_VALUE = re.compile(
-    r"(?i)(?P<prefix>[\"']?(?:token|password|secret|api_key)[\"']?\s*[:=]\s*)(?P<value>\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}\]&;]*)"
+    rf"(?i)(?P<prefix>[\"']?{_SECRET_NAME}[\"']?\s*[:=]\s*)(?P<value>\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*'|[^\r\n,}}\]&;]*)"
 )
-_QUERY_SECRET = re.compile(r"(?i)([?&](?:token|password|secret|api_key)=)[^\r\n&#;]*")
+_QUERY_SECRET = re.compile(rf"(?i)([?&]{_SECRET_NAME}=)[^\r\n&#;]*")
 
 
 def redact_text(text: str) -> str:
@@ -33,7 +37,7 @@ def redact(value: object) -> object:
     """Return a recursively redacted copy suitable for diagnostics."""
     if isinstance(value, dict):
         return {
-            key: REDACTED if str(key).lower() in _SECRET_KEYS else redact(item)
+            key: REDACTED if _normalized_key(key) in _SECRET_KEYS else redact(item)
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -43,3 +47,7 @@ def redact(value: object) -> object:
     if isinstance(value, str):
         return redact_text(value)
     return value
+
+
+def _normalized_key(key: object) -> str:
+    return str(key).casefold().replace("-", "").replace("_", "")
