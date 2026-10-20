@@ -23,6 +23,7 @@ class ManagedResourceInventory:
     credentials: list[dict] = field(default_factory=list)
     job_templates: list[dict] = field(default_factory=list)
     execution_environments: list[dict] = field(default_factory=list)
+    ao_credentials: list[dict] = field(default_factory=list)
     ao_integrations: list[dict] = field(default_factory=list)
     ao_workflows: list[dict] = field(default_factory=list)
 
@@ -36,6 +37,7 @@ _AAP_ENDPOINTS = {
     "execution_environments": "/api/v2/execution_environments/",
 }
 _AO_ENDPOINTS = {
+    "ao_credentials": "/api/v1/credentials",
     "ao_integrations": "/api/v1/integrations",
     "ao_workflows": "/api/v1/workflows",
 }
@@ -82,11 +84,13 @@ def _stable_match(resource: dict, resource_type: str) -> bool:
     if resource_type == "credentials":
         return name in {"aap credential", "openshift credential", "aap-demo aap token", "aap-demo mcp token"}
     if resource_type == "job_templates":
-        return description.startswith("aap orchestrator demo") or name == "sync ao workflows from tmm" or name.startswith("apd |")
+        return description.startswith("aap orchestrator demo") or name == "sync ao workflows from tmm" or name.startswith("apd |") or name.startswith("aap-demo acceptance |")
     if resource_type == "execution_environments":
         return name == "product demos ee"
     if resource_type == "ao_integrations":
         return name in {"aap-demo aap", "aap-demo mcp server"}
+    if resource_type == "ao_credentials":
+        return name in {"aap-demo aap token", "aap-demo mcp token"}
     if resource_type == "ao_workflows":
         labels = resource.get("labels", {})
         return isinstance(labels, dict) and str(labels.get("aap-demo", "")).casefold() == "true"
@@ -132,11 +136,20 @@ def _workflow_nodes(workflow: dict, templates: dict[object, dict]) -> list[dict]
         parameters = node.get("parameters", node.get("config", {}))
         parameters = parameters if isinstance(parameters, dict) else {}
         template_id = _resolved_id(templates, parameters.get("job_template_id"))
+        parameter_name = parameters.get("job_template_name")
+        if template_id is None and isinstance(parameter_name, str):
+            template_id = next(
+                (
+                    candidate_id for candidate_id, candidate in templates.items()
+                    if candidate.get("name") == parameter_name
+                ),
+                None,
+            )
         template = templates.get(template_id, {})
         normalized.append({
             "id": node.get("id", node.get("name")),
             "job_template_id": template_id,
-            "job_template_name": template.get("name"),
+            "job_template_name": template.get("name", parameter_name),
             "integration_id": _id(parameters.get("integration_id")),
             "credential_id": _id(parameters.get("credential_id")),
         })
@@ -230,6 +243,16 @@ def build_inventory(
         record["credential_type_name"] = _credential_type(credential)
         normalized_credentials.append(record)
 
+    ao_credentials = [
+        _safe(item)
+        for item in ao_resources["ao_credentials"]
+        if _matches(
+            item,
+            _marker(managed_markers, "ao_credentials"),
+            "ao_credentials",
+        )
+    ]
+
     ao_integrations = []
     for raw_integration in ao_resources["ao_integrations"]:
         if not _matches(raw_integration, _marker(managed_markers, "ao_integrations"), "ao_integrations"):
@@ -238,6 +261,7 @@ def build_inventory(
         configuration = integration.get("configuration", {})
         configuration = configuration if isinstance(configuration, dict) else {}
         integration["endpoint"] = integration.get("base_url") or configuration.get("base_url") or configuration.get("url")
+        integration["integration_type"] = integration.get("integration_type") or configuration.get("integration_type")
         integration["credential_id"] = _id(integration.get("management_credential_id", integration.get("credential_id")))
         ao_integrations.append(integration)
 
@@ -256,6 +280,7 @@ def build_inventory(
         credentials=normalized_credentials,
         job_templates=job_templates,
         execution_environments=execution_environments,
+        ao_credentials=ao_credentials,
         ao_integrations=ao_integrations,
         ao_workflows=ao_workflows,
     )

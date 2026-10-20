@@ -1,15 +1,16 @@
 """Bounded AO workflow execution checks for acceptance scenarios."""
 
-from datetime import UTC, datetime
 import time
 from typing import TYPE_CHECKING
 
 try:
+    from ..check_timing import CheckTimer
     from ..inventory import ManagedResourceInventory
     from ..model import CheckResult, CheckStatus, FailureClass
     from ..redaction import redact_text
     from ..scenarios import Scenario
 except ImportError:  # Direct execution via run.sh or python runner.py.
+    from check_timing import CheckTimer
     from inventory import ManagedResourceInventory
     from model import CheckResult, CheckStatus, FailureClass
     from redaction import redact_text
@@ -35,8 +36,9 @@ def _result(
     job_template_ids: list[object],
     job_ids: list[int],
     details: dict[str, object] | None = None,
+    timer: CheckTimer | None = None,
 ) -> CheckResult:
-    now = datetime.now(UTC).isoformat()
+    started_at, finished_at, duration_seconds = (timer or CheckTimer.start()).finish()
     linked = {
         "scenario_id": scenario.scenario_id,
         "workflow_id": workflow_id,
@@ -52,9 +54,9 @@ def _result(
         status=status,
         failure_class=failure_class,
         summary=summary,
-        started_at=now,
-        finished_at=now,
-        duration_seconds=0.0,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
         details=linked,
     )
 
@@ -238,18 +240,28 @@ def _contract_drift_for_runtime_links(
 
 
 def _timeout_result(
-    scenario: Scenario, workflow_id: object, template_ids: list[object], job_ids: list[int], execution_id: object
+    scenario: Scenario,
+    workflow_id: object,
+    template_ids: list[object],
+    job_ids: list[int],
+    execution_id: object,
+    timer: CheckTimer | None = None,
 ) -> CheckResult:
     return _result(
         scenario, CheckStatus.FAIL, FailureClass.TIMEOUT,
         "scenario deadline expired before all AO and linked AAP evidence was accepted",
         workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
         details={"execution_id": execution_id},
+        timer=timer,
     )
 
 
 def run(
-    scenarios: list[Scenario], inventory: ManagedResourceInventory, ao: "AoClient", aap: "AapClient"
+    scenarios: list[Scenario],
+    inventory: ManagedResourceInventory,
+    ao: "AoClient",
+    aap: "AapClient",
+    mcp=None,
 ) -> list[CheckResult]:
     """Launch each validated read-only scenario once under a single deadline."""
     blocked_results = [
@@ -270,19 +282,72 @@ def run(
         for scenario in scenarios
         if scenario.launch or not scenario.blocked_reason
     ]
-    resolved, validation_failures = _validate(executable_scenarios, inventory)
+    workflow_scenarios = [
+        scenario for scenario in executable_scenarios
+        if scenario.scenario_type in {"workflow", "workflow_contract"}
+    ]
+    mcp_scenarios = [
+        scenario for scenario in executable_scenarios
+        if scenario.scenario_type == "mcp"
+    ]
+    resolved, validation_failures = _validate(workflow_scenarios, inventory)
     if validation_failures:
         return [*blocked_results, *validation_failures]
 
+    if mcp_scenarios:
+        if mcp is None:
+            scenario = mcp_scenarios[0]
+            return [*blocked_results, _result(
+                scenario, CheckStatus.FAIL, FailureClass.PREREQUISITE,
+                "authenticated MCP client is unavailable",
+                workflow_id=None, job_template_ids=[], job_ids=[],
+            )]
+        try:
+            observed_tools = set(mcp.list_tools())
+        except Exception:
+            scenario = mcp_scenarios[0]
+            return [*blocked_results, _result(
+                scenario, CheckStatus.FAIL, FailureClass.PREREQUISITE,
+                "authenticated MCP tools/list failed",
+                workflow_id=None, job_template_ids=[], job_ids=[],
+            )]
+        missing_tools = [
+            scenario for scenario in mcp_scenarios
+            if scenario.mcp_tool_name not in observed_tools
+        ]
+        if missing_tools:
+            return [
+                *blocked_results,
+                *[
+                    _result(
+                        scenario, CheckStatus.FAIL, FailureClass.CONTRACT_DRIFT,
+                        "declared read-only MCP tool is unavailable",
+                        workflow_id=None, job_template_ids=[], job_ids=[],
+                        details={"tool_name": scenario.mcp_tool_name},
+                    )
+                    for scenario in missing_tools
+                ],
+            ]
+
     results = blocked_results
     for scenario, workflow, template_records in resolved:
+        scenario_timer = CheckTimer.start()
         workflow_id = workflow.get("id") if workflow else None
         template_ids = [record.get("id") for record in template_records]
+        if scenario.scenario_type == "workflow_contract":
+            results.append(_result(
+                scenario, CheckStatus.PASS, None,
+                "AO workflow graph and effective AAP bindings match the read-only contract",
+                workflow_id=workflow_id, job_template_ids=template_ids, job_ids=[],
+                timer=scenario_timer,
+            ))
+            continue
         if not scenario.launch:
             results.append(_result(
                 scenario, CheckStatus.BLOCKED, FailureClass.CONTRACT_DRIFT,
                 scenario.blocked_reason or "scenario is contract-only and is not launched",
                 workflow_id=workflow_id, job_template_ids=template_ids, job_ids=[],
+                timer=scenario_timer,
             ))
             continue
         if workflow is None or not isinstance(workflow_id, str) or not workflow_id:
@@ -290,6 +355,7 @@ def run(
                 scenario, CheckStatus.FAIL, FailureClass.CONTRACT_DRIFT,
                 "resolved AO workflow has no string identifier",
                 workflow_id=workflow_id, job_template_ids=template_ids, job_ids=[],
+                timer=scenario_timer,
             ))
             continue
         deadline = time.monotonic() + scenario.timeout_seconds
@@ -301,6 +367,7 @@ def run(
                 "AO workflow could not be launched",
                 workflow_id=workflow_id, job_template_ids=template_ids, job_ids=[],
                 details={"error": redact_text(str(error))},
+                timer=scenario_timer,
             ))
             continue
         workflow_payload, workflow_error = _poll(
@@ -315,6 +382,7 @@ def run(
                 "AO workflow did not complete with an expected state",
                 workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
                 details={"execution_id": execution_id, "workflow_status": _status(workflow_payload), "error": workflow_error},
+                timer=scenario_timer,
             ))
             continue
         link_error = _contract_drift_for_runtime_links(template_records, jobs)
@@ -323,6 +391,7 @@ def run(
                 scenario, CheckStatus.FAIL, FailureClass.CONTRACT_DRIFT, link_error,
                 workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
                 details={"execution_id": execution_id, "observed_linked_jobs": jobs},
+                timer=scenario_timer,
             ))
             continue
         job_payloads: list[dict] = []
@@ -343,10 +412,11 @@ def run(
                 "linked AAP job did not complete with an expected state",
                 workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
                 details={"execution_id": execution_id, "workflow_status": _status(workflow_payload), "error": job_error},
+                timer=scenario_timer,
             ))
             continue
         if _deadline_expired(deadline):
-            results.append(_timeout_result(scenario, workflow_id, template_ids, job_ids, execution_id))
+            results.append(_timeout_result(scenario, workflow_id, template_ids, job_ids, execution_id, scenario_timer))
             continue
         job_event_payloads: list[dict] = []
         if scenario.success_markers:
@@ -356,7 +426,7 @@ def run(
                         raise TimeoutError("scenario deadline expired")
                     job_event_payloads.extend(aap.list_all(f"/api/v2/jobs/{job_id}/job_events/"))
             except TimeoutError:
-                results.append(_timeout_result(scenario, workflow_id, template_ids, job_ids, execution_id))
+                results.append(_timeout_result(scenario, workflow_id, template_ids, job_ids, execution_id, scenario_timer))
                 continue
             except Exception as error:  # Client boundaries redact their own response values.
                 results.append(_result(
@@ -364,10 +434,11 @@ def run(
                     "linked AAP job events could not be observed for success markers",
                     workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
                     details={"execution_id": execution_id, "error": redact_text(str(error))},
+                    timer=scenario_timer,
                 ))
                 continue
         if _deadline_expired(deadline):
-            results.append(_timeout_result(scenario, workflow_id, template_ids, job_ids, execution_id))
+            results.append(_timeout_result(scenario, workflow_id, template_ids, job_ids, execution_id, scenario_timer))
             continue
         observed_payloads = [workflow_payload, *job_payloads, *job_event_payloads]
         if not _contains_markers(
@@ -380,6 +451,7 @@ def run(
                 "AO workflow and linked AAP jobs completed without every declared success marker",
                 workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
                 details={"execution_id": execution_id, "success_markers": scenario.success_markers},
+                timer=scenario_timer,
             ))
             continue
         results.append(_result(
@@ -387,5 +459,44 @@ def run(
             "AO workflow and linked AAP jobs completed with expected states and execution evidence",
             workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
             details={"execution_id": execution_id, "workflow_status": _status(workflow_payload)},
+            timer=scenario_timer,
+        ))
+    for scenario in mcp_scenarios:
+        scenario_timer = CheckTimer.start()
+        try:
+            observation = mcp.call_tool(
+                scenario.mcp_tool_name, scenario.mcp_arguments
+            )
+        except Exception:
+            results.append(_result(
+                scenario, CheckStatus.FAIL, FailureClass.EXECUTION,
+                "authenticated read-only MCP tool call failed",
+                workflow_id=None, job_template_ids=[], job_ids=[],
+                details={"tool_name": scenario.mcp_tool_name},
+                timer=scenario_timer,
+            ))
+            continue
+        content_types = observation.get("content_types", []) if isinstance(observation, dict) else []
+        passed = bool(
+            isinstance(observation, dict)
+            and observation.get("tool_name") == scenario.mcp_tool_name
+            and observation.get("is_error") is False
+            and isinstance(content_types, list)
+            and bool(content_types)
+        )
+        results.append(_result(
+            scenario,
+            CheckStatus.PASS if passed else CheckStatus.FAIL,
+            None if passed else FailureClass.EXECUTION,
+            "authenticated read-only MCP tool call succeeded" if passed else "authenticated MCP response did not satisfy the safe result contract",
+            workflow_id=None,
+            job_template_ids=[],
+            job_ids=[],
+            details={
+                "tool_name": scenario.mcp_tool_name,
+                "content_types": content_types if isinstance(content_types, list) else [],
+                "is_error": observation.get("is_error") if isinstance(observation, dict) else None,
+            },
+            timer=scenario_timer,
         ))
     return results

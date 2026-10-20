@@ -1,0 +1,103 @@
+---
+- name: Build repository-owned acceptance workflow payload
+  ansible.builtin.set_fact:
+    __ao_acceptance_payload:
+      name: "{{ __acceptance_workflow.name }}"
+      description: "{{ __acceptance_workflow.description }}"
+      labels:
+        aap-demo: "true"
+        acceptance: "true"
+        acceptance_id: "{{ __acceptance_workflow.acceptance_id }}"
+        source: RedHatOfficial/aap-demo
+      project_id: "{{ ao_demo_project_id }}"
+      workflow_definition:
+        name: "{{ __acceptance_workflow.name }}"
+        description: "{{ __acceptance_workflow.description }}"
+        schema_version: "2.0.0"
+        triggers:
+          - id: trigger
+            name: Run acceptance diagnostic
+            type: manual_trigger
+            position:
+              x: 0
+              y: 0
+            parameters: {}
+        nodes:
+          - id: run_read_only_diagnostic
+            name: "{{ __acceptance_workflow.node_name }}"
+            type: aap_job_template
+            position:
+              x: 360
+              y: 0
+            parameters:
+              job_template_id: "{{ __acceptance_workflow.job_template_id | int }}"
+              organization_name: Default
+              credential_id: "{{ ao_aap_credential_id }}"
+              integration_id: "{{ ao_aap_integration_id }}"
+              diff_mode: false
+        edges:
+          - from: trigger
+            to: run_read_only_diagnostic
+
+- name: Find existing repository-owned acceptance workflow
+  ansible.builtin.uri:
+    url: "{{ ao_api_url }}/workflows?limit=100"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ ao_api_token }}"
+      Host: "{{ ao_api_host }}"
+    validate_certs: false
+    use_proxy: false
+    return_content: true
+  register: __ao_acceptance_workflows
+  no_log: true
+
+- name: Select existing repository-owned acceptance workflow
+  ansible.builtin.set_fact:
+    __ao_acceptance_existing: >-
+      {{ (__ao_acceptance_workflows.json.resources
+          | default(__ao_acceptance_workflows.json.results | default([])))
+         | selectattr('labels.acceptance_id', 'defined')
+         | selectattr('labels.acceptance_id', 'equalto', __acceptance_workflow.acceptance_id)
+         | list | first | default({}) }}
+
+- name: Create repository-owned acceptance workflow
+  ansible.builtin.uri:
+    url: "{{ ao_api_url }}/workflows"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ ao_api_token }}"
+      Content-Type: application/json
+      Host: "{{ ao_api_host }}"
+    body_format: json
+    body: "{{ __ao_acceptance_payload }}"
+    status_code: [200, 201]
+    validate_certs: false
+    use_proxy: false
+  when: __ao_acceptance_existing | length == 0
+  no_log: true
+
+- name: Update repository-owned acceptance workflow
+  ansible.builtin.uri:
+    url: "{{ ao_api_url }}/workflows/{{ __ao_acceptance_existing.id }}"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ ao_api_token }}"
+      Content-Type: application/json
+      Host: "{{ ao_api_host }}"
+    body_format: json
+    body:
+      name: "{{ __ao_acceptance_payload.name }}"
+      description: "{{ __ao_acceptance_payload.description }}"
+      labels: "{{ __ao_acceptance_payload.labels }}"
+      workflow_definition: "{{ __ao_acceptance_payload.workflow_definition }}"
+      change_description: Updated from the immutable AAP-Demo acceptance contract
+    status_code: [200, 202]
+    validate_certs: false
+    use_proxy: false
+  when: __ao_acceptance_existing | length > 0
+  no_log: true
+
+- name: Report synchronized repository-owned acceptance workflow
+  ansible.builtin.debug:
+    msg: "Synchronized read-only acceptance workflow {{ __acceptance_workflow.name }}"

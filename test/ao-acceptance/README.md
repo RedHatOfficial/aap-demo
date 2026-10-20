@@ -2,8 +2,9 @@
 
 The AO/AAP-Demo acceptance runner validates an already selected live target.
 It is opt-in and is intentionally separate from pull-request CI. Fast CI runs
-only `test/test-ao-acceptance-cli.sh`, which uses fake commands and cannot
-contact or provision a cluster. Run the live command from a dedicated,
+the CLI safeguard, provisioning contracts, and all Python suites through the
+discovery loader; those tests use controlled doubles and cannot contact or
+provision a cluster. Run the live command from a dedicated,
 access-controlled self-hosted runner or an operator workstation with access to
 the disposable target.
 
@@ -35,7 +36,17 @@ the Product Demos addon. The runner discovers managed AAP-Demo resources and
 checks each managed execution environment referenced by those resources. A
 representative job is launched only when its allowlisted read-only diagnostic
 template exists; missing deterministic representatives are reported as
-contract drift rather than silently skipped.
+contract drift rather than silently skipped. Each representative job remains
+available for a bounded probe so authenticated MCP `tools/list` and custom-CA
+handling are exercised from the actual execution-environment pod. AO backend
+and worker contexts are probed separately.
+
+The default manifest is success-capable and contains four safe contracts: AO
+wiring, an AO-backed AAP read-only workflow, a Product Demos read-only
+workflow, and an authenticated read-only MCP tool call. Operational certificate,
+disk, Product Demos installer, and ServiceNow scenarios are isolated in
+`scenarios/unsafe-operations.json`; selecting that manifest is explicit opt-in
+inspection and still reports them as blocked rather than authorizing mutation.
 
 ## Run modes
 
@@ -51,7 +62,9 @@ results outside the repository. The existing-cluster command is:
   prerequisites after context preflight and a check that the required live
   tokens and optional CA-file configuration are present.
 - `provision` explicitly runs the required AAP-Demo deployment and addon setup
-  before validation. Use it only for a disposable target.
+  before validation. It prepares only the deterministic Product Demos `linux`
+  domain before AO, and stops immediately if preparation fails. Use it only
+  for a disposable target.
 - `validate` never invokes `aap-demo deploy` or `aap-demo enable`; it reports
   unavailable prerequisites and exits without provisioning.
 - `--skip-provision` is an alias for `--mode validate`, useful in scripted
@@ -68,6 +81,14 @@ cluster:
 ```bash
 ./test/ao-acceptance/run.sh --mode provision --context "$target_context" \
   --artifact-dir /tmp/aap-demo-ao-acceptance
+```
+
+To inspect the isolated unsafe contracts without launching them:
+
+```bash
+./test/ao-acceptance/run.sh --mode validate --context "$target_context" \
+  --scenario-file test/ao-acceptance/scenarios/unsafe-operations.json \
+  --artifact-dir /tmp/aap-demo-ao-acceptance-unsafe
 ```
 
 ## Artifacts, cleanup, and triage

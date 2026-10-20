@@ -115,7 +115,7 @@ class ManagedCheckWiringTests(unittest.TestCase):
 
         self.assertEqual(results, [security_result, ee_result])
         security_run.assert_called_once_with(inventory, "probes")
-        ee_run.assert_called_once_with(inventory, "aap", command_runner)
+        ee_run.assert_called_once_with(inventory, "aap", command_runner, "probes")
 
 
 class LiveRunnerTests(unittest.TestCase):
@@ -158,10 +158,10 @@ class LiveRunnerTests(unittest.TestCase):
         self.assertEqual(args, ("aap", "ao", "probes"))
         self.assertEqual(kwargs["command_runner"], command_runner)
         self.assertEqual([scenario.scenario_id for scenario in kwargs["scenarios"]], [
-            "ao-certificate-lifecycle-contract",
-            "ao-disk-remediation-contract",
-            "product-demos-read-only-representative-required",
-            "ao-incident-triage-contract",
+            "ao-read-only-wiring-contract",
+            "ao-aap-read-only-execution",
+            "product-demos-read-only-execution",
+            "authenticated-mcp-read-only",
         ])
 
     def test_missing_live_dependencies_is_a_prerequisite_failure(self):
@@ -215,7 +215,7 @@ class LiveRunnerTests(unittest.TestCase):
         self.assertEqual(live["failure_class"], model.FailureClass.PREREQUISITE.value)
         self.assertNotIn("aap-token", json.dumps(live))
 
-    def test_discovers_an_unlabeled_mcp_route_and_lists_tools_with_authentication(self):
+    def test_discovers_an_unlabeled_mcp_route_without_putting_token_in_argv(self):
         class RouteRunner:
             def __init__(self):
                 self.calls = []
@@ -232,12 +232,6 @@ class LiveRunnerTests(unittest.TestCase):
                         stdout="aap.example.test\naap-mcp-aap-operator.apps.example.test\n",
                         stderr="",
                     )
-                if args[:2] == ["curl", "--fail"]:
-                    return SimpleNamespace(
-                        returncode=0,
-                        stdout='{"result":{"tools":[{"name":"controller_jobs_list"}]}}',
-                        stderr="",
-                    )
                 return SimpleNamespace(returncode=1, stdout="", stderr="unexpected command")
 
         command_runner = RouteRunner()
@@ -248,15 +242,15 @@ class LiveRunnerTests(unittest.TestCase):
             "AAP_ACCEPTANCE_MCP_TOKEN": "mcp-token",
         }, clear=True):
             _, _, probe_set = runner.create_live_dependencies(config, command_runner)
-            tools = probe_set.mcp_tools({"name": "aap-demo MCP Server"})
 
         mcp_route_lookup = next(call for call in command_runner.calls if call[:3] == ["kubectl", "get", "route"] and "aap" not in call[:4])
-        mcp_request = next(call for call in command_runner.calls if call[:2] == ["curl", "--fail"])
         self.assertEqual(probe_set.mcp_url, "https://aap-mcp-aap-operator.apps.example.test/mcp")
-        self.assertEqual(tools, ["controller_jobs_list"])
         self.assertNotIn("-l", mcp_route_lookup)
-        self.assertIn("Authorization: Bearer mcp-token", mcp_request)
-        self.assertIn("tools/list", " ".join(mcp_request))
+        self.assertFalse(any(
+            "mcp-token" in str(argument)
+            for call in command_runner.calls
+            for argument in call
+        ))
 
 
 class RunnerExitTests(unittest.TestCase):

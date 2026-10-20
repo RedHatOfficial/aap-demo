@@ -29,6 +29,8 @@ SECRETS = (
     "github_pat_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "opaque-pod-log-value",
+    "synthetic-unlabeled-api-secret",
+    "synthetic-unlabeled-event-secret",
 )
 
 
@@ -63,8 +65,18 @@ def check(
 
 class FakeAap:
     def get(self, path):
+        if "job_events" in path:
+            return {
+                "count": 1,
+                "results": [{
+                    "id": 99,
+                    "event": "runner_on_ok",
+                    "stdout": "synthetic-unlabeled-event-secret",
+                }],
+            }
         return {
             "path": path,
+            "message": "synthetic-unlabeled-api-secret",
             "token": "bearer-live-token",
             "nested": {"password": "correct-horse-battery-staple"},
             "opaque": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -76,7 +88,12 @@ class FakeAap:
         }
 
     def job_status(self, job_id):
-        return {"id": job_id, "authorization": "Bearer bearer-live-token"}
+        return {
+            "id": job_id,
+            "status": "failed",
+            "authorization": "Bearer bearer-live-token",
+            "result": "synthetic-unlabeled-api-secret",
+        }
 
 
 class FakeAo:
@@ -169,6 +186,9 @@ class ArtifactSafetyTests(unittest.TestCase):
         self.assertIn("[REDACTED]", text)
         self.assertIn("diagnostic omitted", text)
         self.assertIn("0123456789abcdef", text)
+        api_payload = json.loads((bundle / "api.json").read_text())
+        self.assertEqual(api_payload["aap_job_7"]["id"], 7)
+        self.assertEqual(api_payload["aap_job_7"]["status"], "failed")
         for secret in SECRETS:
             self.assertNotIn(secret, text)
 
@@ -186,8 +206,8 @@ class ArtifactSafetyTests(unittest.TestCase):
         )
 
         api_text = (bundle / "api.json").read_text()
-        self.assertIn("diagnostic truncated", api_text)
         self.assertNotIn("x" * 128, api_text)
+        self.assertLess(len(api_text.encode("utf-8")), 1024)
 
     def test_final_artifacts_are_bounded_after_redaction_expands_text(self):
         # Break caught: capping input before token redaction permits oversized files.
@@ -214,7 +234,10 @@ class ArtifactSafetyTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 serialized = path.read_text()
                 self.assertLessEqual(len(serialized.encode("utf-8")), artifacts.MAX_PAYLOAD_BYTES)
-                self.assertIn("final output exceeds", serialized)
+                if path.name == "api.json":
+                    self.assertNotIn(expanding_text, serialized)
+                else:
+                    self.assertIn("final output exceeds", serialized)
 
     def test_collector_selects_valid_pods_in_memory_and_writes_safe_log_artifact(self):
         # Break caught: omitting pod-list stdout before selection prevents log collection.
@@ -318,6 +341,30 @@ class RunnerArtifactIntegrationTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
         ):
             self.assertEqual(runner.main([]), 2)
+
+    def test_main_does_not_collect_cluster_diagnostics_for_unapproved_context(self):
+        blocked = CheckResult(
+            check_id="target.context",
+            component="target",
+            status=CheckStatus.BLOCKED,
+            failure_class=FailureClass.PREREQUISITE,
+            summary="selected context does not match",
+            started_at="",
+            finished_at="",
+            duration_seconds=0.0,
+            details={"expected": "approved", "actual": "unapproved"},
+        )
+        run_result = self._run_result(blocked)
+        run_result["_diagnostic_context"]["target_approved"] = False
+        with (
+            mock.patch.object(runner, "parse_args", return_value=self.config),
+            mock.patch.object(runner, "_run", return_value=run_result),
+            mock.patch.object(runner.artifacts.ArtifactCollector, "collect_failure") as collect,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(runner.main([]), 2)
+
+        collect.assert_not_called()
 
     def test_diagnostic_collection_error_keeps_original_check_exit_code(self):
         failed = check()

@@ -162,6 +162,48 @@
         __ao_source: "{{ ao_sync_source }}"
         __ao_source_names: "{{ ao_sync_source_names }}"
 
+- name: Synchronize repository-owned read-only acceptance workflows
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ao_api_url: "http://automation-orchestrator-backend.automation-orchestrator.svc.cluster.local:8000/api/v1"
+    ao_api_host: ""
+    ao_aap_credential_id: ""
+    ao_aap_integration_id: ""
+    ao_acceptance_template_id: ""
+    product_demos_acceptance_template_id: ""
+    __ao_acceptance_contracts:
+      - acceptance_id: ao-aap-read-only
+        name: AAP-Demo Acceptance | AO AAP Read-Only
+        description: Repository-owned AO-to-AAP read-only acceptance workflow
+        node_name: Run AO-backed read-only diagnostic
+        job_template_id: "{{ ao_acceptance_template_id }}"
+      - acceptance_id: product-demos-read-only
+        name: AAP-Demo Acceptance | Product Demos Read-Only
+        description: Repository-owned Product Demos read-only acceptance workflow
+        node_name: Run Product Demos read-only diagnostic
+        job_template_id: "{{ product_demos_acceptance_template_id }}"
+  pre_tasks:
+    - name: Validate read-only acceptance workflow bindings
+      ansible.builtin.assert:
+        that:
+          - ao_api_token | length > 0
+          - ao_api_host | length > 0
+          - ao_aap_credential_id | length > 0
+          - ao_aap_integration_id | length > 0
+          - ao_acceptance_template_id | string | length > 0
+          - product_demos_acceptance_template_id | string | length > 0
+        fail_msg: Repository-owned acceptance workflow bindings are incomplete.
+      no_log: true
+  tasks:
+    - name: Synchronize one repository-owned acceptance workflow
+      ansible.builtin.include_tasks: tasks/sync_acceptance_workflow.yml
+      loop: "{{ __ao_acceptance_contracts }}"
+      loop_control:
+        loop_var: __acceptance_workflow
+        label: "{{ __acceptance_workflow.name }}"
+
 - name: Remove temporary AO workflow source directory
   hosts: localhost
   connection: local

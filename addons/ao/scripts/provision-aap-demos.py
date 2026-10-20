@@ -19,6 +19,12 @@ CONTROL_PROJECT_NAME = "AAP Demo Control Plane"
 CONTROL_PROJECT_URL = "https://github.com/RedHatOfficial/aap-demo.git"
 CONTROL_TEMPLATE_NAME = "Sync AO Workflows from TMM"
 CONTROL_PLAYBOOK = "addons/ao/playbooks/sync-ao-demos.yml"
+ACCEPTANCE_TEMPLATE_NAME = "AAP-Demo Acceptance | AO Read-Only Diagnostic"
+ACCEPTANCE_PLAYBOOK = "addons/ao/playbooks/acceptance-read-only.yml"
+PRODUCT_DEMOS_ACCEPTANCE_TEMPLATE_NAME = (
+    "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic"
+)
+PRODUCT_DEMOS_EE_NAME = "Product Demos EE"
 CONTROL_FORKS = 10
 EXIT_LICENSE_REQUIRED = 2
 
@@ -55,7 +61,65 @@ def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
         "ao_agent_credential_id": args.ao_agent_credential_id,
         "ao_agent_integration_id": args.ao_agent_integration_id,
         "ao_agent_model_id": args.ao_agent_model_id,
+        "ao_mcp_credential_id": args.ao_mcp_credential_id,
+        "ao_mcp_integration_id": args.ao_mcp_integration_id,
+        "ao_acceptance_template_id": args.ao_acceptance_template_id,
+        "product_demos_acceptance_template_id": (
+            args.product_demos_acceptance_template_id
+        ),
     }
+
+
+def upstream_project_payload(organization_id: int, revision: str) -> dict[str, Any]:
+    """Return the immutable upstream AO demo project contract."""
+    return {
+        "name": PROJECT_NAME,
+        "description": "Playbooks used by the aap-orchestrator-demos AO workflows",
+        "organization": organization_id,
+        "scm_type": "git",
+        "scm_url": PROJECT_URL,
+        "scm_branch": revision,
+        "scm_update_on_launch": False,
+        "scm_delete_on_update": False,
+    }
+
+
+def control_project_payload(
+    organization_id: int, repository: str, revision: str
+) -> dict[str, Any]:
+    """Return the immutable repository control-plane project contract."""
+    return {
+        "name": CONTROL_PROJECT_NAME,
+        "description": "AAP playbooks that synchronize AO control-plane resources",
+        "organization": organization_id,
+        "scm_type": "git",
+        "scm_url": repository,
+        "scm_branch": revision,
+        "scm_update_on_launch": False,
+        "scm_delete_on_update": False,
+    }
+
+
+def acceptance_template_payload(
+    organization_id: int,
+    project_id: int,
+    execution_environment_id: int,
+    inventory_id: int | None = None,
+) -> dict[str, Any]:
+    """Return the no-credential AO acceptance job-template contract."""
+    payload: dict[str, Any] = {
+        "name": ACCEPTANCE_TEMPLATE_NAME,
+        "description": "AAP-Demo acceptance read-only AO-backed diagnostic",
+        "job_type": "run",
+        "organization": organization_id,
+        "project": project_id,
+        "playbook": ACCEPTANCE_PLAYBOOK,
+        "execution_environment": execution_environment_id,
+        "ask_variables_on_launch": True,
+    }
+    if inventory_id is not None:
+        payload["inventory"] = inventory_id
+    return payload
 
 
 def report_missing_license(route: str) -> None:
@@ -90,14 +154,37 @@ class AAP:
         result = self.request(f"/{endpoint}/?name={urllib.parse.quote(name)}")
         return next(iter(result.get("results", [])), None)
 
-    def wait_for_project_sync(self, project_id: int, timeout: int = 180) -> None:
+    def clear_job_template_credentials(self, template_id: int) -> None:
+        """Enforce the explicit no-credential contract for safe diagnostics."""
+        payload = self.request(f"/job_templates/{template_id}/credentials/")
+        credentials = payload.get("results", []) if isinstance(payload, dict) else []
+        for credential in credentials:
+            credential_id = credential.get("id") if isinstance(credential, dict) else None
+            if credential_id is not None:
+                self.request(
+                    f"/job_templates/{template_id}/credentials/",
+                    "POST",
+                    {"id": credential_id, "disassociate": True},
+                )
+
+    def wait_for_project_sync(
+        self, project_id: int, expected_revision: str = "", timeout: int = 180
+    ) -> None:
         """Wait until git SCM has playbooks; create job templates fails before that."""
+        def revision_matches(project: dict[str, Any]) -> bool:
+            if not expected_revision:
+                return True
+            observed = str(project.get("scm_revision") or "")
+            return observed == expected_revision or (
+                len(expected_revision) < 40 and observed.startswith(expected_revision)
+            )
+
         # Reusing an already-synced project is common on re-enable and avoids
         # starting another potentially slow SCM update just to discover that
         # the required playbooks are already available.
         project = self.request(f"/projects/{project_id}/")
         last_status = str(project.get("status") or "unknown")
-        if last_status == "successful":
+        if last_status == "successful" and revision_matches(project):
             playbooks = self.request(f"/projects/{project_id}/playbooks/")
             if isinstance(playbooks, dict):
                 playbooks = playbooks.get("results") or playbooks.get("playbooks") or []
@@ -113,7 +200,7 @@ class AAP:
         while time.time() < deadline:
             project = self.request(f"/projects/{project_id}/")
             last_status = str(project.get("status") or "unknown")
-            if last_status == "successful":
+            if last_status == "successful" and revision_matches(project):
                 playbooks = self.request(f"/projects/{project_id}/playbooks/")
                 if isinstance(playbooks, dict):
                     playbooks = playbooks.get("results") or playbooks.get("playbooks") or []
@@ -139,10 +226,14 @@ def main() -> int:
     parser.add_argument("--ao-agent-credential-id", default="")
     parser.add_argument("--ao-agent-integration-id", default="")
     parser.add_argument("--ao-agent-model-id", default="")
+    parser.add_argument("--ao-mcp-credential-id", default="")
+    parser.add_argument("--ao-mcp-integration-id", default="")
     parser.add_argument("--control-repository", default=CONTROL_PROJECT_URL)
     parser.add_argument("--control-branch", default="main")
     parser.add_argument("--ao-demo-ref", default="abcc1a1482a")
     args = parser.parse_args()
+    args.ao_acceptance_template_id = ""
+    args.product_demos_acceptance_template_id = ""
     api = AAP(args.route, args.token)
 
     organizations = api.request("/organizations/?name=Default").get("results", [])
@@ -151,16 +242,7 @@ def main() -> int:
     organization = organizations[0]
 
     project = api.find("projects", PROJECT_NAME)
-    project_payload = {
-        "name": PROJECT_NAME,
-        "description": "Playbooks used by the aap-orchestrator-demos AO workflows",
-        "organization": organization["id"],
-        "scm_type": "git",
-        "scm_url": PROJECT_URL,
-        "scm_branch": "main",
-        "scm_update_on_launch": True,
-        "scm_delete_on_update": False,
-    }
+    project_payload = upstream_project_payload(organization["id"], args.ao_demo_ref)
     if project:
         project_id = project["id"]
         api.request(f"/projects/{project_id}/", "PATCH", project_payload)
@@ -170,7 +252,7 @@ def main() -> int:
         print(f"  ✓ AAP project created: {PROJECT_NAME}")
 
     print("  ✓ AAP project configured for SCM update on launch")
-    api.wait_for_project_sync(project_id)
+    api.wait_for_project_sync(project_id, args.ao_demo_ref)
     print("  ✓ AAP project playbooks synced")
 
     existing = {item["name"]: item for item in api.request("/job_templates/?page_size=200").get("results", [])}
@@ -199,16 +281,9 @@ def main() -> int:
 
     if args.ao_api_url and args.ao_token:
         control_project = api.find("projects", CONTROL_PROJECT_NAME)
-        control_payload = {
-            "name": CONTROL_PROJECT_NAME,
-            "description": "AAP playbooks that synchronize AO control-plane resources",
-            "organization": organization["id"],
-            "scm_type": "git",
-            "scm_url": args.control_repository,
-            "scm_branch": args.control_branch,
-            "scm_update_on_launch": True,
-            "scm_delete_on_update": False,
-        }
+        control_payload = control_project_payload(
+            organization["id"], args.control_repository, args.control_branch
+        )
         if control_project:
             control_project_id = control_project["id"]
             api.request(f"/projects/{control_project_id}/", "PATCH", control_payload)
@@ -216,8 +291,47 @@ def main() -> int:
         else:
             control_project_id = api.request("/projects/", "POST", control_payload)["id"]
             print(f"  ✓ AAP control project created: {CONTROL_PROJECT_NAME}")
-        api.wait_for_project_sync(control_project_id)
+        api.wait_for_project_sync(control_project_id, args.control_branch)
         print("  ✓ AAP control project playbooks synced")
+
+        product_demos_ee = api.find("execution_environments", PRODUCT_DEMOS_EE_NAME)
+        if not product_demos_ee:
+            raise RuntimeError(
+                "Product Demos EE is required before AO acceptance resources are provisioned"
+            )
+        product_demos_acceptance = api.find(
+            "job_templates", PRODUCT_DEMOS_ACCEPTANCE_TEMPLATE_NAME
+        )
+        if not product_demos_acceptance:
+            raise RuntimeError(
+                "Product Demos read-only acceptance template is required before AO sync"
+            )
+
+        acceptance_template = api.find("job_templates", ACCEPTANCE_TEMPLATE_NAME)
+        acceptance_payload = acceptance_template_payload(
+            organization["id"],
+            control_project_id,
+            product_demos_ee["id"],
+            inventory_id,
+        )
+        if acceptance_template:
+            acceptance_template_id = acceptance_template["id"]
+            api.request(
+                f"/job_templates/{acceptance_template_id}/",
+                "PATCH",
+                acceptance_payload,
+            )
+            print(f"  ✓ AAP acceptance template updated: {ACCEPTANCE_TEMPLATE_NAME}")
+        else:
+            acceptance_template_id = api.request(
+                "/job_templates/", "POST", acceptance_payload
+            )["id"]
+            print(f"  ✓ AAP acceptance template created: {ACCEPTANCE_TEMPLATE_NAME}")
+        args.ao_acceptance_template_id = str(acceptance_template_id)
+        args.product_demos_acceptance_template_id = str(
+            product_demos_acceptance["id"]
+        )
+        api.clear_job_template_credentials(acceptance_template_id)
 
         control_template = api.find("job_templates", CONTROL_TEMPLATE_NAME)
         control_template_payload = {

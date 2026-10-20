@@ -1,18 +1,29 @@
 # Task 6 Report — AO Critical-Path Scenario Execution
 
+## Final whole-branch amendment (2026-10-20)
+
+The final default manifest is no longer blocked. Repository-owned read-only
+job templates and two local AO workflows now provide a success-capable wiring
+contract, AO-backed AAP execution, and Product Demos execution. A fourth
+scenario performs authenticated MCP `tools/list` and a read-only tool call.
+Unsafe certificate, disk, installer, and ServiceNow operations moved to the
+explicit `unsafe-operations.json` manifest and remain non-launchable. Earlier
+fix-round statements below describe historical intermediate states and are not
+the current acceptance behavior.
+
 ## Result
 
 Implemented scenario manifest parsing, pre-launch contract validation, bounded
-AO/AAP polling, AAP job-event completion markers, and runner integration for
-the four critical-path scenarios.
+AO/AAP polling, AAP job-event completion markers, authenticated MCP execution,
+and runner integration for the four safe critical-path scenarios.
 
 Commit: `c8e7a4a test: execute critical AO acceptance workflows`
 
 ## Files
 
 - `test/ao-acceptance/scenarios/critical-path.json` — four bounded scenarios:
-  AO wiring, AAP-backed certificate workflow, Product Demos read-only
-  diagnostic, and MCP smoke operation.
+  AO wiring, AO-backed AAP read-only execution, Product Demos read-only
+  execution, and authenticated MCP read-only behavior.
 - `test/ao-acceptance/scenarios.py` — strict JSON manifest loading and
   `Scenario` contract validation.
 - `test/ao-acceptance/checks/workflows.py` — all-or-nothing contract

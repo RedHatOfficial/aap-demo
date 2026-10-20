@@ -16,6 +16,7 @@ sys.path.insert(0, str(ACCEPTANCE_DIR))
 from clients.aap import AapClient  # noqa: E402
 from clients.ao import AoClient  # noqa: E402
 from clients.http import ApiError, JsonClient  # noqa: E402
+from clients.mcp import McpClient  # noqa: E402
 from redaction import redact, redact_text  # noqa: E402
 
 
@@ -138,6 +139,25 @@ class JsonClientTests(unittest.TestCase):
         self.assertIn("[REDACTED]", error.body)
         self.assertLessEqual(len(error.body), 4096)
 
+    def test_non_success_response_omits_unlabeled_response_values(self):
+        # Break caught: key-name redaction cannot identify a secret returned in
+        # an ordinary API field, so failure diagnostics must not retain bodies.
+        unlabeled_secret = "synthetic-unlabeled-api-secret"
+        self.opener.open.side_effect = HTTPError(
+            "https://aap.example.test/api/v2/items/",
+            500,
+            "Server Error",
+            hdrs=None,
+            fp=BytesIO(f'{{"message":"{unlabeled_secret}"}}'.encode()),
+        )
+
+        with self.assertRaises(ApiError) as raised:
+            self.client.request("GET", "/api/v2/items/")
+
+        self.assertNotIn(unlabeled_secret, raised.exception.body)
+        self.assertNotIn(unlabeled_secret, str(raised.exception))
+        self.assertIn("omitted", raised.exception.body)
+
     def test_invalid_json_and_connection_failures_are_redacted_api_errors(self):
         self.opener.open.return_value = FakeResponse("not-json")
 
@@ -211,6 +231,39 @@ class JsonClientTests(unittest.TestCase):
 
 
 class ResourceClientTests(unittest.TestCase):
+    def test_mcp_lists_and_calls_tools_through_authenticated_json_transport(self):
+        with patch("clients.http.ssl.create_default_context", return_value=object()):
+            client = McpClient(
+                "https://mcp.example.test/mcp", "mcp-token", ca_file="/tmp/ca.pem"
+            )
+        responses = [
+            {"jsonrpc": "2.0", "id": "ao-acceptance-tools", "result": {
+                "tools": [{"name": "controller.job_templates_list"}],
+            }},
+            {"jsonrpc": "2.0", "id": "ao-acceptance-call", "result": {
+                "content": [{"type": "text", "text": "untrusted response body"}],
+                "isError": False,
+            }},
+        ]
+
+        with patch.object(client._client, "request", side_effect=responses) as request:
+            tools = client.list_tools()
+            observation = client.call_tool("controller.job_templates_list", {})
+
+        self.assertEqual(tools, ["controller.job_templates_list"])
+        self.assertEqual(observation, {
+            "tool_name": "controller.job_templates_list",
+            "content_types": ["text"],
+            "is_error": False,
+        })
+        self.assertEqual(request.call_args_list[0].args, ("POST", "/mcp"))
+        self.assertEqual(
+            request.call_args_list[0].kwargs["payload"]["method"], "tools/list"
+        )
+        self.assertEqual(
+            request.call_args_list[1].kwargs["payload"]["method"], "tools/call"
+        )
+
     def test_aap_follows_next_links_and_launches_numeric_job_templates(self):
         client = AapClient("https://aap.example.test", "token-value")
         responses = [

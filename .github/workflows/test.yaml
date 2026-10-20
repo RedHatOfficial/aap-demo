@@ -104,6 +104,12 @@ jobs:
       - name: Run AO acceptance CLI safeguards
         run: bash ./test/test-ao-acceptance-cli.sh
 
+      - name: Run AO acceptance Python suites
+        run: python3 -m unittest discover -s test/ao_acceptance_discovery -p 'test*.py' -v
+
+      - name: Run AO acceptance provisioning contracts
+        run: bash ./test/test-ao-acceptance-provisioning.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -21,16 +22,21 @@ class FakeRunner:
         self.responses = responses
         self.calls = []
         self.timeouts = []
+        self.inputs = []
+        self.sleep = lambda _: None
 
-    def run(self, args, *, check=False, timeout=60):
+    def run(self, args, *, check=False, timeout=60, input_text=None):
         del check
         self.calls.append(args)
         self.timeouts.append(timeout)
+        self.inputs.append(input_text)
         key = tuple(args)
         if key in self.responses:
             return self.responses[key]
         if args[:3] == ["kubectl", "get", "pods"]:
             return CommandResult(0, "aap-controller-task-0", "")
+        if args[:3] == ["kubectl", "exec", "-i"] and ("__pod_exec__",) in self.responses:
+            return self.responses[("__pod_exec__",)]
         return CommandResult(1, "", "unexpected command")
 
 
@@ -69,7 +75,6 @@ class ProbeSetTests(unittest.TestCase):
         host = "mcp.example.test"
         pod = "acceptance-ee-job-abc"
         selector = "job-name=acceptance-ee-job"
-        curl_args = probes.https_command(f"https://{host}/mcp")
         runner = FakeRunner({
             ("getent", "hosts", host): CommandResult(2, "", "token=do-not-leak DNS failure"),
             (
@@ -77,8 +82,10 @@ class ProbeSetTests(unittest.TestCase):
                 "--field-selector=status.phase=Running",
                 "-o", "jsonpath={.items[0].metadata.name}",
             ): CommandResult(0, pod, ""),
-            tuple(["kubectl", "exec", "-n", "aap-operator", pod, "--", *curl_args]): CommandResult(
-                60, "subject=CN=mcp.example.test\n-----BEGIN CERTIFICATE-----\nnot-diagnostic-data", "SSL certificate problem: api-key=do-not-leak password=still-secret token=also-secret X-API-Key: header-secret x-access-token=second-header-secret"
+            ("__pod_exec__",): CommandResult(
+                60,
+                '{"ok":false,"status":null,"hostname":"mcp.example.test","error":"HTTPS certificate or connectivity probe failed"}',
+                "SSL certificate problem: api-key=do-not-leak password=still-secret token=also-secret X-API-Key: header-secret x-access-token=second-header-secret",
             ),
         })
         probe_set = probes.ProbeSet(runner)
@@ -127,6 +134,102 @@ class ProbeSetTests(unittest.TestCase):
 
         self.assertEqual(tools, ["controller_jobs_list"])
         self.assertEqual(client.calls, 1)
+
+    def test_mcp_readiness_uses_authenticated_tools_list_not_an_https_get(self):
+        class McpClient:
+            def __init__(self):
+                self.calls = 0
+
+            def list_tools(self):
+                self.calls += 1
+                return ["controller.job_templates_list"]
+
+        runner = FakeRunner({})
+        client = McpClient()
+        probe_set = probes.ProbeSet(
+            runner,
+            mcp_url="https://mcp.example.test/mcp",
+            mcp_client=client,
+        )
+
+        self.assertTrue(probe_set.mcp_ready())
+        self.assertEqual(client.calls, 1)
+        self.assertFalse(any(call and call[0] == "curl" for call in runner.calls))
+
+    def test_pod_https_streams_ca_content_over_stdin_without_host_path_in_argv(self):
+        ca_file = tempfile.NamedTemporaryFile(mode="w", delete=False)
+        self.addCleanup(lambda: Path(ca_file.name).unlink(missing_ok=True))
+        ca_file.write("-----BEGIN CERTIFICATE-----\nsynthetic-ca\n-----END CERTIFICATE-----\n")
+        ca_file.close()
+        pod = "aap-controller-task-0"
+        selector = "app.kubernetes.io/name=aap-controller-task"
+        url = "https://aap.example.test/api/gateway/v1/ping/"
+        runner = FakeRunner({
+            (
+                "kubectl", "get", "pods", "-n", "aap-operator", "-l", selector,
+                "--field-selector=status.phase=Running",
+                "-o", "jsonpath={.items[0].metadata.name}",
+            ): CommandResult(0, pod, ""),
+            ("__pod_exec__",): CommandResult(
+                0,
+                '{"ok":true,"status":200,"hostname":"aap.example.test"}',
+                "",
+            ),
+        })
+        probe_set = probes.ProbeSet(runner, ca_file=ca_file.name)
+
+        result = probe_set.ee_https("aap-operator", selector, url)
+
+        exec_index = next(
+            index for index, call in enumerate(runner.calls)
+            if call[:3] == ["kubectl", "exec", "-i"]
+        )
+        exec_call = runner.calls[exec_index]
+        streamed = runner.inputs[exec_index]
+        self.assertTrue(result.ok)
+        self.assertNotIn(ca_file.name, exec_call)
+        self.assertNotIn("synthetic-ca", " ".join(exec_call))
+        self.assertIn("synthetic-ca", streamed)
+
+    def test_pod_mcp_probe_streams_token_and_ca_and_returns_only_tool_names(self):
+        class McpClient:
+            def pod_request(self, method, params, *, ca_pem=""):
+                self.call = (method, params, ca_pem)
+                return {
+                    "endpoint": "https://mcp.example.test/mcp",
+                    "token": "synthetic-mcp-token",
+                    "ca_pem": ca_pem,
+                    "request": {"method": method, "params": params},
+                }
+
+        ca_file = tempfile.NamedTemporaryFile(mode="w", delete=False)
+        self.addCleanup(lambda: Path(ca_file.name).unlink(missing_ok=True))
+        ca_file.write("synthetic-mcp-ca")
+        ca_file.close()
+        runner = FakeRunner({
+            ("__pod_exec__",): CommandResult(
+                0,
+                '{"ok":true,"hostname":"mcp.example.test","tool_names":["controller.job_templates_list"]}',
+                "",
+            ),
+        })
+        client = McpClient()
+        probe_set = probes.ProbeSet(runner, ca_file=ca_file.name, mcp_client=client)
+
+        names = probe_set.mcp_tools_from_pod(
+            "automation-orchestrator", "app.kubernetes.io/component=worker"
+        )
+
+        exec_index = next(
+            index for index, call in enumerate(runner.calls)
+            if call[:3] == ["kubectl", "exec", "-i"]
+        )
+        argv = " ".join(runner.calls[exec_index])
+        self.assertEqual(names, ["controller.job_templates_list"])
+        self.assertNotIn("synthetic-mcp-token", argv)
+        self.assertNotIn("synthetic-mcp-ca", argv)
+        self.assertIn("synthetic-mcp-token", runner.inputs[exec_index])
+        self.assertIn("synthetic-mcp-ca", runner.inputs[exec_index])
 
     def test_identity_and_aap_token_observations_do_not_trust_constructor_metadata(self):
         class AapClient:
@@ -227,6 +330,10 @@ class SecurityProbeDouble:
         self.calls.append(("mcp-tools", integration["name"]))
         return self.observations["mcp_tools"]
 
+    def mcp_tools_from_pod(self, namespace, selector):
+        self.calls.append(("mcp-pod", namespace, selector))
+        return self.observations["mcp_tools"]
+
     def private_network_ready(self, hostname):
         self.calls.append(("private-network", hostname))
         return self.observations["private_network_routes"].get(hostname, True)
@@ -252,11 +359,14 @@ class SecurityCheckTests(unittest.TestCase):
         checks = security.run(security_inventory(), probe_set)
 
         self.assertTrue(all(check.status == CheckStatus.PASS for check in checks))
+        self.assertTrue(all(check.duration_seconds > 0.0 for check in checks))
         self.assertTrue(any(check.check_id == "security.mcp.tools" for check in checks))
         self.assertTrue(any(check.check_id == "security.private-network.aap-demo-aap" for check in checks))
         self.assertIn(("identity",), probe_set.calls)
         self.assertIn(("token", "aap-demo AAP"), probe_set.calls)
         self.assertIn(("mcp-tools", "aap-demo MCP Server"), probe_set.calls)
+        self.assertIn(("mcp-pod", "automation-orchestrator", "app.kubernetes.io/component=backend"), probe_set.calls)
+        self.assertIn(("mcp-pod", "automation-orchestrator", "app.kubernetes.io/component=worker"), probe_set.calls)
         self.assertIn(("private-network", "aap.example.test"), probe_set.calls)
         self.assertIn(("ao", "automation-orchestrator", "app.kubernetes.io/component=backend", "https://aap.example.test"), probe_set.calls)
         self.assertIn(("ao", "automation-orchestrator", "app.kubernetes.io/component=worker", "https://aap.example.test"), probe_set.calls)
@@ -307,53 +417,95 @@ class SecurityCheckTests(unittest.TestCase):
 
 class FakeAapClient:
     def __init__(self, statuses=None):
-        self.statuses = list(statuses or [{"status": "successful"}])
+        self.statuses = list(
+            statuses or [{"status": "successful", "execution_environment": 10}]
+        )
         self.launched = []
+        self.launch_payloads = []
 
-    def launch_job_template(self, template_id):
+    def launch_job_template(self, template_id, extra_vars=None):
         self.launched.append(template_id)
+        self.launch_payloads.append(extra_vars)
         return template_id + 100
 
     def job_status(self, job_id):
         del job_id
-        return self.statuses.pop(0) if self.statuses else {"status": "successful"}
+        return self.statuses.pop(0) if self.statuses else {
+            "status": "successful",
+            "execution_environment": 10,
+        }
 
 
-def ee_inventory(*, second_startable=True):
+def ee_inventory():
     return ManagedResourceInventory(
         execution_environments=[
             {"id": 10, "name": "Product Demos EE", "image": "quay.io/ansible-product-demos/apd-ee-27:latest", "available": True},
-            {"id": 11, "name": "OPENSHIFT", "image": "registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel8:latest", "available": True},
         ],
+        projects=[{
+            "id": 30,
+            "name": "APD Bootstrap Project",
+            "scm_type": "git",
+            "scm_url": "https://github.com/ansible/product-demos.git",
+            "scm_branch": "a" * 40,
+            "scm_revision": "a" * 40,
+            "scm_update_on_launch": False,
+        }],
         job_templates=[
-            {"id": 40, "name": "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic", "execution_environment_id": 10, "can_start": True},
-            {"id": 41, "name": "AAP-Demo Acceptance | OpenShift Read-Only Diagnostic", "execution_environment_id": 11, "can_start": second_startable},
+            {
+                "id": 40,
+                "name": "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic",
+                "project_id": 30,
+                "project_name": "APD Bootstrap Project",
+                "playbook": "acceptance-read-only.yml",
+                "execution_environment_id": 10,
+                "can_start": True,
+                "ask_variables_on_launch": True,
+            },
         ],
     )
 
 
 class ExecutionEnvironmentTests(unittest.TestCase):
-    def test_enumerates_each_referenced_managed_execution_environment(self):
-        supported = execution_environments.enumerate_supported(ee_inventory())
+    def test_enumerates_every_managed_execution_environment_even_when_unreferenced(self):
+        inventory = ee_inventory()
+        inventory.execution_environments.append({
+            "id": 11,
+            "name": "Unexpected Managed EE",
+            "image": "registry.example.test/unexpected:1",
+            "available": True,
+        })
+
+        supported = execution_environments.enumerate_supported(inventory)
 
         self.assertEqual([item["id"] for item in supported], [10, 11])
         self.assertEqual(supported[0]["name"], "Product Demos EE")
         self.assertEqual(supported[0]["image"], "quay.io/ansible-product-demos/apd-ee-27:latest")
 
     def test_runs_one_deterministic_job_per_ee_and_classifies_uncovered_ee_as_contract_drift(self):
+        inventory = ee_inventory()
+        inventory.execution_environments.append({
+            "id": 11,
+            "name": "Unexpected Managed EE",
+            "image": "registry.example.test/unexpected:1",
+            "available": True,
+        })
         aap = FakeAapClient()
-        checks = execution_environments.run(ee_inventory(second_startable=False), aap, FakeRunner({}))
+        checks = execution_environments.run(inventory, aap, FakeRunner({}))
 
         covered = next(check for check in checks if check.check_id == "ee.10.representative-job")
         uncovered = next(check for check in checks if check.check_id == "ee.11.representative-job")
         self.assertEqual(covered.status, CheckStatus.PASS)
+        self.assertGreater(covered.duration_seconds, 0.0)
         self.assertEqual(uncovered.status, CheckStatus.FAIL)
         self.assertEqual(uncovered.failure_class, FailureClass.CONTRACT_DRIFT)
         self.assertNotEqual(uncovered.status, CheckStatus.SKIP)
         self.assertEqual(aap.launched, [40])
+        self.assertEqual(aap.launch_payloads, [{
+            "acceptance_probe_pause_seconds": 30,
+        }])
 
     def test_classifies_a_representative_job_failure_as_execution(self):
-        aap = FakeAapClient([{"status": "failed"}])
+        aap = FakeAapClient([{"status": "failed", "execution_environment": 10}])
         checks = execution_environments.run(ee_inventory(), aap, FakeRunner({}))
 
         failed = next(check for check in checks if check.check_id == "ee.10.representative-job")
@@ -369,6 +521,35 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         definition = next(check for check in checks if check.check_id == "ee.10.definition")
         self.assertEqual(definition.status, CheckStatus.FAIL)
         self.assertEqual(definition.failure_class, FailureClass.CONTRACT_DRIFT)
+
+    def test_requires_the_exact_pinned_project_and_playbook_contract(self):
+        inventory = ee_inventory()
+        inventory.projects[0]["scm_branch"] = "main"
+        inventory.job_templates[0]["playbook"] = "setup_demo.yml"
+
+        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}))
+
+        representative = next(
+            check for check in checks
+            if check.check_id == "ee.10.representative-job"
+        )
+        self.assertEqual(representative.status, CheckStatus.FAIL)
+        self.assertEqual(representative.failure_class, FailureClass.CONTRACT_DRIFT)
+
+    def test_requires_the_completed_job_to_report_the_expected_execution_environment(self):
+        aap = FakeAapClient([{
+            "status": "successful",
+            "execution_environment": 999,
+        }])
+
+        checks = execution_environments.run(ee_inventory(), aap, FakeRunner({}))
+
+        representative = next(
+            check for check in checks
+            if check.check_id == "ee.10.representative-job"
+        )
+        self.assertEqual(representative.status, CheckStatus.FAIL)
+        self.assertEqual(representative.failure_class, FailureClass.CONTRACT_DRIFT)
 
     def test_requires_explicit_ee_availability_evidence(self):
         inventory = ee_inventory()
@@ -392,7 +573,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
 
         execution_environments.run(inventory, aap, FakeRunner({}))
 
-        self.assertEqual(aap.launched, [40, 41])
+        self.assertEqual(aap.launched, [40])
 
     def test_returns_contract_drift_when_only_an_installer_is_startable(self):
         inventory = ee_inventory()
@@ -425,16 +606,43 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         self.assertEqual(failed.status, CheckStatus.FAIL)
         self.assertEqual(failed.failure_class, FailureClass.PREREQUISITE)
 
-    def test_uses_runner_timeout_and_running_aap_task_selector_for_job_observation(self):
+    def test_uses_runner_timeout_and_the_launched_job_pod_selector_for_observation(self):
         runner = FakeRunner({})
         runner.timeout_seconds = 19
 
         execution_environments.run(ee_inventory(), FakeAapClient(), runner)
 
         pod_command = next(call for call in runner.calls if call[:3] == ["kubectl", "get", "pods"])
-        self.assertIn("app.kubernetes.io/name=aap-controller-task", pod_command)
+        self.assertIn("ansible-awx-job-id=140", pod_command)
         self.assertIn("--field-selector=status.phase=Running", pod_command)
         self.assertIn(19, runner.timeouts)
+
+    def test_probes_authenticated_mcp_from_each_launched_ee_job_pod(self):
+        class EeProbes:
+            mcp_client = object()
+
+            def __init__(self):
+                self.calls = []
+
+            def mcp_tools_from_pod(self, namespace, selector):
+                self.calls.append((namespace, selector))
+                return ["controller.job_templates_list"]
+
+        probes = EeProbes()
+
+        checks = execution_environments.run(
+            ee_inventory(), FakeAapClient(), FakeRunner({}), probes
+        )
+
+        representative = next(
+            check for check in checks
+            if check.check_id == "ee.10.representative-job"
+        )
+        self.assertEqual(representative.status, CheckStatus.PASS)
+        self.assertEqual(probes.calls, [
+            ("aap-operator", "ansible-awx-job-id=140"),
+        ])
+        self.assertEqual(representative.details["mcp_tool_count"], 1)
 
 
 if __name__ == "__main__":

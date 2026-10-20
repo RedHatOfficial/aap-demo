@@ -1,0 +1,23 @@
+---
+- name: Verify the AO-backed AAP acceptance execution path
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    acceptance_probe_pause_seconds: 0
+  tasks:
+    - name: Validate the bounded acceptance probe pause
+      ansible.builtin.assert:
+        that:
+          - acceptance_probe_pause_seconds | int >= 0
+          - acceptance_probe_pause_seconds | int <= 30
+        quiet: true
+
+    - name: Emit the immutable AO acceptance marker
+      ansible.builtin.debug:
+        msg: AAP_DEMO_ACCEPTANCE_AO_READ_ONLY_OK
+
+    - name: Keep the execution pod available for bounded network probes
+      ansible.builtin.pause:
+        seconds: "{{ acceptance_probe_pause_seconds | int }}"
+      when: acceptance_probe_pause_seconds | int > 0

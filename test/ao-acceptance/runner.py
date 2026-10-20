@@ -2,29 +2,30 @@
 
 import argparse
 from dataclasses import asdict
-from datetime import UTC, datetime
 import os
 from pathlib import Path
 import re
 import sys
 
 try:
+    from .check_timing import CheckTimer
     from .model import CheckResult, CheckStatus, FailureClass, RunConfig
     from .environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from .inventory import build_inventory
     from .checks import execution_environments, readiness, security, wiring, workflows
-    from .clients import AapClient, AoClient
-    from .probes import McpToolsClient, ProbeSet
+    from .clients import AapClient, AoClient, McpClient
+    from .probes import ProbeSet
     from .redaction import redact_text
     from . import artifacts
     from . import scenarios as scenario_manifest
 except ImportError:  # Direct execution via run.sh or python runner.py.
+    from check_timing import CheckTimer
     from model import CheckResult, CheckStatus, FailureClass, RunConfig
     from environment import CommandRunner, TargetInspector, prepare_target, validate_target
     from inventory import build_inventory
     from checks import execution_environments, readiness, security, wiring, workflows
-    from clients import AapClient, AoClient
-    from probes import McpToolsClient, ProbeSet
+    from clients import AapClient, AoClient, McpClient
+    from probes import ProbeSet
     from redaction import redact_text
     import artifacts
     import scenarios as scenario_manifest
@@ -39,6 +40,7 @@ DEFAULT_MANAGED_MARKERS = {key: "aap-demo" for key in (
     "credentials",
     "job_templates",
     "execution_environments",
+    "ao_credentials",
     "ao_integrations",
     "ao_workflows",
 )}
@@ -135,12 +137,14 @@ def run_managed_checks(
     if any(result.status in (CheckStatus.FAIL, CheckStatus.BLOCKED) for result in results):
         return results
     if scenarios is not None:
-        workflow_results = workflows.run(scenarios, inventory, ao, aap)
+        workflow_results = workflows.run(
+            scenarios, inventory, ao, aap, getattr(probes, "mcp_client", None)
+        )
         results.extend(workflow_results)
         # Contract drift must stop all live launches, including EE checks.
         if any(result.failure_class == FailureClass.CONTRACT_DRIFT for result in workflow_results):
             return results
-    results.extend(execution_environments.run(inventory, aap, command_runner))
+    results.extend(execution_environments.run(inventory, aap, command_runner, probes))
     return results
 
 
@@ -194,8 +198,8 @@ def create_live_dependencies(config: RunConfig, command_runner: CommandRunner):
     ca_file = os.environ.get("AAP_ACCEPTANCE_CA_FILE") or None
     aap = AapClient(aap_url, tokens["AAP_ACCEPTANCE_AAP_TOKEN"], ca_file=ca_file)
     ao = AoClient(ao_url, tokens["AAP_ACCEPTANCE_AO_TOKEN"], ca_file=ca_file)
-    mcp_client = McpToolsClient(
-        command_runner, mcp_url, tokens["AAP_ACCEPTANCE_MCP_TOKEN"],
+    mcp_client = McpClient(
+        mcp_url, tokens["AAP_ACCEPTANCE_MCP_TOKEN"],
         ca_file=ca_file, timeout_seconds=config.timeout_seconds,
     )
     probes = ProbeSet(
@@ -224,32 +228,43 @@ def live_configuration_error() -> str | None:
     return None
 
 
-def _prerequisite_failure(check_id: str, summary: str, *, details: dict[str, object] | None = None) -> CheckResult:
-    now = datetime.now(UTC).isoformat()
+def _prerequisite_failure(
+    check_id: str,
+    summary: str,
+    *,
+    details: dict[str, object] | None = None,
+    timer: CheckTimer | None = None,
+) -> CheckResult:
+    started_at, finished_at, duration_seconds = (timer or CheckTimer.start()).finish()
     return CheckResult(
         check_id=check_id,
         component="runner",
         status=CheckStatus.FAIL,
         failure_class=FailureClass.PREREQUISITE,
         summary=summary,
-        started_at=now,
-        finished_at=now,
-        duration_seconds=0.0,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
         details=details or {},
     )
 
 
-def _scenario_failure(error: Exception, scenario_file: Path) -> CheckResult:
-    now = datetime.now(UTC).isoformat()
+def _scenario_failure(
+    error: Exception,
+    scenario_file: Path,
+    *,
+    timer: CheckTimer | None = None,
+) -> CheckResult:
+    started_at, finished_at, duration_seconds = (timer or CheckTimer.start()).finish()
     return CheckResult(
         check_id="workflow.manifest",
         component="workflow",
         status=CheckStatus.FAIL,
         failure_class=FailureClass.CONTRACT_DRIFT,
         summary="scenario manifest is invalid; no workflow or job was launched",
-        started_at=now,
-        finished_at=now,
-        duration_seconds=0.0,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
         details={
             "scenario_id": None,
             "workflow_id": None,
@@ -265,8 +280,14 @@ def _run(config: RunConfig) -> dict[str, object]:
     """Create the run-level result container for the scaffold."""
     results: list[CheckResult] = []
     mutated = False
-    diagnostic_context: dict[str, object] = {"clients": {}, "command_runner": None}
+    diagnostic_context: dict[str, object] = {
+        "clients": {},
+        "command_runner": None,
+        "target_approved": False,
+    }
     if config.dry_run:
+        timer = CheckTimer.start()
+        started_at, finished_at, duration_seconds = timer.finish()
         results.append(
             CheckResult(
                 check_id="runner.dry-run",
@@ -274,9 +295,9 @@ def _run(config: RunConfig) -> dict[str, object]:
                 status=CheckStatus.SKIP,
                 failure_class=None,
                 summary="dry run requested; no live checks executed",
-                started_at="",
-                finished_at="",
-                duration_seconds=0.0,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_seconds=duration_seconds,
                 details={},
             )
         )
@@ -291,6 +312,10 @@ def _run(config: RunConfig) -> dict[str, object]:
         inspection = TargetInspector(command_runner, config)
         preflight = validate_target(config, inspection)
         results.extend(preflight)
+        diagnostic_context["target_approved"] = any(
+            result.check_id == "target.context" and result.status == CheckStatus.PASS
+            for result in preflight
+        )
         blocked = any(result.status == CheckStatus.BLOCKED for result in preflight)
         missing = {
             result.component
@@ -307,9 +332,18 @@ def _run(config: RunConfig) -> dict[str, object]:
             mutated = bool(preparation)
             if all(result.status == CheckStatus.PASS for result in preparation):
                 preflight = validate_target(config, inspection)
+                results = [
+                    result for result in results
+                    if not result.check_id.startswith("target.")
+                ]
                 results.extend(preflight)
+                diagnostic_context["target_approved"] = any(
+                    result.check_id == "target.context" and result.status == CheckStatus.PASS
+                    for result in preflight
+                )
         preflight_ok = bool(preflight) and all(result.status == CheckStatus.PASS for result in preflight)
         if preflight_ok and not configuration_error:
+            dependencies_timer = CheckTimer.start()
             try:
                 dependencies = create_live_dependencies(config, command_runner)
             except Exception as error:
@@ -317,19 +351,22 @@ def _run(config: RunConfig) -> dict[str, object]:
                     "runner.live-dependencies",
                     "live acceptance dependencies could not be initialized",
                     details={"error": redact_text(str(error))},
+                    timer=dependencies_timer,
                 ))
                 dependencies = None
             if dependencies is not None:
                 if dependencies[0] is None:
-                    results.append(_prerequisite_failure("runner.live-dependencies", dependencies[1]))
+                    results.append(_prerequisite_failure("runner.live-dependencies", dependencies[1], timer=dependencies_timer))
                 else:
                     aap, ao, probes = dependencies
                     diagnostic_context["clients"] = {"aap": aap, "ao": ao, "probes": probes}
+                    scenario_timer = CheckTimer.start()
                     try:
                         loaded_scenarios = scenario_manifest.load(config.scenario_file)
                     except Exception as error:
-                        results.append(_scenario_failure(error, config.scenario_file))
+                        results.append(_scenario_failure(error, config.scenario_file, timer=scenario_timer))
                     else:
+                        managed_timer = CheckTimer.start()
                         try:
                             results.extend(run_managed_checks(
                                 aap, ao, probes, scenarios=loaded_scenarios, command_runner=command_runner,
@@ -339,6 +376,7 @@ def _run(config: RunConfig) -> dict[str, object]:
                                 "runner.managed-checks",
                                 "managed live checks could not be initialized or observed",
                                 details={"error": redact_text(str(error))},
+                                timer=managed_timer,
                             ))
     return {
         "config": _config_dict(config),
@@ -407,7 +445,8 @@ def main(argv: list[str]) -> int:
 
     exit_code = _exit_code(results)
     command_runner = diagnostic_context.get("command_runner")
-    if exit_code and command_runner is not None:
+    target_approved = diagnostic_context.get("target_approved", True) is True
+    if exit_code and command_runner is not None and target_approved:
         try:
             artifacts.ArtifactCollector().collect_failure(
                 config,

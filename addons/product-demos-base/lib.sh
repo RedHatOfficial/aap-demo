@@ -3,6 +3,8 @@
 
 APD_AAP_VERSION="${APD_AAP_VERSION:-2.7}"
 PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-27:latest}"
+APD_ACCEPTANCE_TEMPLATE_NAME="AAP-Demo Acceptance | Product Demos Read-Only Diagnostic"
+APD_ACCEPTANCE_PLAYBOOK="acceptance-read-only.yml"
 
 apd_common_extra_vars_yaml() {
   local ee_image="${1:-${PRODUCT_DEMOS_EE}}"
@@ -248,10 +250,121 @@ apd_ensure_domain_job_template() {
   printf '%s\n' "$template_id"
 }
 
+apd_ensure_acceptance_job_template() {
+  local project_id="$1"
+  local ee_id="$2"
+  local encoded_name payload result template_id credential_ids credential_id
+
+  encoded_name=$(jq -rn --arg n "$APD_ACCEPTANCE_TEMPLATE_NAME" '$n|@uri')
+  payload=$(jq -n \
+    --arg name "$APD_ACCEPTANCE_TEMPLATE_NAME" \
+    --arg playbook "$APD_ACCEPTANCE_PLAYBOOK" \
+    --argjson project_id "$project_id" \
+    --argjson ee_id "$ee_id" \
+    --argjson org_id "$DEFAULT_ORG_ID" \
+    '{
+      name: $name,
+      description: "AAP-Demo acceptance read-only Product Demos diagnostic",
+      job_type: "run",
+      inventory: 1,
+      project: $project_id,
+      playbook: $playbook,
+      ask_variables_on_launch: true,
+      organization: $org_id,
+      execution_environment: $ee_id
+    }')
+
+  template_id=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/job_templates/?name=${encoded_name}" 2>&1 \
+    | jq -r --argjson org "$DEFAULT_ORG_ID" \
+      '[.results[] | select(.summary_fields.organization.id == $org)] | .[0].id // empty')
+
+  if [ -n "$template_id" ]; then
+    result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X PATCH -H "Content-Type: application/json" -d "$payload" \
+      "${AAP_API}/job_templates/${template_id}/" 2>&1)
+    if ! printf '%s' "$result" | jq -e '.id' >/dev/null 2>&1; then
+      echo "❌ ERROR: Failed to update ${APD_ACCEPTANCE_TEMPLATE_NAME}" >&2
+      return 1
+    fi
+    echo "✓ Job template updated: ${APD_ACCEPTANCE_TEMPLATE_NAME} (ID: ${template_id})" >&2
+  else
+    result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X POST -H "Content-Type: application/json" -d "$payload" \
+      "${AAP_API}/job_templates/" 2>&1)
+    template_id=$(printf '%s' "$result" | jq -r '.id // empty')
+    if [ -z "$template_id" ]; then
+      echo "❌ ERROR: Failed to create ${APD_ACCEPTANCE_TEMPLATE_NAME}" >&2
+      return 1
+    fi
+    echo "✓ Job template created: ${APD_ACCEPTANCE_TEMPLATE_NAME} (ID: ${template_id})" >&2
+  fi
+
+  # This diagnostic intentionally has no target or cloud credential. Remove any
+  # association left by an older local experiment before acceptance can use it.
+  credential_ids=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/job_templates/${template_id}/credentials/" 2>&1 \
+    | jq -r '.results[]?.id')
+  for credential_id in $credential_ids; do
+    curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+      -X POST -H "Content-Type: application/json" \
+      -d "$(jq -n --argjson id "$credential_id" '{id: $id, disassociate: true}')" \
+      "${AAP_API}/job_templates/${template_id}/credentials/" >/dev/null 2>&1
+  done
+
+  apd_dedupe_job_templates "$APD_ACCEPTANCE_TEMPLATE_NAME" "$template_id"
+  printf '%s\n' "$template_id"
+}
+
 apd_apd_org_id() {
   curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
     "${AAP_API}/organizations/?name=$(jq -rn --arg n 'Ansible Product Demos (APD)' '$n|@uri')" 2>&1 \
     | jq -r '.results[0].id // empty'
+}
+
+apd_pin_installed_project_revision() {
+  local org_id project project_id project_url revision patch_result
+
+  org_id=$(apd_apd_org_id)
+  if [ -z "$org_id" ]; then
+    echo "❌ ERROR: Cannot pin Product Demos project without its organization" >&2
+    return 1
+  fi
+
+  project=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    "${AAP_API}/projects/?name=$(jq -rn --arg n 'Ansible Product Demos' '$n|@uri')" 2>/dev/null \
+    | jq -c --argjson org "$org_id" \
+      '[.results[] | select((.summary_fields.organization.id // .organization) == $org)]
+       | .[0] // empty
+       | {id, scm_url, scm_revision, status}' 2>/dev/null || true)
+  project_id=$(printf '%s' "$project" | jq -r '.id // empty' 2>/dev/null)
+  project_url=$(printf '%s' "$project" | jq -r '.scm_url // empty' 2>/dev/null)
+  revision=$(printf '%s' "$project" | jq -r '.scm_revision // empty' 2>/dev/null)
+
+  if [ -z "$project_id" ] || [ "${project_url%.git}" != "${PRODUCT_DEMOS_REPO%.git}" ]; then
+    echo "❌ ERROR: Installed Product Demos project does not match its repository contract" >&2
+    return 1
+  fi
+  if [[ ! "$revision" =~ ^[0-9a-f]{40,64}$ ]]; then
+    echo "❌ ERROR: Installed Product Demos project has no immutable SCM revision" >&2
+    return 1
+  fi
+
+  patch_result=$(curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg revision "$revision" \
+      '{scm_branch: $revision, scm_update_on_launch: false}')" \
+    "${AAP_API}/projects/${project_id}/" 2>/dev/null || true)
+  if ! printf '%s' "$patch_result" | jq -e \
+    --argjson id "$project_id" --arg revision "$revision" \
+    '.id == $id and .scm_branch == $revision and .scm_update_on_launch == false' \
+    >/dev/null 2>&1; then
+    echo "❌ ERROR: Failed to pin installed Product Demos project revision" >&2
+    return 1
+  fi
+
+  echo "✓ Installed Product Demos project pinned to ${revision}"
 }
 
 apd_discover_openshift_connection() {
@@ -820,6 +933,13 @@ apd_apply_bootstrap_playbook_overlays() {
   local install_playbook="${3:-install-apd-aap-demo.yml}"
   local rc=0
 
+  if ! apd_overlay_project_playbook "$project_id" \
+    "${addons_base_dir}/playbooks/${APD_ACCEPTANCE_PLAYBOOK}" \
+    "$APD_ACCEPTANCE_PLAYBOOK" \
+    'AAP_DEMO_ACCEPTANCE_PRODUCT_DEMOS_READ_ONLY_OK'; then
+    rc=1
+  fi
+
   if [ "$install_playbook" = "install-apd-aap-demo.yml" ]; then
     if ! apd_overlay_project_playbook "$project_id" \
       "${addons_base_dir}/playbooks/install-apd-aap-demo.yml" \
@@ -852,7 +972,7 @@ apd_apply_bootstrap_playbook_overlays() {
 
   # AAP 2.7 validates job template playbooks against project.playbook_files (SCM index).
   # Overlay playbooks exist on disk but are not in that index until we register them.
-  local overlay_playbooks=()
+  local overlay_playbooks=("$APD_ACCEPTANCE_PLAYBOOK")
   if [ "$install_playbook" = "install-apd-aap-demo.yml" ]; then
     overlay_playbooks+=("install-apd-aap-demo.yml")
   elif [ "$install_playbook" != "install-apd.yml" ]; then

@@ -1,14 +1,14 @@
 """Safe target inspection and preparation for AO live acceptance runs."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 import re
 import subprocess
-import time
 
 try:
+    from .check_timing import CheckTimer
     from .model import CheckResult, CheckStatus, FailureClass, RunConfig
 except ImportError:  # Direct execution via run.sh or python runner.py.
+    from check_timing import CheckTimer
     from model import CheckResult, CheckStatus, FailureClass, RunConfig
 
 
@@ -24,7 +24,14 @@ class CommandResult:
 class CommandRunner:
     """Run argv commands without a shell and capture their text output."""
 
-    def run(self, args: list[str], *, check: bool = False, timeout: int = 60) -> CommandResult:
+    def run(
+        self,
+        args: list[str],
+        *,
+        check: bool = False,
+        timeout: int = 60,
+        input_text: str | None = None,
+    ) -> CommandResult:
         try:
             completed = subprocess.run(
                 args,
@@ -32,6 +39,7 @@ class CommandRunner:
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                input=input_text,
             )
         except FileNotFoundError as error:
             result = CommandResult(127, "", str(error))
@@ -111,17 +119,25 @@ def _addon_enabled(status_output: str, addon: str) -> bool:
     return False
 
 
-def _check(check_id: str, component: str, status: CheckStatus, summary: str, *, details=None) -> CheckResult:
-    now = datetime.now(UTC).isoformat()
+def _check(
+    check_id: str,
+    component: str,
+    status: CheckStatus,
+    summary: str,
+    *,
+    details=None,
+    timer: CheckTimer | None = None,
+) -> CheckResult:
+    started_at, finished_at, duration_seconds = (timer or CheckTimer.start()).finish()
     return CheckResult(
         check_id=check_id,
         component=component,
         status=status,
         failure_class=FailureClass.PREREQUISITE if status in (CheckStatus.FAIL, CheckStatus.BLOCKED) else None,
         summary=summary,
-        started_at=now,
-        finished_at=now,
-        duration_seconds=0.0,
+        started_at=started_at,
+        finished_at=finished_at,
+        duration_seconds=duration_seconds,
         details=details or {},
     )
 
@@ -134,28 +150,38 @@ def validate_target(config: RunConfig, inspector: TargetInspector) -> list[Check
             "target.context", "target", CheckStatus.BLOCKED,
             "an explicit Kubernetes context is required for a live run",
         )]
+    timer = CheckTimer.start()
     context = inspector.current_context()
     if not context:
-        return [_check("target.context", "target", CheckStatus.BLOCKED, "unable to determine Kubernetes context")]
+        return [_check("target.context", "target", CheckStatus.BLOCKED, "unable to determine Kubernetes context", timer=timer)]
     if config.context and config.context != context:
-        return [_check("target.context", "target", CheckStatus.BLOCKED, "selected context does not match the active Kubernetes context", details={"expected": config.context, "actual": context})]
-    results.append(_check("target.context", "target", CheckStatus.PASS, "Kubernetes context verified", details={"context": context}))
+        return [_check("target.context", "target", CheckStatus.BLOCKED, "selected context does not match the active Kubernetes context", details={"expected": config.context, "actual": context}, timer=timer)]
+    results.append(_check("target.context", "target", CheckStatus.PASS, "Kubernetes context verified", details={"context": context}, timer=timer))
+    timer = CheckTimer.start()
     if not inspector.credentials_ready():
-        return results + [_check("target.credentials", "target", CheckStatus.BLOCKED, "current Kubernetes credentials cannot read namespaces")]
-    results.append(_check("target.credentials", "target", CheckStatus.PASS, "Kubernetes credentials verified"))
+        return results + [_check("target.credentials", "target", CheckStatus.BLOCKED, "current Kubernetes credentials cannot read namespaces", timer=timer)]
+    results.append(_check("target.credentials", "target", CheckStatus.PASS, "Kubernetes credentials verified", timer=timer))
 
-    readiness = {
-        "aap_demo": inspector.aap_demo_ready(),
-        "ao": inspector.ao_ready(),
-        **inspector.required_addons_ready(),
-    }
-    for component, ready in readiness.items():
+    readiness: list[tuple[str, bool, CheckTimer]] = []
+    for component, observe in (
+        ("aap_demo", inspector.aap_demo_ready),
+        ("ao", inspector.ao_ready),
+    ):
+        timer = CheckTimer.start()
+        readiness.append((component, observe(), timer))
+    timer = CheckTimer.start()
+    addons = inspector.required_addons_ready()
+    readiness.extend(
+        (component, addons.get(component) is True, timer)
+        for component in ("mcp", "product_demos")
+    )
+    for component, ready, timer in readiness:
         if ready:
-            results.append(_check(f"target.{component}", component, CheckStatus.PASS, f"{component} is ready", details={"ready": True}))
+            results.append(_check(f"target.{component}", component, CheckStatus.PASS, f"{component} is ready", details={"ready": True}, timer=timer))
         elif config.mode == "validate":
-            results.append(_check(f"target.{component}", component, CheckStatus.FAIL, f"{component} is a required prerequisite", details={"ready": False}))
+            results.append(_check(f"target.{component}", component, CheckStatus.FAIL, f"{component} is a required prerequisite", details={"ready": False}, timer=timer))
         else:
-            results.append(_check(f"target.{component}", component, CheckStatus.SKIP, f"{component} is missing and may be provisioned", details={"ready": False}))
+            results.append(_check(f"target.{component}", component, CheckStatus.SKIP, f"{component} is missing and may be provisioned", details={"ready": False}, timer=timer))
     return results
 
 
@@ -164,22 +190,28 @@ def prepare_target(config: RunConfig, runner: CommandRunner, missing: set[str] |
     required = {"aap_demo", "ao", "mcp", "product_demos"} if config.mode == "provision" else (missing or set())
     commands: list[tuple[str, list[str], set[str]]] = [
         ("aap_demo", ["aap-demo", "deploy"], {"aap_demo"}),
+        (
+            "product_demos",
+            ["env", "PRODUCT_DEMOS_DOMAINS=linux", "aap-demo", "enable", "product-demos"],
+            {"product_demos"},
+        ),
         ("ao", ["aap-demo", "enable", "ao"], {"ao", "mcp"}),
-        ("product_demos", ["aap-demo", "enable", "product-demos"], {"product_demos"}),
     ]
     results: list[CheckResult] = []
     for component, args, covers in commands:
         if not required.intersection(covers):
             continue
-        started = time.monotonic()
+        timer = CheckTimer.start()
         outcome = runner.run(args, timeout=config.timeout_seconds)
         status = CheckStatus.PASS if outcome.returncode == 0 else CheckStatus.FAIL
-        now = datetime.now(UTC).isoformat()
+        started_at, finished_at, duration_seconds = timer.finish()
         results.append(CheckResult(
             check_id=f"prepare.{component}", component=component, status=status,
             failure_class=None if status == CheckStatus.PASS else FailureClass.EXECUTION,
             summary=f"{'completed' if status == CheckStatus.PASS else 'failed'}: {' '.join(args)}",
-            started_at=now, finished_at=now, duration_seconds=time.monotonic() - started,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=duration_seconds,
             details={"returncode": outcome.returncode},
         ))
         if status == CheckStatus.FAIL:

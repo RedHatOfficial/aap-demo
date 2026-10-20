@@ -898,12 +898,15 @@ AO_AAP_SYNC_RAN=0
 
 provision_aap_demos() {
   local _aap_route _ao_route _aap_token _ao_namespace _ao_token _ao_credential _ao_integration
+  local _mcp_credential _mcp_integration _control_ref
   local -a _provision_args
   _aap_route=$(aap_gateway_route_host)
   _ao_route=$(wire_ao_route_host 2>/dev/null || true)
   _ao_token=$(wire_ao_login_token 2>/dev/null || true)
   _ao_credential=$(wire_ao_find_credential_by_name "$WIRE_AAP_CREDENTIAL_NAME" 2>/dev/null || true)
   _ao_integration=$(wire_ao_find_integration_by_name "$WIRE_AAP_INTEGRATION_NAME" 2>/dev/null || true)
+  _mcp_credential=$(wire_ao_find_credential_by_name "$WIRE_MCP_CREDENTIAL_NAME" 2>/dev/null || true)
+  _mcp_integration=$(wire_ao_find_integration_by_name "$WIRE_MCP_INTEGRATION_NAME" 2>/dev/null || true)
   _ao_namespace="$NAMESPACE"
   NAMESPACE="$AAP_NAMESPACE"
   _aap_token=$(wire_aap_gateway_token "aap-demo AO template provisioning" write 2>/dev/null || true)
@@ -917,6 +920,14 @@ provision_aap_demos() {
     --token "$_aap_token"
   )
   if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
+    _control_ref="${AO_SYNC_REF:-}"
+    if [ -z "$_control_ref" ]; then
+      _control_ref=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)
+    fi
+    if [[ ! "$_control_ref" =~ ^[0-9a-f]{40,64}$ ]]; then
+      echo "  ⚠ AAP AO sync job deferred (immutable control repository ref unavailable)"
+      return 1
+    fi
     _provision_args+=(
       --ao-api-url "${AO_SYNC_API_URL:-https://router-internal-default.openshift-ingress.svc.cluster.local/api/v1}"
       --ao-api-host "$_ao_route"
@@ -924,9 +935,12 @@ provision_aap_demos() {
       --ao-credential-id "$_ao_credential"
       --ao-integration-id "$_ao_integration"
       --control-repository "${AO_SYNC_REPOSITORY:-https://github.com/RedHatOfficial/aap-demo.git}"
-      --control-branch "${AO_SYNC_BRANCH:-main}"
+      --control-branch "$_control_ref"
       --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
     )
+    if [ -n "$_mcp_credential" ] && [ -n "$_mcp_integration" ]; then
+      _provision_args+=(--ao-mcp-credential-id "$_mcp_credential" --ao-mcp-integration-id "$_mcp_integration")
+    fi
     if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
       local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
       local _agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
@@ -1342,7 +1356,7 @@ ao_instance_ready_to_skip() {
 }
 
 wait_for_ao_instance_ready() {
-  local _ao_timeout="${1:-1200}"
+  local _ao_timeout=1200
   local _ao_start _ao_elapsed _ao_reason _ao_degraded _ao_ready _ao_route
   local _ao_running _ao_problem
   _ao_start=$(date +%s)

@@ -23,6 +23,24 @@ _FINAL_OUTPUT_MARKER = f"[diagnostic truncated: final output exceeds {MAX_PAYLOA
 _MAX_PODS = 5
 _POD_NAME = re.compile(r"^pod/[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{7,64}$")
+_AAP_STATUS_FIELDS = frozenset({"version", "active_node", "ha", "status"})
+_AAP_JOB_FIELDS = frozenset({
+    "id", "name", "status", "failed", "elapsed", "started", "finished",
+    "created", "modified", "job_template", "project", "inventory",
+    "execution_environment",
+})
+_AAP_EVENT_FIELDS = frozenset({
+    "id", "counter", "event", "event_display", "failed", "changed",
+    "task", "play", "host", "created", "job",
+})
+_AO_STATUS_FIELDS = frozenset({"status", "version", "ready"})
+_AO_EXECUTION_FIELDS = frozenset({
+    "id", "status", "workflow_id", "created_at", "updated_at", "started_at",
+    "finished_at",
+})
+_PROBE_FIELDS = frozenset({
+    "ok", "status", "hostname", "certificate_subject", "certificate_issuer",
+})
 
 
 def _result_dict(result: CheckResult | dict[str, object]) -> dict[str, object]:
@@ -110,6 +128,43 @@ def _omitted_text(value: object) -> str:
     return f"[diagnostic omitted: untrusted free-form text ({len(str(value))} characters)]"
 
 
+def _allowlisted_record(value: object, fields: frozenset[str]) -> object:
+    """Retain only scalar fields whose diagnostic meaning is repository-owned."""
+    if not isinstance(value, dict):
+        return "[diagnostic omitted: observation was not an object]"
+    return {
+        key: item
+        for key, item in value.items()
+        if key in fields and (item is None or isinstance(item, (bool, int, float, str)))
+    }
+
+
+def _allowlisted_events(value: object) -> object:
+    """Summarize event metadata without stdout, result, or event_data payloads."""
+    if not isinstance(value, dict):
+        return "[diagnostic omitted: event observation was not an object]"
+    events = value.get("results", [])
+    if not isinstance(events, list):
+        return "[diagnostic omitted: event results were not a list]"
+    return {
+        "count": value.get("count") if isinstance(value.get("count"), int) else len(events),
+        "results": [
+            _allowlisted_record(event, _AAP_EVENT_FIELDS)
+            for event in events[:25]
+            if isinstance(event, dict)
+        ],
+    }
+
+
+def _allowlisted_probe(value: object) -> object:
+    if is_dataclass(value):
+        value = asdict(value)
+    result = _allowlisted_record(value, _PROBE_FIELDS)
+    if isinstance(value, dict) and value.get("error"):
+        result["error"] = "probe failed; untrusted error output omitted"
+    return result
+
+
 class ArtifactCollector:
     """Collect only bounded observations necessary to investigate a failure."""
 
@@ -170,18 +225,29 @@ class ArtifactCollector:
         ao = clients.get("ao")
         observations: dict[str, object] = {}
         if aap is not None:
-            observations["aap_status"] = self._observe(lambda: aap.get("/api/v2/ping/"))
+            observations["aap_status"] = self._observe(
+                lambda: aap.get("/api/v2/ping/"),
+                lambda value: _allowlisted_record(value, _AAP_STATUS_FIELDS),
+            )
             for job_id in self._ids(results, "job_ids"):
                 if str(job_id).isdigit():
-                    observations[f"aap_job_{job_id}"] = self._observe(lambda job_id=job_id: aap.job_status(int(job_id)))
+                    observations[f"aap_job_{job_id}"] = self._observe(
+                        lambda job_id=job_id: aap.job_status(int(job_id)),
+                        lambda value: _allowlisted_record(value, _AAP_JOB_FIELDS),
+                    )
                     observations[f"aap_job_events_{job_id}"] = self._observe(
-                        lambda job_id=job_id: aap.get(f"/api/v2/jobs/{int(job_id)}/job_events/?order_by=counter&page_size=25")
+                        lambda job_id=job_id: aap.get(f"/api/v2/jobs/{int(job_id)}/job_events/?order_by=counter&page_size=25"),
+                        _allowlisted_events,
                     )
         if ao is not None:
-            observations["ao_status"] = self._observe(lambda: ao.get("/api/v1/health"))
+            observations["ao_status"] = self._observe(
+                lambda: ao.get("/api/v1/health"),
+                lambda value: _allowlisted_record(value, _AO_STATUS_FIELDS),
+            )
             for execution_id in self._ids(results, "execution_id", "workflow_execution_id"):
                 observations[f"ao_execution_{execution_id}"] = self._observe(
-                    lambda execution_id=execution_id: ao.workflow_status(str(execution_id))
+                    lambda execution_id=execution_id: ao.workflow_status(str(execution_id)),
+                    lambda value: _allowlisted_record(value, _AO_EXECUTION_FIELDS),
                 )
         if not observations:
             observations["diagnostic"] = "[diagnostic omitted: authenticated clients unavailable]"
@@ -198,15 +264,20 @@ class ArtifactCollector:
                 continue
             host = urlparse(url).hostname
             if host:
-                observations[f"{name}_dns"] = self._observe(lambda host=host: probes.host_dns(host))
-            observations[f"{name}_https"] = self._observe(lambda url=url: probes.host_https(url))
+                observations[f"{name}_dns"] = self._observe(
+                    lambda host=host: probes.host_dns(host), _allowlisted_probe
+                )
+            observations[f"{name}_https"] = self._observe(
+                lambda url=url: probes.host_https(url), _allowlisted_probe
+            )
             if name == "aap" and hasattr(probes, "ee_https"):
                 observations["aap_ee_https"] = self._observe(
                     lambda url=url: probes.ee_https(
                         getattr(probes, "ee_namespace", "aap-operator"),
                         getattr(probes, "ee_selector", "app.kubernetes.io/name=aap-controller-task"),
                         url,
-                    )
+                    ),
+                    _allowlisted_probe,
                 )
         _write_json(bundle / "probes.json", observations or {"diagnostic": "[diagnostic omitted: no probe URLs available]"})
 
@@ -243,14 +314,15 @@ class ArtifactCollector:
         return list(dict.fromkeys(values))
 
     @staticmethod
-    def _observe(callback: Callable[[], object]) -> object:
+    def _observe(
+        callback: Callable[[], object],
+        sanitizer: Callable[[object], object],
+    ) -> object:
         try:
             result = callback()
-        except Exception as error:
-            return f"[diagnostic omitted: observation failed: {redact_text(str(error))}]"
-        if is_dataclass(result):
-            result = asdict(result)
-        return _bounded_payload(result)
+        except Exception:
+            return "[diagnostic omitted: observation failed; untrusted error omitted]"
+        return _bounded_payload(sanitizer(result))
 
     @staticmethod
     def _command(runner: CommandRunner, args: list[str], timeout: int) -> dict[str, object]:

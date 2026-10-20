@@ -22,6 +22,9 @@ class Scenario:
     read_only: bool
     success_marker_fields: list[str]
     blocked_reason: str | None
+    scenario_type: str
+    mcp_tool_name: str | None
+    mcp_arguments: dict[str, object]
 
 
 _REQUIRED_FIELDS = (
@@ -38,6 +41,9 @@ _REQUIRED_FIELDS = (
     "read_only",
     "success_marker_fields",
     "blocked_reason",
+    "scenario_type",
+    "mcp_tool_name",
+    "mcp_arguments",
 )
 
 _EXECUTION_EVIDENCE_FIELDS = frozenset({"stdout", "output", "result", "status"})
@@ -72,6 +78,24 @@ def _scenario(value: object) -> Scenario:
             raise ValueError(f"scenario {field} must be a boolean")
     if value["launch"] and not value["read_only"]:
         raise ValueError("a launchable scenario must be declared read_only")
+    scenario_type = value["scenario_type"]
+    if scenario_type not in {"workflow", "workflow_contract", "mcp"}:
+        raise ValueError("scenario scenario_type must be workflow, workflow_contract, or mcp")
+    if scenario_type in {"workflow", "workflow_contract"} and value["workflow_name"] is None:
+        raise ValueError("a workflow scenario requires workflow_name")
+    if scenario_type == "workflow_contract" and value["launch"]:
+        raise ValueError("a workflow_contract scenario cannot launch")
+    if scenario_type == "mcp" and value["workflow_name"] is not None:
+        raise ValueError("an mcp scenario cannot declare workflow_name")
+    mcp_tool_name = value["mcp_tool_name"]
+    if mcp_tool_name is not None and (
+        not isinstance(mcp_tool_name, str) or not mcp_tool_name.strip()
+    ):
+        raise ValueError("scenario mcp_tool_name must be a non-empty string or null")
+    if scenario_type == "mcp" and not mcp_tool_name:
+        raise ValueError("an mcp scenario requires mcp_tool_name")
+    if not isinstance(value["mcp_arguments"], dict):
+        raise ValueError("scenario mcp_arguments must be an object")
     blocked_reason = value["blocked_reason"]
     if blocked_reason is not None and (not isinstance(blocked_reason, str) or not blocked_reason.strip()):
         raise ValueError("scenario blocked_reason must be a non-empty string or null")
@@ -102,6 +126,9 @@ def _scenario(value: object) -> Scenario:
         read_only=value["read_only"],
         success_marker_fields=success_marker_fields,
         blocked_reason=blocked_reason,
+        scenario_type=scenario_type,
+        mcp_tool_name=mcp_tool_name,
+        mcp_arguments=dict(value["mcp_arguments"]),
     )
 
 

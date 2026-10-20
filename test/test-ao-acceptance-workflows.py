@@ -33,6 +33,9 @@ def scenario(**overrides):
         "read_only": True,
         "success_marker_fields": ["stdout", "result"],
         "blocked_reason": None,
+        "scenario_type": "workflow",
+        "mcp_tool_name": None,
+        "mcp_arguments": {},
     }
     values.update(overrides)
     return scenarios.Scenario(**values)
@@ -122,27 +125,80 @@ class ScenarioManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "execution evidence"):
             scenarios.load(self.write_manifest({"scenarios": [payload]}))
 
-    def test_default_scenarios_are_explicitly_blocked_and_never_invent_resources(self):
+    def test_default_scenarios_are_safe_and_capable_of_a_successful_run(self):
         manifest = ACCEPTANCE_DIR / "scenarios" / "critical-path.json"
 
         loaded = scenarios.load(manifest)
 
         self.assertEqual(len(loaded), 4)
-        self.assertTrue(all(not item.launch and not item.read_only for item in loaded))
-        self.assertTrue(all(item.blocked_reason for item in loaded))
-        self.assertNotIn("Product Demos Read-Only Diagnostic", manifest.read_text(encoding="utf-8"))
+        self.assertTrue(all(item.read_only for item in loaded))
+        self.assertTrue(all(item.blocked_reason is None for item in loaded))
+        self.assertEqual(
+            [item.scenario_type for item in loaded],
+            ["workflow_contract", "workflow", "workflow", "mcp"],
+        )
+        self.assertEqual(sum(item.launch for item in loaded), 3)
         self.assertEqual(
             [item.workflow_name for item in loaded],
             [
-                "Cert Demo 101 - Manual Reactive Renewal",
-                "disk-demo-101",
+                "AAP-Demo Acceptance | AO AAP Read-Only",
+                "AAP-Demo Acceptance | AO AAP Read-Only",
+                "AAP-Demo Acceptance | Product Demos Read-Only",
                 None,
-                "ServiceNow Incident - AI Triage and Response",
             ],
         )
 
+    def test_unsafe_operational_scenarios_are_kept_in_an_opt_in_manifest(self):
+        manifest = ACCEPTANCE_DIR / "scenarios" / "unsafe-operations.json"
+
+        loaded = scenarios.load(manifest)
+
+        self.assertTrue(all(not item.launch for item in loaded))
+        self.assertTrue(all(not item.read_only for item in loaded))
+        self.assertTrue(all(item.blocked_reason for item in loaded))
+
 
 class WorkflowExecutionTests(unittest.TestCase):
+    def test_valid_workflow_contract_passes_without_launching(self):
+        ao = FakeAoClient([])
+
+        checks = workflows.run(
+            [scenario(scenario_type="workflow_contract", launch=False)],
+            managed_inventory(), ao, FakeAapClient(),
+        )
+
+        self.assertEqual(checks[0].status, CheckStatus.PASS)
+        self.assertEqual(ao.launched, [])
+
+    def test_authenticated_mcp_scenario_lists_and_calls_only_the_declared_tool(self):
+        class McpClient:
+            def __init__(self):
+                self.calls = []
+
+            def list_tools(self):
+                return ["controller.job_templates_list"]
+
+            def call_tool(self, name, arguments):
+                self.calls.append((name, arguments))
+                return {"tool_name": name, "content_types": ["text"], "is_error": False}
+
+        client = McpClient()
+        checks = workflows.run(
+            [scenario(
+                scenario_type="mcp",
+                workflow_name=None,
+                job_template_names=[],
+                success_markers=[],
+                success_marker_fields=[],
+                mcp_tool_name="controller.job_templates_list",
+                mcp_arguments={"page_size": 1},
+            )],
+            ManagedResourceInventory(), FakeAoClient([]), FakeAapClient(), client,
+        )
+
+        self.assertEqual(checks[0].status, CheckStatus.PASS)
+        self.assertEqual(client.calls, [("controller.job_templates_list", {"page_size": 1})])
+        self.assertEqual(checks[0].details["content_types"], ["text"])
     def test_unknown_workflow_is_contract_drift_without_a_launch(self):
         ao = FakeAoClient([])
         aap = FakeAapClient()
@@ -170,6 +226,7 @@ class WorkflowExecutionTests(unittest.TestCase):
 
         passed = checks[0]
         self.assertEqual(passed.status, CheckStatus.PASS)
+        self.assertGreater(passed.duration_seconds, 0.0)
         self.assertEqual(passed.details["scenario_id"], "aap-certificate-smoke")
         self.assertEqual(passed.details["workflow_id"], "workflow-1")
         self.assertEqual(passed.details["job_template_ids"], [7])
@@ -191,7 +248,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(ao.launched, [])
 
     def test_configured_blocked_scenarios_report_reasons_before_graph_validation(self):
-        loaded = scenarios.load(ACCEPTANCE_DIR / "scenarios" / "critical-path.json")
+        loaded = scenarios.load(ACCEPTANCE_DIR / "scenarios" / "unsafe-operations.json")
         template_names = [
             name
             for item in loaded

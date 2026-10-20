@@ -4,8 +4,8 @@ Validation tests for `aap-demo.sh` command-line interface.
 
 ## AO/AAP-Demo live acceptance
 
-The AO acceptance runner is an opt-in live-cluster check. It is not run by
-pull-request CI; its fast command-line safeguard runs there instead. See
+The AO acceptance runner is an opt-in live-cluster check. Pull-request CI runs
+its non-live CLI, provisioning-contract, and Python discovery suites. See
 [AO live acceptance](ao-acceptance/README.md) for target selection,
 credentials, modes, artifacts, cleanup, and dedicated-runner guidance.
 
@@ -21,6 +21,9 @@ credentials, modes, artifacts, cleanup, and dedicated-runner guidance.
 ./test/test-fix-ssl-command.sh
 ./test/test-apme-eap-oauth.sh
 python3 ./test/test-ao-import-demos.py
+
+# Complete non-live AO acceptance suite
+python3 -m unittest discover -s test/ao_acceptance_discovery -p 'test*.py' -v
 
 # AAP provisioning fast-path test
 python3 ./test/test-provision-aap-demos.py

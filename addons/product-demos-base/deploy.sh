@@ -533,6 +533,19 @@ if [ "$PROJECT_SYNCED" != true ]; then
   exit 1
 fi
 
+PROJECT_REVISION=$(printf '%s' "$PROJECT_STATUS" | jq -r '.scm_revision // empty')
+if [[ ! "$PROJECT_REVISION" =~ ^[0-9a-f]{40,64}$ ]]; then
+  echo "❌ ERROR: Product Demos project did not report an immutable SCM revision"
+  exit 1
+fi
+curl -sk -u "${AAP_USERNAME}:${AAP_PASSWORD}" \
+  -X PATCH \
+  -H "Content-Type: application/json" \
+  -d "$(jq -n --arg revision "$PROJECT_REVISION" \
+    '{scm_branch: $revision, scm_update_on_launch: false, scm_clean: true}')" \
+  "${AAP_API}/projects/${PROJECT_ID}/" >/dev/null 2>&1
+echo "✓ Product Demos project pinned to ${PROJECT_REVISION}"
+
 if ! apd_apply_bootstrap_playbook_overlays "$PROJECT_ID" "$SCRIPT_DIR" "$APD_INSTALL_PLAYBOOK"; then
   echo "❌ ERROR: Could not apply bootstrap playbook overlays (required to skip version ping)"
   exit 1
@@ -593,6 +606,11 @@ else
     "${AAP_API}/execution_environments/${EE_ID}/" >/dev/null 2>&1
   echo "✓ Execution environment image verified"
 fi
+
+if ! APD_ACCEPTANCE_TEMPLATE_ID=$(apd_ensure_acceptance_job_template "$PROJECT_ID" "$EE_ID"); then
+  exit 1
+fi
+echo "✓ Read-only Product Demos acceptance template ready (ID: ${APD_ACCEPTANCE_TEMPLATE_ID})"
 
 # ==============================================================================
 # CREATE JOB TEMPLATE
@@ -721,6 +739,9 @@ echo "Monitoring job progress..."
 echo "View in UI: ${AAP_UI_URL}/#/jobs/playbook/${JOB_ID}/output"
 
 if apd_monitor_job "$JOB_ID" "APD base install" 60; then
+  if ! apd_pin_installed_project_revision; then
+    exit 1
+  fi
   echo ""
   echo "Resources created:"
   echo "  - Organization: Ansible Product Demos (APD)"

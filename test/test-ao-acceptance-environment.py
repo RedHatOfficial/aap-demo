@@ -47,7 +47,7 @@ class FakeCommandRunner:
             return environment.CommandResult(0, self.status_output, "")
         if args[:2] == ["aap-demo", "deploy"] or args[:3] == ["aap-demo", "enable", "ao"]:
             return environment.CommandResult(0, "", "")
-        if args[:3] == ["aap-demo", "enable", "product-demos"]:
+        if args[:5] == ["env", "PRODUCT_DEMOS_DOMAINS=linux", "aap-demo", "enable", "product-demos"]:
             return environment.CommandResult(0, "", "")
         if "aap-controller-web" in args:
             ready = self.readiness["aap_demo"]
@@ -133,9 +133,35 @@ class RunnerModeTests(unittest.TestCase):
             [
                 ["aap-demo", "deploy"],
                 ["aap-demo", "enable", "ao"],
-                ["aap-demo", "enable", "product-demos"],
             ],
         )
+        lifecycle_calls = [
+            call for call in commands.calls
+            if call[:2] == ["aap-demo", "deploy"]
+            or call[:3] == ["aap-demo", "enable", "ao"]
+            or call[:3] == ["env", "PRODUCT_DEMOS_DOMAINS=linux", "aap-demo"]
+        ]
+        self.assertEqual(lifecycle_calls, [
+            ["aap-demo", "deploy"],
+            ["env", "PRODUCT_DEMOS_DOMAINS=linux", "aap-demo", "enable", "product-demos"],
+            ["aap-demo", "enable", "ao"],
+        ])
+
+    def test_failed_product_demos_preparation_stops_before_ao(self):
+        class FailingProductDemos(FakeCommandRunner):
+            def run(self, args, *, check=False, timeout=60):
+                if args[:3] == ["env", "PRODUCT_DEMOS_DOMAINS=linux", "aap-demo"]:
+                    self.calls.append(args)
+                    return environment.CommandResult(1, "", "preparation failed")
+                return super().run(args, check=check, timeout=timeout)
+
+        commands = FailingProductDemos()
+
+        results = environment.prepare_target(config("provision"), commands)
+
+        self.assertEqual([result.component for result in results], ["aap_demo", "product_demos"])
+        self.assertEqual(results[-1].status, model.CheckStatus.FAIL)
+        self.assertNotIn(["aap-demo", "enable", "ao"], commands.calls)
 
     def test_context_mismatch_blocks_before_any_mutation(self):
         commands = FakeCommandRunner(context="other-context")
@@ -146,6 +172,44 @@ class RunnerModeTests(unittest.TestCase):
         self.assertFalse(result["mutated"])
         self.assertEqual(result["results"][0]["status"], "BLOCKED")
         self.assertFalse(any(call[:2] == ["aap-demo", "deploy"] or call[:2] == ["aap-demo", "enable"] for call in commands.calls))
+
+    def test_successful_revalidation_replaces_stale_preflight_results(self):
+        old = environment._check(
+            "target.product_demos", "product_demos", model.CheckStatus.SKIP,
+            "missing and may be provisioned", details={"ready": False},
+        )
+        approved = environment._check(
+            "target.context", "target", model.CheckStatus.PASS, "approved",
+        )
+        fresh = environment._check(
+            "target.product_demos", "product_demos", model.CheckStatus.PASS,
+            "ready", details={"ready": True},
+        )
+        prepared = environment._check(
+            "prepare.product_demos", "product_demos", model.CheckStatus.PASS,
+            "prepared",
+        )
+        with (
+            mock.patch.object(runner, "CommandRunner", return_value=FakeCommandRunner()),
+            mock.patch.object(runner, "validate_target", side_effect=[
+                [approved, old], [approved, fresh],
+            ]),
+            mock.patch.object(runner, "prepare_target", return_value=[prepared]),
+            mock.patch.object(runner, "create_live_dependencies", return_value=(None, "stop after revalidation")),
+            mock.patch.dict(os.environ, {
+                "AAP_ACCEPTANCE_AAP_TOKEN": "aap-token",
+                "AAP_ACCEPTANCE_AO_TOKEN": "ao-token",
+                "AAP_ACCEPTANCE_MCP_TOKEN": "mcp-token",
+            }, clear=True),
+        ):
+            result = runner._run(config("auto"))
+
+        target_product_demos = [
+            item for item in result["results"]
+            if item["check_id"] == "target.product_demos"
+        ]
+        self.assertEqual(len(target_product_demos), 1)
+        self.assertEqual(target_product_demos[0]["status"], "PASS")
 
     def test_missing_context_blocks_before_cluster_or_mutating_commands(self):
         commands = FakeCommandRunner()
@@ -193,6 +257,15 @@ class TargetReadinessTests(unittest.TestCase):
         missing = {result.component for result in results if result.details.get("ready") is False}
 
         self.assertEqual(missing, {"mcp"})
+
+    def test_validate_records_measured_check_durations(self):
+        commands = FakeCommandRunner()
+
+        results = environment.validate_target(
+            config("validate"), environment.TargetInspector(commands, config("validate"))
+        )
+
+        self.assertTrue(all(result.duration_seconds > 0.0 for result in results))
 
 
 if __name__ == "__main__":

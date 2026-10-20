@@ -25,11 +25,23 @@ class _NoRedirectHandler(HTTPRedirectHandler):
 class ApiError(RuntimeError):
     """A failed API request with only redacted diagnostic text."""
 
-    def __init__(self, method: str, url: str, status: int | None, body: str):
+    def __init__(
+        self,
+        method: str,
+        url: str,
+        status: int | None,
+        body: str,
+        *,
+        untrusted_body: bool = False,
+    ):
         self.method = method
         self.url = redact_text(url)
         self.status = status
-        self.body = _safe_body(body)
+        self.body = (
+            "[REDACTED] response body omitted because it may contain unlabeled secrets"
+            if untrusted_body and body
+            else _safe_body(body)
+        )
         status_text = str(status) if status is not None else "unavailable"
         super().__init__(f"{method} {self.url} failed ({status_text}): {self.body}")
 
@@ -74,11 +86,15 @@ class JsonClient:
                 body = error.read().decode("utf-8", errors="replace")
             finally:
                 error.close()
-            raise ApiError(method.upper(), url, error.code, body) from None
+            raise ApiError(
+                method.upper(), url, error.code, body, untrusted_body=True
+            ) from None
         except (URLError, OSError, ValueError) as error:
             raise ApiError(method.upper(), url, None, str(error)) from None
         if not 200 <= status < 300:
-            raise ApiError(method.upper(), url, status, body)
+            raise ApiError(
+                method.upper(), url, status, body, untrusted_body=True
+            )
         try:
             decoded = json.loads(body)
         except json.JSONDecodeError:
