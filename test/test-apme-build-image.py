@@ -161,7 +161,14 @@ if args[:2] == ["image", "inspect"]:
     def test_push_requires_flag_and_reports_registry_digest(self):
         self.env["IMAGE_ID"] = "sha256:" + "c" * 64
         result = self.run_build("--push", "--tag", "release_1")
-        self.assertEqual([c[0] for c in self.calls()], ["build", "image", "login", "push"])
+        calls = self.calls()
+        self.assertEqual([c[0] for c in calls], ["build", "image", "login", "push", "tag", "push"])
+        immutable = "apme-" + SHA + "-" + self.pack_hash[7:19]
+        push_refs = [call[-1] for call in calls if call[0] == "push"]
+        self.assertEqual(push_refs, [
+            "docker://quay.io/aapdemo/apme-eap:" + immutable,
+            "docker://quay.io/aapdemo/apme-eap:release_1",
+        ])
         self.assertIn("quay.io/aapdemo/apme-eap@" + DIGEST, result.stdout)
 
     def test_replay_verifies_recorded_digest_and_source(self):
