@@ -135,13 +135,35 @@ safe_paths "$work/outer-list"
 
 # Use the exact archive spelling (including an optional ./ prefix) for reads.
 member() {
-  awk -v wanted="$2" '{ original=$0; sub(/^\.\//, ""); if ($0 == wanted) print original }' "$1"
+  awk -v wanted="$2" '
+    function canonical(path, parts, count, i, result) {
+      count = split(path, parts, "/")
+      result = ""
+      for (i = 1; i <= count; i++)
+        if (parts[i] != "" && parts[i] != ".")
+          result = result (result == "" ? "" : "/") parts[i]
+      return result
+    }
+    BEGIN { wanted = canonical(wanted) }
+    canonical($0) == wanted { print }
+  ' "$1"
 }
 read_member() {
   local archive="$1" listing="$2" wanted="$3" match
   match="$(member "$listing" "$wanted")"
   [[ -n "$match" && "$match" != *$'\n'* ]] || die "missing or duplicate archive member: $wanted"
   "$tar_cmd" -xOf "$archive" "$match" || die "unreadable archive member: $wanted"
+}
+validate_package_identity() {
+  local package_json="$1" plugin="$2" scoped="@ansible/${2#ansible-}"
+  # Upstream dynamic exports use @ansible/<name>-dynamic; source packages
+  # omit -dynamic, and older packs use the flattened ansible-<name> spelling.
+  # Match the complete identity, never just a filename, basename, or scope.
+  jq -es --arg plugin "$plugin" --arg scoped "$scoped" '
+    length == 1 and (.[0] | type == "object" and
+      (.name == $plugin or .name == ($plugin + "-dynamic") or
+       .name == $scoped or .name == ($scoped + "-dynamic")))
+  ' "$package_json" >/dev/null || die "invalid package.json identity for $plugin (expected $scoped or its dynamic/flattened variant)"
 }
 required_plugins=(
   ansible-plugin-scaffolder-backend-module-backstage-rhaap
@@ -151,6 +173,44 @@ required_plugins=(
   ansible-plugin-backstage-apme
   ansible-backstage-plugin-catalog-backend-module-apme
 )
+validate_oci_paths() {
+  # Entry types come from tar's verbose listing; names come from its separate
+  # name-only listing, so spaces in filenames are not parsed as metadata.
+  # Track implicit parents as directories too. With whiteouts and links denied,
+  # stable types make the validated package identities survive later layers.
+  awk -F '\t' -v roots="${required_plugins[*]}" '
+    function conflict(path) {
+      print "conflicting OCI filesystem entry: " path > "/dev/stderr"
+      exit 1
+    }
+    BEGIN {
+      count = split(roots, names, " ")
+      for (i = 1; i <= count; i++) required[names[i]] = 1
+    }
+    NF != 2 { conflict("invalid typed archive listing") }
+    {
+      type = $1
+      count = split($2, parts, "/")
+      path = ""
+      root = ""
+      for (i = 1; i <= count; i++) {
+        if (parts[i] == "" || parts[i] == ".") continue
+        if (root == "") root = parts[i]
+        if (!(root in required)) break
+        if (path != "") {
+          if (path in kinds && kinds[path] != "d") conflict(path)
+          kinds[path] = "d"
+        }
+        path = path (path == "" ? "" : "/") parts[i]
+      }
+      if (!(root in required)) next
+      if (type != "d" && type != "-") conflict(path)
+      if (path == root && type != "d") conflict(path)
+      if (path in kinds && kinds[path] != type) conflict(path)
+      kinds[path] = type
+    }
+  ' "$work/typed-paths" || die 'conflicting OCI filesystem replacements'
+}
 missing=()
 if [[ -n "$(member "$work/outer-list" manifest.json)" || -n "$(member "$work/outer-list" index.json)" ]]; then
   APME_PACK_FORMAT=oci
@@ -172,7 +232,8 @@ if [[ -n "$(member "$work/outer-list" manifest.json)" || -n "$(member "$work/out
       | .[].digest | "blobs/sha256/" + ltrimstr("sha256:")
     ' "$work/manifest.json" >"$work/layers" || die 'invalid OCI layers'
   fi
-  : >"$work/plugin-paths"
+  : >"$work/typed-paths"
+  : >"$work/verified-plugins"
   while IFS= read -r layer; do
     [[ "$layer" =~ ^[A-Za-z0-9_./-]+$ ]] || die 'unsafe OCI layer path'
     printf '%s\n' "$layer" >"$work/layer-path"
@@ -184,19 +245,24 @@ if [[ -n "$(member "$work/outer-list" manifest.json)" || -n "$(member "$work/out
     fi
     "$tar_cmd" -tf "$work/layer.tar" >"$work/layer-list" || die 'invalid OCI layer archive'
     safe_paths "$work/layer-list"
+    "$tar_cmd" -tvf "$work/layer.tar" >"$work/layer-verbose" || die 'invalid OCI layer entry types'
+    cut -c1 "$work/layer-verbose" >"$work/layer-types"
+    [[ "$(wc -l <"$work/layer-types")" == "$(wc -l <"$work/layer-list")" ]] || die 'invalid OCI typed archive listing'
+    paste "$work/layer-types" "$work/layer-list" >>"$work/typed-paths"
+    validate_oci_paths
     # Whiteouts can remove plugins found in an earlier layer. Reject such packs
     # rather than claim completeness from a union of their filenames.
     if grep -Eq '(^|/)\.wh\.' "$work/layer-list"; then die 'unsupported OCI whiteout in plugin pack'; fi
     for plugin in "${required_plugins[@]}"; do
       if [[ -n "$(member "$work/layer-list" "$plugin/package.json")" ]]; then
         read_member "$work/layer.tar" "$work/layer-list" "$plugin/package.json" >"$work/package.json"
-        jq -e 'type == "object"' "$work/package.json" >/dev/null || die "invalid OCI package.json for $plugin"
+        validate_package_identity "$work/package.json" "$plugin"
+        printf '%s\n' "$plugin" >>"$work/verified-plugins"
       fi
     done
-    sed 's|^\./||' "$work/layer-list" >>"$work/plugin-paths"
   done <"$work/layers"
   for plugin in "${required_plugins[@]}"; do
-    grep -Fxq "$plugin/package.json" "$work/plugin-paths" || missing+=("$plugin")
+    grep -Fxq "$plugin" "$work/verified-plugins" || missing+=("$plugin")
   done
 else
   APME_PACK_FORMAT=npm
@@ -216,7 +282,7 @@ else
     "$tar_cmd" -tzf "$work/package.tgz" >"$work/package-list" || die "invalid npm archive for $plugin"
     safe_paths "$work/package-list"
     read_member "$work/package.tgz" "$work/package-list" package/package.json >"$work/package.json"
-    jq -e 'type == "object"' "$work/package.json" >/dev/null || die "invalid npm package.json for $plugin"
+    validate_package_identity "$work/package.json" "$plugin"
   done
 fi
 [[ ${#missing[@]} == 0 ]] || die "missing required plugins: ${missing[*]}"
