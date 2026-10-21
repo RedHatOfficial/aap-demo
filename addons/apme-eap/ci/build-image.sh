@@ -94,8 +94,12 @@ if [[ -n "$expected_pack_sha" && "$expected_pack_sha" != "$APME_PACK_SHA256" ]];
 fi
 [[ "$APME_PACK_FORMAT" == oci || "$APME_PACK_FORMAT" == npm ]] || die 'unsupported resolved pack format'
 pack_hex="${APME_PACK_SHA256#sha256:}"
-tag="${tag:-apme-${APME_SOURCE_SHA}-${pack_hex:0:12}}"
-image="$image_repo:$tag"
+immutable_tag="apme-${APME_SOURCE_SHA}-${pack_hex:0:12}"
+image="$image_repo:$immutable_tag"
+alias_image=''
+if [[ -n "$tag" && "$tag" != "$immutable_tag" ]]; then
+  alias_image="$image_repo:$tag"
+fi
 printf 'Artifact metadata: %s/artifact.env\n' "$output"
 
 context="$(mktemp -d "$output/.context.XXXXXX")"
@@ -158,11 +162,20 @@ if "$push"; then
   printf '%s\n' '{"auths":{},"credHelpers":{"quay.io":"apme-env"}}' >"$auth_dir/auth.json"
   printf '%s\n' "$QUAY_TOKEN" | podman login --authfile "$auth_dir/auth.json" \
     --username "$QUAY_USERNAME" --password-stdin quay.io
-  podman push --authfile "$auth_dir/auth.json" --digestfile "$context/image.digest" \
+  podman push --authfile "$auth_dir/auth.json" --digestfile "$context/immutable.digest" \
     "$image" "docker://$image"
-  registry_digest="$(cat "$context/image.digest")"
+  registry_digest="$(cat "$context/immutable.digest")"
   [[ "$registry_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid pushed image digest'
-  printf 'Published image: %s\nRegistry digest: %s\nImage reference: %s@%s\n' \
+  printf 'Published immutable image: %s\nRegistry digest: %s\nImage reference: %s@%s\n' \
     "$image" "$registry_digest" "$image_repo" "$registry_digest"
+  if [[ -n "$alias_image" ]]; then
+    podman tag "$image" "$alias_image"
+    podman push --authfile "$auth_dir/auth.json" --digestfile "$context/alias.digest" \
+      "$alias_image" "docker://$alias_image"
+    alias_digest="$(cat "$context/alias.digest")"
+    [[ "$alias_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid pushed alias digest'
+    printf 'Published alias image: %s\nAlias registry digest: %s\n' \
+      "$alias_image" "$alias_digest"
+  fi
 fi
 printf 'Artifact metadata: %s/artifact.env\n' "$output"
