@@ -154,6 +154,135 @@ pass() {
   printf 'PASS: %s\n' "$1"
 }
 
+rewrite_identity() {
+  local format="$1" json="$2" plugin="${plugins[4]}"
+  if [[ "$format" == npm ]]; then
+    printf '%s\n' "$json" >"$work/npm/package/package.json"
+    tar -czf "$work/pack/${plugin}-dynamic-1.0.0.tgz" -C "$work/npm" package
+  else
+    printf '%s\n' "$json" >"$work/layer/$plugin/package.json"
+    tar -cf "$work/pack/layer.tar" -C "$work/layer" .
+  fi
+  tar -czf "$work/pack.tar.gz" -C "$work/pack" .
+}
+
+review_identity_tests() {
+  local format json name
+  for format in npm oci; do
+    for json in '{"name":"unrelated-package"}' '{}' '{"name":"@other/plugin-backstage-apme-dynamic"}'; do
+      reset_case
+      make_pack "$format"
+      rewrite_identity "$format" "$json"
+      run_failure 'identity'
+      pass "$format rejects incorrect or missing package identity: $json"
+    done
+    for name in '@ansible/plugin-backstage-apme-dynamic' '@ansible/plugin-backstage-apme' 'ansible-plugin-backstage-apme-dynamic'; do
+      reset_case
+      make_pack "$format"
+      rewrite_identity "$format" "{\"name\":\"$name\"}"
+      run_success
+      pass "$format accepts the expected upstream identity: $name"
+    done
+  done
+}
+
+add_replacement_layer() {
+  tar -cf "$work/pack/replacement.tar" -C "$work/replacement" .
+  printf '[{"Layers":["layer.tar","replacement.tar"]}]\n' >"$work/pack/manifest.json"
+  tar -czf "$work/pack.tar.gz" -C "$work/pack" .
+}
+
+review_layer_tests() {
+  local plugin="${plugins[4]}"
+  reset_case
+  mkdir -p "$work/replacement"
+  printf 'replacement file\n' >"$work/replacement/$plugin"
+  add_replacement_layer
+  run_failure 'conflicting OCI'
+  pass 'later regular file cannot replace a required OCI plugin directory'
+
+  reset_case
+  rm -rf "$work/replacement"
+  mkdir -p "$work/replacement/$plugin/package.json"
+  add_replacement_layer
+  run_failure 'conflicting OCI'
+  pass 'later directory cannot replace the validated OCI package.json file'
+
+  reset_case
+  rm -rf "$work/replacement"
+  mkdir -p "$work/replacement"
+  ln -s "${plugins[0]}" "$work/replacement/$plugin"
+  add_replacement_layer
+  run_failure 'conflicting OCI'
+  pass 'later symlink cannot replace a required OCI plugin directory'
+
+  reset_case
+  # The original layer deliberately omits all directory entries.
+  tar -cf "$work/pack/layer.tar" -C "$work/layer" "${plugins[@]/%//package.json}"
+  rm -rf "$work/replacement"
+  mkdir -p "$work/replacement"
+  printf 'replacement file\n' >"$work/replacement/$plugin"
+  add_replacement_layer
+  run_failure 'conflicting OCI'
+  pass 'implicit parent directories are protected against later OCI file replacements'
+
+  reset_case
+  mkdir -p "$work/layer/$plugin/dist"
+  printf 'plugin code\n' >"$work/layer/$plugin/dist/index.js"
+  tar -cf "$work/pack/layer.tar" -C "$work/layer" .
+  rm -rf "$work/replacement"
+  mkdir -p "$work/replacement/$plugin"
+  printf 'replacement file\n' >"$work/replacement/$plugin/dist"
+  add_replacement_layer
+  run_failure 'conflicting OCI'
+  pass 'later regular file cannot replace an OCI plugin subdirectory'
+
+  reset_case
+  rm -rf "$work/replacement"
+  mkdir -p "$work/replacement/$plugin"
+  printf '{"name":"unrelated-package"}\n' >"$work/replacement/$plugin/package.json"
+  add_replacement_layer
+  run_failure 'identity'
+  pass 'later OCI package.json replacements must retain the expected identity'
+
+  reset_case
+  rm -rf "$work/replacement"
+  mkdir -p "$work/replacement"
+  printf 'replacement file\n' >"$work/replacement/$plugin"
+  tar -cf "$work/pack/replacement.tar" -C "$work/replacement" "././$plugin"
+  printf '[{"Layers":["layer.tar","replacement.tar"]}]\n' >"$work/pack/manifest.json"
+  tar -czf "$work/pack.tar.gz" -C "$work/pack" .
+  run_failure 'conflicting OCI'
+  pass 'dot path aliases cannot hide OCI directory replacements'
+
+  reset_case
+  rm -rf "$work/replacement"
+  mkdir -p "$work/replacement/$plugin"
+  printf '{"name":"@ansible/plugin-backstage-apme-dynamic"}\n' >"$work/replacement/$plugin/package.json"
+  add_replacement_layer
+  run_success
+  pass 'compatible directory merges and valid regular-file updates remain supported'
+}
+
+# These groups let review regressions reproduce independently before either fix.
+case "${APME_RESOLVER_TEST_GROUP:-all}" in
+  identity)
+    review_identity_tests
+    printf 'PASS: %s identity regression tests\n' "$passed"
+    exit
+    ;;
+  layers)
+    review_layer_tests
+    printf 'PASS: %s layer regression tests\n' "$passed"
+    exit
+    ;;
+  all)
+    review_identity_tests
+    review_layer_tests
+    ;;
+  *) fail 'unknown resolver test group' ;;
+esac
+
 reset_case
 update_artifacts '.artifacts[2].digest = false'
 run_failure 'digest'
