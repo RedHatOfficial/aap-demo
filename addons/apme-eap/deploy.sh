@@ -286,8 +286,10 @@ check_prerequisites() {
   # Portal/gateway Helm releases use kubernetes.core.helm (requires helm binary on PATH)
   _ensure_helm
 
-  # MicroShift lacks an integrated registry; runtime OCI plugins use this local registry.
-  if ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
+  # MicroShift lacks an integrated registry; only local fallback delivery needs it.
+  if apme_preloaded_image_selected "$VARS_FILE"; then
+    info "Preloaded portal image configured"
+  elif ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
     info "Deploying in-cluster registry for APME plugins..."
     if ! bash "${SCRIPT_DIR}/../registry/deploy.sh"; then
       die "Unable to deploy the local registry required for APME plugins."
@@ -585,6 +587,14 @@ generate_vars_file() {
   # This lets users opt into skip/re-push behavior without editing defaults.yml.
   local skip_plugin_push_value=false
   local apme_oci_push_force_value=false
+  local preloaded_ref preloaded_secret preloaded_auth preloaded_verify
+  preloaded_ref=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_ref '""')
+  preloaded_secret=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_pull_secret '""')
+  preloaded_auth=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_auth_file '""')
+  preloaded_verify=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_verify true)
+  if [ -n "${APME_PRELOADED_IMAGE_REF:-}" ]; then
+    preloaded_ref=$(python3 -c 'import json, os; print(json.dumps(os.environ["APME_PRELOADED_IMAGE_REF"]))')
+  fi
   if [ -f "$VARS_FILE" ]; then
     skip_plugin_push_value=$(sed -n 's/^skip_plugin_push:[[:space:]]*//p' "$VARS_FILE" | tail -1)
     apme_oci_push_force_value=$(sed -n 's/^apme_oci_push_force:[[:space:]]*//p' "$VARS_FILE" | tail -1)
@@ -722,6 +732,14 @@ oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
 oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
 skip_plugin_push: ${skip_plugin_push_value}
 apme_oci_push_force: ${apme_oci_push_force_value}
+
+# Optional published portal image. Empty retains the local plugin/build fallback.
+# Example: apme_preloaded_image_ref: quay.io/aapdemo/apme-eap:latest
+# Use an immutable tag or digest for repeatable deployments.
+apme_preloaded_image_ref: ${preloaded_ref}
+apme_preloaded_image_pull_secret: ${preloaded_secret}
+apme_preloaded_image_auth_file: ${preloaded_auth}
+apme_preloaded_image_verify: ${preloaded_verify}
 
 # setup-pah / Automation Hub (reads ~/.aap-demo/galaxy-token and pah-config.yml)
 apme_pah_run_setup_pah: true
