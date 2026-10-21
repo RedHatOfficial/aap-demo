@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Usage: APME_SOURCE_REPO=owner/repo APME_SOURCE_REF=latest|<full-sha> \
 #        GH_TOKEN=... fetch-plugin-artifact.sh <output-directory>
-# Defaults: ansible/ansible-rhdh-plugins, latest. APME_ARTIFACT_NAME is optional.
+# Defaults: ansible/ansible-rhdh-plugins, latest, APME_PACK_FORMAT=oci.
+# APME_ARTIFACT_NAME overrides automatic format/name selection.
 # Outputs: plugin-pack.tar.gz and artifact.env (eight shell-safe exports).
 # APME_PACK_FILENAME is the normalized output filename; format is oci or npm.
 # Command overrides are executable paths, not shell fragments, for offline tests:
@@ -31,6 +32,8 @@ work="$(mktemp -d "$output/.apme-resolve.XXXXXX")"
 
 APME_SOURCE_REPO="${APME_SOURCE_REPO:-ansible/ansible-rhdh-plugins}"
 APME_SOURCE_REF="${APME_SOURCE_REF:-latest}"
+requested_format="${APME_PACK_FORMAT:-oci}"
+[[ "$requested_format" == oci || "$requested_format" == npm ]] || die 'APME_PACK_FORMAT must be oci or npm'
 [[ "$APME_SOURCE_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die 'invalid source repository; use owner/repo'
 [[ "$APME_SOURCE_REF" == latest || "$APME_SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || die 'source ref must be latest or a full 40-character commit SHA'
 [[ -n "${GH_TOKEN:-}" ]] || die 'GH_TOKEN is required for GitHub artifact access'
@@ -87,31 +90,35 @@ APME_SOURCE_SHA="$(jq -er '.head_sha | strings | select(test("^[0-9a-f]{40}$"))'
 jq -e '.created_at | strings | select(test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' <<<"$run" >/dev/null || die 'selected run has an invalid timestamp'
 
 api "repos/$APME_SOURCE_REPO/actions/runs/$APME_RUN_ID/artifacts" --method GET --paginate --raw-field per_page=100 >"$work/artifacts.json"
-candidates="$(jq -ces --arg name "${APME_ARTIFACT_NAME:-}" '
+candidates="$(jq -ces --arg name "${APME_ARTIFACT_NAME:-}" --arg format "$requested_format" '
   [.[] | .artifacts[] | select(.expired == false)
-    | select(if $name != "" then .name == $name else (.name | test("apme|plugin"; "i")) end)]
+    | select(if $name != "" then .name == $name else
+        (.name | ascii_downcase
+          | select(test("apme|plugin"))
+          | select(test("(^|[^a-z0-9])(docker(build)?|build|image)([^a-z0-9]|$)") | not)
+          | if $format == "oci" then test("(^|[^a-z0-9])oci([^a-z0-9]|$)")
+            else (test("(^|[^a-z0-9])oci([^a-z0-9]|$)") | not) and
+              (test("(^|[^a-z0-9])npm([^a-z0-9]|$)") or test("[.]tar[.]gz$")) end)
+      end)]
 ' "$work/artifacts.json")" || die 'invalid GitHub artifacts response'
 count="$(jq 'length' <<<"$candidates")"
 if [[ "$count" != 1 ]]; then
   names="$(jq -rs '[.[] | .artifacts[].name] | tojson' "$work/artifacts.json")" || die 'invalid artifact candidate names'
-  die "zero or ambiguous artifact matches ($count) for '${APME_ARTIFACT_NAME:-apme|plugin}'; candidate names (including expired): $names"
+  die "zero or ambiguous artifact matches ($count) for format '$requested_format', name '${APME_ARTIFACT_NAME:-automatic}'; set APME_ARTIFACT_NAME to an exact pack name or choose APME_PACK_FORMAT=oci|npm; candidate names (including expired): $names"
 fi
 artifact="$(jq '.[0]' <<<"$candidates")"
 APME_ARTIFACT_ID="$(jq -er '.id | numbers | select(. > 0 and floor == .)' <<<"$artifact")" || die 'invalid GitHub artifact ID'
 APME_ARTIFACT_NAME="$(jq -er '.name | strings | select(length > 0 and (contains("\u0000") | not))' <<<"$artifact")" || die 'invalid GitHub artifact name'
-zip_digest="$(jq -er '
+payload_digest="$(jq -er '
   if .digest == null then "" else
     .digest | select(type == "string") | select(test("^sha256:[0-9a-f]{64}$"))
   end
-' <<<"$artifact")" || die 'invalid GitHub artifact ZIP digest'
-api "repos/$APME_SOURCE_REPO/actions/artifacts/$APME_ARTIFACT_ID/zip" >"$work/artifact.zip"
-if [[ -n "$zip_digest" ]]; then
-  [[ "$(digest "$work/artifact.zip")" == "$zip_digest" ]] || die 'GitHub artifact ZIP digest mismatch'
+' <<<"$artifact")" || die 'invalid GitHub artifact payload digest'
+api "repos/$APME_SOURCE_REPO/actions/artifacts/$APME_ARTIFACT_ID/zip" >"$work/artifact.payload"
+if [[ -n "$payload_digest" ]]; then
+  [[ "$(digest "$work/artifact.payload")" == "$payload_digest" ]] || die 'GitHub artifact payload digest mismatch'
 fi
 
-# Stream only the selected file from the ZIP into our temporary directory.
-# No ZIP-controlled path or symlink is ever materialized on the host.
-"$unzip_cmd" -Z1 "$work/artifact.zip" >"$work/zip-entries" || die 'invalid artifact ZIP'
 safe_paths() {
   local path
   while IFS= read -r path; do
@@ -120,15 +127,24 @@ safe_paths() {
     esac
   done <"$1"
 }
-safe_paths "$work/zip-entries"
-packs=()
-while IFS= read -r entry; do
-  [[ "$entry" != *.tar.gz ]] || packs+=("$entry")
-done <"$work/zip-entries"
-[[ ${#packs[@]} == 1 ]] || die "artifact ZIP must contain exactly one .oci.tar.gz or .tar.gz pack (found ${#packs[@]})"
-# unzip -p treats these characters as patterns even when shell-quoted.
-case "${packs[0]}" in *['*?[]']*) die 'unsafe wildcard in ZIP pack filename' ;; esac
-"$unzip_cmd" -p "$work/artifact.zip" "${packs[0]}" >"$work/plugin-pack.tar.gz" || die 'ZIP plugin pack extraction failed'
+# archive:false uploads return the raw file even through the /zip endpoint.
+# Check magic bytes, never the artifact name or response filename. Both paths
+# feed the same digest, archive-safety and six-plugin validation below.
+if [[ "$(od -An -tx1 -N2 "$work/artifact.payload" | tr -d ' \n')" == 1f8b ]]; then
+  cp "$work/artifact.payload" "$work/plugin-pack.tar.gz"
+else
+  # Stream only the selected file. No ZIP-controlled path is materialized.
+  "$unzip_cmd" -Z1 "$work/artifact.payload" >"$work/zip-entries" || die 'invalid artifact ZIP'
+  safe_paths "$work/zip-entries"
+  packs=()
+  while IFS= read -r entry; do
+    [[ "$entry" != *.tar.gz ]] || packs+=("$entry")
+  done <"$work/zip-entries"
+  [[ ${#packs[@]} == 1 ]] || die "artifact ZIP must contain exactly one .oci.tar.gz or .tar.gz pack (found ${#packs[@]})"
+  # unzip -p treats these characters as patterns even when shell-quoted.
+  case "${packs[0]}" in *['*?[]']*) die 'unsafe wildcard in ZIP pack filename' ;; esac
+  "$unzip_cmd" -p "$work/artifact.payload" "${packs[0]}" >"$work/plugin-pack.tar.gz" || die 'ZIP plugin pack extraction failed'
+fi
 APME_PACK_SHA256="$(digest "$work/plugin-pack.tar.gz")"
 "$tar_cmd" -tzf "$work/plugin-pack.tar.gz" >"$work/outer-list" || die 'invalid plugin pack archive'
 safe_paths "$work/outer-list"

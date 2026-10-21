@@ -127,6 +127,9 @@ jobs:
       - name: Test prebuilt and local portal image paths
         run: python3 test/test-apme-preloaded-image.py
 
+      - name: Test immutable manifest publishing and promotion
+        run: python3 test/test-apme-image-workflow.py
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

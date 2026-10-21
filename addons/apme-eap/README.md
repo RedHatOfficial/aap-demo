@@ -155,6 +155,10 @@ Keep `apme_preloaded_image_ref: ""` (the default) to use the local fallback. It 
 A cached local-registry image is reused only after its six plugin identities validate;
 an invalid cache triggers a rebuild, and a failed rebuild stops deployment. Use
 `apme_image_build_force: true` when a rebuild is required even with a valid cache.
+The portal image uses the node-supported external `oci_registry` route and the
+registry digest captured from inspection or Podman push. Its Helm tag is empty,
+so forced or repair rebuilds deploy the new bytes even with `IfNotPresent`.
+The internal service endpoint remains available to the plugin OCI delivery path.
 For a custom `apme_oci_tar`, also set its independently verified digest in
 `apme_image_build_pack_sha256`; the container build rejects mismatches or missing plugins.
 
@@ -290,7 +294,8 @@ environment variables and password-stdin/credential-helper pipes; never commit t
 The native `ubuntu-24.04-arm` runner must also be available to the repository.
 
 Dispatch inputs are `source_repo` (default `ansible/ansible-rhdh-plugins`), `source_ref`
-(default `latest`), and boolean `publish_latest` (default `false`). Choose
+(default `latest`), `pack_format` (`oci` by default, or `npm`), and boolean
+`publish_latest` (default `false`). Choose
 `source_repo=ansible/apme` when that repository publishes the complete six-plugin pack;
 the resolver does not switch repositories automatically. `source_ref=latest` means the
 newest completed successful Actions run on the upstream repository's default branch.
@@ -298,12 +303,16 @@ A full lowercase 40-character commit SHA selects the newest successful run at th
 commit. Branch names and shortened SHAs are not accepted. Selection spans all workflows;
 an unusable newest run fails rather than falling back to an older run.
 
-Within that run, exactly one non-expired artifact name must contain `apme` or `plugin`
-(case-insensitive). Zero/ambiguous matches report candidate names and stop. The standalone
-resolver/build command supports `APME_ARTIFACT_NAME` for an exact name; the CI workflow
-has no artifact-name dispatch input. Resolve upstream naming ambiguity before dispatching.
-The GitHub artifact ZIP must contain exactly one `.oci.tar.gz` or `.tar.gz` plugin pack.
-The resolver verifies the ZIP digest when supplied by GitHub, computes the inner pack's
+Within that run, automatic selection requires a non-expired name containing `apme` or
+`plugin` (case-insensitive), with an `oci` token for OCI packs, or an `npm` token/plain
+`.tar.gz` suffix without an `oci` token for npm packs. Docker/build/image records are
+excluded. Set `APME_PACK_FORMAT=oci|npm` for the standalone resolver/build command.
+Zero/ambiguous matches report candidate names and the exact-name override:
+`APME_ARTIFACT_NAME` bypasses automatic format/name filtering, but never expiry or
+content validation. The workflow exposes format selection, not an artifact-name input.
+The downloaded artifact may be a ZIP containing exactly one `.oci.tar.gz`/`.tar.gz`
+pack, or a raw gzip pack from upstream `archive: false` uploads. The resolver verifies
+the downloaded payload digest when supplied by GitHub, computes the normalized pack's
 SHA256, and validates all six package identities. The extractor validates the pack again
 before both architecture builds. A four-plugin pack fails; these six directories are
 required under `dynamic-plugins/dist/`:
@@ -332,10 +341,13 @@ Let `T = apme-<full-upstream-source-sha>-<first-12-hex-of-pack-sha256>`. The CI 
 | `T` | Manifest containing exactly those two platforms, published after both builds succeed |
 | `latest` | Optional alias of the verified manifest, subject to the gate below |
 
-The artifact-derived tags are the immutable deployment convention. Builds do not configure
-Quay tag immutability, and a rebuild with the same plugin inputs may differ because the
-base tags and timestamp can change. Retain and deploy the published manifest digest for
-the strongest pinning; do not repurpose artifact-derived tags for unrelated inputs.
+Architecture tags and the manifest tag are write-once through these publishing commands:
+immediately before each push, a remote inspection must confirm the tag is missing.
+An existing tag, authentication failure, transport failure, or unknown response stops
+publication. Mutable bases and build timestamps can change rebuilt bytes, so a rebuild
+cannot replace an existing artifact-derived tag. Retain and deploy its published digest.
+These checks do not configure Quay tag immutability or make check-and-push atomic across
+independent publishers; use registry tag protection to enforce that boundary for all clients.
 
 Leave the **repository variable** `APME_QUAY_PUBLISH_ENABLED` unset until the first live
 validation. Dispatch `publish_latest=false`, verify both architecture tags and the manifest,
@@ -348,8 +360,12 @@ resolution. Manual non-latest publishing remains available with the gate closed.
 Incomplete/expired/ambiguous artifacts, bad checksums, unsafe archives, and wrong package
 identities fail before architecture publishing. A failed build or registry push fails its
 job; one architecture tag may already exist, but manifest assembly waits for both builds.
-A manifest verification failure blocks `latest` promotion. Check the failed job before
-retrying; never enable the gate to bypass validation. Live Quay publication and x86/ARM64
+A manifest verification failure blocks `latest` promotion. Retry failed jobs only when
+their target tags are still absent; successful architecture jobs need not be rerun.
+If a push succeeded before a later failure, inspect and reuse its recorded digest;
+rerunning the publishing job deliberately refuses to overwrite it. A full republish
+requires new source/pack inputs. Never enable the gate to bypass validation.
+Live Quay publication and x86/ARM64
 deployment results have not yet been verified; the execution record is in the test plan.
 
 ### Build and publish a preloaded portal image locally
@@ -357,7 +373,7 @@ deployment results have not yet been verified; the execution record is in the te
 From the repository root, use Bash, Podman, GitHub CLI (`gh`), `jq`, `unzip`,
 `tar`, and `sha256sum` (or `shasum`). Podman must be running. Supply `GH_TOKEN`
 through your environment with permission to read upstream Actions artifacts.
-For publishing, also supply `QUAY_USERNAME` and `QUAY_TOKEN` with push access
+For publishing, install Skopeo and supply `QUAY_USERNAME` and `QUAY_TOKEN` with push/pull access
 to `quay.io/aapdemo/apme-eap`. Do not put tokens in command arguments or files.
 
 ```bash
@@ -375,21 +391,27 @@ or `APME_SOURCE_REPO=ansible/apme`. The command does not read Ansible defaults.
 
 The resolver requires all six plugins and records the exact source SHA, artifact
 ID, pack format, and artifact digest (`APME_PACK_SHA256`, the downloaded pack's
-SHA256) in `artifact.env`. It also checks GitHub's ZIP digest when available.
+SHA256) in `artifact.env`. It also checks GitHub's downloaded payload digest when available.
 The build uses the normalized `plugin-pack.tar.gz` with `Containerfile.ci`,
 passing `PLUGIN_PACK_SHA256` and `PLUGIN_PACK_FORMAT`; extraction verifies the
 pack again during the image build. OCI labels record the upstream repository,
 source SHA, artifact ID, pack SHA256, and UTC build timestamp.
 
-The default immutable tag is `apme-<upstream-source-sha>-<pack-sha256-prefix>`
-(12 hex digest characters). `--tag <tag>` accepts only
+For `--push`, the immutable tag is
+`apme-<upstream-source-sha>-<pack-sha256-prefix>-<architecture>` (12 hex digest
+characters). Without `--architecture`, host `x86_64`/`amd64` maps to `amd64` and
+`aarch64`/`arm64` maps to `arm64`; other hosts require an explicit supported architecture.
+Build-only runs may use an unsuffixed local tag. Unsuffixed release tags are reserved
+for CI manifest assembly. `--tag <tag>` accepts only
 `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}` and adds that tag as a Quay alias; the
-immutable tag is always built and published. Publication is always to
+immutable tag is always built and published first. Artifact-derived release tags cannot
+be used as aliases. Existing immutable tags stop the push, including alias publication;
+retry only while the target tag is absent, or reuse the existing digest. Publication is always to
 `quay.io/aapdemo/apme-eap`; only `--push` publishes. Output includes the local
 image config digest, the pushed registry manifest digest when publishing,
 and the path to `artifact.env`. This command builds one architecture and does not assemble
-a multi-architecture manifest. `--architecture amd64|arm64` adds the architecture suffix
-and disallows `--tag`, as used by CI; select the matching `BASE_IMAGE`. The CI `latest`
+a multi-architecture manifest. `--architecture amd64|arm64` selects the architecture
+explicitly and disallows `--tag`, as used by CI; select the matching `BASE_IMAGE`. The CI `latest`
 gate does not apply to standalone `--tag` aliases, so use the workflow for promoting the
 multi-architecture `latest` alias. Preserve the metadata file and the pack for provenance.
 The default output directory is printed; set `--output-dir` to retain them at

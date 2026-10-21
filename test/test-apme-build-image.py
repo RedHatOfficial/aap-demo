@@ -59,7 +59,7 @@ if endpoint.endswith("/actions/runs"):
         "head_branch":"main","status":"completed","conclusion":"success",
         "created_at":"2026-10-20T00:00:00Z"}]}))
 elif endpoint.endswith("/artifacts"):
-    print(json.dumps({"artifacts":[{"id":2,"name":"plugins","expired":False}]}))
+    print(json.dumps({"artifacts":[{"id":2,"name":"plugins-" + os.environ.get("APME_PACK_FORMAT", "oci"),"expired":False}]}))
 elif endpoint.endswith("/zip"):
     sys.stdout.buffer.write((w / "artifact.zip").read_bytes())
 else:
@@ -106,11 +106,27 @@ if args[0] == "push":
 if args[:2] == ["image", "inspect"]:
     print(os.environ.get("IMAGE_ID", "c"*64))
 ''')
+        self.stub("uname", '#!/usr/bin/env bash\nprintf "%s\\n" "${HOST_ARCH:-x86_64}"\n')
+        self.stub("skopeo", '''#!/usr/bin/env python3
+import json, os, pathlib, sys
+w = pathlib.Path(os.environ["FIXTURE_DIR"])
+with (w / "remote.log").open("a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\\n")
+state = os.environ.get("REMOTE_STATE", "missing")
+if state == "exists":
+    print('{"schemaVersion":2}')
+    sys.exit(0)
+print({"missing": "manifest unknown: tag not found",
+       "denied": "unauthorized: authentication required",
+       "network": "connection reset by peer",
+       "notfound": "404 page not found"}[state], file=sys.stderr)
+sys.exit(1)
+''')
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(
             ("APME_", "QUAY_", "REGISTRY_REDHAT_", "BASE_IMAGE"))}
         self.env.update(PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         FIXTURE_DIR=str(self.work), GH_TOKEN="github-test-secret",
-                        QUAY_USERNAME="robot", QUAY_TOKEN="quay-test-secret")
+                        QUAY_USERNAME="robot", QUAY_TOKEN="quay-test-secret", APME_PACK_FORMAT="npm")
         self.env["REAL_AUTH_CLI"] = shutil.which("skopeo") or ""
 
     def stub(self, name, content):
@@ -163,13 +179,47 @@ if args[:2] == ["image", "inspect"]:
         result = self.run_build("--push", "--tag", "release_1")
         calls = self.calls()
         self.assertEqual([c[0] for c in calls], ["build", "image", "login", "push", "tag", "push"])
-        immutable = "apme-" + SHA + "-" + self.pack_hash[7:19]
+        immutable = "apme-" + SHA + "-" + self.pack_hash[7:19] + "-amd64"
         push_refs = [call[-1] for call in calls if call[0] == "push"]
         self.assertEqual(push_refs, [
             "docker://quay.io/aapdemo/apme-eap:" + immutable,
             "docker://quay.io/aapdemo/apme-eap:release_1",
         ])
         self.assertIn("quay.io/aapdemo/apme-eap@" + DIGEST, result.stdout)
+
+    def test_push_derives_host_architecture_and_never_publishes_manifest_tag(self):
+        for host, arch in (("x86_64", "amd64"), ("aarch64", "arm64"), ("arm64", "arm64")):
+            with self.subTest(host=host):
+                (self.work / "podman.log").unlink(missing_ok=True)
+                self.env["HOST_ARCH"] = host
+                self.run_build("--push")
+                push = next(c for c in self.calls() if c[0] == "push")
+                self.assertEqual(push[-1], "docker://quay.io/aapdemo/apme-eap:apme-"
+                                 + SHA + "-" + self.pack_hash[7:19] + "-" + arch)
+
+    def test_push_rejects_unknown_host_architecture(self):
+        self.env["HOST_ARCH"] = "s390x"
+        self.run_build("--push", ok=False)
+        self.assertFalse(any(c[0] == "push" for c in self.calls()))
+
+    def test_existing_immutable_image_cannot_be_overwritten_or_aliased(self):
+        self.env["REMOTE_STATE"] = "exists"
+        result = self.run_build("--push", "--tag", "release_1", ok=False)
+        self.assertIn("already exists", result.stderr)
+        self.assertFalse(any(c[0] in ("push", "tag") for c in self.calls()))
+
+    def test_unknown_remote_status_fails_closed(self):
+        for state in ("denied", "network", "notfound"):
+            with self.subTest(state=state):
+                self.env["REMOTE_STATE"] = state
+                result = self.run_build("--push", ok=False)
+                self.assertIn("confirm", result.stderr)
+                self.assertFalse(any(c[0] == "push" for c in self.calls()))
+
+    def test_alias_cannot_replace_an_artifact_derived_manifest_tag(self):
+        result = self.run_build("--push", "--tag", "apme-" + SHA + "-" + self.pack_hash[7:19], ok=False)
+        self.assertIn("reserved", result.stderr)
+        self.assertFalse(any(c[0] == "push" for c in self.calls()))
 
     def test_replay_verifies_recorded_digest_and_source(self):
         self.env.update(APME_SOURCE_SHA=SHA, APME_PACK_SHA256=self.pack_hash,
@@ -268,6 +318,7 @@ if args[:2] == ["image", "inspect"]:
         self.run_build("--push")
 
     def test_normalized_oci_pack_uses_ci_containerfile(self):
+        self.env["APME_PACK_FORMAT"] = "oci"
         self.env["BASE_IMAGE"] = "registry.redhat.io/rhdh/rhdh-hub-rhel9@" + DIGEST
         layer = io.BytesIO()
         with tarfile.open(fileobj=layer, mode="w") as archive:

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADDON = ROOT / "addons/apme-eap"
 ROLES = ADDON / "playbooks/roles"
 DIGEST = "sha256:" + "a" * 64
+PUSH_DIGEST = "sha256:" + "b" * 64
 PLUGIN_NAMES = (
     "ansible-plugin-scaffolder-backend-module-backstage-rhaap",
     "ansible-backstage-plugin-catalog-backend-module-rhaap",
@@ -61,7 +62,8 @@ class SavedImageSettingsTests(unittest.TestCase):
 @unittest.skipIf(shutil.which("ansible-playbook") is None, "ansible-playbook is not installed")
 class DeploymentImageTests(unittest.TestCase):
     def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0,
-                  inspect_exit=0, build_exit=0, installed_plugins=None):
+                  inspect_exit=0, build_exit=0, installed_plugins=None, pushed_digest=PUSH_DIGEST,
+                  inspected_digest=DIGEST):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             if prepare:
@@ -88,7 +90,9 @@ class DeploymentImageTests(unittest.TestCase):
                 f"    sys.exit({run_exit})\n"
                 f"if command == 'inspect' and {inspect_exit}: sys.exit({inspect_exit})\n"
                 f"if command == 'build' and {build_exit}: sys.exit({build_exit})\n"
-                f"print(json.dumps({{'Digest': {DIGEST!r}}}) if 'inspect' in sys.argv else 'validated six plugins')\n"
+                "if command == 'push' and '--digestfile' in sys.argv:\n"
+                f"    Path(sys.argv[sys.argv.index('--digestfile') + 1]).write_text({pushed_digest!r})\n"
+                f"print(json.dumps({{'Digest': {inspected_digest!r}}}) if 'inspect' in sys.argv else 'validated six plugins')\n"
             )
             for name in ("podman", "skopeo"):
                 recorder = work / name
@@ -240,14 +244,17 @@ class DeploymentImageTests(unittest.TestCase):
         )
         self.assertEqual(rc, 0, output)
         image = values["redhat-developer-hub"]["upstream"]["backstage"]["image"]
-        self.assertEqual(image["registry"], "registry.svc:5000")
+        self.assertEqual(image["registry"], "registry.example.test")
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
+        self.assertEqual(image["digest"], PUSH_DIGEST)
+        self.assertEqual(image["tag"], "")
         build = next(c for c in commands if c[0] == "build")
         self.assertIn("--build-arg=PLUGIN_PACK_FORMAT=oci", build)
         self.assertIn("--build-arg=PLUGIN_PACK_SHA256=sha256:943f67afce1f9d1852df09b74da0126ef73f861e1ffc066e5196cc3701f341c3", build)
         push = next(c for c in commands if c[0] == "push")
-        self.assertEqual(push, ["push", "--tls-verify=false", "localhost/rhdh-apme-preloaded:8593383",
-                                "docker://registry.example.test/apme/rhdh-apme-preloaded:8593383"])
+        self.assertIn("--digestfile", push)
+        self.assertEqual(push[-2:], ["localhost/rhdh-apme-preloaded:8593383",
+                                    "docker://registry.example.test/apme/rhdh-apme-preloaded:8593383"])
         self.assertFalse(any(c[0] == "run" for c in commands))
 
     def local_image_variables(self):
@@ -264,9 +271,14 @@ class DeploymentImageTests(unittest.TestCase):
         )
         self.assertEqual(rc, 0, output)
         self.assertIsNotNone(values)
+        image = values["redhat-developer-hub"]["upstream"]["backstage"]["image"]
+        self.assertEqual(image["registry"], "registry.example.test")
+        self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
+        self.assertEqual(image["digest"], DIGEST)
+        self.assertEqual(image["tag"], "")
         self.assertEqual([c[0] for c in commands], ["inspect", "run"])
         validation = commands[1]
-        self.assertIn("registry.example.test/apme/rhdh-apme-preloaded:8593383", validation)
+        self.assertIn("registry.example.test/apme/rhdh-apme-preloaded@" + DIGEST, validation)
         self.assertIn("--pull=always", validation)
         self.assertIn("--tls-verify=false", validation)
         self.assertIn("--network=none", validation)
@@ -285,7 +297,21 @@ class DeploymentImageTests(unittest.TestCase):
                 )
                 self.assertEqual(rc, 0, output)
                 self.assertIsNotNone(values)
+                self.assertEqual(values["redhat-developer-hub"]["upstream"]["backstage"]["image"]["digest"], PUSH_DIGEST)
                 self.assertEqual([c[0] for c in commands], ["inspect", "run", "build", "push", "rmi"])
+
+    def test_malformed_cached_or_pushed_digest_blocks_rendering(self):
+        for variables, kwargs in (
+            (self.local_image_variables(), {"inspected_digest": "bad"}),
+            ({**self.local_image_variables(), "apme_image_build_force": True}, {"pushed_digest": "bad"}),
+            ({**self.local_image_variables(), "apme_image_build_force": True}, {"pushed_digest": ""}),
+        ):
+            with self.subTest(kwargs=kwargs):
+                rc, output, values, _ = self.run_roles(
+                    variables, ["apme_image_build", "apme_helm_values"], **kwargs,
+                )
+                self.assertNotEqual(rc, 0, output)
+                self.assertIsNone(values)
 
     def test_failed_rebuild_of_invalid_cache_stops_before_helm_rendering(self):
         rc, output, values, commands = self.run_roles(

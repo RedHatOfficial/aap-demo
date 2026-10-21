@@ -499,11 +499,14 @@ completed successful Actions run on the upstream default branch; an exact full l
 40-character SHA selects the newest successful run for that commit. No branch-name or
 short-SHA input is accepted, and unusable artifacts do not cause fallback to an older run.
 
-Exactly one non-expired artifact name must contain `apme` or `plugin`. Zero or ambiguous
-matches fail with candidate names. The standalone resolver accepts `APME_ARTIFACT_NAME`
-for an exact name; the workflow has no artifact-name input. The GitHub ZIP contains one
-inner OCI/npm pack, not a tarball masquerading as the outer ZIP. The resolver checks the
-ZIP digest when present, calculates the pack SHA256, and validates all six expected plugin
+Exactly one non-expired artifact must match `APME_PACK_FORMAT` (`oci` by default, or `npm`),
+with `apme`/`plugin` in its name; Docker/build/image records are excluded. The workflow
+exposes `pack_format`. OCI names have an `oci` token; npm names have an `npm` token or
+a plain `.tar.gz` suffix without `oci`. Zero or ambiguous matches fail with candidate
+names. The standalone resolver accepts `APME_ARTIFACT_NAME` to override automatic
+name/format filtering. Downloads may be ZIP-wrapped packs or raw gzip packs from
+`archive: false` uploads. The resolver checks the payload digest when present,
+calculates the pack SHA256, and validates all six expected plugin
 identities. Extraction checks the digest and plugin set again. Incomplete four-plugin
 packs, checksum mismatches, malformed archives, and wrong identities fail before publishing.
 
@@ -526,9 +529,13 @@ For `T=apme-<full-source-sha>-<first-12-hex-pack-digest>`, CI publishes `T-amd64
 manifest containing exactly `linux/amd64` and `linux/arm64`, verifying its remote digest
 and platform set. A failed job can leave an architecture tag; publishing is not atomic.
 
-Artifact-derived tags are the immutable naming convention, not an enforced Quay retention
-rule. Base tags and timestamps may change image bytes on rebuild; deploy the recorded
-manifest digest for the strongest repeatability. `latest` is a moving convenience alias.
+Architecture and manifest publication check remote tags immediately before pushing and
+refuse existing tags or uncertain registry responses. Rebuilt bytes cannot overwrite an
+existing release through these commands. Local single-architecture pushes always use an
+architecture suffix. Retry failed jobs only for tags still absent; reuse a published
+digest after a later failure, or use new source/pack inputs for a full republish.
+Checks do not configure Quay tag protection or provide atomicity across independent
+publishers. Deploy the recorded manifest digest. `latest` is a moving convenience alias.
 The first live dispatch must use `publish_latest=false` with the gate closed. After live
 validation, set `APME_QUAY_PUBLISH_ENABLED=true`: matching main pushes promote `latest`,
 while manual runs promote only with `publish_latest=true`. A premature manual latest
@@ -558,6 +565,10 @@ Without a prebuilt reference, the addon resolves the bundled OCI pack, runs
 `apme_oci_push` then `apme_image_build`, and publishes via Podman to the local registry.
 Cached images must pass the six-plugin checker before reuse; invalid caches rebuild and
 failed rebuilds stop deployment. Custom packs require an independently verified SHA256.
+Fallback Helm fields use the node-supported external registry route, preserve its
+repository namespace, and pin the cached or newly pushed registry digest with an empty
+tag. This prevents `IfNotPresent` from retaining old bytes after a forced/repair rebuild.
+The internal service endpoint is used only where required for plugin OCI delivery.
 With `skip_plugin_push: true`, both push and build are skipped and runtime OCI delivery
 assumes the archive is already published. The fallback does not fetch GitHub artifacts;
 fresh upstream selection belongs to the CI/local publishing command. The Ansible
