@@ -138,6 +138,23 @@ jobs:
       - name: Run AO PR testing model configuration test
         run: bash ./test/test-ao-pr-testing-model.sh
 
+  apme-deployment-tests:
+    name: APME Deployment Role Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Ansible test dependencies
+        run: |
+          pip install ansible-core PyYAML
+          ansible-galaxy collection install kubernetes.core
+      - name: Test prebuilt and local portal image paths
+        run: python3 test/test-apme-preloaded-image.py
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

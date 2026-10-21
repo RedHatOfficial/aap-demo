@@ -7,6 +7,8 @@
 # Placeholders: namespace, cluster-router-base, init-install-command, init-container-image
 #
 # APME plugins load through the chart's standard dynamic-plugin installer.
+# Preloaded mode replaces the six OCI package URLs with local dist paths and
+# renders parsed registry/repository/tag/digest fields in upstream.backstage.image.
 
 redhat-developer-hub:
   common:

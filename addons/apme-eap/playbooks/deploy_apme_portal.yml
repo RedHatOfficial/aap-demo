@@ -63,8 +63,8 @@
           - "Target namespace: {{ openshift_project_name }}"
           - "Cluster domain: {{ openshift_cluster_domain }}"
           - "Portal URL (expected): {{ portal_url }}"
-          - "Plugin SHA: {{ plugin_sha }}"
-          - "OCI registry: {{ oci_registry }}"
+          - "Plugin SHA: {{ plugin_sha | default('preloaded image') }}"
+          - "Portal image: {{ apme_preloaded_image_ref | default('') }}"
 
     - name: Verify required Ansible collections
       ansible.builtin.command:
@@ -88,8 +88,16 @@
     - role: openshift_apme_setup
     - role: apme_pah_integration
     - role: aap_apme_prerequisites
+    - role: apme_preloaded_image
+      when: apme_preloaded_image_ref | default('') | length > 0
     - role: apme_oci_push
-      when: not (skip_plugin_push | default(false) | bool)
+      when:
+        - apme_preloaded_image_ref | default('') | length == 0
+        - not (skip_plugin_push | default(false) | bool)
+    - role: apme_image_build
+      when:
+        - apme_preloaded_image_ref | default('') | length == 0
+        - not (skip_plugin_push | default(false) | bool)
     - role: apme_helm_values
     - role: apme_scm_secrets
       when: (configure_github_secrets | default(false) | bool) == true
@@ -127,7 +135,9 @@
           - ""
           - "Portal URL: {{ portal_url }}"
           - "Namespace: {{ openshift_project_name }}"
-          - "Plugin image: {{ oci_registry }}/apme-prototype-plugins:{{ plugin_sha }}"
+          - >-
+            Portal image: {{ apme_preloaded_image_ref | default('') or
+            apme_image_build_target | default('chart default') }}
           - ""
           - "Verify: oc get pods -n {{ openshift_project_name }}"
           - "Sign in via AAP OAuth, then open Quality tab after registering a repo."
