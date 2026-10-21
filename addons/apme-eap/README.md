@@ -205,7 +205,8 @@ source SHA, artifact ID, pack SHA256, and UTC build timestamp.
 
 The default immutable tag is `apme-<upstream-source-sha>-<pack-sha256-prefix>`
 (12 hex digest characters). `--tag <tag>` accepts only
-`[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`. Publication is always to
+`[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}` and adds that tag as a Quay alias; the
+immutable tag is always built and published. Publication is always to
 `quay.io/aapdemo/apme-eap`; only `--push` publishes. Output includes the local
 image config digest, the pushed registry manifest digest when publishing,
 and the path to `artifact.env`. Preserve that file and the pack for provenance.
