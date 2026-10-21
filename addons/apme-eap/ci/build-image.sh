@@ -16,7 +16,9 @@ Usage: build-image.sh [--source-ref latest|<full-sha>] [--source-repo owner/repo
                       [--pack-dir <trusted-resolver-output>] [--architecture amd64|arm64]
 Requires Podman; fetching requires GH_TOKEN. Only --push requires Quay credentials.
 --pack-dir consumes trusted artifact.env and revalidates the pack without fetching.
---architecture publishes only the architecture-suffixed immutable tag; no aliases.
+--push always publishes an architecture-suffixed immutable tag (host default).
+--architecture selects amd64 or arm64 explicitly; --tag adds an explicit alias.
+Existing immutable tags are never overwritten; retry only unpublished inputs.
 Optional: BASE_IMAGE, REGISTRY_REDHAT_USERNAME/REGISTRY_REDHAT_PASSWORD.
 Replay: source a trusted artifact.env; APME_SOURCE_SHA and APME_PACK_SHA256
 pin the next resolution and verify the downloaded pack again.
@@ -68,6 +70,14 @@ done
 [[ -z "$architecture" || -z "$tag" ]] || die 'architecture builds cannot publish unqualified aliases'
 if "$push"; then
   [[ -n "${QUAY_USERNAME:-}" && -n "${QUAY_TOKEN:-}" ]] || die '--push requires QUAY_USERNAME and QUAY_TOKEN'
+  command -v skopeo >/dev/null 2>&1 || die '--push requires skopeo for remote publication checks'
+  if [[ -z "$architecture" ]]; then
+    case "$(uname -m)" in
+      x86_64 | amd64) architecture=amd64 ;;
+      aarch64 | arm64) architecture=arm64 ;;
+      *) die 'unsupported host architecture; specify --architecture amd64 or arm64' ;;
+    esac
+  fi
 fi
 if [[ -n "${REGISTRY_REDHAT_USERNAME:-}${REGISTRY_REDHAT_PASSWORD:-}" ]]; then
   [[ -n "${REGISTRY_REDHAT_USERNAME:-}" && -n "${REGISTRY_REDHAT_PASSWORD:-}" ]] || die 'provide both Red Hat registry credentials'
@@ -114,6 +124,9 @@ fi
 [[ "$APME_PACK_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid resolved pack SHA256'
 pack_hex="${APME_PACK_SHA256#sha256:}"
 immutable_tag="apme-${APME_SOURCE_SHA}-${pack_hex:0:12}"
+if [[ "$tag" =~ ^apme-[0-9a-f]{40}-[0-9a-f]{12}(-[a-z0-9]+)?$ ]]; then
+  die 'artifact-derived tags are reserved; --tag must name an explicit non-release alias'
+fi
 [[ -z "$architecture" ]] || immutable_tag+="-$architecture"
 image="$image_repo:$immutable_tag"
 alias_image=''
@@ -189,6 +202,7 @@ if "$push"; then
   printf '%s\n' '{"auths":{},"credHelpers":{"quay.io":"apme-env"}}' >"$auth_dir/auth.json"
   printf '%s\n' "$QUAY_TOKEN" | podman login --authfile "$auth_dir/auth.json" \
     --username "$QUAY_USERNAME" --password-stdin quay.io
+  bash "$script_dir/require-unpublished.sh" "$image" --authfile "$auth_dir/auth.json"
   podman push --authfile "$auth_dir/auth.json" --digestfile "$context/immutable.digest" \
     "$image" "docker://$image"
   registry_digest="$(cat "$context/immutable.digest")"

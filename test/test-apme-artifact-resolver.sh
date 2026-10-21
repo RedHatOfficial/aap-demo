@@ -72,6 +72,7 @@ chmod +x "$work/bin/gh" "$work/bin/unzip" "$work/bin/bad-hash"
 
 make_pack() {
   local format="$1" count="${2:-6}" plugin i
+  export APME_PACK_FORMAT="$format"
   rm -rf "$work/pack" "$work/layer" "$work/npm"
   mkdir -p "$work/pack" "$work/layer" "$work/npm/package"
   for ((i = 0; i < count; i++)); do
@@ -98,10 +99,11 @@ reset_case() {
   rm -rf "$work/output with spaces"
   export APME_SOURCE_REF=latest APME_SOURCE_REPO=ansible/ansible-rhdh-plugins
   unset APME_ARTIFACT_NAME APME_SHA256_CMD API_FAIL UNZIP_FAIL DEFAULT_BRANCH PACK_ENTRY
-  unset ZIP_PAYLOAD
+  unset ZIP_PAYLOAD APME_PACK_FORMAT
   export APME_UNZIP_CMD="$work/bin/unzip"
   printf 'nested/plugins.oci.tar.gz\nreadme.txt\n' >"$work/zip-entries"
   make_pack oci
+  unset APME_PACK_FORMAT
 }
 
 fail() {
@@ -284,6 +286,46 @@ case "${APME_RESOLVER_TEST_GROUP:-all}" in
 esac
 
 reset_case
+run_success
+assert_equal 301 "$APME_ARTIFACT_ID"
+pass 'default OCI selection ignores simultaneous npm packs and Docker/image records'
+
+reset_case
+make_pack npm
+run_success
+assert_equal 306 "$APME_ARTIFACT_ID"
+pass 'npm format selects the npm tarball when both pack formats are present'
+
+reset_case
+export APME_PACK_FORMAT=invalid
+run_failure 'oci or npm'
+pass 'invalid requested format fails with the allowed values'
+
+for format in oci npm; do
+  reset_case
+  make_pack "$format"
+  export ZIP_PAYLOAD="$work/pack.tar.gz" UNZIP_FAIL=yes
+  payload_hash="$(shasum -a 256 "$ZIP_PAYLOAD" | cut -d ' ' -f 1)"
+  export payload_hash
+  update_artifacts '(.artifacts[] | select(.id == 301 or .id == 306)).digest = ("sha256:" + env.payload_hash)'
+  run_success
+  assert_equal "$format" "$APME_PACK_FORMAT"
+  pass "raw $format gzip artifact verifies transport digest without invoking unzip"
+done
+
+reset_case
+export ZIP_PAYLOAD="$work/pack.tar.gz"
+update_artifacts '.artifacts[2].digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"'
+run_failure digest
+pass 'raw gzip transport still rejects a mismatched GitHub digest'
+
+reset_case
+make_pack oci 4
+export ZIP_PAYLOAD="$work/pack.tar.gz"
+run_failure 'ansible-plugin-backstage-apme'
+pass 'raw gzip transport still requires all six plugins'
+
+reset_case
 update_artifacts '.artifacts[2].digest = false'
 run_failure 'digest'
 pass 'a boolean digest is malformed metadata, not an absent legacy digest'
@@ -351,16 +393,17 @@ run_failure apme-expired
 pass 'an explicit artifact name cannot select an expired artifact'
 
 reset_case
-update_artifacts '.artifacts += [{id: 305, name: "plugins-other", expired: false, created_at: "2026-10-21T10:00:00Z", digest: null}]'
+update_artifacts '.artifacts += [{id: 305, name: "plugins-other-oci", expired: false, created_at: "2026-10-21T10:00:00Z", digest: null}]'
 run_failure ambiguous
-grep -Fq apme-plugins "$work/stderr" || fail 'first candidate absent from diagnostic'
+grep -Fq early-access-plugins "$work/stderr" || fail 'first candidate absent from diagnostic'
 grep -Fq plugins-other "$work/stderr" || fail 'second candidate absent from diagnostic'
+grep -Fq APME_ARTIFACT_NAME "$work/stderr" || fail 'ambiguity must explain the exact-name override'
 pass 'ambiguous selection reports all matching names'
 
 reset_case
 export APME_ARTIFACT_NAME=not-present
 run_failure not-present
-grep -Fq apme-plugins "$work/stderr" || fail 'available candidates absent from diagnostic'
+grep -Fq early-access-plugins "$work/stderr" || fail 'available candidates absent from diagnostic'
 pass 'missing exact artifact reports available candidate names'
 
 reset_case
