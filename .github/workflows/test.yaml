@@ -77,6 +77,15 @@ jobs:
       - name: Run APME CRC OAuth URL tests
         run: ./test/test-apme-eap-oauth.sh
 
+      - name: Run APME artifact resolver fixture tests
+        run: bash test/test-apme-artifact-resolver.sh
+
+      - name: Run APME plugin pack fixture tests
+        run: bash test/test-apme-plugin-pack.sh
+
+      - name: Run APME image publishing fixture tests
+        run: python3 test/test-apme-build-image.py
+
       - name: Run local-cache tests
         run: ./test/test-local-cache.sh
 
