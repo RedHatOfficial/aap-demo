@@ -26,10 +26,36 @@
   changed_when: false
   failed_when: false
 
+- name: Validate all six plugins before reusing the cached portal image
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_image_build_podman_binary }}"
+      - run
+      - --rm
+      - --pull=always
+      - --tls-verify=false
+      - --network=none
+      - --read-only
+      - --cap-drop=all
+      - --security-opt=no-new-privileges
+      - --entrypoint=python3
+      - "{{ apme_image_build_target }}"
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/../apme_preloaded_image/files/verify_plugins.py') }}"
+  register: apme_image_build_cached_validation
+  changed_when: false
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - apme_image_build_inspect.rc == 0
+    - not apme_image_build_force | bool
+
 - name: Build and publish the local preloaded image
   when:
     - not ansible_check_mode
-    - apme_image_build_inspect.rc != 0 or apme_image_build_force | bool
+    - >-
+      apme_image_build_force | bool or apme_image_build_inspect.rc != 0 or
+      (apme_image_build_cached_validation.rc | default(1)) != 0
   block:
     - name: Create an isolated normalized pack build context
       ansible.builtin.tempfile:
@@ -74,10 +100,10 @@
         - name: Push the portal image to the local registry
           ansible.builtin.command:
             argv:
-              - "{{ apme_image_build_skopeo_binary }}"
-              - copy
-              - --dest-tls-verify=false
-              - "containers-storage:{{ apme_image_build_local }}"
+              - "{{ apme_image_build_podman_binary }}"
+              - push
+              - --tls-verify=false
+              - "{{ apme_image_build_local }}"
               - "docker://{{ apme_image_build_target }}"
           register: apme_image_build_push
           changed_when: apme_image_build_push.rc == 0
