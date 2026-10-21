@@ -31,6 +31,12 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 configure_github_secrets: false
 
 # Runtime OCI plugin delivery
+# Reserved opt-in settings for preloaded images; deployment wiring is separate.
+# Empty image reference preserves the existing local/in-cluster fallback.
+apme_preloaded_image_ref: ""
+apme_preloaded_image_pull_secret: ""
+apme_source_repo: ""
+apme_source_ref: ""
 skip_plugin_push: false
 apme_oci_push_force: false
 apme_oci_push_python_binary: python3
