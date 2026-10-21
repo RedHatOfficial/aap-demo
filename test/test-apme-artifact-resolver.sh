@@ -155,6 +155,16 @@ pass() {
 }
 
 reset_case
+update_artifacts '.artifacts[2].digest = false'
+run_failure 'digest'
+pass 'a boolean digest is malformed metadata, not an absent legacy digest'
+
+reset_case
+update_artifacts '.artifacts[2].digest = ""'
+run_failure 'digest'
+pass 'an explicitly empty artifact digest is rejected'
+
+reset_case
 run_success
 assert_equal 30 "$APME_RUN_ID"
 assert_equal 3333333333333333333333333333333333333333 "$APME_SOURCE_SHA"
