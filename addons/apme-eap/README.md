@@ -157,6 +157,30 @@ an invalid cache triggers a rebuild, and a failed rebuild stops deployment. Use
 `apme_image_build_force: true` when a rebuild is required even with a valid cache.
 For a custom `apme_oci_tar`, also set its independently verified digest in
 `apme_image_build_pack_sha256`; the container build rejects mismatches or missing plugins.
+
+The wrapper regenerates `~/.aap-demo/apme-eap-vars.yml` on each enable and does **not**
+preserve `apme_image_build_force`, `apme_oci_tar`, or `apme_image_build_pack_sha256`.
+After the wrapper has initialized its venv, collections, and generated vars, run the
+playbook directly from the repository root for these overrides. Select the deployment's
+kubeconfig and replace the archive path and digest below with your verified values:
+
+```bash
+source ~/.aap-demo/apme-eap-venv/bin/activate
+export KUBECONFIG=/absolute/path/to/deployment-kubeconfig
+export K8S_AUTH_KUBECONFIG="$KUBECONFIG"
+export ANSIBLE_ROLES_PATH="$PWD/addons/apme-eap/playbooks/roles"
+ansible-playbook addons/apme-eap/playbooks/deploy_apme_portal.yml \
+  -e @addons/apme-eap/defaults.yml \
+  -e @"$HOME/.aap-demo/apme-eap-vars.yml" \
+  -e '{"apme_preloaded_image_ref":"","skip_plugin_push":false,"apme_image_build_force":true}' \
+  -e '{"apme_oci_tar":"/absolute/path/to/plugin-pack.tar","apme_image_build_pack_sha256":"sha256:<64-hex-digest>"}'
+```
+
+Later `-e` arguments take precedence over the generated vars. To force a rebuild of the
+bundled pack, omit the last `-e` argument. These overrides apply to this direct invocation;
+rerunning the wrapper does not retain them. The preloaded-image settings described above
+are preserved by the wrapper.
+
 `skip_plugin_push: true` retains the existing chart/runtime OCI path and assumes the
 plugin archive has already been published; it skips both local push and image build.
 This fallback uses the bundled OCI pack, not a fresh GitHub artifact. Live Quay and
