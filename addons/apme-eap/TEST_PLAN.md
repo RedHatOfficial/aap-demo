@@ -2,8 +2,11 @@
 
 ## Overview
 
-This test plan validates the AAP-native execution approach for the APME addon, which uses
-Ansible playbooks with `ansible.builtin.uri` to interact with AAP's REST API.
+This plan covers artifact-to-Quay publishing, prebuilt portal images, and the local
+bundled-pack fallback. The current addon runs deployment playbooks locally in an isolated
+venv. The older AAP-native cases below describe historical/manual scenarios; their expected
+results are not evidence of a current successful deployment. Only the dated execution
+record reports checks actually run for this change.
 
 ## Test Environment
 
@@ -472,7 +475,210 @@ kubectl get pods -n apme  # Should exist again
 
 ---
 
+## Image Publishing and Consumption Verification
+
+The [README publishing contract](README.md#ci-publishing-to-quay) defines the required
+Actions secrets, source selection, six plugins, tag policy, and rollout gate. Use
+`quay.io/aapdemo/apme-eap` for every publishing check. Use immutable tags or digests for
+deployment; `latest` is only a convenience alias.
+
+### CI-001: Offline Artifact, Build, and Deployment Checks
+
+Run from the repository root with Bash, Python, `jq`, `unzip`, `tar`, a SHA256 tool,
+ShellCheck, yamllint, Ansible, PyYAML, and the `kubernetes.core` collection installed:
+
+```bash
+bash test/test-apme-artifact-resolver.sh
+bash test/test-apme-plugin-pack.sh
+python3 test/test-apme-build-image.py -v
+python3 test/test-apme-preloaded-image.py -v
+bash -n addons/apme-eap/ci/*.sh
+for script in addons/apme-eap/ci/*.sh; do bash -n "$script" || exit 1; done
+shellcheck addons/apme-eap/ci/*.sh
+yamllint addons/apme-eap .github/workflows/apme-eap-image.yaml
+yamllint --strict -d "{extends: .yamllint, ignore: ''}" .github/workflows/apme-eap-image.yaml
+ansible-playbook --syntax-check addons/apme-eap/playbooks/deploy_apme_portal.yml
+markdownlint addons/apme-eap/README.md addons/apme-eap/TEST_PLAN.md docs/adr/019b-apme-aap-native-execution.md
+make test
+git diff --check
+```
+
+The loop checks each script: `bash -n` with multiple filenames only parses the first.
+The explicit workflow lint overrides `.yamllint`'s `.github/` exclusion. Do not interpret
+the first yamllint command alone as workflow validation. If system Python lacks PyYAML,
+use the existing lint venv's Python and record the interpreter used; do not skip the tests.
+
+**Acceptance criteria:** All focused suites pass, including four-plugin npm/OCI rejection,
+ZIP/pack digest mismatch, malformed identity, unsafe archive paths, expired/ambiguous
+artifacts, and no fallback to an older successful run. Build-wrapper tests must stop before
+push on resolution/checksum/build/login failure, preserve immutable tags with aliases,
+and reject tampered matrix inputs. Deployment tests must cover tag/digest rendering, all
+six local plugin paths, missing private credentials, no build in prebuilt mode, check mode,
+fallback pack requirements, cache validation, invalid-cache rebuild, and failed rebuilds
+blocking Helm rendering. Container/registry commands in these suites are test doubles;
+they do not establish live publishing or cluster results.
+
+### CI-002: First Live Publish Without Updating Latest
+
+**Prerequisites:** Workflow available on the repository default branch, Actions secrets
+`APME_ARTIFACT_TOKEN`, `QUAY_USERNAME`, `QUAY_TOKEN`, and the Red Hat registry credential
+pair when required. The artifact token must read the chosen upstream repository's Actions
+artifacts. Confirm native `ubuntu-24.04` and `ubuntu-24.04-arm` runner access. Leave
+`APME_QUAY_PUBLISH_ENABLED` unset or false during bootstrap. Record the current `latest`
+digest (or its absence) before dispatch so it can be compared after publication.
+
+1. Dispatch the workflow, initially using its upstream defaults:
+
+   ```bash
+   gh workflow run apme-eap-image.yaml --repo RedHatOfficial/aap-demo --ref main \
+     -f source_repo=ansible/ansible-rhdh-plugins -f source_ref=latest -f publish_latest=false
+   ```
+
+2. Record the workflow run URL. Confirm resolution chose the newest successful upstream
+   default-branch run and exactly one non-expired `apme`/`plugin` artifact, not an older
+   substitute. For `ansible/apme`, dispatch with that explicit `source_repo`; only a full
+   40-character commit SHA or `latest` is accepted for `source_ref`.
+3. Record upstream repository/SHA, run ID, artifact ID/name, format, and pack SHA256.
+   Save `apme-resolved-pack` before its one-day expiry. Verify extractor logs list all six
+   plugin names from the README. The summary contains provenance and final manifest digest;
+   `artifact.env` and the pack provide the retained build inputs. An ambiguous artifact
+   name must fail; CI has no exact-name input. The standalone resolver supports
+   `APME_ARTIFACT_NAME` for deliberate local selection.
+4. Confirm both builds use that same pack. Copy the immutable tag and digest from the
+   summary into `APME_TAG` and `APME_DIGEST`, then inspect the published results:
+
+   ```bash
+   : "${APME_TAG:?Set the immutable tag from the run summary}"
+   : "${APME_DIGEST:?Set the sha256 manifest digest from the run summary}"
+   APME_IMAGE=quay.io/aapdemo/apme-eap
+   skopeo inspect --override-arch amd64 "docker://$APME_IMAGE:$APME_TAG-amd64" | jq '{Architecture, Os, Labels}'
+   skopeo inspect --override-arch arm64 "docker://$APME_IMAGE:$APME_TAG-arm64" | jq '{Architecture, Os, Labels}'
+   skopeo inspect --raw "docker://$APME_IMAGE@$APME_DIGEST" | \
+     jq -e '.schemaVersion == 2 and (.manifests | length == 2) and
+       ([.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"])'
+   ```
+
+5. Compare the tag's raw manifest digest with the recorded digest using
+   `skopeo manifest-digest` on a saved raw manifest. Check the child digests match the two
+   architecture tags and OCI labels match the source SHA, artifact ID, and pack digest.
+   Inspect anonymously for public Quay; for private Quay use an explicit `REGISTRY_AUTH_FILE`
+   with pull access. Publication does not change Quay repository visibility.
+6. Verify `latest` is unchanged (or remains absent) by comparing its pre-run and post-run
+   digest. A failed architecture job can leave one architecture tag, but must not run the
+   manifest job. Manifest verification failure must block `latest` promotion.
+
+**Acceptance criteria:** `T-amd64`, `T-arm64`, and `T` exist with exactly the expected
+platforms, where `T=apme-<source-sha>-<12-hex-pack-digest>`. AMD64 uses the Red Hat RHDH 1.9
+base and ARM64 uses the community RHDH 1.9 base. No `latest` change occurs. Artifact-derived
+tags are the immutable naming policy, not registry-enforced byte immutability; retain the
+published manifest digest because base tags and build timestamps can change on rebuild.
+
+### CI-003: Prebuilt Deployment on AMD64 and ARM64
+
+Repeat on one x86 (`amd64`) cluster and one ARM64 cluster, using a deployment host whose
+Podman architecture matches that cluster. Capture node architecture, namespace, rendered
+Helm values, pod image/imageID, rollout result, and dynamic-plugin init logs for each run.
+
+1. Set `apme_preloaded_image_ref` to `quay.io/aapdemo/apme-eap@$APME_DIGEST` (substitute the
+   actual digest in YAML) or use the immutable manifest tag. Keep
+   `apme_preloaded_image_verify: true` and run `aap-demo enable apme-eap`.
+2. In public mode leave `apme_preloaded_image_pull_secret: ""`. Verify the cluster can pull
+   anonymously. A local workstation login is not a cluster pull credential.
+3. Repeat private mode with a pull-only Quay robot account. Follow the README auth-file
+   instructions and set `apme_preloaded_image_auth_file` to its absolute path and
+   `apme_preloaded_image_pull_secret: apme-quay-pull`. Verify the namespaced Secret has
+   type `kubernetes.io/dockerconfigjson`, contains only the selected registry, and its name
+   appears in Helm `image.pullSecrets` and the pod's `imagePullSecrets`. Do not save decoded
+   credentials in test evidence. With no explicit Secret, private pulls require separately
+   configured cluster credentials.
+4. Confirm local Skopeo inspection and isolated Podman six-plugin validation succeed.
+   Prebuilt mode must skip bundled-pack resolution, local-registry bootstrap,
+   `apme_oci_push`, and `apme_image_build`. Check mode only parses/plans and cannot count as
+   remote-image validation; disabling the Skopeo lookup still requires six-plugin validation.
+5. Collect deployment evidence:
+
+   ```bash
+   kubectl get nodes -L kubernetes.io/arch
+   helm get values redhat-rhaap-portal -n apme -o yaml
+   kubectl rollout status deployment/redhat-rhaap-portal -n apme
+   kubectl get pods -n apme -o wide
+   kubectl get pods -n apme -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{.status.containerStatuses[*].imageID}{"\n"}{end}'
+   # Choose the portal pod shown above:
+   kubectl logs -n apme <portal-pod> -c install-dynamic-plugins
+   ```
+
+6. Verify the chart's portal image fields retain `quay.io`, `aapdemo/apme-eap`, and the
+   validated digest (a verified tag is pinned). Compare pod imageID with the matching
+   architecture child from CI-002. All six APME package entries must be local
+   `./dynamic-plugins/dist/...` paths; init logs must not download those six from the OCI
+   plugin registry. Other chart plugins may still use their configured sources.
+
+**Acceptance criteria:** Healthy portal rollout on both architectures with the correct
+image child, preserved digest, local six-plugin delivery, and working public/private pulls.
+
+### CI-004: Bundled-Pack Fallback and Failure Behavior
+
+1. Clear `apme_preloaded_image_ref` in the saved vars and unset `APME_PRELOADED_IMAGE_REF`.
+   Keep `skip_plugin_push: false`, then deploy. Confirm local pack resolution supplies
+   `apme_oci_tar_resolved` and deployment runs `apme_oci_push` before `apme_image_build`.
+   Publication uses Podman push from its own storage, including on macOS Podman machine.
+   The fallback does not fetch current GitHub artifacts; source defaults are not a fetch switch.
+2. Confirm a valid cached portal image is checked for all six plugin identities before
+   reuse. An invalid cache must rebuild; a failed rebuild must stop before Helm renders
+   local plugin paths. `apme_image_build_force: true` forces a rebuild. For custom OCI packs,
+   supply the independently verified `apme_image_build_pack_sha256`.
+3. Test the opt-out separately: empty prebuilt reference plus `skip_plugin_push: true`
+   skips both local publication and image build. The runtime installer then requires the
+   plugin archive to have already been published at its expected registry path.
+4. Run the offline suites in CI-001 for deliberate four-plugin and checksum-mismatch
+   fixtures. Confirm nonzero exit and no build/push on invalid resolver output. Test invalid
+   qualified references, unavailable images, missing private auth, wrong/missing plugins,
+   and failed rebuilds; none may reach Helm installation with a falsely validated image.
+5. With `APME_QUAY_PUBLISH_ENABLED` unset, manually request `publish_latest=true` and expect
+   the gate to fail before resolution. Only after CI-002/CI-003 pass, set the repository
+   variable to `true`; verify matching main pushes promote `latest`, manual `false` does
+   not, and manual `true` does. Confirm the promoted digest matches the verified manifest.
+
+**Acceptance criteria:** Both local modes remain usable, invalid inputs fail closed, and
+promotion follows the gate. A failed remote push may leave already published architecture
+tags; it is not a transactional rollback. The standalone build wrapper publishes a single
+architecture; its explicit `--tag` aliases are outside the CI gate and must not be mistaken
+for CI's multi-architecture promotion.
+
+### Task 6 Execution Record — 2026-10-21
+
+Offline checks target implementation commit `b03dc06` plus this documentation change on
+`codex/apme-quay-ci-publishing`, using macOS with an available ARM64 Podman machine.
+No live workflow was dispatched, registry image built/pushed, or cluster deployment run.
+
+| Check | Result / evidence |
+| --- | --- |
+| `bash test/test-apme-artifact-resolver.sh` | PASS: 62 cases, including four-plugin npm/OCI failures and independent GitHub ZIP digest checks. |
+| `bash test/test-apme-plugin-pack.sh` | PASS: 17 tests, including checksum mismatch before parsing/writing and the real checked-in six-plugin pack. |
+| `python3 test/test-apme-build-image.py -v` | PASS: 15 tests with container/registry doubles, including failed pushes and tampered matrix inputs. |
+| `/Users/cferman/Documents/GitHub/aap-demo/.venv-lint/bin/python3 test/test-apme-preloaded-image.py -v` | PASS: 18 tests. System `python3` initially failed with `ModuleNotFoundError: No module named 'yaml'`; the existing lint venv supplies PyYAML and Ansible. |
+| Shell syntax / ShellCheck | PASS for `addons/apme-eap/ci/*.sh`; each script also checked individually. |
+| Brief's addon/workflow yamllint command | Exit 0, no errors, 53 existing warnings (document-start/line-length); `.github/` excluded by repo config. |
+| Explicit strict workflow YAML lint with `ignore: ''` | PASS, no warnings. `actionlint` unavailable; YAML/fixture checks used as specified by the plan. |
+| Deployment playbook syntax check | PASS, two implicit-localhost/inventory warnings; initial sandbox temp-directory denial resolved by rerunning with filesystem permission. |
+| `make test` | PASS: repository shell syntax and help-command dry run. |
+| Markdown lint and `git diff --check` | PASS for the three changed documentation files; no whitespace errors. |
+| Secret baseline refresh | The first pre-commit run updated `.secrets.baseline` line numbers for existing documentation findings and its timestamp; no new hashed findings were added. |
+
+Live CI-002/CI-003/CI-004 checks remain **PENDING**. `APME_ARTIFACT_TOKEN`, `QUAY_USERNAME`,
+`QUAY_TOKEN`, `REGISTRY_REDHAT_USERNAME`, and `REGISTRY_REDHAT_PASSWORD` were unset in this
+process; repository secret configuration was not inspected. Podman reports ARM64, which
+does not supply an x86 cluster or prove either cluster smoke test. Do not enable the
+publishing gate based on offline results. Pending evidence includes upstream live selection,
+base-image access, native ARM runner access, both Quay architecture tags and manifest digest,
+public/private pulls, x86/ARM64 prebuilt rollouts, local fallback/Podman-machine publishing,
+and live `latest` promotion. Preserve run URLs, provenance, and cluster observations when
+these checks are performed.
+
 ## Test Summary Template
+
+Copy this template for a live run and replace each status only after collecting evidence.
+The expected-result checkmarks in the test cases are acceptance criteria, not run results.
 
 ```markdown
 ## Test Execution Summary
@@ -486,21 +692,25 @@ kubectl get pods -n apme  # Should exist again
 
 | Test ID | Test Name | Status | Notes |
 |---------|-----------|--------|-------|
-| TC-001 | Clean Installation | ✅ PASS | |
-| TC-002 | Idempotent Re-Run | ✅ PASS | |
-| TC-003 | Token Auto-Creation | ✅ PASS | |
-| TC-004 | AAP Resource Creation | ✅ PASS | |
-| TC-005 | Job Launch and Monitoring | ✅ PASS | |
-| TC-006 | MicroShift Compatibility | ✅ PASS | |
-| TC-007 | Tar-Free File Copy | ✅ PASS | |
-| TC-008 | Cleanup and Re-Deploy | ✅ PASS | |
-| TC-009 | AAP Not Deployed Error | ✅ PASS | |
-| TC-010 | Invalid Credentials Error | ✅ PASS | |
-| PT-001 | Deployment Time | ✅ PASS | X min XX sec |
-| PT-002 | Venv Size | ✅ PASS | XX MB |
-| ST-001 | Token Permissions | ✅ PASS | |
-| ST-002 | Secret Storage | ✅ PASS | |
-| RT-001 | Portal Addon Compatibility | ✅ PASS | |
+| TC-001 | Clean Installation | NOT RUN | |
+| TC-002 | Idempotent Re-Run | NOT RUN | |
+| TC-003 | Token Auto-Creation | NOT RUN | |
+| TC-004 | AAP Resource Creation | NOT RUN | |
+| TC-005 | Job Launch and Monitoring | NOT RUN | |
+| TC-006 | MicroShift Compatibility | NOT RUN | |
+| TC-007 | Tar-Free File Copy | NOT RUN | |
+| TC-008 | Cleanup and Re-Deploy | NOT RUN | |
+| TC-009 | AAP Not Deployed Error | NOT RUN | |
+| TC-010 | Invalid Credentials Error | NOT RUN | |
+| PT-001 | Deployment Time | NOT RUN | |
+| PT-002 | Venv Size | NOT RUN | |
+| ST-001 | Token Permissions | NOT RUN | |
+| ST-002 | Secret Storage | NOT RUN | |
+| RT-001 | Portal Addon Compatibility | NOT RUN | |
+| CI-001 | Offline image checks | NOT RUN | |
+| CI-002 | Non-latest Quay publish | NOT RUN | Run URL, immutable tag, manifest digest |
+| CI-003 | x86/ARM64 prebuilt deployment | NOT RUN | Cluster/architecture, public/private pull evidence |
+| CI-004 | Fallback, failures, latest gate | NOT RUN | |
 
 ### Issues Found
 
