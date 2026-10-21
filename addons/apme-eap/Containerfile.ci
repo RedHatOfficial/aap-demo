@@ -1,0 +1,23 @@
+# Preload a normalized, verified pack produced by ci/fetch-plugin-artifact.sh.
+# Build context must contain plugin-pack.tar.gz and ci/extract-plugin-pack.py.
+# Stage the extractor beside the resolver output under ci/ before building.
+# Source artifact.env and pass its metadata as runtime build arguments:
+#   podman build -f /path/to/addons/apme-eap/Containerfile.ci \
+#     --build-arg PLUGIN_PACK_SHA256="$APME_PACK_SHA256" \
+#     --build-arg PLUGIN_PACK_FORMAT="$APME_PACK_FORMAT" /path/to/context
+# Both npm and Docker/OCI packs must contain all six APME plugins.
+ARG BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9
+FROM ${BASE_IMAGE}
+
+USER root
+
+ARG PLUGIN_PACK_SHA256
+ARG PLUGIN_PACK_FORMAT
+COPY plugin-pack.tar.gz /tmp/plugin-pack.tar.gz
+COPY ci/extract-plugin-pack.py /tmp/extract-plugin-pack.py
+RUN test -n "${PLUGIN_PACK_SHA256}" \
+    && PLUGIN_PACK_SHA256="${PLUGIN_PACK_SHA256}" PLUGIN_PACK_FORMAT="${PLUGIN_PACK_FORMAT}" \
+       python3 /tmp/extract-plugin-pack.py \
+    && rm /tmp/plugin-pack.tar.gz /tmp/extract-plugin-pack.py
+
+USER 1001
