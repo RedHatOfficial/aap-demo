@@ -173,6 +173,77 @@ Roles execute in sequence:
 
 ## Configuration
 
+### Build and publish a preloaded portal image locally
+
+From the repository root, use Bash, Podman, GitHub CLI (`gh`), `jq`, `unzip`,
+`tar`, and `sha256sum` (or `shasum`). Podman must be running. Supply `GH_TOKEN`
+through your environment with permission to read upstream Actions artifacts.
+For publishing, also supply `QUAY_USERNAME` and `QUAY_TOKEN` with push access
+to `quay.io/aapdemo/apme-eap`. Do not put tokens in command arguments or files.
+
+```bash
+# Build only (no Quay login or publication)
+addons/apme-eap/ci/build-image.sh --source-ref latest
+
+# Build and publish
+addons/apme-eap/ci/build-image.sh --source-ref latest --push
+```
+
+The branch's existing CI example points at `ansible/ansible-rhdh-plugins`, which
+is also this command's default source. The deployment setting `apme_source_repo`
+can be set to `ansible/apme` when that repository publishes the complete six-plugin
+pack. For this standalone command, select it with `--source-repo ansible/apme`
+or `APME_SOURCE_REPO=ansible/apme`. The command does not read Ansible defaults.
+
+The resolver requires all six plugins and records the exact source SHA, artifact
+ID, pack format, and artifact digest (`APME_PACK_SHA256`, the downloaded pack's
+SHA256) in `artifact.env`. It also checks GitHub's ZIP digest when available.
+The build uses the normalized `plugin-pack.tar.gz` with `Containerfile.ci`,
+passing `PLUGIN_PACK_SHA256` and `PLUGIN_PACK_FORMAT`; extraction verifies the
+pack again during the image build. OCI labels record the upstream repository,
+source SHA, artifact ID, pack SHA256, and UTC build timestamp.
+
+The default immutable tag is `apme-<upstream-source-sha>-<pack-sha256-prefix>`
+(12 hex digest characters). `--tag <tag>` accepts only
+`[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`. Publication is always to
+`quay.io/aapdemo/apme-eap`; only `--push` publishes. Output includes the local
+image config digest, the pushed registry manifest digest when publishing,
+and the path to `artifact.env`. Preserve that file and the pack for provenance.
+The default output directory is printed; set `--output-dir` to retain them at
+a chosen location. Build and authentication scratch directories are removed.
+
+To repeat a build, source only your trusted, locally generated metadata and
+pass its recorded values back to the command:
+
+```bash
+source /path/to/previous-build/artifact.env
+addons/apme-eap/ci/build-image.sh \
+  --source-repo "$APME_SOURCE_REPO" --source-ref "$APME_SOURCE_SHA" \
+  --pack-sha256 "$APME_PACK_SHA256" --output-dir /path/to/repeat-build
+```
+
+Sourced `APME_SOURCE_SHA` and `APME_PACK_SHA256` also serve as defaults when
+not overridden (`APME_SOURCE_REF` takes precedence over `APME_SOURCE_SHA`).
+The resolver downloads and validates a fresh artifact for that commit rather
+than relying on a fixed artifact ID. A changed pack digest or an expired or
+missing artifact fails the build. Retrying does not bypass verification.
+This pins plugin inputs; a mutable base tag and build timestamp mean image
+bytes can differ. Set `BASE_IMAGE` to a digest reference for a pinned base
+(default: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9`).
+
+Optional `REGISTRY_REDHAT_USERNAME` and `REGISTRY_REDHAT_PASSWORD` authenticate
+the base-image pull; otherwise Podman uses its existing authentication. Logins
+use `--password-stdin`. A temporary credential helper reads credentials from
+the environment over pipes and discards credential stores, so its configuration
+and script contain no secrets and no registry password is written to disk.
+
+`apme_preloaded_image_ref`, `apme_preloaded_image_pull_secret`, `apme_source_repo`,
+and `apme_source_ref` are empty by default. These settings reserve the future
+preloaded deployment interface; this publishing command does not wire it into
+deployment. An empty `apme_preloaded_image_ref` preserves the existing
+local/in-cluster fallback (the `apme_image_build` role where used). The current
+branch's chart-native runtime OCI deployment continues unchanged.
+
 ### Auto-Discovered Values
 
 The deploy.sh wrapper automatically discovers:
