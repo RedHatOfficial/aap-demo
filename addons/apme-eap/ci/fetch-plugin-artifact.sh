@@ -99,10 +99,13 @@ fi
 artifact="$(jq '.[0]' <<<"$candidates")"
 APME_ARTIFACT_ID="$(jq -er '.id | numbers | select(. > 0 and floor == .)' <<<"$artifact")" || die 'invalid GitHub artifact ID'
 APME_ARTIFACT_NAME="$(jq -er '.name | strings | select(length > 0 and (contains("\u0000") | not))' <<<"$artifact")" || die 'invalid GitHub artifact name'
-zip_digest="$(jq -r '.digest // ""' <<<"$artifact")"
+zip_digest="$(jq -er '
+  if .digest == null then "" else
+    .digest | select(type == "string") | select(test("^sha256:[0-9a-f]{64}$"))
+  end
+' <<<"$artifact")" || die 'invalid GitHub artifact ZIP digest'
 api "repos/$APME_SOURCE_REPO/actions/artifacts/$APME_ARTIFACT_ID/zip" >"$work/artifact.zip"
 if [[ -n "$zip_digest" ]]; then
-  [[ "$zip_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid GitHub artifact ZIP digest'
   [[ "$(digest "$work/artifact.zip")" == "$zip_digest" ]] || die 'GitHub artifact ZIP digest mismatch'
 fi
 
