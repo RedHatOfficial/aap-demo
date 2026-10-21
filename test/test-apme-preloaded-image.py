@@ -60,19 +60,40 @@ class SavedImageSettingsTests(unittest.TestCase):
 
 @unittest.skipIf(shutil.which("ansible-playbook") is None, "ansible-playbook is not installed")
 class DeploymentImageTests(unittest.TestCase):
-    def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0):
+    def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0,
+                  inspect_exit=0, build_exit=0, installed_plugins=None):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             if prepare:
                 prepare(work)
-            recorder = work / "container-command"
-            recorder.write_text(
-                "#!/usr/bin/env python3\nimport json, sys\n"
+            plugin_root = work / "installed-plugins"
+            if installed_plugins is not None:
+                for name, identity in installed_plugins.items():
+                    (plugin_root / name).mkdir(parents=True)
+                    (plugin_root / name / "package.json").write_text(json.dumps({"name": identity}))
+            recorder_source = (
+                "#!/usr/bin/env python3\nimport json, sys\nfrom pathlib import Path\n"
                 f"with open({str(work / 'commands')!r}, 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                "command = sys.argv[1]\n"
+                "if Path(sys.argv[0]).name == 'skopeo' and command != 'inspect':\n"
+                "    sys.exit('host Skopeo cannot read Podman VM storage')\n"
+                "if command == 'run':\n"
+                f"    if {installed_plugins is not None!r}:\n"
+                "        from unittest.mock import patch\n"
+                "        real_path = Path\n"
+                f"        container_root = real_path({str(plugin_root)!r})\n"
+                "        with patch('pathlib.Path', side_effect=lambda value: container_root\n"
+                "                   if value == '/opt/app-root/src/dynamic-plugins/dist' else real_path(value)):\n"
+                "            exec(sys.argv[-1], {'__name__': '__main__'})\n"
+                f"    sys.exit({run_exit})\n"
+                f"if command == 'inspect' and {inspect_exit}: sys.exit({inspect_exit})\n"
+                f"if command == 'build' and {build_exit}: sys.exit({build_exit})\n"
                 f"print(json.dumps({{'Digest': {DIGEST!r}}}) if 'inspect' in sys.argv else 'validated six plugins')\n"
-                f"sys.exit({run_exit} if sys.argv[1] == 'run' else 0)\n"
             )
-            recorder.chmod(0o755)
+            for name in ("podman", "skopeo"):
+                recorder = work / name
+                recorder.write_text(recorder_source)
+                recorder.chmod(0o755)
             defaults = {
                 "collection_root": str(ADDON),
                 "apme_portal_helm_values_path": str(work / "values.yml"),
@@ -83,10 +104,10 @@ class DeploymentImageTests(unittest.TestCase):
                 "openshift_api_url": "https://api.example.test:6443",
                 "aap_host": "https://aap.example.test",
                 "configure_github_secrets": False,
-                "apme_preloaded_image_skopeo_binary": str(recorder),
-                "apme_preloaded_image_podman_binary": str(recorder),
-                "apme_image_build_skopeo_binary": str(recorder),
-                "apme_image_build_podman_binary": str(recorder),
+                "apme_preloaded_image_skopeo_binary": str(work / "skopeo"),
+                "apme_preloaded_image_podman_binary": str(work / "podman"),
+                "apme_image_build_skopeo_binary": str(work / "skopeo"),
+                "apme_image_build_podman_binary": str(work / "podman"),
                 **variables,
             }
             play = {"name": "Test image deployment", "hosts": "localhost", "gather_facts": False,
@@ -144,11 +165,33 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(commands, [])
 
     def test_unqualified_or_malformed_image_fails_before_container_commands(self):
-        for ref in ("apme:latest", "team/apme:latest", "quay.io/team/apme", "quay.io/team/apme@sha256:abc", "https://quay.io/team/apme:latest"):
+        for ref in ("apme:latest", "team/apme:latest", "team-name/apme:latest", "quay.io/team/apme",
+                    "quay.io/team/apme@sha256:abc", "https://quay.io/team/apme:latest",
+                    "registry:5000:6000/team/apme:v1", "quay.io/team/apme--:v1"):
             with self.subTest(ref=ref):
                 rc, output, _, commands = self.run_roles({"apme_preloaded_image_ref": ref}, ["apme_preloaded_image"])
                 self.assertNotEqual(rc, 0, output)
                 self.assertIn(ref, output)
+                self.assertEqual(commands, [])
+
+    def test_qualified_port_and_repeated_hyphens_preserve_tag_or_digest(self):
+        for ref, registry, repository, tag, digest in (
+            ("registry:5000/team/apme:v1", "registry:5000", "team/apme", "v1", ""),
+            ("registry:5000/team/apme--eap@" + DIGEST, "registry:5000", "team/apme--eap", "", DIGEST),
+            ("quay.io/team--name/apme---eap:v1", "quay.io", "team--name/apme---eap", "v1", ""),
+        ):
+            with self.subTest(ref=ref):
+                rc, output, _, commands = self.run_roles(
+                    {"apme_preloaded_image_ref": ref}, ["apme_preloaded_image"], check=True,
+                    tasks=[{"name": "Check parsed image", "ansible.builtin.assert": {"that": [
+                        "apme_preloaded_registry == '" + registry + "'",
+                        "apme_preloaded_repository == '" + repository + "'",
+                        "apme_preloaded_tag == '" + tag + "'",
+                        "apme_preloaded_digest == '" + digest + "'",
+                        "not apme_preloaded_image_validated",
+                    ]}}],
+                )
+                self.assertEqual(rc, 0, output)
                 self.assertEqual(commands, [])
 
     def test_fallback_requires_resolved_pack_even_in_check_mode(self):
@@ -202,8 +245,74 @@ class DeploymentImageTests(unittest.TestCase):
         build = next(c for c in commands if c[0] == "build")
         self.assertIn("--build-arg=PLUGIN_PACK_FORMAT=oci", build)
         self.assertIn("--build-arg=PLUGIN_PACK_SHA256=sha256:943f67afce1f9d1852df09b74da0126ef73f861e1ffc066e5196cc3701f341c3", build)
-        push = next(c for c in commands if c[0] == "copy")
-        self.assertIn("docker://registry.example.test/apme/rhdh-apme-preloaded:8593383", push)
+        push = next(c for c in commands if c[0] == "push")
+        self.assertEqual(push, ["push", "--tls-verify=false", "localhost/rhdh-apme-preloaded:8593383",
+                                "docker://registry.example.test/apme/rhdh-apme-preloaded:8593383"])
+        self.assertFalse(any(c[0] == "run" for c in commands))
+
+    def local_image_variables(self):
+        return {
+            "plugin_sha": "8593383", "oci_registry": "registry.example.test/apme",
+            "oci_registry_internal": "registry.svc:5000/apme",
+            "apme_oci_tar_resolved": str(ADDON / "plugin_packs/apme-prototype-plugins-8593383-20260718025043.oci.tar.gz"),
+        }
+
+    def test_cached_image_is_reused_only_after_all_six_plugins_validate(self):
+        rc, output, values, commands = self.run_roles(
+            self.local_image_variables(), ["apme_image_build", "apme_helm_values"],
+            installed_plugins={name: name + "-dynamic" for name in PLUGIN_NAMES},
+        )
+        self.assertEqual(rc, 0, output)
+        self.assertIsNotNone(values)
+        self.assertEqual([c[0] for c in commands], ["inspect", "run"])
+        validation = commands[1]
+        self.assertIn("registry.example.test/apme/rhdh-apme-preloaded:8593383", validation)
+        self.assertIn("--pull=always", validation)
+        self.assertIn("--tls-verify=false", validation)
+        self.assertIn("--network=none", validation)
+        self.assertIn("--read-only", validation)
+        self.assertIn("--entrypoint=python3", validation)
+
+    def test_incomplete_or_wrong_identity_cached_image_is_rebuilt_before_rendering(self):
+        incomplete = {name: name + "-dynamic" for name in PLUGIN_NAMES[:-1]}
+        wrong_identity = {name: name + "-dynamic" for name in PLUGIN_NAMES}
+        wrong_identity[PLUGIN_NAMES[-1]] = "wrong-plugin"
+        for installed in (incomplete, wrong_identity):
+            with self.subTest(installed=installed):
+                rc, output, values, commands = self.run_roles(
+                    self.local_image_variables(), ["apme_image_build", "apme_helm_values"],
+                    installed_plugins=installed,
+                )
+                self.assertEqual(rc, 0, output)
+                self.assertIsNotNone(values)
+                self.assertEqual([c[0] for c in commands], ["inspect", "run", "build", "push", "rmi"])
+
+    def test_failed_rebuild_of_invalid_cache_stops_before_helm_rendering(self):
+        rc, output, values, commands = self.run_roles(
+            self.local_image_variables(), ["apme_image_build", "apme_helm_values"],
+            installed_plugins={}, build_exit=1,
+        )
+        self.assertNotEqual(rc, 0, output)
+        self.assertIsNone(values)
+        self.assertEqual([c[0] for c in commands], ["inspect", "run", "build"])
+        self.assertNotIn("Copy portal Helm values template", output)
+
+    def test_missing_cached_image_builds_without_running_cache_validation(self):
+        rc, output, _, commands = self.run_roles(
+            self.local_image_variables(), ["apme_image_build"], inspect_exit=1,
+        )
+        self.assertEqual(rc, 0, output)
+        self.assertEqual([c[0] for c in commands], ["inspect", "build", "push", "rmi"])
+
+    def test_local_build_check_mode_never_inspects_validates_builds_or_pushes(self):
+        for force in (False, True):
+            with self.subTest(force=force):
+                rc, output, _, commands = self.run_roles(
+                    {**self.local_image_variables(), "apme_image_build_force": force},
+                    ["apme_image_build"], check=True,
+                )
+                self.assertEqual(rc, 0, output)
+                self.assertEqual(commands, [])
 
     def test_named_pull_secret_requires_explicit_credentials(self):
         rc, output, _, _ = self.run_roles(
