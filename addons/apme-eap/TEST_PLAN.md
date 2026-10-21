@@ -625,8 +625,17 @@ image child, preserved digest, local six-plugin delivery, and working public/pri
    The fallback does not fetch current GitHub artifacts; source defaults are not a fetch switch.
 2. Confirm a valid cached portal image is checked for all six plugin identities before
    reuse. An invalid cache must rebuild; a failed rebuild must stop before Helm renders
-   local plugin paths. `apme_image_build_force: true` forces a rebuild. For custom OCI packs,
-   supply the independently verified `apme_image_build_pack_sha256`.
+   local plugin paths. To force a rebuild or supply a custom OCI pack, use the README's
+   [direct playbook invocation](README.md#use-a-published-quay-portal-image) after the
+   wrapper has initialized its venv, collections, and generated vars. Load defaults first,
+   then `-e @"$HOME/.aap-demo/apme-eap-vars.yml"`, then the extra `-e` overrides: empty
+   `apme_preloaded_image_ref`, `skip_plugin_push: false`, and `apme_image_build_force: true`.
+   For a custom pack, also supply the absolute `apme_oci_tar` path and independently verified
+   `apme_image_build_pack_sha256`. Omit both custom-pack overrides to rebuild the bundled pack.
+   Confirm this direct invocation rebuilds even when the cached image validates.
+   Do not rely on saving these three fallback overrides in the generated vars: the wrapper
+   regenerates that file on enable and does not preserve them. The documented preloaded-image
+   settings are preserved; clear the prebuilt reference explicitly for this fallback test.
 3. Test the opt-out separately: empty prebuilt reference plus `skip_plugin_push: true`
    skips both local publication and image build. The runtime installer then requires the
    plugin archive to have already been published at its expected registry path.
