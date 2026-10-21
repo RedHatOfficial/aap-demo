@@ -11,6 +11,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = yaml.safe_load((ROOT / ".github/workflows/apme-eap-image.yaml").read_text())
+VALIDATION_GATE = next(step["run"] for step in WORKFLOW["jobs"]["resolve"]["steps"]
+                       if step.get("name") == "Require validation before latest")
 MANIFEST = next(step["run"] for step in WORKFLOW["jobs"]["manifest"]["steps"]
                 if step.get("name", "").startswith("Assemble"))
 
@@ -44,7 +46,8 @@ else:
 
 
 class ManifestPublicationTests(unittest.TestCase):
-    def run_manifest(self, state="missing", architectures=("amd64", "arm64"), promote=False):
+    def run_manifest(self, state="missing", architectures=("amd64", "arm64"), promote=False,
+                     event="workflow_dispatch", publish_enabled="true"):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             bindir = work / "bin"
@@ -64,11 +67,18 @@ class ManifestPublicationTests(unittest.TestCase):
                    "RUNNER_TEMP": str(work), "REMOTE_STATE": state, "RAW_MANIFEST": manifest,
                    "DIGEST": digest, "IMAGE": "quay.io/aapdemo/apme-eap", "IMMUTABLE_TAG": "apme-test",
                    "QUAY_USERNAME": "robot", "QUAY_TOKEN": "workflow-test-token",
-                   "EVENT_NAME": "workflow_dispatch", "EVENT_REF": "refs/heads/main",
-                   "REQUEST_LATEST": "true" if promote else "false", "PUBLISH_ENABLED": "true",
+                   "EVENT_NAME": event, "EVENT_REF": "refs/heads/main",
+                   "REQUEST_LATEST": "true" if promote else "false", "PUBLISH_ENABLED": publish_enabled,
                    "GITHUB_STEP_SUMMARY": str(work / "summary")}
-            result = subprocess.run(["bash", "-c", MANIFEST], cwd=ROOT, env=env, text=True, capture_output=True)
-            calls = [json.loads(line) for line in (work / "commands").read_text().splitlines()]
+            # An unset repository variable resolves to an empty step environment value.
+            env.pop("APME_QUAY_PUBLISH_ENABLED", None)
+            result = subprocess.run(["bash", "-c", VALIDATION_GATE], cwd=ROOT, env=env,
+                                    text=True, capture_output=True)
+            if result.returncode == 0:
+                result = subprocess.run(["bash", "-c", MANIFEST], cwd=ROOT, env=env,
+                                        text=True, capture_output=True)
+            command_log = work / "commands"
+            calls = [json.loads(line) for line in command_log.read_text().splitlines()] if command_log.exists() else []
             self.assertNotIn(env["QUAY_TOKEN"], result.stdout + result.stderr)
             self.assertFalse(list(work.glob("apme-manifest.*")))
             return result, calls
@@ -88,6 +98,20 @@ class ManifestPublicationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(any(c[:3] == ["podman", "manifest", "push"] for c in calls))
                 self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_dispatch_latest_with_unset_gate_fails_before_publication(self):
+        result, calls = self.run_manifest(promote=True, publish_enabled="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("APME_QUAY_PUBLISH_ENABLED=true", result.stdout + result.stderr)
+        self.assertEqual(calls, [])
+
+    def test_main_push_with_enabled_gate_promotes_latest_without_dispatch_request(self):
+        result, calls = self.run_manifest(event="push")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sum(c[:3] == ["podman", "manifest", "push"] for c in calls), 1)
+        copies = [c for c in calls if c[:2] == ["skopeo", "copy"]]
+        self.assertEqual(len(copies), 1)
+        self.assertEqual(copies[0][-1], "docker://quay.io/aapdemo/apme-eap:latest")
 
     def test_incomplete_manifest_never_promotes(self):
         result, calls = self.run_manifest(architectures=("amd64",), promote=True)
