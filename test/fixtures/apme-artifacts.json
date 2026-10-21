@@ -1,0 +1,9 @@
+{
+  "total_count": 4,
+  "artifacts": [
+    {"id": 303, "name": "apme-expired", "expired": true, "created_at": "2026-10-21T10:30:00Z", "digest": null},
+    {"id": 302, "name": "coverage", "expired": false, "created_at": "2026-10-21T10:00:00Z", "digest": null},
+    {"id": 301, "name": "apme-plugins", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null},
+    {"id": 304, "name": "plugin-expiry-unknown", "created_at": "2026-10-21T11:00:00Z", "digest": null}
+  ]
+}
