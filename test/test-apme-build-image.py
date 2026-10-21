@@ -178,6 +178,48 @@ if args[:2] == ["image", "inspect"]:
         self.assertIn("repos/ansible/apme/actions/runs", (self.work / "api.log").read_text())
         self.assertNotIn("repos/ansible/apme\n", (self.work / "api.log").read_text())
 
+    def resolved_pack(self):
+        resolved = self.work / "resolved pack"
+        resolved.mkdir()
+        shutil.copyfile(self.pack, resolved / "plugin-pack.tar.gz")
+        (resolved / "artifact.env").write_text(
+            "export APME_SOURCE_REPO=ansible/ansible-rhdh-plugins\n"
+            f"export APME_SOURCE_SHA={SHA}\n"
+            "export APME_RUN_ID=1 APME_ARTIFACT_ID=2 APME_ARTIFACT_NAME=plugins\n"
+            "export APME_PACK_FILENAME=plugin-pack.tar.gz APME_PACK_FORMAT=npm\n"
+            f"export APME_PACK_SHA256={self.pack_hash}\n")
+        return resolved
+
+    def test_resolved_pack_publishes_only_requested_architecture_without_fetch(self):
+        resolved = self.resolved_pack()
+        self.env.pop("GH_TOKEN")
+        for arch in ("amd64", "arm64"):
+            with self.subTest(arch=arch):
+                (self.work / "podman.log").unlink(missing_ok=True)
+                self.run_build("--pack-dir", str(resolved), "--architecture", arch, "--push")
+                self.assertFalse((self.work / "api.log").exists())
+                calls = self.calls()
+                self.assertEqual([c[0] for c in calls], ["build", "image", "login", "push"])
+                self.assertIn("--arch", calls[0])
+                self.assertEqual(calls[0][calls[0].index("--arch") + 1], arch)
+                self.assertEqual(calls[-1][-1], "docker://quay.io/aapdemo/apme-eap:apme-"
+                                 + SHA + "-" + self.pack_hash[7:19] + "-" + arch)
+
+    def test_resolved_pack_rejects_tampering_before_build_or_login(self):
+        resolved = self.resolved_pack()
+        with (resolved / "plugin-pack.tar.gz").open("ab") as pack:
+            pack.write(b"changed")
+        self.run_build("--pack-dir", str(resolved), "--architecture", "amd64", "--push", ok=False)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse((self.work / "api.log").exists())
+
+    def test_architecture_rejects_invalid_values_and_unqualified_aliases(self):
+        for args in (("--architecture", "x86"), ("--architecture", "amd64", "--tag", "latest")):
+            with self.subTest(args=args):
+                self.run_build(*args, ok=False)
+                self.assertEqual(self.calls(), [])
+                self.assertFalse((self.work / "api.log").exists())
+
     def test_changed_pack_fails_before_build_or_push(self):
         self.run_build("--source-ref", SHA, "--pack-sha256", DIGEST, "--push", ok=False)
         self.assertEqual(self.calls(), [])
