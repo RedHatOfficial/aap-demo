@@ -492,6 +492,7 @@ bash test/test-apme-artifact-resolver.sh
 bash test/test-apme-plugin-pack.sh
 python3 test/test-apme-build-image.py -v
 python3 test/test-apme-preloaded-image.py -v
+python3 test/test-apme-image-workflow.py -v
 bash -n addons/apme-eap/ci/*.sh
 for script in addons/apme-eap/ci/*.sh; do bash -n "$script" || exit 1; done
 shellcheck addons/apme-eap/ci/*.sh
@@ -508,11 +509,14 @@ The explicit workflow lint overrides `.yamllint`'s `.github/` exclusion. Do not 
 the first yamllint command alone as workflow validation. If system Python lacks PyYAML,
 use the existing lint venv's Python and record the interpreter used; do not skip the tests.
 
-**Acceptance criteria:** All focused suites pass, including four-plugin npm/OCI rejection,
-ZIP/pack digest mismatch, malformed identity, unsafe archive paths, expired/ambiguous
+**Acceptance criteria:** All focused suites pass, including simultaneous OCI/npm/build-record
+selection, raw-gzip and ZIP transport, four-plugin npm/OCI rejection,
+payload/pack digest mismatch, malformed identity, unsafe archive paths, expired/ambiguous
 artifacts, and no fallback to an older successful run. Build-wrapper tests must stop before
 push on resolution/checksum/build/login failure, preserve immutable tags with aliases,
-and reject tampered matrix inputs. Deployment tests must cover tag/digest rendering, all
+reject existing immutable tags and unknown remote status, suffix host-architecture pushes,
+and reject tampered matrix inputs. Manifest tests must block overwrites and retain promotion
+checks. Deployment tests must cover external-route/digest rendering, all
 six local plugin paths, missing private credentials, no build in prebuilt mode, check mode,
 fallback pack requirements, cache validation, invalid-cache rebuild, and failed rebuilds
 blocking Helm rendering. Container/registry commands in these suites are test doubles;
@@ -569,9 +573,11 @@ digest (or its absence) before dispatch so it can be compared after publication.
 
 **Acceptance criteria:** `T-amd64`, `T-arm64`, and `T` exist with exactly the expected
 platforms, where `T=apme-<source-sha>-<12-hex-pack-digest>`. AMD64 uses the Red Hat RHDH 1.9
-base and ARM64 uses the community RHDH 1.9 base. No `latest` change occurs. Artifact-derived
-tags are the immutable naming policy, not registry-enforced byte immutability; retain the
-published manifest digest because base tags and build timestamps can change on rebuild.
+base and ARM64 uses the community RHDH 1.9 base. No `latest` change occurs. Architecture
+and manifest publishers refuse existing tags and unknown registry status before pushing.
+Retry only failed jobs whose target tags are absent. If publication preceded a later
+failure, reuse its recorded digest or choose new source/pack inputs for a full republish.
+Registry tag protection is needed to prevent races with independent publishers.
 
 ### CI-003: Prebuilt Deployment on AMD64 and ARM64
 
@@ -622,6 +628,10 @@ image child, preserved digest, local six-plugin delivery, and working public/pri
    Keep `skip_plugin_push: false`, then deploy. Confirm local pack resolution supplies
    `apme_oci_tar_resolved` and deployment runs `apme_oci_push` before `apme_image_build`.
    Publication uses Podman push from its own storage, including on macOS Podman machine.
+   The rendered portal image must use the external `oci_registry` route supported by
+   the node runtime, retain its repository namespace, and pin the inspected/pushed digest
+   with an empty tag. After a forced/repair rebuild, compare the new pod imageID with
+   that pushed digest; an old locally cached tag must not determine deployment bytes.
    The fallback does not fetch current GitHub artifacts; source defaults are not a fetch switch.
 2. Confirm a valid cached portal image is checked for all six plugin identities before
    reuse. An invalid cache must rebuild; a failed rebuild must stop before Helm renders
@@ -683,6 +693,28 @@ base-image access, native ARM runner access, both Quay architecture tags and man
 public/private pulls, x86/ARM64 prebuilt rollouts, local fallback/Podman-machine publishing,
 and live `latest` promotion. Preserve run URLs, provenance, and cluster observations when
 these checks are performed.
+
+### Whole-Branch Review Fix Validation — 2026-10-21
+
+The review fixes add format-specific artifact selection, raw gzip transport, host
+architecture publication tags, fail-closed write-once checks for architecture images
+and manifests, and external-route fallback images pinned to registry digests.
+The artifact fixture includes the simultaneous npm/OCI and `.dockerbuild` names observed
+in upstream run `35992077617`; checking those names does not validate a live download.
+Targeted suites exercise the real resolver, build wrapper, manifest step, Ansible roles,
+and Helm rendering with offline registry/container command doubles. Live Quay publication,
+both architecture pulls, Podman-machine publication, and cluster rollouts remain **PENDING**.
+
+| Targeted command | Offline result |
+| --- | --- |
+| `bash test/test-apme-artifact-resolver.sh` | 69/69 passed, including both transport formats and simultaneous upstream pack/record names. |
+| `bash test/test-apme-plugin-pack.sh` | 17/17 passed; six-plugin extraction and safety checks preserved. |
+| `python3 test/test-apme-build-image.py -v` | 20/20 passed, including architecture suffixes, reserved aliases, existing tags, and unknown registry status. |
+| Lint venv `python3 test/test-apme-preloaded-image.py -v` | 19/19 passed; cached, forced, and repaired fallback images use the external route and correct digest. |
+| Lint venv `python3 test/test-apme-image-workflow.py -v` | 3/3 passed; first publication, overwrite prevention, and manifest promotion checks execute the real workflow shell. |
+| Focused Ansible lint / playbook syntax | Passed: 0 rule failures/warnings; syntax check has the existing implicit-localhost inventory warnings. |
+| Shell syntax, ShellCheck, shfmt, Markdown lint, `make test`, `git diff --check` | Passed. |
+| Publishing workflow strict YAML lint | Passed; the test workflow and Ansible role retain their existing document-start warnings under the repository YAML config. |
 
 ## Test Summary Template
 
