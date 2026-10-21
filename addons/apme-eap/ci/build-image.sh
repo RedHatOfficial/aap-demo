@@ -13,7 +13,10 @@ usage() {
 Usage: build-image.sh [--source-ref latest|<full-sha>] [--source-repo owner/repo]
                       [--tag <tag>] [--pack-sha256 sha256:<digest>]
                       [--output-dir <directory>] [--push]
-Requires GH_TOKEN and Podman. Only --push requires QUAY_USERNAME/QUAY_TOKEN.
+                      [--pack-dir <trusted-resolver-output>] [--architecture amd64|arm64]
+Requires Podman; fetching requires GH_TOKEN. Only --push requires Quay credentials.
+--pack-dir consumes trusted artifact.env and revalidates the pack without fetching.
+--architecture publishes only the architecture-suffixed immutable tag; no aliases.
 Optional: BASE_IMAGE, REGISTRY_REDHAT_USERNAME/REGISTRY_REDHAT_PASSWORD.
 Replay: source a trusted artifact.env; APME_SOURCE_SHA and APME_PACK_SHA256
 pin the next resolution and verify the downloaded pack again.
@@ -29,9 +32,11 @@ image_repo=quay.io/aapdemo/apme-eap
 tag=''
 output=''
 push=false
+pack_dir=''
+architecture=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --source-ref | --source-repo | --tag | --pack-sha256 | --output-dir)
+    --source-ref | --source-repo | --tag | --pack-sha256 | --output-dir | --pack-dir | --architecture)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "missing value for $1"
       case "$1" in
         --source-ref) source_ref="$2" ;;
@@ -39,6 +44,8 @@ while [[ $# -gt 0 ]]; do
         --tag) tag="$2" ;;
         --pack-sha256) expected_pack_sha="$2" ;;
         --output-dir) output="$2" ;;
+        --pack-dir) pack_dir="$2" ;;
+        --architecture) architecture="$2" ;;
       esac
       shift 2
       ;;
@@ -57,6 +64,8 @@ done
 [[ "$source_ref" == latest || "$source_ref" =~ ^[0-9a-f]{40}$ ]] || die 'source ref must be latest or a full 40-character commit SHA'
 [[ -z "$tag" || "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die 'invalid image tag'
 [[ -z "$expected_pack_sha" || "$expected_pack_sha" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid expected pack SHA256'
+[[ -z "$architecture" || "$architecture" == amd64 || "$architecture" == arm64 ]] || die 'architecture must be amd64 or arm64'
+[[ -z "$architecture" || -z "$tag" ]] || die 'architecture builds cannot publish unqualified aliases'
 if "$push"; then
   [[ -n "${QUAY_USERNAME:-}" && -n "${QUAY_TOKEN:-}" ]] || die '--push requires QUAY_USERNAME and QUAY_TOKEN'
 fi
@@ -74,7 +83,7 @@ if [[ -z "$output" ]]; then
   output="$(mktemp -d "${TMPDIR:-/tmp}/apme-image.XXXXXX")"
 fi
 mkdir -p -- "$output"
-output="$(cd "$output" && pwd)"
+output="$(cd "$output" && pwd -P)"
 context=''
 auth_dir=''
 cleanup() {
@@ -84,8 +93,15 @@ cleanup() {
   return "$status"
 }
 trap cleanup EXIT
-APME_SOURCE_REPO="$source_repo" APME_SOURCE_REF="$source_ref" \
-  bash "$script_dir/fetch-plugin-artifact.sh" "$output"
+if [[ -n "$pack_dir" ]]; then
+  pack_dir="$(cd "$pack_dir" && pwd -P)"
+  if [[ "$pack_dir" != "$output" ]]; then
+    cp "$pack_dir/plugin-pack.tar.gz" "$pack_dir/artifact.env" "$output/"
+  fi
+else
+  APME_SOURCE_REPO="$source_repo" APME_SOURCE_REF="$source_ref" \
+    bash "$script_dir/fetch-plugin-artifact.sh" "$output"
+fi
 # This metadata was generated locally by the resolver, never taken from the ZIP.
 # shellcheck disable=SC1091
 source "$output/artifact.env"
@@ -93,8 +109,12 @@ if [[ -n "$expected_pack_sha" && "$expected_pack_sha" != "$APME_PACK_SHA256" ]];
   die 'downloaded pack does not match the recorded SHA256'
 fi
 [[ "$APME_PACK_FORMAT" == oci || "$APME_PACK_FORMAT" == npm ]] || die 'unsupported resolved pack format'
+[[ "$APME_SOURCE_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die 'invalid resolved source repository'
+[[ "$APME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die 'invalid resolved source SHA'
+[[ "$APME_PACK_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid resolved pack SHA256'
 pack_hex="${APME_PACK_SHA256#sha256:}"
 immutable_tag="apme-${APME_SOURCE_SHA}-${pack_hex:0:12}"
+[[ -z "$architecture" ]] || immutable_tag+="-$architecture"
 image="$image_repo:$immutable_tag"
 alias_image=''
 if [[ -n "$tag" && "$tag" != "$immutable_tag" ]]; then
@@ -106,6 +126,12 @@ context="$(mktemp -d "$output/.context.XXXXXX")"
 mkdir -p "$context/ci"
 cp "$output/plugin-pack.tar.gz" "$context/plugin-pack.tar.gz"
 cp "$script_dir/extract-plugin-pack.py" "$context/ci/extract-plugin-pack.py"
+if [[ -n "$pack_dir" ]]; then
+  PLUGIN_PACK_SHA256="$APME_PACK_SHA256" PLUGIN_PACK_FORMAT="$APME_PACK_FORMAT" \
+    python3 "$script_dir/extract-plugin-pack.py" \
+    --archive "$context/plugin-pack.tar.gz" --dest "$context/verified-plugins"
+  rm -rf -- "$context/verified-plugins"
+fi
 
 # Use a standard credential helper that reads the environment and discards
 # stores. Podman login normally persists passwords even with --password-stdin;
@@ -133,6 +159,7 @@ HELPER
 chmod 700 "$auth_dir/bin/docker-credential-apme-env"
 export PATH="$auth_dir/bin:$PATH"
 build_cmd=(podman build)
+[[ -z "$architecture" ]] || build_cmd+=(--arch "$architecture")
 if [[ -n "${REGISTRY_REDHAT_USERNAME:-}" ]]; then
   printf '%s\n' '{"auths":{},"credHelpers":{"registry.redhat.io":"apme-env"}}' >"$auth_dir/auth.json"
   printf '%s\n' "$REGISTRY_REDHAT_PASSWORD" | podman login \
