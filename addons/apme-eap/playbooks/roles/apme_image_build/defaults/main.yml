@@ -1,0 +1,10 @@
+---
+# Ported from feature/apmecontainer; keep outputs separate from the opt-in input.
+apme_image_build_name: rhdh-apme-preloaded
+apme_image_build_force: false
+apme_image_build_podman_binary: podman
+apme_image_build_skopeo_binary: skopeo
+apme_image_build_base_x86: registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9
+apme_image_build_base_arm: quay.io/rhdh-community/rhdh:1.9
+# Independently verified digest of the checked-in pack. Override with apme_oci_tar.
+apme_image_build_pack_sha256: sha256:943f67afce1f9d1852df09b74da0126ef73f861e1ffc066e5196cc3701f341c3

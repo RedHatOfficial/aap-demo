@@ -48,6 +48,10 @@
     regexp: "repository: {{ rhdh_image_repository }}\n        tag: \"1\\.9\""
     replace: "repository: {{ rhdh_image_repository }}\n        tag: \"{{ rhdh_image_tag }}\""
 
+- name: Render preloaded portal image and local plugin locations
+  ansible.builtin.include_tasks: preloaded_image.yml
+  when: apme_preloaded_repository is defined
+
 - name: Substitute portal Helm value placeholders  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
@@ -59,9 +63,9 @@
     - regexp: "<cluster-router-base>"
       replace: "{{ openshift_cluster_domain }}"
     - regexp: "<plugin-sha>"
-      replace: "{{ plugin_sha }}"
+      replace: "{{ plugin_sha | default('preloaded') }}"
     - regexp: "<oci-registry>"
-      replace: "{{ oci_registry_internal }}"
+      replace: "{{ oci_registry_internal | default('unused.invalid/apme') }}"
 
 - name: Configure the chart-native dynamic plugin installer  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
@@ -269,3 +273,19 @@
 - name: Display rendered values path  # noqa: var-naming[no-role-prefix]
   ansible.builtin.debug:
     msg: "Rendered portal Helm values: {{ apme_portal_helm_values_path }}"
+
+- name: Require the parsed image fields after all substitutions
+  ansible.builtin.assert:
+    that:
+      - __image.registry == apme_preloaded_registry
+      - __image.repository == apme_preloaded_repository
+      - __image.digest == apme_preloaded_digest | default('')
+      - __image.tag | string == apme_preloaded_tag | string
+      - __image.registry is search('[.:]') or __image.registry == 'localhost'
+    fail_msg: "Preloaded image fields were not rendered correctly."
+  vars:
+    __image: >-
+      {{ (rendered_helm_values.content | b64decode | from_yaml)['redhat-developer-hub'].upstream.backstage.image }}
+  when:
+    - apme_preloaded_repository is defined
+    - not ansible_check_mode

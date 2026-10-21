@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: apme_image_build
+  author: aap-demo contributors
+  license: Apache-2.0
+  description: Build and publish a verified six-plugin RHDH image to the local registry.
+  min_ansible_version: "2.14"
+dependencies: []

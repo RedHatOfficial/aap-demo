@@ -30,14 +30,14 @@ authentication.
 
 - `kubectl` or `oc`
 - `python3` (3.8+)
+- Podman (running) and Skopeo for portal image builds or validation
 - AAP execution environment with network access to `get.helm.sh` (the playbook bootstraps a pinned Helm client)
 - AAP deployed (`aap-demo deploy`)
 
-The addon uses the portal Helm chart's standard RHDH image and delivers the APME plugins
-through the chart's runtime OCI plugin installer. The deploy bootstraps the local registry,
-publishes the bundled plugin archive with the AAP execution environment's standard-library
-OCI publisher, and runs `install-dynamic-plugins` in the
-chart-provided init container.
+By default the deploy bootstraps the local registry, publishes the bundled plugin archive,
+and builds a custom RHDH 1.9 image with all six APME plugins using Podman. Podman must be
+running (start `podman machine` on macOS). The chart's standard dynamic-plugin installer
+loads those plugins from the image. A published Quay image can replace this local build.
 
 **Ansible installation** (auto-installed in venv):
 
@@ -85,7 +85,7 @@ This will:
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
 5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Push the bundled APME OCI plugin archive to the local registry and run the portal Helm chart
+6. Push the bundled archive and build the portal image locally, or validate the configured prebuilt image
 7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
 
 **Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with
@@ -94,6 +94,58 @@ wrapper script.
 
 **First run** takes longer (~2-3 minutes) to set up the virtual environment and install
 Ansible collections. Subsequent runs reuse the existing venv and are faster.
+
+### Use a published Quay portal image
+
+Opt in for the first deployment with:
+
+```bash
+APME_PRELOADED_IMAGE_REF=quay.io/aapdemo/apme-eap:latest aap-demo enable apme-eap
+```
+
+Or edit `~/.aap-demo/apme-eap-vars.yml` before running enable again:
+
+```yaml
+apme_preloaded_image_ref: quay.io/aapdemo/apme-eap:latest
+# Use an immutable tag or digest for repeatable deployments.
+apme_preloaded_image_pull_secret: ""
+apme_preloaded_image_auth_file: ""
+apme_preloaded_image_verify: true
+```
+
+Fully qualified `registry/repository:tag` and `registry/repository@sha256:<64-hex>`
+references are supported, including registry ports. Skopeo verifies availability and pins
+the resolved digest for validation and Helm. Podman pulls that image and checks all six
+plugin package identities in a read-only container with networking disabled; it does not
+build an image in prebuilt mode. Set `apme_preloaded_image_verify: false` only to skip the
+Skopeo availability/digest lookup; six-plugin validation still runs. Check mode parses
+references and plans the deployment without fetching or validating a remote image.
+
+The prebuilt path does not require the bundled archive or bootstrap the local registry.
+Its six plugin entries become local `./dynamic-plugins/dist/...` paths, so the portal does
+not download the APME plugins at startup. With no pull secret, the cluster must be able to
+read the repository anonymously. For a private Quay repository, create a local auth file:
+
+```bash
+mkdir -p ~/.aap-demo
+skopeo login --authfile ~/.aap-demo/apme-quay-auth.json quay.io
+chmod 600 ~/.aap-demo/apme-quay-auth.json
+```
+
+Then set `apme_preloaded_image_pull_secret: apme-quay-pull` and
+`apme_preloaded_image_auth_file` to the **absolute** path of that file in the generated vars.
+The role uses it for Skopeo/Podman and creates or updates the named docker-registry Secret
+in the portal namespace. Only the selected registry credentials are copied, and secret
+tasks suppress their output. Do not commit the auth file. The wrapper preserves these
+settings when regenerating vars.
+
+Keep `apme_preloaded_image_ref: ""` (the default) to use the local fallback. It retains the
+`apme_oci_push` then `apme_image_build` sequence and requires `apme_oci_tar_resolved`.
+For a custom `apme_oci_tar`, also set its independently verified digest in
+`apme_image_build_pack_sha256`; the container build rejects mismatches or missing plugins.
+`skip_plugin_push: true` retains the existing chart/runtime OCI path and assumes the
+plugin archive has already been published. Live Quay and x86/ARM cluster smoke tests
+remain part of the operational validation in `TEST_PLAN.md`.
 
 ### Check Status
 
@@ -139,10 +191,11 @@ The addon uses these roles from the official APME welcome pack:
 2. **apme_pah_integration** - setup-pah remotes, PAH catalog sync flags, APME galaxy seeding
 3. **aap_apme_prerequisites** - Creates AAP OAuth app, generates API token
 4. **apme_oci_push** - Publishes the bundled APME plugin archive to the local registry
-5. **apme_helm_values** - Generates Helm values for chart-native dynamic plugin installation
-6. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
-7. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
-8. **apme_gateway_helm** - Installs APME gateway Helm chart
+5. **apme_image_build / apme_preloaded_image** - Builds the local image or validates an external image
+6. **apme_helm_values** - Generates Helm values for chart-native dynamic plugin installation
+7. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
+8. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
+9. **apme_gateway_helm** - Installs APME gateway Helm chart
 
 ### Deployment Flow
 
@@ -164,11 +217,12 @@ Roles execute in sequence:
   1. openshift_apme_setup
   2. apme_pah_integration (setup-pah + galaxy facts)
   3. aap_apme_prerequisites
-  4. apme_helm_values (chart-defined portal image + runtime OCI plugins + PAH sync)
-  5. apme_scm_secrets (if enabled)
-  6. portal_helm_install
-  7. apme_gateway_helm
-  8. post_tasks: seed APME galaxy servers + portal rollout
+  4. apme_preloaded_image, or apme_oci_push → apme_image_build
+  5. apme_helm_values (selected portal image + local plugin paths + PAH sync)
+  6. apme_scm_secrets (if enabled)
+  7. portal_helm_install
+  8. apme_gateway_helm
+  9. post_tasks: seed APME galaxy servers + portal rollout
 ```
 
 ## Configuration
@@ -361,6 +415,8 @@ addons/apme-eap/
 ├── roles/
 │   ├── openshift_apme_setup/
 │   ├── aap_apme_prerequisites/
+│   ├── apme_preloaded_image/
+│   ├── apme_image_build/
 │   ├── apme_helm_values/
 │   ├── apme_scm_secrets/
 │   ├── portal_helm_install/
@@ -370,9 +426,9 @@ addons/apme-eap/
 
 ## Runtime plugin architecture
 
-The standard portal chart image runs `install-dynamic-plugins` against the APME OCI image
-published to the local registry. The plugin archive is bundled under `plugin_packs/` and does
-not require a custom portal hub image.
+The chart's `install-dynamic-plugins` loads the six plugins from the custom local or Quay
+portal image. With `skip_plugin_push: true` and no prebuilt reference it uses runtime OCI
+delivery from the existing local registry. The fallback archive is under `plugin_packs/`.
 
 ## Troubleshooting
 
