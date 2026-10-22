@@ -211,6 +211,23 @@ jobs:
           export PATH="$auth_dir/bin:$PATH"
           export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
           printf '%s\n' '{"auths":{},"credHelpers":{"quay.io":"apme-env"}}' > "$REGISTRY_AUTH_FILE"
+          # Bind manifest children to the immutable images verified by the build jobs.
+          architecture_digests=()
+          for arch in amd64 arm64; do
+            skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
+              "docker://$IMAGE:$IMMUTABLE_TAG-$arch" > "$auth_dir/image-$arch.json" \
+              || fail "Cannot inspect immutable $arch image"
+            jq -e '.schemaVersion == 2 and (has("manifests") | not) and
+              (.mediaType == "application/vnd.oci.image.manifest.v1+json" or
+               .mediaType == "application/vnd.docker.distribution.manifest.v2+json") and
+              (.config | type == "object") and (.layers | type == "array")' \
+              "$auth_dir/image-$arch.json" >/dev/null || fail "Invalid immutable $arch image manifest"
+            architecture_digest="$(skopeo manifest-digest "$auth_dir/image-$arch.json")" \
+              || fail "Cannot compute immutable $arch image digest"
+            [[ "$architecture_digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
+              || fail "Invalid immutable $arch image digest"
+            architecture_digests+=("$architecture_digest")
+          done
           if skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
             "docker://$IMAGE:$IMMUTABLE_TAG" > "$auth_dir/manifest.json" 2> "$auth_dir/inspect.error"; then
             publication=reused
@@ -240,6 +257,9 @@ jobs:
           jq -e '.schemaVersion == 2 and (.manifests | length == 2) and
             ([.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"])' \
             "$auth_dir/manifest.json" >/dev/null || fail 'Expected exactly linux/amd64 and linux/arm64'
+          jq -e --arg amd64 "${architecture_digests[0]}" --arg arm64 "${architecture_digests[1]}" \
+            'all(.manifests[]; .digest == ({amd64: $amd64, arm64: $arm64}[.platform.architecture]))' \
+            "$auth_dir/manifest.json" >/dev/null || fail 'Manifest child digests do not match architecture images'
           {
             printf '### APME image %s\n\n' "$publication"
             printf 'Image: `%s:%s`\n\nDigest: `%s@%s`\n\n' "$IMAGE" "$IMMUTABLE_TAG" "$IMAGE" "$digest"
