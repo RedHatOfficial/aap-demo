@@ -589,7 +589,7 @@ Addons:
   enable local-cache Cache container images locally (~30GB) to speed up deploys
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
   enable keycloak  Deploy Keycloak OIDC provider for local AAP/AO authentication tests
-  keycloak configure [--target aap|ao|all] [--apply]
+  keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
                   Configure Keycloak OIDC consumers; dry-run unless --apply
 
 Examples:
@@ -3373,7 +3373,7 @@ cmd_keycloak() {
   case "$subcommand" in
     configure) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" "$@" ;;
     help|-h|--help) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" --help ;;
-    *) echo "Usage: aap-demo keycloak configure [--target aap|ao|all] [--apply]" >&2; return 1 ;;
+    *) echo "Usage: aap-demo keycloak configure [--target aap|ao|all] [--map-groups] [--apply]" >&2; return 1 ;;
   esac
 }
 

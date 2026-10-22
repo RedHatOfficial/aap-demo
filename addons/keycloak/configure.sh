@@ -10,14 +10,16 @@ STATE_DIR="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 TARGET="all"
 APPLY=false
+MAP_GROUPS=false
 
 usage() {
   cat <<'EOF'
-Usage: aap-demo keycloak configure [--target aap|ao|all] [--apply]
+Usage: aap-demo keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
 
 Configure local Keycloak OIDC consumers. Dry-run is default.
 --apply       Create or update consumer configuration
 --target      Configure aap, ao, or both (default: all)
+--map-groups  Align Keycloak groups with AO groups and AAP authenticator maps
 EOF
 }
 
@@ -28,6 +30,7 @@ require_cmd() {
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=true ;;
+    --map-groups) MAP_GROUPS=true ;;
     --target=*) TARGET="${arg#*=}" ;;
     --target) : ;;
     -h|--help) usage; exit 0 ;;
@@ -87,6 +90,7 @@ print_plan() {
   else
     echo "  Mode: apply"
   fi
+  [ "$MAP_GROUPS" = true ] && echo "  Group mapping: enabled"
 }
 
 print_plan
@@ -109,6 +113,31 @@ if [ "$TARGET" != ao ]; then
     echo "✓ Created AAP authenticator: ${AAP_NAME}"
   fi
   echo "  Update Keycloak client redirect URI with callback shown by AAP Gateway, if required."
+
+  if [ "$MAP_GROUPS" = true ]; then
+    AAP_MAP_BASE="https://${AAP_HOST}/api/gateway/v1/authenticator_maps/"
+    AAP_GROUP_MAPS=(
+      "aap-admins|is_superuser|||true"
+      "aap-auditors|role|Platform Auditor||false"
+      "aap-operators|organization|Organization Admin|AAP Demo|false"
+      "aap-developers|organization|Organization Member|AAP Demo|false"
+    )
+    AAP_MAP_LIST="$(curl -skf "$AAP_MAP_BASE?authenticator=${AAP_ID}" --config "$AAP_AUTH")"
+    for map_spec in "${AAP_GROUP_MAPS[@]}"; do
+      IFS='|' read -r group map_type role organization revoke <<<"$map_spec"
+      map_name="Keycloak ${group}"
+      map_payload="$(jq -nc --arg name "$map_name" --arg group "$group" --arg type "$map_type" --arg role "$role" --arg organization "$organization" --argjson authenticator "$AAP_ID" --argjson revoke "$revoke" \
+        '{name:$name,authenticator:$authenticator,map_type:$type,triggers:{groups:{has_or:[$group]}},role:(if $role=="" then null else $role end),organization:(if $organization=="" then null else $organization end),team:null,revoke:$revoke}')"
+      map_id="$(printf '%s' "$AAP_MAP_LIST" | jq -r --arg name "$map_name" '.results[] | select(.name==$name) | .id' | head -n1)"
+      if [ -n "$map_id" ]; then
+        curl -skf -X PATCH "${AAP_MAP_BASE}${map_id}/" --config "$AAP_AUTH" -H 'Content-Type: application/json' -d "$map_payload" >/dev/null
+        echo "✓ Updated AAP group map: ${group}"
+      else
+        curl -skf -X POST "$AAP_MAP_BASE" --config "$AAP_AUTH" -H 'Content-Type: application/json' -d "$map_payload" >/dev/null
+        echo "✓ Created AAP group map: ${group}"
+      fi
+    done
+  fi
 fi
 
 if [ "$TARGET" != aap ]; then
@@ -118,11 +147,39 @@ if [ "$TARGET" != aap ]; then
   [ -n "$AO_TOKEN" ] && [ "$AO_TOKEN" != null ] || { echo "ERROR: AO admin login failed" >&2; exit 1; }
   AO_BASE="https://${AO_HOST}/api/v1/identity_providers"
   AO_LIST="$(curl -skf "$AO_BASE" -H "Authorization: Bearer ${AO_TOKEN}")"
+  AO_GROUP_LIST="$(curl -skf "https://${AO_HOST}/api/v1/groups" -H "Authorization: Bearer ${AO_TOKEN}")"
   AO_ID="$(printf '%s' "$AO_LIST" | jq -r --arg n "$AO_NAME" '.resources[] | select(.name==$n) | .id' | head -n1)"
   if [ -n "$AO_ID" ]; then
-    curl -skf -X PATCH "${AO_BASE}/${AO_ID}" -H 'Content-Type: application/json' -H "Authorization: Bearer ${AO_TOKEN}" -d "$AO_PAYLOAD" >/dev/null
+    if [ "$MAP_GROUPS" = true ]; then
+      AO_GROUPS_PAYLOAD='[]'
+      for group in aap-admins aap-operators aap-auditors aap-developers; do
+        group_id="$(printf '%s' "$AO_GROUP_LIST" | jq -r --arg name "$group" '.resources[] | select(.name==$name) | .id' | head -n1)"
+        if [ -z "$group_id" ]; then
+          group_id="$(curl -skf -X POST "https://${AO_HOST}/api/v1/groups" -H 'Content-Type: application/json' -H "Authorization: Bearer ${AO_TOKEN}" -d "$(jq -nc --arg name "$group" '{name:$name,description:"Keycloak lab group"}')" | jq -r .id)"
+          echo "✓ Created AO group: ${group}"
+        fi
+        AO_GROUPS_PAYLOAD="$(printf '%s' "$AO_GROUPS_PAYLOAD" | jq --arg value "$group" --arg id "$group_id" '. + [{idp_group_value:$value,mapped_group_id:$id}]')"
+      done
+      AO_CURRENT="$(curl -skf "${AO_BASE}/${AO_ID}" -H "Authorization: Bearer ${AO_TOKEN}")"
+      AO_PAYLOAD="$(printf '%s' "$AO_CURRENT" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" '{name,enabled,configuration:(.configuration | del(.client_secret) | .group_mapping_entries=$mappings | .allow_all_authenticated=false)}')"
+      echo "  AO group mappings: $(printf '%s' "$AO_PAYLOAD" | jq '.configuration.group_mapping_entries | length')"
+    fi
+    AO_RESPONSE="$(curl -skf -X PATCH "${AO_BASE}/${AO_ID}" -H 'Content-Type: application/json' -H "Authorization: Bearer ${AO_TOKEN}" -d "$AO_PAYLOAD")"
+    [ "$MAP_GROUPS" != true ] || echo "  AO response group mappings: $(printf '%s' "$AO_RESPONSE" | jq '.configuration.group_mapping_entries | length')"
     echo "✓ Updated AO identity provider: ${AO_NAME}"
   else
+    if [ "$MAP_GROUPS" = true ]; then
+      AO_GROUPS_PAYLOAD='[]'
+      for group in aap-admins aap-operators aap-auditors aap-developers; do
+        group_id="$(printf '%s' "$AO_GROUP_LIST" | jq -r --arg name "$group" '.resources[] | select(.name==$name) | .id' | head -n1)"
+        if [ -z "$group_id" ]; then
+          group_id="$(curl -skf -X POST "https://${AO_HOST}/api/v1/groups" -H 'Content-Type: application/json' -H "Authorization: Bearer ${AO_TOKEN}" -d "$(jq -nc --arg name "$group" '{name:$name,description:"Keycloak lab group"}')" | jq -r .id)"
+          echo "✓ Created AO group: ${group}"
+        fi
+        AO_GROUPS_PAYLOAD="$(printf '%s' "$AO_GROUPS_PAYLOAD" | jq --arg value "$group" --arg id "$group_id" '. + [{idp_group_value:$value,mapped_group_id:$id}]')"
+      done
+      AO_PAYLOAD="$(printf '%s' "$AO_PAYLOAD" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" '.configuration.group_mapping_entries=$mappings | .configuration.allow_all_authenticated=false')"
+    fi
     curl -skf -X POST "$AO_BASE" -H 'Content-Type: application/json' -H "Authorization: Bearer ${AO_TOKEN}" -d "$AO_PAYLOAD" >/dev/null
     echo "✓ Created AO identity provider: ${AO_NAME}"
   fi

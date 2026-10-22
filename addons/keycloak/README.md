@@ -7,6 +7,7 @@ aap-demo enable keycloak
 aap-demo disable keycloak
 aap-demo keycloak configure --target all
 aap-demo keycloak configure --target all --apply
+aap-demo keycloak configure --target all --map-groups --apply
 ```
 
 Addon creates namespace `aap-demo-keycloak`, Route `keycloak.<cluster-domain>`, realm
@@ -71,6 +72,11 @@ their APIs. It is dry-run by default; `--apply` is required for mutation. Use
 URL still must be copied into Keycloak when Gateway reports it. AO group claim
 extraction is configured as `groups[*]`; lab mode allows all authenticated users.
 AO-to-AAP job execution must continue using a separate AAP API key/PAT.
+
+`--map-groups` creates matching AO groups and explicit mappings, then creates
+local AAP authenticator maps: `aap-admins` becomes AAP superuser,
+`aap-auditors` becomes Platform Auditor, and operators/developers receive
+Organization Admin/Member in `AAP Demo`. This role profile is for local testing.
 
 ## Cleanup
 

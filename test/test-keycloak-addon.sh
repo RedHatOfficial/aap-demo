@@ -98,6 +98,8 @@ grep -Eq 'KEYCLOAK_IMAGE=.*@sha256:' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
 grep -q 'keycloak configure' "$ROOT_DIR/aap-demo.sh" || { echo "FAIL: Keycloak configure command missing"; exit 1; }
 grep -q 'group_jmespath_expression' "$ROOT_DIR/addons/keycloak/configure.sh" || { echo "FAIL: AO group claim mapping missing"; exit 1; }
 grep -q 'authenticator_plugins.keycloak' "$ROOT_DIR/addons/keycloak/configure.sh" || { echo "FAIL: AAP Keycloak authenticator missing"; exit 1; }
+grep -q 'group_mapping_entries' "$ROOT_DIR/addons/keycloak/configure.sh" || { echo "FAIL: AO explicit group mappings missing"; exit 1; }
+grep -q 'is_superuser' "$ROOT_DIR/addons/keycloak/configure.sh" || { echo "FAIL: AAP role mapping missing"; exit 1; }
 if grep -Eq 'echo.*(PASSWORD|SECRET)' "$ROOT_DIR/addons/keycloak/deploy.sh"; then
   echo "FAIL: possible secret output"
   exit 1
