@@ -30,6 +30,16 @@ elif tool == "podman" and args[:2] == ["manifest", "push"]:
     pathlib.Path(args[args.index("--digestfile") + 1]).write_text(os.environ["DIGEST"])
     (work / "published").touch()
 elif tool == "skopeo" and args[0] == "inspect":
+    reference = args[-1]
+    for arch in ("amd64", "arm64"):
+        if reference.endswith("-" + arch):
+            state = json.loads(os.environ["ARCH_STATES"]).get(arch, "exists")
+            if state != "exists":
+                sys.exit({"missing": "manifest unknown: tag not found",
+                          "network": "connection reset by peer",
+                          "denied": "unauthorized: access denied"}[state])
+            sys.stdout.write(json.loads(os.environ["ARCH_MANIFESTS"])[arch])
+            sys.exit(0)
     state = os.environ.get("REMOTE_STATE", "missing")
     if state in ("network", "denied", "notfound"):
         sys.exit({"network": "connection reset by peer", "denied": "unauthorized: access denied",
@@ -39,6 +49,9 @@ elif tool == "skopeo" and args[0] == "inspect":
             sys.exit("manifest unknown: tag not found")
     sys.stdout.write(os.environ["RAW_MANIFEST"])
 elif tool == "skopeo" and args[0] == "manifest-digest":
+    if pathlib.Path(args[1]).name.startswith("image-") and "ARCH_DIGEST_OVERRIDE" in os.environ:
+        print(os.environ["ARCH_DIGEST_OVERRIDE"])
+        sys.exit(0)
     print("sha256:" + hashlib.sha256(pathlib.Path(args[1]).read_bytes()).hexdigest())
 elif tool == "skopeo" and args[0] == "copy":
     if os.environ.get("FAIL_COPY") == "true":
@@ -52,7 +65,8 @@ else:
 class ManifestPublicationTests(unittest.TestCase):
     def run_manifest(self, state="missing", architectures=("amd64", "arm64"), promote=False,
                      event="workflow_dispatch", publish_enabled="true", directory=None,
-                     fail_copy=False, immutable_tag=None):
+                     fail_copy=False, immutable_tag=None, child_digests=None, arch_states=None,
+                     arch_manifest_override=None, arch_digest_override=None):
         with (tempfile.TemporaryDirectory() if directory is None else nullcontext(directory)) as directory:
             work = Path(directory)
             bindir = work / "bin"
@@ -65,11 +79,27 @@ class ManifestPublicationTests(unittest.TestCase):
                 "export APME_SOURCE_REPO=ansible/apme APME_SOURCE_SHA=" + "a" * 40 + "\n"
                 "export APME_RUN_ID=1 APME_ARTIFACT_ID=2 APME_ARTIFACT_NAME=plugins\n"
                 "export APME_PACK_FORMAT=oci APME_PACK_SHA256=sha256:" + "b" * 64 + "\n")
+            image_manifests = {
+                arch: json.dumps({
+                    "schemaVersion": 2,
+                    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                    "config": {"mediaType": "application/vnd.oci.image.config.v1+json",
+                               "size": 1, "digest": "sha256:" + config_hex * 64},
+                    "layers": []})
+                for arch, config_hex in (("amd64", "c"), ("arm64", "d"))}
+            image_digests = {arch: "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+                             for arch, raw in image_manifests.items()}
             manifest = json.dumps({"schemaVersion": 2, "manifests": [
-                {"platform": {"os": "linux", "architecture": arch}} for arch in architectures]})
+                {"platform": {"os": "linux", "architecture": arch},
+                 "digest": (child_digests or {}).get(arch, image_digests.get(arch, "sha256:" + "e" * 64))}
+                for arch in architectures]})
+            if arch_manifest_override is not None:
+                image_manifests["arm64"] = arch_manifest_override
             digest = "sha256:" + hashlib.sha256(manifest.encode()).hexdigest()
             env = {**os.environ, "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
                    "RUNNER_TEMP": str(work), "REMOTE_STATE": state, "RAW_MANIFEST": manifest,
+                   "ARCH_MANIFESTS": json.dumps(image_manifests),
+                   "ARCH_STATES": json.dumps(arch_states or {}),
                    "DIGEST": digest, "IMAGE": "quay.io/aapdemo/apme-eap",
                    "IMMUTABLE_TAG": immutable_tag or "apme-" + "a" * 40 + "-" + "b" * 12,
                    "FAIL_COPY": "true" if fail_copy else "false",
@@ -79,6 +109,9 @@ class ManifestPublicationTests(unittest.TestCase):
                    "GITHUB_STEP_SUMMARY": str(work / "summary")}
             # An unset repository variable resolves to an empty step environment value.
             env.pop("APME_QUAY_PUBLISH_ENABLED", None)
+            env.pop("ARCH_DIGEST_OVERRIDE", None)
+            if arch_digest_override is not None:
+                env["ARCH_DIGEST_OVERRIDE"] = arch_digest_override
             command_log = work / "commands"
             previous = len(command_log.read_text().splitlines()) if command_log.exists() else 0
             result = subprocess.run(["bash", "-c", VALIDATION_GATE], cwd=ROOT, env=env,
@@ -145,6 +178,52 @@ class ManifestPublicationTests(unittest.TestCase):
         result, calls = self.run_manifest(architectures=("amd64",), promote=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_existing_manifest_with_wrong_child_digest_never_publishes_or_promotes(self):
+        for arch in ("amd64", "arm64"):
+            for digest in ("sha256:" + "f" * 64, None, "unknown"):
+                with self.subTest(arch=arch, digest=digest):
+                    result, calls = self.run_manifest(
+                        state="exists", promote=True, child_digests={arch: digest})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Manifest child digests do not match architecture images", result.stderr)
+                    self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+                    self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_new_manifest_with_wrong_child_digest_never_promotes(self):
+        result, calls = self.run_manifest(promote=True, child_digests={"arm64": "sha256:" + "f" * 64})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Manifest child digests do not match architecture images", result.stderr)
+        self.assertEqual(sum(c[:3] == ["podman", "manifest", "push"] for c in calls), 1)
+        self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_unavailable_architecture_tag_blocks_publication_and_promotion(self):
+        for arch in ("amd64", "arm64"):
+            for state in ("missing", "network", "denied"):
+                with self.subTest(arch=arch, state=state):
+                    result, calls = self.run_manifest(promote=True, arch_states={arch: state})
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f"Cannot inspect immutable {arch} image", result.stderr)
+                    self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+                    self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_invalid_architecture_manifest_blocks_publication_and_promotion(self):
+        for raw in ("not-json", "{}", '{"schemaVersion": 2, "manifests": []}'):
+            with self.subTest(raw=raw):
+                result, calls = self.run_manifest(promote=True, arch_manifest_override=raw)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Invalid immutable arm64 image manifest", result.stderr)
+                self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+                self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_unknown_architecture_digest_blocks_publication_and_promotion(self):
+        for digest in ("", "unknown", "sha256:short"):
+            with self.subTest(digest=digest):
+                result, calls = self.run_manifest(promote=True, arch_digest_override=digest)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Invalid immutable amd64 image digest", result.stderr)
+                self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+                self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
 
     def test_bootstrap_then_promote_reuses_same_release_and_supports_retries(self):
         with tempfile.TemporaryDirectory() as directory:
