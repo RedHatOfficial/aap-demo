@@ -108,13 +108,32 @@ if args[:2] == ["image", "inspect"]:
 ''')
         self.stub("uname", '#!/usr/bin/env bash\nprintf "%s\\n" "${HOST_ARCH:-x86_64}"\n')
         self.stub("skopeo", '''#!/usr/bin/env python3
-import json, os, pathlib, sys
+import hashlib, json, os, pathlib, sys
 w = pathlib.Path(os.environ["FIXTURE_DIR"])
+args = sys.argv[1:]
 with (w / "remote.log").open("a") as log:
-    log.write(json.dumps(sys.argv[1:]) + "\\n")
+    log.write(json.dumps(args) + "\\n")
+if args[0] == "manifest-digest":
+    print(os.environ.get("REMOTE_DIGEST", "sha256:" + hashlib.sha256(pathlib.Path(args[1]).read_bytes()).hexdigest()))
+    sys.exit(0)
 state = os.environ.get("REMOTE_STATE", "missing")
 if state == "exists":
-    print('{"schemaVersion":2}')
+    raw = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+           "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "size": 1,
+                      "digest": "sha256:" + "c" * 64}, "layers": []}
+    if os.environ.get("REMOTE_INDEX"):
+        raw["manifests"] = []
+    if "--raw" in args:
+        print(json.dumps(raw), end="")
+    else:
+        print(json.dumps({"Digest": os.environ.get("REMOTE_METADATA_DIGEST", "sha256:" +
+              hashlib.sha256(json.dumps(raw).encode()).hexdigest()),
+              "Os": os.environ.get("REMOTE_OS", "linux"),
+              "Architecture": os.environ.get("REMOTE_ARCH", "amd64"),
+              "Labels": {"org.opencontainers.image.source": "https://github.com/" +
+                         os.environ.get("REMOTE_SOURCE_REPO", "ansible/ansible-rhdh-plugins"),
+                         "org.opencontainers.image.revision": os.environ.get("REMOTE_SHA", "a" * 40),
+                         "io.apme.pack.sha256": os.environ.get("REMOTE_PACK_SHA", os.environ["PACK_HASH"])}}))
     sys.exit(0)
 print({"missing": "manifest unknown: tag not found",
        "denied": "unauthorized: authentication required",
@@ -126,7 +145,8 @@ sys.exit(1)
             ("APME_", "QUAY_", "REGISTRY_REDHAT_", "BASE_IMAGE"))}
         self.env.update(PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         FIXTURE_DIR=str(self.work), GH_TOKEN="github-test-secret",
-                        QUAY_USERNAME="robot", QUAY_TOKEN="quay-test-secret", APME_PACK_FORMAT="npm")
+                        QUAY_USERNAME="robot", QUAY_TOKEN="quay-test-secret", APME_PACK_FORMAT="npm",
+                        PACK_HASH=self.pack_hash)
         self.env["REAL_AUTH_CLI"] = shutil.which("skopeo") or ""
 
     def stub(self, name, content):
@@ -216,10 +236,73 @@ sys.exit(1)
                 self.assertIn("confirm", result.stderr)
                 self.assertFalse(any(c[0] == "push" for c in self.calls()))
 
-    def test_alias_cannot_replace_an_artifact_derived_manifest_tag(self):
-        result = self.run_build("--push", "--tag", "apme-" + SHA + "-" + self.pack_hash[7:19], ok=False)
+    def test_alias_cannot_replace_artifact_derived_release_tags(self):
+        for suffix in ("", "-amd64", "-arm64"):
+            with self.subTest(suffix=suffix):
+                result = self.run_build("--push", "--tag", "apme-" + SHA + "-" +
+                                        self.pack_hash[7:19] + suffix, ok=False)
+                self.assertIn("reserved", result.stderr)
+                self.assertEqual(self.calls(), [])
+                self.assertFalse((self.work / "api.log").exists())
+
+    def test_standalone_latest_fails_before_fetch_build_or_login(self):
+        result = self.run_build("--push", "--tag", "latest", ok=False)
         self.assertIn("reserved", result.stderr)
-        self.assertFalse(any(c[0] == "push" for c in self.calls()))
+        self.assertEqual(self.calls(), [])
+        self.assertFalse((self.work / "api.log").exists())
+
+    def test_workflow_reuses_verified_architecture_without_build_or_login(self):
+        resolved = self.resolved_pack()
+        self.env["REMOTE_STATE"] = "exists"
+        for arch in ("amd64", "arm64"):
+            with self.subTest(arch=arch):
+                self.env["REMOTE_ARCH"] = arch
+                result = self.run_build("--pack-dir", str(resolved), "--architecture", arch,
+                                        "--push", "--reuse-existing")
+                self.assertIn("Reused immutable image:", result.stdout)
+                self.assertIn("Image reference: quay.io/aapdemo/apme-eap@sha256:", result.stdout)
+                self.assertEqual(self.calls(), [])
+                self.assertFalse((self.work / "api.log").exists())
+
+    def test_workflow_reuse_rejects_wrong_platform_provenance_or_digest(self):
+        resolved = self.resolved_pack()
+        self.env["REMOTE_STATE"] = "exists"
+        for key, value in (("REMOTE_ARCH", "arm64"), ("REMOTE_OS", "windows"),
+                           ("REMOTE_SHA", "d" * 40), ("REMOTE_PACK_SHA", DIGEST),
+                           ("REMOTE_SOURCE_REPO", "other/repo"), ("REMOTE_INDEX", "yes"),
+                           ("REMOTE_DIGEST", "invalid"), ("REMOTE_METADATA_DIGEST", DIGEST)):
+            with self.subTest(key=key):
+                self.env[key] = value
+                self.run_build("--pack-dir", str(resolved), "--architecture", "amd64",
+                               "--push", "--reuse-existing", ok=False)
+                self.assertEqual(self.calls(), [])
+                self.env.pop(key)
+
+    def test_workflow_reuse_builds_only_when_tag_is_confirmed_absent(self):
+        resolved = self.resolved_pack()
+        self.run_build("--pack-dir", str(resolved), "--architecture", "amd64",
+                       "--push", "--reuse-existing")
+        self.assertEqual([c[0] for c in self.calls()], ["build", "image", "login", "push"])
+
+    def test_workflow_reuse_fails_closed_on_unknown_registry_status(self):
+        resolved = self.resolved_pack()
+        for state in ("denied", "network", "notfound"):
+            with self.subTest(state=state):
+                self.env["REMOTE_STATE"] = state
+                result = self.run_build("--pack-dir", str(resolved), "--architecture", "amd64",
+                                        "--push", "--reuse-existing", ok=False)
+                self.assertIn("Cannot confirm", result.stderr)
+                self.assertEqual(self.calls(), [])
+
+    def test_workflow_reuse_requires_explicit_matrix_inputs(self):
+        resolved = self.resolved_pack()
+        for args in (("--pack-dir", str(resolved), "--architecture", "amd64"),
+                     ("--push", "--architecture", "amd64"),
+                     ("--push", "--pack-dir", str(resolved))):
+            with self.subTest(args=args):
+                self.run_build(*args, "--reuse-existing", ok=False)
+                self.assertEqual(self.calls(), [])
+                self.assertFalse((self.work / "api.log").exists())
 
     def test_replay_verifies_recorded_digest_and_source(self):
         self.env.update(APME_SOURCE_SHA=SHA, APME_PACK_SHA256=self.pack_hash,
