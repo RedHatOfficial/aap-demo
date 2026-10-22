@@ -5,6 +5,8 @@ Local OIDC provider for testing AAP 2.6 and Automation Orchestrator authenticati
 ```bash
 aap-demo enable keycloak
 aap-demo disable keycloak
+aap-demo keycloak configure --target all
+aap-demo keycloak configure --target all --apply
 ```
 
 Addon creates namespace `aap-demo-keycloak`, Route `keycloak.<cluster-domain>`, realm
@@ -63,8 +65,12 @@ The addon marks its namespace with
 `app.kubernetes.io/managed-by=aap-demo-keycloak` and refuses to deploy to or delete
 an unowned namespace.
 
-This addon does not change AAP or AO authentication automatically. AO-to-AAP job
-execution must continue using a separate AAP API key/PAT.
+`keycloak configure` discovers local routes and configures both consumers through
+their APIs. It is dry-run by default; `--apply` is required for mutation. Use
+`--target aap` or `--target ao` to configure one consumer. AAP Gateway callback
+URL still must be copied into Keycloak when Gateway reports it. AO group claim
+extraction is configured as `groups[*]`; lab mode allows all authenticated users.
+AO-to-AAP job execution must continue using a separate AAP API key/PAT.
 
 ## Cleanup
 
