@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# aap-demo - AAP 2.7 Deployment Tool
+# aap-demo - AAP Deployment Tool
 # =============================================================================
 #
-# Deploy Ansible Automation Platform 2.7 to OpenShift Local.
+# Deploy Ansible Automation Platform 2.6 or 2.7 to OpenShift Local.
 #
 # Usage:
-#   ./aap-demo.sh                     # Deploy AAP 2.7
+#   ./aap-demo.sh                     # Deploy selected AAP version (default: 2.7)
 #   ./aap-demo.sh clean               # Remove AAP deployment
 #   ./aap-demo.sh destroy             # Delete entire cluster
 #   ./aap-demo.sh stop                # Stop OpenShift Local cluster
@@ -16,6 +16,7 @@
 #   ./aap-demo.sh create              # Create cluster only
 #
 # Environment variables:
+#   AAP_VERSION  - AAP version to deploy: 2.6 or 2.7 (default: 2.7)
 #   NAMESPACE    - Kubernetes namespace (default: aap-operator)
 #   QUIET        - Suppress disclaimer (true/false)
 #   FORCE        - Force reinstall even if AAP exists (true/false)
@@ -54,11 +55,6 @@ source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
 source "${SCRIPT_DIR}/includes/aap-readiness.sh"
 
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
-
-# AAP version
-# shellcheck disable=SC2034
-AAP_VERSION="2.7"
-AAP_CHANNEL="stable-2.7"
 
 # Recommended CRC/MicroShift version for stable deployments
 # Older versions may encounter VM transport or operator catalog issues.
@@ -114,6 +110,10 @@ if [ -f "$AAP_DEMO_CONFIG" ]; then
     fi
   done <"$AAP_DEMO_CONFIG"
 fi
+
+# shellcheck source=includes/aap-version.sh
+source "${SCRIPT_DIR}/includes/aap-version.sh"
+aap_demo_configure_aap_version "${AAP_VERSION:-2.7}" || exit 1
 
 # Collection authentication environment variables
 GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}"
@@ -530,13 +530,13 @@ check_mkcert_ca() {
 # Help
 # -----------------------------------------------------------------------------
 show_welcome() {
-  cat <<'EOF'
-aap-demo - Deploy AAP 2.7 to OpenShift Local
+  cat <<EOF
+aap-demo - Deploy AAP $AAP_VERSION to OpenShift Local
 
 Usage: aap-demo [options] <command>
 
 Commands:
-  deploy          Deploy AAP 2.7
+  deploy          Deploy AAP $AAP_VERSION
   status          Show cluster and AAP status
   idle [true|false] Scale down/up AAP to save resources
   diagnose [--ai] Check environment health (--ai for Claude analysis)
@@ -572,7 +572,7 @@ Addons:
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
 
 Examples:
-  aap-demo deploy                              # Deploy AAP 2.7
+  aap-demo deploy                              # Deploy AAP $AAP_VERSION
   aap-demo enable fleet                        # Enable fleet addon
   aap-demo fleet add 3 --image ~/rhel9.qcow2  # Create 3 managed VMs
   aap-demo enable portal                       # Enable Self-Service Portal
@@ -583,8 +583,8 @@ EOF
 }
 
 show_help() {
-  cat <<'EOF'
-aap-demo - Deploy AAP 2.7 to OpenShift Local
+  cat <<EOF
+aap-demo - Deploy AAP $AAP_VERSION to OpenShift Local
 
 USAGE:
     aap-demo [OPTIONS] <COMMAND>
@@ -597,7 +597,7 @@ OPTIONS:
     FORCE=true          Force reinstall even if AAP exists
 
 COMMANDS (all infrastructure types):
-    deploy          Deploy AAP 2.7 (operator + CR)
+    deploy          Deploy AAP $AAP_VERSION (operator + CR)
     status          Show cluster and AAP status
     clean           Remove AAP deployment
     watch           Watch AAP deployment status
@@ -643,6 +643,7 @@ COMMANDS:
     redeploy-all    Destroy cluster and redeploy fresh
 
 ENVIRONMENT:
+    AAP_VERSION=2.6|2.7  AAP version to deploy (default: 2.7)
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
     AAP_PERSISTENT_IMAGE_STORE=true
                         Keep CRI-O image storage on a persistent qcow2 disk
@@ -654,7 +655,7 @@ ENVIRONMENT:
 
 EXAMPLES:
     aap-demo create                              # Create OpenShift Local cluster
-    aap-demo deploy                              # Deploy AAP 2.7
+    aap-demo deploy                              # Deploy AAP $AAP_VERSION
     aap-demo enable fleet                        # Enable fleet addon
     aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
     aap-demo fleet list                          # Show running fleet nodes
@@ -2266,6 +2267,8 @@ cmd_setup() {
 }
 
 cmd_deploy() {
+  aap_demo_configure_aap_version "$AAP_VERSION" || exit 1
+
   # Show notice/disclaimer
   if [ "$QUIET" != "true" ] && [ "${AAP_DEMO_NOTICE_SHOWN:-}" != "1" ]; then
     bash "${SCRIPT_DIR}/includes/aap-demo-notice.sh" || true
@@ -2339,7 +2342,7 @@ cmd_deploy() {
   # Refresh kubeconfig before deploy (certs may have changed during OLM install)
   _verify_cluster || exit 1
 
-  # Deploy AAP 2.7
+  # Deploy selected AAP version.
   deploy_latest
 }
 
@@ -2361,16 +2364,17 @@ patch_operator_serviceaccounts() {
 }
 
 deploy_latest() {
+  aap_demo_configure_aap_version "$AAP_VERSION" || exit 1
+
   # Check disk space before deploying (latest catalog images are large)
   _check_disk_space || exit 1
 
   echo ""
   echo "Deploying AAP from latest catalog..."
-  echo "  Version: 2.7"
+  echo "  Version: $AAP_VERSION"
   echo "  Namespace: $NAMESPACE"
   echo ""
 
-  AAP_CHANNEL="stable-2.7"
   # Auto-detect OCP version from CRC status (e.g. 4.22.0 → 4.22)
   if [ -z "${AAP_OCP_VERSION:-}" ]; then
     _crc_status_json=$(crc status -o json 2>/dev/null || echo '{}')
@@ -2414,7 +2418,7 @@ deploy_latest() {
   # (not openshift-marketplace — upstream OLM doesn't create pods there on OpenShift Local)
   echo ""
   _catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${AAP_OCP_VERSION}"
-  _cached_catalog_image="$(_cached_operator_catalog_ref "$AAP_OCP_VERSION")"
+  _cached_catalog_image="$(_cached_operator_catalog_ref "$AAP_OCP_VERSION" "$AAP_VERSION")"
   if [ -n "$_cached_catalog_image" ]; then
     _catalog_image="$_cached_catalog_image"
     echo "Creating CatalogSource from cached digest (OCP $AAP_OCP_VERSION)..."
@@ -2456,8 +2460,8 @@ deploy_latest() {
   # Create Subscription
   echo ""
   echo "Creating Subscription..."
-  sed -e "s|namespace: aap|namespace: $NAMESPACE|" \
-    -e "s|channel: stable-2.6|channel: $AAP_CHANNEL|" \
+  sed -E -e "s|namespace: aap|namespace: $NAMESPACE|" \
+    -e "s|channel: stable-2\.[0-9]+|channel: $AAP_CHANNEL|" \
     "${SCRIPT_DIR}/config/olm/subscription.yaml" | kubectl apply -f -
 
   # OLM creates the operator deployment asynchronously after the Subscription
@@ -2471,7 +2475,14 @@ deploy_latest() {
   CSV_NAME=""
   for i in $(seq 1 60); do
     _rewrite_local_cache_refs
-    CSV_NAME=$(kubectl get csv -n "$NAMESPACE" 2>/dev/null | grep '^aap-operator\.' | awk '{print $1}' | head -1)
+    CSV_NAME=""
+    while IFS= read -r _csv_name; do
+      if aap_demo_csv_matches_aap_version "$_csv_name"; then
+        CSV_NAME="$_csv_name"
+        break
+      fi
+    done < <(kubectl get csv -n "$NAMESPACE" -o name 2>/dev/null \
+      | sed 's|^clusterserviceversion.operators.coreos.com/||')
     if [ -n "$CSV_NAME" ]; then
       echo "Found CSV: $CSV_NAME"
       break
@@ -2670,7 +2681,7 @@ _load_local_cache() {
 _cached_operator_catalog_ref() {
   [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ] && return 0
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" \
-    catalog-ref "$1" 2>/dev/null || true
+    catalog-ref "$1" "${2:-$AAP_VERSION}" 2>/dev/null || true
 }
 
 _rewrite_local_cache_refs() {

@@ -8,6 +8,7 @@ Validation tests for `aap-demo.sh` command-line interface.
 # Run the shell and Python test scripts used by CI
 ./test/test-core-commands.sh
 ./test/test-aap-readiness.sh
+./test/test-aap-version-selection.sh
 ./test/test-ingress-ca-export.sh
 ./test/test-macos-ingress-ca-auth.sh
 ./test/test-macos-ingress-ca-trust-state.sh
