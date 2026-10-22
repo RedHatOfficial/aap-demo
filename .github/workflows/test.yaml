@@ -101,6 +101,12 @@ jobs:
       - name: Run AO provisioning tests
         run: python3 ./test/test-provision-aap-demos.py
 
+      - name: Run Fleet addon tests
+        run: |
+          ./test/test-fleet-prerequisites.sh
+          ./test/test-fleet-enable.sh
+          ./test/test-fleet-image.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

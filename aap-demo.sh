@@ -550,12 +550,12 @@ Cluster management:
   ssh             SSH into cluster node
 
 Addons:
-  enable fleet       Enable Fleet managed VMs for demos (requires AAP)
+  enable fleet       Enable Fleet managed VMs (can download a CentOS Stream cloud image)
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
   enable mcp-server  Enable MCP server for AI assistants
 
 Fleet commands (requires: enable fleet):
-  fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
+  fleet add <N> [--image <path-or-url>]  Create N managed VMs as AAP nodes
   fleet list                    List running fleet node VMs
   fleet remove [N|name]         Remove fleet node VMs
   fleet destroy                 Remove all VMs and AAP resources
@@ -573,8 +573,9 @@ Addons:
 
 Examples:
   aap-demo deploy                              # Deploy AAP 2.7
-  aap-demo enable fleet                        # Enable fleet addon
-  aap-demo fleet add 3 --image ~/rhel9.qcow2  # Create 3 managed VMs
+  aap-demo enable fleet                               # Enable fleet and bring in a QCOW2
+  FLEET_DOWNLOAD_IMAGE=true aap-demo enable fleet     # Download CentOS Stream 9 without prompting
+  aap-demo fleet add 3 --image ~/rhel9.qcow2          # Create 3 managed VMs from a local image
   aap-demo enable portal                       # Enable Self-Service Portal
   aap-demo enable setup-pah                    # Configure Private Automation Hub
 
@@ -614,7 +615,7 @@ COMMANDS (all infrastructure types):
                     Output saved to must-gather.local.<timestamp> (or specified dir)
     enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
     disable [addon] Disable an addon
-    fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
+    fleet add [N] --image <path-or-url>  Create N managed VMs (requires: enable fleet)
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
@@ -651,12 +652,18 @@ ENVIRONMENT:
     AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
     AAP_IMAGE_STORE_FORMAT=true
                         Explicitly format a blank persistent disk once
+    FLEET_IMAGE         Local QCOW2 path or http(s) URL used by Fleet
+    FLEET_IMAGE_URL     Download this URL when FLEET_IMAGE is unset
+    FLEET_DOWNLOAD_IMAGE=true
+                        Download CentOS Stream 9 GenericCloud for this architecture
+    FLEET_IMAGE_SHA256  SHA256 to require before accepting a downloaded QCOW2
 
 EXAMPLES:
     aap-demo create                              # Create OpenShift Local cluster
     aap-demo deploy                              # Deploy AAP 2.7
-    aap-demo enable fleet                        # Enable fleet addon
-    aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
+    aap-demo enable fleet                            # Enable fleet and bring in a QCOW2
+    FLEET_DOWNLOAD_IMAGE=true aap-demo enable fleet  # Download CentOS Stream 9 without prompting
+    aap-demo fleet add 3 --image ~/rhel9.qcow2       # Create 3 managed VMs from a local image
     aap-demo fleet list                          # Show running fleet nodes
     aap-demo status                              # Show cluster and AAP status
     aap-demo stop                                # Stop cluster
@@ -2971,19 +2978,16 @@ cmd_fleet() {
       count="${count:-1}"
       image="${image:-${FLEET_IMAGE:-}}"
 
-      if [ -z "$image" ]; then
-        _err "No QCOW2 image specified"
-        echo ""
-        echo "Usage: aap-demo fleet add [count] --image <path-to-qcow2>"
-        echo ""
-        echo "  count    Number of VMs to create (default: 1)"
-        echo "  --image  Path to a RHEL/CentOS QCOW2 cloud image"
+      _verify_cluster || return 1
+      fleet_check_prereqs || return 1
+      if ! fleet_acquire_image "$image"; then
         return 1
       fi
-
-      image=$(cd "$(dirname "$image")" 2>/dev/null && echo "$(pwd)/$(basename "$image")")
-
-      _verify_cluster || return 1
+      image="${FLEET_ACQUIRED_IMAGE:-}"
+      if [ -z "$image" ]; then
+        _err "Fleet did not resolve a QCOW2 image"
+        return 1
+      fi
       fleet_check_prereqs "$image" || return 1
       fleet_create_all "$count" "$image"
       _fleet_save_image_config "$image"
@@ -3028,13 +3032,14 @@ cmd_fleet() {
       echo "Usage: aap-demo fleet <subcommand>"
       echo ""
       echo "Subcommands:"
-      echo "  add [count] --image <path>   Create fleet node VMs"
+      echo "  add [count] --image <path-or-url>  Create fleet node VMs"
       echo "  remove [count|name]          Remove fleet node VMs"
       echo "  list                         List fleet node VMs"
       echo "  destroy                      Remove all VMs and AAP resources"
       echo ""
       echo "Options:"
-      echo "  --image <path>    Path to RHEL/CentOS QCOW2 cloud image"
+      echo "  --image <path-or-url>  Local QCOW2 or http(s) URL"
+      echo "  FLEET_DOWNLOAD_IMAGE=true  Download CentOS Stream 9 GenericCloud"
       echo "  FLEET_NODE_MEM=N   VM memory in MB (default: 1024)"
       echo "  FLEET_NODE_CPUS=N  VM CPU count (default: 2)"
       echo ""
