@@ -252,6 +252,474 @@ _fleet_validate_image() {
 }
 
 # -----------------------------------------------------------------------------
+# Cloud image acquisition
+#
+# Enable can use a local QCOW2 or download one. CentOS Stream 9 GenericCloud is
+# the default because it is cloud-init ready and published for both x86_64 and
+# aarch64. The download is cached outside ~/.aap-demo/fleet so fleet destroy
+# does not throw the image away. Published CentOS images are checked against
+# the sibling CHECKSUM file; set FLEET_IMAGE_SHA256 to pin a different URL.
+# -----------------------------------------------------------------------------
+
+_fleet_is_url() {
+  case "$1" in
+    http://* | https://*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_fleet_interactive() {
+  if [ "${QUIET:-false}" = true ]; then
+    return 1
+  fi
+  if [ -n "${FLEET_PROMPT_DEVICE:-}" ]; then
+    return 0
+  fi
+  [ -t 0 ]
+}
+
+_fleet_trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s\n' "$value"
+}
+
+_fleet_read_line() {
+  local value
+
+  if [ -n "${FLEET_PROMPT_DEVICE:-}" ]; then
+    if [ -z "${_FLEET_PROMPT_OPENED:-}" ]; then
+      exec 9<"${FLEET_PROMPT_DEVICE}" || return 1
+      _FLEET_PROMPT_OPENED=1
+    fi
+    IFS= read -r value <&9 || return 1
+  else
+    IFS= read -r value || return 1
+  fi
+  value=${value%$'\r'}
+  FLEET_PROMPT_LINE=$(_fleet_trim "$value")
+}
+
+_fleet_expand_user_path() {
+  local path="$1"
+  local rest
+  rest="${path#\~/}"
+  if [ "$path" = "~" ]; then
+    printf '%s\n' "$HOME"
+  elif [ "$rest" != "$path" ]; then
+    printf '%s\n' "${HOME}/${rest}"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+# CentOS "latest" images keep the same cache filename when upstream changes.
+# Re-check those files against the published checksum instead of trusting the
+# saved path forever.
+_fleet_default_url_for_cached_image() {
+  local path="$1"
+  local cache_dir base
+  cache_dir=$(_fleet_image_cache_dir)
+  cache_dir=$(cd "$cache_dir" 2>/dev/null && pwd) || return 1
+  case "$path" in
+    "$cache_dir"/*) ;;
+    *) return 1 ;;
+  esac
+  base=$(basename "$path")
+  case "$base" in
+    CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2)
+      printf '%s\n' "https://cloud.centos.org/centos/9-stream/x86_64/images/${base}"
+      ;;
+    CentOS-Stream-GenericCloud-9-latest.aarch64.qcow2)
+      printf '%s\n' "https://cloud.centos.org/centos/9-stream/aarch64/images/${base}"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_fleet_canonicalize_path() {
+  local path="$1"
+  local dir base
+  dir=$(dirname "$path")
+  base=$(basename "$path")
+  dir=$(cd "$dir" 2>/dev/null && pwd) || return 1
+  printf '%s/%s\n' "$dir" "$base"
+}
+
+_fleet_image_cache_dir() {
+  printf '%s\n' "${FLEET_IMAGE_CACHE_DIR:-${HOME}/.aap-demo/cache/fleet}"
+}
+
+_fleet_default_image_url() {
+  local arch
+  arch=$(_fleet_detect_arch) || return 1
+  case "$arch" in
+    aarch64)
+      printf '%s\n' "https://cloud.centos.org/centos/9-stream/aarch64/images/CentOS-Stream-GenericCloud-9-latest.aarch64.qcow2"
+      ;;
+    x86_64)
+      printf '%s\n' "https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_fleet_image_usage() {
+  cat <<'EOF' >&2
+  Set FLEET_IMAGE to a local .qcow2 path or an http(s) URL.
+  Set FLEET_IMAGE_URL to download a specific image.
+  Set FLEET_DOWNLOAD_IMAGE=true to download CentOS Stream 9 GenericCloud.
+  Re-run without QUIET=true in a terminal to choose an image.
+EOF
+}
+
+_fleet_url_filename() {
+  local url="$1"
+  local path name
+  path="${url%%\?*}"
+  path="${path%%#*}"
+  name=$(basename "$path")
+  case "$name" in
+    '' | . | .. | *[[:space:]]*)
+      _err "Cloud image URL has no usable filename: ${url}"
+      return 1
+      ;;
+  esac
+  printf '%s\n' "$name"
+}
+
+_fleet_is_qcow_name() {
+  local name="$1"
+  local lower
+  lower=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+  case "$lower" in
+    *.qcow2) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_fleet_curl() {
+  curl "$@"
+}
+
+_fleet_sha256() {
+  local file="$1"
+  local sum
+  if command -v sha256sum >/dev/null 2>&1; then
+    sum=$(sha256sum "$file") || return 1
+  elif command -v shasum >/dev/null 2>&1; then
+    sum=$(shasum -a 256 "$file") || return 1
+  else
+    _err "sha256sum or shasum is required to verify a downloaded Fleet image"
+    return 1
+  fi
+  printf '%s\n' "$sum" | awk '{print $1}'
+}
+
+_fleet_checksum_for_file() {
+  local filename="$1"
+  local checksums="$2"
+  local line
+  line=$(printf '%s\n' "$checksums" | grep -F -m 1 -- "SHA256 (${filename}) = " || true)
+  if [ -z "$line" ]; then
+    return 1
+  fi
+  printf '%s\n' "${line##*= }"
+}
+
+# Returns 0 when the file matches, 1 on mismatch, and 2 when the published
+# checksum cannot be fetched. The third argument "quiet" suppresses messages.
+_fleet_verify_downloaded_image() {
+  local file="$1"
+  local url="$2"
+  local quiet="${3:-}"
+  local actual expected checksums checksum_url filename
+
+  if [ -z "${FLEET_IMAGE_SHA256:-}" ]; then
+    case "$url" in
+      https://cloud.centos.org/* | http://cloud.centos.org/*) ;;
+      *) return 0 ;;
+    esac
+  fi
+
+  actual=$(_fleet_sha256 "$file") || return 1
+  actual=$(printf '%s' "$actual" | tr '[:upper:]' '[:lower:]')
+
+  if [ -n "${FLEET_IMAGE_SHA256:-}" ]; then
+    expected=$(printf '%s' "$FLEET_IMAGE_SHA256" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  else
+
+    checksum_url="${url%/*}/CHECKSUM"
+    filename=$(_fleet_url_filename "$url") || return 1
+    if [ "$quiet" != quiet ]; then
+      echo "  Verifying ${filename}"
+    fi
+    if ! checksums=$(_fleet_curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 "$checksum_url"); then
+      if [ "$quiet" != quiet ]; then
+        _err "Could not download checksum file: ${checksum_url}"
+      fi
+      return 2
+    fi
+    if ! expected=$(_fleet_checksum_for_file "$filename" "$checksums"); then
+      if [ "$quiet" != quiet ]; then
+        _err "No SHA256 entry for ${filename}"
+      fi
+      return 1
+    fi
+    expected=$(printf '%s' "$expected" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  fi
+
+  if ! printf '%s\n' "$expected" | grep -Eq '^[0-9a-f]{64}$'; then
+    if [ "$quiet" != quiet ]; then
+      _err "Cloud image checksum is not a SHA256 digest"
+    fi
+    return 1
+  fi
+  if [ "$actual" != "$expected" ]; then
+    if [ "$quiet" != quiet ]; then
+      _err "Cloud image checksum does not match"
+      echo "  Expected: ${expected}" >&2
+      echo "  Actual:   ${actual}" >&2
+    fi
+    return 1
+  fi
+  if [ "$quiet" != quiet ]; then
+    echo "  ✓ Checksum verified"
+  fi
+  return 0
+}
+
+fleet_download_image() {
+  local url="$1"
+  local cache_dir name dest partial cache_status
+  local curl_args=()
+
+  if ! _fleet_is_url "$url"; then
+    _err "Cloud image URL must start with http:// or https://: ${url}"
+    return 1
+  fi
+  name=$(_fleet_url_filename "$url") || return 1
+  if ! _fleet_is_qcow_name "$name"; then
+    _err "Cloud image URL must point to a .qcow2 file: ${url}"
+    return 1
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    _err "curl is required to download a Fleet cloud image"
+    echo "  Install curl and retry." >&2
+    return 1
+  fi
+
+  cache_dir=$(_fleet_image_cache_dir)
+  mkdir -p "$cache_dir" || return 1
+  dest="${cache_dir}/${name}"
+  partial="${dest}.partial"
+
+  if [ -f "$dest" ]; then
+    cache_status=1
+    if _fleet_validate_image "$dest"; then
+      cache_status=0
+      _fleet_verify_downloaded_image "$dest" "$url" quiet || cache_status=$?
+    fi
+    if [ "$cache_status" -eq 0 ]; then
+      echo "  Using cached QCOW2: ${dest}"
+      FLEET_ACQUIRED_IMAGE="$dest"
+      return 0
+    fi
+    if [ "$cache_status" -eq 2 ]; then
+      echo "  Checksum could not be downloaded; using cached QCOW2: ${dest}"
+      FLEET_ACQUIRED_IMAGE="$dest"
+      return 0
+    fi
+    echo "  Replacing cached QCOW2 that failed verification..."
+    rm -f "$dest"
+  fi
+
+  echo "  Downloading QCOW2 cloud image..."
+  echo "  ${url}"
+  echo "  Destination: ${dest}"
+
+  curl_args=(-fL --retry 3 --retry-delay 2 --connect-timeout 20)
+  if [ "${QUIET:-false}" = true ] || [ ! -t 1 ]; then
+    curl_args+=(-sS)
+  else
+    curl_args+=(--progress-bar)
+  fi
+
+  rm -f "$partial"
+  if ! _fleet_curl "${curl_args[@]}" -o "$partial" "$url"; then
+    rm -f "$partial"
+    _err "Failed to download cloud image: ${url}"
+    return 1
+  fi
+  mv -f "$partial" "$dest" || return 1
+
+  if ! _fleet_verify_downloaded_image "$dest" "$url"; then
+    rm -f "$dest"
+    return 1
+  fi
+  if ! _fleet_validate_image "$dest"; then
+    if ! command -v qemu-img >/dev/null 2>&1; then
+      _err "qemu-img is required to verify the downloaded cloud image"
+      echo "  The downloaded file was kept at ${dest}" >&2
+    else
+      rm -f "$dest"
+      _err "Downloaded file is not a valid QCOW2 image"
+    fi
+    return 1
+  fi
+
+  echo "  ✓ Cloud image ready: ${dest}"
+  FLEET_ACQUIRED_IMAGE="$dest"
+  return 0
+}
+
+_fleet_prompt_for_image() {
+  local arch url choice path custom
+  arch=$(_fleet_detect_arch) || return 1
+  url=$(_fleet_default_image_url) || return 1
+
+  cat <<EOF
+
+Fleet needs a QCOW2 cloud image.
+
+  1) Download CentOS Stream 9 GenericCloud (${arch})
+     ${url}
+     The image is larger than 1 GB and is cached for reuse.
+  2) Use a local QCOW2 file
+  3) Download a QCOW2 from a URL
+EOF
+
+  printf '  Choice [1]: ' >&2
+  if ! _fleet_read_line; then
+    _err "Could not read Fleet image choice"
+    return 1
+  fi
+  choice="${FLEET_PROMPT_LINE:-1}"
+  if [ -z "$choice" ]; then
+    choice=1
+  fi
+
+  case "$choice" in
+    1)
+      FLEET_PROMPT_RESULT="$url"
+      ;;
+    2)
+      printf '  Path to QCOW2 cloud image: ' >&2
+      if ! _fleet_read_line; then
+        _err "Could not read QCOW2 image path"
+        return 1
+      fi
+      path="${FLEET_PROMPT_LINE:-}"
+      if [ -z "$path" ]; then
+        _err "A QCOW2 image path is required"
+        return 1
+      fi
+      if ! _fleet_is_url "$path"; then
+        path=$(_fleet_expand_user_path "$path")
+      fi
+      FLEET_PROMPT_RESULT="$path"
+      ;;
+    3)
+      printf '  QCOW2 URL: ' >&2
+      if ! _fleet_read_line; then
+        _err "Could not read QCOW2 URL"
+        return 1
+      fi
+      custom="${FLEET_PROMPT_LINE:-}"
+      if [ -z "$custom" ]; then
+        _err "A QCOW2 URL is required"
+        return 1
+      fi
+      if ! _fleet_is_url "$custom"; then
+        _err "A QCOW2 URL must start with http:// or https://"
+        return 1
+      fi
+      FLEET_PROMPT_RESULT="$custom"
+      ;;
+    *)
+      _err "Unknown image choice: ${choice}"
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+# Resolve a local QCOW2 or download one. Prints progress to stdout and stores
+# the local path in FLEET_ACQUIRED_IMAGE. An empty argument uses FLEET_IMAGE,
+# then FLEET_IMAGE_URL, then FLEET_DOWNLOAD_IMAGE=true, then an interactive choice.
+fleet_acquire_image() {
+  local spec="${1-}"
+  local cached_url
+  FLEET_ACQUIRED_IMAGE=""
+
+  if [ -z "$spec" ]; then
+    spec="${FLEET_IMAGE:-}"
+  fi
+  if [ -n "$spec" ]; then
+    spec=$(_fleet_trim "$spec")
+  fi
+
+  if [ -n "$spec" ] && ! _fleet_is_url "$spec"; then
+    spec=$(_fleet_expand_user_path "$spec")
+    if [ ! -f "$spec" ]; then
+      _err "QCOW2 image not found: ${spec}"
+      if ! _fleet_interactive; then
+        _fleet_image_usage
+        return 1
+      fi
+      echo "  That file is missing. Choose how to get an image." >&2
+      spec=""
+    fi
+  fi
+
+  if [ -z "$spec" ] && [ -n "${FLEET_IMAGE_URL:-}" ]; then
+    spec=$(_fleet_trim "$FLEET_IMAGE_URL")
+  fi
+  if [ -z "$spec" ] && [ "${FLEET_DOWNLOAD_IMAGE:-}" = true ]; then
+    spec=$(_fleet_default_image_url) || return 1
+  fi
+  if [ -z "$spec" ]; then
+    if _fleet_interactive; then
+      _fleet_prompt_for_image || return 1
+      spec="${FLEET_PROMPT_RESULT:-}"
+    else
+      _err "A QCOW2 cloud image is required"
+      _fleet_image_usage
+      return 1
+    fi
+  fi
+  if [ -z "$spec" ]; then
+    _err "A QCOW2 cloud image is required"
+    return 1
+  fi
+
+  if _fleet_is_url "$spec"; then
+    fleet_download_image "$spec" || return 1
+    return 0
+  fi
+
+  if [ ! -f "$spec" ]; then
+    _err "QCOW2 image not found: ${spec}"
+    return 1
+  fi
+  spec=$(_fleet_canonicalize_path "$spec") || {
+    _err "Could not resolve Fleet image path: ${spec}"
+    return 1
+  }
+  if cached_url=$(_fleet_default_url_for_cached_image "$spec"); then
+    fleet_download_image "$cached_url" || return 1
+    return 0
+  fi
+  FLEET_ACQUIRED_IMAGE="$spec"
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # SSH key management
 # -----------------------------------------------------------------------------
 

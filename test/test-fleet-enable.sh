@@ -7,6 +7,8 @@ deploy="${repo_root}/addons/fleet/deploy.sh"
 
 grep -Fq 'FLEET_IMAGE' "$deploy"
 grep -Fq 'FLEET_NODE_COUNT' "$deploy"
+grep -Fq 'fleet_acquire_image' "$deploy"
+grep -Fq 'FLEET_DOWNLOAD_IMAGE' "$deploy"
 grep -Fq 'fleet_install_prereqs' "$deploy"
 grep -Fq 'fleet_create_all' "$deploy"
 grep -Fq 'fleet_register_aap' "$deploy"
