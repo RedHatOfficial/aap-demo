@@ -136,7 +136,8 @@ aap-demo enable local-cache        # restore auto-load on future deploys
 
 ```bash
 # Deployment
-aap-demo deploy              # Deploy AAP 2.7
+AAP_VERSION=2.7 aap-demo deploy  # Deploy AAP 2.7 (default)
+AAP_VERSION=2.6 aap-demo deploy  # Deploy AAP 2.6
 
 # Cluster management
 aap-demo status              # Show cluster status, routes, credentials
@@ -185,6 +186,7 @@ CRC_MEMORY=16384             # VM memory in MiB (default: 16384)
 CRC_DISK=100                 # VM disk size in GiB (default: 100)
 CRC_PV_SIZE=70               # Storage reserved for LVMS PVCs in GiB (default: 70, must be < CRC_DISK)
 NAMESPACE=aap-operator       # Target namespace
+AAP_VERSION=2.7               # AAP version to deploy: 2.6 or 2.7
 QUIET=true                   # Suppress disclaimer
 ```
 
