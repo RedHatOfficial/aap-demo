@@ -41,6 +41,16 @@ jobs:
       - name: Run kubeconfig shell setup tests
         run: ./test/test-kubeconfig-shell-setup.sh
 
+      - name: Install kubectl
+        run: |
+          if ! command -v kubectl >/dev/null 2>&1; then
+            curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/v1.31.4/bin/linux/amd64/kubectl"
+            sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+          fi
+
+      - name: Run kubeconfig guard tests
+        run: ./test/test-kubeconfig-guard.sh
+
       - name: Run installer tests
         run: ./test/test-install.sh
 

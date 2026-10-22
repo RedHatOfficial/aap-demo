@@ -42,6 +42,8 @@ source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
 
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
+# shellcheck source=includes/kubeconfig-guard.sh
+source "${SCRIPT_DIR}/includes/kubeconfig-guard.sh"
 # shellcheck source=includes/ao-llm.sh
 source "${SCRIPT_DIR}/includes/ao-llm.sh"
 # shellcheck source=includes/json-utils.sh
@@ -394,7 +396,9 @@ reject_windows_deferred_addon() {
 # Infrastructure Type Handling
 # -----------------------------------------------------------------------------
 
-# Setup KUBECONFIG based on infrastructure type
+# Setup KUBECONFIG based on infrastructure type.
+# Refuse a remote current context before any API call. oc login rewrites this
+# file when the shell exports it, and cluster-info would otherwise succeed.
 setup_kubeconfig() {
   check_kubectl || exit 1
   # Apply --kubeconfig override first (takes precedence)
@@ -408,7 +412,26 @@ setup_kubeconfig() {
     mkdir -p "$AAP_DEMO_DIR"
     KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
     export KUBECONFIG
-    # Refresh from cluster if current kubeconfig doesn't work
+  fi
+
+  # Apply context override if specified
+  if [ -n "$KUBECTL_CONTEXT" ]; then
+    if ! kubectl config use-context "$KUBECTL_CONTEXT" >/dev/null 2>&1; then
+      echo "ERROR: Context '$KUBECTL_CONTEXT' not found"
+      echo ""
+      echo "Available contexts:"
+      kubectl config get-contexts -o name 2>/dev/null | sed 's/^/  /' || echo "  (none)"
+      exit 1
+    fi
+  fi
+
+  if ! aap_demo_reject_remote_kubeconfig; then
+    exit 1
+  fi
+
+  # Refresh from the VM only after the current context is local. A reachable
+  # remote context used to skip this refresh and keep the remote target.
+  if [ -z "$KUBECTL_KUBECONFIG" ]; then
     if ! kubectl cluster-info --request-timeout=3s &>/dev/null 2>&1; then
       # Ensure infra backend is loaded to set CRC_SSH_KEY
       _infra_ensure_backend 2>/dev/null || true
@@ -421,21 +444,13 @@ setup_kubeconfig() {
           mv "${AAP_DEMO_KUBECONFIG}.tmp" "$AAP_DEMO_KUBECONFIG"
           chmod 600 "$AAP_DEMO_KUBECONFIG"
           export KUBECONFIG="$AAP_DEMO_KUBECONFIG"
+          if ! aap_demo_reject_remote_kubeconfig; then
+            exit 1
+          fi
         else
           rm -f "${AAP_DEMO_KUBECONFIG}.tmp"
         fi
       fi
-    fi
-  fi
-
-  # Apply context override if specified
-  if [ -n "$KUBECTL_CONTEXT" ]; then
-    if ! kubectl config use-context "$KUBECTL_CONTEXT" >/dev/null 2>&1; then
-      echo "ERROR: Context '$KUBECTL_CONTEXT' not found"
-      echo ""
-      echo "Available contexts:"
-      kubectl config get-contexts -o name 2>/dev/null | sed 's/^/  /' || echo "  (none)"
-      exit 1
     fi
   fi
 
@@ -595,6 +610,9 @@ OPTIONS:
     NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
     QUIET=true          Suppress disclaimer
     FORCE=true          Force reinstall even if AAP exists
+    AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true
+                        Allow a remote kubeconfig context. Default is to
+                        refuse, so oc login cannot retarget deploy or enable.
 
 COMMANDS (all infrastructure types):
     deploy          Deploy AAP 2.7 (operator + CR)
