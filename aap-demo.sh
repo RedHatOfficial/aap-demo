@@ -644,6 +644,9 @@ COMMANDS (all infrastructure types):
     fleet destroy          Remove all VMs and AAP resources
     enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
                     portal-operator is Technology Preview and AMD64 only
+    keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
+                    Configure Keycloak OIDC consumers; dry-run unless --apply
+                    --map-groups aligns Keycloak groups with AAP roles and AO groups
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
