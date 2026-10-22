@@ -151,7 +151,7 @@ jobs:
         run: |
           set +x
           bash addons/apme-eap/ci/build-image.sh --pack-dir "$RUNNER_TEMP/resolved" \
-            --architecture "$ARCHITECTURE" --output-dir "$RUNNER_TEMP/build-output" --push
+            --architecture "$ARCHITECTURE" --output-dir "$RUNNER_TEMP/build-output" --push --reuse-existing
 
   manifest:
     needs: [resolve, build]
@@ -182,6 +182,11 @@ jobs:
           set +x
           set -euo pipefail
           fail() { printf '::error::%s\n' "$*" >&2; exit 1; }
+          source "$RUNNER_TEMP/resolved/artifact.env"
+          pack_hex="${APME_PACK_SHA256#sha256:}"
+          [[ "$APME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$pack_hex" =~ ^[0-9a-f]{64}$ &&
+             "$IMMUTABLE_TAG" == "apme-$APME_SOURCE_SHA-${pack_hex:0:12}" ]] ||
+            fail 'Resolved source/pack does not match immutable tag'
           : "${QUAY_USERNAME:?Missing QUAY_USERNAME}" "${QUAY_TOKEN:?Missing QUAY_TOKEN}"
           umask 077
           auth_dir="$(mktemp -d "$RUNNER_TEMP/apme-manifest.XXXXXX")"
@@ -206,28 +211,37 @@ jobs:
           export PATH="$auth_dir/bin:$PATH"
           export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
           printf '%s\n' '{"auths":{},"credHelpers":{"quay.io":"apme-env"}}' > "$REGISTRY_AUTH_FILE"
-          printf '%s\n' "$QUAY_TOKEN" | podman login --authfile "$REGISTRY_AUTH_FILE" \
-            --username "$QUAY_USERNAME" --password-stdin quay.io
-          podman manifest create apme-release
-          for arch in amd64 arm64; do
-            podman manifest add --authfile "$REGISTRY_AUTH_FILE" \
-              apme-release "docker://$IMAGE:$IMMUTABLE_TAG-$arch"
-          done
-          bash addons/apme-eap/ci/require-unpublished.sh "$IMAGE:$IMMUTABLE_TAG" \
-            --authfile "$REGISTRY_AUTH_FILE"
-          podman manifest push --all --authfile "$REGISTRY_AUTH_FILE" \
-            --digestfile "$auth_dir/manifest.digest" apme-release "docker://$IMAGE:$IMMUTABLE_TAG"
-          digest="$(cat "$auth_dir/manifest.digest")"
+          if skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
+            "docker://$IMAGE:$IMMUTABLE_TAG" > "$auth_dir/manifest.json" 2> "$auth_dir/inspect.error"; then
+            publication=reused
+            digest="$(skopeo manifest-digest "$auth_dir/manifest.json")"
+          else
+            grep -Eiq '(^|[^a-z_])(manifest unknown|name unknown)(:|[[:space:]]|$)' \
+              "$auth_dir/inspect.error" || fail 'Cannot confirm immutable manifest is absent'
+            printf '%s\n' "$QUAY_TOKEN" | podman login --authfile "$REGISTRY_AUTH_FILE" \
+              --username "$QUAY_USERNAME" --password-stdin quay.io
+            podman manifest create apme-release
+            for arch in amd64 arm64; do
+              podman manifest add --authfile "$REGISTRY_AUTH_FILE" \
+                apme-release "docker://$IMAGE:$IMMUTABLE_TAG-$arch"
+            done
+            # Recheck immediately before writing; a concurrent publisher must not be overwritten.
+            bash addons/apme-eap/ci/require-unpublished.sh "$IMAGE:$IMMUTABLE_TAG" \
+              --authfile "$REGISTRY_AUTH_FILE"
+            podman manifest push --all --authfile "$REGISTRY_AUTH_FILE" \
+              --digestfile "$auth_dir/manifest.digest" apme-release "docker://$IMAGE:$IMMUTABLE_TAG"
+            publication=published
+            digest="$(cat "$auth_dir/manifest.digest")"
+            skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
+              "docker://$IMAGE:$IMMUTABLE_TAG" > "$auth_dir/manifest.json"
+          fi
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Invalid manifest digest'
-          skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
-            "docker://$IMAGE:$IMMUTABLE_TAG" > "$auth_dir/manifest.json"
           [[ "$(skopeo manifest-digest "$auth_dir/manifest.json")" == "$digest" ]] || fail 'Manifest digest mismatch'
           jq -e '.schemaVersion == 2 and (.manifests | length == 2) and
             ([.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"])' \
             "$auth_dir/manifest.json" >/dev/null || fail 'Expected exactly linux/amd64 and linux/arm64'
-          source "$RUNNER_TEMP/resolved/artifact.env"
           {
-            printf '### APME image published\n\n'
+            printf '### APME image %s\n\n' "$publication"
             printf 'Image: `%s:%s`\n\nDigest: `%s@%s`\n\n' "$IMAGE" "$IMMUTABLE_TAG" "$IMAGE" "$digest"
             printf 'Architectures: `%s-amd64`, `%s-arm64`\n\n' "$IMMUTABLE_TAG" "$IMMUTABLE_TAG"
             printf 'Upstream: `%s@%s`\n\nRun: `%s`; artifact: `%s` (`%s`)\n\n' \

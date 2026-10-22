@@ -1,4 +1,5 @@
 """Execute the real manifest step with offline registry command doubles."""
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -30,15 +31,18 @@ elif tool == "podman" and args[:2] == ["manifest", "push"]:
     (work / "published").touch()
 elif tool == "skopeo" and args[0] == "inspect":
     state = os.environ.get("REMOTE_STATE", "missing")
+    if state in ("network", "denied", "notfound"):
+        sys.exit({"network": "connection reset by peer", "denied": "unauthorized: access denied",
+                  "notfound": "404 page not found"}[state])
     if not (work / "published").exists():
         if state == "missing":
             sys.exit("manifest unknown: tag not found")
-        if state == "network":
-            sys.exit("connection reset by peer")
     sys.stdout.write(os.environ["RAW_MANIFEST"])
 elif tool == "skopeo" and args[0] == "manifest-digest":
     print("sha256:" + hashlib.sha256(pathlib.Path(args[1]).read_bytes()).hexdigest())
 elif tool == "skopeo" and args[0] == "copy":
+    if os.environ.get("FAIL_COPY") == "true":
+        sys.exit("connection reset during promotion")
     pathlib.Path(args[args.index("--digestfile") + 1]).write_text(os.environ["DIGEST"])
 else:
     assert tool == "podman" and args[:2] in (["manifest", "create"], ["manifest", "add"])
@@ -47,15 +51,16 @@ else:
 
 class ManifestPublicationTests(unittest.TestCase):
     def run_manifest(self, state="missing", architectures=("amd64", "arm64"), promote=False,
-                     event="workflow_dispatch", publish_enabled="true"):
-        with tempfile.TemporaryDirectory() as directory:
+                     event="workflow_dispatch", publish_enabled="true", directory=None,
+                     fail_copy=False, immutable_tag=None):
+        with (tempfile.TemporaryDirectory() if directory is None else nullcontext(directory)) as directory:
             work = Path(directory)
             bindir = work / "bin"
-            bindir.mkdir()
+            bindir.mkdir(exist_ok=True)
             for tool in ("podman", "skopeo"):
                 (bindir / tool).write_text(STUB)
                 (bindir / tool).chmod(0o755)
-            (work / "resolved").mkdir()
+            (work / "resolved").mkdir(exist_ok=True)
             (work / "resolved/artifact.env").write_text(
                 "export APME_SOURCE_REPO=ansible/apme APME_SOURCE_SHA=" + "a" * 40 + "\n"
                 "export APME_RUN_ID=1 APME_ARTIFACT_ID=2 APME_ARTIFACT_NAME=plugins\n"
@@ -65,20 +70,25 @@ class ManifestPublicationTests(unittest.TestCase):
             digest = "sha256:" + hashlib.sha256(manifest.encode()).hexdigest()
             env = {**os.environ, "PATH": str(bindir) + os.pathsep + os.environ["PATH"],
                    "RUNNER_TEMP": str(work), "REMOTE_STATE": state, "RAW_MANIFEST": manifest,
-                   "DIGEST": digest, "IMAGE": "quay.io/aapdemo/apme-eap", "IMMUTABLE_TAG": "apme-test",
+                   "DIGEST": digest, "IMAGE": "quay.io/aapdemo/apme-eap",
+                   "IMMUTABLE_TAG": immutable_tag or "apme-" + "a" * 40 + "-" + "b" * 12,
+                   "FAIL_COPY": "true" if fail_copy else "false",
                    "QUAY_USERNAME": "robot", "QUAY_TOKEN": "workflow-test-token",
                    "EVENT_NAME": event, "EVENT_REF": "refs/heads/main",
                    "REQUEST_LATEST": "true" if promote else "false", "PUBLISH_ENABLED": publish_enabled,
                    "GITHUB_STEP_SUMMARY": str(work / "summary")}
             # An unset repository variable resolves to an empty step environment value.
             env.pop("APME_QUAY_PUBLISH_ENABLED", None)
+            command_log = work / "commands"
+            previous = len(command_log.read_text().splitlines()) if command_log.exists() else 0
             result = subprocess.run(["bash", "-c", VALIDATION_GATE], cwd=ROOT, env=env,
                                     text=True, capture_output=True)
             if result.returncode == 0:
                 result = subprocess.run(["bash", "-c", MANIFEST], cwd=ROOT, env=env,
                                         text=True, capture_output=True)
-            command_log = work / "commands"
-            calls = [json.loads(line) for line in command_log.read_text().splitlines()] if command_log.exists() else []
+            calls = [json.loads(line) for line in command_log.read_text().splitlines()[previous:]] if command_log.exists() else []
+            summary = work / "summary"
+            self.summary = summary.read_text() if summary.exists() else ""
             self.assertNotIn(env["QUAY_TOKEN"], result.stdout + result.stderr)
             self.assertFalse(list(work.glob("apme-manifest.*")))
             return result, calls
@@ -91,8 +101,17 @@ class ManifestPublicationTests(unittest.TestCase):
                 self.assertEqual(sum(c[:3] == ["podman", "manifest", "push"] for c in calls), 1)
                 self.assertEqual(sum(c[:2] == ["skopeo", "copy"] for c in calls), int(promote))
 
-    def test_existing_manifest_or_unknown_registry_status_never_pushes(self):
-        for state in ("exists", "network"):
+    def test_existing_complete_manifest_is_verified_and_promoted_without_republication(self):
+        result, calls = self.run_manifest(state="exists", promote=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+        copies = [c for c in calls if c[:2] == ["skopeo", "copy"]]
+        self.assertEqual(len(copies), 1)
+        digest = copies[0][-2].split("@", 1)[1]
+        self.assertIn("Digest: `quay.io/aapdemo/apme-eap@" + digest + "`", self.summary)
+
+    def test_unknown_registry_status_never_publishes_or_promotes(self):
+        for state in ("network", "denied", "notfound"):
             with self.subTest(state=state):
                 result, calls = self.run_manifest(state=state, promote=True)
                 self.assertNotEqual(result.returncode, 0)
@@ -113,10 +132,50 @@ class ManifestPublicationTests(unittest.TestCase):
         self.assertEqual(len(copies), 1)
         self.assertEqual(copies[0][-1], "docker://quay.io/aapdemo/apme-eap:latest")
 
-    def test_incomplete_manifest_never_promotes(self):
+    def test_incomplete_or_extra_existing_platforms_never_publish_or_promote(self):
+        for arches in (("amd64",), ("amd64", "amd64"), ("amd64", "arm64", "ppc64le")):
+            with self.subTest(arches=arches):
+                result, calls = self.run_manifest(state="exists", architectures=arches, promote=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Expected exactly linux/amd64 and linux/arm64", result.stderr)
+                self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+                self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_new_incomplete_manifest_never_promotes(self):
         result, calls = self.run_manifest(architectures=("amd64",), promote=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+
+    def test_bootstrap_then_promote_reuses_same_release_and_supports_retries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls = self.run_manifest(directory=directory, publish_enabled="")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(sum(c[:3] == ["podman", "manifest", "push"] for c in calls), 1)
+            self.assertFalse(any(c[:2] == ["skopeo", "copy"] for c in calls))
+            published_summary = self.summary
+            for _ in range(2):
+                result, calls = self.run_manifest(directory=directory, promote=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+                copies = [c for c in calls if c[:2] == ["skopeo", "copy"]]
+                self.assertEqual(len(copies), 1)
+                self.assertIn(copies[0][-2].removeprefix("docker://"), published_summary)
+
+    def test_failed_latest_copy_can_retry_without_overwriting_release(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls = self.run_manifest(directory=directory, promote=True, fail_copy=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(sum(c[:3] == ["podman", "manifest", "push"] for c in calls), 1)
+            result, calls = self.run_manifest(directory=directory, promote=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse(any(c[:2] == ["podman", "manifest"] for c in calls))
+            self.assertEqual(sum(c[:2] == ["skopeo", "copy"] for c in calls), 1)
+
+    def test_existing_release_tag_must_match_resolved_source_and_pack(self):
+        result, calls = self.run_manifest(state="exists", promote=True, immutable_tag="apme-wrong")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Resolved source/pack does not match immutable tag", result.stderr)
+        self.assertEqual(calls, [])
 
 
 if __name__ == "__main__":

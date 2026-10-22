@@ -18,7 +18,9 @@ Requires Podman; fetching requires GH_TOKEN. Only --push requires Quay credentia
 --pack-dir consumes trusted artifact.env and revalidates the pack without fetching.
 --push always publishes an architecture-suffixed immutable tag (host default).
 --architecture selects amd64 or arm64 explicitly; --tag adds an explicit alias.
-Existing immutable tags are never overwritten; retry only unpublished inputs.
+latest and artifact-derived release aliases are reserved for the workflow.
+Existing immutable tags are never overwritten. Workflow-only --reuse-existing
+requires --push, --pack-dir and --architecture; validates existing image provenance.
 Optional: BASE_IMAGE, REGISTRY_REDHAT_USERNAME/REGISTRY_REDHAT_PASSWORD.
 Replay: source a trusted artifact.env; APME_SOURCE_SHA and APME_PACK_SHA256
 pin the next resolution and verify the downloaded pack again.
@@ -36,6 +38,7 @@ output=''
 push=false
 pack_dir=''
 architecture=''
+reuse_existing=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --source-ref | --source-repo | --tag | --pack-sha256 | --output-dir | --pack-dir | --architecture)
@@ -55,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       push=true
       shift
       ;;
+    --reuse-existing)
+      reuse_existing=true
+      shift
+      ;;
     --help | -h)
       usage
       exit 0
@@ -65,9 +72,19 @@ done
 [[ "$source_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die 'invalid source repository; use owner/repo'
 [[ "$source_ref" == latest || "$source_ref" =~ ^[0-9a-f]{40}$ ]] || die 'source ref must be latest or a full 40-character commit SHA'
 [[ -z "$tag" || "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die 'invalid image tag'
+if [[ "$tag" =~ ^apme-[0-9a-f]{40}-[0-9a-f]{12}(-[a-z0-9]+)?$ ]]; then
+  die 'artifact-derived tags are reserved; --tag must name an explicit non-release alias'
+fi
+if "$push" && [[ "$tag" == latest ]]; then
+  die 'latest is reserved for verified multi-architecture workflow promotion'
+fi
 [[ -z "$expected_pack_sha" || "$expected_pack_sha" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid expected pack SHA256'
 [[ -z "$architecture" || "$architecture" == amd64 || "$architecture" == arm64 ]] || die 'architecture must be amd64 or arm64'
 [[ -z "$architecture" || -z "$tag" ]] || die 'architecture builds cannot publish unqualified aliases'
+if "$reuse_existing"; then
+  [[ "$push" == true && -n "$pack_dir" && -n "$architecture" && -z "$tag" ]] \
+    || die '--reuse-existing requires --push, --pack-dir, and an explicit --architecture without aliases'
+fi
 if "$push"; then
   [[ -n "${QUAY_USERNAME:-}" && -n "${QUAY_TOKEN:-}" ]] || die '--push requires QUAY_USERNAME and QUAY_TOKEN'
   command -v skopeo >/dev/null 2>&1 || die '--push requires skopeo for remote publication checks'
@@ -124,9 +141,6 @@ fi
 [[ "$APME_PACK_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid resolved pack SHA256'
 pack_hex="${APME_PACK_SHA256#sha256:}"
 immutable_tag="apme-${APME_SOURCE_SHA}-${pack_hex:0:12}"
-if [[ "$tag" =~ ^apme-[0-9a-f]{40}-[0-9a-f]{12}(-[a-z0-9]+)?$ ]]; then
-  die 'artifact-derived tags are reserved; --tag must name an explicit non-release alias'
-fi
 [[ -z "$architecture" ]] || immutable_tag+="-$architecture"
 image="$image_repo:$immutable_tag"
 alias_image=''
@@ -171,6 +185,32 @@ esac
 HELPER
 chmod 700 "$auth_dir/bin/docker-credential-apme-env"
 export PATH="$auth_dir/bin:$PATH"
+if "$reuse_existing"; then
+  printf '%s\n' '{"auths":{},"credHelpers":{"quay.io":"apme-env"}}' >"$auth_dir/auth.json"
+  if skopeo inspect --raw --authfile "$auth_dir/auth.json" "docker://$image" \
+    >"$context/existing-manifest.json" 2>"$context/inspect.error"; then
+    jq -e '.schemaVersion == 2 and (has("manifests") | not)' \
+      "$context/existing-manifest.json" >/dev/null || die 'Expected a single-architecture image manifest'
+    registry_digest="$(skopeo manifest-digest "$context/existing-manifest.json")"
+    [[ "$registry_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'Invalid existing image digest'
+    # Inspect the captured digest, so tag changes cannot substitute other content.
+    skopeo inspect --authfile "$auth_dir/auth.json" "docker://$image_repo@$registry_digest" \
+      >"$context/existing-image.json" 2>"$context/inspect.error" || die 'Cannot verify existing image metadata'
+    jq -e --arg arch "$architecture" --arg sha "$APME_SOURCE_SHA" \
+      --arg source "https://github.com/$APME_SOURCE_REPO" --arg pack "$APME_PACK_SHA256" \
+      --arg digest "$registry_digest" \
+      '.Os == "linux" and .Architecture == $arch and .Digest == $digest and
+       .Labels["org.opencontainers.image.source"] == $source and
+       .Labels["org.opencontainers.image.revision"] == $sha and
+       .Labels["io.apme.pack.sha256"] == $pack' "$context/existing-image.json" >/dev/null \
+      || die 'Existing image platform or source/pack provenance does not match resolved inputs'
+    printf 'Reused immutable image: %s\nRegistry digest: %s\nImage reference: %s@%s\n' \
+      "$image" "$registry_digest" "$image_repo" "$registry_digest"
+    exit 0
+  elif ! grep -Eiq '(^|[^a-z_])(manifest unknown|name unknown)(:|[[:space:]]|$)' "$context/inspect.error"; then
+    die 'Cannot confirm immutable image is absent; check registry connectivity and pull permission'
+  fi
+fi
 build_cmd=(podman build)
 [[ -z "$architecture" ]] || build_cmd+=(--arch "$architecture")
 if [[ -n "${REGISTRY_REDHAT_USERNAME:-}" ]]; then
