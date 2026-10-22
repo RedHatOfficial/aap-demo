@@ -514,9 +514,13 @@ selection, raw-gzip and ZIP transport, four-plugin npm/OCI rejection,
 payload/pack digest mismatch, malformed identity, unsafe archive paths, expired/ambiguous
 artifacts, and no fallback to an older successful run. Build-wrapper tests must stop before
 push on resolution/checksum/build/login failure, preserve immutable tags with aliases,
-reject existing immutable tags and unknown remote status, suffix host-architecture pushes,
-and reject tampered matrix inputs. Manifest tests must block overwrites and retain promotion
-checks. Deployment tests must cover external-route/digest rendering, all
+reject standalone `latest` before fetch/build/login, reject standalone existing immutable
+tags and unknown remote status, suffix host-architecture pushes, and reject tampered matrix
+inputs. Explicit workflow reuse must verify architecture image platform/provenance/digests
+before skipping builds. Manifest tests must cover bootstrap followed by promotion, retrying
+a failed promotion without overwriting release tags, and refusing incomplete existing
+manifests or unknown/unauthorized registry status. Keep the promotion gate checks.
+Deployment tests must cover external-route/digest rendering, all
 six local plugin paths, missing private credentials, no build in prebuilt mode, check mode,
 fallback pack requirements, cache validation, invalid-cache rebuild, and failed rebuilds
 blocking Helm rendering. Container/registry commands in these suites are test doubles;
@@ -574,9 +578,9 @@ digest (or its absence) before dispatch so it can be compared after publication.
 **Acceptance criteria:** `T-amd64`, `T-arm64`, and `T` exist with exactly the expected
 platforms, where `T=apme-<source-sha>-<12-hex-pack-digest>`. AMD64 uses the Red Hat RHDH 1.9
 base and ARM64 uses the community RHDH 1.9 base. No `latest` change occurs. Architecture
-and manifest publishers refuse existing tags and unknown registry status before pushing.
-Retry only failed jobs whose target tags are absent. If publication preceded a later
-failure, reuse its recorded digest or choose new source/pack inputs for a full republish.
+and manifest publishers never overwrite existing immutable tags. Workflow retries verify
+and reuse complete existing images/manifests, building or assembling only absent tags;
+unknown registry status or invalid existing releases must stop publication and promotion.
 Registry tag protection is needed to prevent races with independent publishers.
 
 ### CI-003: Prebuilt Deployment on AMD64 and ARM64
@@ -657,12 +661,19 @@ image child, preserved digest, local six-plugin delivery, and working public/pri
    the gate to fail before resolution. Only after CI-002/CI-003 pass, set the repository
    variable to `true`; verify matching main pushes promote `latest`, manual `false` does
    not, and manual `true` does. Confirm the promoted digest matches the verified manifest.
+6. Redispatch the CI-002 bootstrap source/pack inputs with `publish_latest=true` after
+   enabling the gate. Pin the recorded full source SHA and pack format rather than allowing
+   `latest` to select a newer upstream release. Confirm both architecture jobs reuse their
+   verified immutable images without building/pushing, the manifest job reuses the complete
+   existing manifest without pushing it, and `latest` receives that exact manifest digest.
+   Retry a failed promotion and confirm immutable tag digests remain unchanged. An incomplete
+   existing manifest, unauthorized inspection, or unknown registry response must fail closed.
 
 **Acceptance criteria:** Both local modes remain usable, invalid inputs fail closed, and
 promotion follows the gate. A failed remote push may leave already published architecture
 tags; it is not a transactional rollback. The standalone build wrapper publishes a single
-architecture; its explicit `--tag` aliases are outside the CI gate and must not be mistaken
-for CI's multi-architecture promotion.
+architecture and must reject `--push --tag latest` before fetch/build/login. `latest` is
+reserved for the workflow's gated, verified multi-architecture manifest promotion.
 
 ### Task 6 Execution Record — 2026-10-21
 
@@ -715,6 +726,28 @@ both architecture pulls, Podman-machine publication, and cluster rollouts remain
 | Focused Ansible lint / playbook syntax | Passed: 0 rule failures/warnings; syntax check has the existing implicit-localhost inventory warnings. |
 | Shell syntax, ShellCheck, shfmt, Markdown lint, `make test`, `git diff --check` | Passed. |
 | Publishing workflow strict YAML lint | Passed; the test workflow and Ansible role retain their existing document-start warnings under the repository YAML config. |
+
+### Repeatable Guarded Promotion Validation — 2026-10-21
+
+The final review regressions first reproduced standalone `latest` publication and failure
+to promote an existing bootstrap release. The fixes reject reserved standalone publication
+aliases before fetch/build/login and add explicit workflow reuse with source/pack/platform
+validation. Existing immutable images and manifests are never overwritten. The existing
+`APME_QUAY_PUBLISH_ENABLED` promotion gate remains unchanged.
+
+| Command / check | Offline result |
+| --- | --- |
+| `bash test/test-apme-artifact-resolver.sh` | 69/69 passed. |
+| `bash test/test-apme-plugin-pack.sh` | 17/17 passed. |
+| `python3 test/test-apme-build-image.py -v` | 26/26 passed, including early `latest` rejection, standalone write-once behavior, explicit workflow reuse, provenance/platform/digest mismatches, and unknown registry status. Reserved manifest/architecture alias subcases were also rerun after expansion and passed. |
+| Lint venv `python3 test/test-apme-preloaded-image.py -v` | 19/19 passed with the lint venv on `PATH`, outside the sandbox. The initial sandbox run could not start Ansible's local RPC worker. |
+| Lint venv `python3 test/test-apme-image-workflow.py -v` | 10/10 passed, including bootstrap then promotion/retry, failed-copy recovery, complete-release reuse, incomplete/duplicate/extra platforms, unknown/unauthorized status, and the existing gate cases. |
+| Shell/Python syntax, ShellCheck, shfmt, strict workflow YAML lint, Markdown lint, `make test`, and whitespace | Passed. All seven workflow `run` blocks passed Bash syntax and ShellCheck. Python files passed AST parsing. `actionlint` remains unavailable. |
+
+These are **141 offline tests**, using container/registry doubles. No live Quay publication,
+image builds, public/private pulls, Podman-machine publication, cluster deployments, or
+live `latest` promotion were performed. Check-and-push remains non-atomic across independent
+publishers; registry tag protection is still required for that boundary.
 
 ## Test Summary Template
 

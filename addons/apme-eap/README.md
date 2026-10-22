@@ -343,9 +343,15 @@ Let `T = apme-<full-upstream-source-sha>-<first-12-hex-of-pack-sha256>`. The CI 
 
 Architecture tags and the manifest tag are write-once through these publishing commands:
 immediately before each push, a remote inspection must confirm the tag is missing.
-An existing tag, authentication failure, transport failure, or unknown response stops
-publication. Mutable bases and build timestamps can change rebuilt bytes, so a rebuild
-cannot replace an existing artifact-derived tag. Retain and deploy its published digest.
+The workflow explicitly reuses existing architecture images only after verifying their
+platform, source repository/revision, pack checksum, and registry digest. It reuses an
+existing manifest only when the resolved source/pack tag matches and the manifest contains
+exactly `linux/amd64` and `linux/arm64`; its digest is captured for deployment and promotion.
+Existing immutable references are never pushed again. An authentication failure, transport
+failure, unknown response, or invalid existing release stops the workflow. Standalone
+publishing refuses existing tags. Mutable bases and build timestamps can change rebuilt
+bytes, so a rebuild cannot replace an existing artifact-derived tag. Retain and deploy its
+published digest.
 These checks do not configure Quay tag immutability or make check-and-push atomic across
 independent publishers; use registry tag protection to enforce that boundary for all clients.
 
@@ -356,15 +362,20 @@ After validation, set the variable to the literal `true`. With that gate open, m
 `main` pushes also update `latest`, and a manual run updates it only with
 `publish_latest=true`. A manual request for `latest` with the gate closed fails before
 resolution. Manual non-latest publishing remains available with the gate closed.
+To promote the validated bootstrap release, dispatch again with the same source/pack inputs
+and `publish_latest=true` after opening the gate. Use the recorded full source SHA and pack
+format to select the same upstream release; `source_ref=latest` may resolve newer inputs.
+The workflow verifies and reuses the existing architecture tags and manifest, then copies
+the verified manifest digest to `latest` without rebuilding or overwriting release tags.
 
 Incomplete/expired/ambiguous artifacts, bad checksums, unsafe archives, and wrong package
 identities fail before architecture publishing. A failed build or registry push fails its
 job; one architecture tag may already exist, but manifest assembly waits for both builds.
-A manifest verification failure blocks `latest` promotion. Retry failed jobs only when
-their target tags are still absent; successful architecture jobs need not be rerun.
-If a push succeeded before a later failure, inspect and reuse its recorded digest;
-rerunning the publishing job deliberately refuses to overwrite it. A full republish
-requires new source/pack inputs. Never enable the gate to bypass validation.
+A manifest verification failure blocks `latest` promotion. Rerunning the workflow reuses
+verified existing architecture images and publishes only missing tags. A complete existing
+manifest can be promoted again after a failed `latest` copy. An incomplete existing manifest
+fails validation and is never repaired by overwriting its tag; publish new source/pack inputs
+instead. Never enable the gate to bypass validation.
 Live Quay publication and x86/ARM64
 deployment results have not yet been verified; the execution record is in the test plan.
 
@@ -405,15 +416,18 @@ Build-only runs may use an unsuffixed local tag. Unsuffixed release tags are res
 for CI manifest assembly. `--tag <tag>` accepts only
 `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}` and adds that tag as a Quay alias; the
 immutable tag is always built and published first. Artifact-derived release tags cannot
-be used as aliases. Existing immutable tags stop the push, including alias publication;
+be used as aliases, and `--push --tag latest` is rejected before fetching, building, or login.
+Existing immutable tags stop the push, including alias publication;
 retry only while the target tag is absent, or reuse the existing digest. Publication is always to
 `quay.io/aapdemo/apme-eap`; only `--push` publishes. Output includes the local
 image config digest, the pushed registry manifest digest when publishing,
 and the path to `artifact.env`. This command builds one architecture and does not assemble
 a multi-architecture manifest. `--architecture amd64|arm64` selects the architecture
-explicitly and disallows `--tag`, as used by CI; select the matching `BASE_IMAGE`. The CI `latest`
-gate does not apply to standalone `--tag` aliases, so use the workflow for promoting the
-multi-architecture `latest` alias. Preserve the metadata file and the pack for provenance.
+explicitly and disallows `--tag`, as used by CI; select the matching `BASE_IMAGE`.
+`latest` is reserved for the workflow's gated, verified multi-architecture promotion.
+The workflow alone supplies `--reuse-existing` with `--push`, `--pack-dir`, and an explicit
+`--architecture`; ordinary standalone publishing remains write-once.
+Preserve the metadata file and the pack for provenance.
 The default output directory is printed; set `--output-dir` to retain them at
 a chosen location. Build and authentication scratch directories are removed.
 
