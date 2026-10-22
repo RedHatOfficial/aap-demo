@@ -67,6 +67,10 @@ grep -q 'protected_namespace' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: protected namespace guard missing"
   exit 1
 }
+grep -Fq "jsonpath='{.metadata.labels.app\\.kubernetes\\.io/managed-by}'" "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: namespace ownership JSONPath must escape label dots once"
+  exit 1
+}
 if grep -Eq 'redirectUris:.*\\/\\*|post.logout.redirect.uris.*\\/\\*' "$ROOT_DIR/addons/keycloak/deploy.sh"; then
   echo "FAIL: Keycloak redirect URI must not use a wildcard"
   exit 1

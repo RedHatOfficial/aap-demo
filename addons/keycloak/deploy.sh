@@ -38,8 +38,8 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     echo "Keycloak namespace ${KEYCLOAK_NAMESPACE} does not exist"
     exit 0
   fi
-  _managed_by="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/managed-by}' 2>/dev/null || true)"
-  _managed_part="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/part-of}' 2>/dev/null || true)"
+  _managed_by="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
+  _managed_part="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || true)"
   if [ "$_managed_by" != "aap-demo-keycloak" ] || [ "$_managed_part" != "aap-demo" ]; then
     echo "ERROR: refusing to delete unowned namespace ${KEYCLOAK_NAMESPACE}" >&2
     exit 1
@@ -211,8 +211,8 @@ jq -n \
   }' >"$realm_file"
 
 if kubectl get namespace "$KEYCLOAK_NAMESPACE" >/dev/null 2>&1; then
-  _managed_by="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/managed-by}' 2>/dev/null || true)"
-  _managed_part="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/part-of}' 2>/dev/null || true)"
+  _managed_by="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
+  _managed_part="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || true)"
   if [ "$_managed_by" != "aap-demo-keycloak" ] || [ "$_managed_part" != "aap-demo" ]; then
     echo "ERROR: refusing to use unowned namespace ${KEYCLOAK_NAMESPACE}" >&2
     exit 1
