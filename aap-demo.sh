@@ -599,7 +599,7 @@ Examples:
   aap-demo enable portal                       # Enable Self-Service Portal
   aap-demo enable setup-pah                    # Configure Private Automation Hub
 
-Run 'aap-demo help' for full documentation.
+Run 'aap-demo.sh help' for full documentation.
 EOF
 }
 
