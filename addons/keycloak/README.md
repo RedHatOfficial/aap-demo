@@ -50,6 +50,19 @@ AO: create an OIDC identity provider using the realm issuer, client ID
 For local MicroShift, AO may require its private-network OIDC allowance; keep this
 setting limited to the local lab.
 
+The generated clients use exact callback URLs. Override the defaults when AAP or AO
+provides its generated callback URL:
+
+```bash
+KEYCLOAK_AAP_REDIRECT_URI=https://aap.example.test/generated-callback \\
+KEYCLOAK_AO_REDIRECT_URI=https://ao.example.test/generated-callback \\
+aap-demo enable keycloak
+```
+
+The addon marks its namespace with
+`app.kubernetes.io/managed-by=aap-demo-keycloak` and refuses to deploy to or delete
+an unowned namespace.
+
 This addon does not change AAP or AO authentication automatically. AO-to-AAP job
 execution must continue using a separate AAP API key/PAT.
 

@@ -21,9 +21,18 @@ spec:
         aap-demo/keycloak-realm-revision: __REALM_REVISION__
         aap-demo/keycloak-admin-revision: __ADMIN_REVISION__
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: keycloak
           image: __KEYCLOAK_IMAGE__
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
           args:
             - start-dev
             - --import-realm
@@ -80,7 +89,7 @@ spec:
       volumes:
         - name: realm
           secret:
-            secretName: keycloak-realm
+            secretName: keycloak-realm  # pragma: allowlist secret
 ---
 apiVersion: v1
 kind: Service

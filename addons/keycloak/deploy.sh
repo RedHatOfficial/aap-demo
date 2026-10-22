@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-aap-demo-keycloak}"
-KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.8.1}"
+KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244}"
 KEYCLOAK_REALM="${KEYCLOAK_REALM:-aap-lab}"
 STATE_DIR="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
 ACTION="${1:-deploy}"
@@ -18,7 +18,32 @@ require_cmd() {
   }
 }
 
+protected_namespace() {
+  case "$1" in
+    default | kube-* | openshift-* | aap-operator | automation-orchestrator)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
+  if protected_namespace "$KEYCLOAK_NAMESPACE"; then
+    echo "ERROR: refusing to delete protected namespace ${KEYCLOAK_NAMESPACE}" >&2
+    exit 1
+  fi
+  if ! kubectl get namespace "$KEYCLOAK_NAMESPACE" >/dev/null 2>&1; then
+    echo "Keycloak namespace ${KEYCLOAK_NAMESPACE} does not exist"
+    exit 0
+  fi
+  _managed_by="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/managed-by}' 2>/dev/null || true)"
+  _managed_part="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/part-of}' 2>/dev/null || true)"
+  if [ "$_managed_by" != "aap-demo-keycloak" ] || [ "$_managed_part" != "aap-demo" ]; then
+    echo "ERROR: refusing to delete unowned namespace ${KEYCLOAK_NAMESPACE}" >&2
+    exit 1
+  fi
   echo "Removing Keycloak namespace ${KEYCLOAK_NAMESPACE}..."
   kubectl delete namespace "$KEYCLOAK_NAMESPACE" --ignore-not-found
   echo "✓ Keycloak removed"
@@ -31,6 +56,10 @@ kubectl cluster-info >/dev/null 2>&1 || {
   echo "ERROR: kubectl is not connected to a cluster" >&2
   exit 1
 }
+if protected_namespace "$KEYCLOAK_NAMESPACE"; then
+  echo "ERROR: refusing to use protected namespace ${KEYCLOAK_NAMESPACE}" >&2
+  exit 1
+fi
 
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
@@ -69,6 +98,14 @@ fi
 KEYCLOAK_HOST="${KEYCLOAK_HOST:-keycloak.${cluster_domain}}"
 AAP_HOST="$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" -o jsonpath='{.spec.host}' 2>/dev/null || printf 'aap-aap-operator.%s' "$cluster_domain")"
 AO_HOST="$(kubectl get route -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || printf 'automation-orchestrator.%s' "$cluster_domain")"
+KEYCLOAK_AAP_REDIRECT_URI="${KEYCLOAK_AAP_REDIRECT_URI:-https://${AAP_HOST}/}"
+KEYCLOAK_AO_REDIRECT_URI="${KEYCLOAK_AO_REDIRECT_URI:-https://${AO_HOST}/}"
+case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in
+  *\**)
+    echo "ERROR: Keycloak redirect URIs must be exact URLs, not wildcards" >&2
+    exit 1
+    ;;
+esac
 
 realm_file="$(mktemp "${TMPDIR:-/tmp}/aap-lab-realm.XXXXXX.json")"
 cleanup() { rm -f "$realm_file"; }
@@ -78,6 +115,8 @@ jq -n \
   --arg realm "$KEYCLOAK_REALM" \
   --arg aap_host "$AAP_HOST" \
   --arg ao_host "$AO_HOST" \
+  --arg aap_redirect_uri "$KEYCLOAK_AAP_REDIRECT_URI" \
+  --arg ao_redirect_uri "$KEYCLOAK_AO_REDIRECT_URI" \
   --rawfile aap_secret_file "$STATE_DIR/aap-client-secret" \
   --rawfile ao_secret_file "$STATE_DIR/ao-client-secret" \
   --rawfile aap_password_file "$STATE_DIR/aap-user-password" \
@@ -100,9 +139,9 @@ jq -n \
         standardFlowEnabled: true,
         directAccessGrantsEnabled: false,
         defaultClientScopes: ["profile", "email", "roles", "web-origins", "acr", "groups"],
-        redirectUris: ["https://" + $aap_host + "/*"],
+        redirectUris: [$aap_redirect_uri],
         webOrigins: ["https://" + $aap_host],
-        attributes: {"post.logout.redirect.uris": ("https://" + $aap_host + "/*")}
+        attributes: {"post.logout.redirect.uris": $aap_redirect_uri}
       },
       {
         clientId: "aap-demo-ao",
@@ -114,9 +153,9 @@ jq -n \
         standardFlowEnabled: true,
         directAccessGrantsEnabled: false,
         defaultClientScopes: ["profile", "email", "roles", "web-origins", "acr", "groups"],
-        redirectUris: ["https://" + $ao_host + "/*"],
+        redirectUris: [$ao_redirect_uri],
         webOrigins: ["https://" + $ao_host],
-        attributes: {"post.logout.redirect.uris": ("https://" + $ao_host + "/*")}
+        attributes: {"post.logout.redirect.uris": $ao_redirect_uri}
       }
     ],
     groups: [
@@ -171,7 +210,19 @@ jq -n \
     }]
   }' >"$realm_file"
 
-kubectl create namespace "$KEYCLOAK_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if kubectl get namespace "$KEYCLOAK_NAMESPACE" >/dev/null 2>&1; then
+  _managed_by="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/managed-by}' 2>/dev/null || true)"
+  _managed_part="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/part-of}' 2>/dev/null || true)"
+  if [ "$_managed_by" != "aap-demo-keycloak" ] || [ "$_managed_part" != "aap-demo" ]; then
+    echo "ERROR: refusing to use unowned namespace ${KEYCLOAK_NAMESPACE}" >&2
+    exit 1
+  fi
+else
+  kubectl create namespace "$KEYCLOAK_NAMESPACE" >/dev/null
+  kubectl label namespace "$KEYCLOAK_NAMESPACE" \
+    app.kubernetes.io/managed-by=aap-demo-keycloak \
+    app.kubernetes.io/part-of=aap-demo --overwrite >/dev/null
+fi
 kubectl -n "$KEYCLOAK_NAMESPACE" create secret generic keycloak-admin \
   --from-file=password="$STATE_DIR/admin-password" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$KEYCLOAK_NAMESPACE" create secret generic keycloak-realm \
@@ -204,6 +255,8 @@ echo "  Issuer:        ${issuer}"
 echo "  Realm:         ${KEYCLOAK_REALM}"
 echo "  AAP client:    aap-demo-aap"
 echo "  AO client:     aap-demo-ao"
+echo "  AAP callback:  ${KEYCLOAK_AAP_REDIRECT_URI}"
+echo "  AO callback:   ${KEYCLOAK_AO_REDIRECT_URI}"
 echo "  Credentials:   ${STATE_DIR}/"
 echo ""
 echo "  Configure AAP/AO manually with the issuer and client files."
