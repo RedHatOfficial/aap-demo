@@ -52,12 +52,13 @@ addons/fleet/
 
 | Invocation | Behavior |
 |------------|----------|
-| `./deploy.sh` | Validate prereqs (qemu, qemu-img, mkisofs), print usage |
+| `./deploy.sh` | Validate prereqs, bring in a QCOW2, and create VMs |
 | `./deploy.sh --delete` | Deregister AAP resources, destroy all VMs, remove `~/.aap-demo/fleet/` |
 
-Deploy does not create VMs — that requires a user-supplied QCOW2 image via
-`aap-demo fleet add`. This is intentional: enable makes the capability available,
-the user drives VM creation.
+For the QEMU backend, `aap-demo enable fleet` creates the VMs. It can download
+a CentOS Stream 9 GenericCloud image when a local QCOW2 is not already present
+([ADR-038](038-fleet-cloud-image-download.md), issue #194). `--backend kube-native`
+is the Python Fleet addon and does not use this image.
 
 ### CLI integration
 

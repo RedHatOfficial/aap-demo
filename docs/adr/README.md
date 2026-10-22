@@ -84,6 +84,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [040](040-addon-framework-and-bash-fallback.md) | Shared Addon Framework and Bash Fallback for the Python Command | Accepted |
 | [041](041-openshift-5-on-crc.md) | OpenShift 5 on CRC | Accepted |
 | [042](042-eda-playground-on-python-command.md) | EDA Playground on the Python Command | Accepted |
+| [038](038-fleet-cloud-image-download.md) | Fleet Cloud Image Download | Accepted |
 
 ## Creating a New ADR
 
