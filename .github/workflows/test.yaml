@@ -106,6 +106,7 @@ jobs:
           ./test/test-fleet-prerequisites.sh
           ./test/test-fleet-enable.sh
           ./test/test-fleet-image.sh
+          ./test/test-cli-parsing.sh
 
   dry-run:
     name: Dry Run Test

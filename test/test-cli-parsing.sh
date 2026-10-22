@@ -23,6 +23,25 @@ fi
 
 echo "PASS: destroy is only accepted as a fleet subcommand"
 
+if output=$(AAP_DEMO_CONFIG="$config_test_dir/missing" QUIET=true "$AAP_DEMO_SH" enable fleet destroy 2>&1); then
+  echo "FAIL: enable fleet accepted destroy as an enable argument"
+  exit 1
+fi
+
+if ! grep -q "Unknown argument for 'enable': destroy" <<<"$output"; then
+  echo "FAIL: enable fleet was not parsed as the enable command"
+  echo "$output"
+  exit 1
+fi
+
+if grep -q "Usage: aap-demo fleet <subcommand>" <<<"$output"; then
+  echo "FAIL: enable fleet was dispatched as the fleet command"
+  echo "$output"
+  exit 1
+fi
+
+echo "PASS: enable fleet stays on the enable command"
+
 printf '%s\n' 'NAMESPACE=config-test' >"$config_test_dir/config"
 
 if ! AAP_DEMO_CONFIG="$config_test_dir/config" QUIET=true "$AAP_DEMO_SH" version >/dev/null 2>&1; then

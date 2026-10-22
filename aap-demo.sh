@@ -168,11 +168,24 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         *) COMMAND="$arg" ;;
       esac
+      ;;
+    fleet)
+      # fleet is both a command and an addon name. enable/disable must keep it
+      # as an addon; otherwise the token overwrites the command.
+      if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
+        EXTRA_ARGS+=("$arg")
+      elif [ -n "$COMMAND" ]; then
+        echo "Unknown argument for '$COMMAND': $arg"
+        echo "Run '$0 help' for usage"
+        exit 1
+      else
+        COMMAND="fleet"
+      fi
       ;;
     destroy)
       # Fleet owns destroy as a subcommand; otherwise destroy is top-level.
@@ -194,7 +207,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
+    mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -3513,7 +3526,7 @@ case "$COMMAND" in
     ;;
   fleet)
     reject_windows_deferred_addon fleet || exit 1
-    cmd_fleet "${EXTRA_ARGS[@]}"
+    cmd_fleet "${EXTRA_ARGS[@]}" || exit 1
     ;;
   enable)
     reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
@@ -3523,7 +3536,7 @@ case "$COMMAND" in
         check_python_windows || exit 1
         ;;
     esac
-    cmd_enable "${EXTRA_ARGS[@]}"
+    cmd_enable "${EXTRA_ARGS[@]}" || exit 1
     ;;
   wire)
     cmd_wire
