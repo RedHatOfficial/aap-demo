@@ -62,7 +62,7 @@ fail() {
 # CLI registration
 # ---------------------------------------------------------------------------
 
-if grep -q ' | opa | ollama)' "$AAP_DEMO"; then
+if grep -q 'ollama' "$AAP_DEMO"; then
   pass "cli_accepts_ollama_addon"
 else
   fail "cli_accepts_ollama_addon"

@@ -194,7 +194,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -570,6 +570,7 @@ Addons:
   enable ao       Install Automation Orchestrator (prompts for LLM or no LLM)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
+  enable keycloak  Deploy Keycloak OIDC provider for local AAP/AO authentication tests
 
 Examples:
   aap-demo deploy                              # Deploy AAP $AAP_VERSION
@@ -618,7 +619,7 @@ COMMANDS (all infrastructure types):
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
-    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, fleet)
+    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
                     portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
@@ -1905,6 +1906,22 @@ cmd_status() {
     fi
   fi
 
+  # Show the credential paths for the Keycloak OIDC lab addon without exposing
+  # secret values in terminal output or CI logs.
+  local _keycloak_state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+  if [ -d "$_keycloak_state_dir" ]; then
+    if [ -f "$_keycloak_state_dir/admin-password" ]; then
+      if [ "$_cred_found" = "false" ]; then
+        echo "Credentials:"
+        echo "------------"
+        _cred_found=true
+      fi
+      echo "  Keycloak users: aap-oidc-admin, aap-oidc-operator, aap-oidc-auditor, aap-oidc-developer"
+      echo "  Keycloak credential files: ${_keycloak_state_dir}/"
+      echo ""
+    fi
+  fi
+
   # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
@@ -1966,6 +1983,18 @@ cmd_status() {
       ao)
         if [ "$enabled" = true ] || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
           label="enabled"
+        else
+          label="disabled"
+        fi
+        ;;
+      keycloak)
+        local _keycloak_namespace="${KEYCLOAK_NAMESPACE:-aap-demo-keycloak}"
+        if [ "$enabled" = true ] || kubectl get namespace "$_keycloak_namespace" &>/dev/null 2>&1; then
+          url="https://$(kubectl get route keycloak -n "$_keycloak_namespace" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
         else
           label="disabled"
         fi
@@ -3063,7 +3092,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3304,7 +3333,7 @@ cmd_enable() {
     # password secret is stale after the instance has already been initialized.
     # `aap-demo wire` remains available for an explicit retry.
     :
-  else
+  elif [ "$addon" != "keycloak" ]; then
     _aap_demo_run_addon_wire false
   fi
 }
@@ -3339,7 +3368,12 @@ cmd_disable() {
   if [ -f "$addon_dir/deploy.sh" ]; then
     echo "Disabling addon: $addon"
     setup_kubeconfig
-    bash "$addon_dir/deploy.sh" --delete "$@" || true
+    if ! bash "$addon_dir/deploy.sh" --delete "$@"; then
+      if [ "$addon" = "keycloak" ]; then
+        echo "ERROR: Keycloak removal failed; leaving addon enabled in config" >&2
+        return 1
+      fi
+    fi
     _addons_remove "$addon"
     echo "  Removed from config"
   else

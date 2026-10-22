@@ -21,6 +21,10 @@ python3 ./test/test-provision-aap-demos.py
 
 # AO replica profile rendering (no cluster required)
 ./test/test-ao-replica-profile.sh
+./test/test-keycloak-addon.sh
+
+# Run against a running local MicroShift cluster after enabling Keycloak.
+KUBECONFIG="$HOME/.aap-demo/kubeconfig.microshift" ./test/test-keycloak-live.sh
 ```
 
 ### Coverage
@@ -54,6 +58,8 @@ python3 ./test/test-provision-aap-demos.py
 - ✓ `destroy`, `clean` show warnings (interactive skipped in quick mode)
 - ✓ `destroy --reset` flag parsing
 - ✓ AAP 2.7 terminal readiness across shell and PowerShell implementations
+- ✓ Keycloak OIDC addon wiring, namespace isolation, client separation, and secret handling
+- ✓ Keycloak live Route, readiness, discovery, realm, groups, users, and client validation
 
 ### Test Design
 
