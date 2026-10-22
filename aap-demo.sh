@@ -1906,6 +1906,28 @@ cmd_status() {
     fi
   fi
 
+  # Show credentials for the Keycloak OIDC lab addon. These are intentionally
+  # read from the local mode-0600 state directory, matching AAP/AO status output.
+  local _keycloak_state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+  if [ -d "$_keycloak_state_dir" ]; then
+    local _keycloak_admin_pw _keycloak_aap_pw _keycloak_ao_pw
+    _keycloak_admin_pw=$(cat "$_keycloak_state_dir/admin-password" 2>/dev/null || true)
+    _keycloak_aap_pw=$(cat "$_keycloak_state_dir/aap-user-password" 2>/dev/null || true)
+    _keycloak_ao_pw=$(cat "$_keycloak_state_dir/ao-user-password" 2>/dev/null || true)
+    if [ -n "$_keycloak_admin_pw$_keycloak_aap_pw$_keycloak_ao_pw" ]; then
+      if [ "$_cred_found" = "false" ]; then
+        echo "Credentials:"
+        echo "------------"
+        _cred_found=true
+      fi
+      [ -n "$_keycloak_admin_pw" ] && printf "  %-20s admin / %s\n" "keycloak:" "$_keycloak_admin_pw"
+      [ -n "$_keycloak_aap_pw" ] && printf "  %-20s aap-oidc-admin / %s\n" "keycloak:" "$_keycloak_aap_pw"
+      [ -n "$_keycloak_ao_pw" ] && printf "  %-20s aap-oidc-operator / %s\n" "keycloak:" "$_keycloak_ao_pw"
+      echo "  Keycloak client secrets: ${_keycloak_state_dir}/aap-client-secret, ${_keycloak_state_dir}/ao-client-secret"
+      echo ""
+    fi
+  fi
+
   # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
