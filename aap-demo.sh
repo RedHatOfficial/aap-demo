@@ -1911,10 +1911,13 @@ cmd_status() {
   local _keycloak_state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
   if [ -d "$_keycloak_state_dir" ]; then
     local _keycloak_admin_pw _keycloak_aap_pw _keycloak_ao_pw
+    local _keycloak_auditor_pw _keycloak_developer_pw
     _keycloak_admin_pw=$(cat "$_keycloak_state_dir/admin-password" 2>/dev/null || true)
     _keycloak_aap_pw=$(cat "$_keycloak_state_dir/aap-user-password" 2>/dev/null || true)
     _keycloak_ao_pw=$(cat "$_keycloak_state_dir/ao-user-password" 2>/dev/null || true)
-    if [ -n "$_keycloak_admin_pw$_keycloak_aap_pw$_keycloak_ao_pw" ]; then
+    _keycloak_auditor_pw=$(cat "$_keycloak_state_dir/aap-auditor-password" 2>/dev/null || true)
+    _keycloak_developer_pw=$(cat "$_keycloak_state_dir/aap-developer-password" 2>/dev/null || true)
+    if [ -n "$_keycloak_admin_pw$_keycloak_aap_pw$_keycloak_ao_pw$_keycloak_auditor_pw$_keycloak_developer_pw" ]; then
       if [ "$_cred_found" = "false" ]; then
         echo "Credentials:"
         echo "------------"
@@ -1923,6 +1926,8 @@ cmd_status() {
       [ -n "$_keycloak_admin_pw" ] && printf "  %-20s admin / %s\n" "keycloak:" "$_keycloak_admin_pw"
       [ -n "$_keycloak_aap_pw" ] && printf "  %-20s aap-oidc-admin / %s\n" "keycloak:" "$_keycloak_aap_pw"
       [ -n "$_keycloak_ao_pw" ] && printf "  %-20s aap-oidc-operator / %s\n" "keycloak:" "$_keycloak_ao_pw"
+      [ -n "$_keycloak_auditor_pw" ] && printf "  %-20s aap-oidc-auditor / %s\n" "keycloak:" "$_keycloak_auditor_pw"
+      [ -n "$_keycloak_developer_pw" ] && printf "  %-20s aap-oidc-developer / %s\n" "keycloak:" "$_keycloak_developer_pw"
       echo "  Keycloak client secrets: ${_keycloak_state_dir}/aap-client-secret, ${_keycloak_state_dir}/ao-client-secret"
       echo ""
     fi

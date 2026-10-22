@@ -56,6 +56,8 @@ secret_file aap-client-secret >/dev/null
 secret_file ao-client-secret >/dev/null
 secret_file aap-user-password >/dev/null
 secret_file ao-user-password >/dev/null
+secret_file aap-auditor-password >/dev/null
+secret_file aap-developer-password >/dev/null
 
 cluster_domain="$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
 if [ -n "$cluster_domain" ]; then
@@ -80,6 +82,8 @@ jq -n \
   --rawfile ao_secret_file "$STATE_DIR/ao-client-secret" \
   --rawfile aap_password_file "$STATE_DIR/aap-user-password" \
   --rawfile ao_password_file "$STATE_DIR/ao-user-password" \
+  --rawfile auditor_password_file "$STATE_DIR/aap-auditor-password" \
+  --rawfile developer_password_file "$STATE_DIR/aap-developer-password" \
   '{
     realm: $realm,
     enabled: true,
@@ -115,7 +119,12 @@ jq -n \
         attributes: {"post.logout.redirect.uris": ("https://" + $ao_host + "/*")}
       }
     ],
-    groups: [{name: "aap-admins"}, {name: "aap-operators"}],
+    groups: [
+      {name: "aap-admins"},
+      {name: "aap-operators"},
+      {name: "aap-auditors"},
+      {name: "aap-developers"}
+    ],
     users: [
       {
         username: "aap-oidc-admin",
@@ -132,6 +141,22 @@ jq -n \
         emailVerified: true,
         groups: ["/aap-operators"],
         credentials: [{type: "password", value: ($ao_password_file | rtrimstr("\n")), temporary: false}]
+      },
+      {
+        username: "aap-oidc-auditor",
+        enabled: true,
+        email: "aap-oidc-auditor@example.test",
+        emailVerified: true,
+        groups: ["/aap-auditors"],
+        credentials: [{type: "password", value: ($auditor_password_file | rtrimstr("\n")), temporary: false}]
+      },
+      {
+        username: "aap-oidc-developer",
+        enabled: true,
+        email: "aap-oidc-developer@example.test",
+        emailVerified: true,
+        groups: ["/aap-developers"],
+        credentials: [{type: "password", value: ($developer_password_file | rtrimstr("\n")), temporary: false}]
       }
     ],
     clientScopes: [{
@@ -182,4 +207,4 @@ echo "  AO client:     aap-demo-ao"
 echo "  Credentials:   ${STATE_DIR}/"
 echo ""
 echo "  Configure AAP/AO manually with the issuer and client files."
-echo "  Usernames: aap-oidc-admin, aap-oidc-operator"
+echo "  Users:       aap-oidc-admin, aap-oidc-operator, aap-oidc-auditor, aap-oidc-developer"

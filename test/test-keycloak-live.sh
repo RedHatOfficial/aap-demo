@@ -37,8 +37,8 @@ kubectl get secret keycloak-realm -n "$NAMESPACE" \
   -o jsonpath='{.data.aap-lab-realm\.json}' | base64 -d \
   | jq -e '
     ([.clients[].clientId] | sort) == ["aap-demo-aap", "aap-demo-ao"] and
-    ([.groups[].name] | sort) == ["aap-admins", "aap-operators"] and
-    ([.users[].username] | sort) == ["aap-oidc-admin", "aap-oidc-operator"]
+    ([.groups[].name] | sort) == ["aap-admins", "aap-auditors", "aap-developers", "aap-operators"] and
+    ([.users[].username] | sort) == ["aap-oidc-admin", "aap-oidc-auditor", "aap-oidc-developer", "aap-oidc-operator"]
   ' >/dev/null
 
 echo "PASS: live Keycloak Route, readiness, discovery, realm, groups, users, and clients"

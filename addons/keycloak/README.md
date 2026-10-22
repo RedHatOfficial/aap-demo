@@ -8,7 +8,8 @@ aap-demo disable keycloak
 ```
 
 Addon creates namespace `aap-demo-keycloak`, Route `keycloak.<cluster-domain>`, realm
-`aap-lab`, groups `aap-admins` and `aap-operators`, and separate confidential clients:
+`aap-lab`, groups `aap-admins`, `aap-operators`, `aap-auditors`, and `aap-developers`,
+and separate confidential clients:
 
 | Client | Target | Secret file |
 |---|---|---|
@@ -17,6 +18,18 @@ Addon creates namespace `aap-demo-keycloak`, Route `keycloak.<cluster-domain>`, 
 
 Generated admin and user passwords stay under `~/.aap-demo/keycloak` with mode `0600`.
 They are never printed by the addon.
+
+Users and groups:
+
+| User | Group | Password file |
+|---|---|---|
+| `aap-oidc-admin` | `aap-admins` | `aap-user-password` |
+| `aap-oidc-operator` | `aap-operators` | `ao-user-password` |
+| `aap-oidc-auditor` | `aap-auditors` | `aap-auditor-password` |
+| `aap-oidc-developer` | `aap-developers` | `aap-developer-password` |
+
+Map these groups to AAP organizations, teams, and roles, and to AO roles when
+configuring each OIDC client. Keycloak emits membership in the `groups` claim.
 
 ## Configure consumers
 
