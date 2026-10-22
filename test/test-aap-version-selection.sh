@@ -16,14 +16,29 @@ fi
 source "$VERSION_HELPER"
 
 aap_demo_configure_aap_version 2.6
-[ "$AAP_VERSION" = "2.6" ] || { echo "FAIL: 2.6 version selection"; exit 1; }
-[ "$AAP_CHANNEL" = "stable-2.6" ] || { echo "FAIL: 2.6 channel selection"; exit 1; }
-[ "$(bash -c 'printf "%s" "$AAP_VERSION"')" = "2.6" ] || { echo "FAIL: selected version is not exported"; exit 1; }
+[ "$AAP_VERSION" = "2.6" ] || {
+  echo "FAIL: 2.6 version selection"
+  exit 1
+}
+[ "$AAP_CHANNEL" = "stable-2.6" ] || {
+  echo "FAIL: 2.6 channel selection"
+  exit 1
+}
+[ "$(bash -c 'printf "%s" "$AAP_VERSION"')" = "2.6" ] || {
+  echo "FAIL: selected version is not exported"
+  exit 1
+}
 echo "PASS: AAP 2.6 selects stable-2.6"
 
 aap_demo_configure_aap_version 2.7
-[ "$AAP_VERSION" = "2.7" ] || { echo "FAIL: 2.7 version selection"; exit 1; }
-[ "$AAP_CHANNEL" = "stable-2.7" ] || { echo "FAIL: 2.7 channel selection"; exit 1; }
+[ "$AAP_VERSION" = "2.7" ] || {
+  echo "FAIL: 2.7 version selection"
+  exit 1
+}
+[ "$AAP_CHANNEL" = "stable-2.7" ] || {
+  echo "FAIL: 2.7 channel selection"
+  exit 1
+}
 echo "PASS: AAP 2.7 selects stable-2.7"
 
 if aap_demo_configure_aap_version 2.8 >/dev/null 2>&1; then
