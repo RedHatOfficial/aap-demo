@@ -30,14 +30,14 @@ authentication.
 
 - `kubectl` or `oc`
 - `python3` (3.8+)
+- Podman (running) and Skopeo for portal image builds or validation
 - AAP execution environment with network access to `get.helm.sh` (the playbook bootstraps a pinned Helm client)
 - AAP deployed (`aap-demo deploy`)
 
-The addon uses the portal Helm chart's standard RHDH image and delivers the APME plugins
-through the chart's runtime OCI plugin installer. The deploy bootstraps the local registry,
-publishes the bundled plugin archive with the AAP execution environment's standard-library
-OCI publisher, and runs `install-dynamic-plugins` in the
-chart-provided init container.
+By default the deploy bootstraps the local registry, publishes the bundled plugin archive,
+and builds a custom RHDH 1.9 image with all six APME plugins using Podman. Podman must be
+running (start `podman machine` on macOS). The chart's standard dynamic-plugin installer
+loads those plugins from the image. A published Quay image can replace this local build.
 
 **Ansible installation** (auto-installed in venv):
 
@@ -85,7 +85,7 @@ This will:
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
 5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Push the bundled APME OCI plugin archive to the local registry and run the portal Helm chart
+6. Push the bundled archive and build the portal image locally, or validate the configured prebuilt image
 7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
 
 **Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with
@@ -94,6 +94,101 @@ wrapper script.
 
 **First run** takes longer (~2-3 minutes) to set up the virtual environment and install
 Ansible collections. Subsequent runs reuse the existing venv and are faster.
+
+### Use a published Quay portal image
+
+Use the immutable manifest tag or `quay.io/aapdemo/apme-eap@sha256:...` reference from
+the publishing workflow summary. Replace the example tag with the published value:
+
+```bash
+APME_PRELOADED_IMAGE_REF='quay.io/aapdemo/apme-eap:apme-<source-sha>-<12-hex-pack-digest>' \
+  aap-demo enable apme-eap
+```
+
+Or edit `~/.aap-demo/apme-eap-vars.yml` before running enable again:
+
+```yaml
+apme_preloaded_image_ref: quay.io/aapdemo/apme-eap:apme-<source-sha>-<12-hex-pack-digest>
+# Replace the example with the published immutable tag or @sha256:... digest.
+apme_preloaded_image_pull_secret: ""
+apme_preloaded_image_auth_file: ""
+apme_preloaded_image_verify: true
+```
+
+Fully qualified `registry/repository:tag` and `registry/repository@sha256:<64-hex>`
+references are supported, including registry ports. Skopeo verifies availability and pins
+the resolved digest for validation and Helm. Podman pulls that image and checks all six
+plugin package identities in a read-only container with networking disabled; it does not
+build an image in prebuilt mode. The cluster selects its architecture from the published
+manifest; deploy from a host matching the cluster architecture because local validation
+runs the image with Podman. Set `apme_preloaded_image_verify: false` only to skip the
+Skopeo availability/digest lookup; six-plugin validation still runs. Check mode parses
+references and plans the deployment without fetching or validating a remote image.
+
+The prebuilt path does not require the bundled archive or bootstrap the local registry.
+Its six plugin entries become local `./dynamic-plugins/dist/...` paths, so the portal does
+not download the APME plugins at startup. With no pull secret, the cluster must be able to
+read the repository anonymously, or have credentials already configured for its service
+account. Local Podman/Skopeo credentials do not automatically authorize cluster pulls.
+For a private Quay repository, use a pull-only robot account to create a local auth file:
+
+```bash
+mkdir -p ~/.aap-demo
+skopeo login --authfile ~/.aap-demo/apme-quay-auth.json quay.io
+chmod 600 ~/.aap-demo/apme-quay-auth.json
+```
+
+Then set `apme_preloaded_image_pull_secret: apme-quay-pull` and
+`apme_preloaded_image_auth_file` to the **absolute** path of that file in the generated vars.
+The role uses it for Skopeo/Podman and creates or updates the named docker-registry Secret
+in the portal namespace. Only the selected registry credentials are copied, and secret
+tasks suppress their output. The file must contain an inline `auths.quay.io.auth` entry;
+a credential-helper-only configuration cannot be copied into the cluster Secret. The
+Secret name is rendered into the portal image's `pullSecrets`. Leave the name empty for
+public pulls or when cluster pull credentials are managed separately. Do not commit the
+auth file or reuse the CI push token for cluster pulls. The wrapper preserves these
+settings when regenerating vars. `latest` is a moving convenience alias; prefer the
+immutable tag or a digest for repeatable deployments.
+
+Keep `apme_preloaded_image_ref: ""` (the default) to use the local fallback. It retains the
+`apme_oci_push` then `apme_image_build` sequence and requires `apme_oci_tar_resolved`.
+A cached local-registry image is reused only after its six plugin identities validate;
+an invalid cache triggers a rebuild, and a failed rebuild stops deployment. Use
+`apme_image_build_force: true` when a rebuild is required even with a valid cache.
+The portal image uses the node-supported external `oci_registry` route and the
+registry digest captured from inspection or Podman push. Its Helm tag is empty,
+so forced or repair rebuilds deploy the new bytes even with `IfNotPresent`.
+The internal service endpoint remains available to the plugin OCI delivery path.
+For a custom `apme_oci_tar`, also set its independently verified digest in
+`apme_image_build_pack_sha256`; the container build rejects mismatches or missing plugins.
+
+The wrapper regenerates `~/.aap-demo/apme-eap-vars.yml` on each enable and does **not**
+preserve `apme_image_build_force`, `apme_oci_tar`, or `apme_image_build_pack_sha256`.
+After the wrapper has initialized its venv, collections, and generated vars, run the
+playbook directly from the repository root for these overrides. Select the deployment's
+kubeconfig and replace the archive path and digest below with your verified values:
+
+```bash
+source ~/.aap-demo/apme-eap-venv/bin/activate
+export KUBECONFIG=/absolute/path/to/deployment-kubeconfig
+export K8S_AUTH_KUBECONFIG="$KUBECONFIG"
+export ANSIBLE_ROLES_PATH="$PWD/addons/apme-eap/playbooks/roles"
+ansible-playbook addons/apme-eap/playbooks/deploy_apme_portal.yml \
+  -e @addons/apme-eap/defaults.yml \
+  -e @"$HOME/.aap-demo/apme-eap-vars.yml" \
+  -e '{"apme_preloaded_image_ref":"","skip_plugin_push":false,"apme_image_build_force":true}' \
+  -e '{"apme_oci_tar":"/absolute/path/to/plugin-pack.tar","apme_image_build_pack_sha256":"sha256:<64-hex-digest>"}'
+```
+
+Later `-e` arguments take precedence over the generated vars. To force a rebuild of the
+bundled pack, omit the last `-e` argument. These overrides apply to this direct invocation;
+rerunning the wrapper does not retain them. The preloaded-image settings described above
+are preserved by the wrapper.
+
+`skip_plugin_push: true` retains the existing chart/runtime OCI path and assumes the
+plugin archive has already been published; it skips both local push and image build.
+This fallback uses the bundled OCI pack, not a fresh GitHub artifact. Live Quay and
+x86/ARM cluster smoke tests remain pending in [TEST_PLAN.md](TEST_PLAN.md).
 
 ### Check Status
 
@@ -139,10 +234,11 @@ The addon uses these roles from the official APME welcome pack:
 2. **apme_pah_integration** - setup-pah remotes, PAH catalog sync flags, APME galaxy seeding
 3. **aap_apme_prerequisites** - Creates AAP OAuth app, generates API token
 4. **apme_oci_push** - Publishes the bundled APME plugin archive to the local registry
-5. **apme_helm_values** - Generates Helm values for chart-native dynamic plugin installation
-6. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
-7. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
-8. **apme_gateway_helm** - Installs APME gateway Helm chart
+5. **apme_image_build / apme_preloaded_image** - Builds the local image or validates an external image
+6. **apme_helm_values** - Generates Helm values for chart-native dynamic plugin installation
+7. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
+8. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
+9. **apme_gateway_helm** - Installs APME gateway Helm chart
 
 ### Deployment Flow
 
@@ -164,14 +260,209 @@ Roles execute in sequence:
   1. openshift_apme_setup
   2. apme_pah_integration (setup-pah + galaxy facts)
   3. aap_apme_prerequisites
-  4. apme_helm_values (chart-defined portal image + runtime OCI plugins + PAH sync)
-  5. apme_scm_secrets (if enabled)
-  6. portal_helm_install
-  7. apme_gateway_helm
-  8. post_tasks: seed APME galaxy servers + portal rollout
+  4. apme_preloaded_image, or apme_oci_push → apme_image_build
+  5. apme_helm_values (selected portal image + local plugin paths + PAH sync)
+  6. apme_scm_secrets (if enabled)
+  7. portal_helm_install
+  8. apme_gateway_helm
+  9. post_tasks: seed APME galaxy servers + portal rollout
 ```
 
 ## Configuration
+
+### CI publishing to Quay
+
+The [APME EAP image workflow](../../.github/workflows/apme-eap-image.yaml) resolves one
+upstream pack, builds it on native AMD64 and ARM64 runners, pushes to
+`quay.io/aapdemo/apme-eap`, and assembles a verified two-platform manifest. It runs on
+manual dispatch or matching addon/workflow changes pushed to `main`; pull requests
+never publish. Publishing is serialized across branches. There is no upstream webhook
+or scheduled rebuild: each triggered build resolves its inputs anew.
+
+Configure these **Actions repository secrets** on `RedHatOfficial/aap-demo`:
+
+| Secret | Purpose |
+| --- | --- |
+| `APME_ARTIFACT_TOKEN` | Read access to Actions runs/artifacts in the selected upstream repository (Actions read permission, including private-repository access when needed). Passed as `GH_TOKEN` to the resolver. |
+| `QUAY_USERNAME` | Quay user or robot account authorized for `aapdemo/apme-eap`. |
+| `QUAY_TOKEN` | That account's token with push/pull access to the target repository. |
+| `REGISTRY_REDHAT_USERNAME` / `REGISTRY_REDHAT_PASSWORD` | Base-image pull credentials for the AMD64 Red Hat registry image when authentication is required. Set both. |
+
+The workflow has only `contents: read` for its own `GITHUB_TOKEN`; that token does not
+replace the upstream artifact token or Quay credentials. Secrets are passed through
+environment variables and password-stdin/credential-helper pipes; never commit them.
+The native `ubuntu-24.04-arm` runner must also be available to the repository.
+
+Dispatch inputs are `source_repo` (default `ansible/ansible-rhdh-plugins`), `source_ref`
+(default `latest`), `pack_format` (`oci` by default, or `npm`), and boolean
+`publish_latest` (default `false`). Choose
+`source_repo=ansible/apme` when that repository publishes the complete six-plugin pack;
+the resolver does not switch repositories automatically. `source_ref=latest` means the
+newest completed successful Actions run on the upstream repository's default branch.
+A full lowercase 40-character commit SHA selects the newest successful run at that exact
+commit. Branch names and shortened SHAs are not accepted. Selection spans all workflows;
+an unusable newest run fails rather than falling back to an older run.
+
+Within that run, automatic selection requires a non-expired name containing `apme` or
+`plugin` (case-insensitive), with an `oci` token for OCI packs, or an `npm` token/plain
+`.tar.gz` suffix without an `oci` token for npm packs. Docker/build/image records are
+excluded. Set `APME_PACK_FORMAT=oci|npm` for the standalone resolver/build command.
+Zero/ambiguous matches report candidate names and the exact-name override:
+`APME_ARTIFACT_NAME` bypasses automatic format/name filtering, but never expiry or
+content validation. The workflow exposes format selection, not an artifact-name input.
+The downloaded artifact may be a ZIP containing exactly one `.oci.tar.gz`/`.tar.gz`
+pack, or a raw gzip pack from upstream `archive: false` uploads. The resolver verifies
+the downloaded payload digest when supplied by GitHub, computes the normalized pack's
+SHA256, and validates all six package identities. The extractor validates the pack again
+before both architecture builds. A four-plugin pack fails; these six directories are
+required under `dynamic-plugins/dist/`:
+
+```text
+ansible-plugin-scaffolder-backend-module-backstage-rhaap
+ansible-backstage-plugin-catalog-backend-module-rhaap
+ansible-plugin-backstage-self-service
+ansible-backstage-plugin-auth-backend-module-rhaap-provider
+ansible-plugin-backstage-apme
+ansible-backstage-plugin-catalog-backend-module-apme
+```
+
+Both jobs consume the same `plugin-pack.tar.gz` and `artifact.env`, retained as the
+`apme-resolved-pack` Actions artifact for one day. Save them with the run URL and publishing
+summary for longer retention. The metadata records source repository/SHA, upstream run ID,
+artifact ID/name, pack filename/format, and full pack SHA256. The summary includes provenance
+and the registry manifest digest; extractor logs identify the six validated plugins.
+
+Let `T = apme-<full-upstream-source-sha>-<first-12-hex-of-pack-sha256>`. The CI tags are:
+
+| Reference in `quay.io/aapdemo/apme-eap` | Contents |
+| --- | --- |
+| `T-amd64` | `linux/amd64`, based on `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` |
+| `T-arm64` | `linux/arm64`, based on `quay.io/rhdh-community/rhdh:1.9` |
+| `T` | Manifest containing exactly those two platforms, published after both builds succeed |
+| `latest` | Optional alias of the verified manifest, subject to the gate below |
+
+Architecture tags and the manifest tag are write-once through these publishing commands:
+immediately before each push, a remote inspection must confirm the tag is missing.
+The workflow explicitly reuses existing architecture images only after verifying their
+platform, source repository/revision, pack checksum, and registry digest. It reuses an
+existing manifest only when the resolved source/pack tag matches and the manifest contains
+exactly `linux/amd64` and `linux/arm64`; its digest is captured for deployment and promotion.
+Existing immutable references are never pushed again. An authentication failure, transport
+failure, unknown response, or invalid existing release stops the workflow. Standalone
+publishing refuses existing tags. Mutable bases and build timestamps can change rebuilt
+bytes, so a rebuild cannot replace an existing artifact-derived tag. Retain and deploy its
+published digest.
+These checks do not configure Quay tag immutability or make check-and-push atomic across
+independent publishers; use registry tag protection to enforce that boundary for all clients.
+
+Leave the **repository variable** `APME_QUAY_PUBLISH_ENABLED` unset until the first live
+validation. Dispatch `publish_latest=false`, verify both architecture tags and the manifest,
+then validate prebuilt deployment on x86 and ARM64 using [TEST_PLAN.md](TEST_PLAN.md).
+After validation, set the variable to the literal `true`. With that gate open, matching
+`main` pushes also update `latest`, and a manual run updates it only with
+`publish_latest=true`. A manual request for `latest` with the gate closed fails before
+resolution. Manual non-latest publishing remains available with the gate closed.
+To promote the validated bootstrap release, dispatch again with the same source/pack inputs
+and `publish_latest=true` after opening the gate. Use the recorded full source SHA and pack
+format to select the same upstream release; `source_ref=latest` may resolve newer inputs.
+The workflow verifies and reuses the existing architecture tags and manifest, then copies
+the verified manifest digest to `latest` without rebuilding or overwriting release tags.
+
+Incomplete/expired/ambiguous artifacts, bad checksums, unsafe archives, and wrong package
+identities fail before architecture publishing. A failed build or registry push fails its
+job; one architecture tag may already exist, but manifest assembly waits for both builds.
+A manifest verification failure blocks `latest` promotion. Rerunning the workflow reuses
+verified existing architecture images and publishes only missing tags. A complete existing
+manifest can be promoted again after a failed `latest` copy. An incomplete existing manifest
+fails validation and is never repaired by overwriting its tag; publish new source/pack inputs
+instead. Never enable the gate to bypass validation.
+Live Quay publication and x86/ARM64
+deployment results have not yet been verified; the execution record is in the test plan.
+
+### Build and publish a preloaded portal image locally
+
+From the repository root, use Bash, Podman, GitHub CLI (`gh`), `jq`, `unzip`,
+`tar`, and `sha256sum` (or `shasum`). Podman must be running. Supply `GH_TOKEN`
+through your environment with permission to read upstream Actions artifacts.
+For publishing, install Skopeo and supply `QUAY_USERNAME` and `QUAY_TOKEN` with push/pull access
+to `quay.io/aapdemo/apme-eap`. Do not put tokens in command arguments or files.
+
+```bash
+# Build only (no Quay login or publication)
+addons/apme-eap/ci/build-image.sh --source-ref latest
+
+# Build and publish
+addons/apme-eap/ci/build-image.sh --source-ref latest --push
+```
+
+The branch's existing CI example points at `ansible/ansible-rhdh-plugins`, which
+is also this command's default source. Select `ansible/apme` when that repository
+publishes the complete six-plugin pack, using `--source-repo ansible/apme`
+or `APME_SOURCE_REPO=ansible/apme`. The command does not read Ansible defaults.
+
+The resolver requires all six plugins and records the exact source SHA, artifact
+ID, pack format, and artifact digest (`APME_PACK_SHA256`, the downloaded pack's
+SHA256) in `artifact.env`. It also checks GitHub's downloaded payload digest when available.
+The build uses the normalized `plugin-pack.tar.gz` with `Containerfile.ci`,
+passing `PLUGIN_PACK_SHA256` and `PLUGIN_PACK_FORMAT`; extraction verifies the
+pack again during the image build. OCI labels record the upstream repository,
+source SHA, artifact ID, pack SHA256, and UTC build timestamp.
+
+For `--push`, the immutable tag is
+`apme-<upstream-source-sha>-<pack-sha256-prefix>-<architecture>` (12 hex digest
+characters). Without `--architecture`, host `x86_64`/`amd64` maps to `amd64` and
+`aarch64`/`arm64` maps to `arm64`; other hosts require an explicit supported architecture.
+Build-only runs may use an unsuffixed local tag. Unsuffixed release tags are reserved
+for CI manifest assembly. `--tag <tag>` accepts only
+`[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}` and adds that tag as a Quay alias; the
+immutable tag is always built and published first. Artifact-derived release tags cannot
+be used as aliases, and `--push --tag latest` is rejected before fetching, building, or login.
+Existing immutable tags stop the push, including alias publication;
+retry only while the target tag is absent, or reuse the existing digest. Publication is always to
+`quay.io/aapdemo/apme-eap`; only `--push` publishes. Output includes the local
+image config digest, the pushed registry manifest digest when publishing,
+and the path to `artifact.env`. This command builds one architecture and does not assemble
+a multi-architecture manifest. `--architecture amd64|arm64` selects the architecture
+explicitly and disallows `--tag`, as used by CI; select the matching `BASE_IMAGE`.
+`latest` is reserved for the workflow's gated, verified multi-architecture promotion.
+The workflow alone supplies `--reuse-existing` with `--push`, `--pack-dir`, and an explicit
+`--architecture`; ordinary standalone publishing remains write-once.
+Preserve the metadata file and the pack for provenance.
+The default output directory is printed; set `--output-dir` to retain them at
+a chosen location. Build and authentication scratch directories are removed.
+
+To repeat a build, source only your trusted, locally generated metadata and
+pass its recorded values back to the command:
+
+```bash
+source /path/to/previous-build/artifact.env
+addons/apme-eap/ci/build-image.sh \
+  --source-repo "$APME_SOURCE_REPO" --source-ref "$APME_SOURCE_SHA" \
+  --pack-sha256 "$APME_PACK_SHA256" --output-dir /path/to/repeat-build
+```
+
+Sourced `APME_SOURCE_SHA` and `APME_PACK_SHA256` also serve as defaults when
+not overridden (`APME_SOURCE_REF` takes precedence over `APME_SOURCE_SHA`).
+The resolver downloads and validates a fresh artifact for that commit rather
+than relying on a fixed artifact ID. A changed pack digest or an expired or
+missing artifact fails the build. Retrying does not bypass verification.
+This pins plugin inputs; a mutable base tag and build timestamp mean image
+bytes can differ. Set `BASE_IMAGE` to a digest reference for a pinned base
+(default: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9`).
+
+Optional `REGISTRY_REDHAT_USERNAME` and `REGISTRY_REDHAT_PASSWORD` authenticate
+the base-image pull; otherwise Podman uses its existing authentication. Logins
+use `--password-stdin`. A temporary credential helper reads credentials from
+the environment over pipes and discards credential stores, so its configuration
+and script contain no secrets and no registry password is written to disk.
+
+`apme_preloaded_image_ref`, `apme_preloaded_image_pull_secret`, `apme_source_repo`,
+and `apme_source_ref` are empty by default. The preloaded image settings select the
+implemented deployment path described above. `apme_source_repo` and `apme_source_ref`
+are not consumed by the deploy playbook or this standalone command: use CLI flags or
+uppercase `APME_SOURCE_REPO` / `APME_SOURCE_REF` to fetch fresh artifacts, publish the
+image, then select that image with `apme_preloaded_image_ref`. Leaving the image reference
+empty preserves bundled-pack local builds; it does not request the latest upstream pack.
 
 ### Auto-Discovered Values
 
@@ -289,6 +580,8 @@ addons/apme-eap/
 ├── roles/
 │   ├── openshift_apme_setup/
 │   ├── aap_apme_prerequisites/
+│   ├── apme_preloaded_image/
+│   ├── apme_image_build/
 │   ├── apme_helm_values/
 │   ├── apme_scm_secrets/
 │   ├── portal_helm_install/
@@ -298,9 +591,9 @@ addons/apme-eap/
 
 ## Runtime plugin architecture
 
-The standard portal chart image runs `install-dynamic-plugins` against the APME OCI image
-published to the local registry. The plugin archive is bundled under `plugin_packs/` and does
-not require a custom portal hub image.
+The chart's `install-dynamic-plugins` loads the six plugins from the custom local or Quay
+portal image. With `skip_plugin_push: true` and no prebuilt reference it uses runtime OCI
+delivery from the existing local registry. The fallback archive is under `plugin_packs/`.
 
 ## Troubleshooting
 

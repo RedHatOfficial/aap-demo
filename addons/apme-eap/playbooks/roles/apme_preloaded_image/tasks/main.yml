@@ -1,0 +1,122 @@
+---
+- name: Require an explicitly qualified image with a tag or SHA256 digest
+  ansible.builtin.assert:
+    that:
+      - >-
+        apme_preloaded_image_ref is match(
+        '^(?:(?:localhost|[a-z0-9]+(?:[.-][a-z0-9]+)*[.][a-z0-9]+)(?::[0-9]+)?|' ~
+        '[a-z0-9]+(?:-[a-z0-9]+)*:[0-9]+)/' ~
+        '[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*' ~
+        '(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})$')
+    fail_msg: "Invalid fully qualified portal image reference: {{ apme_preloaded_image_ref }}"
+
+- name: Parse the external image reference  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_preloaded_registry: "{{ apme_preloaded_image_ref.split('/')[0] }}"
+    apme_preloaded_repository: >-
+      {{ apme_preloaded_image_ref.split('/', 1)[1] | regex_replace('(:[^/]+|@sha256:[0-9a-f]+)$', '') }}
+    apme_preloaded_tag: >-
+      {{ apme_preloaded_image_ref.rsplit(':', 1)[1] if '@' not in apme_preloaded_image_ref else '' }}
+    apme_preloaded_digest: "{{ apme_preloaded_image_ref.split('@')[1] if '@' in apme_preloaded_image_ref else '' }}"
+    apme_preloaded_image_validated: false
+
+- name: Inspect the exact portal image reference
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_preloaded_image_skopeo_binary }}"
+      - inspect
+      - "docker://{{ apme_preloaded_image_ref }}"
+  environment: >-
+    {{ {'REGISTRY_AUTH_FILE': apme_preloaded_image_auth_file}
+       if apme_preloaded_image_auth_file | length > 0 else {} }}
+  register: apme_preloaded_image_inspect
+  changed_when: false
+  when: apme_preloaded_image_verify | bool
+
+- name: Validate the inspected image digest
+  ansible.builtin.assert:
+    that:
+      - (apme_preloaded_image_inspect.stdout | from_json).Digest is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "Registry returned an invalid digest for {{ apme_preloaded_image_ref }}"
+  when:
+    - apme_preloaded_image_verify | bool
+    - not ansible_check_mode
+
+- name: Pin the inspected image for validation and deployment  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_preloaded_digest: "{{ (apme_preloaded_image_inspect.stdout | from_json).Digest }}"
+  when:
+    - apme_preloaded_image_verify | bool
+    - not ansible_check_mode
+
+- name: Validate all six installed plugins in an isolated portal container
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_preloaded_image_podman_binary }}"
+      - run
+      - --rm
+      - --pull=always
+      - --network=none
+      - --read-only
+      - --cap-drop=all
+      - --security-opt=no-new-privileges
+      - --entrypoint=python3
+      - >-
+        {{ apme_preloaded_registry }}/{{ apme_preloaded_repository }}{{
+        '@' ~ apme_preloaded_digest if apme_preloaded_digest | length > 0 else ':' ~ apme_preloaded_tag }}
+      - -c
+      - "{{ lookup('ansible.builtin.file', role_path ~ '/files/verify_plugins.py') }}"
+  environment: >-
+    {{ {'REGISTRY_AUTH_FILE': apme_preloaded_image_auth_file}
+       if apme_preloaded_image_auth_file | length > 0 else {} }}
+  changed_when: false
+
+- name: Record successful six-plugin validation
+  ansible.builtin.set_fact:
+    apme_preloaded_image_validated: true
+  when: not ansible_check_mode
+
+- name: Configure private image pull credentials
+  when: apme_preloaded_image_pull_secret | length > 0
+  block:
+    - name: Require an explicit registry auth file for the pull secret
+      ansible.builtin.assert:
+        that:
+          - apme_preloaded_image_auth_file | length > 0
+        fail_msg: "Set apme_preloaded_image_auth_file to a containers auth.json file for the requested pull secret."
+
+    - name: Read the registry auth file
+      ansible.builtin.slurp:
+        src: "{{ apme_preloaded_image_auth_file }}"
+      register: apme_preloaded_image_auth
+      no_log: true
+
+    - name: Require credentials for the image registry
+      ansible.builtin.assert:
+        that:
+          - >-
+            (((apme_preloaded_image_auth.content | b64decode | from_json).auths |
+            default({})).get(apme_preloaded_registry, {}).auth | default('') | length) > 0
+        fail_msg: "The auth file must contain inline credentials for the selected image registry."
+      no_log: true
+
+    - name: Create or update the portal image pull secret
+      kubernetes.core.k8s:
+        state: present
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ openshift_validate_certs | default(false) }}"
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ apme_preloaded_image_pull_secret }}"
+            namespace: "{{ openshift_project_name }}"
+          type: kubernetes.io/dockerconfigjson
+          data:
+            .dockerconfigjson: >-
+              {{ {'auths': {apme_preloaded_registry:
+                 (apme_preloaded_image_auth.content | b64decode | from_json).auths[apme_preloaded_registry]}}
+                 | to_json | b64encode }}
+      no_log: true
