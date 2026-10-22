@@ -52,7 +52,7 @@ This environment includes characteristics specific to local development:
 | Destroy and rebuild from scratch | `aap-demo redeploy-all` |
 | Show help | `aap-demo help` |
 
-Available addons: olm, console, registry, mcp-server, devspaces, prometheus, portal, **ao** (Automation Orchestrator)
+Available addons: olm, console, registry, mcp-server, devspaces, prometheus, portal, **ao** (Automation Orchestrator), **fleet**
 
 ## Portal Addon
 
@@ -80,6 +80,15 @@ GA install via checked-in GitOps manifests (`aap-demo enable ao`):
 - Force reinstall after password drift: `FORCE=1 aap-demo enable ao`
 
 **Access**: `aap-demo status` or `kubectl get routes -n automation-orchestrator`. Admin password in `automation-orchestrator-initial-admin-password`.
+
+## Fleet Addon
+
+`aap-demo enable fleet` creates local QEMU VMs and registers them as AAP managed nodes.
+
+- If `FLEET_IMAGE` is unset, an interactive enable can download the CentOS Stream 9 GenericCloud qcow2 for the host architecture (`x86_64` or `aarch64`). The image is cached at `~/.aap-demo/cache/fleet/` and checked against the upstream `CHECKSUM` file.
+- A local path or `http://` / `https://` URL in `FLEET_IMAGE` is used as-is. `FLEET_IMAGE_URL` downloads that URL when `FLEET_IMAGE` is empty.
+- Non-interactive runs need `FLEET_IMAGE`, `FLEET_IMAGE_URL`, or `FLEET_DOWNLOAD_IMAGE=true`. `QUIET=true` does not download an image or install packages unless one of those is set.
+- `aap-demo fleet add` reuses the saved image. `aap-demo fleet destroy` removes the VMs and leaves the cached qcow2 in place.
 
 ## Workflow
 

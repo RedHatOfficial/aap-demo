@@ -59,6 +59,10 @@ Deploy does not create VMs — that requires a user-supplied QCOW2 image via
 `aap-demo fleet add`. This is intentional: enable makes the capability available,
 the user drives VM creation.
 
+Amended by issue #194 and [ADR-034](034-fleet-cloud-image-download.md):
+`aap-demo enable fleet` creates the VMs, and it can download a CentOS Stream 9
+GenericCloud image when a local QCOW2 is not already present.
+
 ### CLI integration
 
 Fleet is more complex than typical addons — it has subcommands (`add`, `remove`,
