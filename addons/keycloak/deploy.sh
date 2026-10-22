@@ -39,7 +39,13 @@ umask 077
 secret_file() {
   local _file="$STATE_DIR/$1"
   if [ ! -s "$_file" ]; then
-    openssl rand -hex 24 >"$_file"
+    openssl rand -hex 24 | tr -d '\r\n' >"$_file"
+  else
+    local _normalized
+    _normalized="$(mktemp "${TMPDIR:-/tmp}/aap-demo-secret.XXXXXX")"
+    tr -d '\r\n' <"$_file" >"$_normalized"
+    chmod 600 "$_normalized"
+    mv "$_normalized" "$_file"
   fi
   chmod 600 "$_file"
   cat "$_file"
@@ -148,14 +154,17 @@ kubectl -n "$KEYCLOAK_NAMESPACE" create secret generic keycloak-realm \
 
 if command -v sha256sum >/dev/null 2>&1; then
   realm_revision="$(sha256sum "$realm_file" | awk '{print $1}')"
+  admin_revision="$(sha256sum "$STATE_DIR/admin-password" | awk '{print $1}')"
 else
   realm_revision="$(shasum -a 256 "$realm_file" | awk '{print $1}')"
+  admin_revision="$(shasum -a 256 "$STATE_DIR/admin-password" | awk '{print $1}')"
 fi
 
 sed \
   -e "s|__KEYCLOAK_IMAGE__|${KEYCLOAK_IMAGE}|g" \
   -e "s|__KEYCLOAK_HOST__|${KEYCLOAK_HOST}|g" \
   -e "s|__REALM_REVISION__|${realm_revision}|g" \
+  -e "s|__ADMIN_REVISION__|${admin_revision}|g" \
   -e "s|aap-demo-keycloak|${KEYCLOAK_NAMESPACE}|g" \
   "$SCRIPT_DIR/keycloak.yaml" | kubectl apply -f - >/dev/null
 

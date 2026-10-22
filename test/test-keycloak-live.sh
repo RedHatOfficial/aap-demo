@@ -22,6 +22,14 @@ available="$(kubectl get deployment keycloak -n "$NAMESPACE" -o jsonpath='{.stat
 host="$(kubectl get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}')"
 [ -n "$host" ] || { echo "FAIL: Keycloak Route has no host"; exit 1; }
 
+state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+admin_password_file="$state_dir/admin-password"
+if [ -f "$admin_password_file" ]; then
+  admin_bytes="$(wc -c <"$admin_password_file" | tr -d ' ')"
+  admin_last_byte="$(od -An -t x1 -N 1 -j $((admin_bytes - 1)) "$admin_password_file" | tr -d ' ')"
+  [ "$admin_last_byte" != "0a" ] || { echo "FAIL: admin password file ends with newline"; exit 1; }
+fi
+
 curl -skf "https://${host}/realms/${REALM}/.well-known/openid-configuration" \
   | jq -e '.issuer and .authorization_endpoint and .token_endpoint and .jwks_uri' >/dev/null
 
