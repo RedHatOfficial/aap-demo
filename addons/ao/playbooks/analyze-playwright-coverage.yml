@@ -1,0 +1,52 @@
+---
+- name: Analyze AAP-UI Playwright integration coverage
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ao_repository: "{{ repository | default('ansible/ansible-ui') }}"
+    ao_ref: "{{ ref | default('devel') }}"
+    ao_test_path: "{{ test_path }}"
+    ao_source_name: "{{ source_label | default('AAP-UI Playwright integration tests') }}"
+    ao_source_url: "https://raw.githubusercontent.com/{{ ao_repository }}/{{ ao_ref }}/{{ ao_test_path }}"
+    ao_source_file: "/tmp/aap-ui-playwright-coverage-source.ts"
+    ao_analyzer: "{{ playbook_dir }}/../scripts/analyze-playwright-coverage.py"
+    ao_deployment_areas: "{{ deployment_areas | default('authentication,controller,execution,gateway,hub,eda,permissions,failure handling') }}"
+  tasks:
+    - name: Fetch Playwright source from GitHub
+      ansible.builtin.uri:
+        url: "{{ ao_source_url }}"
+        method: GET
+        return_content: true
+        status_code: 200
+      register: ao_source
+
+    - name: Save Playwright source
+      ansible.builtin.copy:
+        content: "{{ ao_source.content }}"
+        dest: "{{ ao_source_file }}"
+        mode: "0600"
+
+    - name: Run deterministic coverage analyzer
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ ao_analyzer }}"
+          - --source-file
+          - "{{ ao_source_file }}"
+          - --source-name
+          - "{{ ao_source_name }}"
+          - --deployment-areas
+          - "{{ ao_deployment_areas }}"
+      register: ao_analysis
+      changed_when: false
+
+    - name: Publish coverage report as job artifact
+      ansible.builtin.set_stats:
+        data:
+          aap_ui_coverage_report: "{{ ao_analysis.stdout | from_json }}"
+        per_host: false
+
+    - name: Show coverage report
+      ansible.builtin.debug:
+        msg: "{{ ao_analysis.stdout }}"
