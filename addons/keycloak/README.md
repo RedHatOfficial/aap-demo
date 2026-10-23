@@ -5,6 +5,9 @@ Local OIDC provider for testing AAP 2.6 and Automation Orchestrator authenticati
 ```bash
 aap-demo enable keycloak
 aap-demo disable keycloak
+aap-demo keycloak configure --target all
+aap-demo keycloak configure --target all --apply
+aap-demo keycloak configure --target all --map-groups --apply
 ```
 
 Addon creates namespace `aap-demo-keycloak`, Route `keycloak.<cluster-domain>`, realm
@@ -63,8 +66,23 @@ The addon marks its namespace with
 `app.kubernetes.io/managed-by=aap-demo-keycloak` and refuses to deploy to or delete
 an unowned namespace.
 
-This addon does not change AAP or AO authentication automatically. AO-to-AAP job
-execution must continue using a separate AAP API key/PAT.
+`keycloak configure` discovers local routes and configures both consumers through
+their APIs. It is dry-run by default; `--apply` is required for mutation. Use
+`--target aap` or `--target ao` to configure one consumer. AAP Gateway callback
+URL still must be copied into Keycloak when Gateway reports it. AO group claim
+extraction is configured as `groups[*]`; lab mode allows all authenticated users.
+AO-to-AAP job execution must continue using a separate AAP API key/PAT.
+
+Configuration verifies TLS by default. On CRC/MicroShift installations using the
+local self-signed ingress certificate, set `KEYCLOAK_INSECURE_TLS=true` explicitly
+or provide `KEYCLOAK_CA_FILE=/path/to/ingress-ca.crt`. The AO redirect URI used by
+`enable keycloak` is retained under `~/.aap-demo/keycloak/` so a later configure
+run continues to match the registered Keycloak client.
+
+`--map-groups` creates matching AO groups and explicit mappings, then creates
+local AAP authenticator maps: `aap-admins` becomes AAP superuser,
+`aap-auditors` becomes Platform Auditor, and operators/developers receive
+Organization Admin/Member in `AAP Demo`. This role profile is for local testing.
 
 ## Cleanup
 

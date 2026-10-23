@@ -81,6 +81,9 @@ jobs:
       - name: Run Keycloak addon tests
         run: ./test/test-keycloak-addon.sh
 
+      - name: Run Keycloak configure tests
+        run: ./test/test-keycloak-configure.sh
+
       - name: Run CRC version and local environment tests
         run: ./test/test-crc-version-check.sh
 

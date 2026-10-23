@@ -170,9 +170,12 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | keycloak | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
+        keycloak)
+          if [ -z "$COMMAND" ]; then COMMAND="keycloak"; else EXTRA_ARGS+=("$arg"); fi
+          ;;
         *) COMMAND="$arg" ;;
       esac
       ;;
@@ -224,7 +227,7 @@ for arg in "$@"; do
       ;;
     *)
       # Commands that accept arbitrary args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ]; then
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ] || [ "$COMMAND" = "keycloak" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -586,6 +589,8 @@ Addons:
   enable local-cache Cache container images locally (~30GB) to speed up deploys
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
   enable keycloak  Deploy Keycloak OIDC provider for local AAP/AO authentication tests
+  keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
+                  Configure Keycloak OIDC consumers; dry-run unless --apply
 
 Examples:
   aap-demo deploy                              # Deploy AAP $AAP_VERSION
@@ -594,7 +599,7 @@ Examples:
   aap-demo enable portal                       # Enable Self-Service Portal
   aap-demo enable setup-pah                    # Configure Private Automation Hub
 
-Run 'aap-demo help' for full documentation.
+Run 'aap-demo.sh help' for full documentation.
 EOF
 }
 
@@ -639,6 +644,9 @@ COMMANDS (all infrastructure types):
     fleet destroy          Remove all VMs and AAP resources
     enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
                     portal-operator is Technology Preview and AMD64 only
+    keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
+                    Configure Keycloak OIDC consumers; dry-run unless --apply
+                    --map-groups aligns Keycloak groups with AAP roles and AO groups
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
@@ -3362,6 +3370,19 @@ cmd_wire() {
   _aap_demo_run_addon_wire true
 }
 
+cmd_keycloak() {
+  local subcommand="${1:-configure}"
+  shift 1 2>/dev/null || true
+  case "$subcommand" in
+    configure) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" "$@" ;;
+    help | -h | --help) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" --help ;;
+    *)
+      echo "Usage: aap-demo keycloak configure [--target aap|ao|all] [--map-groups] [--apply]" >&2
+      return 1
+      ;;
+  esac
+}
+
 cmd_disable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
@@ -3589,6 +3610,9 @@ case "$COMMAND" in
   disable)
     reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
     cmd_disable "${EXTRA_ARGS[@]}"
+    ;;
+  keycloak)
+    cmd_keycloak "${EXTRA_ARGS[@]}"
     ;;
   deploy | deploy-all)
     cmd_deploy

@@ -29,15 +29,30 @@ protected_namespace() {
   esac
 }
 
+require_cmd kubectl
+
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
+  kubectl cluster-info >/dev/null 2>&1 || {
+    echo "ERROR: kubectl is not connected to a cluster; refusing to remove Keycloak" >&2
+    exit 1
+  }
   if protected_namespace "$KEYCLOAK_NAMESPACE"; then
     echo "ERROR: refusing to delete protected namespace ${KEYCLOAK_NAMESPACE}" >&2
     exit 1
   fi
-  if ! kubectl get namespace "$KEYCLOAK_NAMESPACE" >/dev/null 2>&1; then
-    echo "Keycloak namespace ${KEYCLOAK_NAMESPACE} does not exist"
-    exit 0
+  _namespace_error="$(mktemp "${TMPDIR:-/tmp}/aap-demo-keycloak-delete.XXXXXX")"
+  if ! kubectl get namespace "$KEYCLOAK_NAMESPACE" >/dev/null 2>"$_namespace_error"; then
+    if grep -Eiq 'not found|notfound' "$_namespace_error"; then
+      rm -f "$_namespace_error"
+      echo "Keycloak namespace ${KEYCLOAK_NAMESPACE} does not exist"
+      exit 0
+    fi
+    cat "$_namespace_error" >&2
+    rm -f "$_namespace_error"
+    echo "ERROR: unable to inspect Keycloak namespace ${KEYCLOAK_NAMESPACE}" >&2
+    exit 1
   fi
+  rm -f "$_namespace_error"
   _managed_by="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
   _managed_part="$(kubectl get namespace "$KEYCLOAK_NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || true)"
   if [ "$_managed_by" != "aap-demo-keycloak" ] || [ "$_managed_part" != "aap-demo" ]; then
@@ -51,7 +66,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   exit 0
 fi
 
-for _cmd in kubectl jq openssl; do require_cmd "$_cmd"; done
+for _cmd in jq openssl; do require_cmd "$_cmd"; done
 kubectl cluster-info >/dev/null 2>&1 || {
   echo "ERROR: kubectl is not connected to a cluster" >&2
   exit 1
@@ -99,13 +114,15 @@ KEYCLOAK_HOST="${KEYCLOAK_HOST:-keycloak.${cluster_domain}}"
 AAP_HOST="$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" -o jsonpath='{.spec.host}' 2>/dev/null || printf 'aap-aap-operator.%s' "$cluster_domain")"
 AO_HOST="$(kubectl get route -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || printf 'automation-orchestrator.%s' "$cluster_domain")"
 KEYCLOAK_AAP_REDIRECT_URI="${KEYCLOAK_AAP_REDIRECT_URI:-https://${AAP_HOST}/}"
-KEYCLOAK_AO_REDIRECT_URI="${KEYCLOAK_AO_REDIRECT_URI:-https://${AO_HOST}/}"
+KEYCLOAK_AO_REDIRECT_URI="${KEYCLOAK_AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback}"
 case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in
   *\**)
     echo "ERROR: Keycloak redirect URIs must be exact URLs, not wildcards" >&2
     exit 1
     ;;
 esac
+printf '%s' "$KEYCLOAK_AO_REDIRECT_URI" >"$STATE_DIR/ao-redirect-uri"
+chmod 600 "$STATE_DIR/ao-redirect-uri"
 
 realm_file="$(mktemp "${TMPDIR:-/tmp}/aap-lab-realm.XXXXXX.json")"
 cleanup() { rm -f "$realm_file"; }
