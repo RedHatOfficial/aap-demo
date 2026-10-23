@@ -436,6 +436,27 @@ class FakeAapClient:
         }
 
 
+class FakeAoClient:
+    def __init__(self, statuses=None):
+        self.statuses = list(statuses or [{
+            "status": "successful",
+            "aap_jobs": [{
+                "id": 140,
+                "job_template_id": 40,
+                "job_template_name": "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic",
+            }],
+        }])
+        self.launched = []
+
+    def launch_workflow(self, workflow_id):
+        self.launched.append(workflow_id)
+        return "execution-1"
+
+    def workflow_status(self, execution_id):
+        del execution_id
+        return self.statuses.pop(0)
+
+
 def ee_inventory():
     return ManagedResourceInventory(
         execution_environments=[
@@ -462,10 +483,42 @@ def ee_inventory():
                 "ask_variables_on_launch": True,
             },
         ],
+        ao_workflows=[{
+            "id": "product-demos-workflow",
+            "name": "AAP-Demo Acceptance | Product Demos Read-Only",
+            "aap_job_template_nodes": [{
+                "job_template_id": 40,
+                "job_template_name": "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic",
+            }],
+        }],
     )
 
 
 class ExecutionEnvironmentTests(unittest.TestCase):
+    def test_representative_execution_is_launched_through_ao_not_aap(self):
+        aap = FakeAapClient()
+        ao = FakeAoClient()
+
+        checks = execution_environments.run(
+            ee_inventory(), aap, FakeRunner({}), ao=ao
+        )
+
+        representative = next(check for check in checks if check.check_id == "ee.10.representative-job")
+        self.assertEqual(representative.status, CheckStatus.PASS)
+        self.assertEqual(ao.launched, ["product-demos-workflow"])
+        self.assertEqual(aap.launched, [])
+
+    def test_managed_ee_without_an_ao_representative_is_explicit_contract_drift(self):
+        inventory = ee_inventory()
+        inventory.ao_workflows = []
+
+        checks = execution_environments.run(
+            inventory, FakeAapClient(), FakeRunner({}), ao=FakeAoClient()
+        )
+
+        representative = next(check for check in checks if check.check_id == "ee.10.representative-job")
+        self.assertEqual(representative.status, CheckStatus.FAIL)
+        self.assertEqual(representative.failure_class, FailureClass.CONTRACT_DRIFT)
     def test_enumerates_every_managed_execution_environment_even_when_unreferenced(self):
         inventory = ee_inventory()
         inventory.execution_environments.append({
@@ -490,7 +543,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
             "available": True,
         })
         aap = FakeAapClient()
-        checks = execution_environments.run(inventory, aap, FakeRunner({}))
+        checks = execution_environments.run(inventory, aap, FakeRunner({}), ao=FakeAoClient())
 
         covered = next(check for check in checks if check.check_id == "ee.10.representative-job")
         uncovered = next(check for check in checks if check.check_id == "ee.11.representative-job")
@@ -499,14 +552,11 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         self.assertEqual(uncovered.status, CheckStatus.FAIL)
         self.assertEqual(uncovered.failure_class, FailureClass.CONTRACT_DRIFT)
         self.assertNotEqual(uncovered.status, CheckStatus.SKIP)
-        self.assertEqual(aap.launched, [40])
-        self.assertEqual(aap.launch_payloads, [{
-            "acceptance_probe_pause_seconds": 30,
-        }])
+        self.assertEqual(aap.launched, [])
 
     def test_classifies_a_representative_job_failure_as_execution(self):
         aap = FakeAapClient([{"status": "failed", "execution_environment": 10}])
-        checks = execution_environments.run(ee_inventory(), aap, FakeRunner({}))
+        checks = execution_environments.run(ee_inventory(), aap, FakeRunner({}), ao=FakeAoClient())
 
         failed = next(check for check in checks if check.check_id == "ee.10.representative-job")
         self.assertEqual(failed.status, CheckStatus.FAIL)
@@ -516,7 +566,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         inventory = ee_inventory()
         inventory.execution_environments[0]["image"] = "quay.io/ansible-product-demos/unexpected:latest"
 
-        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}))
+        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}), ao=FakeAoClient())
 
         definition = next(check for check in checks if check.check_id == "ee.10.definition")
         self.assertEqual(definition.status, CheckStatus.FAIL)
@@ -527,7 +577,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         inventory.projects[0]["scm_branch"] = "main"
         inventory.job_templates[0]["playbook"] = "setup_demo.yml"
 
-        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}))
+        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}), ao=FakeAoClient())
 
         representative = next(
             check for check in checks
@@ -542,7 +592,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
             "execution_environment": 999,
         }])
 
-        checks = execution_environments.run(ee_inventory(), aap, FakeRunner({}))
+        checks = execution_environments.run(ee_inventory(), aap, FakeRunner({}), ao=FakeAoClient())
 
         representative = next(
             check for check in checks
@@ -555,7 +605,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         inventory = ee_inventory()
         inventory.execution_environments[0].pop("available")
 
-        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}))
+        checks = execution_environments.run(inventory, FakeAapClient(), FakeRunner({}), ao=FakeAoClient())
 
         definition = next(check for check in checks if check.check_id == "ee.10.definition")
         self.assertEqual(definition.status, CheckStatus.FAIL)
@@ -571,9 +621,9 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         })
         aap = FakeAapClient()
 
-        execution_environments.run(inventory, aap, FakeRunner({}))
+        execution_environments.run(inventory, aap, FakeRunner({}), ao=FakeAoClient())
 
-        self.assertEqual(aap.launched, [40])
+        self.assertEqual(aap.launched, [])
 
     def test_returns_contract_drift_when_only_an_installer_is_startable(self):
         inventory = ee_inventory()
@@ -585,7 +635,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         }]
         aap = FakeAapClient()
 
-        checks = execution_environments.run(inventory, aap, FakeRunner({}))
+        checks = execution_environments.run(inventory, aap, FakeRunner({}), ao=FakeAoClient())
 
         uncovered = next(check for check in checks if check.check_id == "ee.10.representative-job")
         self.assertEqual(uncovered.failure_class, FailureClass.CONTRACT_DRIFT)
@@ -600,7 +650,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
                 return super().run(args, check=check, timeout=timeout)
 
         aap = FakeAapClient()
-        checks = execution_environments.run(ee_inventory(), aap, NoPodRunner({}))
+        checks = execution_environments.run(ee_inventory(), aap, NoPodRunner({}), ao=FakeAoClient())
 
         failed = next(check for check in checks if check.check_id == "ee.10.representative-job")
         self.assertEqual(failed.status, CheckStatus.FAIL)
@@ -610,7 +660,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         runner = FakeRunner({})
         runner.timeout_seconds = 19
 
-        execution_environments.run(ee_inventory(), FakeAapClient(), runner)
+        execution_environments.run(ee_inventory(), FakeAapClient(), runner, ao=FakeAoClient())
 
         pod_command = next(call for call in runner.calls if call[:3] == ["kubectl", "get", "pods"])
         self.assertIn("ansible-awx-job-id=140", pod_command)
@@ -631,7 +681,7 @@ class ExecutionEnvironmentTests(unittest.TestCase):
         probes = EeProbes()
 
         checks = execution_environments.run(
-            ee_inventory(), FakeAapClient(), FakeRunner({}), probes
+            ee_inventory(), FakeAapClient(), FakeRunner({}), probes, ao=FakeAoClient()
         )
 
         representative = next(

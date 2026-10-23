@@ -6,10 +6,12 @@ try:
     from ..check_timing import CheckTimer
     from ..inventory import ManagedResourceInventory
     from ..model import CheckResult, CheckStatus, FailureClass
+    from ..scenarios import SUPPORTED_MCP_TOOL_NAME
 except ImportError:  # Direct execution via run.sh or python runner.py.
     from check_timing import CheckTimer
     from inventory import ManagedResourceInventory
     from model import CheckResult, CheckStatus, FailureClass
+    from scenarios import SUPPORTED_MCP_TOOL_NAME
 
 
 _REQUIRED_INTEGRATIONS = ("aap-demo AAP", "aap-demo MCP Server")
@@ -246,6 +248,8 @@ def _workflow_checks(inventory) -> list[CheckResult]:
         return [_result("wiring.workflows", "ao_workflows", False, "no managed AO workflows were found")]
     template_ids = {item.get("id") for item in inventory.job_templates}
     integration_ids = {item.get("id") for item in inventory.ao_integrations}
+    credential_ids = {item.get("id") for item in inventory.ao_credentials}
+    model_records = inventory.ao_models
     aap_integration = next(
         (
             item for item in inventory.ao_integrations
@@ -255,6 +259,20 @@ def _workflow_checks(inventory) -> list[CheckResult]:
     )
     expected_integration_id = aap_integration.get("id") if aap_integration else None
     expected_credential_id = aap_integration.get("credential_id") if aap_integration else None
+    mcp_integration = next(
+        (
+            item for item in inventory.ao_integrations
+            if str(item.get("name", "")).casefold() == "aap-demo mcp server"
+        ),
+        None,
+    )
+    expected_mcp_connection = (
+        {
+            "integration_id": mcp_integration.get("id"),
+            "credential_id": mcp_integration.get("credential_id"),
+        }
+        if mcp_integration else None
+    )
     checks = []
     for workflow in inventory.ao_workflows:
         nodes = workflow.get("aap_job_template_nodes", [])
@@ -273,13 +291,46 @@ def _workflow_checks(inventory) -> list[CheckResult]:
                 "AAP-Demo Acceptance | AO AAP Read-Only": "AAP-Demo Acceptance | AO Read-Only Diagnostic",
                 "AAP-Demo Acceptance | Product Demos Read-Only": "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic",
             }.get(workflow.get("name"))
-            valid = bool(
-                valid
-                and expected_template
-                and len(nodes) == 1
-                and nodes[0].get("job_template_name") == expected_template
-                and nodes[0].get("job_template_id") in template_ids
-            )
+            if expected_template:
+                valid = bool(
+                    valid
+                    and len(nodes) == 1
+                    and nodes[0].get("job_template_name") == expected_template
+                    and nodes[0].get("job_template_id") in template_ids
+                )
+            elif workflow.get("name") == "AAP-Demo Acceptance | MCP Read-Only":
+                agentic_nodes = workflow.get("agentic_nodes", [])
+                connection = (
+                    agentic_nodes[0].get("integration_connections", [])[0]
+                    if len(agentic_nodes) == 1
+                    and len(agentic_nodes[0].get("integration_connections", [])) == 1
+                    else None
+                )
+                valid = bool(
+                    not nodes
+                    and len(agentic_nodes) == 1
+                    and expected_mcp_connection
+                    and connection == expected_mcp_connection
+                    and agentic_nodes[0].get("credential_id") in credential_ids
+                    and agentic_nodes[0].get("integration_id") in integration_ids
+                    and any(
+                        integration.get("id") == agentic_nodes[0].get("integration_id")
+                        and integration.get("credential_id") == agentic_nodes[0].get("credential_id")
+                        for integration in inventory.ao_integrations
+                    )
+                    and any(
+                        model.get("model_id") == agentic_nodes[0].get("llm_model_id")
+                        and model.get("integration_id") == agentic_nodes[0].get("integration_id")
+                        for model in model_records
+                    )
+                    and connection.get("integration_id") in integration_ids
+                    and connection.get("credential_id") in credential_ids
+                    and agentic_nodes[0].get("tool_selection_strategy") == "SELECTED"
+                    and agentic_nodes[0].get("tool_selections") == [SUPPORTED_MCP_TOOL_NAME]
+                    and agentic_nodes[0].get("prompt")
+                )
+            else:
+                valid = False
         resource_id = workflow.get("id")
         checks.append(_result(
             f"wiring.workflow.{resource_id}",

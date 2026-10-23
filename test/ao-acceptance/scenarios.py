@@ -47,6 +47,7 @@ _REQUIRED_FIELDS = (
 )
 
 _EXECUTION_EVIDENCE_FIELDS = frozenset({"stdout", "output", "result", "status"})
+SUPPORTED_MCP_TOOL_NAME = "controller.job_templates_list"
 
 
 def _strings(value: object, field: str, *, allow_empty: bool = False) -> list[str]:
@@ -85,8 +86,8 @@ def _scenario(value: object) -> Scenario:
         raise ValueError("a workflow scenario requires workflow_name")
     if scenario_type == "workflow_contract" and value["launch"]:
         raise ValueError("a workflow_contract scenario cannot launch")
-    if scenario_type == "mcp" and value["workflow_name"] is not None:
-        raise ValueError("an mcp scenario cannot declare workflow_name")
+    if scenario_type == "mcp" and value["workflow_name"] is None:
+        raise ValueError("an mcp scenario requires workflow_name")
     mcp_tool_name = value["mcp_tool_name"]
     if mcp_tool_name is not None and (
         not isinstance(mcp_tool_name, str) or not mcp_tool_name.strip()
@@ -94,8 +95,16 @@ def _scenario(value: object) -> Scenario:
         raise ValueError("scenario mcp_tool_name must be a non-empty string or null")
     if scenario_type == "mcp" and not mcp_tool_name:
         raise ValueError("an mcp scenario requires mcp_tool_name")
+    if scenario_type == "mcp" and mcp_tool_name != SUPPORTED_MCP_TOOL_NAME:
+        raise ValueError(
+            f"unsupported MCP tool {mcp_tool_name!r}; only {SUPPORTED_MCP_TOOL_NAME!r} is supported"
+        )
     if not isinstance(value["mcp_arguments"], dict):
         raise ValueError("scenario mcp_arguments must be an object")
+    if value["mcp_arguments"]:
+        raise ValueError(
+            "unsupported MCP arguments; acceptance workflows currently support only the declared tool name"
+        )
     blocked_reason = value["blocked_reason"]
     if blocked_reason is not None and (not isinstance(blocked_reason, str) or not blocked_reason.strip()):
         raise ValueError("scenario blocked_reason must be a non-empty string or null")

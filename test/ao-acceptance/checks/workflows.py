@@ -1,5 +1,6 @@
 """Bounded AO workflow execution checks for acceptance scenarios."""
 
+import json
 import time
 from typing import TYPE_CHECKING
 
@@ -134,6 +135,22 @@ def _as_job_id(value: object) -> int | None:
     return None
 
 
+def _execution_environment_id(payload: object) -> object | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("execution_environment")
+    if isinstance(value, dict):
+        return value.get("id")
+    if value is not None:
+        return value
+    summary = payload.get("summary_fields")
+    if isinstance(summary, dict):
+        value = summary.get("execution_environment")
+        if isinstance(value, dict):
+            return value.get("id")
+    return None
+
+
 def _linked_jobs(payload: object) -> list[dict[str, object]]:
     """Extract AO-reported linked jobs together with their template identity."""
     found: list[dict[str, object]] = []
@@ -195,6 +212,56 @@ def _contains_markers(
         for value in _path_values(payload, field)
     )
     return all(marker.casefold() in observed for marker in markers)
+
+
+def _structured_mcp_tool_evidence(payloads: list[dict], tool_name: str, evidence_fields) -> bool:
+    """Require a structured AO execution record for the declared MCP tool."""
+    evidence_keys = {"mcp_tool_calls", "mcp_calls", "tool_calls", "tool_results"}
+    successful_statuses = {"success", "successful", "succeeded", "ok", "passed", "pass", "complete", "completed"}
+    failed_statuses = {"failed", "failure", "error", "errored", "canceled", "cancelled"}
+
+    def successful_record(record: dict) -> bool:
+        if record.get("is_error") is True or record.get("isError") is True:
+            return False
+        if record.get("error") not in (None, False, "", [], {}):
+            return False
+        status = record.get("status")
+        if status is not None:
+            normalized_status = str(status).casefold()
+            if normalized_status in failed_statuses:
+                return False
+            return normalized_status in successful_statuses
+        if "is_error" in record:
+            return record["is_error"] is False
+        if "isError" in record:
+            return record["isError"] is False
+        return record.get("success") is True or record.get("ok") is True
+
+    def records(value: object):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if str(key).casefold() in evidence_keys and isinstance(child, list):
+                    yield from (item for item in child if isinstance(item, dict))
+                yield from records(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from records(child)
+        elif isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except (TypeError, ValueError):
+                return
+            yield from records(decoded)
+
+    for payload in payloads:
+        for field in evidence_fields:
+            for value in _path_values(payload, field):
+                for record in records(value):
+                    observed_name = record.get("tool", record.get("tool_name", record.get("name")))
+                    has_result = any(key in record for key in ("result", "output", "content"))
+                    if observed_name == tool_name and has_result and successful_record(record):
+                        return True
+    return False
 
 
 def _poll(status_fn, expected_states: list[str], deadline: float, poll_seconds: int) -> tuple[dict | None, str | None]:
@@ -263,7 +330,12 @@ def run(
     aap: "AapClient",
     mcp=None,
 ) -> list[CheckResult]:
-    """Launch each validated read-only scenario once under a single deadline."""
+    """Launch each validated read-only scenario through AO under one deadline.
+
+    ``mcp`` remains an ignored compatibility argument for callers that used
+    the pre-AO-mediated runner. MCP readiness and security probes own direct
+    MCP access; execution scenarios never do.
+    """
     blocked_results = [
         _result(
             scenario,
@@ -282,52 +354,9 @@ def run(
         for scenario in scenarios
         if scenario.launch or not scenario.blocked_reason
     ]
-    workflow_scenarios = [
-        scenario for scenario in executable_scenarios
-        if scenario.scenario_type in {"workflow", "workflow_contract"}
-    ]
-    mcp_scenarios = [
-        scenario for scenario in executable_scenarios
-        if scenario.scenario_type == "mcp"
-    ]
-    resolved, validation_failures = _validate(workflow_scenarios, inventory)
+    resolved, validation_failures = _validate(executable_scenarios, inventory)
     if validation_failures:
         return [*blocked_results, *validation_failures]
-
-    if mcp_scenarios:
-        if mcp is None:
-            scenario = mcp_scenarios[0]
-            return [*blocked_results, _result(
-                scenario, CheckStatus.FAIL, FailureClass.PREREQUISITE,
-                "authenticated MCP client is unavailable",
-                workflow_id=None, job_template_ids=[], job_ids=[],
-            )]
-        try:
-            observed_tools = set(mcp.list_tools())
-        except Exception:
-            scenario = mcp_scenarios[0]
-            return [*blocked_results, _result(
-                scenario, CheckStatus.FAIL, FailureClass.PREREQUISITE,
-                "authenticated MCP tools/list failed",
-                workflow_id=None, job_template_ids=[], job_ids=[],
-            )]
-        missing_tools = [
-            scenario for scenario in mcp_scenarios
-            if scenario.mcp_tool_name not in observed_tools
-        ]
-        if missing_tools:
-            return [
-                *blocked_results,
-                *[
-                    _result(
-                        scenario, CheckStatus.FAIL, FailureClass.CONTRACT_DRIFT,
-                        "declared read-only MCP tool is unavailable",
-                        workflow_id=None, job_template_ids=[], job_ids=[],
-                        details={"tool_name": scenario.mcp_tool_name},
-                    )
-                    for scenario in missing_tools
-                ],
-            ]
 
     results = blocked_results
     for scenario, workflow, template_records in resolved:
@@ -454,48 +483,29 @@ def run(
                 timer=scenario_timer,
             ))
             continue
+        if scenario.scenario_type == "mcp" and not _structured_mcp_tool_evidence(
+            [payload for payload in observed_payloads if isinstance(payload, dict)],
+            scenario.mcp_tool_name or "",
+            scenario.success_marker_fields,
+        ):
+            results.append(_result(
+                scenario, CheckStatus.FAIL, FailureClass.EXECUTION,
+                "AO workflow completed with the marker but without declared MCP tool evidence",
+                workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
+                details={"execution_id": execution_id, "mcp_tool_name": scenario.mcp_tool_name},
+                timer=scenario_timer,
+            ))
+            continue
         results.append(_result(
             scenario, CheckStatus.PASS, None,
             "AO workflow and linked AAP jobs completed with expected states and execution evidence",
             workflow_id=workflow_id, job_template_ids=template_ids, job_ids=job_ids,
-            details={"execution_id": execution_id, "workflow_status": _status(workflow_payload)},
-            timer=scenario_timer,
-        ))
-    for scenario in mcp_scenarios:
-        scenario_timer = CheckTimer.start()
-        try:
-            observation = mcp.call_tool(
-                scenario.mcp_tool_name, scenario.mcp_arguments
-            )
-        except Exception:
-            results.append(_result(
-                scenario, CheckStatus.FAIL, FailureClass.EXECUTION,
-                "authenticated read-only MCP tool call failed",
-                workflow_id=None, job_template_ids=[], job_ids=[],
-                details={"tool_name": scenario.mcp_tool_name},
-                timer=scenario_timer,
-            ))
-            continue
-        content_types = observation.get("content_types", []) if isinstance(observation, dict) else []
-        passed = bool(
-            isinstance(observation, dict)
-            and observation.get("tool_name") == scenario.mcp_tool_name
-            and observation.get("is_error") is False
-            and isinstance(content_types, list)
-            and bool(content_types)
-        )
-        results.append(_result(
-            scenario,
-            CheckStatus.PASS if passed else CheckStatus.FAIL,
-            None if passed else FailureClass.EXECUTION,
-            "authenticated read-only MCP tool call succeeded" if passed else "authenticated MCP response did not satisfy the safe result contract",
-            workflow_id=None,
-            job_template_ids=[],
-            job_ids=[],
             details={
-                "tool_name": scenario.mcp_tool_name,
-                "content_types": content_types if isinstance(content_types, list) else [],
-                "is_error": observation.get("is_error") if isinstance(observation, dict) else None,
+                "execution_id": execution_id,
+                "workflow_status": _status(workflow_payload),
+                "job_execution_environments": [
+                    _execution_environment_id(payload) for payload in job_payloads
+                ],
             },
             timer=scenario_timer,
         ))

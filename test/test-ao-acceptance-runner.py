@@ -115,7 +115,7 @@ class ManagedCheckWiringTests(unittest.TestCase):
 
         self.assertEqual(results, [security_result, ee_result])
         security_run.assert_called_once_with(inventory, "probes")
-        ee_run.assert_called_once_with(inventory, "aap", command_runner, "probes")
+        ee_run.assert_called_once_with(inventory, "aap", command_runner, "probes", ao="ao")
 
 
 class LiveRunnerTests(unittest.TestCase):

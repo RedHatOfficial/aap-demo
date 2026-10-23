@@ -1,4 +1,71 @@
 ---
+- name: Validate acceptance workflow bindings
+  ansible.builtin.assert:
+    that:
+      - ao_api_token | default('') | length > 0
+      - ao_api_host | default('') | length > 0
+      - ao_aap_credential_id | default('') | length > 0
+      - ao_aap_integration_id | default('') | length > 0
+      - __acceptance_workflow.name | default('') | length > 0
+      - >-
+        (__acceptance_workflow.node_type | default('aap_job_template') != 'agentic')
+        or (
+          __acceptance_workflow.mcp_tool_name | default('') | length > 0
+          and ao_agent_credential_id | default('') | length > 0
+          and ao_agent_integration_id | default('') | length > 0
+          and ao_agent_model_id | default('') | length > 0
+          and ao_mcp_integration_id | default('') | length > 0
+          and ao_mcp_credential_id | default('') | length > 0
+          and (__acceptance_workflow.mcp_arguments | default({}) | length == 0)
+        )
+      - >-
+        (__acceptance_workflow.node_type | default('aap_job_template') == 'agentic')
+        or (__acceptance_workflow.job_template_id | default('', true) | string | trim | length > 0)
+      - >-
+        (__acceptance_workflow.node_type | default('aap_job_template') != 'agentic')
+        or (__acceptance_workflow.mcp_tool_name | default('') == 'controller.job_templates_list')
+    fail_msg: Repository-owned acceptance workflow bindings are incomplete or unsupported.
+  no_log: true
+
+- name: Build AAP-backed acceptance workflow node
+  ansible.builtin.set_fact:
+    __ao_acceptance_node:
+      id: run_read_only_diagnostic
+      name: "{{ __acceptance_workflow.node_name }}"
+      type: aap_job_template
+      position:
+        x: 360
+        y: 0
+      parameters:
+        job_template_id: "{{ __acceptance_workflow.job_template_id | int }}"
+        organization_name: Default
+        credential_id: "{{ ao_aap_credential_id }}"
+        integration_id: "{{ ao_aap_integration_id }}"
+        diff_mode: false
+  when: __acceptance_workflow.node_type | default('aap_job_template') != 'agentic'
+
+- name: Build MCP-backed acceptance workflow node
+  ansible.builtin.set_fact:
+    __ao_acceptance_node:
+      id: run_read_only_diagnostic
+      name: "{{ __acceptance_workflow.node_name }}"
+      type: agentic
+      position:
+        x: 360
+        y: 0
+      parameters:
+        prompt: "{{ __acceptance_workflow.prompt }}"
+        credential_id: "{{ ao_agent_credential_id }}"
+        integration_id: "{{ ao_agent_integration_id }}"
+        llm_model_id: "{{ ao_agent_model_id }}"
+        tool_selection_strategy: SELECTED
+        tool_selections:
+          - "{{ __acceptance_workflow.mcp_tool_name }}"
+        integration_connections:
+          - integration_id: "{{ ao_mcp_integration_id }}"
+            credential_id: "{{ ao_mcp_credential_id }}"
+  when: __acceptance_workflow.node_type | default('aap_job_template') == 'agentic'
+
 - name: Build repository-owned acceptance workflow payload
   ansible.builtin.set_fact:
     __ao_acceptance_payload:
@@ -23,18 +90,7 @@
               y: 0
             parameters: {}
         nodes:
-          - id: run_read_only_diagnostic
-            name: "{{ __acceptance_workflow.node_name }}"
-            type: aap_job_template
-            position:
-              x: 360
-              y: 0
-            parameters:
-              job_template_id: "{{ __acceptance_workflow.job_template_id | int }}"
-              organization_name: Default
-              credential_id: "{{ ao_aap_credential_id }}"
-              integration_id: "{{ ao_aap_integration_id }}"
-              diff_mode: false
+          - "{{ __ao_acceptance_node }}"
         edges:
           - from: trigger
             to: run_read_only_diagnostic
@@ -46,7 +102,7 @@
     headers:
       Authorization: "Bearer {{ ao_api_token }}"
       Host: "{{ ao_api_host }}"
-    validate_certs: false
+    validate_certs: true
     use_proxy: false
     return_content: true
   register: __ao_acceptance_workflows
@@ -72,7 +128,7 @@
     body_format: json
     body: "{{ __ao_acceptance_payload }}"
     status_code: [200, 201]
-    validate_certs: false
+    validate_certs: true
     use_proxy: false
   when: __ao_acceptance_existing | length == 0
   no_log: true
@@ -93,7 +149,7 @@
       workflow_definition: "{{ __ao_acceptance_payload.workflow_definition }}"
       change_description: Updated from the immutable AAP-Demo acceptance contract
     status_code: [200, 202]
-    validate_certs: false
+    validate_certs: true
     use_proxy: false
   when: __ao_acceptance_existing | length > 0
   no_log: true

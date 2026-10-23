@@ -24,7 +24,30 @@ grep -Fq 'AAP-Demo Acceptance | Product Demos Read-Only Diagnostic' "$PD_LIB"
 grep -Fq 'acceptance-read-only.yml' "$PD_LIB"
 grep -Fq 'ao_acceptance_template_id' "$AO_SYNC"
 grep -Fq 'product_demos_acceptance_template_id' "$AO_SYNC"
+grep -Fq 'AAP-Demo Acceptance | MCP Read-Only' "$AO_SYNC"
+grep -Fq 'node_type: agentic' "$AO_SYNC"
+grep -Fq 'ao_mcp_integration_id' "$AO_SYNC"
+grep -Fq 'integration_connections' \
+  "${ROOT_DIR}/addons/ao/playbooks/tasks/sync_acceptance_workflow.yml"
 grep -Fq 'sync_acceptance_workflow.yml' "$AO_SYNC"
+
+if grep -Fq 'validate_certs: false' \
+  "${ROOT_DIR}/addons/ao/playbooks/tasks/sync_acceptance_workflow.yml"; then
+  echo "FAIL: acceptance workflow synchronization disables TLS verification" >&2
+  exit 1
+fi
+grep -Fq 'Validate acceptance workflow bindings' \
+  "${ROOT_DIR}/addons/ao/playbooks/tasks/sync_acceptance_workflow.yml"
+grep -Fq 'mcp_tool_name' \
+  "${ROOT_DIR}/addons/ao/playbooks/tasks/sync_acceptance_workflow.yml"
+grep -Fq "__acceptance_workflow.job_template_id | default('', true) | string | trim | length > 0" \
+  "${ROOT_DIR}/addons/ao/playbooks/tasks/sync_acceptance_workflow.yml"
+grep -Fq "__acceptance_workflow.mcp_tool_name | default('') == 'controller.job_templates_list'" \
+  "${ROOT_DIR}/addons/ao/playbooks/tasks/sync_acceptance_workflow.yml"
+if sed -n '/^  pre_tasks:/,/^  tasks:/p' "$AO_SYNC" | grep -Fq '__acceptance_workflow'; then
+  echo "FAIL: acceptance binding validation runs before the workflow loop" >&2
+  exit 1
+fi
 
 grep -Fq 'git -C "$REPO_ROOT" rev-parse HEAD' "$AO_DEPLOY"
 grep -Fq 'scm_branch: $revision' "$PD_DEPLOY"

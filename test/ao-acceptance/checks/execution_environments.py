@@ -9,11 +9,15 @@ try:
     from ..inventory import ManagedResourceInventory
     from ..model import CheckResult, CheckStatus, FailureClass
     from ..redaction import redact_text
+    from ..scenarios import Scenario
+    from . import workflows
 except ImportError:  # Direct execution via run.sh or python runner.py.
     from check_timing import CheckTimer
     from inventory import ManagedResourceInventory
     from model import CheckResult, CheckStatus, FailureClass
     from redaction import redact_text
+    from scenarios import Scenario
+    from checks import workflows
 
 if TYPE_CHECKING:
     from ..clients.aap import AapClient
@@ -26,6 +30,7 @@ _EXPECTED_CONTRACTS = {
     "product demos ee": {
         "image": "quay.io/ansible-product-demos/apd-ee-27:latest",
         "template": "AAP-Demo Acceptance | Product Demos Read-Only Diagnostic",
+        "workflow": "AAP-Demo Acceptance | Product Demos Read-Only",
         "project": "APD Bootstrap Project",
         "project_url": "https://github.com/ansible/product-demos",
         "playbook": "acceptance-read-only.yml",
@@ -34,7 +39,6 @@ _EXPECTED_CONTRACTS = {
 _IMMUTABLE_REF = re.compile(r"^[0-9a-f]{40,64}$")
 _DEFAULT_POLL_TIMEOUT_SECONDS = 60
 _PROBE_PAUSE_SECONDS = 30
-_JOB_POD_WAIT_ATTEMPTS = 15
 
 
 def _same_id(left: object, right: object) -> bool:
@@ -112,6 +116,22 @@ def _template_for(inventory: ManagedResourceInventory, ee: dict) -> dict | None:
     return None
 
 
+def _workflow_for(inventory: ManagedResourceInventory, template: dict, ee: dict) -> dict | None:
+    """Resolve the explicit AO representative for a managed EE/template pair."""
+    contract = _EXPECTED_CONTRACTS.get(str(ee.get("name", "")).casefold())
+    if not contract:
+        return None
+    expected_pair = (str(template.get("id")), str(template.get("name")))
+    for workflow in inventory.ao_workflows:
+        if workflow.get("name") != contract["workflow"]:
+            continue
+        for node in workflow.get("aap_job_template_nodes", []):
+            observed_pair = (str(node.get("job_template_id")), str(node.get("job_template_name")))
+            if observed_pair == expected_pair:
+                return workflow
+    return None
+
+
 def _execution_environment_id(payload: dict) -> object | None:
     value = payload.get("execution_environment")
     if isinstance(value, dict):
@@ -149,7 +169,7 @@ def _wait_for_job_pod(
     timeout_seconds: int,
     sleep,
 ):
-    attempts = min(max(timeout_seconds, 1), _JOB_POD_WAIT_ATTEMPTS)
+    attempts = max(timeout_seconds, 1)
     for attempt in range(attempts):
         result = runner.run(
             [
@@ -171,8 +191,10 @@ def run(
     aap: "AapClient",
     runner: "CommandRunner",
     probes=None,
+    *,
+    ao=None,
 ) -> list[CheckResult]:
-    """Launch one deterministic, startable managed job for every supported EE."""
+    """Execute one explicit AO representative workflow for every managed EE."""
     results: list[CheckResult] = []
     timeout_seconds = max(int(getattr(runner, "timeout_seconds", _DEFAULT_POLL_TIMEOUT_SECONDS)), 1)
     sleep = getattr(runner, "sleep", time.sleep)
@@ -205,18 +227,78 @@ def run(
             continue
         if not definition_ok:
             continue
+        workflow = _workflow_for(inventory, template, ee)
+        if workflow is None:
+            results.append(_result(
+                f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL,
+                FailureClass.CONTRACT_DRIFT,
+                "managed execution environment has no AO representative workflow",
+                details={
+                    "execution_environment_id": ee_id,
+                    "job_template_id": template.get("id"),
+                    "job_template_name": template.get("name"),
+                },
+                timer=representative_timer,
+            ))
+            continue
+        if ao is None:
+            results.append(_result(
+                f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL,
+                FailureClass.PREREQUISITE,
+                "AO client is required for representative execution",
+                details={"execution_environment_id": ee_id, "workflow_name": workflow.get("name")},
+                timer=representative_timer,
+            ))
+            continue
         template_id = template.get("id")
         if isinstance(template_id, bool) or not isinstance(template_id, int):
             results.append(_result(f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL, FailureClass.CONTRACT_DRIFT, "representative job template has no numeric identifier", details={"execution_environment_id": ee_id, "job_template_name": template.get("name")}, timer=representative_timer))
             continue
-        try:
-            job_id = aap.launch_job_template(
-                template_id,
-                {"acceptance_probe_pause_seconds": _PROBE_PAUSE_SECONDS},
-            )
-        except Exception as error:  # Client boundaries redact their own errors.
-            results.append(_result(f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL, FailureClass.EXECUTION, "representative job could not be launched", details={"execution_environment_id": ee_id, "job_template_id": template_id, "error": redact_text(str(error))}, timer=representative_timer))
+        scenario = Scenario(
+            scenario_id=f"ee-{ee_id}-representative",
+            component=component,
+            workflow_name=str(workflow.get("name")),
+            job_template_names=[str(template.get("name"))],
+            timeout_seconds=timeout_seconds,
+            poll_seconds=2,
+            expected_workflow_states=["successful"],
+            expected_job_states=["successful"],
+            success_markers=[],
+            launch=True,
+            read_only=True,
+            success_marker_fields=[],
+            blocked_reason=None,
+            scenario_type="workflow",
+            mcp_tool_name=None,
+            mcp_arguments={},
+        )
+        workflow_checks = workflows.run([scenario], inventory, ao, aap)
+        workflow_check = workflow_checks[0]
+        if workflow_check.status is not CheckStatus.PASS:
+            results.append(_result(
+                f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL,
+                workflow_check.failure_class or FailureClass.EXECUTION,
+                "AO representative workflow did not complete successfully",
+                details={
+                    "execution_environment_id": ee_id,
+                    "job_template_id": template_id,
+                    "workflow_id": workflow.get("id"),
+                    "error": redact_text(workflow_check.summary),
+                },
+                timer=representative_timer,
+            ))
             continue
+        job_ids = workflow_check.details.get("job_ids", [])
+        if not isinstance(job_ids, list) or len(job_ids) != 1 or not isinstance(job_ids[0], int):
+            results.append(_result(
+                f"ee.{ee_id}.representative-job", component, CheckStatus.FAIL,
+                FailureClass.CONTRACT_DRIFT,
+                "AO representative workflow did not report exactly one linked AAP job",
+                details={"execution_environment_id": ee_id, "workflow_id": workflow.get("id"), "job_ids": job_ids},
+                timer=representative_timer,
+            ))
+            continue
+        job_id = job_ids[0]
         namespace = getattr(runner, "aap_namespace", "aap-operator")
         job_selector = f"ansible-awx-job-id={job_id}"
         pod_result = _wait_for_job_pod(
@@ -240,7 +322,10 @@ def run(
                 if callable(observe_tools) else None
             )
             mcp_context_ok = isinstance(mcp_tools, list) and bool(mcp_tools)
-        status, error, observed_ee_id = _poll_job(aap, job_id, timeout_seconds, sleep)
+        environment_ids = workflow_check.details.get("job_execution_environments", [])
+        observed_ee_id = environment_ids[0] if isinstance(environment_ids, list) and environment_ids else None
+        status = "successful"
+        error = None
         execution_environment_ok = _same_id(observed_ee_id, ee_id)
         passed = (
             status in _SUCCESS_STATES
@@ -262,7 +347,7 @@ def run(
             CheckStatus.PASS if passed else CheckStatus.FAIL,
             failure_class,
             "representative job and authenticated in-EE MCP probe completed successfully" if passed else "representative job or authenticated in-EE MCP probe did not complete successfully",
-            details={"execution_environment_id": ee_id, "observed_execution_environment_id": observed_ee_id, "job_template_id": template_id, "job_id": job_id, "job_pod_observed": True, "mcp_tool_count": len(mcp_tools) if isinstance(mcp_tools, list) else None, "status": status, "error": error},
+            details={"execution_environment_id": ee_id, "observed_execution_environment_id": observed_ee_id, "workflow_id": workflow.get("id"), "job_template_id": template_id, "job_id": job_id, "job_pod_observed": True, "mcp_tool_count": len(mcp_tools) if isinstance(mcp_tools, list) else None, "status": status, "error": error},
             timer=representative_timer,
         ))
     return results

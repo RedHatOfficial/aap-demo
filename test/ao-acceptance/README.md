@@ -34,16 +34,22 @@ export AAP_ACCEPTANCE_CA_FILE=/path/to/cluster-ca.pem
 The target must provide AAP, Automation Orchestrator, the AAP MCP service, and
 the Product Demos addon. The runner discovers managed AAP-Demo resources and
 checks each managed execution environment referenced by those resources. A
-representative job is launched only when its allowlisted read-only diagnostic
-template exists; missing deterministic representatives are reported as
-contract drift rather than silently skipped. Each representative job remains
+  representative job is launched only through its allowlisted AO read-only
+  workflow; missing deterministic AO representatives are reported as contract
+  drift rather than silently skipped. Each representative job remains
 available for a bounded probe so authenticated MCP `tools/list` and custom-CA
 handling are exercised from the actual execution-environment pod. AO backend
-and worker contexts are probed separately.
+and worker contexts are probed separately. Acceptance execution itself is
+AO-centric: the MCP scenario launches the repository-owned AO workflow with an
+agentic node connected to the managed MCP integration. A pass requires the
+declared success marker plus structured AO evidence naming the declared MCP
+tool and its result. Direct MCP calls are limited to supplemental readiness and
+security diagnostics. Custom MCP arguments are currently rejected until an AO
+workflow contract can encode them without ambiguity.
 
 The default manifest is success-capable and contains four safe contracts: AO
 wiring, an AO-backed AAP read-only workflow, a Product Demos read-only
-workflow, and an authenticated read-only MCP tool call. Operational certificate,
+workflow, and an AO-mediated authenticated read-only MCP workflow. Operational certificate,
 disk, Product Demos installer, and ServiceNow scenarios are isolated in
 `scenarios/unsafe-operations.json`; selecting that manifest is explicit opt-in
 inspection and still reports them as blocked rather than authorizing mutation.

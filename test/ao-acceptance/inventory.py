@@ -25,6 +25,7 @@ class ManagedResourceInventory:
     execution_environments: list[dict] = field(default_factory=list)
     ao_credentials: list[dict] = field(default_factory=list)
     ao_integrations: list[dict] = field(default_factory=list)
+    ao_models: list[dict] = field(default_factory=list)
     ao_workflows: list[dict] = field(default_factory=list)
 
 
@@ -156,6 +157,39 @@ def _workflow_nodes(workflow: dict, templates: dict[object, dict]) -> list[dict]
     return normalized
 
 
+def _agentic_nodes(workflow: dict) -> list[dict]:
+    """Normalize agentic nodes and their AO integration connections."""
+    definition = workflow.get("workflow_definition", workflow)
+    nodes = definition.get("nodes", []) if isinstance(definition, dict) else []
+    normalized: list[dict] = []
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict) or node.get("type") != "agentic":
+            continue
+        parameters = node.get("parameters", node.get("config", {}))
+        parameters = parameters if isinstance(parameters, dict) else {}
+        connections = parameters.get("integration_connections", [])
+        normalized_connections = []
+        for connection in connections if isinstance(connections, list) else []:
+            if not isinstance(connection, dict):
+                continue
+            normalized_connections.append({
+                "integration_id": _id(connection.get("integration_id")),
+                "credential_id": _id(connection.get("credential_id")),
+            })
+        normalized.append({
+            "id": node.get("id", node.get("name")),
+            "name": node.get("name"),
+            "prompt": parameters.get("prompt"),
+            "tool_selection_strategy": parameters.get("tool_selection_strategy"),
+            "tool_selections": parameters.get("tool_selections", []),
+            "integration_connections": normalized_connections,
+            "credential_id": _id(parameters.get("credential_id")),
+            "integration_id": _id(parameters.get("integration_id")),
+            "llm_model_id": _id(parameters.get("llm_model_id")),
+        })
+    return normalized
+
+
 def build_inventory(
     aap: "AapClient", ao: "AoClient", managed_markers: dict[str, str]
 ) -> ManagedResourceInventory:
@@ -265,12 +299,30 @@ def build_inventory(
         integration["credential_id"] = _id(integration.get("management_credential_id", integration.get("credential_id")))
         ao_integrations.append(integration)
 
+    ao_models = []
+    for integration in ao_integrations:
+        integration_id = _id(integration.get("id"))
+        if integration_id is None:
+            continue
+        try:
+            raw_models = ao.list_all(f"/api/v1/integrations/{integration_id}/models?limit=100")
+        except Exception:
+            # AAP and MCP integrations do not expose provider models. The
+            # agentic wiring check will fail closed if its LLM model is absent.
+            raw_models = []
+        for raw_model in raw_models:
+            model = _safe(raw_model)
+            model["integration_id"] = integration_id
+            model["model_id"] = _id(model.get("id") or model.get("model_id"))
+            ao_models.append(model)
+
     ao_workflows = []
     for raw_workflow in ao_resources["ao_workflows"]:
         if not _matches(raw_workflow, _marker(managed_markers, "ao_workflows"), "ao_workflows", workflow=True):
             continue
         workflow = _safe(raw_workflow)
         workflow["aap_job_template_nodes"] = _workflow_nodes(workflow, templates_by_id)
+        workflow["agentic_nodes"] = _agentic_nodes(workflow)
         ao_workflows.append(workflow)
 
     return ManagedResourceInventory(
@@ -282,5 +334,6 @@ def build_inventory(
         execution_environments=execution_environments,
         ao_credentials=ao_credentials,
         ao_integrations=ao_integrations,
+        ao_models=ao_models,
         ao_workflows=ao_workflows,
     )

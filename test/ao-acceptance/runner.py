@@ -138,13 +138,13 @@ def run_managed_checks(
         return results
     if scenarios is not None:
         workflow_results = workflows.run(
-            scenarios, inventory, ao, aap, getattr(probes, "mcp_client", None)
+            scenarios, inventory, ao, aap
         )
         results.extend(workflow_results)
         # Contract drift must stop all live launches, including EE checks.
         if any(result.failure_class == FailureClass.CONTRACT_DRIFT for result in workflow_results):
             return results
-    results.extend(execution_environments.run(inventory, aap, command_runner, probes))
+    results.extend(execution_environments.run(inventory, aap, command_runner, probes, ao=ao))
     return results
 
 

@@ -125,6 +125,30 @@ class ScenarioManifestTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "execution evidence"):
             scenarios.load(self.write_manifest({"scenarios": [payload]}))
 
+    def test_load_rejects_unsupported_mcp_arguments_before_provisioning(self):
+        payload = scenario(
+            scenario_type="mcp",
+            workflow_name="MCP workflow",
+            job_template_names=[],
+            mcp_tool_name="controller.job_templates_list",
+            mcp_arguments={"page_size": 1},
+        ).__dict__.copy()
+
+        with self.assertRaisesRegex(ValueError, "unsupported MCP arguments"):
+            scenarios.load(self.write_manifest({"scenarios": [payload]}))
+
+    def test_load_rejects_unsupported_mcp_tool_before_provisioning(self):
+        payload = scenario(
+            scenario_type="mcp",
+            workflow_name="MCP workflow",
+            job_template_names=[],
+            mcp_tool_name="controller.users_list",
+            mcp_arguments={},
+        ).__dict__.copy()
+
+        with self.assertRaisesRegex(ValueError, "unsupported MCP tool"):
+            scenarios.load(self.write_manifest({"scenarios": [payload]}))
+
     def test_default_scenarios_are_safe_and_capable_of_a_successful_run(self):
         manifest = ACCEPTANCE_DIR / "scenarios" / "critical-path.json"
 
@@ -144,7 +168,7 @@ class ScenarioManifestTests(unittest.TestCase):
                 "AAP-Demo Acceptance | AO AAP Read-Only",
                 "AAP-Demo Acceptance | AO AAP Read-Only",
                 "AAP-Demo Acceptance | Product Demos Read-Only",
-                None,
+                "AAP-Demo Acceptance | MCP Read-Only",
             ],
         )
 
@@ -170,35 +194,106 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(checks[0].status, CheckStatus.PASS)
         self.assertEqual(ao.launched, [])
 
-    def test_authenticated_mcp_scenario_lists_and_calls_only_the_declared_tool(self):
+    def test_mcp_scenario_launches_ao_workflow_without_calling_mcp_client(self):
         class McpClient:
-            def __init__(self):
-                self.calls = []
+            def __getattr__(self, name):
+                raise AssertionError(f"acceptance execution must not call McpClient.{name}")
 
-            def list_tools(self):
-                return ["controller.job_templates_list"]
-
-            def call_tool(self, name, arguments):
-                self.calls.append((name, arguments))
-                return {"tool_name": name, "content_types": ["text"], "is_error": False}
-
-        client = McpClient()
+        ao = FakeAoClient([{
+            "status": "successful",
+            "result": "AAP_DEMO_ACCEPTANCE_MCP_READ_ONLY_OK",
+        }])
+        inventory = ManagedResourceInventory(ao_workflows=[{
+            "id": "mcp-workflow-1",
+            "name": "AAP-Demo Acceptance | MCP Read-Only",
+            "aap_job_template_nodes": [],
+        }])
         checks = workflows.run(
             [scenario(
                 scenario_type="mcp",
-                workflow_name=None,
+                workflow_name="AAP-Demo Acceptance | MCP Read-Only",
                 job_template_names=[],
-                success_markers=[],
-                success_marker_fields=[],
+                success_markers=["AAP_DEMO_ACCEPTANCE_MCP_READ_ONLY_OK"],
+                success_marker_fields=["result"],
                 mcp_tool_name="controller.job_templates_list",
-                mcp_arguments={"page_size": 1},
+                mcp_arguments={},
             )],
-            ManagedResourceInventory(), FakeAoClient([]), FakeAapClient(), client,
+            inventory, ao, FakeAapClient(), McpClient(),
+        )
+
+        self.assertEqual(checks[0].status, CheckStatus.FAIL)
+        self.assertEqual(checks[0].failure_class, FailureClass.EXECUTION)
+        self.assertIn("MCP tool evidence", checks[0].summary)
+        self.assertEqual(ao.launched, ["mcp-workflow-1"])
+        self.assertEqual(checks[0].details["workflow_id"], "mcp-workflow-1")
+
+    def test_mcp_scenario_requires_declared_tool_evidence_in_ao_output(self):
+        ao = FakeAoClient([{
+            "status": "successful",
+            "result": {
+                "mcp_tool_calls": [{
+                    "tool": "controller.job_templates_list",
+                    "is_error": False,
+                    "result": {"items": []},
+                }],
+                "text": "AAP_DEMO_ACCEPTANCE_MCP_READ_ONLY_OK",
+            },
+        }])
+        inventory = ManagedResourceInventory(ao_workflows=[{
+            "id": "mcp-workflow-1",
+            "name": "AAP-Demo Acceptance | MCP Read-Only",
+            "aap_job_template_nodes": [],
+        }])
+
+        checks = workflows.run(
+            [scenario(
+                scenario_type="mcp",
+                workflow_name="AAP-Demo Acceptance | MCP Read-Only",
+                job_template_names=[],
+                success_markers=["AAP_DEMO_ACCEPTANCE_MCP_READ_ONLY_OK"],
+                success_marker_fields=["result"],
+                mcp_tool_name="controller.job_templates_list",
+                mcp_arguments={},
+            )],
+            inventory, ao, FakeAapClient(),
         )
 
         self.assertEqual(checks[0].status, CheckStatus.PASS)
-        self.assertEqual(client.calls, [("controller.job_templates_list", {"page_size": 1})])
-        self.assertEqual(checks[0].details["content_types"], ["text"])
+
+    def test_mcp_error_tool_record_with_marker_fails(self):
+        ao = FakeAoClient([{
+            "status": "successful",
+            "result": {
+                "tool_calls": [{
+                    "tool": "controller.job_templates_list",
+                    "is_error": True,
+                    "status": "error",
+                    "result": "AAP_DEMO_ACCEPTANCE_MCP_READ_ONLY_OK",
+                }],
+            },
+        }])
+        inventory = ManagedResourceInventory(ao_workflows=[{
+            "id": "mcp-workflow-1",
+            "name": "AAP-Demo Acceptance | MCP Read-Only",
+            "aap_job_template_nodes": [],
+        }])
+
+        checks = workflows.run(
+            [scenario(
+                scenario_type="mcp",
+                workflow_name="AAP-Demo Acceptance | MCP Read-Only",
+                job_template_names=[],
+                success_markers=["AAP_DEMO_ACCEPTANCE_MCP_READ_ONLY_OK"],
+                success_marker_fields=["result"],
+                mcp_tool_name="controller.job_templates_list",
+                mcp_arguments={},
+            )],
+            inventory, ao, FakeAapClient(),
+        )
+
+        self.assertEqual(checks[0].status, CheckStatus.FAIL)
+        self.assertEqual(checks[0].failure_class, FailureClass.EXECUTION)
+        self.assertIn("MCP tool evidence", checks[0].summary)
     def test_unknown_workflow_is_contract_drift_without_a_launch(self):
         ao = FakeAoClient([])
         aap = FakeAapClient()

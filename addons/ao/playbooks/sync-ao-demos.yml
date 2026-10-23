@@ -37,7 +37,7 @@
         headers:
           Authorization: "Bearer {{ ao_api_token }}"
           Host: "{{ ao_api_host }}"
-        validate_certs: false
+        validate_certs: true
         use_proxy: false
         return_content: true
       register: __ao_projects
@@ -171,6 +171,11 @@
     ao_api_host: ""
     ao_aap_credential_id: ""
     ao_aap_integration_id: ""
+    ao_agent_credential_id: ""
+    ao_agent_integration_id: ""
+    ao_agent_model_id: ""
+    ao_mcp_integration_id: ""
+    ao_mcp_credential_id: ""
     ao_acceptance_template_id: ""
     product_demos_acceptance_template_id: ""
     __ao_acceptance_contracts:
@@ -184,18 +189,18 @@
         description: Repository-owned Product Demos read-only acceptance workflow
         node_name: Run Product Demos read-only diagnostic
         job_template_id: "{{ product_demos_acceptance_template_id }}"
-  pre_tasks:
-    - name: Validate read-only acceptance workflow bindings
-      ansible.builtin.assert:
-        that:
-          - ao_api_token | length > 0
-          - ao_api_host | length > 0
-          - ao_aap_credential_id | length > 0
-          - ao_aap_integration_id | length > 0
-          - ao_acceptance_template_id | string | length > 0
-          - product_demos_acceptance_template_id | string | length > 0
-        fail_msg: Repository-owned acceptance workflow bindings are incomplete.
-      no_log: true
+      - acceptance_id: mcp-read-only
+        name: AAP-Demo Acceptance | MCP Read-Only
+        description: Repository-owned AO-to-MCP read-only acceptance workflow
+        node_name: Run MCP read-only diagnostic
+        node_type: agentic
+        prompt: >-
+          Use only the controller.job_templates_list tool through the configured
+          MCP integration, request at most one item, and return structured JSON
+          containing the MCP tool call evidence plus the marker
+          AAP_DEMO_ACCEPTANCE_MCP_READ_ONLY_OK when the tool call succeeds.
+        mcp_tool_name: controller.job_templates_list
+        mcp_arguments: {}
   tasks:
     - name: Synchronize one repository-owned acceptance workflow
       ansible.builtin.include_tasks: tasks/sync_acceptance_workflow.yml

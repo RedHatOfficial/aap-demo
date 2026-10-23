@@ -230,7 +230,7 @@
 - `probes.ProbeSet.ee_https(namespace: str, selector: str, url: str) -> ProbeResult`.
 - `checks.security.run(inventory: ManagedResourceInventory, probes: ProbeSet) -> list[CheckResult]`.
 - `checks.execution_environments.enumerate_supported(inventory: ManagedResourceInventory) -> list[dict]`.
-- `checks.execution_environments.run(inventory: ManagedResourceInventory, aap: AapClient, runner: CommandRunner) -> list[CheckResult]`.
+- `checks.execution_environments.run(inventory: ManagedResourceInventory, aap: AapClient, runner: CommandRunner, probes: ProbeSet, *, ao: AoClient) -> list[CheckResult]`. Representative EE execution must launch the named AO workflow mapped to the exact AAP job template; it must not call `AapClient.launch_job_template` directly.
 
 - [ ] **Step 1: Write failing tests for TLS/security and EE coverage.**
 
@@ -250,7 +250,7 @@
 
 - [ ] **Step 5: Implement managed EE enumeration and representative jobs.**
 
-  Derive EE references from managed job templates, verify expected image/name and availability, map each EE to a deterministic representative job template, launch it, poll until terminal state, and require success. Fail when a managed EE has no matrix entry or its job fails.
+  Derive EE references from managed job templates, verify expected image/name and availability, map each EE/template pair to a named AO workflow, launch AO, poll AO and its linked AAP job until terminal state, and require success. Fail with explicit contract drift when a managed EE has no matrix entry or AO representative; never launch the AAP template directly.
 
 - [ ] **Step 6: Run the focused tests and verify they pass.**
 
@@ -289,7 +289,7 @@
 
 - [ ] **Step 3: Add the critical-path scenario manifest.**
 
-  Define one AO wiring smoke scenario, one deterministic AAP-backed workflow, one Product Demos workflow, and one MCP operation using stable names already created by the addons. Set bounded polling and timeout values in the manifest rather than in code.
+  Define one AO wiring smoke scenario, one deterministic AAP-backed workflow, one Product Demos workflow, and one AO-mediated MCP workflow using stable names already created by the addons. The MCP workflow must use an agentic node bound to the managed AO MCP integration and a bounded success marker. Set polling and timeout values in the manifest rather than in code.
 
 - [ ] **Step 4: Implement scenario loading and contract validation.**
 
@@ -297,7 +297,7 @@
 
 - [ ] **Step 5: Implement launch and polling.**
 
-  Launch each selected AO workflow, follow its linked AAP jobs, poll both systems until terminal state or deadline, and check declared success markers. Do not retry a mutating workflow automatically unless the manifest explicitly marks it idempotent.
+  Launch each selected AO workflow, follow its linked AAP jobs, poll both systems until terminal state or deadline, and check declared success markers. MCP scenarios must also find structured AO evidence naming the declared MCP tool and a result; marker-only text is insufficient. Reject unsupported MCP arguments before provisioning. Do not retry a mutating workflow automatically unless the manifest explicitly marks it idempotent.
 
 - [ ] **Step 6: Run the focused tests and verify they pass.**
 

@@ -9,6 +9,7 @@ ACCEPTANCE_DIR = Path(__file__).parent / "ao-acceptance"
 sys.path.insert(0, str(ACCEPTANCE_DIR))
 
 import inventory  # noqa: E402
+import scenarios  # noqa: E402
 from checks import readiness, wiring  # noqa: E402
 from model import CheckStatus, FailureClass  # noqa: E402
 
@@ -125,6 +126,15 @@ def managed_resources():
                 "management_credential_id": "ao-mcp-credential",
                 "integration_type": "mcp_server",
             },
+            {
+                "id": "llm",
+                "name": "aap-demo LLM",
+                "description": "Auto-wired by aap-demo",
+                "base_url": "https://llm.example.test",
+                "enabled": True,
+                "management_credential_id": "llm-credential",
+                "integration_type": "llm",
+            },
             {"id": "other", "name": "Other", "description": "other"},
         ],
         "/api/v1/credentials": [
@@ -140,6 +150,15 @@ def managed_resources():
                 "description": "Auto-wired by aap-demo",
                 "credential_type_id": "bearer-type",
             },
+            {
+                "id": "llm-credential",
+                "name": "aap-demo LLM Token",
+                "description": "Auto-wired by aap-demo",
+                "credential_type_id": "bearer-type",
+            },
+        ],
+        "/api/v1/integrations/llm/models?limit=100": [
+            {"id": "llm-model", "model_id": "gpt-6-luna", "is_default": True},
         ],
         "/api/v1/workflows": [
             {
@@ -157,6 +176,32 @@ def managed_resources():
                             },
                         }
                     ]
+                },
+            },
+            {
+                "id": "workflow-mcp",
+                "name": "AAP-Demo Acceptance | MCP Read-Only",
+                "labels": {
+                    "aap-demo": "true",
+                    "acceptance": "true",
+                    "acceptance_id": "mcp-read-only",
+                },
+                "workflow_definition": {
+                    "nodes": [{
+                        "type": "agentic",
+                        "parameters": {
+                            "prompt": "Use the controller.job_templates_list tool and return the acceptance marker.",
+                            "credential_id": "llm-credential",
+                            "integration_id": "llm",
+                            "llm_model_id": "llm-model",
+                            "tool_selection_strategy": "SELECTED",
+                            "tool_selections": ["controller.job_templates_list"],
+                            "integration_connections": [{
+                                "integration_id": "mcp",
+                                "credential_id": "ao-mcp-credential",
+                            }],
+                        },
+                    }],
                 },
             },
             {"id": "other", "name": "Other", "labels": {}},
@@ -177,13 +222,21 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(result.job_templates[0]["project_name"], "AAP Orchestrator Demos")
         self.assertEqual(result.job_templates[0]["credential_ids"], [])
         self.assertEqual(result.job_templates[0]["execution_environment_name"], "AAP-Demo EE")
-        self.assertEqual([item["id"] for item in result.ao_integrations], ["aap", "mcp"])
+        self.assertEqual([item["id"] for item in result.ao_integrations], ["aap", "mcp", "llm"])
         self.assertEqual(
             [item["id"] for item in result.ao_credentials],
-            ["ao-aap-credential", "ao-mcp-credential"],
+            ["ao-aap-credential", "ao-mcp-credential", "llm-credential"],
         )
         self.assertEqual(result.ao_workflows[0]["aap_job_template_nodes"][0]["job_template_id"], 40)
         self.assertEqual(result.ao_workflows[0]["aap_job_template_nodes"][0]["job_template_name"], "Renew Certificate")
+        mcp_workflow = next(
+            item for item in result.ao_workflows
+            if item["name"] == "AAP-Demo Acceptance | MCP Read-Only"
+        )
+        self.assertEqual(
+            mcp_workflow["agentic_nodes"][0]["integration_connections"],
+            [{"integration_id": "mcp", "credential_id": "ao-mcp-credential"}],
+        )
 
     def test_build_inventory_normalizes_string_form_link_ids(self):
         resources = managed_resources()
@@ -319,6 +372,27 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(failed.status, CheckStatus.FAIL)
         self.assertEqual(failed.failure_class, FailureClass.WIRING)
 
+    def test_wiring_rejects_an_mcp_acceptance_workflow_without_the_mcp_connection(self):
+        parameters = self.resources["/api/v1/workflows"][1]["workflow_definition"]["nodes"][0]["parameters"]
+        parameters["integration_connections"] = []
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.workflow.workflow-mcp")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+        self.assertEqual(failed.failure_class, FailureClass.WIRING)
+
+    def test_wiring_uses_the_supported_mcp_tool_contract_and_rejects_other_tools(self):
+        self.assertEqual(wiring.SUPPORTED_MCP_TOOL_NAME, scenarios.SUPPORTED_MCP_TOOL_NAME)
+        parameters = self.resources["/api/v1/workflows"][1]["workflow_definition"]["nodes"][0]["parameters"]
+        parameters["tool_selections"] = ["controller.users_list"]
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.workflow.workflow-mcp")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+        self.assertEqual(failed.failure_class, FailureClass.WIRING)
+
     def test_wiring_allows_an_intentionally_credentialless_job_template(self):
         self.resources["/api/v2/job_templates/40/credentials/"] = []
 
@@ -389,6 +463,33 @@ class WiringTests(unittest.TestCase):
             check for check in checks
             if check.check_id == "wiring.integration.aap-demo-aap"
         )
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+
+    def test_wiring_rejects_an_agentic_node_with_an_unknown_credential(self):
+        node = self.resources["/api/v1/workflows"][1]["workflow_definition"]["nodes"][0]
+        node["parameters"]["credential_id"] = "missing-credential"
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.workflow.workflow-mcp")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+
+    def test_wiring_rejects_an_agentic_node_with_an_unknown_integration(self):
+        node = self.resources["/api/v1/workflows"][1]["workflow_definition"]["nodes"][0]
+        node["parameters"]["integration_id"] = "missing-integration"
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.workflow.workflow-mcp")
+        self.assertEqual(failed.status, CheckStatus.FAIL)
+
+    def test_wiring_rejects_an_agentic_node_with_an_unknown_model(self):
+        node = self.resources["/api/v1/workflows"][1]["workflow_definition"]["nodes"][0]
+        node["parameters"]["llm_model_id"] = "missing-model"
+
+        checks = wiring.run(self.build())
+
+        failed = next(check for check in checks if check.check_id == "wiring.workflow.workflow-mcp")
         self.assertEqual(failed.status, CheckStatus.FAIL)
 
 

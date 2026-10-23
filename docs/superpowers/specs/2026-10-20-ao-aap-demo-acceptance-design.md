@@ -148,12 +148,14 @@ Validate:
 
 The suite defines “all supported execution environments” as every execution
 environment referenced by AAP-Demo-managed job templates, including the Product
-Demos EE. It must:
+Demos EE. Each EE/template pair must map to a named AO acceptance workflow whose
+AO graph links the exact AAP job template. It must:
 
 1. enumerate those references from the managed AAP resources;
 2. verify each EE’s expected name/image and availability;
 3. ensure every managed EE is represented in the acceptance matrix; and
-4. run at least one representative successful job through each EE.
+4. launch at least one representative successful job through its mapped AO
+   workflow for each EE.
 
 An unrecognized or untested EE reference is a contract-drift failure, not a
  silently skipped check.
@@ -171,9 +173,13 @@ upstream AO demo:
 3. **Product Demos integration** — verify the selected Product Demos project,
    EE, and job template, then run the least environment-sensitive demo through
    AO and validate its expected artifact or fact.
-4. **MCP integration smoke test** — invoke one deterministic MCP operation
-   through AO and validate a recognizable successful result without broad
-   infrastructure changes.
+4. **MCP integration smoke test** — launch one deterministic AO workflow with
+   an agentic node bound to the managed MCP integration, invoke one selected
+   read-only MCP tool, and validate a recognizable successful result without
+   broad infrastructure changes. Acceptance success requires structured AO
+   evidence for the declared MCP tool in addition to the marker; direct MCP
+   calls remain supplemental readiness/security diagnostics only. Unsupported
+   MCP arguments are rejected before provisioning.
 
 Every scenario declares a timeout, polling interval, expected terminal states,
 resource names, and success markers. Upstream workflow or job-template changes
