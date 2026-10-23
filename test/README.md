@@ -22,6 +22,7 @@ python3 ./test/test-provision-aap-demos.py
 # AO replica profile rendering (no cluster required)
 ./test/test-ao-replica-profile.sh
 ./test/test-keycloak-addon.sh
+./test/test-keycloak-configure.sh
 
 # Run against a running local MicroShift cluster after enabling Keycloak.
 KUBECONFIG="$HOME/.aap-demo/kubeconfig.microshift" ./test/test-keycloak-live.sh

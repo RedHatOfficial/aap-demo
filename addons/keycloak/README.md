@@ -73,6 +73,12 @@ URL still must be copied into Keycloak when Gateway reports it. AO group claim
 extraction is configured as `groups[*]`; lab mode allows all authenticated users.
 AO-to-AAP job execution must continue using a separate AAP API key/PAT.
 
+Configuration verifies TLS by default. On CRC/MicroShift installations using the
+local self-signed ingress certificate, set `KEYCLOAK_INSECURE_TLS=true` explicitly
+or provide `KEYCLOAK_CA_FILE=/path/to/ingress-ca.crt`. The AO redirect URI used by
+`enable keycloak` is retained under `~/.aap-demo/keycloak/` so a later configure
+run continues to match the registered Keycloak client.
+
 `--map-groups` creates matching AO groups and explicit mappings, then creates
 local AAP authenticator maps: `aap-admins` becomes AAP superuser,
 `aap-auditors` becomes Platform Auditor, and operators/developers receive

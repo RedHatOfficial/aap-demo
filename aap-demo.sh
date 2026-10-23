@@ -3372,11 +3372,14 @@ cmd_wire() {
 
 cmd_keycloak() {
   local subcommand="${1:-configure}"
-  shift 2>/dev/null || true
+  shift 1 2>/dev/null || true
   case "$subcommand" in
     configure) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" "$@" ;;
-    help|-h|--help) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" --help ;;
-    *) echo "Usage: aap-demo keycloak configure [--target aap|ao|all] [--map-groups] [--apply]" >&2; return 1 ;;
+    help | -h | --help) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" --help ;;
+    *)
+      echo "Usage: aap-demo keycloak configure [--target aap|ao|all] [--map-groups] [--apply]" >&2
+      return 1
+      ;;
   esac
 }
 
