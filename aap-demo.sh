@@ -2321,6 +2321,28 @@ cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
 }
 
+_verify_aap_storage_prerequisites() {
+  local cr_name="${CR:-minimal}"
+  local cr_file="${SCRIPT_DIR}/config/crs/aap-${cr_name}.yaml"
+
+  # Let create_aap_instance report a missing CR file with its existing error.
+  [ -f "$cr_file" ] || return 0
+
+  # Only the CRs that explicitly request RWX NFS storage need this check.
+  if ! grep -Eq '^[[:space:]]*file_storage_storage_class:[[:space:]]*nfs-local-rwx[[:space:]]*$' "$cr_file"; then
+    return 0
+  fi
+
+  if kubectl get sc nfs-local-rwx &>/dev/null; then
+    return 0
+  fi
+
+  echo "ERROR: AAP CR '${cr_name}' requires the missing nfs-local-rwx StorageClass"
+  echo "  Hub file storage cannot be provisioned without RWX NFS storage."
+  echo "  Run 'aap-demo create' to provision the NFS storage layer, then retry deploy."
+  return 1
+}
+
 cmd_deploy() {
   aap_demo_configure_aap_version "$AAP_VERSION" || exit 1
 
@@ -2364,13 +2386,6 @@ cmd_deploy() {
   # OLM/AAP workloads until the cluster CNI can create pod sandboxes.
   _wait_for_ovn_ready || exit 1
 
-  # Restore any cache left by a previous destroy before OLM and AAP begin
-  # pulling images. The cluster and CNI must be ready first so the cache loader
-  # can safely import images into the MicroShift runtime.
-  # This is independent of the local-cache addon setting so a destroy/create
-  # cycle does not require re-enabling the addon first.
-  _load_local_cache
-
   # Check if AAP already exists — skip OLM and the full deploy if so
   if [ "$FORCE" != "true" ]; then
     AAP_EXISTS=$(kubectl get aap -n "$NAMESPACE" 2>/dev/null | grep -v NAME | head -1 | awk '{print $1}' || true)
@@ -2385,6 +2400,15 @@ cmd_deploy() {
       exit 0
     fi
   fi
+
+  _verify_aap_storage_prerequisites || exit 1
+
+  # Restore any cache left by a previous destroy before OLM and AAP begin
+  # pulling images. The cluster and CNI must be ready first so the cache loader
+  # can safely import images into the MicroShift runtime.
+  # This is independent of the local-cache addon setting so a destroy/create
+  # cycle does not require re-enabling the addon first.
+  _load_local_cache
 
   # Install OLM if not present (OpenShift Local doesn't include it)
   if ! KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}" bash "${SCRIPT_DIR}/addons/olm/deploy.sh"; then
