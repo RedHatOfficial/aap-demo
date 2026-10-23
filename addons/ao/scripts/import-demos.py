@@ -17,6 +17,7 @@ import sys
 import tarfile
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
@@ -95,6 +96,71 @@ def items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
+def collect_workflow_sources(
+    upstream_root: Path,
+    local_workflow_dir: Path | None = None,
+) -> list[tuple[Path, str]]:
+    """Return upstream exports followed by checked-in local workflow exports."""
+    sources = [
+        (path, "ansible-tmm/aap-orchestrator-demos")
+        for path in sorted(upstream_root.rglob("ao/*.json"))
+    ]
+    if local_workflow_dir:
+        sources.extend(
+            (path, "aap-demo")
+            for path in sorted(local_workflow_dir.glob("*.json"))
+        )
+    return sources
+
+
+def resolve_tool_selections(
+    base: str,
+    token: str,
+    tool_names: set[str],
+) -> dict[str, str]:
+    """Resolve portable MCP tool names to IDs in the target AO instance."""
+    resolved: dict[str, str] = {}
+    cursor = ""
+    while True:
+        path = "/tools?limit=100"
+        if cursor:
+            path += f"&cursor={urllib.parse.quote(cursor, safe='')}"
+        page = request(base, token, "GET", path)
+        for tool in items(page):
+            name = tool.get("name")
+            tool_id = tool.get("id")
+            if isinstance(name, str) and isinstance(tool_id, str):
+                resolved[name] = tool_id
+        next_cursor = page.get("next") if isinstance(page, dict) else None
+        if not next_cursor or next_cursor == cursor:
+            break
+        cursor = str(next_cursor)
+
+    missing = sorted(tool_names - resolved.keys())
+    if missing:
+        raise RuntimeError(f"AO MCP tool catalog is missing: {', '.join(missing)}")
+    return {name: resolved[name] for name in sorted(tool_names)}
+
+
+def bind_tool_selections(
+    workflow: dict[str, Any],
+    tool_ids: dict[str, str],
+) -> dict[str, Any]:
+    """Replace source-controlled tool names with target AO tool UUIDs."""
+    if not tool_ids:
+        return workflow
+    for node in workflow.get("nodes", []):
+        if node.get("type") != "agentic":
+            continue
+        parameters = node.setdefault("parameters", {})
+        names = parameters.get("tool_selection_names")
+        if not names:
+            continue
+        parameters["tool_selection_strategy"] = "SELECTED"
+        parameters["tool_selections"] = [tool_ids[name] for name in names]
+    return workflow
+
+
 def validate_existing_workflow_project(
     workflow: dict[str, Any], project_id: str,
 ) -> None:
@@ -152,6 +218,7 @@ def normalize(
     mcp_integration_id: str | None = None,
     mcp_credential_id: str | None = None,
     webhook_service_account_id: str | None = None,
+    tool_agent_model_id: str | None = None,
 ) -> dict[str, Any]:
     workflow = dict(document)
     workflow.setdefault("schema_version", "2.0.0")
@@ -177,7 +244,11 @@ def normalize(
             # SELECTED with an empty list is rejected by AO.  The demo MCP server
             # is deliberately wired with all discovered tools, so ALL is the most
             # faithful portable default for exports that did not carry selections.
-            if parameters.get("tool_selection_strategy") == "SELECTED" and not parameters.get("tool_selections"):
+            if (
+                parameters.get("tool_selection_strategy") == "SELECTED"
+                and not parameters.get("tool_selections")
+                and not parameters.get("tool_selection_names")
+            ):
                 parameters["tool_selection_strategy"] = "ALL"
                 parameters.pop("tool_selections", None)
             elif "tool_selection_strategy" not in parameters:
@@ -194,8 +265,13 @@ def normalize(
                     parameters["integration_id"] = agent_integration_id
                 else:
                     parameters.pop("integration_id", None)
-                if agent_model_id:
-                    parameters["llm_model_id"] = agent_model_id
+                selected_model_id = (
+                    tool_agent_model_id
+                    if parameters.get("model_role") == "tool" and tool_agent_model_id
+                    else agent_model_id
+                )
+                if selected_model_id:
+                    parameters["llm_model_id"] = selected_model_id
                 else:
                     parameters.pop("llm_model_id", None)
             else:
@@ -271,16 +347,32 @@ def import_workflows(args: argparse.Namespace) -> int:
         if w.get("labels", {}).get("source_file")
     }
     with workflow_sources(args.source_dir, args.repository, args.ref) as source_dir:
-        sources = sorted(source_dir.glob("*.json") if args.source_dir else source_dir.rglob("ao/*.json"))
+        if args.source_dir:
+            sources = [
+                (path, "ansible-tmm/aap-orchestrator-demos")
+                for path in sorted(source_dir.glob("*.json"))
+            ]
+        else:
+            sources = collect_workflow_sources(
+                source_dir,
+                Path(args.local_workflow_dir) if args.local_workflow_dir else None,
+            )
         if not sources:
             raise RuntimeError(f"no workflow exports found in {source_dir}")
+        documents = []
         raw_names = []
-        for source in sources:
+        tool_names: set[str] = set()
+        for source, _source_label in sources:
+            document = json.loads(source.read_text())
+            documents.append(document)
+            for node in document.get("nodes", []):
+                if node.get("type") == "agentic":
+                    tool_names.update(node.get("parameters", {}).get("tool_selection_names", []))
             raw_names.append(json.loads(source.read_text()).get("name") or source.stem)
         name_counts = {name: raw_names.count(name) for name in set(raw_names)}
+        tool_ids = resolve_tool_selections(base, args.token, tool_names) if tool_names else {}
         imported = 0
-        for source, raw_name in zip(sources, raw_names):
-            document = json.loads(source.read_text())
+        for (source, source_label), raw_name, document in zip(sources, raw_names, documents):
             workflow = normalize(
                 document,
                 args.aap_credential_id,
@@ -292,7 +384,9 @@ def import_workflows(args: argparse.Namespace) -> int:
                 args.mcp_integration_id,
                 args.mcp_credential_id,
                 webhook_service_account_id,
+                args.tool_agent_model_id,
             )
+            workflow = bind_tool_selections(workflow, tool_ids)
             name = workflow.get("name") or source.stem
             if name_counts.get(raw_name, 0) > 1 and source.stem.endswith("-legacy"):
                 name = f"{name} (legacy)"
@@ -302,7 +396,7 @@ def import_workflows(args: argparse.Namespace) -> int:
                 "description": workflow.get("description"),
                 "labels": {
                     "aap-demo": "true",
-                    "source": "ansible-tmm/aap-orchestrator-demos",
+                    "source": source_label,
                     "source_file": source.name,
                 },
                 "workflow_definition": workflow,
@@ -334,6 +428,7 @@ def main() -> int:
     parser.add_argument("--route", required=True, help="AO route hostname")
     parser.add_argument("--token", required=True)
     parser.add_argument("--source-dir", help="Local workflow directory (testing override)")
+    parser.add_argument("--local-workflow-dir", help="Checked-in aap-demo workflow directory")
     parser.add_argument("--repository", default=UPSTREAM_REPOSITORY)
     parser.add_argument("--ref", default=UPSTREAM_REF)
     parser.add_argument("--aap-credential-id", required=True)
@@ -341,6 +436,7 @@ def main() -> int:
     parser.add_argument("--agent-credential-id")
     parser.add_argument("--agent-integration-id", help="AO LLM provider integration UUID for agentic nodes")
     parser.add_argument("--agent-model-id", help="AO LLMModel UUID to set as llm_model_id on agentic nodes")
+    parser.add_argument("--tool-agent-model-id", help="AO LLMModel UUID for tool-enabled agentic nodes")
     parser.add_argument("--mcp-integration-id", help="AO MCP integration ID for tool connection credentials")
     parser.add_argument("--mcp-credential-id", help="AO MCP credential ID for tool connection credentials")
     parser.add_argument("--project-id")

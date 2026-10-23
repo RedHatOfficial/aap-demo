@@ -145,6 +145,35 @@ Use `aap-demo wire` to re-run wiring after manual cluster changes; it also resto
 the CoreDNS route rewrite if MicroShift's DNS operator has dropped it, and reapplies
 AO pod `hostAliases` for AAP/AO/MCP route hostnames.
 
+### Test one Ansible UI Playwright case
+
+The checked-in workflow at
+[`workflows/ansible-ui-playwright-test-builder.json`](workflows/ansible-ui-playwright-test-builder.json)
+analyzes one exact Playwright test title and then branches into AAP validation.
+The importer overlays it after the pinned upstream exports; local exports are
+labeled `aap-demo` and their MCP tool names are resolved to IDs in the target AO
+instance at sync time.
+
+Run the safe read-only path with a unique target name:
+
+```bash
+python3 addons/ao/scripts/run-playwright-workflow.py \
+  --route "$AO_ROUTE" \
+  --token "$AO_TOKEN" \
+  --workflow-id "$AO_PLAYWRIGHT_WORKFLOW_ID" \
+  --ref devel \
+  --test-path playwright/tests/integration/automation-execution/workflow-job-templates/workflow-job-templates.spec.ts \
+  --test-title "can edit a workflow job template from the details view" \
+  --target-name "ao-playwright-validation-$(date +%s)"
+```
+
+The `execute_mutations` input defaults to `false`; omitting
+`--execute-mutations` is read-only. Each run must name one exact
+`test_title`; do not pass a whole file or a broad description. Mutation runs
+require `--execute-mutations`, a unique target name, and disposable AAP
+resources. If the title is missing or ambiguous, inspect the `select_test_case`
+result for candidate titles and rerun with exactly one of them.
+
 **Workflow builder note:** Configuration → Integrations may show **Available** while the workflow
 UI still reports “AAP credential not configured” until you select **aap-demo AAP** and
 **aap-demo AAP Token** on an AAP job-template node. AO proxy APIs require both `integration_id`
@@ -216,6 +245,8 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_LLM_PROVIDER` | `ollama` | `ollama`, `external`, or `none`; external and none modes skip the Ollama dependency |
 | `AO_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint used by external mode |
 | `AO_LLM_MODEL` | `gpt-6-luna` | External model selected as AO's default after discovery |
+| `AO_AGENT_TOOL_MODEL` | `gpt-4.1` | Non-reasoning model used by MCP-enabled workflow nodes |
+| `AO_AGENT_TOOL_MODEL_ID` | unset | Override the AO model UUID for MCP-enabled workflow nodes |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
 | `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
 | `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |

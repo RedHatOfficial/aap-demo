@@ -15,6 +15,7 @@ Validation tests for `aap-demo.sh` command-line interface.
 ./test/test-fix-ssl-command.sh
 ./test/test-apme-eap-oauth.sh
 python3 ./test/test-ao-import-demos.py
+python3 ./test/test-ao-playwright-workflow.py -v
 
 # AAP provisioning fast-path test
 python3 ./test/test-provision-aap-demos.py
@@ -80,6 +81,16 @@ Tests **do not** validate:
 - Full deploy flow (too slow for unit tests)
 - Live AAP operations (requires running instance)
 - Network endpoints (skipped in `--quick` mode)
+
+### Test-by-test AO smoke test
+
+The focused unit tests validate the checked-in AO workflow contract, importer
+overlay, tool/model binding, and runner payload without a cluster. On a
+disposable AO/AAP environment, run one exact title through the documented
+runner with its default `execute_mutations=false` read-only mode. Repeat with a
+second title from the same file to verify selection changes without changing the
+bounded workflow graph. Mutation execution is opt-in and is not part of the
+default smoke procedure.
 
 ### Exit Codes
 

@@ -75,6 +75,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [031](031-windows-git-bash-wrapper.md) | Windows Git Bash Command Wrapper | Accepted |
 | [032](032-open-issues-remediation-strategy.md) | Open Issue Remediation Strategy | Proposed |
 | [033](033-apme-local-oci-plugin-publishing.md) | APME Local OCI Plugin Publishing | Accepted |
+| [034](034-ao-ansible-ui-playwright-workflow.md) | AO Workflow for Test-by-Test Ansible UI Playwright Analysis | Proposed |
 
 ## Creating a New ADR
 
