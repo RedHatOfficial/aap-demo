@@ -52,6 +52,13 @@ export KUBECONFIG=~/.aap-demo/kubeconfig.microshift
 # or: aap-demo kubeconfig   # refresh file and print export command
 ```
 
+`oc login` writes into the kubeconfig named by `KUBECONFIG`. When that is the
+aap-demo file, the current context can switch to a remote cluster. Cluster
+commands then stop before they read or change that API, and tell you how to
+switch back to the `microshift` or `aap-demo` context. `aap-demo kubeconfig`
+refreshes the local file from the CRC VM. Set
+`AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true` only when that remote API is intentional.
+
 ## Status
 
 ```bash

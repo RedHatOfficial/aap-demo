@@ -63,6 +63,11 @@ oc adm policy add-scc-to-group privileged system:serviceaccounts:aap-operator
 **Symptom**: Pods evicted or images fail to pull
 **Fix**: `aap-demo ssh` then `sudo crictl rmi --prune` to clean unused images
 
+### Commands target a remote cluster
+**Symptom**: `Kubeconfig points at a remote cluster`, or `AAP not found in namespace aap-operator` while the CRC VM is running
+**Cause**: `oc login` changed the current context of `~/.aap-demo/kubeconfig.microshift`
+**Fix**: `kubectl config use-context microshift`, or `aap-demo kubeconfig` to refresh the local file. Cluster commands refuse the remote API before they change it.
+
 ## File Structure
 
 ```

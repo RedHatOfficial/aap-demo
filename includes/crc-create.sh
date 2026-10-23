@@ -13,6 +13,8 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
+# shellcheck source=includes/kubeconfig-guard.sh
+source "${SCRIPT_DIR}/includes/kubeconfig-guard.sh"
 
 # Source CRC infra backend (sets CRC_SSH_KEY, CRC_SSH_OPTS)
 # shellcheck source=includes/infra-crc.sh
@@ -633,6 +635,9 @@ echo "  podman --connection aap-demo build ."
 printf "${_GREEN}▸${_NC} Installing metrics-server...\n"
 KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
 export KUBECONFIG
+if ! aap_demo_reject_remote_kubeconfig; then
+  exit 1
+fi
 if kubectl get deployment metrics-server -n kube-system &>/dev/null; then
   echo "  Already installed"
 else
