@@ -1,0 +1,121 @@
+"""Persisted fleet options. The namespace default lives in ``images.NAMESPACE``."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from aap_demo.addons.fleet import images
+from aap_demo.core.context import AppContext
+from aap_demo.core.errors import UsageError
+
+
+def fleet_options(ctx: AppContext) -> Dict[str, Any]:
+    options = ctx.config.get("addons.options") or {}
+    if not isinstance(options, dict):
+        return {}
+    fleet = options.get("fleet")
+    return dict(fleet) if isinstance(fleet, dict) else {}
+
+
+def save_options(ctx: AppContext, fleet: Dict[str, Any]) -> None:
+    options = ctx.config.get("addons.options") or {}
+    if not isinstance(options, dict):
+        options = {}
+    merged = dict(options)
+    merged["fleet"] = fleet
+    ctx.config.set("addons.options", merged)
+    ctx.config.save()
+
+
+def namespace_token_for(ctx: AppContext) -> str:
+    return str(fleet_options(ctx).get("namespace_token") or "")
+
+
+def remember_namespace_token(ctx: AppContext, token: str) -> None:
+    """Record the token without marking Fleet enabled or rewriting its nodes."""
+    fleet = fleet_options(ctx)
+    if fleet.get("namespace_token") == token:
+        return
+    fleet["namespace_token"] = token
+    save_options(ctx, fleet)
+
+
+def namespace_uid_for(ctx: AppContext, key: str) -> str:
+    return str(fleet_options(ctx).get(key) or "")
+
+
+def remember_namespace_uid(ctx: AppContext, key: str, uid: str) -> None:
+    """Record the API server UID. It cannot be copied onto another namespace."""
+    if not uid:
+        return
+    fleet = fleet_options(ctx)
+    if fleet.get(key) == uid:
+        return
+    fleet[key] = uid
+    save_options(ctx, fleet)
+
+
+def namespace_for(ctx: AppContext) -> str:
+    raw = fleet_options(ctx).get("namespace")
+    text = str(raw).strip() if raw else ""
+    return text or images.NAMESPACE
+
+
+def disk_size_for(ctx: AppContext) -> str:
+    raw = fleet_options(ctx).get("disk_size")
+    text = str(raw).strip() if raw else ""
+    return text or images.DISK_SIZE
+
+
+def storage_class_for(ctx: AppContext) -> str:
+    """Empty means the cluster default StorageClass. The playbook omits the field."""
+    raw = fleet_options(ctx).get("storage_class")
+    return str(raw).strip() if raw else ""
+
+
+def nodes_of(ctx: AppContext) -> List[Dict[str, str]]:
+    raw = fleet_options(ctx).get("nodes") or []
+    if not isinstance(raw, list):
+        return []
+    nodes = []
+    for item in raw:
+        if isinstance(item, dict) and item.get("name") and item.get("os"):
+            nodes.append({"name": str(item["name"]), "os": str(item["os"])})
+    return nodes
+
+
+def enabled_names(ctx: AppContext) -> List[str]:
+    raw = ctx.config.get("addons.enabled") or []
+    if not isinstance(raw, list):
+        return []
+    return [str(name) for name in raw]
+
+
+def set_enabled(ctx: AppContext, present: bool) -> None:
+    names = enabled_names(ctx)
+    if present and "fleet" not in names:
+        names.append("fleet")
+    if not present:
+        names = [name for name in names if name != "fleet"]
+    ctx.config.set("addons.enabled", names)
+
+
+def validate_certs_for(ctx: AppContext) -> bool:
+    """Certificate checks stay on unless the operator turns them off."""
+    raw = fleet_options(ctx).get("validate_certs", True)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no"}
+    return bool(raw)
+
+
+def ca_path_for(ctx: AppContext) -> str:
+    path = ctx.paths.ingress_ca
+    return str(path) if path.is_file() else ""
+
+
+def require_os(os_id: str) -> None:
+    if os_id not in images.IMAGES:
+        raise UsageError(
+            f"unknown OS {os_id!r}",
+            hint="OS ids: " + ", ".join(images.OS_IDS),
+        )

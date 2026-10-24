@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+
 from aap_demo.core import bash_v1
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _bash_script(path: Path) -> None:
@@ -138,6 +144,101 @@ def test_help_and_quiet_do_not_offer_to_remove_bash_v1(tmp_path: Path, monkeypat
     assert run(["help"], env=env) == 0
     assert run(["--quiet", "version"], env=env) == 0
     assert called == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh is the Unix launcher")
+def test_bash_help_labels_fleet_as_legacy_qemu_and_points_to_v2() -> None:
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "aap-demo.sh"), "help"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert "(legacy Bash v1; local QEMU VMs only)" in result.stdout
+    assert "Kubernetes-native fleet: aap-demo fleet list" in result.stdout
+    assert "v2 [args...]" in result.stdout
+
+
+def test_bash_status_has_a_python_v2_fleet_report() -> None:
+    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+
+    assert "Kubernetes-native Fleet:" in source
+    assert "kubectl get pods -A" in source
+    assert "app.kubernetes.io/name=fleet-node" in source
+
+
+def test_bash_fleet_source_has_explicit_backend_delegation() -> None:
+    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+
+    assert "--backend qemu|kube-native|all" in source
+    assert "_fleet_delegate_v2" in source
+    assert "_fleet_delegate_kube_native" in source
+    assert ".venv/bin/python" in source
+    assert "import yaml" in source
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+def test_bash_can_dispatch_the_python_v2_cli() -> None:
+    env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "aap-demo.sh"), "v2", "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert "usage: aap-demo" in result.stdout
+    assert "fleet" in result.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+def test_bash_v2_can_enable_fleet() -> None:
+    env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "aap-demo.sh"), "v2", "enable", "fleet", "--help"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert "usage: aap-demo enable" in result.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+def test_bash_enable_fleet_can_select_kube_native_backend() -> None:
+    env = {"AAP_DEMO_PYTHON": sys.executable, "CI": "true"}
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "aap-demo.sh"),
+            "enable",
+            "fleet",
+            "--backend",
+            "kube-native",
+            "--help",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert "usage: aap-demo enable" in result.stdout
 
 
 def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:

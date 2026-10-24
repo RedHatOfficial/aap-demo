@@ -107,6 +107,43 @@ def render_cr(
     return yaml.safe_dump(document, sort_keys=False, default_flow_style=False)
 
 
+def _contains_mapping(actual: Any, expected: Any) -> bool:
+    """Return whether ``actual`` contains ``expected`` as a recursive subset."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _contains_mapping(actual[key], value)
+            for key, value in expected.items()
+        )
+    return actual == expected
+
+
+def cr_template_name(document: Dict[str, Any], *, namespace: str) -> str:
+    """Identify the bundled CR template used for an applied AAP resource.
+
+    New deployments carry an explicit annotation. Older Bash-created CRs do
+    not, so fall back to matching the rendered template as a subset of the
+    live spec; the operator may add defaults and status-adjacent fields.
+    """
+    annotations = (document.get("metadata") or {}).get("annotations") or {}
+    annotated = annotations.get("aap-demo/cr")
+    if isinstance(annotated, str) and annotated in available_crs():
+        return annotated
+
+    live_spec = document.get("spec")
+    if not isinstance(live_spec, dict):
+        return DEFAULT_CR
+    for candidate in available_crs():
+        # This template contains a caller-specific public URL and cannot be
+        # inferred reliably from a live object without that original input.
+        if candidate.endswith("-noingress"):
+            continue
+        rendered = yaml.safe_load(render_cr(load_cr(candidate), namespace=namespace))
+        expected_spec = rendered.get("spec") or {}
+        if _contains_mapping(live_spec, expected_spec):
+            return candidate
+    return DEFAULT_CR
+
+
 def public_url_for(ctx: AppContext) -> Optional[str]:
     """Ports the PUBLIC_URL auto-construction (aap-demo.sh:2441-2456).
 
@@ -191,6 +228,10 @@ def create_instance(
         ctx.console.progress(f"Using CR: {name}")
 
     manifest = render_cr(template, namespace=ns, public_url=public_url, noingress=noingress)
+    document = yaml.safe_load(manifest)
+    annotations = (document.setdefault("metadata", {})).setdefault("annotations", {})
+    annotations["aap-demo/cr"] = name
+    manifest = yaml.safe_dump(document, sort_keys=False, default_flow_style=False)
     kubectl.apply_stdin(ctx.runner, manifest, "-n", ns).check()
 
     from aap_demo.cluster import pull_secret as pull_secret_mod
@@ -893,6 +934,7 @@ __all__ = [
     "DEFAULT_CR",
     "admin_password",
     "available_crs",
+    "cr_template_name",
     "cr_metadata_name",
     "create_instance",
     "existing_instance",

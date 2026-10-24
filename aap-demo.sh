@@ -74,6 +74,7 @@ _NAMESPACE_EXPLICIT="${NAMESPACE:+true}"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 QUIET="${QUIET:-false}"
 FORCE="${FORCE:-false}"
+FLEET_BACKEND="${FLEET_BACKEND:-qemu}"
 
 # Config file for persistent settings
 AAP_DEMO_CONFIG="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
@@ -104,9 +105,16 @@ KUBECTL_KUBECONFIG=""
 # Parse command line arguments
 COMMAND=""
 EXTRA_ARGS=()
+V2_ARGS=()
+V2_MODE=false
 PENDING_FLAG=""
 
 for arg in "$@"; do
+  if [ "$V2_MODE" = true ]; then
+    V2_ARGS+=("$arg")
+    continue
+  fi
+
   # Handle pending flag value
   if [ -n "$PENDING_FLAG" ]; then
     case "$PENDING_FLAG" in
@@ -118,6 +126,9 @@ for arg in "$@"; do
         ;;
       kubeconfig)
         KUBECTL_KUBECONFIG="$arg"
+        ;;
+      backend)
+        FLEET_BACKEND="$arg"
         ;;
     esac
     PENDING_FLAG=""
@@ -144,9 +155,33 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | version | help | --help | -h | --version | -V)
+    --backend=*)
+      FLEET_BACKEND="${arg#*=}"
+      ;;
+    --backend)
+      PENDING_FLAG="backend"
+      ;;
+    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | v2 | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
+        fleet)
+          if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
+            EXTRA_ARGS+=("$arg")
+          else
+            COMMAND="fleet"
+          fi
+          ;;
+        --help | -h)
+          if [ "$COMMAND" = "enable" ]; then
+            EXTRA_ARGS+=("$arg")
+          else
+            COMMAND="help"
+          fi
+          ;;
+        v2)
+          COMMAND="v2"
+          V2_MODE=true
+          ;;
         *) COMMAND="$arg" ;;
       esac
       ;;
@@ -506,6 +541,7 @@ Commands:
   idle [true|false] Scale down/up AAP to save resources
   diagnose [--ai] Check environment health (--ai for Claude analysis)
   must-gather      Collect diagnostic info (AAP + cluster)
+  v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
   clean           Remove AAP deployment
 
 Cluster management:
@@ -516,14 +552,18 @@ Cluster management:
 
 Addons:
   enable fleet       Enable Fleet managed VMs for demos (requires AAP)
+                      Use --backend kube-native for the Python v2 Fleet addon
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
   enable mcp-server  Enable MCP server for AI assistants
 
-Fleet commands (requires: enable fleet):
+Fleet commands (legacy Bash v1; local QEMU VMs only; requires: enable fleet):
+  fleet --backend qemu|kube-native|all <action>
   fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
   fleet list                    List running fleet node VMs
   fleet remove [N|name]         Remove fleet node VMs
   fleet destroy                 Remove all VMs and AAP resources
+
+Kubernetes-native fleet: aap-demo fleet list  (Kubernetes pod-backed nodes)
 
 Addons:
   enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
@@ -577,12 +617,17 @@ COMMANDS (all infrastructure types):
     must-gather [dir] Collect AAP and cluster diagnostics
                     Uses AAP must-gather image for AAP-specific collection
                     Output saved to must-gather.local.<timestamp> (or specified dir)
+    v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
     enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
+                    Fleet backends: --backend qemu|kube-native
     disable [addon] Disable an addon
+    fleet --backend qemu|kube-native|all <action>
     fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
+    (legacy Bash v1; local QEMU VMs only)
+    Kubernetes-native fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
     enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, fleet)
                     portal-operator is Technology Preview and AMD64 only
     disable [addon] Disable an addon
@@ -1927,18 +1972,42 @@ cmd_status() {
   done
   echo ""
 
-  # Show fleet nodes (addon)
+  # Show both fleet backends. Bash v1 stores QEMU nodes on the host; Python v2
+  # stores pod-backed nodes in Kubernetes, so neither state can be inferred
+  # from the other's config or filesystem.
+  echo "Fleet:"
+  echo "------"
+
+  local _fleet_v2_rows _fleet_v2_total _fleet_v2_ready
+  _fleet_v2_rows=$(kubectl get pods -A \
+    -l app.kubernetes.io/name=fleet-node \
+    --no-headers \
+    -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
+    2>/dev/null || true)
+  if [ -n "$_fleet_v2_rows" ]; then
+    _fleet_v2_total=$(printf '%s\n' "$_fleet_v2_rows" | awk 'NF {count++} END {print count + 0}')
+    _fleet_v2_ready=$(printf '%s\n' "$_fleet_v2_rows" | awk '$3 == "true" {count++} END {print count + 0}')
+    echo "Kubernetes-native Fleet:"
+    printf "  %s/%s pod nodes ready\n" "$_fleet_v2_ready" "$_fleet_v2_total"
+    printf '%s\n' "$_fleet_v2_rows" | sed 's/^/  /'
+  else
+    echo "Kubernetes-native Fleet: no pod nodes"
+  fi
+
   if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
     local _node_count
     _node_count=$(fleet_count 2>/dev/null || echo "0")
     if [ "$_node_count" -gt 0 ] 2>/dev/null; then
-      echo "Fleet:"
-      echo "-----------"
-      fleet_list
-      echo ""
+      echo "Legacy Bash v1 Fleet:"
+      fleet_list | sed 's/^/  /'
+    else
+      echo "Legacy Bash v1 Fleet: no QEMU nodes"
     fi
+  else
+    echo "Legacy Bash v1 Fleet: no QEMU nodes"
   fi
+  echo ""
 }
 
 cmd_redeploy() {
@@ -2881,7 +2950,55 @@ watch_aap() {
 # Fleet nodes: managed RHEL VMs for AAP demos (addon)
 # ---------------------------------------------------------------------------
 
-cmd_fleet() {
+_fleet_delegate_v2() {
+  local python_bin=""
+  local candidate
+
+  if [ -n "${AAP_DEMO_PYTHON:-}" ] && command -v "$AAP_DEMO_PYTHON" >/dev/null 2>&1; then
+    if "$AAP_DEMO_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
+      python_bin="$AAP_DEMO_PYTHON"
+    fi
+  fi
+
+  for candidate in "${SCRIPT_DIR}/.venv/bin/python" "${SCRIPT_DIR}/.venv/bin/python3"; do
+    if [ -z "$python_bin" ] && [ -x "$candidate" ] && "$candidate" -c 'import yaml' >/dev/null 2>&1; then
+      python_bin="$candidate"
+    fi
+  done
+
+  if [ -z "$python_bin" ]; then
+    candidate=$(command -v aap-demo 2>/dev/null || true)
+    if [ -n "$candidate" ] && ! head -1 "$candidate" 2>/dev/null | grep -qi bash; then
+      "$candidate" "$@"
+      return
+    fi
+  fi
+
+  if [ -z "$python_bin" ] && command -v python3 >/dev/null 2>&1 \
+    && python3 -c 'import yaml' >/dev/null 2>&1; then
+    python_bin="$(command -v python3)"
+  fi
+
+  if [ -z "$python_bin" ]; then
+    _err "Python is required for the v2 CLI"
+    echo "  Install the project dependencies or set AAP_DEMO_PYTHON=/path/to/python3"
+    return 1
+  fi
+  if [ ! -d "${SCRIPT_DIR}/src/aap_demo" ]; then
+    _err "Python v2 CLI is not available from this checkout"
+    echo "  Install the Python aap-demo package or run the v2 checkout"
+    return 1
+  fi
+
+  PYTHONPATH="${SCRIPT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+    "$python_bin" -m aap_demo "$@"
+}
+
+_fleet_delegate_kube_native() {
+  _fleet_delegate_v2 fleet --backend kube-native "$@"
+}
+
+cmd_fleet_qemu() {
   local fleet_dir="${SCRIPT_DIR}/addons/fleet"
   if [ ! -f "${fleet_dir}/fleet.sh" ]; then
     _err "Fleet addon not found"
@@ -2956,7 +3073,7 @@ cmd_fleet() {
       ;;
     list)
       echo ""
-      printf "\033[1mFleet Nodes\033[0m\n"
+      printf "\033[1mLegacy QEMU Fleet Nodes (Bash v1)\033[0m\n"
       echo ""
       fleet_list
       ;;
@@ -2983,6 +3100,32 @@ cmd_fleet() {
       echo "  aap-demo fleet list"
       echo "  aap-demo fleet remove 1"
       echo "  aap-demo fleet destroy"
+      ;;
+  esac
+}
+
+cmd_fleet() {
+  local backend="${FLEET_BACKEND:-qemu}"
+  case "$backend" in
+    qemu)
+      cmd_fleet_qemu "$@"
+      ;;
+    kube-native)
+      _fleet_delegate_kube_native "$@"
+      ;;
+    all)
+      if [ "${1:-}" != "list" ]; then
+        _err "Fleet backend 'all' is read-only"
+        echo "  Use --backend qemu or --backend kube-native for mutations"
+        return 2
+      fi
+      _fleet_delegate_kube_native "$@" || return
+      cmd_fleet_qemu "$@"
+      ;;
+    *)
+      _err "Unknown Fleet backend: $backend"
+      echo "  Choose: qemu, kube-native, or all"
+      return 2
       ;;
   esac
 }
@@ -3154,6 +3297,27 @@ cmd_enable() {
       printf "  %-15s %s\n" "$a" "($status)"
     done
     return 0
+  fi
+
+  if [ "$addon" = "fleet" ]; then
+    case "${FLEET_BACKEND:-qemu}" in
+      kube-native)
+        _fleet_delegate_v2 enable fleet "$@"
+        return
+        ;;
+      qemu)
+        ;;
+      all)
+        _err "Fleet backend 'all' cannot be enabled"
+        echo "  Choose: qemu or kube-native"
+        return 2
+        ;;
+      *)
+        _err "Unknown Fleet backend: ${FLEET_BACKEND}"
+        echo "  Choose: qemu or kube-native"
+        return 2
+        ;;
+    esac
   fi
 
   local addon_dir="${SCRIPT_DIR}/addons/${addon}"
@@ -3350,9 +3514,25 @@ case "$COMMAND" in
 esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
+_ENABLE_HELP=false
+if [ "$COMMAND" = "enable" ]; then
+  for _arg in "${EXTRA_ARGS[@]}"; do
+    if [ "$_arg" = "--help" ] || [ "$_arg" = "-h" ]; then
+      _ENABLE_HELP=true
+      break
+    fi
+  done
+fi
+
 case "$COMMAND" in
-  help | --help | -h | config | update | version | "" | destroy | status)
+  help | --help | -h | config | update | version | v2 | "" | destroy | status)
     # These commands don't need cluster access
+    ;;
+  enable)
+    if [ "$_ENABLE_HELP" != true ]; then
+      setup_kubeconfig
+      verify_cluster_type || exit 1
+    fi
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
     # These handle their own cluster state (auto-start if stopped)
@@ -3411,6 +3591,9 @@ case "$COMMAND" in
     ;;
   version | --version | -V)
     cmd_version
+    ;;
+  v2)
+    _fleet_delegate_v2 "${V2_ARGS[@]}"
     ;;
   config)
     cmd_config "${EXTRA_ARGS[@]}"
