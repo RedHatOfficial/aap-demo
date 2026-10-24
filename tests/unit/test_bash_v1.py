@@ -191,6 +191,7 @@ def test_bash_can_dispatch_the_python_v2_cli() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
 
     assert result.returncode == 0
@@ -208,6 +209,7 @@ def test_bash_v2_can_enable_fleet() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
 
     assert result.returncode == 0
@@ -232,6 +234,7 @@ def test_bash_enable_fleet_can_select_kube_native_backend() -> None:
         capture_output=True,
         text=True,
         check=False,
+        timeout=30,
     )
 
     assert result.returncode == 0

@@ -7,9 +7,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  vars:
-    state: "{{ state | default('present') }}"
-    scope: "{{ scope | default('all') }}"
+  # state and scope come from extra-vars. Defaulting a variable to itself
+  # is a recursive template, so this play does not set those names.
   tasks:
     - name: Fleet node service account
       when: scope == 'all' and state == 'present'
