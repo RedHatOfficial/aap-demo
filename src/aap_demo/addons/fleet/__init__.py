@@ -42,7 +42,11 @@ class FleetAddon:
             runner.import_nodes(ctx, nodes, private_key=private, state="present")
         set_enabled(ctx, True)
         _commit_fleet(ctx, fleet)
-        ctx.console.out(f"Fleet enabled in namespace {fleet['namespace']}")
+        _say(
+            ctx,
+            f"Fleet enabled in namespace {fleet['namespace']}",
+            namespace=fleet["namespace"],
+        )
         return 0
 
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
@@ -52,18 +56,19 @@ class FleetAddon:
         _private, public = sshkey.load_or_create(ctx)
         nodes = nodes_of(ctx)
         if not nodes:
-            ctx.console.out("Fleet has no nodes to stop")
+            _say(ctx, "Fleet has no nodes to stop")
             return 0
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all", replicas=0)
-        ctx.console.out("Fleet pods stopped")
+        _say(ctx, "Fleet pods stopped", namespace=namespace_for(ctx))
         return 0
 
     def destroy(self, ctx: AppContext, args: argparse.Namespace) -> int:
         """Delete Controller objects, then the local Fleet resources."""
         del args
         cleanup_error: AddonError | None = None
+        skipped = False
         try:
-            private, public = _controller_cleanup_keys(ctx)
+            private, public, skipped = _controller_cleanup_keys(ctx)
             nodes = nodes_of(ctx)
             imported = (
                 "import" in fleet_options(ctx) and fleet_options(ctx).get("import") is not False
@@ -79,7 +84,13 @@ class FleetAddon:
         _delete_local_fleet(ctx)
         if cleanup_error is not None:
             raise cleanup_error
-        ctx.console.out("Fleet destroyed")
+        if skipped and not is_structured(ctx.output):
+            ctx.console.out("Skipping Controller cleanup because AAP is not available")
+        _say(
+            ctx,
+            "Fleet destroyed",
+            controller_cleanup="skipped" if skipped else "removed",
+        )
         return 0
 
     def list(self, ctx: AppContext, args: argparse.Namespace) -> int:
@@ -139,7 +150,7 @@ class FleetAddon:
         if fleet.get("import", True) is not False:
             runner.import_nodes(ctx, nodes, private_key=private, state="present")
         _commit_fleet(ctx, fleet)
-        ctx.console.out(f"Added {name}")
+        _say(ctx, f"Added {name}", name=name)
         return 0
 
     def remove(self, ctx: AppContext, args: argparse.Namespace) -> int:
@@ -162,7 +173,7 @@ class FleetAddon:
         fleet = fleet_options(ctx)
         fleet["nodes"] = [node for node in nodes if node["name"] != name]
         save_options(ctx, fleet)
-        ctx.console.out(f"Removed {name}")
+        _say(ctx, f"Removed {name}", name=name)
         return 0
 
 
@@ -181,15 +192,23 @@ def _delete_local_fleet(ctx: AppContext) -> None:
     save_options(ctx, fleet)
 
 
+def _say(ctx: AppContext, message: str, **fields: object) -> None:
+    """Human text, or one JSON/YAML document when structured output is on."""
+    if is_structured(ctx.output):
+        render(ctx.console, {"message": message, **fields}, output=ctx.output)
+        return
+    ctx.console.out(message)
+
+
 def _controller_cleanup_keys(ctx: AppContext) -> tuple:
     """Return the SSH key when AAP can run the cleanup playbooks."""
     try:
         discover_image(ctx)
     except AddonError as exc:
         ctx.console.err(exc.message)
-        ctx.console.out("Skipping Controller cleanup because AAP is not available")
-        return "", ""
-    return sshkey.load_or_create(ctx)
+        return "", "", True
+    private, public = sshkey.load_or_create(ctx)
+    return private, public, False
 
 
 def _commit_fleet(ctx: AppContext, fleet: dict) -> None:

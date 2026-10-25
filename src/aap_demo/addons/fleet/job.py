@@ -61,12 +61,12 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     _prepare_namespace(ctx, fleet_ns, create=True, bind_scc=present or scope == "node")
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
     pull_name = f"{name}-pull"
-    _grant_runner_mounts(ctx, fleet_ns, job_ns, name, pull_name)
-    rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
     purpose = _playbook_purpose(playbook)
     ctx.console.progress(f"Submitting Fleet job: {purpose}")
     playbook_error: AddonError | None = None
     try:
+        _grant_runner_mounts(ctx, fleet_ns, job_ns, name, pull_name)
+        rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
         used_pull = _stage_pull_secret(ctx, aap_namespace(ctx), job_ns, pull_name)
         aliases = _aliases_for(ctx, rewritten)
         _apply_checked(ctx, _configmap(name, job_ns, playbook, rewritten))
@@ -143,7 +143,10 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
 
 
 def _playbook_purpose(playbook: Path) -> str:
-    return _PLAYBOOK_PURPOSES.get(playbook.name, f"running {playbook.name}")
+    try:
+        return _PLAYBOOK_PURPOSES[playbook.name]
+    except KeyError as exc:
+        raise AddonError(f"unsupported fleet playbook: {playbook.name}") from exc
 
 
 def _apply_checked(ctx: AppContext, manifest: str) -> None:

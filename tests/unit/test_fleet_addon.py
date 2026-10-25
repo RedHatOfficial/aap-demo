@@ -871,6 +871,19 @@ def test_destroy_refuses_a_copied_namespace_token(app_ctx, monkeypatch) -> None:
     assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
 
 
+def test_enable_json_is_a_document(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.output = "json"
+    app_ctx.console.structured = True
+    app_ctx.runner = _cluster_runner()
+
+    assert get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True)) == 0
+
+    payload = json.loads(app_ctx.console.stdout)
+    assert payload["namespace"] == "fleet"
+    assert payload["message"] == "Fleet enabled in namespace fleet"
+
+
 def test_fleet_list_json_is_a_document(app_ctx) -> None:
     app_ctx.output = "json"
     app_ctx.runner = FakeRunner()

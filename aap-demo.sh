@@ -1979,8 +1979,17 @@ cmd_status() {
   echo "------"
 
   local _fleet_v2_rows _fleet_v2_total _fleet_v2_ready _fleet_v2_err _fleet_v2_rc
+  local _fleet_kubectl
+  # status does not run cluster setup, so pass the flags the user already gave.
+  _fleet_kubectl=(kubectl)
+  if [ -n "${KUBECTL_CONTEXT:-}" ]; then
+    _fleet_kubectl+=(--context "$KUBECTL_CONTEXT")
+  fi
+  if [ -n "${KUBECTL_KUBECONFIG:-}" ]; then
+    _fleet_kubectl+=(--kubeconfig "$KUBECTL_KUBECONFIG")
+  fi
   _fleet_v2_err=$(mktemp)
-  _fleet_v2_rows=$(kubectl get pods -A \
+  _fleet_v2_rows=$("${_fleet_kubectl[@]}" get pods -A \
     -l app.kubernetes.io/name=fleet-node \
     --no-headers \
     -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
