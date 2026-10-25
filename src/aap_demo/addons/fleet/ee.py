@@ -29,10 +29,16 @@ def discover_image(ctx: AppContext) -> str:
         )
     replica_sets = ctx.runner.run(["kubectl", "get", "rs", "-n", namespace, "-o", "json"])
     deployments = ctx.runner.run(["kubectl", "get", "deploy", "-n", namespace, "-o", "json"])
+    controllers = ctx.runner.run(
+        ["kubectl", "get", "automationcontroller", "-n", namespace, "-o", "json"]
+    )
+    platforms = ctx.runner.run(["kubectl", "get", "aap", "-n", namespace, "-o", "json"])
     image = _ee_image(
         pods.stdout or "",
         replica_sets.stdout if replica_sets.ok else "",
         deployments.stdout if deployments.ok else "",
+        controllers.stdout if controllers.ok else "",
+        platforms.stdout if platforms.ok else "",
     )
     if not image:
         raise AddonError(
@@ -43,11 +49,20 @@ def discover_image(ctx: AppContext) -> str:
 
 
 def _ee_image(
-    pods_payload: str, replica_sets_payload: str = "", deployments_payload: str = ""
+    pods_payload: str,
+    replica_sets_payload: str = "",
+    deployments_payload: str = "",
+    controllers_payload: str = "",
+    platforms_payload: str = "",
 ) -> str:
-    trusted_sets = _trusted_replica_sets(replica_sets_payload, deployments_payload)
+    trusted_sets = _trusted_replica_sets(
+        replica_sets_payload, deployments_payload, controllers_payload, platforms_payload
+    )
+    replica_sets = {_name(item): item for item in _items(replica_sets_payload)}
     for item in _items(pods_payload):
-        if not _running(item) or _controller_owner(item, "ReplicaSet") not in trusted_sets:
+        if not _running(item) or not _linked(item, replica_sets, "ReplicaSet"):
+            continue
+        if str(_owner_ref(item, "ReplicaSet").get("name") or "") not in trusted_sets:
             continue
         spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
         containers = spec.get("containers")
@@ -72,20 +87,24 @@ def _has_trusted_container(payload: str) -> bool:
     return False
 
 
-def _trusted_replica_sets(replica_sets_payload: str, deployments_payload: str) -> set:
-    deployments = set()
-    for item in _items(deployments_payload):
-        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-        name = str(meta.get("name") or "")
-        if name and _owner_kind(item) in {"AutomationController", "AnsibleAutomationPlatform"}:
-            deployments.add(name)
-    names = set()
-    for item in _items(replica_sets_payload):
-        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-        name = str(meta.get("name") or "")
-        if name and _controller_owner(item, "Deployment") in deployments:
-            names.add(name)
-    return names
+def _trusted_replica_sets(
+    replica_sets_payload: str,
+    deployments_payload: str,
+    controllers_payload: str,
+    platforms_payload: str,
+) -> set:
+    owners = {_name(item): item for item in _items(controllers_payload) + _items(platforms_payload)}
+    deployments = {
+        _name(item): item
+        for item in _items(deployments_payload)
+        if _linked(item, owners, "AutomationController")
+        or _linked(item, owners, "AnsibleAutomationPlatform")
+    }
+    return {
+        _name(item)
+        for item in _items(replica_sets_payload)
+        if _linked(item, deployments, "Deployment")
+    }
 
 
 def _items(payload: str) -> list:
@@ -99,34 +118,33 @@ def _items(payload: str) -> list:
     return [item for item in items if isinstance(item, dict)]
 
 
-def _controller_owner(item: dict, kind: str) -> str:
+def _name(item: dict) -> str:
+    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    return str((meta or {}).get("name") or "")
+
+
+def _owner_ref(item: dict, kind: str) -> dict:
     meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     refs = meta.get("ownerReferences")
     if not isinstance(refs, list):
-        return ""
+        return {}
     for ref in refs:
-        if (
-            isinstance(ref, dict)
-            and ref.get("kind") == kind
-            and ref.get("controller") is True
-            and ref.get("name")
-        ):
-            return str(ref["name"])
-    return ""
+        if not isinstance(ref, dict) or ref.get("kind") != kind or not ref.get("name"):
+            continue
+        optional = kind in {"AutomationController", "AnsibleAutomationPlatform"}
+        if ref.get("controller") is True or (optional and "controller" not in ref):
+            return ref
+    return {}
 
 
-def _owner_kind(item: dict) -> str:
-    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-    refs = meta.get("ownerReferences")
-    if not isinstance(refs, list):
-        return ""
-    for ref in refs:
-        if isinstance(ref, dict) and ref.get("kind") in {
-            "AutomationController",
-            "AnsibleAutomationPlatform",
-        }:
-            return str(ref["kind"])
-    return ""
+def _linked(child: dict, parents: dict, kind: str) -> bool:
+    ref = _owner_ref(child, kind)
+    parent = parents.get(str(ref.get("name") or ""))
+    ref_uid = str(ref.get("uid") or "")
+    if not isinstance(parent, dict) or not ref_uid:
+        return False
+    meta = parent.get("metadata") if isinstance(parent.get("metadata"), dict) else {}
+    return ref_uid == str((meta or {}).get("uid") or "")
 
 
 def _running(pod: dict) -> bool:

@@ -1,8 +1,18 @@
 """Checklist rendering: boxes check off, and the active step uses Ansible teal."""
 
+import io
 import time
 
-from aap_demo.core.console import ANSIBLE_TEAL, RecordingConsole
+from aap_demo.core.console import ANSIBLE_TEAL, Console, RecordingConsole
+
+
+def test_structured_output_does_not_print_progress() -> None:
+    stdout = io.StringIO()
+    console = Console(stdout=stdout, style="basic", structured=True)
+
+    console.progress("Submitting Fleet job: provisioning nodes")
+
+    assert stdout.getvalue() == ""
 
 
 def test_steps_check_off_in_order() -> None:

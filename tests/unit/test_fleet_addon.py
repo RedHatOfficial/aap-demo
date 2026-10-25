@@ -27,6 +27,7 @@ EE_PODS = json.dumps(
                         {
                             "kind": "ReplicaSet",
                             "name": "aap-controller-task-rs",
+                            "uid": "rs-uid",
                             "controller": True,
                         }
                     ]
@@ -46,8 +47,14 @@ EE_REPLICA_SETS = json.dumps(
             {
                 "metadata": {
                     "name": "aap-controller-task-rs",
+                    "uid": "rs-uid",
                     "ownerReferences": [
-                        {"kind": "Deployment", "name": "aap-controller-task", "controller": True}
+                        {
+                            "kind": "Deployment",
+                            "name": "aap-controller-task",
+                            "uid": "deploy-uid",
+                            "controller": True,
+                        }
                     ],
                 }
             }
@@ -60,12 +67,20 @@ EE_DEPLOYMENTS = json.dumps(
             {
                 "metadata": {
                     "name": "aap-controller-task",
-                    "ownerReferences": [{"kind": "AutomationController", "name": "aap-controller"}],
+                    "uid": "deploy-uid",
+                    "ownerReferences": [
+                        {
+                            "kind": "AutomationController",
+                            "name": "aap-controller",
+                            "uid": "ac-uid",
+                        }
+                    ],
                 }
             }
         ]
     }
 )
+EE_CONTROLLERS = json.dumps({"items": [{"metadata": {"name": "aap-controller", "uid": "ac-uid"}}]})
 
 
 def _which(present):
@@ -107,15 +122,21 @@ def _cluster_runner(
     namespace_stdout: str | None = None,
     namespace_error: str | None = None,
     wait_ok: bool = True,
+    pods_ok: bool = True,
 ) -> FakeRunner:
     runner = FakeRunner()
     runner.register(["/usr/bin/ssh-keygen"], _keygen)
     runner.fail(["kubectl", "get", "clusterrolebinding"], stderr="NotFound")
     runner.fail(["kubectl", "get", "clusterrole", "aap-demo-fleet-runner"], stderr="NotFound")
     runner.fail(["kubectl", "get", "serviceaccount", "aap-demo-fleet-runner"], stderr="NotFound")
-    runner.ok(["kubectl", "get", "pods"], stdout=EE_PODS)
+    if pods_ok:
+        runner.ok(["kubectl", "get", "pods"], stdout=EE_PODS)
+    else:
+        runner.fail(["kubectl", "get", "pods"], stderr="connection refused")
     runner.ok(["kubectl", "get", "rs"], stdout=EE_REPLICA_SETS)
     runner.ok(["kubectl", "get", "deploy"], stdout=EE_DEPLOYMENTS)
+    runner.ok(["kubectl", "get", "automationcontroller"], stdout=EE_CONTROLLERS)
+    runner.ok(["kubectl", "get", "aap"], stdout='{"items":[]}')
     if namespace_error:
         runner.fail(["kubectl", "get", "namespace"], stderr=namespace_error)
     elif namespace_stdout is None:
@@ -163,7 +184,7 @@ def _gateway_chain(
         "app.kubernetes.io/managed-by": "aap-operator",
     }
     owner_kind = "AnsibleAutomationPlatform" if owned else "ReplicaSet"
-    deployment_owner = {"kind": owner_kind, "name": "aap"}
+    deployment_owner = {"kind": owner_kind, "name": "aap", "uid": "aap-uid"}
     if deployment_controller:
         deployment_owner["controller"] = True
     deploy = {
@@ -171,6 +192,7 @@ def _gateway_chain(
             {
                 "metadata": {
                     "name": "aap-gateway",
+                    "uid": "deploy-uid",
                     "ownerReferences": [deployment_owner],
                 },
                 "spec": {"selector": {"matchLabels": labels}},
@@ -182,8 +204,14 @@ def _gateway_chain(
             {
                 "metadata": {
                     "name": "aap-gateway-rs",
+                    "uid": "rs-uid",
                     "ownerReferences": [
-                        {"kind": "Deployment", "name": "aap-gateway", "controller": True}
+                        {
+                            "kind": "Deployment",
+                            "name": "aap-gateway",
+                            "uid": "deploy-uid",
+                            "controller": True,
+                        }
                     ],
                 }
             }
@@ -195,7 +223,12 @@ def _gateway_chain(
                 "metadata": {
                     "name": "gateway-0",
                     "ownerReferences": [
-                        {"kind": "ReplicaSet", "name": "aap-gateway-rs", "controller": True}
+                        {
+                            "kind": "ReplicaSet",
+                            "name": "aap-gateway-rs",
+                            "uid": "rs-uid",
+                            "controller": True,
+                        }
                     ],
                 },
                 "status": {
@@ -236,6 +269,10 @@ def _gateway_chain(
         ]
     }
     runner = FakeRunner()
+    runner.ok(
+        ["kubectl", "get", "aap"],
+        stdout=json.dumps({"items": [{"metadata": {"name": "aap", "uid": "aap-uid"}}]}),
+    )
     runner.ok(["kubectl", "get", "deploy"], stdout=json.dumps(deploy))
     runner.ok(["kubectl", "get", "rs"], stdout=json.dumps(replica_sets))
     runner.ok(["kubectl", "get", "pods"], stdout=json.dumps(pods))
@@ -373,7 +410,30 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
         if document.get("kind") == "Role" and document["metadata"]["namespace"] == "fleet-runner"
     )
     assert runner_role["rules"] == [
-        {"apiGroups": [""], "resources": ["secrets", "configmaps"], "verbs": ["get"]}
+        {
+            "apiGroups": [""],
+            "resources": ["secrets", "configmaps"],
+            "resourceNames": [
+                provision_job["metadata"]["name"],
+                f"{provision_job['metadata']['name']}-pull",
+            ],
+            "verbs": ["get"],
+        }
+    ]
+    node_role = next(
+        document
+        for document in applied
+        if document.get("kind") == "Role" and document["metadata"]["namespace"] == "fleet"
+    )
+    secret_rules = [rule for rule in node_role["rules"] if rule.get("resources") == ["secrets"]]
+    assert secret_rules == [
+        {"apiGroups": [""], "resources": ["secrets"], "verbs": ["create"]},
+        {
+            "apiGroups": [""],
+            "resources": ["secrets"],
+            "resourceNames": ["fleet-ssh", "pull-secret"],
+            "verbs": ["get", "update", "patch", "delete"],
+        },
     ]
     scc = next(
         document for document in applied if document.get("kind") == "SecurityContextConstraints"
@@ -381,6 +441,7 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert scc["metadata"]["name"] == "aap-demo-fleet"
     assert scc["allowedCapabilities"] == ["SYS_CHROOT", "AUDIT_WRITE"]
     assert scc["allowPrivilegedContainer"] is False
+    assert scc["runAsUser"] == {"type": "MustRunAs", "uid": 0}
     scc_role = next(document for document in applied if document.get("kind") == "ClusterRole")
     assert scc_role["metadata"]["name"] == "system:openshift:scc:aap-demo-fleet"
     assert scc_role["rules"] == [
@@ -599,6 +660,7 @@ def test_gateway_ignores_a_route_that_is_only_named_gateway(app_ctx) -> None:
 
 def test_gateway_refuses_a_name_suffix_without_the_service(app_ctx) -> None:
     app_ctx.runner = FakeRunner()
+    app_ctx.runner.ok(["kubectl", "get", "aap"], stdout='{"items":[]}')
     app_ctx.runner.ok(["kubectl", "get", "deploy"], stdout='{"items":[]}')
 
     from aap_demo.addons.fleet.gateway import gateway_url
@@ -653,7 +715,12 @@ def test_ee_image_rejects_a_lookalike() -> None:
             {
                 "metadata": {
                     "ownerReferences": [
-                        {"kind": "ReplicaSet", "name": "aap-controller-task-rs", "controller": True}
+                        {
+                            "kind": "ReplicaSet",
+                            "name": "aap-controller-task-rs",
+                            "uid": "rs-uid",
+                            "controller": True,
+                        }
                     ]
                 },
                 "status": {
@@ -664,7 +731,9 @@ def test_ee_image_rejects_a_lookalike() -> None:
             }
         ]
     }
-    assert _ee_image(json.dumps(trusted), EE_REPLICA_SETS, EE_DEPLOYMENTS) == EE_IMAGE
+    assert (
+        _ee_image(json.dumps(trusted), EE_REPLICA_SETS, EE_DEPLOYMENTS, EE_CONTROLLERS) == EE_IMAGE
+    )
     assert _ee_image(json.dumps(trusted)) == ""
 
 
@@ -756,6 +825,20 @@ def test_destroy_refuses_a_copied_namespace_token(app_ctx, monkeypatch) -> None:
         get("fleet").destroy(app_ctx, argparse.Namespace())
 
     assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
+
+
+def test_destroy_removes_namespaces_when_aap_is_down(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    token = app_ctx.config.get("addons.options")["fleet"]["namespace_token"]
+    app_ctx.runner = _cluster_runner(namespace_stdout=_namespace_stdout(token), pods_ok=False)
+
+    assert get("fleet").destroy(app_ctx, argparse.Namespace()) == 0
+
+    assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
+    assert app_ctx.runner.called(["kubectl", "delete", "namespace"])
+    assert "Skipping Controller cleanup" in app_ctx.console.stdout
 
 
 def test_destroy_keeps_state_when_the_namespace_cannot_be_read(app_ctx, monkeypatch) -> None:

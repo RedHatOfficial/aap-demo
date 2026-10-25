@@ -18,7 +18,7 @@ from aap_demo.addons.fleet.state import (
     set_enabled,
 )
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import UsageError
+from aap_demo.core.errors import AddonError, UsageError
 
 
 class FleetAddon:
@@ -60,15 +60,15 @@ class FleetAddon:
     def destroy(self, ctx: AppContext, args: argparse.Namespace) -> int:
         """Delete Controller objects, then the fleet namespace."""
         del args
-        discover_image(ctx)
-        private, public = sshkey.load_or_create(ctx)
+        private, public = _controller_cleanup_keys(ctx)
         nodes = nodes_of(ctx)
         imported = "import" in fleet_options(ctx) and fleet_options(ctx).get("import") is not False
-        if imported:
+        if private and public and imported:
             runner.import_nodes(
                 ctx, nodes, private_key=private, state="absent", manage_inventory=True
             )
-        runner.provision(ctx, nodes, public_key=public, state="absent", scope="all")
+        if public:
+            runner.provision(ctx, nodes, public_key=public, state="absent", scope="all")
         namespace = namespace_for(ctx)
         delete_owned_namespace(ctx, namespace, uid_key="namespace_uid")
         delete_owned_namespace(ctx, runner_namespace(namespace), uid_key="runner_namespace_uid")
@@ -156,6 +156,17 @@ class FleetAddon:
         save_options(ctx, fleet)
         ctx.console.out(f"Removed {name}")
         return 0
+
+
+def _controller_cleanup_keys(ctx: AppContext) -> tuple:
+    """Return the SSH key when AAP can run the cleanup playbooks."""
+    try:
+        discover_image(ctx)
+    except AddonError as exc:
+        ctx.console.err(exc.message)
+        ctx.console.out("Skipping Controller cleanup because AAP is not available")
+        return "", ""
+    return sshkey.load_or_create(ctx)
 
 
 def _commit_fleet(ctx: AppContext, fleet: dict) -> None:

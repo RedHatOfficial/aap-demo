@@ -61,6 +61,7 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     _prepare_namespace(ctx, fleet_ns, create=True, bind_scc=present or scope == "node")
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
     pull_name = f"{name}-pull"
+    _grant_runner_mounts(ctx, job_ns, name, pull_name)
     rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
     purpose = _playbook_purpose(playbook)
     ctx.console.progress(f"Submitting Fleet job: {purpose}")
@@ -317,21 +318,27 @@ def _apply_runner_access(ctx: AppContext, job_ns: str, token: str) -> None:
             "metadata": {"name": RUNNER_ACCOUNT, "namespace": job_ns},
             "automountServiceAccountToken": False,
         },
-        {
-            "apiVersion": "rbac.authorization.k8s.io/v1",
-            "kind": "Role",
-            "metadata": {"name": RUNNER_ACCOUNT, "namespace": job_ns},
-            "rules": [
-                {
-                    "apiGroups": [""],
-                    "resources": ["secrets", "configmaps"],
-                    "verbs": ["get"],
-                }
-            ],
-        },
         _role_binding(job_ns, job_ns),
     ]
     _apply_checked(ctx, yaml.safe_dump_all(documents, sort_keys=False))
+
+
+def _grant_runner_mounts(ctx: AppContext, job_ns: str, name: str, pull_name: str) -> None:
+    """Let this run mount only its own Secret and ConfigMap."""
+    role = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "Role",
+        "metadata": {"name": RUNNER_ACCOUNT, "namespace": job_ns},
+        "rules": [
+            {
+                "apiGroups": [""],
+                "resources": ["secrets", "configmaps"],
+                "resourceNames": [name, pull_name],
+                "verbs": ["get"],
+            }
+        ],
+    }
+    _apply_checked(ctx, yaml.safe_dump(role, sort_keys=False))
 
 
 def _namespace_body(namespace: str, token: str) -> Dict[str, Any]:
@@ -355,7 +362,13 @@ def _node_role(namespace: str) -> Dict[str, Any]:
             {
                 "apiGroups": [""],
                 "resources": ["secrets"],
-                "verbs": ["get", "create", "update", "patch", "delete"],
+                "verbs": ["create"],
+            },
+            {
+                "apiGroups": [""],
+                "resources": ["secrets"],
+                "resourceNames": ["fleet-ssh", "pull-secret"],
+                "verbs": ["get", "update", "patch", "delete"],
             },
             {
                 "apiGroups": [""],
@@ -417,7 +430,7 @@ def _fleet_scc() -> Dict[str, Any]:
         "fsGroup": {"type": "RunAsAny"},
         "readOnlyRootFilesystem": False,
         "requiredDropCapabilities": ["MKNOD"],
-        "runAsUser": {"type": "RunAsAny"},
+        "runAsUser": {"type": "MustRunAs", "uid": 0},
         "seLinuxContext": {"type": "MustRunAs"},
         "supplementalGroups": {"type": "RunAsAny"},
         "volumes": [

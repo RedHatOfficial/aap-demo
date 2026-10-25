@@ -31,24 +31,30 @@ def gateway_url(ctx: AppContext) -> str:
 
 def _operator_gateway_pods(ctx: AppContext, namespace: str) -> set:
     """Pods in the ReplicaSet chain owned by the AAP gateway deployment."""
+    platforms = dict(_named(ctx, "aap", namespace))
+    deploy_items = dict(_named(ctx, "deploy", namespace))
     deployments = {
         name
-        for name, item in _named(ctx, "deploy", namespace)
-        if _controller_owner(item, "AnsibleAutomationPlatform")
+        for name, item in deploy_items.items()
+        if _linked(item, platforms, "AnsibleAutomationPlatform")
         and _match_labels(item).get("app.kubernetes.io/component") == "aap-gateway"
         and _match_labels(item).get("app.kubernetes.io/managed-by") == "aap-operator"
     }
     if not deployments:
         return set()
-    replica_sets = {
+    replica_sets = dict(_named(ctx, "rs", namespace))
+    owned_sets = {
         name
-        for name, item in _named(ctx, "rs", namespace)
-        if _controller_owner(item, "Deployment") in deployments
+        for name, item in replica_sets.items()
+        if _linked(item, deploy_items, "Deployment")
+        and str(_owner_ref(item, "Deployment").get("name") or "") in deployments
     }
     return {
         name
         for name, item in _named(ctx, "pods", namespace)
-        if _controller_owner(item, "ReplicaSet") in replica_sets and _ready(item)
+        if _linked(item, replica_sets, "ReplicaSet")
+        and str(_owner_ref(item, "ReplicaSet").get("name") or "") in owned_sets
+        and _ready(item)
     }
 
 
@@ -112,25 +118,30 @@ def _named(ctx: AppContext, kind: str, namespace: str):
             yield name, item
 
 
-def _controller_owner(item: dict, kind: str) -> str:
+def _owner_ref(item: dict, kind: str) -> dict:
     meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     refs = meta.get("ownerReferences")
     if not isinstance(refs, list):
-        return ""
+        return {}
     for ref in refs:
-        if (
-            isinstance(ref, dict)
-            and ref.get("kind") == kind
-            and ref.get("name")
-            and (
-                ref.get("controller") is True
-                # AAP 2.7 gateway Deployments may omit this optional field
-                # while still being owned by the AnsibleAutomationPlatform CR.
-                or (kind == "AnsibleAutomationPlatform" and "controller" not in ref)
-            )
+        if not isinstance(ref, dict) or ref.get("kind") != kind or not ref.get("name"):
+            continue
+        if ref.get("controller") is True or (
+            kind == "AnsibleAutomationPlatform" and "controller" not in ref
         ):
-            return str(ref["name"])
-    return ""
+            return ref
+    return {}
+
+
+def _linked(child: dict, parents: dict, kind: str) -> bool:
+    """True when the owner reference names that object and carries its UID."""
+    ref = _owner_ref(child, kind)
+    parent = parents.get(str(ref.get("name") or ""))
+    ref_uid = str(ref.get("uid") or "")
+    if not isinstance(parent, dict) or not ref_uid:
+        return False
+    meta = parent.get("metadata") if isinstance(parent.get("metadata"), dict) else {}
+    return ref_uid == str((meta or {}).get("uid") or "")
 
 
 def _match_labels(item: dict) -> dict:

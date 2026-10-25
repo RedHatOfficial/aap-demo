@@ -1978,19 +1978,27 @@ cmd_status() {
   echo "Fleet:"
   echo "------"
 
-  local _fleet_v2_rows _fleet_v2_total _fleet_v2_ready
+  local _fleet_v2_rows _fleet_v2_total _fleet_v2_ready _fleet_v2_err _fleet_v2_rc
+  _fleet_v2_err=$(mktemp)
   _fleet_v2_rows=$(kubectl get pods -A \
     -l app.kubernetes.io/name=fleet-node \
     --no-headers \
     -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
-    2>/dev/null || true)
-  if [ -n "$_fleet_v2_rows" ]; then
+    2>"$_fleet_v2_err")
+  _fleet_v2_rc=$?
+  if [ "$_fleet_v2_rc" -ne 0 ]; then
+    echo "Kubernetes-native Fleet: kubectl failed"
+    sed 's/^/  /' "$_fleet_v2_err"
+    rm -f "$_fleet_v2_err"
+  elif [ -n "$_fleet_v2_rows" ]; then
+    rm -f "$_fleet_v2_err"
     _fleet_v2_total=$(printf '%s\n' "$_fleet_v2_rows" | awk 'NF {count++} END {print count + 0}')
     _fleet_v2_ready=$(printf '%s\n' "$_fleet_v2_rows" | awk '$3 == "true" {count++} END {print count + 0}')
     echo "Kubernetes-native Fleet:"
     printf "  %s/%s pod nodes ready\n" "$_fleet_v2_ready" "$_fleet_v2_total"
     printf '%s\n' "$_fleet_v2_rows" | sed 's/^/  /'
   else
+    rm -f "$_fleet_v2_err"
     echo "Kubernetes-native Fleet: no pod nodes"
   fi
 
@@ -2953,6 +2961,14 @@ watch_aap() {
 _fleet_delegate_v2() {
   local python_bin=""
   local candidate
+  local forwarded=("$@")
+
+  if [ -n "${KUBECTL_CONTEXT:-}" ]; then
+    forwarded=(--context "$KUBECTL_CONTEXT" "${forwarded[@]}")
+  fi
+  if [ -n "${KUBECTL_KUBECONFIG:-}" ]; then
+    forwarded=(--kubeconfig "$KUBECTL_KUBECONFIG" "${forwarded[@]}")
+  fi
 
   if [ -n "${AAP_DEMO_PYTHON:-}" ] && command -v "$AAP_DEMO_PYTHON" >/dev/null 2>&1; then
     if "$AAP_DEMO_PYTHON" -c 'import yaml' >/dev/null 2>&1; then
@@ -2969,7 +2985,7 @@ _fleet_delegate_v2() {
   if [ -z "$python_bin" ]; then
     candidate=$(command -v aap-demo 2>/dev/null || true)
     if [ -n "$candidate" ] && ! head -1 "$candidate" 2>/dev/null | grep -qi bash; then
-      "$candidate" "$@"
+      "$candidate" "${forwarded[@]}"
       return
     fi
   fi
@@ -2991,7 +3007,7 @@ _fleet_delegate_v2() {
   fi
 
   PYTHONPATH="${SCRIPT_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
-    "$python_bin" -m aap_demo "$@"
+    "$python_bin" -m aap_demo "${forwarded[@]}"
 }
 
 _fleet_delegate_kube_native() {

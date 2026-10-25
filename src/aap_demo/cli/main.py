@@ -598,7 +598,12 @@ def run(
         bash_v1.maybe_offer(environ)
     presented = output_mod.normalize(getattr(args, "output", "rich") or "rich")
     style = "basic" if output_mod.is_structured(presented) else presented
-    console = Console(quiet=quiet, style=style, env=environ)
+    console = Console(
+        quiet=quiet,
+        style=style,
+        env=environ,
+        structured=output_mod.is_structured(presented),
+    )
     secrets = SecretStore(backend=str(config.get("secrets.backend", "auto")))
     args._namespace_explicit = "core" in overrides and "namespace" in overrides["core"]
 

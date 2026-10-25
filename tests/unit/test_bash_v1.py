@@ -167,6 +167,7 @@ def test_bash_status_has_a_python_v2_fleet_report() -> None:
     source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
 
     assert "Kubernetes-native Fleet:" in source
+    assert "Kubernetes-native Fleet: kubectl failed" in source
     assert "kubectl get pods -A" in source
     assert "app.kubernetes.io/name=fleet-node" in source
 
@@ -179,6 +180,8 @@ def test_bash_fleet_source_has_explicit_backend_delegation() -> None:
     assert "_fleet_delegate_kube_native" in source
     assert ".venv/bin/python" in source
     assert "import yaml" in source
+    assert '--kubeconfig "$KUBECTL_KUBECONFIG"' in source
+    assert '--context "$KUBECTL_CONTEXT"' in source
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
