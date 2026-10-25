@@ -29,36 +29,51 @@ def gateway_url(ctx: AppContext) -> str:
     return f"https://{host}"
 
 
-def _operator_gateway_pods(ctx: AppContext, namespace: str) -> set:
-    """Pods in the ReplicaSet chain owned by the AAP gateway deployment."""
+def _operator_gateway_pods(ctx: AppContext, namespace: str) -> dict:
+    """Ready gateway pods, keyed by name to their API UID.
+
+    More than one matching deployment fails closed. A second object that
+    only claims the platform UID must not become an alternate gateway.
+    """
     platforms = dict(_named(ctx, "aap", namespace))
     deploy_items = dict(_named(ctx, "deploy", namespace))
     deployments = {
-        name
+        name: item
         for name, item in deploy_items.items()
         if _linked(item, platforms, "AnsibleAutomationPlatform")
         and _match_labels(item).get("app.kubernetes.io/component") == "aap-gateway"
         and _match_labels(item).get("app.kubernetes.io/managed-by") == "aap-operator"
     }
-    if not deployments:
-        return set()
+    if len(deployments) != 1:
+        return {}
+    deploy_name, deploy = next(iter(deployments.items()))
+    expected = _match_labels(deploy)
     replica_sets = dict(_named(ctx, "rs", namespace))
     owned_sets = {
         name
         for name, item in replica_sets.items()
-        if _linked(item, deploy_items, "Deployment")
-        and str(_owner_ref(item, "Deployment").get("name") or "") in deployments
+        if name.startswith(f"{deploy_name}-")
+        and _linked(item, deploy_items, "Deployment")
+        and str(_owner_ref(item, "Deployment").get("name") or "") == deploy_name
     }
-    return {
-        name
-        for name, item in _named(ctx, "pods", namespace)
-        if _linked(item, replica_sets, "ReplicaSet")
-        and str(_owner_ref(item, "ReplicaSet").get("name") or "") in owned_sets
-        and _ready(item)
-    }
+    pods = {}
+    for name, item in _named(ctx, "pods", namespace):
+        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        uid = str(meta.get("uid") or "")
+        replica_set = str(_owner_ref(item, "ReplicaSet").get("name") or "")
+        labels = meta.get("labels") if isinstance(meta.get("labels"), dict) else {}
+        if not uid or not name.startswith(f"{replica_set}-"):
+            continue
+        if replica_set not in owned_sets or not _linked(item, replica_sets, "ReplicaSet"):
+            continue
+        if any(labels.get(key) != value for key, value in expected.items()):
+            continue
+        if _ready(item):
+            pods[name] = uid
+    return pods
 
 
-def _route_for_pods(ctx: AppContext, namespace: str, pods: set) -> str:
+def _route_for_pods(ctx: AppContext, namespace: str, pods: dict) -> str:
     services = set()
     for name, item in _named(ctx, "svc", namespace):
         selector = _service_selector(item)
@@ -67,10 +82,14 @@ def _route_for_pods(ctx: AppContext, namespace: str, pods: set) -> str:
         if selector.get("app.kubernetes.io/managed-by") != "aap-operator":
             continue
         endpoints = _endpoint_pods(ctx, namespace, name)
-        if endpoints and endpoints <= pods:
-            services.add(name)
-    if not services:
+        if not endpoints or not set(endpoints) <= set(pods):
+            continue
+        if any(endpoints[pod] != pods[pod] for pod in endpoints):
+            continue
+        services.add(name)
+    if len(services) != 1:
         return ""
+    hosts = []
     for item in _items(ctx, "route", namespace):
         spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
         target = spec.get("to") if isinstance(spec.get("to"), dict) else {}
@@ -78,11 +97,14 @@ def _route_for_pods(ctx: AppContext, namespace: str, pods: set) -> str:
             continue
         host = str(spec.get("host") or "").strip()
         if host:
-            return host
-    return ""
+            hosts.append(host)
+    if len(hosts) != 1:
+        return ""
+    return hosts[0]
 
 
-def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> set:
+def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> dict:
+    """Pod name to UID. An address without a Pod UID rejects the whole set."""
     result = ctx.runner.run(["kubectl", "get", "endpoints", service, "-n", namespace, "-o", "json"])
     if not result.ok:
         raise AddonError(
@@ -90,12 +112,12 @@ def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> set:
             hint=(result.stderr or result.stdout or "").strip() or None,
         )
     if not (result.stdout or "").strip():
-        return set()
+        return {}
     try:
         document = json.loads(result.stdout)
     except json.JSONDecodeError:
-        return set()
-    names = set()
+        return {}
+    names: dict = {}
     for subset in document.get("subsets") or []:
         if not isinstance(subset, dict):
             continue
@@ -104,9 +126,10 @@ def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> set:
                 continue
             target = address.get("targetRef") if isinstance(address.get("targetRef"), dict) else {}
             name = str(target.get("name") or "")
-            if target.get("kind") != "Pod" or not name:
-                return set()
-            names.add(name)
+            uid = str(target.get("uid") or "")
+            if target.get("kind") != "Pod" or not name or not uid:
+                return {}
+            names[name] = uid
     return names
 
 

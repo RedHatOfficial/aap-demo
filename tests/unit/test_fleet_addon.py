@@ -23,6 +23,8 @@ EE_PODS = json.dumps(
         "items": [
             {
                 "metadata": {
+                    "name": "aap-controller-task-rs-pod",
+                    "uid": "pod-uid",
                     "ownerReferences": [
                         {
                             "kind": "ReplicaSet",
@@ -30,7 +32,7 @@ EE_PODS = json.dumps(
                             "uid": "rs-uid",
                             "controller": True,
                         }
-                    ]
+                    ],
                 },
                 "status": {
                     "phase": "Running",
@@ -75,12 +77,34 @@ EE_DEPLOYMENTS = json.dumps(
                             "uid": "ac-uid",
                         }
                     ],
+                },
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [{"name": "aap-controller-ee", "image": EE_IMAGE}],
+                        }
+                    }
+                },
+            }
+        ]
+    }
+)
+EE_CONTROLLERS = json.dumps(
+    {
+        "items": [
+            {
+                "metadata": {
+                    "name": "aap-controller",
+                    "uid": "ac-uid",
+                    "ownerReferences": [
+                        {"kind": "AnsibleAutomationPlatform", "name": "aap", "uid": "aap-uid"}
+                    ],
                 }
             }
         ]
     }
 )
-EE_CONTROLLERS = json.dumps({"items": [{"metadata": {"name": "aap-controller", "uid": "ac-uid"}}]})
+EE_PLATFORMS = json.dumps({"items": [{"metadata": {"name": "aap", "uid": "aap-uid"}}]})
 
 
 def _which(present):
@@ -136,7 +160,7 @@ def _cluster_runner(
     runner.ok(["kubectl", "get", "rs"], stdout=EE_REPLICA_SETS)
     runner.ok(["kubectl", "get", "deploy"], stdout=EE_DEPLOYMENTS)
     runner.ok(["kubectl", "get", "automationcontroller"], stdout=EE_CONTROLLERS)
-    runner.ok(["kubectl", "get", "aap"], stdout='{"items":[]}')
+    runner.ok(["kubectl", "get", "aap"], stdout=EE_PLATFORMS)
     if namespace_error:
         runner.fail(["kubectl", "get", "namespace"], stderr=namespace_error)
     elif namespace_stdout is None:
@@ -221,7 +245,9 @@ def _gateway_chain(
         "items": [
             {
                 "metadata": {
-                    "name": "gateway-0",
+                    "name": "aap-gateway-rs-pod",
+                    "uid": "pod-uid",
+                    "labels": labels,
                     "ownerReferences": [
                         {
                             "kind": "ReplicaSet",
@@ -265,7 +291,18 @@ def _gateway_chain(
         )
     endpoints = {
         "subsets": [
-            {"addresses": [{"ip": "10.0.0.8", "targetRef": {"kind": "Pod", "name": "gateway-0"}}]}
+            {
+                "addresses": [
+                    {
+                        "ip": "10.0.0.8",
+                        "targetRef": {
+                            "kind": "Pod",
+                            "name": "aap-gateway-rs-pod",
+                            "uid": "pod-uid",
+                        },
+                    }
+                ]
+            }
         ]
     }
     runner = FakeRunner()
@@ -388,21 +425,23 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert "SecurityContextConstraints" in kinds
     assert "ClusterRole" in kinds
     assert "ClusterRoleBinding" not in kinds
+    job_name = provision_job["metadata"]["name"]
     runner_account = next(
         document
         for document in applied
-        if document.get("kind") == "ServiceAccount"
-        and document["metadata"]["name"] == "aap-demo-fleet-runner"
+        if document.get("kind") == "ServiceAccount" and document["metadata"]["name"] == job_name
     )
     assert runner_account["metadata"]["namespace"] == "fleet-runner"
     assert runner_account["automountServiceAccountToken"] is False
+    assert provision_job["spec"]["template"]["spec"]["serviceAccountName"] == job_name
     binding = next(
         document
         for document in applied
         if document.get("kind") == "RoleBinding"
-        and document["metadata"]["name"] == "aap-demo-fleet-runner"
+        and document["metadata"]["name"] == job_name
         and document["metadata"]["namespace"] == "fleet"
     )
+    assert binding["subjects"][0]["name"] == job_name
     assert binding["subjects"][0]["namespace"] == "fleet-runner"
     runner_role = next(
         document
@@ -413,10 +452,7 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
         {
             "apiGroups": [""],
             "resources": ["secrets", "configmaps"],
-            "resourceNames": [
-                provision_job["metadata"]["name"],
-                f"{provision_job['metadata']['name']}-pull",
-            ],
+            "resourceNames": [job_name, f"{job_name}-pull"],
             "verbs": ["get"],
         }
     ]
@@ -714,6 +750,7 @@ def test_ee_image_rejects_a_lookalike() -> None:
         "items": [
             {
                 "metadata": {
+                    "name": "aap-controller-task-rs-pod",
                     "ownerReferences": [
                         {
                             "kind": "ReplicaSet",
@@ -721,7 +758,7 @@ def test_ee_image_rejects_a_lookalike() -> None:
                             "uid": "rs-uid",
                             "controller": True,
                         }
-                    ]
+                    ],
                 },
                 "status": {
                     "phase": "Running",
@@ -732,7 +769,14 @@ def test_ee_image_rejects_a_lookalike() -> None:
         ]
     }
     assert (
-        _ee_image(json.dumps(trusted), EE_REPLICA_SETS, EE_DEPLOYMENTS, EE_CONTROLLERS) == EE_IMAGE
+        _ee_image(
+            json.dumps(trusted),
+            EE_REPLICA_SETS,
+            EE_DEPLOYMENTS,
+            EE_CONTROLLERS,
+            EE_PLATFORMS,
+        )
+        == EE_IMAGE
     )
     assert _ee_image(json.dumps(trusted)) == ""
 
@@ -827,6 +871,36 @@ def test_destroy_refuses_a_copied_namespace_token(app_ctx, monkeypatch) -> None:
     assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
 
 
+def test_fleet_list_json_is_a_document(app_ctx) -> None:
+    app_ctx.output = "json"
+    app_ctx.runner = FakeRunner()
+    app_ctx.runner.ok(
+        ["kubectl", "get", "pods"],
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {
+                            "name": "fleet-ubi9-pod",
+                            "labels": {
+                                "app.kubernetes.io/instance": "fleet-ubi9",
+                                "aap-demo/os": "ubi9",
+                            },
+                        },
+                        "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+                    }
+                ]
+            }
+        ),
+    )
+
+    assert get("fleet").list(app_ctx, argparse.Namespace()) == 0
+
+    assert json.loads(app_ctx.console.stdout) == [
+        {"name": "fleet-ubi9", "os": "ubi9", "ready": True}
+    ]
+
+
 def test_destroy_removes_namespaces_when_aap_is_down(app_ctx, monkeypatch) -> None:
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()
@@ -838,7 +912,23 @@ def test_destroy_removes_namespaces_when_aap_is_down(app_ctx, monkeypatch) -> No
 
     assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
     assert app_ctx.runner.called(["kubectl", "delete", "namespace"])
+    assert app_ctx.runner.called(["kubectl", "delete", "scc", "aap-demo-fleet"])
     assert "Skipping Controller cleanup" in app_ctx.console.stdout
+
+
+def test_destroy_removes_local_resources_when_the_playbook_fails(app_ctx, monkeypatch) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    token = app_ctx.config.get("addons.options")["fleet"]["namespace_token"]
+    app_ctx.runner = _cluster_runner(namespace_stdout=_namespace_stdout(token), wait_ok=False)
+
+    with pytest.raises(AddonError, match="playbook failed"):
+        get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
+    assert app_ctx.runner.called(["kubectl", "delete", "namespace"])
+    assert app_ctx.runner.called(["kubectl", "delete", "scc", "aap-demo-fleet"])
 
 
 def test_destroy_keeps_state_when_the_namespace_cannot_be_read(app_ctx, monkeypatch) -> None:

@@ -7,7 +7,7 @@ import json
 
 from aap_demo.addons.fleet import images, runner, sshkey
 from aap_demo.addons.fleet.ee import discover_image
-from aap_demo.addons.fleet.job import delete_owned_namespace, runner_namespace
+from aap_demo.addons.fleet.job import delete_fleet_scc, delete_owned_namespace, runner_namespace
 from aap_demo.addons.fleet.state import (
     enabled_names,
     fleet_options,
@@ -19,6 +19,7 @@ from aap_demo.addons.fleet.state import (
 )
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, UsageError
+from aap_demo.core.output import is_structured, render
 
 
 class FleetAddon:
@@ -58,27 +59,26 @@ class FleetAddon:
         return 0
 
     def destroy(self, ctx: AppContext, args: argparse.Namespace) -> int:
-        """Delete Controller objects, then the fleet namespace."""
+        """Delete Controller objects, then the local Fleet resources."""
         del args
-        private, public = _controller_cleanup_keys(ctx)
-        nodes = nodes_of(ctx)
-        imported = "import" in fleet_options(ctx) and fleet_options(ctx).get("import") is not False
-        if private and public and imported:
-            runner.import_nodes(
-                ctx, nodes, private_key=private, state="absent", manage_inventory=True
+        cleanup_error: AddonError | None = None
+        try:
+            private, public = _controller_cleanup_keys(ctx)
+            nodes = nodes_of(ctx)
+            imported = (
+                "import" in fleet_options(ctx) and fleet_options(ctx).get("import") is not False
             )
-        if public:
-            runner.provision(ctx, nodes, public_key=public, state="absent", scope="all")
-        namespace = namespace_for(ctx)
-        delete_owned_namespace(ctx, namespace, uid_key="namespace_uid")
-        delete_owned_namespace(ctx, runner_namespace(namespace), uid_key="runner_namespace_uid")
-        fleet = fleet_options(ctx)
-        fleet["nodes"] = []
-        fleet.pop("namespace_token", None)
-        fleet.pop("namespace_uid", None)
-        fleet.pop("runner_namespace_uid", None)
-        set_enabled(ctx, False)
-        save_options(ctx, fleet)
+            if private and public and imported:
+                runner.import_nodes(
+                    ctx, nodes, private_key=private, state="absent", manage_inventory=True
+                )
+            if public:
+                runner.provision(ctx, nodes, public_key=public, state="absent", scope="all")
+        except AddonError as exc:
+            cleanup_error = exc
+        _delete_local_fleet(ctx)
+        if cleanup_error is not None:
+            raise cleanup_error
         ctx.console.out("Fleet destroyed")
         return 0
 
@@ -98,12 +98,20 @@ class FleetAddon:
                 "json",
             ]
         )
-        ctx.console.out(f"{'NAME':<16} {'OS':<8} READY")
         if not result.ok:
             ctx.console.err((result.stderr or "kubectl get pods failed").strip())
             return result.returncode or 1
-        for name, os_id, ready in _pod_rows(result.stdout or ""):
-            ctx.console.out(f"{name:<16} {os_id:<8} {ready}")
+        rows = [
+            {"name": name, "os": os_id, "ready": ready == "yes"}
+            for name, os_id, ready in _pod_rows(result.stdout or "")
+        ]
+        if is_structured(ctx.output):
+            render(ctx.console, rows, output=ctx.output)
+            return 0
+        ctx.console.out(f"{'NAME':<16} {'OS':<8} READY")
+        for row in rows:
+            mark = "yes" if row["ready"] else "no"
+            ctx.console.out(f"{row['name']:<16} {row['os']:<8} {mark}")
         return 0
 
     def add(self, ctx: AppContext, args: argparse.Namespace) -> int:
@@ -156,6 +164,21 @@ class FleetAddon:
         save_options(ctx, fleet)
         ctx.console.out(f"Removed {name}")
         return 0
+
+
+def _delete_local_fleet(ctx: AppContext) -> None:
+    """Namespaces and the SCC, whether or not Controller cleanup ran."""
+    namespace = namespace_for(ctx)
+    delete_owned_namespace(ctx, namespace, uid_key="namespace_uid")
+    delete_owned_namespace(ctx, runner_namespace(namespace), uid_key="runner_namespace_uid")
+    delete_fleet_scc(ctx)
+    fleet = fleet_options(ctx)
+    fleet["nodes"] = []
+    fleet.pop("namespace_token", None)
+    fleet.pop("namespace_uid", None)
+    fleet.pop("runner_namespace_uid", None)
+    set_enabled(ctx, False)
+    save_options(ctx, fleet)
 
 
 def _controller_cleanup_keys(ctx: AppContext) -> tuple:

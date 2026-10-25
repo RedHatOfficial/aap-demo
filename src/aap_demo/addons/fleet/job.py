@@ -61,7 +61,7 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     _prepare_namespace(ctx, fleet_ns, create=True, bind_scc=present or scope == "node")
     name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
     pull_name = f"{name}-pull"
-    _grant_runner_mounts(ctx, job_ns, name, pull_name)
+    _grant_runner_mounts(ctx, fleet_ns, job_ns, name, pull_name)
     rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
     purpose = _playbook_purpose(playbook)
     ctx.console.progress(f"Submitting Fleet job: {purpose}")
@@ -109,19 +109,37 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
                 f"configmap/{name}",
                 f"secret/{name}",
                 f"secret/{pull_name}",
+                f"serviceaccount/{name}",
+                f"role/{name}",
+                f"rolebinding/{name}",
             ]
         )
+        binding = ctx.runner.run(
+            [
+                "kubectl",
+                "delete",
+                "rolebinding",
+                name,
+                "-n",
+                fleet_ns,
+                "--ignore-not-found",
+            ]
+        )
+    cleanup_hint = "\n".join(
+        part
+        for part in (
+            (deleted.stderr or deleted.stdout or "").strip() if not deleted.ok else "",
+            (binding.stderr or binding.stdout or "").strip() if not binding.ok else "",
+        )
+        if part
+    )
     if playbook_error is not None:
-        if not deleted.ok:
-            cleanup = (deleted.stderr or deleted.stdout or "").strip()
-            hint = "\n".join(part for part in (playbook_error.hint, cleanup) if part)
+        if cleanup_hint:
+            hint = "\n".join(part for part in (playbook_error.hint, cleanup_hint) if part)
             playbook_error = AddonError(playbook_error.message, hint=hint or None)
         raise playbook_error
-    if not deleted.ok:
-        raise AddonError(
-            "could not delete the fleet playbook secret",
-            hint=(deleted.stderr or deleted.stdout or "").strip() or None,
-        )
+    if cleanup_hint:
+        raise AddonError("could not delete the fleet playbook secret", hint=cleanup_hint)
 
 
 def _playbook_purpose(playbook: Path) -> str:
@@ -199,11 +217,13 @@ def _read(kind: str, name: str, ctx: AppContext, *, namespace: str = "") -> dict
     return document if isinstance(document, dict) else None
 
 
-def _delete_ok(ctx: AppContext, argv: list) -> None:
+def _delete_ok(
+    ctx: AppContext, argv: list, *, message: str = "could not remove the old fleet runner role"
+) -> None:
     deleted = ctx.runner.run(argv)
     if not deleted.ok:
         raise AddonError(
-            "could not remove the old fleet runner role",
+            message,
             hint=(deleted.stderr or deleted.stdout or "").strip() or None,
         )
 
@@ -260,10 +280,20 @@ def _apply_node_access(
             "--ignore-not-found",
         ]
     )
+    ctx.runner.run(
+        [
+            "kubectl",
+            "delete",
+            "rolebinding",
+            RUNNER_ACCOUNT,
+            "-n",
+            job_ns,
+            "--ignore-not-found",
+        ]
+    )
     documents: List[Dict[str, Any]] = [
         _namespace_body(namespace, token),
         _node_role(namespace),
-        _role_binding(namespace, job_ns),
     ]
     ctx.runner.run(
         [
@@ -309,36 +339,44 @@ def _apply_node_access(
 
 
 def _apply_runner_access(ctx: AppContext, job_ns: str, token: str) -> None:
-    """The Job account can mount its own Secret. It cannot create pods here."""
+    """Create the runner namespace. Each Job gets its own account."""
+    _apply_checked(ctx, yaml.safe_dump(_namespace_body(job_ns, token), sort_keys=False))
+
+
+def _grant_runner_mounts(
+    ctx: AppContext, fleet_ns: str, job_ns: str, name: str, pull_name: str
+) -> None:
+    """A ServiceAccount that exists only for this Job and can read only its mounts."""
     documents = [
-        _namespace_body(job_ns, token),
         {
             "apiVersion": "v1",
             "kind": "ServiceAccount",
-            "metadata": {"name": RUNNER_ACCOUNT, "namespace": job_ns},
+            "metadata": {"name": name, "namespace": job_ns},
             "automountServiceAccountToken": False,
         },
-        _role_binding(job_ns, job_ns),
+        {
+            "apiVersion": "rbac.authorization.k8s.io/v1",
+            "kind": "Role",
+            "metadata": {"name": name, "namespace": job_ns},
+            "rules": [
+                {
+                    "apiGroups": [""],
+                    "resources": ["secrets", "configmaps"],
+                    "resourceNames": [name, pull_name],
+                    "verbs": ["get"],
+                }
+            ],
+        },
+        _role_binding(job_ns, job_ns, name=name, subject_name=name, role_name=name),
+        _role_binding(
+            fleet_ns,
+            job_ns,
+            name=name,
+            subject_name=name,
+            role_name=RUNNER_ACCOUNT,
+        ),
     ]
     _apply_checked(ctx, yaml.safe_dump_all(documents, sort_keys=False))
-
-
-def _grant_runner_mounts(ctx: AppContext, job_ns: str, name: str, pull_name: str) -> None:
-    """Let this run mount only its own Secret and ConfigMap."""
-    role = {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "Role",
-        "metadata": {"name": RUNNER_ACCOUNT, "namespace": job_ns},
-        "rules": [
-            {
-                "apiGroups": [""],
-                "resources": ["secrets", "configmaps"],
-                "resourceNames": [name, pull_name],
-                "verbs": ["get"],
-            }
-        ],
-    }
-    _apply_checked(ctx, yaml.safe_dump(role, sort_keys=False))
 
 
 def _namespace_body(namespace: str, token: str) -> Dict[str, Any]:
@@ -389,18 +427,25 @@ def _node_role(namespace: str) -> Dict[str, Any]:
     }
 
 
-def _role_binding(namespace: str, subject_namespace: str) -> Dict[str, Any]:
+def _role_binding(
+    namespace: str,
+    subject_namespace: str,
+    *,
+    name: str,
+    subject_name: str,
+    role_name: str,
+) -> Dict[str, Any]:
     return {
         "apiVersion": "rbac.authorization.k8s.io/v1",
         "kind": "RoleBinding",
-        "metadata": {"name": RUNNER_ACCOUNT, "namespace": namespace},
+        "metadata": {"name": name, "namespace": namespace},
         "roleRef": {
             "apiGroup": "rbac.authorization.k8s.io",
             "kind": "Role",
-            "name": RUNNER_ACCOUNT,
+            "name": role_name,
         },
         "subjects": [
-            {"kind": "ServiceAccount", "name": RUNNER_ACCOUNT, "namespace": subject_namespace}
+            {"kind": "ServiceAccount", "name": subject_name, "namespace": subject_namespace}
         ],
     }
 
@@ -472,6 +517,20 @@ def _fleet_scc_binding(namespace: str) -> Dict[str, Any]:
         },
         "subjects": [{"kind": "ServiceAccount", "name": "fleet-node", "namespace": namespace}],
     }
+
+
+def delete_fleet_scc(ctx: AppContext) -> None:
+    """Remove the cluster-scoped SCC even when the playbook cannot run."""
+    _delete_ok(
+        ctx,
+        ["kubectl", "delete", "clusterrole", FLEET_SCC_ROLE, "--ignore-not-found"],
+        message="could not delete the fleet SCC role",
+    )
+    _delete_ok(
+        ctx,
+        ["kubectl", "delete", "scc", FLEET_SCC, "--ignore-not-found"],
+        message="could not delete the fleet SCC",
+    )
 
 
 def delete_owned_namespace(ctx: AppContext, namespace: str, *, uid_key: str) -> None:
@@ -688,7 +747,7 @@ def _job(
         ]
     pod: Dict[str, Any] = {
         "restartPolicy": "Never",
-        "serviceAccountName": RUNNER_ACCOUNT,
+        "serviceAccountName": name,
         "automountServiceAccountToken": True,
         "containers": [container],
         "volumes": [

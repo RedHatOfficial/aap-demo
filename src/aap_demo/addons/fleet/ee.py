@@ -55,23 +55,48 @@ def _ee_image(
     controllers_payload: str = "",
     platforms_payload: str = "",
 ) -> str:
-    trusted_sets = _trusted_replica_sets(
-        replica_sets_payload, deployments_payload, controllers_payload, platforms_payload
-    )
+    """Image from the operator's ``{controller}-task`` deployment only.
+
+    A second object that merely claims the controller's UID is ignored.
+    Two trusted deployments with different images fail closed.
+    """
+    images = []
+    platforms = {_name(item): item for item in _items(platforms_payload)}
+    deployments = {_name(item): item for item in _items(deployments_payload)}
     replica_sets = {_name(item): item for item in _items(replica_sets_payload)}
-    for item in _items(pods_payload):
-        if not _running(item) or not _linked(item, replica_sets, "ReplicaSet"):
+    for controller in _items(controllers_payload):
+        if not _linked(controller, platforms, "AnsibleAutomationPlatform"):
             continue
-        if str(_owner_ref(item, "ReplicaSet").get("name") or "") not in trusted_sets:
+        controller_name = _name(controller)
+        deploy_name = f"{controller_name}-task"
+        deploy = deployments.get(deploy_name)
+        if not isinstance(deploy, dict):
             continue
-        spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
-        containers = spec.get("containers")
-        if not isinstance(containers, list):
+        if not _linked(deploy, {controller_name: controller}, "AutomationController"):
             continue
-        for container in containers:
-            if isinstance(container, dict) and _trusted_ee(container):
-                return str(container.get("image") or "")
-    return ""
+        template_image = _template_ee(deploy)
+        if not template_image:
+            continue
+        trusted_sets = {
+            name
+            for name, item in replica_sets.items()
+            if name.startswith(f"{deploy_name}-")
+            and _linked(item, {deploy_name: deploy}, "Deployment")
+        }
+        for pod in _items(pods_payload):
+            pod_name = _name(pod)
+            replica_set = str(_owner_ref(pod, "ReplicaSet").get("name") or "")
+            if not pod_name.startswith(f"{replica_set}-"):
+                continue
+            if replica_set not in trusted_sets or not _linked(pod, replica_sets, "ReplicaSet"):
+                continue
+            if not _running(pod) or _pod_ee(pod) != template_image:
+                continue
+            images.append(template_image)
+    unique = list(dict.fromkeys(images))
+    if len(unique) != 1:
+        return ""
+    return unique[0]
 
 
 def _has_trusted_container(payload: str) -> bool:
@@ -87,24 +112,25 @@ def _has_trusted_container(payload: str) -> bool:
     return False
 
 
-def _trusted_replica_sets(
-    replica_sets_payload: str,
-    deployments_payload: str,
-    controllers_payload: str,
-    platforms_payload: str,
-) -> set:
-    owners = {_name(item): item for item in _items(controllers_payload) + _items(platforms_payload)}
-    deployments = {
-        _name(item): item
-        for item in _items(deployments_payload)
-        if _linked(item, owners, "AutomationController")
-        or _linked(item, owners, "AnsibleAutomationPlatform")
-    }
-    return {
-        _name(item)
-        for item in _items(replica_sets_payload)
-        if _linked(item, deployments, "Deployment")
-    }
+def _template_ee(deploy: dict) -> str:
+    spec = deploy.get("spec") if isinstance(deploy.get("spec"), dict) else {}
+    template = spec.get("template") if isinstance(spec.get("template"), dict) else {}
+    pod_spec = template.get("spec") if isinstance(template.get("spec"), dict) else {}
+    return _container_ee(pod_spec.get("containers"))
+
+
+def _pod_ee(pod: dict) -> str:
+    spec = pod.get("spec") if isinstance(pod.get("spec"), dict) else {}
+    return _container_ee(spec.get("containers"))
+
+
+def _container_ee(containers: object) -> str:
+    if not isinstance(containers, list):
+        return ""
+    for container in containers:
+        if isinstance(container, dict) and _trusted_ee(container):
+            return str(container.get("image") or "")
+    return ""
 
 
 def _items(payload: str) -> list:
