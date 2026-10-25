@@ -170,6 +170,7 @@ def test_bash_status_has_a_python_v2_fleet_report() -> None:
     assert "Kubernetes-native Fleet: kubectl failed" in source
     fleet = source.split('echo "Fleet:"', 1)[1].split("if [ -d", 1)[0]
     assert "get pods -A" in fleet
+    assert "|| _fleet_v2_rc=$?" in fleet
     assert "app.kubernetes.io/name=fleet-node" in fleet
     assert '--kubeconfig "$KUBECTL_KUBECONFIG"' in fleet
     assert '--context "$KUBECTL_CONTEXT"' in fleet

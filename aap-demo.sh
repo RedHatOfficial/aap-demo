@@ -1989,12 +1989,13 @@ cmd_status() {
     _fleet_kubectl+=(--kubeconfig "$KUBECTL_KUBECONFIG")
   fi
   _fleet_v2_err=$(mktemp)
+  # set -e would exit on a failing assignment before the rc could be read.
+  _fleet_v2_rc=0
   _fleet_v2_rows=$("${_fleet_kubectl[@]}" get pods -A \
     -l app.kubernetes.io/name=fleet-node \
     --no-headers \
     -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
-    2>"$_fleet_v2_err")
-  _fleet_v2_rc=$?
+    2>"$_fleet_v2_err") || _fleet_v2_rc=$?
   if [ "$_fleet_v2_rc" -ne 0 ]; then
     echo "Kubernetes-native Fleet: kubectl failed"
     sed 's/^/  /' "$_fleet_v2_err"
