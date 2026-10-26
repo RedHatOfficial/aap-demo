@@ -78,3 +78,51 @@ as part of the whole-branch fix wave.
 - Task 6: fixed safe default scenarios, actual pinned workflow names, strict
   runtime job allowlists, execution-only markers, shared deadlines, and clear
   blocked results before graph validation.
+
+## Final scoped re-review residuals
+
+- **Ruling:** park the MCP-mediated-path finding as unresolved; the current MCP
+  scenario calls MCP directly instead of exercising MCP through AO. Cost if
+  wrong: the acceptance suite could pass while AO's MCP integration is broken.
+- **Ruling:** park the unlabeled MCP diagnostic-content finding as unresolved;
+  `results.json` still permits opaque MCP content to survive pattern redaction.
+  Cost if wrong: credentials or sensitive tool output could be persisted.
+- **Ruling:** park the immutable-EE-representative finding as unresolved; the
+  representative overlay/manual registration can be removed by SCM sync and
+  uses mutable image/resource contracts. Cost if wrong: EE coverage can pass
+  against a drifted or unsafe representative.
+- **Ruling:** park the preparation lifecycle finding as unresolved; auto mode
+  can omit AO re-provisioning when only Product Demos is missing and can
+  continue after addon failure. Cost if wrong: later checks may run against a
+  partially prepared target.
+- **Ruling:** park the EE discovery-timeout finding as unresolved; discovery
+  caps the configured timeout at 15 seconds. Cost if wrong: cold EE pulls can
+  produce false prerequisite failures.
+
+## Post-fix completion
+
+The residual findings above were superseded by the post-review fix waves:
+
+- AO-mediated MCP execution replaced the direct MCP execution path; the
+  critical-path MCP scenario now launches an AO agentic workflow bound to the
+  managed MCP integration and credential.
+- Structured MCP tool-call evidence is required, including an explicit
+  successful/non-error result and the declared read-only success marker.
+- Representative execution-environment checks launch through mapped AO
+  workflows; missing managed-EE representatives fail as contract drift.
+- Agentic credential, integration, and model references resolve against the
+  inventoried AO resources; unsupported MCP tools/arguments and missing AAP
+  template bindings fail closed.
+- AO synchronization validates TLS certificates.
+
+The implementation fix waves were reviewed and pushed in commit `cae0235` on
+`codex/ao-aap-demo-acceptance`. Verification completed with 134 acceptance
+tests, provisioning and CLI safeguards, Ansible syntax checks, `make test`,
+and pre-commit hooks passing.
+
+Live-cluster execution remains an environment follow-up, not an SDD code
+finding: the available cluster has a stale kubeconfig CA and the required
+live AAP, AO, and MCP tokens were unavailable. No live mutation was performed.
+
+Final status: implementation SDD complete; branch pushed and preserved for
+live validation on the next cluster.
