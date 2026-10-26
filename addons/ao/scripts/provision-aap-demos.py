@@ -19,8 +19,6 @@ CONTROL_PROJECT_NAME = "AAP Demo Control Plane"
 CONTROL_PROJECT_URL = "https://github.com/RedHatOfficial/aap-demo.git"
 CONTROL_TEMPLATE_NAME = "Sync AO Workflows from TMM"
 CONTROL_PLAYBOOK = "addons/ao/playbooks/sync-ao-demos.yml"
-COVERAGE_TEMPLATE_NAME = "Analyze AAP-UI Integration Coverage"
-COVERAGE_PLAYBOOK = "addons/ao/playbooks/analyze-playwright-coverage.yml"
 CONTROL_FORKS = 10
 EXIT_LICENSE_REQUIRED = 2
 
@@ -243,28 +241,6 @@ def main() -> int:
         else:
             control_template_id = api.request("/job_templates/", "POST", control_template_payload)["id"]
             print(f"  ✓ AAP control job template created: {CONTROL_TEMPLATE_NAME}")
-
-        coverage_template = api.find("job_templates", COVERAGE_TEMPLATE_NAME)
-        coverage_template_payload = {
-            "name": COVERAGE_TEMPLATE_NAME,
-            "description": "Deterministically analyze AAP-UI Playwright integration coverage and redundancies",
-            "job_type": "run",
-            "organization": organization["id"],
-            "project": control_project_id,
-            "playbook": COVERAGE_PLAYBOOK,
-            "forks": CONTROL_FORKS,
-            "ask_variables_on_launch": True,
-        }
-        if inventory_id:
-            coverage_template_payload["inventory"] = inventory_id
-        else:
-            coverage_template_payload["ask_inventory_on_launch"] = True
-        if coverage_template:
-            api.request(f"/job_templates/{coverage_template['id']}/", "PATCH", coverage_template_payload)
-            print(f"  ✓ AAP coverage job template updated: {COVERAGE_TEMPLATE_NAME}")
-        else:
-            api.request("/job_templates/", "POST", coverage_template_payload)
-            print(f"  ✓ AAP coverage job template created: {COVERAGE_TEMPLATE_NAME}")
 
         try:
             launch = api.request(
