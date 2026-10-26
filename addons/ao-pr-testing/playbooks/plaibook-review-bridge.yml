@@ -25,7 +25,6 @@
       review_require_ci_passing: "{{ review_require_ci_passing | default(true) | bool }}"
       review_run_ledger_host: "{{ review_run_ledger_host | default('aap-plaibook') }}"
       review_write_artifact: "{{ review_write_artifact | default(true) | bool }}"
-      last_run_id: "{{ bridge_run_id }}"
 
   tasks:
     - name: Create the bridge working directory
@@ -66,7 +65,10 @@
           - --connection
           - local
           - --extra-vars
-          - "{{ review_input_vars | to_json }}"
+          # bridge_run_id is a task fact, so merge it after the fact has been
+          # frozen. Keeping this value in the play-level vars block can leave
+          # the nested playbook with an unresolved or different run ID.
+          - "{{ review_input_vars | combine({'last_run_id': bridge_run_id}) | to_json }}"
       environment:
         HOME: "{{ bridge_home }}"
         ANSIBLE_ASYNC_DIR: "{{ bridge_root }}/.ansible_async"
