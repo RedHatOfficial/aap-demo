@@ -120,14 +120,14 @@ jobs:
           requirements_path = Path("build/requirements.yml")
           requirements = requirements_path.read_text(encoding="utf-8")
           if "aknochow-cursor-" not in requirements:
-              marker = "collections:\\n"
+              marker = "collections:\n"
               if marker not in requirements:
                   raise SystemExit("could not locate collections section in build/requirements.yml")
               requirements = requirements.replace(
                   marker,
                   marker
-                  + "  - name: collections/" + cursor_placeholder + "\\n"
-                  + "    type: file\\n",
+                  + "  - name: collections/" + cursor_placeholder + "\n"
+                  + "    type: file\n",
                   1,
               )
               requirements_path.write_text(requirements, encoding="utf-8")
@@ -135,14 +135,14 @@ jobs:
           ee_path = Path("execution-environment.yml")
           ee = ee_path.read_text(encoding="utf-8")
           if "build/collections/aknochow-cursor-" not in ee:
-              marker = "additional_build_files:\\n"
+              marker = "additional_build_files:\n"
               if marker not in ee:
                   raise SystemExit("could not locate additional_build_files in execution-environment.yml")
               ee = ee.replace(
                   marker,
                   marker
-                  + "  - src: build/collections/" + cursor_placeholder + "\\n"
-                  + "    dest: collections\\n",
+                  + "  - src: build/collections/" + cursor_placeholder + "\n"
+                  + "    dest: collections\n",
                   1,
               )
               ee_path.write_text(ee, encoding="utf-8")
