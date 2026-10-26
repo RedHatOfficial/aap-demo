@@ -21,11 +21,16 @@
         mode: "0600"
 
     - name: Extract AAP-UI source archive
+      ansible.builtin.file:
+        path: "{{ ao_source_root }}"
+        state: directory
+        mode: "0700"
+
+    - name: Unpack AAP-UI source archive
       ansible.builtin.unarchive:
         src: "{{ ao_archive_file }}"
         dest: "{{ ao_source_root }}"
         remote_src: true
-        creates: "{{ ao_source_root }}"
 
     - name: Run deterministic coverage analyzer
       ansible.builtin.command:
