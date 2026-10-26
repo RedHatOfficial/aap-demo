@@ -54,6 +54,17 @@ class CoverageAnalyzerTests(unittest.TestCase):
         self.assertIn("controller", report["coverage_gaps"])
         self.assertEqual(1, report["test_count"])
 
+    def test_builds_one_report_across_multiple_spec_files(self) -> None:
+        files = [
+            ("playwright/tests/integration/controller.spec.ts", 'test("creates", async ({page}) => { await page.goto("/jobs"); await expect(page).toBeVisible(); });'),
+            ("playwright/tests/integration/execution.spec.ts", 'test("launches", async ({page}) => { await page.getByRole("button").click(); await expect(page).toHaveText("Done"); });'),
+        ]
+        report = MODULE.build_report_from_files(files, "full suite", ["controller", "execution"])
+        self.assertEqual(2, report["file_count"])
+        self.assertEqual(2, report["test_count"])
+        self.assertEqual([], report["coverage_gaps"])
+        self.assertEqual(2, len(report["coverage_matrix"]))
+
 
 if __name__ == "__main__":
     unittest.main()

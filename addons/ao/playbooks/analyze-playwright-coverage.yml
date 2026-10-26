@@ -6,34 +6,36 @@
   vars:
     ao_repository: "{{ repository | default('ansible/ansible-ui', true) }}"
     ao_ref: "{{ ref | default('devel', true) }}"
-    ao_test_path: "{{ test_path | default('playwright/tests/integration/automation-execution/workflow-job-templates/workflow-job-templates.spec.ts', true) }}"
+    ao_test_path: "{{ test_path | default('playwright/tests/integration', true) }}"
     ao_source_name: "{{ source_label | default('AAP-UI Playwright integration tests', true) }}"
-    ao_source_url: "https://raw.githubusercontent.com/{{ ao_repository }}/{{ ao_ref }}/{{ ao_test_path }}"
-    ao_source_file: "/tmp/aap-ui-playwright-coverage-source.ts"
+    ao_archive_url: "https://github.com/{{ ao_repository }}/archive/{{ ao_ref }}.tar.gz"
+    ao_archive_file: "/tmp/aap-ui-playwright-source.tar.gz"
+    ao_source_root: "/tmp/aap-ui-playwright-source"
     ao_analyzer: "{{ playbook_dir }}/../scripts/analyze-playwright-coverage.py"
     ao_deployment_areas: "{{ deployment_areas | default('authentication,controller,execution,gateway,hub,eda,permissions,failure handling', true) }}"
   tasks:
-    - name: Fetch Playwright source from GitHub
-      ansible.builtin.uri:
-        url: "{{ ao_source_url }}"
-        method: GET
-        return_content: true
-        status_code: 200
-      register: ao_source
-
-    - name: Save Playwright source
-      ansible.builtin.copy:
-        content: "{{ ao_source.content }}"
-        dest: "{{ ao_source_file }}"
+    - name: Download AAP-UI source archive
+      ansible.builtin.get_url:
+        url: "{{ ao_archive_url }}"
+        dest: "{{ ao_archive_file }}"
         mode: "0600"
+
+    - name: Extract AAP-UI source archive
+      ansible.builtin.unarchive:
+        src: "{{ ao_archive_file }}"
+        dest: "{{ ao_source_root }}"
+        remote_src: true
+        creates: "{{ ao_source_root }}"
 
     - name: Run deterministic coverage analyzer
       ansible.builtin.command:
         argv:
           - python3
           - "{{ ao_analyzer }}"
-          - --source-file
-          - "{{ ao_source_file }}"
+          - --source-root
+          - "{{ ao_source_root }}"
+          - --include-path
+          - "{{ ao_test_path }}"
           - --source-name
           - "{{ ao_source_name }}"
           - --deployment-areas
