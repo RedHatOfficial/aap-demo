@@ -148,11 +148,17 @@ def build_report_from_files(files: list[tuple[str, str]], source_name: str, depl
         *(["no expect assertion"] if not t["assertions"] else []),
         *(["no cleanup evidence for resource-changing test"] if t["resources"] and not t["cleanup"] else []),
     ]} for t in tests if not t["actions"] or not t["assertions"] or (t["resources"] and not t["cleanup"])]
+    compact_tests = [{
+        "file": t["file"], "title": t["title"], "areas": t["areas"],
+        "actions": t["actions"], "assertion_count": len(t["assertions"]),
+        "locator_count": len(t["locators"]), "resource_action_count": len(t["resources"]),
+        "cleanup_evidence": bool(t["cleanup"]), "source_lines": t["source_lines"],
+    } for t in tests]
     matrix = [{"area": area, "covered": area in covered, "test_count": sum(area in t["areas"] for t in tests),
-               "tests": [{"file": t["file"], "title": t["title"]} for t in tests if area in t["areas"]]} for area in expected]
+               "sample_tests": [{"file": t["file"], "title": t["title"]} for t in tests if area in t["areas"]][:10]} for area in expected]
     redundant_count = sum(len(group["tests"]) - 1 for group in groups)
     return {"source": source_name, "file_count": len(files), "files": [path for path, _ in files], "test_count": len(tests),
-            "tests": tests, "covered_areas": covered, "coverage_matrix": matrix, "redundancy_groups": groups,
+            "tests": compact_tests, "covered_areas": covered, "coverage_matrix": matrix, "redundancy_groups": groups,
             "weak_or_low_value_tests": weak, "coverage_gaps": gaps, "recommended_additions": additions_for_gaps(gaps),
             "summary": {"tests_to_keep_or_review": len(tests) - redundant_count, "redundancy_group_count": len(groups),
                         "redundant_test_count_estimate": redundant_count, "coverage_gap_count": len(gaps), "weak_test_count": len(weak)},
