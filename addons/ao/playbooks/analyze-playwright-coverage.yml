@@ -4,14 +4,14 @@
   connection: local
   gather_facts: false
   vars:
-    ao_repository: "{{ repository | default('ansible/ansible-ui', true) }}"
-    ao_ref: "{{ ref | default('devel', true) }}"
-    ao_test_path: "{{ test_path | default('playwright/tests/integration/automation-execution/workflow-job-templates/workflow-job-templates.spec.ts', true) }}"
-    ao_source_name: "{{ source_label | default('AAP-UI Playwright integration tests', true) }}"
+    ao_repository: "{{ repository | default('ansible/ansible-ui') }}"
+    ao_ref: "{{ ref | default('devel') }}"
+    ao_test_path: "{{ test_path }}"
+    ao_source_name: "{{ source_label | default('AAP-UI Playwright integration tests') }}"
     ao_source_url: "https://raw.githubusercontent.com/{{ ao_repository }}/{{ ao_ref }}/{{ ao_test_path }}"
     ao_source_file: "/tmp/aap-ui-playwright-coverage-source.ts"
     ao_analyzer: "{{ playbook_dir }}/../scripts/analyze-playwright-coverage.py"
-    ao_deployment_areas: "{{ deployment_areas | default('authentication,controller,execution,gateway,hub,eda,permissions,failure handling', true) }}"
+    ao_deployment_areas: "{{ deployment_areas | default('authentication,controller,execution,gateway,hub,eda,permissions,failure handling') }}"
   tasks:
     - name: Fetch Playwright source from GitHub
       ansible.builtin.uri:
