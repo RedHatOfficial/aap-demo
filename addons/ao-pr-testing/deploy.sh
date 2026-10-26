@@ -286,6 +286,7 @@ ensure_plaibook_job_template() {
       agent_family:"openai",openai_base_url:$base_url,
       openai_api_key:$api_key,review_openai_model:$model,use_sandbox:false,
       review_explore_enabled:false,
+      review_ollama_compat:true,
       review_run_ledger_host:"aap-plaibook",
       plaibook_source_url:$source_url,plaibook_source_branch:$source_branch,
       aap_route_host:$aap_route,ao_route_host:$ao_route}')

@@ -25,6 +25,7 @@
       review_require_ci_passing: "{{ review_require_ci_passing | default(true) | bool }}"
       review_run_ledger_host: "{{ review_run_ledger_host | default('aap-plaibook') }}"
       review_write_artifact: "{{ review_write_artifact | default(true) | bool }}"
+      review_ollama_compat: "{{ review_ollama_compat | default(false) | bool }}"
 
   tasks:
     - name: Create the bridge working directory
@@ -51,6 +52,17 @@
         dest: "{{ bridge_root }}/source"
         depth: 1
         force: true
+
+    # Ollama's OpenAI-compatible endpoint only accepts a scalar JSON-schema
+    # type. The upstream verification schema uses [string, null] for an
+    # optional continuity id, which makes Ollama reject the request before
+    # the model sees it. Keep this adaptation opt-in for Ollama-backed jobs.
+    - name: Adapt the plaibook continuity schema for Ollama
+      when: review_ollama_compat | bool
+      ansible.builtin.replace:
+        path: "{{ bridge_root }}/source/roles/review/vars/main.yml"
+        regexp: 'type: \[string, "null"\]'
+        replace: "type: string"
 
     # The nested invocation is intentionally hidden because the extra-vars
     # JSON contains the LLM API key. The structured result below is the only
