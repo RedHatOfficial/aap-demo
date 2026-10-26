@@ -95,6 +95,9 @@ jobs:
           clone_at aknochow/ansible-openai \
             79c1ab3ce5b3a047ca88e30f23422f9fadbdb401 \
             "$asset_root/ansible-openai"
+          clone_at aknochow/ansible-cursor \
+            def5dcc15b6feb7d47e219f7959f6285f9101435 \
+            "$asset_root/ansible-cursor"
           clone_at ansible-collections/kubernetes.core \
             0f472b53e2ee73e11b5f9067ab0826d76183c157 \
             "$asset_root/kubernetes.core"
@@ -104,6 +107,7 @@ jobs:
             "$asset_root/ansible-openshell" \
             "$asset_root/ansible-claude" \
             "$asset_root/ansible-openai" \
+            "$asset_root/ansible-cursor" \
             "$asset_root/kubernetes.core"; do
             ansible-galaxy collection build "$collection" --output-path build/collections
           done
@@ -112,11 +116,43 @@ jobs:
           from pathlib import Path
           import re
 
+          cursor_placeholder = "aknochow-cursor-0.1.0.tar.gz"
+          requirements_path = Path("build/requirements.yml")
+          requirements = requirements_path.read_text(encoding="utf-8")
+          if "aknochow-cursor-" not in requirements:
+              marker = "collections:\\n"
+              if marker not in requirements:
+                  raise SystemExit("could not locate collections section in build/requirements.yml")
+              requirements = requirements.replace(
+                  marker,
+                  marker
+                  + "  - name: collections/" + cursor_placeholder + "\\n"
+                  + "    type: file\\n",
+                  1,
+              )
+              requirements_path.write_text(requirements, encoding="utf-8")
+
+          ee_path = Path("execution-environment.yml")
+          ee = ee_path.read_text(encoding="utf-8")
+          if "build/collections/aknochow-cursor-" not in ee:
+              marker = "additional_build_files:\\n"
+              if marker not in ee:
+                  raise SystemExit("could not locate additional_build_files in execution-environment.yml")
+              ee = ee.replace(
+                  marker,
+                  marker
+                  + "  - src: build/collections/" + cursor_placeholder + "\\n"
+                  + "    dest: collections\\n",
+                  1,
+              )
+              ee_path.write_text(ee, encoding="utf-8")
+
           generated_files = {}
           for prefix in (
               "aknochow-openshell",
               "aknochow-claude",
               "aknochow-openai",
+              "aknochow-cursor",
               "kubernetes-core",
           ):
               packages = sorted(Path("build/collections").glob(f"{prefix}-*.tar.gz"))
