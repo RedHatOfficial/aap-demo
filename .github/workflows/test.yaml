@@ -120,6 +120,9 @@ jobs:
       - name: Run plaibook EE CI configuration test
         run: bash ./test/test-plaibook-ee-ci.sh
 
+      - name: Run plaibook publication verdict test
+        run: bash ./test/test-plaibook-publication.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

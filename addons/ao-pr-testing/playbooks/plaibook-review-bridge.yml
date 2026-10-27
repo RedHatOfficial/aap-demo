@@ -207,6 +207,16 @@
         - github_pr_files.status | default(0) | int == 200
         - item.file | default(item.path | default(''), true) | regex_replace('^\\./', '') not in review_changed_files
 
+    - name: Derive the PR-scoped review verdict
+      ansible.builtin.set_fact:
+        review_effective_verdict: >-
+          {{ 'PASS'
+             if (plaibook_result.status | default('failed') == 'ok')
+             and (review_classification_ready | bool)
+             and (review_current_findings | length == 0)
+             else ((plaibook_result.targets | default([]) | first).verdict
+                   | default('UNKNOWN')) }}
+
     - name: Build the stale-findings issue body
       ansible.builtin.set_fact:
         stale_findings_issue_body: |-
@@ -322,7 +332,7 @@
       ansible.builtin.set_fact:
         review_comment_body: |-
           <!-- aap-demo-plaibook-review -->
-          ## Plaibook review: {{ (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN') }}
+          ## Plaibook review: {{ review_effective_verdict }}
 
           **Score:** {{ (plaibook_result.targets | default([]) | first).score | default('n/a') }}
           **Commit:** {{ (plaibook_result.targets | default([]) | first).commit | default('n/a') }}
@@ -518,7 +528,7 @@
             {{ {
                  'repository': github_repository | default(''),
                  'pull_request_number': github_pull_request_number | default('') | string,
-                 'verdict': (plaibook_result.targets | default([]) | first).verdict | default('UNKNOWN'),
+                 'verdict': review_effective_verdict,
                  'score': (plaibook_result.targets | default([]) | first).score | default('n/a'),
                  'commit': (plaibook_result.targets | default([]) | first).commit | default('n/a'),
                  'current_findings': review_current_findings | default([]),
