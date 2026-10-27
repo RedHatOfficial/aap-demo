@@ -69,6 +69,12 @@ Before creating the `redhat-operators` CatalogSource, `aap-demo deploy` (MicroSh
 4. Waits up to 600s (override with `AAP_CATALOG_TIMEOUT`) for CatalogSource `READY`, with
    automatic recovery if a signature pull failure is detected
 
+On MicroShift 4.22+, the full Red Hat index can take longer to initialize than
+OLM's generated catalog pod startup probe allows. Deploy uses
+`redhat-operators-registry` (a Deployment with a 15-minute startup probe) and
+points the `redhat-operators` CatalogSource at its Service. This also repairs
+an existing image-backed CatalogSource during a retry.
+
 The same module is used by **`aap-demo enable ao`**, which copies a local `redhat-operators`
 CatalogSource into `automation-orchestrator` and calls `ensure_catalog_signature_policy()` before
 the catalog pod is created.
