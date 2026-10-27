@@ -14,7 +14,7 @@ from aap_demo.addons import get, names
 from aap_demo.addons.fleet import resources
 from aap_demo.cli import addons as addons_cli
 from aap_demo.cli.main import build_parser
-from aap_demo.core.errors import AddonError, UsageError
+from aap_demo.core.errors import AddonError, PrerequisiteError, UsageError
 from aap_demo.exec.runner import CompletedCommand, FakeRunner
 
 EE_IMAGE = "registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9@sha256:abc"
@@ -871,6 +871,14 @@ def test_destroy_refuses_a_copied_namespace_token(app_ctx, monkeypatch) -> None:
     assert "fleet" in (app_ctx.config.get("addons.enabled") or [])
 
 
+def test_enable_without_a_name_json_lists_addons(app_ctx) -> None:
+    app_ctx.output = "json"
+
+    assert addons_cli.enable(app_ctx, argparse.Namespace(addon=None)) == 0
+
+    assert json.loads(app_ctx.console.stdout) == ["fleet"]
+
+
 def test_enable_json_is_a_document(app_ctx, monkeypatch) -> None:
     _install_bins(monkeypatch)
     app_ctx.output = "json"
@@ -927,6 +935,28 @@ def test_destroy_removes_namespaces_when_aap_is_down(app_ctx, monkeypatch) -> No
     assert app_ctx.runner.called(["kubectl", "delete", "namespace"])
     assert app_ctx.runner.called(["kubectl", "delete", "scc", "aap-demo-fleet"])
     assert "Skipping Controller cleanup" in app_ctx.console.stdout
+
+
+def test_destroy_removes_local_resources_when_the_ssh_key_cannot_be_loaded(
+    app_ctx, monkeypatch
+) -> None:
+    _install_bins(monkeypatch)
+    app_ctx.runner = _cluster_runner()
+    get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=True))
+    token = app_ctx.config.get("addons.options")["fleet"]["namespace_token"]
+    app_ctx.runner = _cluster_runner(namespace_stdout=_namespace_stdout(token))
+
+    def missing_keygen(_ctx):
+        raise PrerequisiteError("ssh-keygen is not on PATH")
+
+    monkeypatch.setattr("aap_demo.addons.fleet.sshkey.load_or_create", missing_keygen)
+
+    with pytest.raises(PrerequisiteError, match="ssh-keygen"):
+        get("fleet").destroy(app_ctx, argparse.Namespace())
+
+    assert "fleet" not in (app_ctx.config.get("addons.enabled") or [])
+    assert app_ctx.runner.called(["kubectl", "delete", "namespace"])
+    assert app_ctx.runner.called(["kubectl", "delete", "scc", "aap-demo-fleet"])
 
 
 def test_destroy_removes_local_resources_when_the_playbook_fails(app_ctx, monkeypatch) -> None:

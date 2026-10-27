@@ -7,12 +7,17 @@ import argparse
 from aap_demo.addons import get, names
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import NotImplementedYetError, UsageError
+from aap_demo.core.output import is_structured, render
 
 
 def enable(ctx: AppContext, args: argparse.Namespace) -> int:
     addon_name = getattr(args, "addon", None)
     if not addon_name:
-        for name in names():
+        available = list(names())
+        if is_structured(ctx.output):
+            render(ctx.console, available, output=ctx.output)
+            return 0
+        for name in available:
             ctx.console.out(name)
         return 0
     return int(get(addon_name).enable(ctx, args) or 0)

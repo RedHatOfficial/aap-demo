@@ -18,7 +18,7 @@ from aap_demo.addons.fleet.state import (
     set_enabled,
 )
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import AddonError, UsageError
+from aap_demo.core.errors import AapDemoError, AddonError, UsageError
 from aap_demo.core.output import is_structured, render
 
 
@@ -65,7 +65,7 @@ class FleetAddon:
     def destroy(self, ctx: AppContext, args: argparse.Namespace) -> int:
         """Delete Controller objects, then the local Fleet resources."""
         del args
-        cleanup_error: AddonError | None = None
+        cleanup_error: AapDemoError | None = None
         skipped = False
         try:
             private, public, skipped = _controller_cleanup_keys(ctx)
@@ -79,7 +79,7 @@ class FleetAddon:
                 )
             if public:
                 runner.provision(ctx, nodes, public_key=public, state="absent", scope="all")
-        except AddonError as exc:
+        except AapDemoError as exc:
             cleanup_error = exc
         _delete_local_fleet(ctx)
         if cleanup_error is not None:
