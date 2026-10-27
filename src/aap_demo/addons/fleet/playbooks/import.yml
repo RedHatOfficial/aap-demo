@@ -1,0 +1,99 @@
+---
+# ansible-doc -l ansible.platform listed no modules here, so gateway
+# reachability is ansible.builtin.uri against /api/gateway/v1/ping/.
+# ansible.platform stays in requirements.yml because controller on AAP 2.7
+# imports it. ansible.controller reads controller_host, not aap_hostname.
+- name: Register fleet nodes in AAP
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  module_defaults:
+    group/ansible.controller.controller:
+      controller_host: "{{ aap_hostname }}"
+      controller_username: "{{ aap_username }}"
+      controller_password: "{{ aap_password }}"
+      validate_certs: "{{ aap_validate_certs | default(true) | bool }}"
+  # state, manage_inventory, and aap_validate_certs come from extra-vars.
+  # A play var must not default a name to itself.
+  tasks:
+    - name: Gateway reachability
+      when: state == 'present'
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/gateway/v1/ping/"
+        validate_certs: "{{ aap_validate_certs | default(true) | bool }}"
+        ca_path: "{{ aap_ca_path if (aap_ca_path | default('') | length) > 0 else omit }}"
+        status_code: [200, 401, 403]
+
+    - name: Inventory
+      when: manage_inventory | bool and state == 'present'
+      ansible.controller.inventory:
+        name: "{{ inventory_name }}"
+        organization: Default
+        state: "{{ state }}"
+
+    - name: Hosts
+      ansible.controller.host:
+        name: "{{ item.name }}"
+        inventory: "{{ inventory_name }}"
+        state: "{{ state }}"
+        variables:
+          ansible_host: "{{ item.name }}.{{ namespace }}.svc"
+          ansible_port: 22
+          ansible_user: ansible
+          # Fleet's / is an overlay filesystem and is omitted from
+          # ansible_mounts. The PVC-backed /var mount is reported and is the
+          # persistent disk that Linux disk workflows should inspect.
+          disk_mount: /var
+      loop: "{{ nodes }}"
+
+    - name: Machine credential
+      when: manage_inventory | bool
+      ansible.controller.credential:
+        name: "{{ credential_name }}"
+        organization: Default
+        credential_type: Machine
+        state: "{{ state }}"
+        inputs:
+          username: ansible
+          ssh_key_data: "{{ ssh_private_key | default('') }}"
+      no_log: true
+
+    - name: Project
+      when: manage_inventory | bool
+      ansible.controller.project:
+        name: "{{ project_name }}"
+        organization: Default
+        state: "{{ state }}"
+        scm_type: git
+        scm_url: "{{ scm_url }}"
+        scm_branch: "{{ scm_branch }}"
+        scm_update_on_launch: true
+
+    - name: Update the project
+      when: state == 'present' and manage_inventory | bool
+      ansible.controller.project_update:
+        name: "{{ project_name }}"
+        organization: Default
+        wait: true
+        interval: 5
+        timeout: 300
+
+    - name: Ping job template
+      when: manage_inventory | bool
+      ansible.controller.job_template:
+        name: "{{ job_template_name }}"
+        organization: Default
+        state: "{{ state }}"
+        inventory: "{{ inventory_name }}"
+        project: "{{ project_name }}"
+        playbook: src/aap_demo/addons/fleet/playbooks/ping.yml
+        credentials:
+          - "{{ credential_name }}"
+        ask_variables_on_launch: false
+
+    - name: Remove inventory
+      when: manage_inventory | bool and state == 'absent'
+      ansible.controller.inventory:
+        name: "{{ inventory_name }}"
+        organization: Default
+        state: absent

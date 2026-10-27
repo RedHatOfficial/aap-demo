@@ -251,10 +251,12 @@ class Console:
         color: Optional[bool] = None,
         env: Optional[dict] = None,
         style: str = "basic",
+        structured: bool = False,
     ) -> None:
         self._stdout = stdout if stdout is not None else sys.stdout
         self._stderr = stderr if stderr is not None else sys.stderr
         self.quiet = quiet
+        self.structured = structured
         self.style = "basic" if quiet else style
         environ = os.environ if env is None else env
         tty = self._stdout.isatty() if hasattr(self._stdout, "isatty") else False
@@ -706,7 +708,7 @@ class Console:
         detail or the status spinner shows the latest text, and a plain log
         prints a line only when the text changes.
         """
-        if self.quiet or not text:
+        if self.quiet or self.structured or not text:
             return
         changed = text != self._detail
         if changed:

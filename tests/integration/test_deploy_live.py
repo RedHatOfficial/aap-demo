@@ -227,7 +227,7 @@ def test_the_live_cr_matches_what_the_renderer_would_produce(live_ctx, deployed)
     )
     assert result.ok
     live = json.loads(result.stdout)
-    cr_name = live["metadata"]["annotations"].get("aap-demo/cr", "controller")
+    cr_name = aap_mod.cr_template_name(live, namespace=DEFAULT_NAMESPACE)
     rendered = yaml.safe_load(
         aap_mod.render_cr(aap_mod.load_cr(cr_name), namespace=DEFAULT_NAMESPACE)
     )

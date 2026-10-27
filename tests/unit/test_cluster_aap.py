@@ -7,6 +7,7 @@ import json
 from typing import Optional
 
 import pytest
+import yaml
 
 from aap_demo.cluster import aap as aap_mod
 from aap_demo.core.errors import UsageError
@@ -144,12 +145,30 @@ def test_cr_defaults_to_minimal_when_config_is_empty(app_ctx) -> None:
     assert "Using CR: minimal" in app_ctx.console.stdout
 
 
+def test_create_instance_records_the_selected_cr_template(app_ctx) -> None:
+    runner = _create_runner()
+    app_ctx.runner = runner
+
+    aap_mod.create_instance(app_ctx, cr_name="controller", namespace=NS, sleep=lambda _s: None)
+
+    cr_apply = [c for c in runner.calls if "kind: AnsibleAutomationPlatform" in (c.input or "")][0]
+    document = yaml.safe_load(cr_apply.input)
+    assert document["metadata"]["annotations"]["aap-demo/cr"] == "controller"
+
+
 def test_cr_comes_from_config_when_set(app_ctx) -> None:
     app_ctx.config.set("deploy.cr", "controller")
     runner = _create_runner()
     app_ctx.runner = runner
     aap_mod.create_instance(app_ctx, namespace=NS, sleep=lambda _s: None)
     assert "Using CR: controller" in app_ctx.console.stdout
+
+
+def test_unannotated_live_cr_is_matched_to_the_minimal_template() -> None:
+    rendered = yaml.safe_load(aap_mod.render_cr(aap_mod.load_cr("minimal"), namespace=NS))
+    document = {"metadata": {"annotations": {}}, "spec": rendered["spec"]}
+
+    assert aap_mod.cr_template_name(document, namespace=NS) == "minimal"
 
 
 # ---------------------------------------------------------------------------
