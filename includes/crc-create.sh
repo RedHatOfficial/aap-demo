@@ -610,7 +610,7 @@ fi
 # CRC's oc-env is not reliable on every Windows installation. Resolve the
 # Kubernetes client explicitly before the post-create resources use kubectl;
 # OpenShift's oc is API-compatible for these operations.
-if ! command -v kubectl >/dev/null 2>&1; then
+if ! command -v kubectl >/dev/null 2>&1 || ! kubectl version --client >/dev/null 2>&1; then
   if command -v oc >/dev/null 2>&1; then
     kubectl() { oc "$@"; }
   else
@@ -641,10 +641,10 @@ fi
 if kubectl get deployment metrics-server -n kube-system &>/dev/null; then
   echo "  Already installed"
 else
-  kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml 2>/dev/null
+  kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
   # MicroShift needs --kubelet-insecure-tls
   kubectl patch deployment metrics-server -n kube-system --type=json \
-    -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' 2>/dev/null
+    -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
   echo "  ✓ metrics-server installed"
 fi
 
