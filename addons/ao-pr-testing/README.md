@@ -6,7 +6,7 @@ ao addon.
 
 The addon:
 
-- registers the public `quay.io/aapdemo/plaibook-ee:latest` execution
+- registers the public `ghcr.io/aknochow/plaibook-ee:latest` execution
   environment in AAP as `plaibook-ee` so PR checks can use the shared image
   without a local build or registry credential;
 - creates or updates an AAP Project and Job Template for the local
@@ -67,13 +67,13 @@ build:
     AO_PR_TESTING_EE_IMAGE=quay.io/example/plaibook-ee:latest \\
     aap-demo enable ao-pr-testing
 
-The repository workflow `.github/workflows/plaibook-ee.yaml` builds the
-upstream `aknochow/ansible-plaibook` execution-environment definition and
-publishes `latest`, an upstream source SHA tag, and a UTC build tag to
-`quay.io/aapdemo/plaibook-ee`. It runs for relevant changes, checks upstream
-`main` daily, and can be run manually with a different upstream ref. Configure
-the repository secrets `QUAY_USERNAME` and `QUAY_PASSWORD` for Quay.io; pull
-requests build without publishing.
+The addon uses the upstream-maintained
+`ghcr.io/aknochow/plaibook-ee:latest` image. That image includes the pinned
+OpenShell, Claude, Gemini, OpenAI, Cursor, Kubernetes, and supporting Ansible
+collections required by the review. Upstream publishes `:main` and `:latest`
+from its main branch and publishes versioned release tags. For reproducible
+deployments, set `AO_PR_TESTING_EE_IMAGE` to an upstream release tag or digest.
+The local repository does not build or publish a replacement EE.
 
 The bridge project and Job Template can also be overridden. The bridge project
 contains the playbook that fetches plaibook; the source variables select the

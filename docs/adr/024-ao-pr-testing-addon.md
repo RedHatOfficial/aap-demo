@@ -29,8 +29,8 @@ The addon owns:
    keeps a separate short-lived AO bearer credential minted from that
    ServiceAccount for explicit operator-led MCP inspection.
 3. An AAP Project and two Job Templates: one local plaibook-result bridge and
-   one publication-only template, synchronized on launch and executed with the shared
-   `quay.io/aapdemo/plaibook-ee:latest` image. The bridge fetches the public
+   one publication-only template, synchronized on launch and executed with the
+   upstream `ghcr.io/aknochow/plaibook-ee:latest` image. The bridge fetches the public
    `https://github.com/aknochow/ansible-plaibook.git` source at runtime from a
    tested immutable revision by default,
    invokes its `review.yml`, reads the run-scoped JSON summary, and publishes
@@ -44,10 +44,11 @@ The addon owns:
      deterministic `artifacts` for the review and live smoke test; and
    - a separate publication node that consumes the bridge's `artifacts` and
      retries GitHub delivery without rerunning the model review.
-5. A public AAP execution environment registration for
-   `quay.io/aapdemo/plaibook-ee:latest`, managed idempotently by the addon so
-   PR-related AAP job templates can use the shared image without a registry
-   credential. The image name and EE name are overrideable through
+5. A public AAP execution environment registration for the upstream
+   `ghcr.io/aknochow/plaibook-ee:latest` image, managed idempotently by the
+   addon. The upstream image supplies the OpenShell, Claude, Gemini, OpenAI,
+   Cursor, Kubernetes, and supporting Ansible collections required by the
+   review. The image name and EE name are overrideable through
    `AO_PR_TESTING_EE_IMAGE` and `AO_PR_TESTING_EE_NAME`.
 6. An optional addon-owned AAP custom GitHub token credential. When present,
    the bridge injects it as `GITHUB_TOKEN` and creates or updates one marked
@@ -99,8 +100,8 @@ documentation.
 
 The implementation provisions the following AAP resources idempotently:
 
-- execution environment `plaibook-ee`, using the public
-  `quay.io/aapdemo/plaibook-ee:latest` image;
+- execution environment `plaibook-ee`, using the public upstream
+  `ghcr.io/aknochow/plaibook-ee:latest` image;
 - project `aap-demo Plaibook Review`, synchronized from the aap-demo bridge
   repository; and
 - Job Template `aap-demo | Plaibook PR Review` running
@@ -119,10 +120,10 @@ MCP integration type, and finally the agentic nodes were given the AAP
 integration type. These were corrected before replacing the agentic stages
 with the bridge's deterministic artifact handoff.
 The first AAP job then reached `review.yml` and failed because the EE omitted
-`aknochow.cursor`, which supplies `aknochow.cursor.bridge`; that collection is
-now included in the EE build alongside the OpenAI, Claude, OpenShell, and
-Kubernetes collections. A PR test is not considered complete until the rebuilt
-EE is pushed and the run-scoped plaibook result is available.
+`aknochow.cursor`, which supplies `aknochow.cursor.bridge`. The upstream
+published EE now includes that collection alongside the OpenAI, Claude,
+OpenShell, Gemini, and Kubernetes collections, so this addon consumes the
+upstream image instead of maintaining a duplicate local EE build.
 
 The dev profile intentionally runs without an OpenShell sandbox. Missing
 checkout, runner, permission, or run-scoped result remains blocked; the AAP EE
