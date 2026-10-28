@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -246,6 +247,135 @@ def test_bash_enable_fleet_can_select_kube_native_backend() -> None:
 
     assert result.returncode == 0
     assert "usage: aap-demo enable" in result.stdout
+
+
+def _bash_delegation_env(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """Stub kubectl and the Python CLI so fleet delegation can be observed."""
+    bindir = tmp_path / "bin"
+    home = tmp_path / "home"
+    bindir.mkdir()
+    home.mkdir()
+    kubectl = bindir / "kubectl"
+    kubectl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    kubectl.chmod(0o755)
+    record = tmp_path / "python-args.txt"
+    wrapper = tmp_path / "python-wrapper"
+    wrapper.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "if len(sys.argv) > 1 and sys.argv[1] == '-c':\n"
+        "    raise SystemExit(0)\n"
+        "Path(os.environ['AAP_DEMO_RECORD']).write_text('\\n'.join(sys.argv[1:]) + '\\n')\n"
+        "raise SystemExit(0)\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{bindir}{os.pathsep}{env.get('PATH', '')}"
+    env["HOME"] = str(home)
+    env["AAP_DEMO_DIR"] = str(home / ".aap-demo")
+    env["AAP_DEMO_PYTHON"] = str(wrapper)
+    env["AAP_DEMO_RECORD"] = str(record)
+    env["CI"] = "true"
+    env["QUIET"] = "true"
+    return env, record
+
+
+def _recorded_python_args(record: Path) -> list[str]:
+    if not record.exists():
+        return []
+    return [line for line in record.read_text(encoding="utf-8").splitlines() if line]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+def test_bash_disable_fleet_kube_native_delegates_to_python(tmp_path: Path) -> None:
+    env, record = _bash_delegation_env(tmp_path)
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "aap-demo.sh"),
+            "disable",
+            "fleet",
+            "--backend",
+            "kube-native",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _recorded_python_args(record) == ["-m", "aap_demo", "disable", "fleet"]
+    assert "Removing Fleet addon" not in result.stdout
+    assert "Disabling addon: fleet" not in result.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+def test_bash_enable_fleet_kube_native_forwards_no_import(tmp_path: Path) -> None:
+    env, record = _bash_delegation_env(tmp_path)
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "aap-demo.sh"),
+            "enable",
+            "fleet",
+            "--backend",
+            "kube-native",
+            "--no-import",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _recorded_python_args(record) == ["-m", "aap_demo", "enable", "fleet", "--no-import"]
+    assert "Unknown argument" not in result.stderr
+    assert "Unknown argument" not in result.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+def test_bash_enable_fleet_accepts_no_import_before_backend(tmp_path: Path) -> None:
+    env, record = _bash_delegation_env(tmp_path)
+    result = subprocess.run(
+        [
+            "bash",
+            str(REPO_ROOT / "aap-demo.sh"),
+            "enable",
+            "fleet",
+            "--no-import",
+            "--backend",
+            "kube-native",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _recorded_python_args(record) == ["-m", "aap_demo", "enable", "fleet", "--no-import"]
+
+
+def test_bash_fleet_default_backend_stays_qemu() -> None:
+    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+
+    assert 'FLEET_BACKEND="${FLEET_BACKEND:-qemu}"' in source
+    disable = source.split("cmd_disable()", 1)[1].split("_check_for_updates()", 1)[0]
+    assert 'case "${FLEET_BACKEND:-qemu}" in' in disable
+    assert '_fleet_delegate_v2 disable fleet "$@"' in disable
+    qemu = disable.split("qemu)", 1)[1].split("all)", 1)[0]
+    assert "_fleet_delegate_v2" not in qemu
 
 
 def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:
