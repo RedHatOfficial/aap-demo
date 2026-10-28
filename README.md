@@ -77,6 +77,13 @@ export KUBECONFIG=~/.local/state/aap-demo/kubeconfig.microshift
   prompts for optional temp swap on memory-constrained hosts (see
   [scripts/README.md](scripts/README.md))
 
+`oc login` writes into the kubeconfig named by `KUBECONFIG`. When that is the
+aap-demo file, the current context can switch to a remote cluster. Cluster
+commands then stop before they read or change that API, and tell you how to
+switch back to the `microshift` or `aap-demo` context. `aap-demo kubeconfig`
+refreshes the local file from the CRC VM. Set
+`AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true` only when that remote API is intentional.
+
 ## Status
 
 ```bash
@@ -124,6 +131,8 @@ aap-demo enable portal-operator # Installs Operator-based Portal (Technology Pre
 aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
 aap-demo enable mcp-server   # MCP server for AI assistants
 aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
+aap-demo enable ao-pr-testing  # PR validation workflow and read-only OpenShift MCP (requires AO)
+aap-demo enable apme-eap     # Early Access Program only for APME
 aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
 
 # Ansible Product Demos - Official demo content from ansible/product-demos
@@ -161,7 +170,8 @@ aap-demo enable local-cache        # restore auto-load on future deploys
 
 ```bash
 # Deployment
-aap-demo deploy              # Deploy AAP 2.7
+AAP_VERSION=2.7 aap-demo deploy  # Deploy AAP 2.7 (default)
+AAP_VERSION=2.6 aap-demo deploy  # Deploy AAP 2.6
 
 # Cluster management
 aap-demo status              # Show cluster status, routes, credentials
@@ -181,6 +191,7 @@ aap-demo diagnose            # Quick health check (cluster, storage, SCCs, pods)
 aap-demo must-gather         # Collect full diagnostics (AAP + cluster)
 aap-demo must-gather /tmp/d  # Collect to specific directory
 aap-demo repair              # Fix after sleep/wake issues
+aap-demo trust-ca            # Fix ingress certificate trust without cluster repair
 
 # Maintenance
 aap-demo clean               # Remove AAP deployment (keeps cluster)
@@ -190,8 +201,8 @@ aap-demo help                # Full command reference
 
 ## Architecture
 
-Architecture decisions are documented in [docs/adr/](docs/adr/README.md) (14 ADRs covering CLI
-design, storage, OLM, addons, and cross-platform support).
+Architecture decisions are documented in [docs/adr/](docs/adr/README.md), covering CLI design,
+storage, OLM, addons, and cross-platform support.
 
 ### macOS / Linux / Windows
 
@@ -209,6 +220,7 @@ CRC_MEMORY=16384             # VM memory in MiB (default: 16384)
 CRC_DISK=100                 # VM disk size in GiB (default: 100)
 CRC_PV_SIZE=70               # Storage reserved for LVMS PVCs in GiB (default: 70, must be < CRC_DISK)
 NAMESPACE=aap-operator       # Target namespace
+AAP_VERSION=2.7               # AAP version to deploy: 2.6 or 2.7
 QUIET=true                   # Suppress disclaimer
 ```
 

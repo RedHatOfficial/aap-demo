@@ -85,7 +85,7 @@ function Invoke-AapWindowsBashCli {
 
   $interactiveCommands = @(
     'create', 'deploy', 'deploy-all', 'redeploy', 'redeploy-all',
-    'setup', 'enable', 'disable', 'wire', 'repair', 'start', 'stop',
+    'setup', 'enable', 'disable', 'wire', 'repair', 'trust-ca', 'start', 'stop',
     'destroy', 'clean', 'update', 'idle', 'ssh'
   )
   $interactive = @($CliArguments | Where-Object {
@@ -93,7 +93,7 @@ function Invoke-AapWindowsBashCli {
     }).Count -gt 0
   $result = Invoke-AapGitBashCli -Arguments $CliArguments -Interactive:$interactive
   if ($result.Success) {
-    $trustCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all', 'repair', 'start')
+    $trustCommands = @('deploy', 'deploy-all', 'redeploy', 'redeploy-all', 'repair', 'trust-ca', 'start')
     if ($CliArguments | Where-Object { $trustCommands -contains $_.ToLowerInvariant() }) {
       try { & $AapDemoModule { Install-AapIngressCaTrust } } catch {
         Write-Warning "Could not update Windows ingress CA trust: $($_.Exception.Message)"

@@ -101,7 +101,7 @@
     oauth_client_secret: "{{ portal_oauth_secret_check.resources[0].data['oauth-client-secret'] | b64decode }}"
     oauth_app_id: "{{ existing_oauth_app.id }}"
   when:
-    - oauth_credentials_valid | bool
+    - (oauth_credentials_valid | bool) == true
     - aap_oauth_client_id is not defined or aap_oauth_client_id | length == 0
   no_log: true
 

@@ -60,7 +60,7 @@ execution environment.
 
 1. Creates custom credential type "APD Installer Credentials" that injects AAP admin credentials as environment variables
 2. Creates AAP project pointing to github.com/ansible/product-demos (auto-syncs on launch)
-3. Registers Product Demos EE (`quay.io/ansible-product-demos/apd-ee-26:latest`)
+3. Registers Product Demos EE (`quay.io/ansible-product-demos/apd-ee-27:latest`)
 4. Creates job template "APD | Install Base Resources" with:
    - Project: Ansible Product Demos
    - Playbook: `install-apd.yml`
@@ -450,7 +450,7 @@ and recent controller output to make repository or checkout errors actionable.
 - [Issue #71: Feature: Integrate `ansible/product-demos` as an Add-on](https://github.com/RedHatOfficial/aap-demo/issues/71)
 - [Ansible Product Demos Repository](https://github.com/ansible/product-demos)
 - [APD Documentation](https://ansible.github.io/product-demos/)
-- [Product Demos Execution Environment](https://quay.io/repository/ansible-product-demos/apd-ee-26)
+- [Product Demos Execution Environment](https://quay.io/repository/ansible-product-demos/apd-ee-27)
 - [infra.aap_configuration Collection](https://github.com/redhat-cop/infra.aap_configuration)
 - [ADR-008: Addon System](008-addon-system.md)
 - Commit: `823863f` - Initial implementation (local ansible-playbook approach)

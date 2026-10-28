@@ -8,6 +8,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LIB_SH="${REPO_ROOT}/addons/product-demos-base/lib.sh"
 DEPLOY_SH="${REPO_ROOT}/addons/product-demos-base/deploy.sh"
 
+unset PRODUCT_DEMOS_EE
+
 if ! command -v jq >/dev/null 2>&1; then
   echo "jq is required for these tests" >&2
   exit 1
@@ -15,6 +17,20 @@ fi
 
 # shellcheck source=addons/product-demos-base/lib.sh
 source "$LIB_SH"
+
+if [ "$PRODUCT_DEMOS_EE" = "quay.io/ansible-product-demos/apd-ee-27:latest" ]; then
+  echo "✓ product_demos_ee_defaults_to_aap_27"
+else
+  echo "✗ product_demos_ee_defaults_to_aap_27" >&2
+  exit 1
+fi
+
+if grep -Fq 'apd-ee-26' "$DEPLOY_SH" "$LIB_SH"; then
+  echo "✗ product_demos_aap_27_paths_must_not_default_to_aap_26_ee" >&2
+  exit 1
+else
+  echo "✓ product_demos_aap_27_paths_must_not_default_to_aap_26_ee"
+fi
 
 export AAP_USERNAME="admin"
 export AAP_PASSWORD=""

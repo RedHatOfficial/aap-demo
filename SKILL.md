@@ -121,6 +121,25 @@ AAP_PASSWORD=$(kubectl get secret aap-admin-password -n aap-operator -o jsonpath
 #    Password: $AAP_PASSWORD
 ```
 
+## MCP credentials and RBAC
+
+The MCP server is intended for local aap-demo development. Using the generated
+admin credential is acceptable for that isolated sandbox, but it must not be
+treated as the default for shared or production environments.
+
+- **Local demo:** the AAP admin credential is acceptable when the cluster and
+  MCP client are controlled by one developer.
+- **Shared environments:** use a named account with only the organization,
+  team, inventory, and job permissions required for the demo.
+- **CI/CD:** use a dedicated service account or token with least-privilege
+  access, and rotate it through the CI secret store.
+- **Production:** never configure MCP with the AAP admin credential; use
+  scoped RBAC and review the allowed operations before connecting a client.
+
+Treat credentials printed by `aap-demo status` as local development secrets.
+Do not copy them into source control, issue reports, or reusable MCP
+configuration.
+
 ## Deprecated Tools
 
 ### NEVER use awx-cli
@@ -156,6 +175,47 @@ ansible-playbook -i inventory playbook.yml
 2. **For testing**: Use `curl` with gateway API endpoints
 3. **For CLI workflows**: Use `aap-demo` commands or write shell scripts around the API
 
+## Ansible modules and configuration as code
+
+For AAP configuration-as-code workflows, prefer the Red Hat Community of
+Practice `infra.aap_configuration` collection and its `dispatch` role. Use
+certified collections such as `ansible.controller`, `ansible.eda`, or
+`ansible.hub` when a dispatch operation does not cover the required resource or
+when a module-specific API is the supported interface.
+
+Before running a playbook, verify the required collections are installed:
+
+```bash
+ansible-galaxy collection list \
+  | grep -E 'infra.aap_configuration|ansible.platform|ansible.controller|ansible.eda|ansible.hub'
+```
+
+Declare dependencies in `collections/requirements.yml` (or the repository's
+equivalent requirements file) instead of relying on a developer's global
+collection cache:
+
+```yaml
+collections:
+  - name: infra.aap_configuration
+  - name: ansible.platform
+  - name: ansible.controller
+  - name: ansible.eda
+  - name: ansible.hub
+```
+
+Install them before running the playbook:
+
+```bash
+ansible-galaxy collection install -r collections/requirements.yml
+```
+
+If installation fails, check the configured Galaxy/Private Automation Hub or
+console.redhat.com credentials in `docs/collection-authentication.md`, confirm
+the collection source is reachable, and report the exact collection and
+version. Do not silently replace `infra.aap_configuration` with an unrelated
+collection; choose a certified fallback only when the dispatch role is
+insufficient for the operation.
+
 ## Common Integration Patterns
 
 ### Playbook execution via API
@@ -179,6 +239,41 @@ See `docs/collection-authentication.md` for detailed guidance on:
 - Using `ansible.controller` collection with gateway API
 - Token-based authentication
 - Certificate verification options
+
+## AO pull-request testing
+
+When the user asks to validate an aap-demo pull request from the local LLM
+session, use the standalone ao-pr-testing addon. It requires AO but is not
+part of the core AO addon:
+
+```bash
+aap-demo enable ao-pr-testing
+addons/ao-pr-testing/run-pr.sh owner/repository <pull-request-number> [head-sha]
+addons/ao-pr-testing/register-codex.sh
+```
+
+The addon-owned workflow uses the official GitHub MCP read-only endpoint to
+fetch the requested PR metadata and changed files when the portal/APME GitHub
+credentials file at ~/.aap-demo/apme-eap-github-creds.yml is available. The
+workflow uses MCP tools directly and contains no direct GitHub REST/HTTP nodes;
+enable fails if MCP authentication or discovery is unavailable. It also
+supports a latest-open-PR manual trigger and a signed
+GitHub webhook at
+/api/v1/webhooks/aap-demo-pr-validation.
+
+When the local LLM session needs direct read-only deployment inspection, register
+the addon-owned OpenShift MCP endpoint with Codex using
+`addons/ao-pr-testing/register-codex.sh`, then start a new Codex task/session so
+the MCP server is loaded. Keep the route local-only; do not expose it through a
+public tunnel without authentication.
+
+The workflow must account for every changed or directly affected component. It
+uses AAP MCP and read-only OpenShift MCP evidence, and reports missing diff,
+checkout, test runner, or permissions as blocked; do not substitute the
+unrelated disk-percentage workflow or invoke kubectl from the workflow.
+
+For architecture and lifecycle decisions, see
+docs/adr/024-ao-pr-testing-addon.md.
 
 ## Troubleshooting
 

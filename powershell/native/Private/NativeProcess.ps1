@@ -15,6 +15,7 @@ function Invoke-AapNativeProcess {
     [string[]]$ArgumentList = @(),
     [hashtable]$Environment = @{},
     [string]$WorkingDirectory = $null,
+    [switch]$ClearEnvironment,
     [switch]$Interactive
   )
 
@@ -37,6 +38,9 @@ function Invoke-AapNativeProcess {
       }) -join ' '
   }
 
+  if ($ClearEnvironment) {
+    $psi.EnvironmentVariables.Clear()
+  }
   foreach ($name in $Environment.Keys) {
     $psi.EnvironmentVariables[$name] = [string]$Environment[$name]
   }

@@ -63,6 +63,11 @@ oc adm policy add-scc-to-group privileged system:serviceaccounts:aap-operator
 **Symptom**: Pods evicted or images fail to pull
 **Fix**: `aap-demo ssh` then `sudo crictl rmi --prune` to clean unused images
 
+### Commands target a remote cluster
+**Symptom**: `Kubeconfig points at a remote cluster`, or `AAP not found in namespace aap-operator` while the CRC VM is running
+**Cause**: `oc login` changed the current context of `~/.aap-demo/kubeconfig.microshift`
+**Fix**: `kubectl config use-context microshift`, or `aap-demo kubeconfig` to refresh the local file. Cluster commands refuse the remote API before they change it.
+
 ## File Structure
 
 ```
@@ -96,3 +101,44 @@ ansible/                       # Ansible playbook alternative
 4. If still unclear, run `aap-demo must-gather` to collect full diagnostics
 5. Check `aap-demo status` for routes and credentials
 6. For deployment issues, check operator logs: `kubectl logs -l app.kubernetes.io/managed-by=aap-gateway-operator -n aap-operator --tail=50`
+
+## Contributing to aap-demo
+
+Three Claude Code skills are available to guide common development workflows:
+
+### Architecture Decision Records (ADRs)
+
+**IMPORTANT**: When making architectural decisions (new addons, platform support, deployment model changes, CLI modifications, storage/networking changes, security model updates), **always create an ADR first** using the `/aap-adr` skill.
+
+ADRs document:
+- Why the decision was made (context and constraints)
+- What approach was chosen (decision)
+- Trade-offs and impacts (consequences)
+- Alternatives considered and rejected
+- References to related ADRs, issues, or PRs
+
+**Use the `/aap-adr` skill** to:
+- Determine the next ADR number
+- Follow the template from `docs/adr/000-template.md`
+- Ensure proper formatting and required sections
+- Update the ADR index in `docs/adr/README.md`
+
+### GitHub Issue Creation
+
+**Use the `/aap-issue-creation` skill** to:
+- Search for duplicate issues before creating new ones
+- Select appropriate issue template (bug report, documentation, feature)
+- Gather context automatically (environment, diagnostics, git state)
+- Guide template field completion with validation
+- Apply appropriate labels
+
+### Addon Development
+
+**Use the `/aap-addon-development` skill** to:
+- Create new addons with proper structure
+- Generate `deploy.sh` with deploy and delete modes
+- Register addon in `AVAILABLE_ADDONS` (aap-demo.sh:3002)
+- Document dependencies and prerequisites
+- Test enable/disable lifecycle
+
+**Before creating a new addon**: Consider whether an ADR is needed for the addon's architecture. Use `/aap-adr` to document significant design decisions.

@@ -48,6 +48,7 @@ _ssh() {
 # --- Cached operator catalog reference ---
 if [ "$ACTION" = "catalog-ref" ]; then
   requested_version="${2:-}"
+  requested_aap_version="${3:-}"
   metadata_file="${CACHE_DIR}/${CACHE_CATALOG_METADATA}"
 
   if [ -z "$requested_version" ] || [ ! -s "$metadata_file" ]; then
@@ -55,8 +56,10 @@ if [ "$ACTION" = "catalog-ref" ]; then
   fi
 
   _require_crc_ssh
-  cached_catalog_ref=$(awk -F '\t' -v version="$requested_version" \
-    '$1 == version {print $3; exit}' "$metadata_file")
+  cached_catalog_ref=$(awk -F '\t' \
+    -v version="$requested_version" -v aap_version="$requested_aap_version" \
+    '$1 == version && (aap_version == "" || $4 == "" || $4 == "all" || $4 == aap_version) {print $3; exit}' \
+    "$metadata_file")
   if [ -z "$cached_catalog_ref" ] \
     || ! _crc_exec sudo crictl inspecti "$cached_catalog_ref" &>/dev/null; then
     exit 1
@@ -398,8 +401,8 @@ for img in data.get('images', []):
       file_size=$(du -h "$tarball" | awk '{print $1}')
       printf "  %-62s %6s (cached)\n" "$display_name" "$file_size"
       if [ -n "$catalog_version" ] && [ -s "${tarball%.tar}.local-ref" ]; then
-        printf '%s\t%s\t%s\n' "$catalog_version" "$img_ref" \
-          "$(cat "${tarball%.tar}.local-ref")" >>"$catalog_metadata_tmp"
+        printf '%s\t%s\t%s\t%s\n' "$catalog_version" "$img_ref" \
+          "$(cat "${tarball%.tar}.local-ref")" "${AAP_VERSION:-all}" >>"$catalog_metadata_tmp"
       fi
       skipped=$((skipped + 1))
       continue
@@ -421,8 +424,8 @@ for img in data.get('images', []):
         echo "$img_ref" >"$ref_file"
         printf '%s@sha256:%s\n' "${img_ref%@*}" "$manifest_digest" >"${tarball%.tar}.local-ref"
         if [ -n "$catalog_version" ]; then
-          printf '%s\t%s\t%s\n' "$catalog_version" "$img_ref" \
-            "$(cat "${tarball%.tar}.local-ref")" >>"$catalog_metadata_tmp"
+          printf '%s\t%s\t%s\t%s\n' "$catalog_version" "$img_ref" \
+            "$(cat "${tarball%.tar}.local-ref")" "${AAP_VERSION:-all}" >>"$catalog_metadata_tmp"
         fi
         file_size=$(du -h "$tarball" | awk '{print $1}')
         printf "${_GREEN}%6s${_NC}\n" "$file_size"

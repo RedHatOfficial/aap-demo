@@ -71,6 +71,61 @@ else
 fi
 MCP_ROUTE="aap-mcp-${NAMESPACE}.${CLUSTER_DOMAIN}"
 
+# Check if a hostname resolves using an available host DNS tool.
+# Args: $1 - hostname to check
+# Returns: 0 if it resolves, 1 if it does not resolve, 2 if no tool is available.
+_mcp_route_resolves() {
+  local _host="$1"
+  local _dscache_output
+
+  if command -v getent >/dev/null 2>&1; then
+    if getent hosts "$_host" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
+  if command -v dscacheutil >/dev/null 2>&1; then
+    if ! _dscache_output="$(dscacheutil -q host -a name "$_host" 2>/dev/null)"; then
+      return 1
+    fi
+    if grep -q '^ip_address:' <<<"$_dscache_output"; then
+      return 0
+    fi
+    return 1
+  fi
+  if command -v host >/dev/null 2>&1; then
+    if host "$_host" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
+  return 2
+}
+
+_mcp_report_route_resolution() {
+  local _route_host="$1"
+  local _resolution_status
+
+  if _mcp_route_resolves "$_route_host"; then
+    echo "  ✓ MCP route hostname resolves on this host: ${_route_host}"
+  else
+    _resolution_status=$?
+    case "$_resolution_status" in
+      2)
+        echo "  ⚠ Cannot check MCP route DNS: install getent, dscacheutil, or host"
+        ;;
+      *)
+        echo "  ⚠ MCP route hostname does not resolve on this host: ${_route_host}"
+        echo "    The Route is configured, but Claude Code needs host-side DNS."
+        echo "    Check the cluster and CoreDNS wiring with: aap-demo status"
+        echo "    Re-apply local route wiring with: aap-demo start"
+        echo "    Then retry: aap-demo enable mcp-server"
+        ;;
+    esac
+    return 1
+  fi
+}
+
 # MCP server validates bearer tokens by calling back to AAP. On MicroShift, pods
 # cannot reach external nip.io routes (they resolve to 127.0.0.1). Use the
 # in-cluster AAP service URL instead.
@@ -282,10 +337,10 @@ if [ -n "$MCP_TOKEN" ]; then
           echo "  ✓ MCP server is connected and ready"
         elif echo "$MCP_STATUS" | grep -q "✗ Failed to connect"; then
           echo "  ⚠ MCP server configured but connection failed"
-          # DEBUG
-          echo "CA path: ${CA_PATH}"
+          _mcp_report_route_resolution "$MCP_ROUTE" || true # DNS issues are diagnostic only
         else
           echo "  ⓘ MCP server configured (connection status unknown)"
+          _mcp_report_route_resolution "$MCP_ROUTE" || true # DNS issues are diagnostic only
         fi
       fi
     else

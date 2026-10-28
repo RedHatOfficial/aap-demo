@@ -33,6 +33,7 @@ _aap_demo() {
     'setup:Run setup only - storage, coredns, mkcert (MINC)'
     'kubeconfig:Sync MINC kubeconfig (MINC)'
     'redeploy-all:Destroy cluster and redeploy fresh (MINC)'
+    'keycloak:Configure local Keycloak OIDC consumers'
   )
 
   case "$state" in

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# aap-demo - AAP 2.7 Deployment Tool
+# aap-demo - AAP Deployment Tool
 # =============================================================================
 #
-# Deploy Ansible Automation Platform 2.7 to OpenShift Local.
+# Deploy Ansible Automation Platform 2.6 or 2.7 to OpenShift Local.
 #
 # Usage:
-#   ./aap-demo.sh                     # Deploy AAP 2.7
+#   ./aap-demo.sh                     # Deploy selected AAP version (default: 2.7)
 #   ./aap-demo.sh clean               # Remove AAP deployment
 #   ./aap-demo.sh destroy             # Delete entire cluster
 #   ./aap-demo.sh stop                # Stop OpenShift Local cluster
@@ -16,6 +16,7 @@
 #   ./aap-demo.sh create              # Create cluster only
 #
 # Environment variables:
+#   AAP_VERSION  - AAP version to deploy: 2.6 or 2.7 (default: 2.7)
 #   NAMESPACE    - Kubernetes namespace (default: aap-operator)
 #   QUIET        - Suppress disclaimer (true/false)
 #   FORCE        - Force reinstall even if AAP exists (true/false)
@@ -42,6 +43,8 @@ source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
 
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
+# shellcheck source=includes/kubeconfig-guard.sh
+source "${SCRIPT_DIR}/includes/kubeconfig-guard.sh"
 # shellcheck source=includes/ao-llm.sh
 source "${SCRIPT_DIR}/includes/ao-llm.sh"
 # shellcheck source=includes/json-utils.sh
@@ -54,11 +57,6 @@ source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
 source "${SCRIPT_DIR}/includes/aap-readiness.sh"
 
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
-
-# AAP version
-# shellcheck disable=SC2034
-AAP_VERSION="2.7"
-AAP_CHANNEL="stable-2.7"
 
 # Recommended CRC/MicroShift version for stable deployments
 # Older versions may encounter VM transport or operator catalog issues.
@@ -75,22 +73,50 @@ NAMESPACE="${NAMESPACE:-aap-operator}"
 QUIET="${QUIET:-false}"
 FORCE="${FORCE:-false}"
 FLEET_BACKEND="${FLEET_BACKEND:-qemu}"
+_AAP_DEMO_KUBECONFIG_FROM_ENV="${KUBECONFIG+x}"
 
 # Config file for persistent settings
 AAP_DEMO_CONFIG="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
 AAP_DEMO_CONFIG_FILE="$AAP_DEMO_CONFIG"
+
+# Values in the shared config are inherited by every addon. Keep credentials in
+# dedicated files or one-shot process environment variables instead of making
+# them persistent in this broadly readable settings file.
+aap_demo_config_key_allowed() {
+  case "$1" in
+    *_FILE | *_PATH)
+      return 0
+      ;;
+  esac
+  local upper_key
+  upper_key="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  case "$upper_key" in
+    *API_KEY* | *ACCESS_KEY* | *PRIVATE_KEY* | *TOKEN* | *PASSWORD* | *SECRET* | *CREDENTIAL*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
 
 # Source config file (command-line env vars take precedence)
 if [ -f "$AAP_DEMO_CONFIG" ]; then
   while IFS='=' read -r key value || [ -n "$key" ]; do
     # Skip comments and empty lines
     [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    aap_demo_config_key_allowed "$key" || continue
     # Only set if not already set in environment
     if [ -z "${!key+x}" ]; then
       export "$key=$value"
     fi
   done <"$AAP_DEMO_CONFIG"
 fi
+
+# shellcheck source=includes/aap-version.sh
+source "${SCRIPT_DIR}/includes/aap-version.sh"
+aap_demo_configure_aap_version "${AAP_VERSION:-2.7}" || exit 1
 
 # Collection authentication environment variables
 GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}"
@@ -161,7 +187,7 @@ for arg in "$@"; do
     --backend)
       PENDING_FLAG="backend"
       ;;
-    deploy | deploy-all | repair | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | v2 | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | keycloak | v2 | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         fleet)
@@ -170,6 +196,9 @@ for arg in "$@"; do
           else
             COMMAND="fleet"
           fi
+          ;;
+        keycloak)
+          if [ -z "$COMMAND" ]; then COMMAND="keycloak"; else EXTRA_ARGS+=("$arg"); fi
           ;;
         --help | -h)
           if [ "$COMMAND" = "enable" ]; then
@@ -206,7 +235,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -234,7 +263,7 @@ for arg in "$@"; do
       ;;
     *)
       # Commands that accept arbitrary args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ]; then
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ] || [ "$COMMAND" = "keycloak" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -406,7 +435,9 @@ reject_windows_deferred_addon() {
 # Infrastructure Type Handling
 # -----------------------------------------------------------------------------
 
-# Setup KUBECONFIG based on infrastructure type
+# Setup KUBECONFIG based on infrastructure type.
+# Refuse a remote current context before any API call. oc login rewrites this
+# file when the shell exports it, and cluster-info would otherwise succeed.
 setup_kubeconfig() {
   check_kubectl || exit 1
   # Apply --kubeconfig override first (takes precedence)
@@ -420,7 +451,26 @@ setup_kubeconfig() {
     mkdir -p "$AAP_DEMO_DIR"
     KUBECONFIG="$(aap_demo_resolve_kubeconfig)"
     export KUBECONFIG
-    # Refresh from cluster if current kubeconfig doesn't work
+  fi
+
+  # Apply context override if specified
+  if [ -n "$KUBECTL_CONTEXT" ]; then
+    if ! kubectl config use-context "$KUBECTL_CONTEXT" >/dev/null 2>&1; then
+      echo "ERROR: Context '$KUBECTL_CONTEXT' not found"
+      echo ""
+      echo "Available contexts:"
+      kubectl config get-contexts -o name 2>/dev/null | sed 's/^/  /' || echo "  (none)"
+      exit 1
+    fi
+  fi
+
+  if ! aap_demo_reject_remote_kubeconfig; then
+    exit 1
+  fi
+
+  # Refresh from the VM only after the current context is local. A reachable
+  # remote context used to skip this refresh and keep the remote target.
+  if [ -z "$KUBECTL_KUBECONFIG" ]; then
     if ! kubectl cluster-info --request-timeout=3s &>/dev/null 2>&1; then
       # Ensure infra backend is loaded to set CRC_SSH_KEY
       _infra_ensure_backend 2>/dev/null || true
@@ -433,6 +483,9 @@ setup_kubeconfig() {
           mv "${AAP_DEMO_KUBECONFIG}.tmp" "$AAP_DEMO_KUBECONFIG"
           chmod 600 "$AAP_DEMO_KUBECONFIG"
           export KUBECONFIG="$AAP_DEMO_KUBECONFIG"
+          if ! aap_demo_reject_remote_kubeconfig; then
+            exit 1
+          fi
         else
           rm -f "${AAP_DEMO_KUBECONFIG}.tmp"
         fi
@@ -440,15 +493,8 @@ setup_kubeconfig() {
     fi
   fi
 
-  # Apply context override if specified
-  if [ -n "$KUBECTL_CONTEXT" ]; then
-    if ! kubectl config use-context "$KUBECTL_CONTEXT" >/dev/null 2>&1; then
-      echo "ERROR: Context '$KUBECTL_CONTEXT' not found"
-      echo ""
-      echo "Available contexts:"
-      kubectl config get-contexts -o name 2>/dev/null | sed 's/^/  /' || echo "  (none)"
-      exit 1
-    fi
+  if [ -z "$KUBECTL_KUBECONFIG" ]; then
+    aap_demo_offer_kubeconfig_shell_setup "$QUIET" "$_AAP_DEMO_KUBECONFIG_FROM_ENV"
   fi
 }
 
@@ -471,6 +517,14 @@ verify_cluster_type() {
 # -----------------------------------------------------------------------------
 # Preflight: mkcert CA check (macOS and Linux)
 # -----------------------------------------------------------------------------
+_path_match_exists() {
+  local _path
+  for _path in "$@"; do
+    [ -e "$_path" ] && return 0
+  done
+  return 1
+}
+
 check_mkcert_ca() {
   # Skip if mkcert is disabled
   [ "${AAP_DEMO_MKCERT:-true}" != "true" ] && return 0
@@ -491,10 +545,9 @@ check_mkcert_ca() {
     CAROOT="$(mkcert -CAROOT 2>/dev/null)"
     if [ -f "$CAROOT/rootCA.pem" ]; then
       # Check if it's been added to system trust
-      # shellcheck disable=SC2144
-      if compgen -G "/etc/ssl/certs/mkcert*" >/dev/null \
-        || compgen -G "/usr/local/share/ca-certificates/mkcert*" >/dev/null \
-        || compgen -G "/etc/pki/ca-trust/source/anchors/mkcert*" >/dev/null; then
+      if _path_match_exists /etc/ssl/certs/mkcert* \
+        /usr/local/share/ca-certificates/mkcert* \
+        /etc/pki/ca-trust/source/anchors/mkcert*; then
         CA_INSTALLED=true
       elif trust list 2>/dev/null | grep -q "mkcert"; then
         CA_INSTALLED=true
@@ -531,13 +584,13 @@ check_mkcert_ca() {
 # Help
 # -----------------------------------------------------------------------------
 show_welcome() {
-  cat <<'EOF'
-aap-demo - Deploy AAP 2.7 to OpenShift Local
+  cat <<EOF
+aap-demo - Deploy AAP $AAP_VERSION to OpenShift Local
 
 Usage: aap-demo [options] <command>
 
 Commands:
-  deploy          Deploy AAP 2.7
+  deploy          Deploy AAP $AAP_VERSION
   status          Show cluster and AAP status
   idle [true|false] Scale down/up AAP to save resources
   diagnose [--ai] Check environment health (--ai for Claude analysis)
@@ -575,23 +628,27 @@ Addons:
   enable mcp-server Enable MCP server for AI assistants (required by ao)
   enable setup-pah Configure Private Automation Hub remotes and credentials
   enable ao       Install Automation Orchestrator (prompts for LLM or no LLM)
+  enable ao-pr-testing Install PR validation workflow and read-only OpenShift MCP (requires ao)
   enable local-cache Cache container images locally (~30GB) to speed up deploys
   enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
+  enable keycloak  Deploy Keycloak OIDC provider for local AAP/AO authentication tests
+  keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
+                  Configure Keycloak OIDC consumers; dry-run unless --apply
 
 Examples:
-  aap-demo deploy                              # Deploy AAP 2.7
+  aap-demo deploy                              # Deploy AAP $AAP_VERSION
   aap-demo enable fleet                        # Enable fleet addon
   aap-demo fleet add 3 --image ~/rhel9.qcow2  # Create 3 managed VMs
   aap-demo enable portal                       # Enable Self-Service Portal
   aap-demo enable setup-pah                    # Configure Private Automation Hub
 
-Run 'aap-demo help' for full documentation.
+Run 'aap-demo.sh help' for full documentation.
 EOF
 }
 
 show_help() {
-  cat <<'EOF'
-aap-demo - Deploy AAP 2.7 to OpenShift Local
+  cat <<EOF
+aap-demo - Deploy AAP $AAP_VERSION to OpenShift Local
 
 USAGE:
     aap-demo [OPTIONS] <COMMAND>
@@ -602,9 +659,12 @@ OPTIONS:
     NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
     QUIET=true          Suppress disclaimer
     FORCE=true          Force reinstall even if AAP exists
+    AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true
+                        Allow a remote kubeconfig context. Default is to
+                        refuse, so oc login cannot retarget deploy or enable.
 
 COMMANDS (all infrastructure types):
-    deploy          Deploy AAP 2.7 (operator + CR)
+    deploy          Deploy AAP $AAP_VERSION (operator + CR)
     status          Show cluster and AAP status
     clean           Remove AAP deployment
     watch           Watch AAP deployment status
@@ -632,8 +692,11 @@ COMMANDS (all infrastructure types):
     fleet destroy          Remove all VMs and AAP resources
     (legacy Bash v1; local QEMU VMs only)
     Kubernetes-native fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
-    enable [addon]  Enable an addon (ao, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, fleet)
+    enable [addon]  Enable an addon (ao, ao-pr-testing, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
                     portal-operator is Technology Preview and AMD64 only
+    keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
+                    Configure Keycloak OIDC consumers; dry-run unless --apply
+                    --map-groups aligns Keycloak groups with AAP roles and AO groups
     disable [addon] Disable an addon
                     local-cache: Cache container images locally (~30GB).
                     Saves images from a running cluster for fast reloads.
@@ -651,11 +714,13 @@ COMMANDS:
     start           Start stopped cluster (re-applies CoreDNS config)
     ssh             SSH into cluster node
     repair          Repair cluster after crash
+    trust-ca        Repair ingress certificate trust only
     setup           Run setup only (storage, coredns, mkcert)
     kubeconfig      Extract and merge kubeconfig
     redeploy-all    Destroy cluster and redeploy fresh
 
 ENVIRONMENT:
+    AAP_VERSION=2.6|2.7  AAP version to deploy (default: 2.7)
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
     AAP_PERSISTENT_IMAGE_STORE=true
                         Keep CRI-O image storage on a persistent qcow2 disk
@@ -667,7 +732,7 @@ ENVIRONMENT:
 
 EXAMPLES:
     aap-demo create                              # Create OpenShift Local cluster
-    aap-demo deploy                              # Deploy AAP 2.7
+    aap-demo deploy                              # Deploy AAP $AAP_VERSION
     aap-demo enable fleet                        # Enable fleet addon
     aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
     aap-demo fleet list                          # Show running fleet nodes
@@ -732,6 +797,12 @@ cmd_repair() {
   echo ""
   echo "If issues persist (ImagePullBackOff, NFS/storage, wedged VM):"
   echo "  crc stop && crc start"
+}
+
+cmd_trust_ca() {
+  NAMESPACE="${NAMESPACE:-aap-operator}"
+  export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig)}"
+  fix_ingress_ca_trust
 }
 
 # Shared function: display cluster info for warnings
@@ -1684,10 +1755,28 @@ cmd_kubeconfig() {
   client_cert=$(KUBECONFIG="$TEMP_KUBECONFIG" kubectl config view --raw -o jsonpath='{.users[?(@.name=="user")].user.client-certificate-data}' 2>/dev/null)
   client_key=$(KUBECONFIG="$TEMP_KUBECONFIG" kubectl config view --raw -o jsonpath='{.users[?(@.name=="user")].user.client-key-data}' 2>/dev/null)
   if [ -n "$client_cert" ]; then
+    local cert_tmp key_tmp
+    cert_tmp=$(mktemp) || {
+      echo "  ERROR: Failed to create temporary file for client certificate" >&2
+      exit 1
+    }
+    key_tmp=$(mktemp) || {
+      rm -f "$cert_tmp"
+      echo "  ERROR: Failed to create temporary file for client key" >&2
+      exit 1
+    }
+    TEMP_FILES+=("$cert_tmp" "$key_tmp")
+    if ! printf '%s' "$client_cert" | base64 -d >"$cert_tmp" \
+      || ! printf '%s' "$client_key" | base64 -d >"$key_tmp"; then
+      echo "  ERROR: Failed to decode kubeconfig client credentials"
+      exit 1
+    fi
     KUBECONFIG="$TEMP_KUBECONFIG" kubectl config set-credentials "$ctx_name" \
-      --client-certificate=<(echo "$client_cert" | base64 -d) \
-      --client-key=<(echo "$client_key" | base64 -d) \
+      --client-certificate="$cert_tmp" \
+      --client-key="$key_tmp" \
       --embed-certs=true >/dev/null 2>&1
+    rm -f "$cert_tmp" "$key_tmp"
+    TEMP_FILES=("$TEMP_KUBECONFIG")
     KUBECONFIG="$TEMP_KUBECONFIG" kubectl config unset users.user >/dev/null 2>&1 || true
   fi
   KUBECONFIG="$TEMP_KUBECONFIG" kubectl config use-context "$ctx_name" >/dev/null 2>&1
@@ -1893,6 +1982,22 @@ cmd_status() {
     fi
   fi
 
+  # Show the credential paths for the Keycloak OIDC lab addon without exposing
+  # secret values in terminal output or CI logs.
+  local _keycloak_state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+  if [ -d "$_keycloak_state_dir" ]; then
+    if [ -f "$_keycloak_state_dir/admin-password" ]; then
+      if [ "$_cred_found" = "false" ]; then
+        echo "Credentials:"
+        echo "------------"
+        _cred_found=true
+      fi
+      echo "  Keycloak users: aap-oidc-admin, aap-oidc-operator, aap-oidc-auditor, aap-oidc-developer"
+      echo "  Keycloak credential files: ${_keycloak_state_dir}/"
+      echo ""
+    fi
+  fi
+
   # Show addons with URLs or enable instructions
   local saved_addons
   saved_addons=$(_addons_list)
@@ -1954,6 +2059,18 @@ cmd_status() {
       ao)
         if [ "$enabled" = true ] || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
           label="enabled"
+        else
+          label="disabled"
+        fi
+        ;;
+      keycloak)
+        local _keycloak_namespace="${KEYCLOAK_NAMESPACE:-aap-demo-keycloak}"
+        if [ "$enabled" = true ] || kubectl get namespace "$_keycloak_namespace" &>/dev/null 2>&1; then
+          url="https://$(kubectl get route keycloak -n "$_keycloak_namespace" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+          if [ "$url" = "https://" ]; then
+            url=""
+            label="not-deployed"
+          fi
         else
           label="disabled"
         fi
@@ -2297,6 +2414,8 @@ cmd_setup() {
 }
 
 cmd_deploy() {
+  aap_demo_configure_aap_version "$AAP_VERSION" || exit 1
+
   # Show notice/disclaimer
   if [ "$QUIET" != "true" ] && [ "${AAP_DEMO_NOTICE_SHOWN:-}" != "1" ]; then
     bash "${SCRIPT_DIR}/includes/aap-demo-notice.sh" || true
@@ -2370,7 +2489,7 @@ cmd_deploy() {
   # Refresh kubeconfig before deploy (certs may have changed during OLM install)
   _verify_cluster || exit 1
 
-  # Deploy AAP 2.7
+  # Deploy selected AAP version.
   deploy_latest
 }
 
@@ -2392,16 +2511,17 @@ patch_operator_serviceaccounts() {
 }
 
 deploy_latest() {
+  aap_demo_configure_aap_version "$AAP_VERSION" || exit 1
+
   # Check disk space before deploying (latest catalog images are large)
   _check_disk_space || exit 1
 
   echo ""
   echo "Deploying AAP from latest catalog..."
-  echo "  Version: 2.7"
+  echo "  Version: $AAP_VERSION"
   echo "  Namespace: $NAMESPACE"
   echo ""
 
-  AAP_CHANNEL="stable-2.7"
   # Auto-detect OCP version from CRC status (e.g. 4.22.0 → 4.22)
   if [ -z "${AAP_OCP_VERSION:-}" ]; then
     _crc_status_json=$(crc status -o json 2>/dev/null || echo '{}')
@@ -2445,7 +2565,7 @@ deploy_latest() {
   # (not openshift-marketplace — upstream OLM doesn't create pods there on OpenShift Local)
   echo ""
   _catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${AAP_OCP_VERSION}"
-  _cached_catalog_image="$(_cached_operator_catalog_ref "$AAP_OCP_VERSION")"
+  _cached_catalog_image="$(_cached_operator_catalog_ref "$AAP_OCP_VERSION" "$AAP_VERSION")"
   if [ -n "$_cached_catalog_image" ]; then
     _catalog_image="$_cached_catalog_image"
     echo "Creating CatalogSource from cached digest (OCP $AAP_OCP_VERSION)..."
@@ -2487,8 +2607,8 @@ deploy_latest() {
   # Create Subscription
   echo ""
   echo "Creating Subscription..."
-  sed -e "s|namespace: aap|namespace: $NAMESPACE|" \
-    -e "s|channel: stable-2.6|channel: $AAP_CHANNEL|" \
+  sed -E -e "s|namespace: aap|namespace: $NAMESPACE|" \
+    -e "s|channel: stable-2\.[0-9]+|channel: $AAP_CHANNEL|" \
     "${SCRIPT_DIR}/config/olm/subscription.yaml" | kubectl apply -f -
 
   # OLM creates the operator deployment asynchronously after the Subscription
@@ -2502,7 +2622,14 @@ deploy_latest() {
   CSV_NAME=""
   for i in $(seq 1 60); do
     _rewrite_local_cache_refs
-    CSV_NAME=$(kubectl get csv -n "$NAMESPACE" 2>/dev/null | grep '^aap-operator\.' | awk '{print $1}' | head -1)
+    CSV_NAME=""
+    while IFS= read -r _csv_name; do
+      if aap_demo_csv_matches_aap_version "$_csv_name"; then
+        CSV_NAME="$_csv_name"
+        break
+      fi
+    done < <(kubectl get csv -n "$NAMESPACE" -o name 2>/dev/null \
+      | sed 's|^clusterserviceversion.operators.coreos.com/||')
     if [ -n "$CSV_NAME" ]; then
       echo "Found CSV: $CSV_NAME"
       break
@@ -2701,7 +2828,7 @@ _load_local_cache() {
 _cached_operator_catalog_ref() {
   [ "${AAP_DEMO_SKIP_CACHE:-false}" = "true" ] && return 0
   AAP_DEMO_LOCAL_CACHE_QUIET=1 bash "${SCRIPT_DIR}/addons/local-cache/deploy.sh" \
-    catalog-ref "$1" 2>/dev/null || true
+    catalog-ref "$1" "${2:-$AAP_VERSION}" 2>/dev/null || true
 }
 
 _rewrite_local_cache_refs() {
@@ -3165,7 +3292,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3427,7 +3554,7 @@ cmd_enable() {
     # password secret is stale after the instance has already been initialized.
     # `aap-demo wire` remains available for an explicit retry.
     :
-  else
+  elif [ "$addon" != "keycloak" ]; then
     _aap_demo_run_addon_wire false
   fi
 }
@@ -3436,6 +3563,19 @@ cmd_wire() {
   echo "Re-running addon wiring (also runs automatically after enable and deploy)..."
   _verify_cluster || return 1
   _aap_demo_run_addon_wire true
+}
+
+cmd_keycloak() {
+  local subcommand="${1:-configure}"
+  shift 1 2>/dev/null || true
+  case "$subcommand" in
+    configure) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" "$@" ;;
+    help | -h | --help) bash "${SCRIPT_DIR}/addons/keycloak/configure.sh" --help ;;
+    *)
+      echo "Usage: aap-demo keycloak configure [--target aap|ao|all] [--map-groups] [--apply]" >&2
+      return 1
+      ;;
+  esac
 }
 
 cmd_disable() {
@@ -3483,7 +3623,12 @@ cmd_disable() {
   if [ -f "$addon_dir/deploy.sh" ]; then
     echo "Disabling addon: $addon"
     setup_kubeconfig
-    bash "$addon_dir/deploy.sh" --delete "$@" || true
+    if ! bash "$addon_dir/deploy.sh" --delete "$@"; then
+      if [ "$addon" = "keycloak" ]; then
+        echo "ERROR: Keycloak removal failed; leaving addon enabled in config" >&2
+        return 1
+      fi
+    fi
     _addons_remove "$addon"
     echo "  Removed from config"
   else
@@ -3606,6 +3751,9 @@ case "$COMMAND" in
   repair)
     cmd_repair
     ;;
+  trust-ca)
+    cmd_trust_ca
+    ;;
   clean)
     cmd_clean
     ;;
@@ -3697,6 +3845,9 @@ case "$COMMAND" in
   disable)
     reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
     cmd_disable "${EXTRA_ARGS[@]}"
+    ;;
+  keycloak)
+    cmd_keycloak "${EXTRA_ARGS[@]}"
     ;;
   deploy | deploy-all)
     cmd_deploy

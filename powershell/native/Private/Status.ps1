@@ -156,6 +156,7 @@ CLUSTER:
     start           Start stopped cluster
     destroy         Deletes cluster (--reset clears saved preset)
     repair          Show repair instructions
+    trust-ca        Repair ingress certificate trust only
     ssh             SSH into VM
 
 DEPLOY:

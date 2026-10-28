@@ -229,6 +229,40 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 - **apme_helm_chart_version** - Override APME gateway chart version
 - **devspaces_base_url** - Enable "Open in DevSpaces" actions
 
+### Local Registry and Plugin Archives
+
+The addon publishes the bundled APME dynamic-plugin archive to the in-cluster registry before
+installing the portal Helm release. On OpenShift Local, that registry is exposed through an
+OpenShift Route, so the registry API can return redirects during blob and manifest operations.
+The publisher follows those redirects automatically.
+
+The archive is stored under the repository path expected by the portal's runtime installer:
+
+```text
+registry.apps.127.0.0.1.nip.io/apme/apme-prototype-plugins:<version>
+```
+
+This path is part of the deployment contract. If the archive is pushed to only `apme:<version>`,
+the portal can start successfully but its dynamic-plugin init container will fail with a
+`manifest unknown` error because it requests `apme/apme-prototype-plugins:<version>`.
+
+When troubleshooting a failed enablement, check the APME deployment report for the first
+registry or portal error, then verify the archive and portal rollout:
+
+```bash
+kubectl get pods -n apme
+kubectl rollout status deployment/redhat-rhaap-portal -n apme
+```
+
+The addon also uses explicit boolean comparisons for standalone Ansible `when` expressions and
+`kubectl exec` for gateway seeding. These choices keep the playbooks compatible with the strict
+conditional handling in newer Ansible releases and avoid the unavailable `kubernetes.core.k8s_exec`
+client path in the APME execution environment.
+
+For detailed registry troubleshooting, set `APME_OCI_PUSH_DEBUG=1` before enabling the addon. The
+publisher then writes redirect chains, contacted endpoints, and progress for large blob uploads to
+stderr without changing the normal output or registry behavior.
+
 ## Differences from Bash Addon
 
 | Feature | Bash Addon | Playbook Addon |
@@ -356,6 +390,25 @@ aap-demo enable apme-eap
 ```bash
 kubectl get secret -n aap-operator <aap-cr-name> -o jsonpath='{.data.admin_password}' | base64 -d
 # Verify password works by logging into AAP web UI
+```
+
+### OAuth login fails on CRC or MicroShift
+
+The portal uses the external HTTPS AAP route for browser access. On CRC, its
+backend uses `http://<aap-route>` for the in-cluster token exchange and
+receives a `hostAliases` entry for the AAP Service. On MicroShift, `nip.io`
+routes continue to use HTTPS through the router and receive router aliases for
+the AAP and registry routes. This applies to the default `apps.crc.testing`
+domain and `nip.io` routes respectively.
+
+If login still fails, check the generated values and portal environment:
+
+```bash
+grep -E '^aap_(host|host_url):' ~/.aap-demo/apme-eap-vars.yml
+kubectl exec deploy/redhat-rhaap-portal -n apme -- \
+  printenv AAP_HOST_URL
+kubectl get deploy redhat-rhaap-portal -n apme \
+  -o jsonpath='{.spec.template.spec.hostAliases}'
 ```
 
 ### Portal image or plugin pull fails
