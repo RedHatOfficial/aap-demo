@@ -278,7 +278,7 @@ source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 # -----------------------------------------------------------------------------
 
 check_kubectl() {
-  if command -v kubectl &>/dev/null; then
+  if command -v kubectl &>/dev/null && kubectl version --client &>/dev/null; then
     return 0
   fi
 
