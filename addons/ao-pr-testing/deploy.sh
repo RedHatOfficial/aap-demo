@@ -619,15 +619,28 @@ ensure_openshift_credential() {
 
 find_configured_model() {
   local integration_name integration_id models selected_model
+  if [ "${REVIEW_AI_READY:-false}" != true ]; then
+    return 0
+  fi
   integration_name=$(wire_ao_llm_integration_name) \
-    || die 'ao-pr-testing requires an AI provider; provider is set to none or is unsupported'
-  integration_id=$(wire_ao_find_integration_by_name "$integration_name")
-  [ -n "$integration_id" ] || die "AO LLM integration is missing: $integration_name"
-  models=$(wire_ao_api GET "/integrations/$integration_id/models?limit=50")
+    || {
+      ao_pr_testing_model_unavailable 'the provider is set to none or is unsupported'
+      return 0
+    }
+  integration_id=$(wire_ao_find_integration_by_name "$integration_name" || true)
+  if [ -z "$integration_id" ]; then
+    ao_pr_testing_model_unavailable "the AO integration is missing: $integration_name"
+    return 0
+  fi
+  models=$(wire_ao_api GET "/integrations/$integration_id/models?limit=50" || true)
   selected_model=$(ao_pr_testing_select_model "$models" "${PLAIBOOK_MODEL:-}")
-  [ -n "$selected_model" ] || die "No AI model is available in AO integration: $integration_name"
+  if [ -z "$selected_model" ]; then
+    ao_pr_testing_model_unavailable "no model is available in AO integration: $integration_name"
+    return 0
+  fi
   if [ -n "${PLAIBOOK_MODEL:-}" ] && [ "$selected_model" != "$PLAIBOOK_MODEL" ]; then
-    die "Configured PR review model is not available: $PLAIBOOK_MODEL"
+    ao_pr_testing_model_unavailable "configured model is not available: $PLAIBOOK_MODEL"
+    return 0
   fi
   PLAIBOOK_MODEL="$selected_model"
   export PLAIBOOK_MODEL
@@ -833,7 +846,7 @@ fi
 kubectl cluster-info >/dev/null 2>&1 || die 'Cannot connect to the OpenShift cluster'
 ao_is_ready || die 'Automation Orchestrator is not ready; enable the ao addon first'
 prompt_github_token
-ao_pr_testing_configure_model || die 'Could not configure an AI model for the PR review'
+ao_pr_testing_configure_model
 find_configured_model
 ensure_aap_execution_environment
 ensure_github_credential

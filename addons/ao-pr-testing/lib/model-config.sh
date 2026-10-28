@@ -31,6 +31,20 @@ ao_pr_testing_select_model() {
       end'
 }
 
+ao_pr_testing_model_unavailable() {
+  local reason="$1"
+
+  PLAIBOOK_MODEL=""
+  PLAIBOOK_OPENAI_BASE_URL=""
+  PLAIBOOK_OPENAI_API_KEY=""
+  REVIEW_OLLAMA_COMPAT=false
+  REVIEW_AI_READY=false
+  REVIEW_AI_WARNING="Set up an AI provider before running PR reviews: ${reason}"
+  export PLAIBOOK_MODEL PLAIBOOK_OPENAI_BASE_URL PLAIBOOK_OPENAI_API_KEY
+  export REVIEW_OLLAMA_COMPAT REVIEW_AI_READY REVIEW_AI_WARNING
+  printf 'WARNING: %s\n' "$REVIEW_AI_WARNING" >&2
+}
+
 ao_pr_testing_configure_model() {
   local provider="${AO_LLM_PROVIDER:-ollama}"
   local model base_url api_key
@@ -48,23 +62,26 @@ ao_pr_testing_configure_model() {
       base_url="${AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL:-${AO_LLM_BASE_URL:-https://api.openai.com/v1}}"
       api_key=$(ao_pr_testing_model_key)
       [ -n "$api_key" ] || {
-        printf '%s\n' 'ERROR: An API key is required for the external PR review model.' >&2
-        return 1
+        ao_pr_testing_model_unavailable 'the external provider API key is missing'
+        return 0
       }
       REVIEW_OLLAMA_COMPAT=false
       ;;
     none)
-      printf '%s\n' 'ERROR: ao-pr-testing requires an AI model; provider is set to none.' >&2
-      return 1
+      ao_pr_testing_model_unavailable 'the provider is set to none'
+      return 0
       ;;
     *)
-      printf 'ERROR: Unsupported AO LLM provider for PR review: %s\n' "$provider" >&2
-      return 1
+      ao_pr_testing_model_unavailable "the provider is unsupported: $provider"
+      return 0
       ;;
   esac
 
   PLAIBOOK_MODEL="$model"
   PLAIBOOK_OPENAI_BASE_URL="$base_url"
   PLAIBOOK_OPENAI_API_KEY="$api_key"
-  export PLAIBOOK_MODEL PLAIBOOK_OPENAI_BASE_URL PLAIBOOK_OPENAI_API_KEY REVIEW_OLLAMA_COMPAT
+  REVIEW_AI_READY=true
+  REVIEW_AI_WARNING=""
+  export PLAIBOOK_MODEL PLAIBOOK_OPENAI_BASE_URL PLAIBOOK_OPENAI_API_KEY
+  export REVIEW_OLLAMA_COMPAT REVIEW_AI_READY REVIEW_AI_WARNING
 }

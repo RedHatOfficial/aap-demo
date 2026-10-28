@@ -10,6 +10,10 @@ source "$ROOT_DIR/addons/ao-pr-testing/lib/model-config.sh"
 
 grep -Fq 'find_configured_model' "$DEPLOY"
 grep -Fq 'ao_pr_testing_select_model' "$DEPLOY"
+if grep -Fq 'ao_pr_testing_configure_model || die' "$DEPLOY"; then
+  echo 'missing AI provider must not abort addon setup' >&2
+  exit 1
+fi
 if grep -Fq 'PLAIBOOK_MODEL=$(env_value AO_PR_TESTING_PLAIBOOK_MODEL qwen2.5:3b)' "$DEPLOY"; then
   echo 'PR workflow must not require the qwen2.5:3b model by name' >&2
   exit 1
@@ -55,9 +59,14 @@ fi
 [ "$PLAIBOOK_MODEL" = workflow-model ]
 
 AO_LLM_PROVIDER=none
-if ao_pr_testing_configure_model; then
-  echo 'provider none must fail because PR review requires an AI model' >&2
+warning_file=$(mktemp)
+if ! ao_pr_testing_configure_model 2>"$warning_file"; then
+  echo 'provider none should warn without failing setup' >&2
+  rm -f "$warning_file"
   exit 1
 fi
+grep -Fiq 'set up an AI provider' "$warning_file"
+rm -f "$warning_file"
+[ "$REVIEW_AI_READY" = false ]
 
 echo 'ao-pr-testing model configuration is valid'

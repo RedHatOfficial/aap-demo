@@ -42,8 +42,8 @@ old disk-percentage workflow or any unrelated AO demo workflow.
     aap-demo enable ao
     aap-demo enable ao-pr-testing
 
-The addon requires an already-running AO deployment and at least one available
-AI model. The provider defaults to local Ollama, but the PR workflow does not
+The addon works with an already-running AO deployment and an available AI
+provider/model. The provider defaults to local Ollama, but the PR workflow does not
 require a particular model: it uses the explicitly configured model, then the
 provider's AO default, then the first model exposed by that provider. When the
 Ollama addon is installed normally, it pulls and selects `qwen2.5:3b` as that
@@ -121,10 +121,10 @@ checkout password and attached to the plaibook project.
 
 The Ollama addon documents `qwen2.5:3b` as its installation default, but
 `ao-pr-testing` discovers the selected model rather than requiring that name.
-The addon fails during enable if the provider is set to `none` or exposes no
-models, because a model-backed review is required. The discovered PR model is
-the model checked, warmed for Ollama, and passed to Plaibook; it is not
-silently replaced with a different model.
+If no provider or model is configured, setup completes with a warning telling
+you to set up an AI provider; the review workflow remains unavailable until
+then. The discovered PR model is the model checked, warmed for Ollama, and
+passed to Plaibook; it is not silently replaced with a different model.
 This dev addon deliberately runs plaibook sandboxless inside the ephemeral AAP
 execution environment. OpenShell is not deployed or configured by this addon;
 use a separate production-oriented review deployment when per-review sandbox
