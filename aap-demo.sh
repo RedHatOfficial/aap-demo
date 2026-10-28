@@ -197,8 +197,9 @@ for arg in "$@"; do
         COMMAND="$arg"
       fi
       ;;
-    --ai | --reset | --skip-cache | --force | --refresh-catalog | --purge-data | --purge-creds)
-      # Flags for diagnose --ai, destroy --reset, addon deploy.sh options
+    --ai | --reset | --skip-cache | --force | --refresh-catalog | --purge-data | --purge-creds | --no-import)
+      # Flags for diagnose --ai, destroy --reset, addon deploy.sh options.
+      # --no-import is forwarded to Python for: enable fleet --backend kube-native
       EXTRA_ARGS+=("$arg")
       ;;
     add | remove | list)
@@ -553,6 +554,7 @@ Cluster management:
 Addons:
   enable fleet       Enable Fleet managed VMs for demos (requires AAP)
                       Use --backend kube-native for the Python v2 Fleet addon
+                      Add --no-import with that backend to skip AAP registration
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
   enable mcp-server  Enable MCP server for AI assistants
 
@@ -620,7 +622,9 @@ COMMANDS (all infrastructure types):
     v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
     enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
                     Fleet backends: --backend qemu|kube-native
+                    --no-import with --backend kube-native skips AAP registration
     disable [addon] Disable an addon
+                    Fleet: --backend kube-native delegates to the Python addon
     fleet --backend qemu|kube-native|all <action>
     fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
@@ -3447,6 +3451,27 @@ cmd_disable() {
     echo "  ao:       --purge-data  Remove the AO database and saved admin credential"
     echo "  apme-eap: --purge-creds   Remove saved GitHub credentials and private key"
     return 0
+  fi
+
+  if [ "$addon" = "fleet" ]; then
+    case "${FLEET_BACKEND:-qemu}" in
+      kube-native)
+        _fleet_delegate_v2 disable fleet "$@"
+        return
+        ;;
+      qemu)
+        ;;
+      all)
+        _err "Fleet backend 'all' cannot be disabled"
+        echo "  Choose: qemu or kube-native"
+        return 2
+        ;;
+      *)
+        _err "Unknown Fleet backend: ${FLEET_BACKEND}"
+        echo "  Choose: qemu or kube-native"
+        return 2
+        ;;
+    esac
   fi
 
   local addon_dir="${SCRIPT_DIR}/addons/${addon}"
