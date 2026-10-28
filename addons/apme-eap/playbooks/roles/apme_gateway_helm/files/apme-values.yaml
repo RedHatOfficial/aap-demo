@@ -1,9 +1,9 @@
 ---
 # APME gateway — EAP install (same namespace as portal)
-# APME chart 0.1.8 / application release 2026.9.3.
+# APME chart 0.1.10 / application release 2026.10.4 (engine #733, gateway #739 stack).
 image:
   registry: ghcr.io/ansible
-  tag: "2026.9.3"
+  tag: "2026.10.4"
 
 # OpenShift uses the restricted SCC to assign pod security settings.
 platform: openshift
