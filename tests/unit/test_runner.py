@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from aap_demo.core.errors import PrerequisiteError
+from aap_demo.core.errors import AapDemoError, PrerequisiteError
 from aap_demo.core.events import EventEmitter, ListSink
 from aap_demo.exec.runner import (
     CommandFailed,
@@ -117,6 +117,17 @@ def test_real_runner_streams_lines_as_events() -> None:
     runner = SubprocessRunner()
     runner.run([sys.executable, "-c", "print('a'); print('b')"], sink=EventEmitter(sink=sink))
     assert sink.texts("log") == ["a", "b"]
+
+
+def test_real_runner_streaming_enforces_timeout() -> None:
+    sink = ListSink()
+    runner = SubprocessRunner()
+    with pytest.raises(AapDemoError, match="timed out"):
+        runner.run(
+            [sys.executable, "-c", "import time; print('start'); time.sleep(2)"],
+            sink=EventEmitter(sink=sink),
+            timeout=0.1,
+        )
 
 
 def test_env_override_is_merged_not_replaced() -> None:

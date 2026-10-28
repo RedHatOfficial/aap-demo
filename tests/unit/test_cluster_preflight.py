@@ -176,6 +176,15 @@ def test_no_warning_when_the_cluster_is_running(
     assert app_ctx.console.stdout == ""
 
 
+def test_cluster_state_warning_suppressed_for_json_output(
+    app_ctx: AppContext, fake_runner: FakeRunner
+) -> None:
+    app_ctx.output = "json"
+    fake_runner.ok("crc status -o json", stdout='{"crcStatus": "Stopped"}')
+    preflight.warn_cluster_state(app_ctx)
+    assert app_ctx.console.stdout == ""
+
+
 # -- wiring into cli/main.py::run ------------------------------------------
 
 

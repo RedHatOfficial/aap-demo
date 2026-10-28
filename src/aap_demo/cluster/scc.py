@@ -24,6 +24,9 @@ from typing import Callable, List, Optional
 from aap_demo.core.context import AppContext
 
 #: The two SCCs, in the order bash grants them.
+#: Per ADR-012, in single-node MicroShift local development environments,
+#: both anyuid and privileged are required at the namespace ServiceAccount
+#: level for AAP operator and OLM bundle unpack init containers.
 SCCS = ("anyuid", "privileged")
 
 

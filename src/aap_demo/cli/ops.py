@@ -293,8 +293,14 @@ def _fetch_rss(runner: Any) -> str:
     doc's mapping table suggested (``httpx``/``urllib``) but nothing else in
     phase 1 needs.
     """
-    result = runner.run(["curl", "-s", "--connect-timeout", "5", RSS_URL])
-    return result.stdout if result.ok else ""
+    try:
+        result = runner.run(
+            ["curl", "-s", "--connect-timeout", "5", "--max-time", "15", RSS_URL],
+            timeout=15.0,
+        )
+        return result.stdout if result.ok else ""
+    except AapDemoError:
+        return ""
 
 
 def _parse_incidents(rss_content: str) -> List[Dict[str, str]]:

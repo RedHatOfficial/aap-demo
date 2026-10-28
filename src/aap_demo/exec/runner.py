@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -185,11 +186,24 @@ class SubprocessRunner:
             ) from exc
 
         assert proc.stdout is not None
-        for line in proc.stdout:
-            text = line.rstrip("\n")
-            lines.append(text)
-            sink.log(text)
-        proc.wait(timeout=timeout)
+
+        def _reader() -> None:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                text = line.rstrip("\n")
+                lines.append(text)
+                sink.log(text)
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+        try:
+            proc.wait(timeout=timeout)
+            reader_thread.join(timeout=1.0)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.wait()
+            raise AapDemoError(f"command timed out after {timeout}s: {' '.join(args)}") from exc
+
         return CompletedCommand(
             argv=tuple(args), returncode=proc.returncode, stdout="\n".join(lines)
         )

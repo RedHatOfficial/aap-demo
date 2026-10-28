@@ -118,8 +118,10 @@ def warn_cluster_state(ctx: AppContext, runner: Any = None) -> None:
     """Ports ``verify_cluster_type`` (aap-demo.sh:2853-2874).
 
     Bash prints these with plain ``echo`` — stdout — before the command's own
-    output, and never fails on them.
+    output, and never fails on them. Suppressed for structured JSON/YAML output.
     """
+    if ctx.output in ("json", "yaml"):
+        return
     state = infra_crc.get_state(runner if runner is not None else ctx.runner)
     if state == infra_crc.STATE_NOT_CREATED:
         ctx.console.out("WARNING: No cluster exists")

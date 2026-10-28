@@ -100,6 +100,8 @@ class CredentialInfo:
     password: str
 
     def as_dict(self) -> Dict[str, Any]:
+        # Emitting credentials in status is intentional parity with aap-demo.sh:751
+        # for developer login to the local development web UI.
         return {"namespace": self.namespace, "username": self.username, "password": self.password}
 
 

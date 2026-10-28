@@ -270,8 +270,13 @@ def _install_metrics(ctx: AppContext) -> None:
     if ctx.runner.run(["kubectl", "get", "deployment", "metrics-server", "-n", "kube-system"]).ok:
         ctx.console.checkpoint("metrics-server already installed")
         return
-    ctx.runner.run(["kubectl", "apply", "-f", METRICS_SERVER_URL])
-    ctx.runner.run(
+    applied = ctx.runner.run(["kubectl", "apply", "-f", METRICS_SERVER_URL])
+    if not applied.ok:
+        raise AapDemoError(
+            f"Failed to apply metrics-server: {applied.stderr.strip() or applied.stdout.strip()}",
+            hint="Check internet access or install metrics-server manually.",
+        )
+    patched = ctx.runner.run(
         [
             "kubectl",
             "patch",
@@ -285,6 +290,11 @@ def _install_metrics(ctx: AppContext) -> None:
             '"value":"--kubelet-insecure-tls"}]',
         ]
     )
+    if not patched.ok:
+        raise AapDemoError(
+            f"Failed to patch metrics-server: {patched.stderr.strip() or patched.stdout.strip()}",
+            hint="Check cluster status or patch metrics-server manually.",
+        )
     ctx.console.checkpoint("metrics-server installed")
 
 

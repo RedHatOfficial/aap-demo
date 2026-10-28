@@ -60,7 +60,9 @@ def _rename(raw: Dict[str, Any]) -> Dict[str, Any]:
         # Bash builds a *fresh* cluster entry — ``kubectl config set-cluster
         # aap-demo --server=... --insecure-skip-tls-verify=true`` against a
         # name that does not exist yet — then unsets the original
-        # (aap-demo.sh:1653-1657). The result therefore carries the server and
+        # (aap-demo.sh:1653-1657). Insecure TLS verification is intentional
+        # for local CRC / MicroShift 127.0.0.1 self-signed certificates (ADR-010).
+        # The result therefore carries the server and
         # the insecure flag and nothing else: no certificate-authority-data,
         # no file-form ``certificate-authority`` (which kubectl rejects
         # outright next to insecure-skip-tls-verify), no proxy-url, no
