@@ -42,11 +42,23 @@ old disk-percentage workflow or any unrelated AO demo workflow.
     aap-demo enable ao
     aap-demo enable ao-pr-testing
 
-The addon requires an already-running AO deployment with the normal local
-Ollama and AAP integrations. Public GitHub PRs are retrieved by plaibook from
-the AAP Job Template, so a GitHub MCP integration or shared GitHub token is
-not required. Private repositories need explicit AAP credential and plaibook
-wiring; this addon does not copy local GitHub secrets into the cluster.
+The addon requires an already-running AO deployment and at least one available
+AI model. The provider defaults to local Ollama, but the PR workflow does not
+require a particular model: it uses the explicitly configured model, then the
+provider's AO default, then the first model exposed by that provider. When the
+Ollama addon is installed normally, it pulls and selects `qwen2.5:3b` as that
+default. Public GitHub PRs are retrieved by plaibook from the AAP Job Template,
+so a GitHub MCP integration or shared GitHub token is not required. Private
+repositories need explicit AAP credential and plaibook wiring; this addon does
+not copy local GitHub secrets into the cluster.
+
+The selected AO provider is honored by the PR workflow. Set
+`AO_LLM_PROVIDER=external`, `AO_LLM_BASE_URL`, and the normal AO API-key file
+to use another OpenAI-compatible provider; set `AO_LLM_MODEL` when you want a
+specific model instead of that provider's default. The explicit
+`AO_PR_TESTING_PLAIBOOK_MODEL`, `AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL`, and
+`AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY` variables override those values for a
+dedicated PR workflow.
 
 The execution environment defaults can be overridden for a fork or custom
 build:
@@ -107,7 +119,12 @@ When `AO_PR_TESTING_PLAIBOOK_PROJECT_URL` points to a private repository or a
 fork, the same PAT is also stored in an AAP Source Control credential as the
 checkout password and attached to the plaibook project.
 
-The default review model is `qwen2.5:3b` through the local Ollama service.
+The Ollama addon documents `qwen2.5:3b` as its installation default, but
+`ao-pr-testing` discovers the selected model rather than requiring that name.
+The addon fails during enable if the provider is set to `none` or exposes no
+models, because a model-backed review is required. The discovered PR model is
+the model checked, warmed for Ollama, and passed to Plaibook; it is not
+silently replaced with a different model.
 This dev addon deliberately runs plaibook sandboxless inside the ephemeral AAP
 execution environment. OpenShell is not deployed or configured by this addon;
 use a separate production-oriented review deployment when per-review sandbox

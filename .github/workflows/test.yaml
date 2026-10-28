@@ -123,6 +123,9 @@ jobs:
       - name: Run plaibook publication verdict test
         run: bash ./test/test-plaibook-publication.sh
 
+      - name: Run AO PR testing model configuration test
+        run: bash ./test/test-ao-pr-testing-model.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

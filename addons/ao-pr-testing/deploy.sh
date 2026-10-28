@@ -55,9 +55,6 @@ PLAIBOOK_JOB_TEMPLATE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_JOB_TEMPLATE_NAME 
 PLAIBOOK_PUBLISH_JOB_TEMPLATE_NAME=$(env_value AO_PR_TESTING_PLAIBOOK_PUBLISH_JOB_TEMPLATE_NAME 'aap-demo | Publish Plaibook PR Review')
 PLAIBOOK_PUBLISH_PLAYBOOK=$(env_value AO_PR_TESTING_PLAIBOOK_PUBLISH_PLAYBOOK addons/ao-pr-testing/playbooks/publish-plaibook-result.yml)
 PLAIBOOK_JOB_TIMEOUT=$(env_value AO_PR_TESTING_JOB_TIMEOUT 1800)
-PLAIBOOK_MODEL=$(env_value AO_PR_TESTING_PLAIBOOK_MODEL qwen2.5:3b)
-PLAIBOOK_OPENAI_BASE_URL=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL 'http://ollama.aap-demo-ollama.svc.cluster.local:11434/v1')
-PLAIBOOK_OPENAI_API_KEY=$(env_value AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY ollama)
 WEBHOOK_PATH=$(env_value AO_PR_TESTING_WEBHOOK_PATH aap-demo-pr-validation)
 HOME_DIR=$(env_value HOME "$PWD")
 GITHUB_CREDENTIALS_FILE=$(env_value AO_PR_TESTING_GITHUB_CREDENTIALS_FILE "$HOME_DIR/.aap-demo/ao-pr-testing-github-creds.yml")
@@ -88,6 +85,8 @@ ACTION=deploy
 
 export NAMESPACE AO_NAMESPACE
 source "$REPO_ROOT/includes/addon-wire.sh"
+# shellcheck source=lib/model-config.sh
+source "$SCRIPT_DIR/lib/model-config.sh"
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -282,11 +281,12 @@ ensure_plaibook_job_template() {
     --arg source_branch "$PLAIBOOK_SOURCE_BRANCH" \
     --arg aap_route "$aap_route" \
     --arg ao_route "$ao_route" \
+    --argjson ollama_compat "$REVIEW_OLLAMA_COMPAT" \
     '{review_type:"pr",post_results:false,review_comment_enabled:true,
       agent_family:"openai",openai_base_url:$base_url,
       openai_api_key:$api_key,review_openai_model:$model,use_sandbox:false,
       review_explore_enabled:false,
-      review_ollama_compat:true,
+      review_ollama_compat:$ollama_compat,
       review_run_ledger_host:"aap-plaibook",
       plaibook_source_url:$source_url,plaibook_source_branch:$source_branch,
       aap_route_host:$aap_route,ao_route_host:$ao_route}')
@@ -617,24 +617,31 @@ ensure_openshift_credential() {
   unset token
 }
 
-find_ollama_ids() {
-  local ollama_integration
-  ollama_integration=$(wire_ao_find_integration_by_name 'aap-demo Ollama')
-  [ -n "$ollama_integration" ] || die 'AO Ollama integration is missing; enable AO first'
-  OLLAMA_CREDENTIAL_ID=$(wire_ao_find_credential_by_name 'aap-demo Ollama')
-  OLLAMA_MODEL_ID=$(wire_ao_api GET "/integrations/$ollama_integration/models?limit=50" \
-    | wire_ao_list_items | jq -r --arg model "$WIRE_OLLAMA_MODEL" '[.[] | select(.model_id == $model)] | .[0].id // empty')
-  [ -n "$OLLAMA_CREDENTIAL_ID" ] || die 'AO Ollama credential is missing; run aap-demo wire'
-  [ -n "$OLLAMA_MODEL_ID" ] || die "AO Ollama model $WIRE_OLLAMA_MODEL is missing; run aap-demo wire"
+find_configured_model() {
+  local integration_name integration_id models selected_model
+  integration_name=$(wire_ao_llm_integration_name) \
+    || die 'ao-pr-testing requires an AI provider; provider is set to none or is unsupported'
+  integration_id=$(wire_ao_find_integration_by_name "$integration_name")
+  [ -n "$integration_id" ] || die "AO LLM integration is missing: $integration_name"
+  models=$(wire_ao_api GET "/integrations/$integration_id/models?limit=50")
+  selected_model=$(ao_pr_testing_select_model "$models" "${PLAIBOOK_MODEL:-}")
+  [ -n "$selected_model" ] || die "No AI model is available in AO integration: $integration_name"
+  if [ -n "${PLAIBOOK_MODEL:-}" ] && [ "$selected_model" != "$PLAIBOOK_MODEL" ]; then
+    die "Configured PR review model is not available: $PLAIBOOK_MODEL"
+  fi
+  PLAIBOOK_MODEL="$selected_model"
+  export PLAIBOOK_MODEL
+  printf '  PR review model: %s (%s)\n' "$PLAIBOOK_MODEL" "$integration_name"
 }
 
 warm_ollama_model() {
+  [ "${AO_LLM_PROVIDER:-ollama}" = ollama ] || return 0
   [ "$(env_value AO_PR_TESTING_WARM_MODEL true)" = true ] || return 0
-  printf '  Warming Ollama model: %s\n' "$WIRE_OLLAMA_MODEL"
+  printf '  Warming Ollama model: %s\n' "$PLAIBOOK_MODEL"
   kubectl exec -n aap-demo-ollama deploy/ollama -- \
-    ollama run "$WIRE_OLLAMA_MODEL" 'Respond with READY only.' \
+    ollama run "$PLAIBOOK_MODEL" 'Respond with READY only.' \
     >/dev/null 2>&1 \
-    || warn "Could not warm Ollama model $WIRE_OLLAMA_MODEL; AO will load it on demand"
+    || warn "Could not warm Ollama model $PLAIBOOK_MODEL; AO will load it on demand"
 }
 
 find_webhook_service_account() {
@@ -826,6 +833,8 @@ fi
 kubectl cluster-info >/dev/null 2>&1 || die 'Cannot connect to the OpenShift cluster'
 ao_is_ready || die 'Automation Orchestrator is not ready; enable the ao addon first'
 prompt_github_token
+ao_pr_testing_configure_model || die 'Could not configure an AI model for the PR review'
+find_configured_model
 ensure_aap_execution_environment
 ensure_github_credential
 ensure_github_scm_credential
@@ -839,7 +848,6 @@ AO_ACCESS_TOKEN=$(wire_ao_login_token)
 export AO_ACCESS_TOKEN
 OPENSHIFT_INTEGRATION_ID=$(ensure_openshift_integration)
 ensure_openshift_credential
-find_ollama_ids
 warm_ollama_model
 find_webhook_service_account
 mkdir -p "$STATE_DIR"
