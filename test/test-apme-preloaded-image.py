@@ -247,7 +247,7 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["registry"], "registry.example.test")
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
         self.assertEqual(image["digest"], PUSH_DIGEST)
-        self.assertEqual(image["tag"], "")
+        self.assertEqual(image["tag"], "8593383")
         build = next(c for c in commands if c[0] == "build")
         self.assertIn("--build-arg=PLUGIN_PACK_FORMAT=oci", build)
         self.assertIn("--build-arg=PLUGIN_PACK_SHA256=sha256:943f67afce1f9d1852df09b74da0126ef73f861e1ffc066e5196cc3701f341c3", build)
@@ -275,7 +275,7 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["registry"], "registry.example.test")
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
         self.assertEqual(image["digest"], DIGEST)
-        self.assertEqual(image["tag"], "")
+        self.assertEqual(image["tag"], "8593383")
         self.assertEqual([c[0] for c in commands], ["inspect", "run"])
         validation = commands[1]
         self.assertIn("registry.example.test/apme/rhdh-apme-preloaded@" + DIGEST, validation)
