@@ -515,72 +515,6 @@ verify_cluster_type() {
 }
 
 # -----------------------------------------------------------------------------
-# Preflight: mkcert CA check (macOS and Linux)
-# -----------------------------------------------------------------------------
-_path_match_exists() {
-  local _path
-  for _path in "$@"; do
-    [ -e "$_path" ] && return 0
-  done
-  return 1
-}
-
-check_mkcert_ca() {
-  # Skip if mkcert is disabled
-  [ "${AAP_DEMO_MKCERT:-true}" != "true" ] && return 0
-
-  # Skip if mkcert not installed (will be installed during setup)
-  command -v mkcert &>/dev/null || return 0
-
-  local CA_INSTALLED=false
-
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS: check system and login keychains
-    if security find-certificate -a -c "mkcert" /Library/Keychains/System.keychain 2>/dev/null | grep -q "mkcert" \
-      || security find-certificate -a -c "mkcert" ~/Library/Keychains/login.keychain-db 2>/dev/null | grep -q "mkcert"; then
-      CA_INSTALLED=true
-    fi
-  else
-    # Linux: check if CA file exists in system trust store
-    CAROOT="$(mkcert -CAROOT 2>/dev/null)"
-    if [ -f "$CAROOT/rootCA.pem" ]; then
-      # Check if it's been added to system trust
-      if _path_match_exists /etc/ssl/certs/mkcert* \
-        /usr/local/share/ca-certificates/mkcert* \
-        /etc/pki/ca-trust/source/anchors/mkcert*; then
-        CA_INSTALLED=true
-      elif trust list 2>/dev/null | grep -q "mkcert"; then
-        CA_INSTALLED=true
-      elif [ -f "$CAROOT/rootCA.pem" ]; then
-        # CA file exists, assume mkcert -install was run
-        CA_INSTALLED=true
-      fi
-    fi
-  fi
-
-  if [ "$CA_INSTALLED" = false ]; then
-    echo ""
-    echo "  Trusted SSL Setup Required"
-    echo "  --------------------------"
-    echo "  aap-demo uses mkcert to generate locally-trusted SSL certificates."
-    echo "  This eliminates browser security warnings for *.apps.127.0.0.1.nip.io"
-    echo ""
-    echo "  To add the certificate authority to your system trust store, run:"
-    echo ""
-    echo "      mkcert -install"
-    echo ""
-    echo "  You will be prompted for your system administrator password (sudo)."
-    echo "  This is a one-time setup per machine."
-    echo ""
-    echo "  Firefox: Install certutil first (brew install nss / apt install libnss3-tools)"
-    echo ""
-    echo "  To skip trusted SSL: AAP_DEMO_MKCERT=false aap-demo deploy"
-    echo ""
-    exit 1
-  fi
-}
-
-# -----------------------------------------------------------------------------
 # Help
 # -----------------------------------------------------------------------------
 show_welcome() {
@@ -715,7 +649,7 @@ COMMANDS:
     ssh             SSH into cluster node
     repair          Repair cluster after crash
     trust-ca        Repair ingress certificate trust only
-    setup           Run setup only (storage, coredns, mkcert)
+    setup           Run setup only (storage, coredns)
     kubeconfig      Extract and merge kubeconfig
     redeploy-all    Destroy cluster and redeploy fresh
 

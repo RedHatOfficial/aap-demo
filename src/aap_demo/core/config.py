@@ -201,6 +201,12 @@ def resolve(
     data = _deep_merge(data, env_overlay(env))
     if overrides:
         data = _deep_merge(data, overrides)
+    # Older config files saved trust.mkcert. That setting is gone, and a
+    # leftover key would fail validation because the trust section rejects
+    # unknown properties.
+    trust = data.get("trust")
+    if isinstance(trust, dict):
+        trust.pop("mkcert", None)
     core = data.get("core")
     if isinstance(core, dict) and core.get("output") == "text":
         core["output"] = "basic"

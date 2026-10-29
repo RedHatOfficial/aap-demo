@@ -15,14 +15,3 @@ properties:
     x-config: trust.install_ca
     x-gui: {group: trust, widget: switch}
     x-order: 10
-
-  mkcert:
-    type: boolean
-    default: true
-    title: Use mkcert
-    description: Use a mkcert-issued certificate for cluster ingress when mkcert is present.
-    x-cli: {flag: "--no-mkcert"}
-    x-env: AAP_DEMO_MKCERT
-    x-config: trust.mkcert
-    x-gui: {group: trust, widget: switch}
-    x-order: 20

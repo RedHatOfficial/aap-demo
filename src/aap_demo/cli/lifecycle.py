@@ -68,10 +68,10 @@ def redeploy_all(ctx: AppContext, args: argparse.Namespace) -> int:
 def setup(ctx: AppContext, args: argparse.Namespace) -> int:
     """Ports ``cmd_setup`` (aap-demo.sh:2013), which is one ``echo`` and nothing else.
 
-    The help text still advertises "Run setup only (storage, coredns, mkcert)",
-    but that work moved into ``crc-create.sh`` long ago and the command has
-    been a pointer ever since. Porting the *advertised* behavior instead of
-    the actual behavior would invent a command that has never existed.
+    The help text says "Run setup only (storage, coredns)", but that work
+    moved into ``crc-create.sh`` long ago and the command has been a pointer
+    ever since. Porting the advertised behavior instead of the actual
+    behavior would invent a command that has never existed.
     """
     ctx.console.out("CRC setup is handled during 'aap-demo create'")
     return 0

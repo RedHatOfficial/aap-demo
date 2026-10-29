@@ -50,7 +50,6 @@ def healthy(app_ctx, tmp_path, monkeypatch) -> FakeRunner:
     monkeypatch.setattr("shutil.which", _which("kubectl", "oc", "operator-sdk"))
 
     runner = FakeRunner()
-    runner.fail("mkcert")
     # Specific rules first: FakeRunner matches in registration order, so the
     # broad "kubectl get aap" below must not shadow the condition jsonpath.
     runner.ok(

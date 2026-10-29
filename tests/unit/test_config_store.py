@@ -112,8 +112,18 @@ def test_set_coerces_string_values_by_schema_type() -> None:
     config = config_mod.resolve(env={})
     config.set("crc.cpus", "12")
     assert config.get("crc.cpus") == 12
-    config.set("trust.mkcert", "false")
-    assert config.get("trust.mkcert") is False
+    config.set("trust.install_ca", "false")
+    assert config.get("trust.install_ca") is False
+
+
+def test_removed_mkcert_setting_is_dropped(tmp_path: Path) -> None:
+    target = tmp_path / "config.yaml"
+    target.write_text("trust:\n  mkcert: false\n  install_ca: false\n", encoding="utf-8")
+    config = config_mod.load(target, env={})
+    assert config.get("trust.install_ca") is False
+    assert "mkcert" not in config.section("trust")
+    ignored = config_mod.resolve(env={"AAP_DEMO_MKCERT": "false"})
+    assert "mkcert" not in ignored.section("trust")
 
 
 def test_missing_file_resolves_to_defaults(tmp_path: Path) -> None:

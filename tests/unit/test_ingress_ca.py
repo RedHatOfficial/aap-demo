@@ -74,7 +74,6 @@ def test_install_imports_when_the_keychain_does_not_trust_the_ca(
     ca = _cert(tmp_path, "ingress-ca")
     encoded = base64.b64encode(ca.encode()).decode()
     runner = FakeRunner()
-    runner.fail("mkcert")
     runner.ok(
         [
             "kubectl",
@@ -117,7 +116,6 @@ def test_install_is_quiet_when_the_ca_is_already_trusted(
     app_ctx.paths.ingress_ca.write_text(ca, encoding="utf-8")
     encoded = base64.b64encode(ca.encode()).decode()
     runner = FakeRunner()
-    runner.fail("mkcert")
     runner.ok(
         [
             "kubectl",
@@ -152,49 +150,22 @@ def test_status_names_an_untrusted_saved_ca(app_ctx: AppContext, tmp_path: Path)
     assert described["ingress_ca_file"] == str(app_ctx.paths.ingress_ca)
 
 
-def test_mkcert_replaces_the_router_certificate_when_its_ca_is_trusted(
-    app_ctx: AppContext, tmp_path: Path
+def test_install_trusts_the_cluster_ca_when_mkcert_is_missing(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
 ) -> None:
-    root_dir = tmp_path / "mkcert"
-    root_dir.mkdir()
-    root_pem = _cert(tmp_path, "root")
-    (root_dir / "rootCA.pem").write_text(root_pem, encoding="utf-8")
-    leaf = _cert(tmp_path, "leaf")
+    """A missing mkcert binary must not abort before the CRC CA import.
 
-    def issue(argv: tuple[str, ...]):
-        from aap_demo.exec.runner import CompletedCommand
+    ``SubprocessRunner`` raises ``PrerequisiteError`` for a command that is
+    not on PATH. Deploy used to call ``mkcert`` first, so that error stopped
+    the checklist. The cluster CA import is the only path now.
+    """
+    from aap_demo.core.errors import PrerequisiteError
 
-        cert = Path(argv[argv.index("-cert-file") + 1])
-        key = Path(argv[argv.index("-key-file") + 1])
-        cert.write_text(leaf, encoding="utf-8")
-        key.write_text("private-key\n", encoding="utf-8")
-        return CompletedCommand(argv=tuple(argv), returncode=0, stdout="created\n")
-
+    ca = _cert(tmp_path, "ingress-ca")
+    encoded = base64.b64encode(ca.encode()).decode()
     runner = FakeRunner()
-    runner.ok("mkcert -CAROOT", stdout=str(root_dir) + "\n")
-    runner.ok("security verify-cert")
-    runner.register("mkcert -cert-file", issue)
-    runner.ok("kubectl apply -f -")
-    runner.ok("kubectl delete pod")
-    app_ctx.runner = runner
-
-    assert ingress_ca.issue_with_mkcert(app_ctx, system="Darwin") is True
-
-    applied = next(call for call in runner.calls if call.argv[:3] == ("kubectl", "apply", "-f"))
-    assert applied.input is not None
-    assert "tls.crt" in applied.input
-    assert "private-key" in applied.input
-    assert "BEGIN CERTIFICATE" in applied.input
-    assert "Ingress certificate is trusted locally" in app_ctx.console.stdout
-    assert "private-key" not in app_ctx.console.stdout
-    assert runner.called("kubectl delete pod")
-
-
-def test_mkcert_is_skipped_when_disabled(app_ctx: AppContext, tmp_path: Path) -> None:
-    app_ctx.env = {"HOME": str(tmp_path)}
-    app_ctx.config.set("trust.mkcert", False)
-    runner = FakeRunner()
-    runner.fail(
+    runner.register("mkcert", PrerequisiteError("required command not found: mkcert"))
+    runner.ok(
         [
             "kubectl",
             "get",
@@ -204,9 +175,25 @@ def test_mkcert_is_skipped_when_disabled(app_ctx: AppContext, tmp_path: Path) ->
             "openshift-ingress",
             "-o",
             "json",
-        ]
+        ],
+        stdout='{"data":{"tls.crt":"' + encoded + '"}}',
     )
+    runner.ok("sudo cp")
+    runner.ok("sudo update-ca-trust")
     app_ctx.runner = runner
 
-    assert ingress_ca.install(app_ctx, system="Darwin") is False
+    real_is_dir = Path.is_dir
+
+    def is_dir(self: Path) -> bool:
+        if str(self) == "/etc/pki/ca-trust/source/anchors":
+            return True
+        return real_is_dir(self)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+
+    assert ingress_ca.install(app_ctx, system="Linux") is True
     assert not runner.called("mkcert")
+    assert runner.called(["sudo", "cp"])
+    assert runner.called(["sudo", "update-ca-trust"])
+    assert app_ctx.paths.ingress_ca.read_text(encoding="utf-8") == ca
+    assert "kubectl apply" not in " ".join(runner.commands)

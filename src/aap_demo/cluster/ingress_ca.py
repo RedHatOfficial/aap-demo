@@ -13,20 +13,11 @@ import hashlib
 import json
 import platform
 import re
-import shutil
-import tempfile
 from pathlib import Path
 from typing import List, Optional
 
-import yaml
-
 from aap_demo.core.context import AppContext
-from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
-
-#: One label under this suffix, which is what ``*.apps.127.0.0.1.nip.io`` covers.
-NIPIO_SUFFIX = "127.0.0.1.nip.io"
-ROUTER_POD_LABEL = "ingresscontroller.operator.openshift.io/deployment-ingresscontroller=default"
 
 ROUTER_SECRET = "router-certs-default"
 ROUTER_NAMESPACE = "openshift-ingress"
@@ -126,89 +117,18 @@ def system_trusts(ctx: AppContext, path: Path, *, system: Optional[str] = None) 
     return False
 
 
-def issue_with_mkcert(ctx: AppContext, *, system: Optional[str] = None) -> bool:
-    """Serve ingress with a certificate signed by the local mkcert CA.
-
-    That CA is already in the login or system trust store on a machine where
-    ``mkcert -install`` has been run, so the route verifies without a second
-    approval dialog. Returns False when mkcert is absent or its CA is not
-    trusted, and leaves the current router certificate alone.
-    """
-    if not bool(ctx.config.get("trust.mkcert", True)):
-        return False
-    caroot = ctx.runner.run(["mkcert", "-CAROOT"])
-    if not caroot.ok or not caroot.stdout.strip():
-        return False
-    root = Path(caroot.stdout.strip()) / "rootCA.pem"
-    if not root.is_file():
-        return False
-    kind = system or platform.system()
-    if kind == "Darwin" and not system_trusts(ctx, root, system=kind):
-        return False
-    work = Path(tempfile.mkdtemp(prefix="aap-ingress-"))
-    cert_path = work / "tls.crt"
-    key_path = work / "tls.key"
-    try:
-        issued = ctx.runner.run(
-            [
-                "mkcert",
-                "-cert-file",
-                str(cert_path),
-                "-key-file",
-                str(key_path),
-                f"*.apps.{NIPIO_SUFFIX}",
-                f"apps.{NIPIO_SUFFIX}",
-            ]
-        )
-        if not issued.ok or not cert_path.is_file() or not key_path.is_file():
-            return False
-        chain = cert_path.read_text(encoding="utf-8")
-        root_pem = root.read_text(encoding="utf-8")
-        if "BEGIN CERTIFICATE" not in chain:
-            return False
-        if root_pem.strip() not in chain:
-            chain = chain.rstrip() + "\n" + root_pem
-            if not chain.endswith("\n"):
-                chain += "\n"
-        secret = {
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "metadata": {"name": ROUTER_SECRET, "namespace": ROUTER_NAMESPACE},
-            "type": "Opaque",
-            "stringData": {"tls.crt": chain, "tls.key": key_path.read_text(encoding="utf-8")},
-        }
-        applied = kubectl.apply_stdin(ctx.runner, yaml.safe_dump(secret))
-        if not applied.ok:
-            return False
-        ctx.runner.run(
-            [
-                "kubectl",
-                "delete",
-                "pod",
-                "-n",
-                ROUTER_NAMESPACE,
-                "-l",
-                ROUTER_POD_LABEL,
-                "--wait=false",
-            ]
-        )
-        ctx.console.checkpoint("Ingress certificate is trusted locally")
-        return True
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
 def install(ctx: AppContext, *, system: Optional[str] = None) -> bool:
-    """Prefer a mkcert ingress certificate, otherwise trust CRC's ingress CA.
+    """Import the cluster ingress CA into the OS trust store.
 
-    Returns True when the certificate the router will present is trusted.
-    A missing router secret is quiet: create can run this before ingress
-    exists, and deploy will try again.
+    The CA is the one CRC already issued for the router. Bash deploy trusts
+    that same certificate in ``install_ingress_ca_trust`` and leaves the
+    router secret alone.
+
+    Returns True when that CA is trusted. A missing router secret is quiet:
+    create can run this before ingress exists, and deploy will try again.
     """
     if not _enabled(ctx):
         return False
-    if issue_with_mkcert(ctx, system=system):
-        return True
     pem = fetch_cluster_ca(ctx)
     if pem is None:
         return False

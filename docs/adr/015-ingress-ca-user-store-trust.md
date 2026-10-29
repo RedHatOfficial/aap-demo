@@ -164,7 +164,7 @@ When already trusted, commands stay silent. Import failures are warnings only â€
 ### Neutral
 
 - Ingress CA trust is orthogonal to CoreDNS nip.io resolution (ADR-007)
-- mkcert for other local certs is separate (`aap-demo.sh` preflight messaging)
+- Deploy trusts the cluster ingress CA. It does not install or require mkcert.
 - Windows `curl.exe` may still need `--ssl-no-revoke` for Schannel revocation checks
 
 ## Alternatives Considered

@@ -178,3 +178,16 @@ def test_schema_only_properties_have_no_flag(all_options: Dict[str, List[argpars
         assert f"{section_name}__{key}" not in all_options, (
             f"{section_name}.{key} carries x-cli: false but has an argparse argument"
         )
+
+
+def test_mkcert_is_not_a_setting(all_options: Dict[str, List[argparse.Action]]) -> None:
+    assert "mkcert" not in schema.section("trust")["properties"]
+    assert "AAP_DEMO_MKCERT" not in schema.env_map()
+    flags = {
+        flag
+        for actions in all_options.values()
+        for action in actions
+        for flag in action.option_strings
+    }
+    assert "--no-mkcert" not in flags
+    assert "--mkcert" not in flags
