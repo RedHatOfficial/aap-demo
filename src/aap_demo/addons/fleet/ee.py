@@ -7,10 +7,17 @@ or the Galaxy collections.
 from __future__ import annotations
 
 import json
+from typing import Any, Dict, cast
 
 from aap_demo.addons.fleet.gateway import aap_namespace
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return cast(Dict[str, Any], value)
+    return {}
 
 
 def discover_image(ctx: AppContext) -> str:
@@ -103,7 +110,7 @@ def _has_trusted_container(payload: str) -> bool:
     for item in _items(payload):
         if not _running(item):
             continue
-        spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
+        spec = _as_dict(item.get("spec"))
         containers = spec.get("containers")
         if not isinstance(containers, list):
             continue
@@ -113,14 +120,14 @@ def _has_trusted_container(payload: str) -> bool:
 
 
 def _template_ee(deploy: dict) -> str:
-    spec = deploy.get("spec") if isinstance(deploy.get("spec"), dict) else {}
-    template = spec.get("template") if isinstance(spec.get("template"), dict) else {}
-    pod_spec = template.get("spec") if isinstance(template.get("spec"), dict) else {}
+    spec = _as_dict(deploy.get("spec"))
+    template = _as_dict(spec.get("template"))
+    pod_spec = _as_dict(template.get("spec"))
     return _container_ee(pod_spec.get("containers"))
 
 
 def _pod_ee(pod: dict) -> str:
-    spec = pod.get("spec") if isinstance(pod.get("spec"), dict) else {}
+    spec = _as_dict(pod.get("spec"))
     return _container_ee(spec.get("containers"))
 
 
@@ -145,12 +152,12 @@ def _items(payload: str) -> list:
 
 
 def _name(item: dict) -> str:
-    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    meta = _as_dict(item.get("metadata"))
     return str((meta or {}).get("name") or "")
 
 
 def _owner_ref(item: dict, kind: str) -> dict:
-    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    meta = _as_dict(item.get("metadata"))
     refs = meta.get("ownerReferences")
     if not isinstance(refs, list):
         return {}
@@ -169,15 +176,15 @@ def _linked(child: dict, parents: dict, kind: str) -> bool:
     ref_uid = str(ref.get("uid") or "")
     if not isinstance(parent, dict) or not ref_uid:
         return False
-    meta = parent.get("metadata") if isinstance(parent.get("metadata"), dict) else {}
+    meta = _as_dict(parent.get("metadata"))
     return ref_uid == str((meta or {}).get("uid") or "")
 
 
 def _running(pod: dict) -> bool:
-    meta = pod.get("metadata") if isinstance(pod.get("metadata"), dict) else {}
+    meta = _as_dict(pod.get("metadata"))
     if meta.get("deletionTimestamp"):
         return False
-    status = pod.get("status") if isinstance(pod.get("status"), dict) else {}
+    status = _as_dict(pod.get("status"))
     if status.get("phase") != "Running":
         return False
     conditions = status.get("conditions")

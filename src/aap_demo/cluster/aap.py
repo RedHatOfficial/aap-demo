@@ -29,7 +29,7 @@ import base64
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import yaml
 
@@ -37,6 +37,19 @@ from aap_demo import data
 from aap_demo.core import waiting
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import UsageError
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return cast(Dict[str, Any], value)
+    return {}
+
+
+def _as_list(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return cast(List[Any], value)
+    return []
+
 
 #: ``cr_name="${CR:-minimal}"`` (aap-demo.sh:2429).
 DEFAULT_CR = "minimal"
@@ -594,7 +607,7 @@ def _status_detail(conditions: List[Dict[str, Any]], pending: List[str]) -> str:
 def build_component_rows(
     spec: Dict[str, Any],
     platform_conditions: List[Dict[str, Any]],
-    children: Dict[str, List[Dict[str, Any]]],
+    children: Dict[str, Optional[List[Dict[str, Any]]]],
     deploy_table: str,
 ) -> List[Tuple[str, str, str]]:
     """``(name, state, detail)`` for each enabled component."""
@@ -652,9 +665,9 @@ def _component_rows(ctx: AppContext, namespace: str) -> Optional[List[Tuple[str,
     document = _aap_named(items, instance_name(ctx, namespace) or "aap")
     if document is None:
         return None
-    spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
-    status = document.get("status") if isinstance(document.get("status"), dict) else {}
-    raw_conditions = status.get("conditions") if isinstance(status.get("conditions"), list) else []
+    spec = _as_dict(document.get("spec"))
+    status = _as_dict(document.get("status"))
+    raw_conditions = _as_list(status.get("conditions"))
     conditions = [item for item in raw_conditions if isinstance(item, dict)]
     if successful_condition(ctx, namespace) == "True":
         conditions = [item for item in conditions if item.get("type") != "Successful"]

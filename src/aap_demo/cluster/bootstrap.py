@@ -483,13 +483,13 @@ def create(
         ctx.console.progress("Running CRC setup...")
         ctx.runner.run(["crc", "setup"], sink=ctx.console.log_sink())
 
-    for key, value in (
+    for setting, value in (
         ("cpus", str(vm_cpus)),
         ("memory", str(vm_memory)),
         ("disk-size", str(disk_gb)),
         ("persistent-volume-size", str(pv_gb)),
     ):
-        ctx.runner.run(["crc", "config", "set", key, value])
+        ctx.runner.run(["crc", "config", "set", setting, value])
     ctx.console.progress(
         f"Resources: {vm_cpus} CPUs, {vm_memory // 1024}GB RAM, "
         f"{disk_gb}GB disk ({pv_gb}GB for PVs)"

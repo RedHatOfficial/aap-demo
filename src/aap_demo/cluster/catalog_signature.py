@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from aap_demo.core import waiting
 from aap_demo.core.context import AppContext
@@ -492,7 +492,12 @@ def wait_for_catalog_ready(
     recovery sleeps go through the injected ``sleep`` too.
     """
     budget = timeout if timeout is not None else timeout_seconds(ctx)
-    state = {"signature_fix": False, "pod_restart": False, "outcome": TIMEOUT, "detail": []}
+    state: Dict[str, Any] = {
+        "signature_fix": False,
+        "pod_restart": False,
+        "outcome": TIMEOUT,
+        "detail": [],
+    }
 
     def attempt(_n: int) -> bool:
         if catalog_state(ctx, namespace, catalog_name=catalog_name) == "READY":

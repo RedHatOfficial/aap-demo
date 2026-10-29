@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Any, Dict, cast
 
 from aap_demo.addons.fleet import images, runner, sshkey
 from aap_demo.addons.fleet.ee import discover_image
@@ -20,6 +21,12 @@ from aap_demo.addons.fleet.state import (
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, AddonError, UsageError
 from aap_demo.core.output import is_structured, render
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return cast(Dict[str, Any], value)
+    return {}
 
 
 class FleetAddon:
@@ -232,12 +239,12 @@ def _pod_rows(payload: str) -> list:
     for item in items:
         if not isinstance(item, dict):
             continue
-        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-        labels = meta.get("labels") if isinstance(meta.get("labels"), dict) else {}
+        meta = _as_dict(item.get("metadata"))
+        labels = _as_dict(meta.get("labels"))
         name = str(labels.get("app.kubernetes.io/instance") or meta.get("name") or "")
         os_id = str(labels.get("aap-demo/os") or "")
         ready = "no"
-        status = item.get("status") if isinstance(item.get("status"), dict) else {}
+        status = _as_dict(item.get("status"))
         for condition in status.get("conditions") or []:
             if (
                 isinstance(condition, dict)

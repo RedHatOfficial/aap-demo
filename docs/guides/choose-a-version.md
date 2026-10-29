@@ -36,4 +36,5 @@ The next deploy uses the saved channel. Set it back with:
 aap-demo config set deploy.channel stable-2.7
 ```
 
-The default, if you never set one, is `stable-2.7`. Any channel name the catalog publishes is accepted. If the name is wrong, the install fails when it cannot find that line.
+The default, if you never set one, is `stable-2.7`. Any channel name the catalog publishes is accepted.
+If the name is wrong, the install fails when it cannot find that line.

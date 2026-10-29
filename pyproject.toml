@@ -40,7 +40,9 @@ desktop = ["aap-demo[gui]", "toga>=0.4.7"]
 dev = [
     "pytest>=8",
     "pytest-cov",
-    "mypy",
+    # mypy 2 rejects python_version 3.9, which is still the floor below.
+    "mypy>=1.19.1,<2",
+    "types-jsonschema",
     "ruff",
     "commitizen",
     "types-PyYAML",

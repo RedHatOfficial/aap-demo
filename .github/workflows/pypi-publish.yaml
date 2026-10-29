@@ -3,11 +3,12 @@ name: Publish to PyPI
 # Publishes the development release that reserves the aap-demo name.
 # 2.0.0.dev0 is not installed by `pip install aap-demo`.
 # A push publishes only when src/aap_demo/__init__.py changes, because PyPI
-# keeps each version forever. The first upload is workflow_dispatch.
+# keeps each version forever. Publish from main. That is where this workflow
+# lands with the v2 cutover. The first upload is workflow_dispatch.
 on:
   workflow_dispatch:
   push:
-    branches: [v2]
+    branches: [main]
     paths:
       - src/aap_demo/__init__.py
 

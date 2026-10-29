@@ -85,3 +85,6 @@ jobs:
 
       - name: Ruff format check
         run: python -m ruff format --check src tests
+
+      - name: Mypy
+        run: python -m mypy src

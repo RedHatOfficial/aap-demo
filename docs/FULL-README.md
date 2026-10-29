@@ -109,9 +109,11 @@ pip install aap-demo
 uv tool install aap-demo
 ```
 
-This installs the published release of the v2 beta. Check out `v2` only if you are changing the code. If you already installed from the git URL, switch with `pipx install --force aap-demo`.
+This installs the published release of the v2 beta. Check out `v2` only if you are changing the code.
+If you already installed from the git URL, switch with `pipx install --force aap-demo`.
 
-`./install.sh` links `~/.local/bin/aap-demo` to the bash script. pipx installs v2 at that same path, so move or remove the old command before installing v2.
+`./install.sh` links `~/.local/bin/aap-demo` to the bash script. pipx installs v2 at that same path,
+so move or remove the old command before installing v2.
 
 ```bash
 mv ~/.local/bin/aap-demo ~/.local/bin/aap-demo-v1

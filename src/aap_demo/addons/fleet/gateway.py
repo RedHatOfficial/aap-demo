@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import json
+from typing import Any, Dict, cast
 
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return cast(Dict[str, Any], value)
+    return {}
 
 
 def aap_namespace(ctx: AppContext) -> str:
@@ -58,10 +65,10 @@ def _operator_gateway_pods(ctx: AppContext, namespace: str) -> dict:
     }
     pods = {}
     for name, item in _named(ctx, "pods", namespace):
-        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        meta = _as_dict(item.get("metadata"))
         uid = str(meta.get("uid") or "")
         replica_set = str(_owner_ref(item, "ReplicaSet").get("name") or "")
-        labels = meta.get("labels") if isinstance(meta.get("labels"), dict) else {}
+        labels = _as_dict(meta.get("labels"))
         if not uid or not name.startswith(f"{replica_set}-"):
             continue
         if replica_set not in owned_sets or not _linked(item, replica_sets, "ReplicaSet"):
@@ -91,8 +98,8 @@ def _route_for_pods(ctx: AppContext, namespace: str, pods: dict) -> str:
         return ""
     hosts = []
     for item in _items(ctx, "route", namespace):
-        spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
-        target = spec.get("to") if isinstance(spec.get("to"), dict) else {}
+        spec = _as_dict(item.get("spec"))
+        target = _as_dict(spec.get("to"))
         if str(target.get("name") or "") not in services:
             continue
         host = str(spec.get("host") or "").strip()
@@ -124,7 +131,7 @@ def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> dict:
         for address in subset.get("addresses") or []:
             if not isinstance(address, dict):
                 continue
-            target = address.get("targetRef") if isinstance(address.get("targetRef"), dict) else {}
+            target = _as_dict(address.get("targetRef"))
             name = str(target.get("name") or "")
             uid = str(target.get("uid") or "")
             if target.get("kind") != "Pod" or not name or not uid:
@@ -135,14 +142,14 @@ def _endpoint_pods(ctx: AppContext, namespace: str, service: str) -> dict:
 
 def _named(ctx: AppContext, kind: str, namespace: str):
     for item in _items(ctx, kind, namespace):
-        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        meta = _as_dict(item.get("metadata"))
         name = str(meta.get("name") or "")
         if name:
             yield name, item
 
 
 def _owner_ref(item: dict, kind: str) -> dict:
-    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    meta = _as_dict(item.get("metadata"))
     refs = meta.get("ownerReferences")
     if not isinstance(refs, list):
         return {}
@@ -163,28 +170,28 @@ def _linked(child: dict, parents: dict, kind: str) -> bool:
     ref_uid = str(ref.get("uid") or "")
     if not isinstance(parent, dict) or not ref_uid:
         return False
-    meta = parent.get("metadata") if isinstance(parent.get("metadata"), dict) else {}
+    meta = _as_dict(parent.get("metadata"))
     return ref_uid == str((meta or {}).get("uid") or "")
 
 
 def _match_labels(item: dict) -> dict:
-    spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
-    selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
-    labels = selector.get("matchLabels") if isinstance(selector.get("matchLabels"), dict) else {}
+    spec = _as_dict(item.get("spec"))
+    selector = _as_dict(spec.get("selector"))
+    labels = _as_dict(selector.get("matchLabels"))
     return labels
 
 
 def _service_selector(item: dict) -> dict:
-    spec = item.get("spec") if isinstance(item.get("spec"), dict) else {}
-    selector = spec.get("selector") if isinstance(spec.get("selector"), dict) else {}
+    spec = _as_dict(item.get("spec"))
+    selector = _as_dict(spec.get("selector"))
     return selector
 
 
 def _ready(item: dict) -> bool:
-    meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    meta = _as_dict(item.get("metadata"))
     if meta.get("deletionTimestamp"):
         return False
-    status = item.get("status") if isinstance(item.get("status"), dict) else {}
+    status = _as_dict(item.get("status"))
     if status.get("phase") != "Running":
         return False
     conditions = status.get("conditions")

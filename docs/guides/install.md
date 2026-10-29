@@ -33,7 +33,8 @@ pip install 'aap-demo==2.0.0.dev1'
 uv tool install aap-demo
 ```
 
-If a plain `pip install aap-demo` says it cannot find a version, use the `2.0.0.dev1` line above. pip often skips beta versions unless you name them.
+If a plain `pip install aap-demo` says it cannot find a version, use the `2.0.0.dev1` line above.
+pip often skips beta versions unless you name them.
 
 ## Update
 
@@ -46,16 +47,19 @@ That upgrades the pipx install. It does not rebuild your cluster.
 
 ## If an older aap-demo is already on this computer
 
-The older installer puts a bash script on your `PATH` at `~/.local/bin/aap-demo`. pipx wants that same spot. Move the old command out of the way first:
+The older installer puts a bash script on your `PATH` at `~/.local/bin/aap-demo`. pipx wants that same spot.
+Move the old command out of the way first:
 
 ```bash
 mv ~/.local/bin/aap-demo ~/.local/bin/aap-demo-v1
 pipx install aap-demo
 ```
 
-Keep `aap-demo-v1` if you still need a feature the new command does not have. See [The older command](older-command.md).
+Keep `aap-demo-v1` if you still need a feature the new command does not have.
+See [The older command](older-command.md).
 
-If both are installed and the bash one still runs, the new command will offer to rename it. Set `AAP_DEMO_KEEP_BASH=1` if you want that prompt skipped.
+If both are installed and the bash one still runs, the new command will offer to rename it.
+Set `AAP_DEMO_KEEP_BASH=1` if you want that prompt skipped.
 
 ## Remove the command
 
