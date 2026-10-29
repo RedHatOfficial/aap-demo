@@ -19,6 +19,22 @@ grep -q 'aap-demo-ao' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: AO client missing"
   exit 1
 }
+grep -q 'oidc-audience-mapper' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: OIDC audience mapper missing"
+  exit 1
+}
+grep -q 'included.client.audience' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: client audience mapper must target the client"
+  exit 1
+}
+grep -q 'oidc-usermodel-property-mapper' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: OIDC username/profile mappers missing"
+  exit 1
+}
+grep -q 'preferred_username' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: preferred_username claim missing"
+  exit 1
+}
 grep -q 'KC_BOOTSTRAP_ADMIN_PASSWORD' "$ROOT_DIR/addons/keycloak/keycloak.yaml" || {
   echo "FAIL: admin secret not wired"
   exit 1
@@ -49,6 +65,14 @@ grep -q 'aap-oidc-auditor' "$ROOT_DIR/aap-demo.sh" || {
 }
 grep -q 'aap-oidc-developer' "$ROOT_DIR/aap-demo.sh" || {
   echo "FAIL: status developer missing"
+  exit 1
+}
+grep -q 'firstName: "AAP OIDC"' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: generated users must have profile first names"
+  exit 1
+}
+grep -q 'lastName: "Admin"' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: generated users must have profile last names"
   exit 1
 }
 grep -q "tr -d '\\\\r\\\\n'" "$ROOT_DIR/addons/keycloak/deploy.sh" || {

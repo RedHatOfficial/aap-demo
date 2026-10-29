@@ -70,4 +70,17 @@ if grep -Eq 'aap-client-test-value|aap-admin-test' "$CURL_LOG"; then
   exit 1
 fi
 
+if grep -q 'csrf_token' "$ROOT_DIR/addons/keycloak/configure.sh"; then
+  echo "FAIL: AO login must use the same CSRF-free API flow as addon wiring"
+  exit 1
+fi
+if ! grep -q 'scopes:"openid"' "$ROOT_DIR/addons/keycloak/configure.sh"; then
+  echo "FAIL: AO must request only the universally valid OIDC scope"
+  exit 1
+fi
+if ! grep -q 'scopes=\$scopes' "$ROOT_DIR/addons/keycloak/configure.sh"; then
+  echo "FAIL: AO updates must apply the current desired scopes"
+  exit 1
+fi
+
 echo "PASS: mocked Keycloak AAP configure and group mapping"
