@@ -1,6 +1,8 @@
 # v2 to main
 
-This note is the install and state-path record for proposing the Python beta on `v2` as `main`. It does not change either install. The package version stays `2.0.0.dev1`.
+People installing the product should start at the [guides](guides/index.md), not here. This note is the install and state-path record for proposing the Python beta on `v2` as `main`. It does not change either install. The package version stays `2.0.0.dev1`.
+
+As of 28 October 2026 the draft pull request into `main` is [#264](https://github.com/RedHatOfficial/aap-demo/pull/264). The fleet flag work in [#261](https://github.com/RedHatOfficial/aap-demo/pull/261) is already merged.
 
 `main` at `55ff2dd` is the bash release. `v2` at `8726739` is the Python beta. Those commits are the baseline for this note. Later commits on `v2` do not move the paths below.
 
