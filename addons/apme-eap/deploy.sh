@@ -588,6 +588,18 @@ generate_vars_file() {
   local skip_plugin_push_value=false
   local apme_oci_push_force_value=false
   local preloaded_ref preloaded_secret preloaded_auth preloaded_verify
+  local podman_connection=""
+  local registry_service_ip=""
+  local registry_push_registry=""
+  if command -v podman >/dev/null 2>&1 \
+    && podman system connection list --format '{{.Name}}' 2>/dev/null | grep -qx aap-demo; then
+    podman_connection=aap-demo
+  fi
+  registry_service_ip=$(kubectl get svc registry -n aap-demo-registry \
+    -o jsonpath='{.spec.clusterIP}' 2>/dev/null || true)
+  if [ -n "$registry_service_ip" ]; then
+    registry_push_registry="${registry_service_ip}:5000/apme"
+  fi
   preloaded_ref=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_ref '""')
   preloaded_secret=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_pull_secret '""')
   preloaded_auth=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_auth_file '""')
@@ -730,6 +742,8 @@ EOF
 # OCI registry configuration for chart-native runtime plugin installation
 oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
 oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
+apme_image_build_podman_connection: "${podman_connection}"
+apme_image_build_push_registry: "${registry_push_registry}"
 skip_plugin_push: ${skip_plugin_push_value}
 apme_oci_push_force: ${apme_oci_push_force_value}
 
