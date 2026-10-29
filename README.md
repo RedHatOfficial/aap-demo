@@ -1,16 +1,16 @@
 # AAP Demo Quick Start
 
-**v2 is a beta.** This branch is the Python rewrite. It is not an official release. The supported release line remains `main`. The package version stays `2.0.0.dev1`.
+**Python beta, `2.0.0.dev1`.** This is the line in the `v2` → `main` cutover. It is not stable `2.0.0`. The bash release on today's `main` stays until that cutover, and `aap-demo.sh` stays in the tree until Phase 8.
 
-Deploy AAP 2.7 to a local MicroShift cluster.
+Deploy Ansible Automation Platform 2.7 to a local MicroShift cluster.
 
 ## SECURITY NOTICE — DEVELOPMENT ENVIRONMENT ONLY
 
 **aap-demo is a local development tool and must never be used in production.**
 
-Install and state paths for the `v2` to `main` cutover are in [docs/v2-to-main.md](docs/v2-to-main.md).
+Install paths for both lines are in [docs/v2-to-main.md](docs/v2-to-main.md).
 
-## Install
+## Install the Python beta
 
 Python 3.9 or newer. [pipx](https://pipx.pypa.io/) keeps the command isolated:
 
@@ -26,7 +26,7 @@ aap-demo version
 pip install 'aap-demo==2.0.0.dev1'
 ```
 
-Check out `v2` only to change the code. `./install.sh` on this branch still links `~/.local/bin/aap-demo` to the bash script. Move that command before installing the Python one:
+State lives under `~/.local/state/aap-demo`, not `~/.aap-demo`. A checkout is only for changing the code. `./install.sh` still links `~/.local/bin/aap-demo` to `aap-demo.sh`, so move that bash command before pipx or the bash launcher wins:
 
 ```bash
 mv ~/.local/bin/aap-demo ~/.local/bin/aap-demo-v1
@@ -34,6 +34,20 @@ pipx install aap-demo
 ```
 
 If a bash `aap-demo` is still earlier on `PATH`, the first Python command asks whether to uninstall it or rename it to `aap-demo-v1`. `AAP_DEMO_KEEP_BASH=1` skips that prompt.
+
+### Bash release, until Phase 8
+
+Today's `main` installs from a checkout:
+
+```bash
+git clone https://github.com/RedHatOfficial/aap-demo.git
+cd aap-demo
+./install.sh
+mkdir -p ~/.aap-demo
+cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
+```
+
+That kubeconfig is `~/.aap-demo/kubeconfig.microshift` and is not merged into `~/.kube/config`. `aap-demo update` on that line is `git pull` plus `./install.sh`. Bash `enable fleet` is the QEMU addon. Details and the Phase 8 boundary are in [docs/v2-to-main.md](docs/v2-to-main.md).
 
 ## Pull secret and kubeconfig
 
@@ -105,7 +119,7 @@ aap-demo fleet destroy
 
 Any other name, including `portal`, `ao`, `mcp-server`, and `local-cache`, raises `unknown addon '...'; only fleet is implemented`.
 
-Those addons still install from the bash launcher (`aap-demo-v1`, or `aap-demo.sh` on this branch). Bash `enable fleet` stays the QEMU addon unless the command passes `--backend kube-native`.
+Those addons still install from the bash command (`aap-demo-v1` or `aap-demo.sh`). Bash `enable fleet` stays the QEMU addon unless the command passes `--backend kube-native`.
 
 ## Commands
 
@@ -127,7 +141,7 @@ aap-demo update              # pipx upgrade aap-demo
 aap-demo version             # 2.0.0.dev1
 ```
 
-`redeploy-all`, `addon`, `playbooks`, `gui`, and `completion` are accepted and exit not implemented. Use the bash command for those until they are ported.
+`redeploy-all`, `addon`, `playbooks`, `gui`, and `completion` are accepted and exit not implemented. Use the bash command for those until they are ported. Removing the bash tree is Phase 8, not this cutover.
 
 ## Environment
 
@@ -140,7 +154,7 @@ NAMESPACE=aap-operator       # legacy name of AAP_DEMO_NAMESPACE
 QUIET=true
 ```
 
-Config file: `~/.config/aap-demo/config.yaml`. `AAP_DEMO_DIR` collapses config, state, and cache under one directory.
+Config file: `~/.config/aap-demo/config.yaml`. `AAP_DEMO_DIR` collapses config, state, and cache under one directory. That is the escape hatch for CI, not the path for a normal install.
 
 ## Clean up
 
@@ -152,6 +166,6 @@ pipx uninstall aap-demo
 
 ## Documentation
 
-- **[v2 to main](docs/v2-to-main.md)** — install and state paths for this cutover
+- **[v2 to main](docs/v2-to-main.md)** — bash `main` and Python beta install paths for the cutover
 - **[Architecture decision records](docs/adr/)** — design history
 - **[Contributing](docs/CONTRIBUTING.md)**
