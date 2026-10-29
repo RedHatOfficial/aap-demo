@@ -57,3 +57,4 @@ aap-demo destroy    # delete the cluster
 ```
 
 `destroy --reset` also clears your saved settings file. `aap-demo redeploy` removes AAP and installs it again.
+`aap-demo redeploy-all` deletes the cluster, creates it again, and installs AAP.

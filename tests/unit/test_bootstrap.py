@@ -384,3 +384,57 @@ def test_nipio_restart_stays_under_the_domain_step(app_ctx, tmp_path) -> None:
         "Waiting for the MicroShift API",
     ]
     assert "Restarting MicroShift with the nip.io domain" in app_ctx.console.stdout
+
+
+def test_create_stops_when_crc_setup_fails(app_ctx, tmp_path) -> None:
+    """CRC 2.64 setup needs sudo setcap. A failed setup must not continue."""
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    runner._rules.insert(
+        0,
+        (
+            ("crc", "setup"),
+            CompletedCommand(
+                argv=("crc", "setup"),
+                returncode=1,
+                stderr="sudo: a password is required\n",
+            ),
+        ),
+    )
+
+    try:
+        bootstrap.create(
+            app_ctx,
+            sleep=lambda _s: None,
+            host=(8, 32768),
+            which=lambda name: "/bin/" + name,
+        )
+    except AapDemoError as exc:
+        assert "crc setup failed" in exc.message
+        hint = exc.hint or ""
+        assert "CAP_NET_BIND_SERVICE" in hint
+        assert "setcap" in hint
+        assert "CRC_VERSION=4.21" in hint
+        assert "does not grant" in hint
+    else:
+        raise AssertionError("failed crc setup must stop create")
+
+    assert not runner.called("crc start")
+    assert not any("setcap" in command for command in runner.commands)
+
+
+def test_create_keeps_an_older_bundle_when_config_lowers_the_floor(app_ctx, tmp_path) -> None:
+    runner = _prepare(
+        app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}', microshift="4.21.0"
+    )
+    app_ctx.env.pop("CRC_VERSION", None)
+    app_ctx.config.set("crc.version", "4.21")
+
+    bootstrap.create(
+        app_ctx,
+        sleep=lambda _s: None,
+        host=(8, 32768),
+        which=lambda name: "/bin/" + name,
+    )
+
+    assert "Installing CRC" not in app_ctx.console.stdout
+    assert runner.called("crc setup")

@@ -481,7 +481,22 @@ def create(
     vm_cpus, vm_memory, disk_gb, pv_gb = _resources(ctx)
     if state == infra_crc.STATE_NOT_CREATED:
         ctx.console.progress("Running CRC setup...")
-        ctx.runner.run(["crc", "setup"], sink=ctx.console.log_sink())
+        setup = ctx.runner.run(["crc", "setup"], sink=ctx.console.log_sink())
+        if not setup.ok:
+            release = infra_crc.managed_crc_release()
+            raise AapDemoError(
+                f"crc setup failed for CRC {release}",
+                hint=(
+                    "crc setup uses sudo to run setcap cap_net_bind_service=+ep "
+                    "on the crc binary (CAP_NET_BIND_SERVICE) so CRC can bind low "
+                    "ports without staying root. aap-demo does not grant that "
+                    "capability. Run `crc setup` in a terminal where sudo can "
+                    "prompt, then `aap-demo create` again. To keep an older CRC "
+                    "that is already installed, lower the MicroShift floor for "
+                    "this command: CRC_VERSION=4.21 aap-demo create. That is the "
+                    "same override `aap-demo deploy` accepts."
+                ),
+            )
 
     for setting, value in (
         ("cpus", str(vm_cpus)),

@@ -193,6 +193,7 @@ def test_gateway_replicas_are_forced_to_one_before_the_capability_patch(app_ctx)
     patches = [c.argv[-1] for c in runner.calls if c.argv[:3] == ("kubectl", "patch", "deployment")]
     assert '"replicas":1' in patches[0]
     assert "NET_BIND_SERVICE" in patches[1]
+    assert "supplementalGroups" in patches[1]
 
 
 def test_gateway_already_patched_is_left_alone(app_ctx) -> None:
@@ -212,8 +213,30 @@ def test_gateway_already_patched_is_left_alone(app_ctx) -> None:
         stdout="1",
     )
     runner.ok(
-        ["kubectl", "get", "deployment", "aap-gateway", "-n", NS, "-o"],
+        [
+            "kubectl",
+            "get",
+            "deployment",
+            "aap-gateway",
+            "-n",
+            NS,
+            "-o",
+            'jsonpath={.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}',
+        ],
         stdout='["NET_BIND_SERVICE"]',
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "deployment",
+            "aap-gateway",
+            "-n",
+            NS,
+            "-o",
+            "jsonpath={.spec.template.spec.securityContext.supplementalGroups}",
+        ],
+        stdout="[0]",
     )
     runner.ok("kubectl get deployment aap-gateway")
     app_ctx.runner = runner
@@ -223,6 +246,79 @@ def test_gateway_already_patched_is_left_alone(app_ctx) -> None:
         is True
     )
     assert not runner.called("kubectl patch")
+
+
+def test_gateway_with_the_capability_still_gets_supplemental_group_zero(app_ctx) -> None:
+    """NET_BIND_SERVICE alone is not enough. Bash also sets supplementalGroups [0]."""
+    runner = FakeRunner()
+    runner.ok("kubectl get aap", stdout="aap")
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "deployment",
+            "aap-gateway",
+            "-n",
+            NS,
+            "-o",
+            "jsonpath={.spec.replicas}",
+        ],
+        stdout="1",
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "deployment",
+            "aap-gateway",
+            "-n",
+            NS,
+            "-o",
+            'jsonpath={.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}',
+        ],
+        stdout='["NET_BIND_SERVICE"]',
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "deployment",
+            "aap-gateway",
+            "-n",
+            NS,
+            "-o",
+            "jsonpath={.spec.template.spec.securityContext.supplementalGroups}",
+        ],
+        stdout="",
+    )
+    runner.ok("kubectl patch deployment")
+    runner.ok("kubectl get deployment aap-gateway")
+    app_ctx.runner = runner
+
+    assert aap_mod.patch_gateway_capability(app_ctx, namespace=NS, sleep=lambda _s: None) is True
+
+    patches = [c.argv[-1] for c in runner.calls if c.argv[:3] == ("kubectl", "patch", "deployment")]
+    assert len(patches) == 1
+    assert "supplementalGroups" in patches[0]
+    assert "[0]" in patches[0]
+    assert "NET_BIND_SERVICE" in patches[0]
+
+
+def test_unannotated_minimal_cr_is_not_compared_as_controller() -> None:
+    """A missing annotation used to select controller, which sets eda.disabled true."""
+    rendered = yaml.safe_load(aap_mod.render_cr(aap_mod.load_cr("minimal"), namespace=NS))
+    live = {"metadata": {}, "spec": rendered["spec"]}
+
+    assert aap_mod.cr_template_name(live, namespace=NS) == "minimal"
+    assert aap_mod.spec_disagreements(live, namespace=NS) == []
+    assert rendered["spec"]["eda"]["disabled"] is False
+
+
+def test_condition_is_complete_accepts_the_aap_27_terminal_state() -> None:
+    assert aap_mod.condition_is_complete("False", "True", "Successful", "False")
+    assert aap_mod.condition_is_complete("True", "", "", "")
+    assert not aap_mod.condition_is_complete("False", "True", "Successful", "True")
+    assert not aap_mod.condition_is_complete("False", "True", "Running", "False")
 
 
 def test_gateway_that_never_appears_is_a_warning_not_a_failed_deploy(app_ctx) -> None:

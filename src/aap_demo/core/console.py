@@ -526,7 +526,18 @@ class Console:
         self._stop_status()
 
     def out(self, text: str = "", *, color: Optional[str] = None) -> None:
+        """Human log line. Structured output keeps stdout for :meth:`emit`."""
+        if self.structured:
+            return
         self._write(self._stdout, text, color)
+
+    def emit(self, text: str = "") -> None:
+        """The machine document. Not dropped for ``--quiet`` or ``--output json``."""
+        self._stdout.write(text + "\n")
+        try:
+            self._stdout.flush()
+        except (AttributeError, ValueError):  # pragma: no cover - closed stream
+            pass
 
     def err(self, text: str = "", *, color: Optional[str] = None) -> None:
         self._write(self._stderr, text, color)
@@ -891,8 +902,11 @@ class RecordingConsole(Console):
         self.glyphs = ASCII_GLYPHS
 
     def out(self, text: str = "", *, color: Optional[str] = None) -> None:
-        if self.quiet:
+        if self.quiet or self.structured:
             return
+        self.stdout_lines.append(text)
+
+    def emit(self, text: str = "") -> None:
         self.stdout_lines.append(text)
 
     def err(self, text: str = "", *, color: Optional[str] = None) -> None:

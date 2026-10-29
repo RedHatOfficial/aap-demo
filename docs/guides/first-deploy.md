@@ -55,6 +55,18 @@ aap-demo create
 This builds the virtual machine only. It does not install AAP yet. If a cluster is already running,
 `create` stops and tells you to deploy or destroy first.
 
+`create` downloads CRC 2.64.0 when the `crc` command on your PATH is older. That release's
+`crc setup` uses sudo to run `setcap cap_net_bind_service=+ep` on the binary. The capability
+is `CAP_NET_BIND_SERVICE`, so CRC can bind low ports without staying root. aap-demo does not
+run `setcap` itself. If sudo cannot prompt, `create` stops.
+
+To keep an older CRC that is already installed, lower the MicroShift floor for this command.
+This is the same override `deploy` accepts:
+
+```bash
+CRC_VERSION=4.21 aap-demo create
+```
+
 ## 3. Install AAP
 
 ```bash

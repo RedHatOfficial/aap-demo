@@ -293,7 +293,7 @@ def build_parser(
     fleet_destroy.set_defaults(func=_fleet_destroy)
     p.set_defaults(func=_fleet_list)
 
-    p = add("addon", "List, inspect, and scaffold addons")
+    p = add("addon", "Not yet implemented (use aap-demo-v1): list, inspect, and scaffold addons")
     addon_sub = p.add_subparsers(dest="addon_action", metavar="<ACTION>")
     addon_sub.add_parser("list", help="List discovered addons", parents=[globals_parser])
     info = addon_sub.add_parser("info", help="Show an addon's manifest", parents=[globals_parser])
@@ -305,7 +305,10 @@ def build_parser(
     p.set_defaults(func=addons_cli.addon)
 
     # -- day-2 playbooks ----------------------------------------------------
-    p = add("playbooks", "Run day-2 operations from the aap-demo-playbooks repo")
+    p = add(
+        "playbooks",
+        "Not yet implemented (use aap-demo-v1): run day-2 playbooks",
+    )
     pb_sub = p.add_subparsers(dest="playbooks_action", metavar="<ACTION>")
     pb_sub.add_parser("list", help="List available playbooks", parents=[globals_parser])
     pb_info = pb_sub.add_parser("info", help="Show a playbook's manifest", parents=[globals_parser])
@@ -327,12 +330,12 @@ def build_parser(
     p.set_defaults(func=day2.playbooks)
 
     # -- gui ----------------------------------------------------------------
-    p = add("gui", "Start the web GUI (requires the [gui] extra)")
+    p = add("gui", "Not yet implemented (use aap-demo-v1): start the web GUI")
     add_schema_arguments(p, "gui", resolved=values.get("gui", {}), suppress=suppress)
     p.set_defaults(func=gui_cli.gui)
 
     # -- completion / help --------------------------------------------------
-    p = add("completion", "Emit a shell completion script")
+    p = add("completion", "Not yet implemented (use aap-demo-v1): emit a shell completion script")
     p.add_argument("shell", nargs="?", choices=("bash", "zsh", "fish", "powershell"))
     p.set_defaults(func=completion_cli.completion)
 
@@ -488,7 +491,7 @@ CLUSTER_COMMANDS = frozenset(
 #: ``create`` belongs here too: it builds the cluster, so the "no cluster"
 #: warning would contradict the command. ``destroy`` stays out of both sets
 #: because bash runs it with no kubeconfig preflight.
-SELF_MANAGED_COMMANDS = frozenset({"deploy", "deploy-all", "redeploy", "create"})
+SELF_MANAGED_COMMANDS = frozenset({"deploy", "deploy-all", "redeploy", "redeploy-all", "create"})
 
 
 def _fleet_list(ctx: AppContext, args: argparse.Namespace) -> int:

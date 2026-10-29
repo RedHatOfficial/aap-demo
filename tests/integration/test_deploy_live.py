@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 
 import pytest
-import yaml
 
 from aap_demo.cluster import aap as aap_mod
 from aap_demo.cluster import catalog_signature, coredns, olm, scc, storage
@@ -167,7 +166,39 @@ def deployed(live_ctx):
 
 
 def test_deployed_aap_reports_the_successful_condition(live_ctx, deployed) -> None:
-    assert aap_mod.successful_condition(live_ctx, DEFAULT_NAMESPACE) == "True"
+    """AAP 2.7 can finish with Successful=False. Failure=True is still a failure."""
+    ns = DEFAULT_NAMESPACE
+    successful = kubectl.jsonpath(
+        live_ctx.runner,
+        "aap",
+        "-n",
+        ns,
+        path='{.items[0].status.conditions[?(@.type=="Successful")].status}',
+    )
+    running = kubectl.jsonpath(
+        live_ctx.runner,
+        "aap",
+        "-n",
+        ns,
+        path='{.items[0].status.conditions[?(@.type=="Running")].status}',
+    )
+    reason = kubectl.jsonpath(
+        live_ctx.runner,
+        "aap",
+        "-n",
+        ns,
+        path='{.items[0].status.conditions[?(@.type=="Successful")].reason}',
+    )
+    failure = kubectl.jsonpath(
+        live_ctx.runner,
+        "aap",
+        "-n",
+        ns,
+        path='{.items[0].status.conditions[?(@.type=="Failure")].status}',
+    )
+    assert aap_mod.condition_is_complete(successful, running, reason, failure), (
+        f"Successful={successful!r} Running={running!r} reason={reason!r} Failure={failure!r}"
+    )
 
 
 def test_deployed_aap_has_running_pods(live_ctx, deployed) -> None:
@@ -209,6 +240,15 @@ def test_gateway_has_the_net_bind_service_capability(live_ctx, deployed) -> None
         path='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}',
     )
     assert "NET_BIND_SERVICE" in caps
+    groups = kubectl.jsonpath(
+        live_ctx.runner,
+        "deployment",
+        deployment,
+        "-n",
+        DEFAULT_NAMESPACE,
+        path="{.spec.template.spec.securityContext.supplementalGroups}",
+    )
+    assert groups.strip() == "[0]"
 
 
 def test_no_pvc_is_stuck_pending(live_ctx, deployed) -> None:
@@ -227,14 +267,8 @@ def test_the_live_cr_matches_what_the_renderer_would_produce(live_ctx, deployed)
     )
     assert result.ok
     live = json.loads(result.stdout)
-    cr_name = aap_mod.cr_template_name(live, namespace=DEFAULT_NAMESPACE)
-    rendered = yaml.safe_load(
-        aap_mod.render_cr(aap_mod.load_cr(cr_name), namespace=DEFAULT_NAMESPACE)
-    )
-    for key, value in rendered["spec"].items():
-        if isinstance(value, dict):
-            for sub_key, sub_value in value.items():
-                assert live["spec"].get(key, {}).get(sub_key) == sub_value, f"{key}.{sub_key}"
+    mismatches = aap_mod.spec_disagreements(live, namespace=DEFAULT_NAMESPACE)
+    assert mismatches == [], mismatches
 
 
 # ---------------------------------------------------------------------------

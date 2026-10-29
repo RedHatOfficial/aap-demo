@@ -66,8 +66,8 @@ class NotImplementedYetError(AapDemoError):
 
     def __init__(self, command: str) -> None:
         super().__init__(
-            f"'{command}' is not yet implemented in the Python rewrite.",
-            hint="Use the bash aap-demo for this command during the rewrite overlap.",
+            f"'{command}' is not yet implemented.",
+            hint="Use aap-demo-v1 for this command.",
         )
         self.command = command
 

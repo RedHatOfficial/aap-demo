@@ -1,7 +1,8 @@
 """Cluster and AAP lifecycle commands (design §12.4).
 
-``deploy``, ``clean``, ``redeploy``, ``setup``, ``create`` and ``destroy`` are
-implemented. ``redeploy-all``, ``start``, ``stop`` and ``repair`` stay stubs.
+``deploy``, ``clean``, ``redeploy``, ``redeploy-all``, ``setup``, ``create`` and
+``destroy`` are implemented. ``start``, ``stop`` and ``repair`` stay in this
+module because they are thin wrappers, not stubs.
 The command functions are thin: every decision lives in ``cluster/``, which
 is what lets the GUI reach the same behavior without importing ``cli/`` (§2.2).
 """
@@ -19,7 +20,7 @@ from aap_demo.cluster import runtime as runtime_mod
 from aap_demo.cluster import status as status_mod
 from aap_demo.core import prompts
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import NotImplementedYetError
+from aap_demo.core.errors import AapDemoError
 from aap_demo.core.output import is_structured, render
 from aap_demo.infra import crc as infra_crc
 
@@ -62,7 +63,22 @@ def redeploy(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def redeploy_all(ctx: AppContext, args: argparse.Namespace) -> int:
-    raise NotImplementedYetError("redeploy-all")
+    """Ports ``cmd_redeploy-all``: destroy, pause, then a fresh cluster and AAP.
+
+    Bash calls ``cmd_deploy``, and that command creates a cluster when none
+    exists. Python ``deploy`` does not, so this command creates the cluster
+    between destroy and deploy. A machine with nothing to delete continues
+    into create; a failed delete does not.
+    """
+    try:
+        bootstrap_mod.destroy(ctx)
+    except AapDemoError as exc:
+        if "No CRC cluster" not in exc.message:
+            raise
+        ctx.console.out(exc.message)
+    time.sleep(2)
+    bootstrap_mod.create(ctx)
+    return deploy(ctx, args)
 
 
 def setup(ctx: AppContext, args: argparse.Namespace) -> int:

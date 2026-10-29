@@ -265,11 +265,14 @@ def patch_gateway_capability(
     """Ports ``_patch_gateway_capability`` (aap-demo.sh:2477).
 
     The gateway binds a privileged port, so its ``api`` container needs
-    NET_BIND_SERVICE. On full OpenShift the privileged SCC grants every
-    capability; on MicroShift the SCC admission controller picks
-    ``restricted-v2``, which does not include it, and the pod crash-loops on
-    EACCES. Replicas are forced to 1 *before* the capability patch, because
-    two replicas racing the same schema migration is a separate, worse failure.
+    NET_BIND_SERVICE. OpenShift Local's restricted SCC also needs supplemental
+    group 0 or supervisord crashes with EACCES on its socket. On full
+    OpenShift the privileged SCC grants every capability; on MicroShift the
+    SCC admission controller picks ``restricted-v2``, which does not include
+    it, and the pod crash-loops on EACCES. Replicas are forced to 1 *before*
+    the security patch, because two replicas racing the same schema migration
+    is a separate, worse failure. Either missing piece is patched; a gateway
+    that already has the capability is not left without the group.
     """
     from aap_demo.exec import kubectl
 
@@ -325,11 +328,22 @@ def patch_gateway_capability(
         ns,
         path='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}',
     )
-    if "NET_BIND_SERVICE" in existing_caps:
-        ctx.console.progress("Gateway already has NET_BIND_SERVICE")
+    existing_groups = kubectl.jsonpath(
+        ctx.runner,
+        "deployment",
+        deploy_name,
+        "-n",
+        ns,
+        path="{.spec.template.spec.securityContext.supplementalGroups}",
+    )
+    needs_capability = "NET_BIND_SERVICE" not in existing_caps
+    # Bash treats any ``0`` in the jsonpath text as the group already being set.
+    needs_group = "0" not in existing_groups
+    if not needs_capability and not needs_group:
+        ctx.console.progress("Gateway already has NET_BIND_SERVICE and supplementalGroups [0]")
         return True
 
-    ctx.console.progress("Patching gateway with NET_BIND_SERVICE")
+    ctx.console.progress("Patching gateway with NET_BIND_SERVICE and supplementalGroups [0]")
     patched = ctx.runner.run(
         [
             "kubectl",
@@ -340,12 +354,14 @@ def patch_gateway_capability(
             ns,
             "--type=strategic",
             "-p",
-            '{"spec":{"template":{"spec":{"containers":[{"name":"api",'
-            '"securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}',
+            '{"spec":{"template":{"spec":{"securityContext":{"supplementalGroups":[0]},'
+            '"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}',
         ]
     )
     if patched.ok:
-        ctx.console.progress("Gateway patched — pod will restart with NET_BIND_SERVICE")
+        ctx.console.progress(
+            "Gateway patched — pod will restart with NET_BIND_SERVICE and supplementalGroups [0]"
+        )
         return True
     ctx.console.out("  ⚠ Gateway patch failed — may need manual fix if gateway crashes")
     return False
@@ -389,6 +405,51 @@ def installed_version(ctx: AppContext, namespace: str, *, csv: str = "") -> str:
         return ""
     rest = name.split(marker, 1)[1]
     return rest.split("-", 1)[0]
+
+
+def condition_is_complete(
+    successful: str,
+    running: str,
+    successful_reason: str,
+    failure: str = "",
+) -> bool:
+    """Same terminal rule as ``includes/aap-readiness.sh``.
+
+    AAP 2.7 can finish with Successful=False, reason=Successful, and
+    Running=True. Failure=True is never complete, even when every pod is up.
+    """
+    if failure == "True":
+        return False
+    if successful == "True":
+        return True
+    return successful == "False" and running == "True" and successful_reason == "Successful"
+
+
+def spec_disagreements(document: Dict[str, Any], *, namespace: str) -> List[str]:
+    """Renderer fields that disagree with an applied AAP spec.
+
+    The template is the ``aap-demo/cr`` annotation, or the first bundled CR
+    whose rendered spec is a subset of the live spec. It is not the controller
+    template: that one sets ``eda.disabled: true``, and the default deploy is
+    ``minimal``.
+    """
+    cr_name = cr_template_name(document, namespace=namespace)
+    rendered = _as_dict(yaml.safe_load(render_cr(load_cr(cr_name), namespace=namespace)))
+    live_spec = _as_dict(document.get("spec"))
+    expected = _as_dict(rendered.get("spec"))
+    mismatches: List[str] = []
+    for key, value in expected.items():
+        if not isinstance(value, dict):
+            continue
+        actual = live_spec.get(key)
+        if not isinstance(actual, dict):
+            actual = {}
+        for sub_key, sub_value in value.items():
+            if actual.get(sub_key) != sub_value:
+                mismatches.append(
+                    f"{key}.{sub_key}: renderer {sub_value!r}, applied {actual.get(sub_key)!r}"
+                )
+    return mismatches
 
 
 def successful_condition(ctx: AppContext, namespace: str) -> str:
@@ -947,6 +1008,7 @@ __all__ = [
     "DEFAULT_CR",
     "admin_password",
     "available_crs",
+    "condition_is_complete",
     "cr_template_name",
     "cr_metadata_name",
     "create_instance",
@@ -956,6 +1018,7 @@ __all__ = [
     "patch_gateway_capability",
     "render_cr",
     "route_host_for",
+    "spec_disagreements",
     "successful_condition",
     "teardown",
     "wait_ready",
