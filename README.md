@@ -1,263 +1,145 @@
 # AAP Demo Quick Start
 
-**v2 is a beta.** This branch is the Python rewrite while it is still in development. It is not an official release. The supported release line remains `main`.
+**v2 is a beta.** This branch is the Python rewrite. It is not an official release. The supported release line remains `main`. The package version stays `2.0.0.dev1`.
 
-Deploy AAP to a local MicroShift cluster in minutes.
+Deploy AAP 2.7 to a local MicroShift cluster.
 
 ## SECURITY NOTICE — DEVELOPMENT ENVIRONMENT ONLY
 
-**aap-demo is a LOCAL DEVELOPMENT tool and must NEVER be used in production.**
+**aap-demo is a local development tool and must never be used in production.**
+
+Install and state paths for the `v2` to `main` cutover are in [docs/v2-to-main.md](docs/v2-to-main.md).
 
 ## Install
 
-Python 3.9 or newer. [pipx](https://pipx.pypa.io/) keeps the command isolated from the rest of your Python packages:
+Python 3.9 or newer. [pipx](https://pipx.pypa.io/) keeps the command isolated:
 
 ```bash
 pipx install aap-demo
-```
-
-Update the installed command with:
-
-```bash
 aap-demo update
+aap-demo version
 ```
 
-That checks how this command was installed, then runs `pipx upgrade aap-demo`.
-
-pip and uv install the same release:
+`pip install aap-demo` and `uv tool install aap-demo` install the same published beta. `pip` does not select a `.dev` release on every configuration. If it reports no matching version:
 
 ```bash
-pip install aap-demo
-uv tool install aap-demo
+pip install 'aap-demo==2.0.0.dev1'
 ```
 
-This installs the published release of the v2 beta. Check out `v2` only if you are changing the code. If you already installed from the git URL, switch with `pipx install --force aap-demo`.
-
-### Replace the bash v1 command
-
-`./install.sh` links `~/.local/bin/aap-demo` to the bash script. pipx installs v2 at that same path, so move or remove the old command before installing v2.
-
-Keep v1 available as `aap-demo-v1`:
+Check out `v2` only to change the code. `./install.sh` on this branch still links `~/.local/bin/aap-demo` to the bash script. Move that command before installing the Python one:
 
 ```bash
 mv ~/.local/bin/aap-demo ~/.local/bin/aap-demo-v1
+pipx install aap-demo
 ```
 
-Or remove the command. Cluster data is left in place:
+If a bash `aap-demo` is still earlier on `PATH`, the first Python command asks whether to uninstall it or rename it to `aap-demo-v1`. `AAP_DEMO_KEEP_BASH=1` skips that prompt.
 
-```bash
-rm -f ~/.local/bin/aap-demo \
-  ~/.zsh/completions/_aap-demo \
-  ~/.local/share/bash-completion/completions/aap-demo
-```
+## Pull secret and kubeconfig
 
-If a bash `aap-demo` is still earlier on `PATH` after install, the first v2 command asks whether to uninstall it or rename it to `aap-demo-v1`. Choosing keep is remembered. Set `AAP_DEMO_KEEP_BASH=1` to skip that prompt.
-
-Download a pull secret from the
-[Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
-The CLI stores it at `~/.local/state/aap-demo/pull-secret.txt`. Cluster
-credentials live at `~/.local/state/aap-demo/kubeconfig.microshift`. Those
-files are **not** merged into `~/.kube/config`.
+Download a pull secret from the [Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
 
 ```bash
 mkdir -p ~/.local/state/aap-demo
 cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
-export KUBECONFIG=~/.local/state/aap-demo/kubeconfig.microshift
-# or: aap-demo kubeconfig   # refresh file and print export command
 ```
 
-`aap-demo create` provisions the MicroShift VM only. `aap-demo deploy` installs OLM and AAP
-(use `deploy` for the typical path; `create` alone is for cluster-only setup).
+`pull-secret.json` in that directory is accepted second. `~/.aap-demo` is not searched. `aap-demo config set pull-secret ~/path/to/pull-secret.txt` stores another path.
+
+`aap-demo create` saves the cluster kubeconfig at `~/.local/state/aap-demo/kubeconfig.microshift` and installs an `aap-demo` context into `~/.kube/config`. That context becomes current. Other contexts stay. `aap-demo kubeconfig` refreshes both files.
+
+```bash
+aap-demo oc get nodes
+export KUBECONFIG=~/.local/state/aap-demo/kubeconfig.microshift
+```
 
 ## Prerequisites
 
-- **CRC (OpenShift Local)** — [Download](https://console.redhat.com/openshift/create/local)
-- **16 GB RAM minimum** — default VM allocation is 16 GB (override with
-  `CRC_MEMORY=24576 aap-demo create` for 24 GB). On Linux, `aap-demo create`
-  prompts for optional temp swap on memory-constrained hosts (see
-  [scripts/README.md](scripts/README.md))
+- **OpenShift Local (`crc`)** — [Download](https://console.redhat.com/openshift/create/local)
+- **kubectl**
+- **Linux:** `libvirt-daemon`, `libvirt-daemon-driver-storage`, `qemu-kvm`. Start `crc daemon` when `~/.crc/crc-http.sock` is missing.
 
-`oc login` writes into the kubeconfig named by `KUBECONFIG`. When that is the
-aap-demo file, the current context can switch to a remote cluster. Cluster
-commands then stop before they read or change that API, and tell you how to
-switch back to the `microshift` or `aap-demo` context. `aap-demo kubeconfig`
-refreshes the local file from the CRC VM. Set
-`AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true` only when that remote API is intentional.
-
-## Status
+The Python schema defaults are 8 vCPUs, 24576 MB of memory, a 120 GB disk, and a 100 GB PV pool. `create` warns when the host has fewer than 4 CPUs or 10 GB of RAM. Override before the VM exists:
 
 ```bash
-aap-demo version       # Tool version, commit, and build timestamp
-aap-demo status        # Show routes and credentials
+aap-demo create --cpus 8 --memory 24576 --disk 120 --pv-size 100
 ```
 
-```text
-AAP Demo Status
-===============
+`--preset openshift` is refused. This beta provisions MicroShift only.
 
-Infra:       OpenShift Local (CRC)
-Cluster:     running (crc-microshift)
-
-Namespaces:
------------
-  aap-operator         27/29 pods   aap
-
-AAP Deployments:
-----------------
-  https://aap-aap-operator.apps.127.0.0.1.nip.io
-
-Credentials:
-------------
-  aap-operator: admin / <password>
-
-Addons:
--------
-  mcp-server      disabled
-  portal          disabled
-  portal-operator disabled (AMD64 only)
-  setup-pah       disabled
-  ao            disabled
-  local-cache     disabled
-  product-demos       disabled
-  product-demo-satellite  disabled
-```
-
-## Addons to add additional functionality
+## Create and deploy
 
 ```bash
-aap-demo enable              # List all addons
-aap-demo enable portal       # Installs Automation Portal
-aap-demo enable portal-operator # Installs Operator-based Portal (Technology Preview; AMD64 only)
-aap-demo enable setup-pah     # Configures Private Automation Hub Credentials
-aap-demo enable mcp-server   # MCP server for AI assistants
-aap-demo enable ao           # Automation Orchestrator (GA; no aapctl required — see addons/ao/README.md)
-aap-demo enable ao-pr-testing  # PR validation workflow and read-only OpenShift MCP (requires AO)
-aap-demo enable apme-eap     # Early Access Program only for APME
-aap-demo enable local-cache  # Caches AAP containers locally so you don't re-download after destroy/create
-
-# Ansible Product Demos - Official demo content from ansible/product-demos
-aap-demo enable product-demos        # Five domains at once (includes base; Satellite opt-in)
-aap-demo enable product-demo-satellite  # Satellite demos (requires a Satellite server)
-aap-demo disable addon_name  # Disables addon
+aap-demo create     # MicroShift VM only
+aap-demo deploy     # OLM and the AAP 2.7 operator. Starts a stopped cluster.
+aap-demo status     # Routes and the admin password
 ```
 
-The Windows wrapper currently defers Fleet and local image caching; those
-addons remain available through the Linux/macOS Bash workflow.
+`deploy` does not install addons and does not load a saved image cache.
 
-When destroying a running cluster, `aap-demo destroy` asks whether to save the
-container images locally. Confirming lets the next `aap-demo deploy` reuse the
-cached containers instead of downloading them again. Existing cached images are
-loaded automatically at the start of the next deploy.
+## Fleet
 
-Normal destroy/recreate flow:
+`fleet` is the only addon the Python command implements. It runs Kubernetes-native pods in the `fleet` namespace. The default nodes are `fleet-ubi9` and `fleet-ubi10`.
 
 ```bash
-aap-demo destroy   # answer y at the cache prompt
-aap-demo create
-aap-demo deploy     # automatically loads the saved cache
+aap-demo enable              # prints: fleet
+aap-demo enable fleet        # --no-import skips AAP registration
+aap-demo fleet list
+aap-demo fleet add --os ubi9
+aap-demo fleet remove fleet-ubi9
+aap-demo disable fleet       # scales the pods to 0
+aap-demo fleet destroy
 ```
 
-You do not need to run `aap-demo enable local-cache load` for this normal flow.
+Any other name, including `portal`, `ao`, `mcp-server`, and `local-cache`, raises `unknown addon '...'; only fleet is implemented`.
 
-To manage the cache manually:
+Those addons still install from the bash launcher (`aap-demo-v1`, or `aap-demo.sh` on this branch). Bash `enable fleet` stays the QEMU addon unless the command passes `--backend kube-native`.
+
+## Commands
 
 ```bash
-aap-demo enable local-cache load   # one-shot reload into fresh VM
-aap-demo enable local-cache        # restore auto-load on future deploys
+aap-demo start
+aap-demo stop
+aap-demo idle true           # scale AAP down; the VM keeps running
+aap-demo idle false
+aap-demo ssh
+aap-demo watch
+aap-demo diagnose            # exit 1 only when the API cannot be reached
+aap-demo diagnose --ai       # requires the claude CLI
+aap-demo must-gather
+aap-demo repair
+aap-demo clean               # remove AAP, keep the VM
+aap-demo destroy             # delete the VM. --reset also clears config.yaml
+aap-demo redeploy            # clean, then deploy
+aap-demo update              # pipx upgrade aap-demo
+aap-demo version             # 2.0.0.dev1
 ```
 
-### Common Commands
+`redeploy-all`, `addon`, `playbooks`, `gui`, and `completion` are accepted and exit not implemented. Use the bash command for those until they are ported.
+
+## Environment
 
 ```bash
-# Deployment
-AAP_VERSION=2.7 aap-demo deploy  # Deploy AAP 2.7 (default)
-AAP_VERSION=2.6 aap-demo deploy  # Deploy AAP 2.6
-
-# Cluster management
-aap-demo status              # Show cluster status, routes, credentials
-aap-demo stop                # Stop the cluster
-aap-demo start               # Start the cluster
-aap-demo ssh                 # SSH into the cluster node
-aap-demo watch               # Monitor deployment progress
-aap-demo destroy             # Delete entire cluster
-
-# AAP Operator Idle
-aap-demo idle true           # Scale down AAP to save resources
-aap-demo idle false          # Scale back up
-aap-demo idle                # Check current idle state
-
-# Troubleshooting
-aap-demo diagnose            # Quick health check (cluster, storage, SCCs, pods)
-aap-demo must-gather         # Collect full diagnostics (AAP + cluster)
-aap-demo must-gather /tmp/d  # Collect to specific directory
-aap-demo repair              # Fix after sleep/wake issues
-aap-demo trust-ca            # Fix ingress certificate trust without cluster repair
-
-# Maintenance
-aap-demo clean               # Remove AAP deployment (keeps cluster)
-aap-demo update              # Update the pipx install to the latest release
-aap-demo help                # Full command reference
+CRC_CPUS=8                   # default 8
+CRC_MEMORY=24576             # MiB, default 24576
+CRC_DISK=120                 # GiB, default 120
+CRC_PV_SIZE=100              # GiB, default 100
+NAMESPACE=aap-operator       # legacy name of AAP_DEMO_NAMESPACE
+QUIET=true
 ```
 
-## Architecture
+Config file: `~/.config/aap-demo/config.yaml`. `AAP_DEMO_DIR` collapses config, state, and cache under one directory.
 
-Architecture decisions are documented in [docs/adr/](docs/adr/README.md), covering CLI design,
-storage, OLM, addons, and cross-platform support.
-
-### macOS / Linux / Windows
-
-- **Networking:** SSH (2222), API (6443), HTTP/HTTPS (443) — all on localhost
-- **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
-- **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust;
-  on Windows, run `aap-demo deploy` from an elevated PowerShell (see
-  [powershell/README.md](powershell/README.md#ingress-ca-and-browser-tls))
-
-## Environment Variables
+## Clean up
 
 ```bash
-CRC_CPUS=8                   # VM CPU count (default: 8)
-CRC_MEMORY=16384             # VM memory in MiB (default: 16384)
-CRC_DISK=100                 # VM disk size in GiB (default: 100)
-CRC_PV_SIZE=70               # Storage reserved for LVMS PVCs in GiB (default: 70, must be < CRC_DISK)
-NAMESPACE=aap-operator       # Target namespace
-AAP_VERSION=2.7               # AAP version to deploy: 2.6 or 2.7
-QUIET=true                   # Suppress disclaimer
-```
-
-## Troubleshooting
-
-```bash
-aap-demo diagnose      # Quick health check — finds common issues
-aap-demo diagnose --ai # AI-powered analysis (requires claude CLI)
-aap-demo must-gather   # Collect full diagnostics for support
-```
-
-On MicroShift 4.22+, `aap-demo deploy` relaxes container signature verification for
-`registry.redhat.io` inside the CRC VM so operator index images can pull. This is a
-**demo-only** workaround and must not be used as a production pattern.
-
-## Clean Up
-
-```bash
-aap-demo clean         # Remove AAP (keep cluster)
-aap-demo destroy       # Delete everything
-pipx uninstall aap-demo   # Remove the CLI
+aap-demo clean
+aap-demo destroy
+pipx uninstall aap-demo
 ```
 
 ## Documentation
 
-- **[Full README](docs/FULL-README.md)** — Complete documentation, architecture, troubleshooting
-- **[Architecture Decision Records](docs/adr/)** — Design decisions and rationale
-- **[Contributing](docs/CONTRIBUTING.md)** — Development guidelines
-- **[Linting](docs/LINTING.md)** — Ansible linting setup
-
-### Versioning
-
-Feature PRs do not need to change [`VERSION`](VERSION). Update it deliberately when preparing
-a release; CI only verifies that the checked-in value is valid semver. Development builds are
-also identified by the commit SHA and build timestamp shown by `aap-demo version`.
-
-```bash
-aap-demo version              # show current version + git build info
-cz bump --increment PATCH     # after ./scripts/setup-linting.sh (optional)
-```
+- **[v2 to main](docs/v2-to-main.md)** — install and state paths for this cutover
+- **[Architecture decision records](docs/adr/)** — design history
+- **[Contributing](docs/CONTRIBUTING.md)**
