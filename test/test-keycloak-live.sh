@@ -46,8 +46,14 @@ kubectl get secret keycloak-realm -n "$NAMESPACE" \
   -o jsonpath='{.data.aap-lab-realm\.json}' | base64 -d \
   | jq -e '
     ([.clients[].clientId] | sort) == ["aap-demo-aap", "aap-demo-ao"] and
+    all(.clients[]; . as $client |
+      any(.protocolMappers[]; .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == $client.clientId) and
+      any(.protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "preferred_username") and
+      any(.protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "email")
+    ) and
     ([.groups[].name] | sort) == ["aap-admins", "aap-auditors", "aap-developers", "aap-operators"] and
-    ([.users[].username] | sort) == ["aap-oidc-admin", "aap-oidc-auditor", "aap-oidc-developer", "aap-oidc-operator"]
+    ([.users[].username] | sort) == ["aap-oidc-admin", "aap-oidc-auditor", "aap-oidc-developer", "aap-oidc-operator"] and
+    all(.users[]; (.firstName == "AAP OIDC") and (.lastName | type == "string" and length > 0))
   ' >/dev/null
 
-echo "PASS: live Keycloak Route, readiness, discovery, realm, groups, users, and clients"
+echo "PASS: live Keycloak Route, readiness, discovery, realm, groups, users, claims, and clients"
