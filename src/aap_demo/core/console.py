@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import IO, Callable, List, Optional, Sequence, Tuple, TypeVar
+from typing import IO, Any, Callable, List, Optional, Sequence, Tuple, TypeVar
 
 from rich.console import Console as RichConsole
 from rich.console import Group
@@ -355,7 +355,7 @@ class Console:
             self._spinners[key] = spinner
         return spinner
 
-    def _parent_cells(self) -> Tuple[object, object]:
+    def _parent_cells(self) -> Tuple[Any, Any]:
         if self._title_done:
             return (
                 Text(self.glyphs["ok"], style=ANSIBLE_TEAL),
@@ -371,7 +371,7 @@ class Console:
         label.append(f"  {format_elapsed(seconds)}", style=ANSIBLE_TEAL)
         return label
 
-    def _task_mark(self, task: "_Task") -> Tuple[object, object]:
+    def _task_mark(self, task: "_Task") -> Tuple[Any, Any]:
         if task.state == "done":
             # Finished steps stay primary teal, and they are not bold.
             return (
@@ -760,7 +760,7 @@ class Console:
     def _child_mark(self) -> str:
         return "".join(self._nest_chars())
 
-    def _child_line(self, child: _Child) -> object:
+    def _child_line(self, child: _Child) -> Any:
         """One component under the active step: a check, a spinner, or a box."""
         detail = f"  {child.detail}" if child.detail else ""
         if child.state == "done":
@@ -788,7 +788,7 @@ class Console:
         """Label-column text for a line that belongs to the step above it."""
         return f"  {self._child_mark()} {text}"
 
-    def _nested_line(self, text: str, *, animate: bool = False) -> object:
+    def _nested_line(self, text: str, *, animate: bool = False) -> Any:
         """A short shade ramp, then the detail in the dark teal.
 
         The active detail animates: one bold primary character walks the ramp

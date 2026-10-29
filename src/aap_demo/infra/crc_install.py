@@ -15,7 +15,7 @@ import shutil
 import tarfile
 import zipfile
 from pathlib import Path
-from typing import Any, BinaryIO, Optional
+from typing import IO, Any, Optional, cast
 
 from aap_demo.core.errors import AapDemoError, PrerequisiteError
 from aap_demo.infra.crc import managed_crc_release
@@ -72,7 +72,7 @@ def extract_crc_zip(archive: Path, dest: Path) -> None:
 def extract_gzip_odc(payload: Path, dest: Path) -> None:
     """Unpack a macOS pkg ``Payload`` (gzip-compressed odc cpio)."""
     with gzip.open(payload, "rb") as handle:
-        _extract_odc(handle, dest)
+        _extract_odc(cast(IO[bytes], handle), dest)
 
 
 def install_managed_release(ctx: Any, *, current: Optional[str] = None) -> Path:
@@ -182,7 +182,7 @@ def _extract_macos_pkg(ctx: Any, archive: Path, dest: Path) -> None:
     _require_crc_binary(dest)
 
 
-def _extract_named_member(member: tarfile.TarInfo, source: Optional[BinaryIO], dest: Path) -> None:
+def _extract_named_member(member: tarfile.TarInfo, source: Optional[IO[bytes]], dest: Path) -> None:
     name = Path(member.name).name
     if source is None or not member.isfile() or name not in _INSTALL_NAMES:
         return
@@ -193,7 +193,7 @@ def _extract_named_member(member: tarfile.TarInfo, source: Optional[BinaryIO], d
     target.chmod(0o755)
 
 
-def _extract_odc(handle: BinaryIO, dest: Path) -> None:
+def _extract_odc(handle: IO[bytes], dest: Path) -> None:
     while True:
         header = _read_exact(handle, 76)
         if header is None:
@@ -225,7 +225,7 @@ def _extract_odc(handle: BinaryIO, dest: Path) -> None:
         target.write_bytes(data)
 
 
-def _read_exact(handle: BinaryIO, size: int) -> Optional[bytes]:
+def _read_exact(handle: IO[bytes], size: int) -> Optional[bytes]:
     if size == 0:
         return b""
     chunks = []

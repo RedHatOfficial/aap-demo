@@ -7,7 +7,7 @@ import json
 import secrets
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 from urllib.parse import urlparse
 
 import yaml
@@ -24,6 +24,13 @@ from aap_demo.addons.fleet.state import (
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
+
+
+def _as_dict(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return cast(Dict[str, Any], value)
+    return {}
+
 
 RUNNER_ACCOUNT = "aap-demo-fleet-runner"
 FLEET_LABEL = "aap-demo/fleet"
@@ -165,7 +172,7 @@ def _retire_cluster_rights(ctx: AppContext, aap_ns: str) -> None:
         _delete_our_clusterrole(ctx)
         _delete_our_account(ctx, aap_ns)
         return
-    role_ref = binding.get("roleRef") if isinstance(binding.get("roleRef"), dict) else {}
+    role_ref = _as_dict(binding.get("roleRef"))
     if role_ref.get("name") not in {"cluster-admin", RUNNER_ACCOUNT}:
         return
     _delete_ok(
@@ -569,7 +576,7 @@ def _require_owned(namespace: str, payload: str, token: str, uid: str = "") -> s
             f"could not read namespace {namespace}",
             hint=str(exc),
         ) from exc
-    meta = document.get("metadata") if isinstance(document.get("metadata"), dict) else {}
+    meta = _as_dict(document.get("metadata"))
     live_uid = str((meta or {}).get("uid") or "")
     if uid:
         if live_uid != uid:
@@ -677,7 +684,7 @@ def _ee_pull_secret(ctx: AppContext, namespace: str) -> str:
     for item in document.get("items") or []:
         if not isinstance(item, dict) or item.get("type") != "kubernetes.io/dockerconfigjson":
             continue
-        meta = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        meta = _as_dict(item.get("metadata"))
         if meta.get("name"):
             names.append(str(meta["name"]))
     if "redhat-operators-pull-secret" in names:
