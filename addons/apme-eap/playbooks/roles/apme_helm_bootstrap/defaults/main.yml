@@ -6,5 +6,11 @@
 apme_helm_version: "3.15.4"
 apme_helm_install_dir: "/tmp/apme-helm"
 apme_helm_binary: "{{ apme_helm_install_dir }}/helm"
-apme_helm_archive: "/tmp/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"
-apme_helm_download_url: "https://get.helm.sh/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"
+apme_helm_os: >-
+  {{ 'darwin' if (ansible_system | default('Linux') | lower) == 'darwin' else 'linux' }}
+apme_helm_architecture: >-
+  {{ 'arm64' if ansible_architecture | default('x86_64') in ['aarch64', 'arm64'] else 'amd64' }}
+apme_helm_archive: >-
+  /tmp/helm-v{{ apme_helm_version }}-{{ apme_helm_os }}-{{ apme_helm_architecture }}.tar.gz
+apme_helm_download_url: >-
+  https://get.helm.sh/helm-v{{ apme_helm_version }}-{{ apme_helm_os }}-{{ apme_helm_architecture }}.tar.gz
