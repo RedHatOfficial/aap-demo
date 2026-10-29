@@ -19,7 +19,9 @@ sources:
 
 # The older command
 
-Some jobs still belong to the original bash command: the self-service portal, Automation Orchestrator, the product demos, and a handful of others. That command keeps working. Use it for those jobs, and use the new command for create, deploy, and day-to-day cluster care.
+Some jobs still belong to the original bash command: the self-service portal, Automation Orchestrator,
+the product demos, and a handful of others. That command keeps working. Use it for those jobs, and use the
+new command for create, deploy, and day-to-day cluster care.
 
 ## Install it from a checkout
 
@@ -38,7 +40,8 @@ mkdir -p ~/.aap-demo
 cp ~/Downloads/pull-secret.txt ~/.aap-demo/pull-secret.txt
 ```
 
-Its kubeconfig is `~/.aap-demo/kubeconfig.microshift`. Unlike the new command, that file is not copied into `~/.kube/config`. Updating this command is `git pull` and `./install.sh` again.
+Its kubeconfig is `~/.aap-demo/kubeconfig.microshift`. Unlike the new command, that file is not copied into
+`~/.kube/config`. Updating this command is `git pull` and `./install.sh` again.
 
 ## Use both commands
 
@@ -60,8 +63,11 @@ If you would rather call the script directly, `./aap-demo.sh` in a checkout is t
 
 ## Fleet on the older command
 
-`aap-demo-v1 enable fleet` still builds virtual machines with QEMU. The new command's Fleet is different: those machines are pods inside the cluster. Pass `--backend kube-native` on the bash command only when you mean the new kind.
+`aap-demo-v1 enable fleet` still builds virtual machines with QEMU. The new command's Fleet is different:
+those machines are pods inside the cluster. Pass `--backend kube-native` on the bash command only when you
+mean the new kind.
 
 ## What we are not doing
 
-We are not turning the older command off, and we are not listing features as deprecated. When a feature moves, its own page will say the new way to run it.
+We are not turning the older command off, and we are not listing features as deprecated. When a feature
+moves, its own page will say the new way to run it.

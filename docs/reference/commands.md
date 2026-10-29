@@ -13,7 +13,8 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 # Commands
 
-These are the commands in the new `aap-demo` (version 2.0.0.dev1). Jobs that are not listed as working here still run with [the older command](../guides/older-command.md).
+These are the commands in the new `aap-demo` (version 2.0.0.dev1). Jobs that are not listed as working here
+still run with [the older command](../guides/older-command.md).
 
 ## You will use these
 
@@ -51,6 +52,7 @@ These names exist so old habits are not a mystery, and they stop with "not imple
 
 `redeploy-all`, `addon`, `playbooks`, `gui`, `completion`
 
-`enable` and `disable` with a name other than `fleet` stop with "only fleet is implemented." `enable` with no name prints `fleet`.
+`enable` and `disable` with a name other than `fleet` stop with "only fleet is implemented."
+`enable` with no name prints `fleet`.
 
 Use the older command for portal, Automation Orchestrator, product demos, and the image cache.

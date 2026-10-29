@@ -13,5 +13,5 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 # Examples
 
-* [First cluster](first-cluster.md) - From an empty machine to a page you can open.
-* [AAP 2.6](aap-2-6.md) - One deploy that asks for the 2.6 channel.
+- [First cluster](first-cluster.md) - From an empty machine to a page you can open.
+- [AAP 2.6](aap-2-6.md) - One deploy that asks for the 2.6 channel.

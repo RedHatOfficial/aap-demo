@@ -2,7 +2,8 @@
 
 Ansible Automation Platform, on your own computer, for demos and trying things out.
 
-This is a local tool. Do not use it for a real production system. The published command is a beta, version **2.0.0.dev1**. A finished 2.0.0 release is not out yet.
+This is a local tool. Do not use it for a real production system. The published command is a beta,
+version **2.0.0.dev1**. A finished 2.0.0 release is not out yet.
 
 ## Start
 
@@ -15,7 +16,8 @@ aap-demo deploy
 aap-demo status
 ```
 
-`create` builds the local cluster. `deploy` installs Ansible Automation Platform. `status` prints the web address and the admin password.
+`create` builds the local cluster. `deploy` installs Ansible Automation Platform.
+`status` prints the web address and the admin password.
 
 To try AAP 2.6 instead of the usual 2.7 release:
 

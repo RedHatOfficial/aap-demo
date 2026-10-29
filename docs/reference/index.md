@@ -13,5 +13,5 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 # Reference
 
-* [Commands](commands.md) - What each command does.
-* [Settings](settings.md) - Memory, disk, channels, and file locations.
+- [Commands](commands.md) - What each command does.
+- [Settings](settings.md) - Memory, disk, channels, and file locations.
