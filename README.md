@@ -71,8 +71,20 @@ aap-demo create --cpus 8 --memory 24576 --disk 120 --pv-size 100
 
 ```bash
 aap-demo create     # MicroShift VM only
-aap-demo deploy     # OLM and the AAP 2.7 operator. Starts a stopped cluster.
+aap-demo deploy     # OLM and the AAP operator. Default channel is stable-2.7.
 aap-demo status     # Routes and the admin password
+```
+
+`--channel` selects the OLM subscription channel. Use it to try another AAP release:
+
+```bash
+aap-demo deploy --channel stable-2.6
+```
+
+The value is any channel string the operator catalog publishes. The default is `stable-2.7`. Save one so later deploys keep it:
+
+```bash
+aap-demo config set deploy.channel stable-2.6
 ```
 
 `deploy` does not install addons and does not load a saved image cache.
