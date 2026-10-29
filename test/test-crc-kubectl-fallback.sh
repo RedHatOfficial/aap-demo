@@ -10,3 +10,13 @@ if ! grep -q 'command -v oc' <<<"$script" || ! grep -q 'kubectl()' <<<"$script";
 fi
 
 echo 'CRC kubectl fallback checks passed'
+
+# Exercise the actual selection block with a kubectl that exists but cannot run.
+selection=$(sed -n '/^if ! command -v kubectl /,/^fi$/p' "${repo_root}/includes/crc-create.sh")
+(
+  kubectl() { return 126; }
+  oc() { printf '%s\n' "oc $*"; }
+  eval "$selection"
+  [[ "$(kubectl get nodes)" == 'oc get nodes' ]]
+)
+echo 'Unusable kubectl falls back to oc'

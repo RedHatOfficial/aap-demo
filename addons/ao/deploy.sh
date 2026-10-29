@@ -168,7 +168,8 @@ report_catalog_failure() {
   echo "    kubectl get pods -n ${AAP_NAMESPACE} -l olm.catalogSource=redhat-operators" >&2
   echo "" >&2
   echo "  Then inspect the AO catalog pod and events:" >&2
-  echo "    kubectl describe pod -n ${_catalog_ns} -l olm.catalogSource=redhat-operators" >&2
+  echo "    kubectl describe catalogsource ${_catalog_name} -n ${_catalog_ns}" >&2
+  echo "    kubectl get pods -n ${_catalog_ns}" >&2
   echo "    kubectl get events -n ${_catalog_ns} --sort-by=.lastTimestamp | tail -15" >&2
   echo "" >&2
   echo "  Retry with a longer wait or after fixing AAP deploy:" >&2
@@ -320,6 +321,8 @@ remove_fallback_catalog_source() {
   local _catalog_ns="$1"
   kubectl delete catalogsource "$AO_FALLBACK_CATALOG_NAME" -n "$_catalog_ns" \
     --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  kubectl delete deployment,service "${AO_FALLBACK_CATALOG_NAME}-registry" -n "$_catalog_ns" \
+    --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete serviceaccount "$AO_FALLBACK_CATALOG_NAME" -n "$_catalog_ns" \
     --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete clusterrolebinding \
@@ -331,11 +334,26 @@ remove_fallback_catalog_source() {
 ensure_fallback_catalog_source() {
   local _catalog_ns="$1"
   local _image="$2"
-  echo "  Creating fallback CatalogSource ${AO_FALLBACK_CATALOG_NAME} in ${_catalog_ns}..." >&2
-  ensure_catalog_service_account "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" || return 1
-  apply_image_catalog_source "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" "$_image"
+  local _registry_name="${AO_FALLBACK_CATALOG_NAME}-registry" _existing_image
+  echo "  Creating fallback catalog registry ${_registry_name} in ${_catalog_ns}..." >&2
+  # OLM's generated pod has a short fixed startup probe; use the longer
+  # startup allowance already used by the AAP catalog registry.
+  sed -e "s|redhat-operators-registry|${_registry_name}|g" \
+    -e "s|namespace: aap-operator|namespace: ${_catalog_ns}|g" \
+    -e "s|image: registry.redhat.io/redhat/redhat-operator-index:v[0-9.]*|image: ${_image}|" \
+    "${REPO_ROOT}/config/olm/catalog-registry.yaml" | kubectl apply -f - >&2 || return 1
+  _existing_image=$(kubectl get catalogsource "$AO_FALLBACK_CATALOG_NAME" -n "$_catalog_ns" \
+    -o jsonpath='{.spec.image}' 2>/dev/null || true)
+  if [ -n "$_existing_image" ]; then
+    kubectl delete catalogsource "$AO_FALLBACK_CATALOG_NAME" -n "$_catalog_ns" --wait=true >&2 || return 1
+  fi
+  echo "  Waiting for fallback registry startup..." >&2
+  kubectl rollout status deployment/"$_registry_name" -n "$_catalog_ns" \
+    --timeout="$(catalog_wait_timeout_seconds)s" >&2 || return 1
+  apply_address_catalog_source "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns" \
+    "${_registry_name}.${_catalog_ns}.svc:50051" || return 1
   echo "  Waiting for fallback CatalogSource READY..." >&2
-  if ! wait_for_catalog_service_ready "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"; then
+  if ! wait_for_catalog_ready "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"; then
     report_catalog_failure "$_catalog_ns" "$AO_FALLBACK_CATALOG_NAME"
     return 1
   fi
@@ -343,7 +361,7 @@ ensure_fallback_catalog_source() {
     echo "ERROR: automation-orchestrator-operator not found in fallback catalog." >&2
     return 1
   fi
-  printf '%s.%s.svc:50051\n' "$AO_FALLBACK_CATALOG_NAME" "$_catalog_ns"
+  printf '%s.%s.svc:50051\n' "$_registry_name" "$_catalog_ns"
 }
 
 select_ao_index_image() {
@@ -435,8 +453,14 @@ ensure_ao_catalog_source() {
 
   if [ -n "$REFRESH_CATALOG" ] || { [ -n "$_current_image" ] && [ "$_current_image" != "$_target_image" ]; }; then
     echo "  Restarting catalog pod..." >&2
-    kubectl delete pod -n "$_refresh_ns" -l "olm.catalogSource=${_refresh_catalog_name}" \
-      --wait=false >/dev/null 2>&1 || true
+    if [ "$_refresh_catalog_name" = "$AO_FALLBACK_CATALOG_NAME" ]; then
+      kubectl rollout restart deployment/"${AO_FALLBACK_CATALOG_NAME}-registry" -n "$_refresh_ns" >&2 || return 1
+      kubectl rollout status deployment/"${AO_FALLBACK_CATALOG_NAME}-registry" -n "$_refresh_ns" \
+        --timeout="$(catalog_wait_timeout_seconds)s" >&2 || return 1
+    else
+      kubectl delete pod -n "$_refresh_ns" -l "olm.catalogSource=${_refresh_catalog_name}" \
+        --wait=false >/dev/null 2>&1 || true
+    fi
   fi
 
   echo "  Waiting for CatalogSource READY..." >&2

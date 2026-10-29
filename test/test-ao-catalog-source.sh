@@ -2,7 +2,7 @@
 # Regression checks for the AO CatalogSource rendering contract.
 #
 # The normal AO install must proxy the healthy AAP catalog Service. Explicit or
-# fallback index images must continue to use an image-backed local CatalogSource.
+# fallback index images use a separately managed registry with a longer startup probe.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -85,7 +85,9 @@ fi
 if grep -q 'AO_FALLBACK_INDEX_IMAGE' "$DEPLOY_SCRIPT" \
   && grep -q 'AO_FALLBACK_CATALOG_NAME' "$DEPLOY_SCRIPT" \
   && grep -q 'ensure_fallback_catalog_source' "$DEPLOY_SCRIPT" \
-  && grep -q 'wait_for_catalog_service_ready "\$_catalog_ns" "\$AO_FALLBACK_CATALOG_NAME"' "$DEPLOY_SCRIPT" \
+  && grep -q 'wait_for_catalog_ready "\$_catalog_ns" "\$AO_FALLBACK_CATALOG_NAME"' "$DEPLOY_SCRIPT" \
+  && grep -q 'config/olm/catalog-registry.yaml' "$DEPLOY_SCRIPT" \
+  && grep -q 'rollout status deployment/' "$DEPLOY_SCRIPT" \
   && grep -q 'wait_for_operator_package "\$_catalog_ns" "\$AO_FALLBACK_CATALOG_NAME"' "$DEPLOY_SCRIPT" \
   && ! grep -q '"\$_image" 100' "$DEPLOY_SCRIPT" \
   && grep -q 'copy_pull_secret_to_namespace' "$DEPLOY_SCRIPT" \

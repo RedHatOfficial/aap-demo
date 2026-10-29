@@ -1,0 +1,10 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: redhat-operators
+  namespace: aap-operator
+spec:
+  sourceType: grpc
+  address: redhat-operators-registry.aap-operator.svc:50051
+  displayName: Red Hat Operators
+  publisher: Red Hat

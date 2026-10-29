@@ -278,7 +278,7 @@ source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 # -----------------------------------------------------------------------------
 
 check_kubectl() {
-  if command -v kubectl &>/dev/null; then
+  if command -v kubectl &>/dev/null && kubectl version --client &>/dev/null; then
     return 0
   fi
 
@@ -1446,7 +1446,7 @@ cmd_diagnose() {
   # =========================================================================
   echo "AAP Deployment:"
   local aap_name
-  aap_name=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  aap_name=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 
   if [ -z "$aap_name" ]; then
     _check_info "No AAP instance found in $NAMESPACE"
@@ -2499,15 +2499,35 @@ deploy_latest() {
   echo ""
   _catalog_image="registry.redhat.io/redhat/redhat-operator-index:v${AAP_OCP_VERSION}"
   _cached_catalog_image="$(_cached_operator_catalog_ref "$AAP_OCP_VERSION" "$AAP_VERSION")"
-  if [ -n "$_cached_catalog_image" ]; then
-    _catalog_image="$_cached_catalog_image"
-    echo "Creating CatalogSource from cached digest (OCP $AAP_OCP_VERSION)..."
+  _existing_catalog_address=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
+    -o jsonpath='{.spec.address}' 2>/dev/null || true)
+  _managed_catalog_address="redhat-operators-registry.${NAMESPACE}.svc:50051"
+  if [ "$_existing_catalog_address" = "$_managed_catalog_address" ] \
+    || { [ -z "$_existing_catalog_address" ] \
+      && [ "$_deploy_preset" = "microshift" ] \
+      && needs_signature_policy_relaxation; }; then
+    # The 4.22 index can need over two minutes to initialize; OLM's generated
+    # catalog pod has a fixed, shorter startup probe and restarts indefinitely.
+    echo "Creating catalog registry with extended startup probe (OCP $AAP_OCP_VERSION)..."
+    sed -e "s|image: registry.redhat.io/redhat/redhat-operator-index:v[0-9.]*|image: ${_cached_catalog_image:-$_catalog_image}|" \
+      -e "s|namespace: aap-operator|namespace: $NAMESPACE|g" \
+      "${SCRIPT_DIR}/config/olm/catalog-registry.yaml" | kubectl apply -f - || exit 1
+    sed -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
+      -e "s|address: redhat-operators-registry.aap-operator.svc:50051|address: ${_managed_catalog_address}|" \
+      "${SCRIPT_DIR}/config/olm/catalogsource-address.yaml" | kubectl apply -f - || exit 1
+  elif [ -n "$_existing_catalog_address" ]; then
+    echo "Using existing external CatalogSource: $_existing_catalog_address"
   else
-    echo "Creating CatalogSource (OCP $AAP_OCP_VERSION)..."
+    if [ -n "$_cached_catalog_image" ]; then
+      _catalog_image="$_cached_catalog_image"
+      echo "Creating CatalogSource from cached digest (OCP $AAP_OCP_VERSION)..."
+    else
+      echo "Creating CatalogSource (OCP $AAP_OCP_VERSION)..."
+    fi
+    sed -e "s|image: registry.redhat.io/redhat/redhat-operator-index:v[0-9.]*|image: ${_catalog_image}|" \
+      -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
+      "${SCRIPT_DIR}/config/olm/catalogsource.yaml" | kubectl apply -f -
   fi
-  sed -e "s|image: registry.redhat.io/redhat/redhat-operator-index:v[0-9.]*|image: ${_catalog_image}|" \
-    -e "s|namespace: aap-operator|namespace: $NAMESPACE|" \
-    "${SCRIPT_DIR}/config/olm/catalogsource.yaml" | kubectl apply -f -
 
   # Wait for CatalogSource — skip if already READY
   _catsrc_status=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
@@ -2524,7 +2544,7 @@ deploy_latest() {
       CATSRC_READY=true
     else
       echo "✗ CatalogSource not ready after $(catalog_wait_timeout_seconds)s"
-      echo "  Check: kubectl describe pod -n $NAMESPACE -l olm.catalogSource=redhat-operators"
+      echo "  Check: kubectl describe pods -n $NAMESPACE"
       exit 1
     fi
   fi

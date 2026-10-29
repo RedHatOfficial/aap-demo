@@ -115,7 +115,21 @@ function Invoke-AapGitBashCli {
   )
 
   $bashEnvironment = Get-AapGitBashCliEnvironment -Arguments $Arguments
-  $result = Invoke-AapGitBash -Command './aap-demo.sh "$@"' -Arguments $Arguments `
+  # A prior Linux install can leave an ELF kubectl in ~/.local/bin on Windows.
+  # Git Bash finds it on PATH but cannot execute it. The Windows installer
+  # supplies oc, which supports the kubectl commands used by the Bash CLI.
+  $command = @'
+if ! kubectl version --client >/dev/null 2>&1; then
+  if ! command -v oc >/dev/null 2>&1; then
+    echo 'A working kubectl or oc is required for the Windows CLI.' >&2
+    exit 1
+  fi
+  kubectl() { command oc "$@"; }
+  export -f kubectl
+fi
+./aap-demo.sh "$@"
+'@
+  $result = Invoke-AapGitBash -Command $command -Arguments $Arguments `
     -Environment $bashEnvironment -Interactive:$Interactive
   if ($result.Output) { Write-Host $result.Output.TrimEnd() }
   return $result

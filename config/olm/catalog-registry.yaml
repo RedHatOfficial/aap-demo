@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redhat-operators-registry
+  namespace: aap-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redhat-operators-registry
+  template:
+    metadata:
+      labels:
+        app: redhat-operators-registry
+    spec:
+      imagePullSecrets:
+        - name: redhat-operators-pull-secret
+      containers:
+        - name: registry-server
+          image: registry.redhat.io/redhat/redhat-operator-index:v4.20
+          ports:
+            - name: grpc
+              containerPort: 50051
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+          startupProbe:
+            exec:
+              command: [grpc_health_probe, -addr=:50051]
+            periodSeconds: 10
+            failureThreshold: 90
+          readinessProbe:
+            exec:
+              command: [grpc_health_probe, -addr=:50051]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: [grpc_health_probe, -addr=:50051]
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redhat-operators-registry
+  namespace: aap-operator
+spec:
+  selector:
+    app: redhat-operators-registry
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
