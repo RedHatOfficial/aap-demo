@@ -179,7 +179,7 @@ def build_parser(
         func=lifecycle.start
     )
     add("repair", "Repair cluster after crash").set_defaults(func=lifecycle.repair)
-    add("setup", "Run setup only (storage, coredns, mkcert)").set_defaults(func=lifecycle.setup)
+    add("setup", "Run setup only (storage, coredns)").set_defaults(func=lifecycle.setup)
     add("redeploy-all", "Destroy cluster and redeploy fresh").set_defaults(
         func=lifecycle.redeploy_all
     )

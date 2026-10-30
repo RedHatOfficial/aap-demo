@@ -80,7 +80,6 @@ def _prepare(
         return CompletedCommand(argv=tuple(argv), returncode=0, stdout=body)
 
     runner = FakeRunner()
-    runner.fail("mkcert")
     runner.register("crc status -o json", status)
     if version is None:
         runner.ok("crc version", stdout=_crc_version_text(microshift))
