@@ -30,30 +30,54 @@ host="$(kubectl get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}')"
 
 state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
 admin_password_file="$state_dir/admin-password"
-if [ -f "$admin_password_file" ]; then
-  admin_bytes="$(wc -c <"$admin_password_file" | tr -d ' ')"
-  admin_last_byte="$(od -An -t x1 -N 1 -j $((admin_bytes - 1)) "$admin_password_file" | tr -d ' ')"
-  [ "$admin_last_byte" != "0a" ] || {
-    echo "FAIL: admin password file ends with newline"
-    exit 1
-  }
-fi
+test -s "$admin_password_file" || {
+  echo "FAIL: Keycloak admin password file is missing"
+  exit 1
+}
+
+admin_token="$(curl -skf -X POST "https://${host}/realms/master/protocol/openid-connect/token" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'client_id=admin-cli' \
+  --data-urlencode 'grant_type=password' \
+  --data-urlencode 'username=admin' \
+  --data-urlencode "password@${admin_password_file}" | jq -r '.access_token // empty')"
+[ -n "$admin_token" ] || {
+  echo "FAIL: Keycloak admin API login failed"
+  exit 1
+}
+
+admin_curl() {
+  curl -skf -H "Authorization: Bearer ${admin_token}" "$@"
+}
 
 curl -skf "https://${host}/realms/${REALM}/.well-known/openid-configuration" \
   | jq -e '.issuer and .authorization_endpoint and .token_endpoint and .jwks_uri' >/dev/null
 
-kubectl get secret keycloak-realm -n "$NAMESPACE" \
-  -o jsonpath='{.data.aap-lab-realm\.json}' | base64 -d \
+admin_curl "https://${host}/admin/realms/${REALM}/clients?clientId=aap-demo-aap" \
   | jq -e '
-    ([.clients[].clientId] | sort) == ["aap-demo-aap", "aap-demo-ao"] and
-    all(.clients[]; . as $client |
-      any(.protocolMappers[]; .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == $client.clientId) and
-      any(.protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "preferred_username") and
-      any(.protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "email")
-    ) and
-    ([.groups[].name] | sort) == ["aap-admins", "aap-auditors", "aap-developers", "aap-operators"] and
-    ([.users[].username] | sort) == ["aap-oidc-admin", "aap-oidc-auditor", "aap-oidc-developer", "aap-oidc-operator"] and
-    all(.users[]; (.firstName == "AAP OIDC") and (.lastName | type == "string" and length > 0))
+    (. | length == 1) and
+    .[0].clientId == "aap-demo-aap" and
+    any(.[0].protocolMappers[]; .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "aap-demo-aap" and .config["access.token.claim"] == "true") and
+    any(.[0].protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "preferred_username" and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["userinfo.token.claim"] == "true") and
+    any(.[0].protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "email" and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["userinfo.token.claim"] == "true")
   ' >/dev/null
 
-echo "PASS: live Keycloak Route, readiness, discovery, realm, groups, users, claims, and clients"
+admin_curl "https://${host}/admin/realms/${REALM}/clients?clientId=aap-demo-ao" \
+  | jq -e '
+    (. | length == 1) and
+    .[0].clientId == "aap-demo-ao" and
+    any(.[0].protocolMappers[]; .protocolMapper == "oidc-audience-mapper" and .config["included.client.audience"] == "aap-demo-ao" and .config["access.token.claim"] == "true") and
+    any(.[0].protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "preferred_username" and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["userinfo.token.claim"] == "true") and
+    any(.[0].protocolMappers[]; .protocolMapper == "oidc-usermodel-property-mapper" and .config["claim.name"] == "email" and .config["id.token.claim"] == "true" and .config["access.token.claim"] == "true" and .config["userinfo.token.claim"] == "true")
+  ' >/dev/null
+
+admin_curl "https://${host}/admin/realms/${REALM}/groups" \
+  | jq -e '([.[].name] | sort) == ["aap-admins", "aap-auditors", "aap-developers", "aap-operators"]' >/dev/null
+
+admin_curl "https://${host}/admin/realms/${REALM}/users?max=100" \
+  | jq -e '
+    ([.[].username] | sort) == ["aap-oidc-admin", "aap-oidc-auditor", "aap-oidc-developer", "aap-oidc-operator"] and
+    all(.[]; (.firstName == "AAP OIDC") and (.lastName | type == "string" and length > 0))
+  ' >/dev/null
+
+echo "PASS: live Keycloak Route, readiness, discovery, active realm, groups, users, claims, and clients"
