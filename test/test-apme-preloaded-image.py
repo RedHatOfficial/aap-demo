@@ -108,6 +108,7 @@ class DeploymentImageTests(unittest.TestCase):
             defaults = {
                 "collection_root": str(ADDON),
                 "apme_portal_helm_values_path": str(work / "values.yml"),
+                "apme_portal_overlay_values_path": str(work / "values.yml"),
                 "ansible_python_interpreter": "{{ ansible_playbook_python }}",
                 "ansible_architecture": "x86_64",
                 "openshift_project_name": "apme",
