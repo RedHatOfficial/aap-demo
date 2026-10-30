@@ -76,6 +76,16 @@ _deploy_sh_fn_line_after() {
   fi
 }
 
+_deploy_sh_fn_must_grep _load_github_creds_from_file '_apme_python' \
+  'credential loading must use the managed APME Python runtime'
+_deploy_sh_fn_must_grep _persist_github_catalog_org_in_creds_file '_apme_python' \
+  'catalog-org persistence must use the managed APME Python runtime'
+_deploy_sh_fn_must_grep setup_venv 'version_info' \
+  'setup_venv must detect an existing venv created by another Python version'
+_deploy_sh_fn_must_grep setup_venv 'PYTHONPATH' \
+  'setup_venv must isolate Ansible commands from external PYTHONPATH'
+grep -q 'APME_PYTHON_BIN=' "$DEPLOY"
+
 _deploy_sh_deploy_case() {
   sed -n '/^[[:space:]]*deploy | --deploy)/,/^[[:space:]]*;;/p' "$DEPLOY"
 }
