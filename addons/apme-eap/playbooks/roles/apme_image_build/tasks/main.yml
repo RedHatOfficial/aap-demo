@@ -1,11 +1,14 @@
 ---
+- name: Resolve the external verified plugin artifact
+  ansible.builtin.include_tasks: resolve_external_artifact.yml
+
 - name: Require resolved plugin pack and local registry inputs
   ansible.builtin.assert:
     that:
       - plugin_sha is defined and plugin_sha | length > 0
       - oci_registry is defined and oci_registry | length > 0
       - apme_oci_tar_resolved is defined and apme_oci_tar_resolved | length > 0
-      - apme_image_build_pack_sha256 is match('^sha256:[0-9a-f]{64}$')
+      - apme_image_build_pack_sha256 | default('') is match('^sha256:[0-9a-f]{64}$')
     fail_msg: "plugin_sha, oci_registry, apme_oci_tar_resolved and a verified pack SHA256 are required."
 
 - name: Resolve the Podman command
@@ -113,7 +116,7 @@
               {{ apme_image_build_podman_command + [
                  'build', '--build-arg=BASE_IMAGE=' ~ apme_image_build_base,
                  '--build-arg=PLUGIN_PACK_SHA256=' ~ apme_image_build_pack_sha256,
-                 '--build-arg=PLUGIN_PACK_FORMAT=oci',
+                 '--build-arg=PLUGIN_PACK_FORMAT=' ~ apme_image_build_pack_format,
                  '--tag=' ~ apme_image_build_local, apme_image_build_context.path
               ] }}
           register: apme_image_build_result
@@ -160,3 +163,9 @@
     apme_preloaded_repository: "{{ apme_image_build_target.rsplit(':', 1)[0].split('/', 1)[1] }}"
     apme_preloaded_tag: "{{ plugin_sha }}"
     apme_preloaded_digest: "{{ apme_image_build_digest }}"
+
+- name: Remove the transient external plugin artifact
+  ansible.builtin.file:
+    path: "{{ apme_image_build_artifact_dir.path }}"
+    state: absent
+  when: apme_image_build_artifact_dir.path is defined
