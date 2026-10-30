@@ -29,6 +29,8 @@ source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
 # shellcheck source=includes/json-utils.sh
 source "${SCRIPT_DIR}/includes/json-utils.sh"
+# shellcheck source=includes/crc-storage.sh
+source "${SCRIPT_DIR}/includes/crc-storage.sh"
 
 # Colors
 _RED='\033[0;31m'
@@ -39,7 +41,7 @@ _NC='\033[0m'
 
 _save_config_key() {
   local key="$1" value="$2"
-  local config="${HOME}/.aap-demo/config"
+  local config="${AAP_DEMO_CONFIG:-${HOME}/.aap-demo/config}"
   mkdir -p "$(dirname "$config")"
   if [ -f "$config" ] && grep -q "^${key}=" "$config"; then
     sed -i.bak "s/^${key}=.*/${key}=${value}/" "$config" && rm -f "${config}.bak"
@@ -257,22 +259,6 @@ _crc_should_prompt_resources() {
 }
 
 # When sourced for CoreDNS only (aap-demo start), skip cluster creation.
-aap_demo_resource_prompt_enabled() {
-  if [ -t 0 ] || [ "${AAP_DEMO_INTERACTIVE:-}" = "1" ]; then
-    return 0
-  fi
-
-  local _tty_fd
-  if { exec {_tty_fd}</dev/tty; } 2>/dev/null; then
-    if [ -t "$_tty_fd" ]; then
-      exec {_tty_fd}<&-
-      return 0
-    fi
-    exec {_tty_fd}<&-
-  fi
-  return 1
-}
-
 aap_demo_normalize_crc_status() {
   case "${1:-}" in
     Running | Stopped) printf '%s\n' "$1" ;;
@@ -355,14 +341,17 @@ _DEFAULT_CPUS=8
 _DEFAULT_MEMORY_GB=16
 
 # Use saved values as defaults when available
-if [ -f "${HOME}/.aap-demo/config" ]; then
-  _saved_cpus=$(grep '^CRC_CPUS=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
-  _saved_memory=$(grep '^CRC_MEMORY=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)
+_crc_config_file="${AAP_DEMO_CONFIG:-${HOME}/.aap-demo/config}"
+if [ -f "$_crc_config_file" ]; then
+  _saved_cpus=$(grep '^CRC_CPUS=' "$_crc_config_file" 2>/dev/null | cut -d= -f2 || true)
+  _saved_memory=$(grep '^CRC_MEMORY=' "$_crc_config_file" 2>/dev/null | cut -d= -f2 || true)
   [[ "${_saved_cpus:-}" =~ ^[0-9]+$ ]] || _saved_cpus=""
   [[ "${_saved_memory:-}" =~ ^[0-9]+$ ]] || _saved_memory=""
   [ -n "$_saved_cpus" ] && _DEFAULT_CPUS="$_saved_cpus"
   [ -n "$_saved_memory" ] && _DEFAULT_MEMORY_GB=$(((_saved_memory + 512) / 1024))
 fi
+
+aap_demo_resolve_crc_storage
 
 if _crc_should_prompt_resources; then
   echo ""
@@ -404,16 +393,17 @@ if _crc_should_prompt_resources; then
   fi
   CRC_MEMORY=$((_input_memory_gb * 1024))
 
-  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
-  CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
+  if ! aap_demo_prompt_crc_storage; then
+    exit 1
+  fi
+  aap_demo_note_crc_storage_limits "$CRC_DISK"
 
   _save_config_key "CRC_CPUS" "$CRC_CPUS"
   _save_config_key "CRC_MEMORY" "$CRC_MEMORY"
+  aap_demo_save_crc_storage
 else
   CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-${_DEFAULT_CPUS}}}"
   CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$((_DEFAULT_MEMORY_GB * 1024))}}"
-  CRC_DISK="${CRC_DISK:-${VM_DISK_SIZE:-120}}"
-  CRC_PV_SIZE="${CRC_PV_SIZE:-${VM_PV_SIZE:-70}}"
 
   if [ "$(uname -s)" = "Linux" ] && [ "${SKIP_TEMP_SWAP:-false}" != "true" ] && [ "${AAP_ENABLE_TEMP_SWAP:-false}" = "true" ]; then
     # shellcheck source=includes/temp-swap.sh

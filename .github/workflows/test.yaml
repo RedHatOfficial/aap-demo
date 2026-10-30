@@ -66,6 +66,9 @@ jobs:
       - name: Run CRC resource prompt bridge test
         run: ./test/test-crc-resource-prompt.sh
 
+      - name: Run CRC storage prompt tests
+        run: ./test/test-crc-storage.sh
+
       - name: Run AO CatalogSource tests
         run: ./test/test-ao-catalog-source.sh
 
