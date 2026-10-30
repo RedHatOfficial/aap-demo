@@ -77,6 +77,7 @@ _AAP_DEMO_KUBECONFIG_FROM_ENV="${KUBECONFIG+x}"
 # Config file for persistent settings
 AAP_DEMO_CONFIG="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
 AAP_DEMO_CONFIG_FILE="$AAP_DEMO_CONFIG"
+export AAP_DEMO_CONFIG
 
 # Values in the shared config are inherited by every addon. Keep credentials in
 # dedicated files or one-shot process environment variables instead of making
@@ -170,7 +171,7 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
-    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | keycloak | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | storage | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | keycloak | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
         keycloak)
@@ -227,7 +228,7 @@ for arg in "$@"; do
       ;;
     *)
       # Commands that accept arbitrary args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ] || [ "$COMMAND" = "keycloak" ]; then
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ] || [ "$COMMAND" = "keycloak" ] || [ "$COMMAND" = "storage" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -563,6 +564,7 @@ Commands:
 
 Cluster management:
   create          Create OpenShift Local cluster
+  storage [DISK] [PV]  Show or change the VM disk and persistent-volume size
   destroy         Delete cluster (--reset to clear config, --skip-cache to bypass image caching)
   stop            Stop cluster
   ssh             SSH into cluster node
@@ -660,6 +662,10 @@ COMMANDS (all infrastructure types):
 
 COMMANDS:
     create          Create OpenShift Local cluster
+                    Interactive runs also ask for disk and persistent-volume size
+    storage [DISK_GB] [PV_GB]
+                    Show or change the OpenShift Local disk and persistent-volume pool
+                    Example: aap-demo storage 160 100
     destroy [--reset] [--skip-cache] Delete local cluster (--reset also clears config)
     stop            Stop local cluster gracefully
     start           Start stopped cluster (re-applies CoreDNS config)
@@ -672,6 +678,9 @@ COMMANDS:
 
 ENVIRONMENT:
     AAP_VERSION=2.6|2.7  AAP version to deploy (default: 2.7)
+    CRC_DISK            VM disk size in GiB (default: 120)
+    CRC_PV_SIZE         Persistent-volume pool in GiB (default: 70, must be < CRC_DISK)
+    QUIET=true          Skip the CPU, memory, and storage prompts
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
     AAP_PERSISTENT_IMAGE_STORE=true
                         Keep CRI-O image storage on a persistent qcow2 disk
@@ -683,6 +692,8 @@ ENVIRONMENT:
 
 EXAMPLES:
     aap-demo create                              # Create OpenShift Local cluster
+    aap-demo storage                             # Show disk and persistent-volume size
+    aap-demo storage 160 100                     # Set a 160GB disk and 100GB PV pool
     aap-demo deploy                              # Deploy AAP $AAP_VERSION
     aap-demo enable fleet                        # Enable fleet addon
     aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
@@ -1059,6 +1070,55 @@ _clean_operator() {
     _prune_unused_images
   else
     echo "Namespace $ns not found - nothing to clean"
+  fi
+}
+
+cmd_storage() {
+  local requested_disk="${1:-}"
+  local requested_pv="${2:-}"
+  # shellcheck source=includes/crc-storage.sh
+  source "${SCRIPT_DIR}/includes/crc-storage.sh"
+
+  if [ "$#" -gt 2 ]; then
+    printf "Usage: aap-demo storage [DISK_GB] [PV_GB]\n" >&2
+    exit 1
+  fi
+
+  aap_demo_resolve_crc_storage
+  local current_disk="$CRC_DISK"
+  local current_pv="$CRC_PV_SIZE"
+
+  if [ -z "$requested_disk" ]; then
+    aap_demo_print_crc_storage "$current_disk" "$current_pv"
+    aap_demo_note_crc_storage_limits "$current_disk"
+    aap_demo_note_existing_crc_disk || true
+    if [ "${QUIET:-false}" = "true" ] || ! aap_demo_resource_prompt_enabled; then
+      return 0
+    fi
+    echo ""
+    echo "Enter a new size, or press Enter to keep the current value."
+    if ! aap_demo_prompt_crc_storage; then
+      exit 1
+    fi
+  else
+    CRC_DISK="$requested_disk"
+    if [ -n "$requested_pv" ]; then
+      CRC_PV_SIZE="$requested_pv"
+    fi
+    if ! aap_demo_validate_crc_storage "$CRC_DISK" "$CRC_PV_SIZE"; then
+      printf 'Usage: aap-demo storage DISK_GB [PV_GB]\n' >&2
+      exit 1
+    fi
+  fi
+
+  aap_demo_save_crc_storage
+  if ! aap_demo_apply_crc_storage_config "$CRC_DISK" "$CRC_PV_SIZE"; then
+    exit 1
+  fi
+  aap_demo_print_crc_storage "$CRC_DISK" "$CRC_PV_SIZE"
+  aap_demo_note_crc_storage_limits "$CRC_DISK"
+  if ! aap_demo_note_existing_crc_disk; then
+    printf 'Saved. The next aap-demo create will use this size.\n'
   fi
 }
 
@@ -3540,7 +3600,7 @@ esac
 
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
 case "$COMMAND" in
-  help | --help | -h | config | update | version | "" | destroy | status)
+  help | --help | -h | config | update | version | "" | destroy | status | storage)
     # These commands don't need cluster access
     ;;
   redeploy-all | deploy | deploy-all | redeploy | create)
@@ -3585,6 +3645,9 @@ case "$COMMAND" in
     ;;
   create)
     cmd_create
+    ;;
+  storage)
+    cmd_storage "${EXTRA_ARGS[@]}"
     ;;
   setup)
     cmd_setup

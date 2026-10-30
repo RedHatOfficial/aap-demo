@@ -84,7 +84,7 @@ function Invoke-AapWindowsBashCli {
   }
 
   $interactiveCommands = @(
-    'create', 'deploy', 'deploy-all', 'redeploy', 'redeploy-all',
+    'create', 'storage', 'deploy', 'deploy-all', 'redeploy', 'redeploy-all',
     'setup', 'enable', 'disable', 'wire', 'repair', 'trust-ca', 'start', 'stop',
     'destroy', 'clean', 'update', 'idle', 'ssh'
   )
