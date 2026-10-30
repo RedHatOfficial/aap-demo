@@ -13,5 +13,6 @@ from aap_demo.core.errors import NotImplementedYetError
 
 
 def playbooks(ctx: AppContext, args: argparse.Namespace) -> int:
-    action = getattr(args, "playbooks_action", None) or ""
-    raise NotImplementedYetError(f"playbooks {action}".strip())
+    action = getattr(args, "playbooks_action", None)
+    command = "playbooks" if not action else f"playbooks {action}"
+    raise NotImplementedYetError(command)

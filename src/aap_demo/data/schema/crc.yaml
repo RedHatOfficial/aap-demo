@@ -70,7 +70,11 @@ properties:
     type: string
     default: ""
     title: CRC version
-    description: Pin a specific OpenShift Local version. Empty means no pin.
+    description: >
+      MicroShift version floor for create and deploy. Empty uses 4.22.
+      A lower value such as 4.21 keeps the CRC binary already on PATH
+      instead of installing the pinned release. CRC 2.64 setup needs sudo
+      to grant CAP_NET_BIND_SERVICE; aap-demo does not run setcap itself.
     x-cli: {flag: "--crc-version"}
     x-env: CRC_VERSION
     x-config: crc.version

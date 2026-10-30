@@ -44,6 +44,10 @@ def _register_healthy_cluster(
     aap_name_stdout: str = "myaap",
     idle_stdout: str = "false",
     successful_stdout: str = "True",
+    running_stdout: str = "",
+    reason_stdout: str = "",
+    failure_stdout: str = "",
+    failure_message: str = "",
     pod_lines: str = "aap-gateway-1  1/1  Running  0  1h\n",
     pvc_lines: str = "data  Bound  1h\n",
     dns_pod_lines: str = "dns-1  1/1  Running  0  1h\n",
@@ -143,9 +147,48 @@ def _register_healthy_cluster(
                 "-n",
                 NAMESPACE,
                 "-o",
+                'jsonpath={.status.conditions[?(@.type=="Running")].status}',
+            ],
+            stdout=running_stdout,
+        )
+        fake_runner.ok(
+            [
+                "kubectl",
+                "get",
+                "aap",
+                "myaap",
+                "-n",
+                NAMESPACE,
+                "-o",
+                'jsonpath={.status.conditions[?(@.type=="Successful")].reason}',
+            ],
+            stdout=reason_stdout,
+        )
+        fake_runner.ok(
+            [
+                "kubectl",
+                "get",
+                "aap",
+                "myaap",
+                "-n",
+                NAMESPACE,
+                "-o",
                 'jsonpath={.status.conditions[?(@.type=="Failure")].status}',
             ],
-            stdout="",
+            stdout=failure_stdout,
+        )
+        fake_runner.ok(
+            [
+                "kubectl",
+                "get",
+                "aap",
+                "myaap",
+                "-n",
+                NAMESPACE,
+                "-o",
+                'jsonpath={.status.conditions[?(@.type=="Failure")].message}',
+            ],
+            stdout=failure_message,
         )
     fake_runner.ok(["kubectl", "get", "pods", "-n", NAMESPACE, "--no-headers"], stdout=pod_lines)
     fake_runner.ok(["kubectl", "get", "pvc", "-n", NAMESPACE, "--no-headers"], stdout=pvc_lines)
@@ -284,6 +327,48 @@ def test_idle_aap_is_informational(fake_runner: FakeRunner) -> None:
 
     deployment_section = next(s for s in report.sections if s.name == "AAP Deployment")
     assert any("is idle" in c.message for c in deployment_section.checks)
+
+
+def test_aap_27_terminal_state_is_success_when_failure_is_not_true(
+    fake_runner: FakeRunner,
+) -> None:
+    """Successful=False with reason Successful and Running=True is finished."""
+    _register_healthy_cluster(
+        fake_runner,
+        successful_stdout="False",
+        running_stdout="True",
+        reason_stdout="Successful",
+        failure_stdout="False",
+    )
+
+    report = diagnose_checks.run(fake_runner, NAMESPACE)
+
+    deployment_section = next(s for s in report.sections if s.name == "AAP Deployment")
+    assert any(
+        c.level == "pass" and "deployed successfully" in c.message
+        for c in deployment_section.checks
+    )
+    assert not any("still reconciling" in c.message for c in deployment_section.checks)
+    assert report.warnings == 0
+
+
+def test_failure_true_stays_a_failure_when_pods_are_healthy(fake_runner: FakeRunner) -> None:
+    _register_healthy_cluster(
+        fake_runner,
+        successful_stdout="False",
+        running_stdout="True",
+        reason_stdout="Successful",
+        failure_stdout="True",
+        failure_message="backup failed",
+    )
+
+    report = diagnose_checks.run(fake_runner, NAMESPACE)
+
+    deployment_section = next(s for s in report.sections if s.name == "AAP Deployment")
+    assert any(
+        c.level == "fail" and "backup failed" in c.message for c in deployment_section.checks
+    )
+    assert report.issues >= 1
 
 
 def test_reconciling_aap_is_a_warning(fake_runner: FakeRunner) -> None:

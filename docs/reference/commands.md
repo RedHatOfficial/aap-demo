@@ -34,6 +34,7 @@ still run with [the older command](../guides/older-command.md).
 | `must-gather` | Collect logs into a folder. An optional path picks the folder. |
 | `clean` | Remove AAP and keep the cluster. |
 | `redeploy` | `clean`, then `deploy`. |
+| `redeploy-all` | Delete the cluster, create it again, and install AAP. |
 | `destroy` | Delete the cluster. `--reset` also clears saved settings. |
 | `update` | Upgrade the pipx install of the command. |
 | `version` | Print `2.0.0.dev1` and how this copy was installed. |
@@ -50,7 +51,7 @@ still run with [the older command](../guides/older-command.md).
 
 These names exist so old habits are not a mystery, and they stop with "not implemented" rather than doing the old work:
 
-`redeploy-all`, `addon`, `playbooks`, `gui`, `completion`
+`addon`, `playbooks`, `gui`, `completion`
 
 `enable` and `disable` with a name other than `fleet` stop with "only fleet is implemented."
 `enable` with no name prints `fleet`.

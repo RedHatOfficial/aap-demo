@@ -36,8 +36,8 @@ def render(
 ) -> None:
     output = normalize(output)
     if output == "json":
-        console.out(json.dumps(data, indent=2, sort_keys=False, default=str))
+        console.emit(json.dumps(data, indent=2, sort_keys=False, default=str))
     elif output == "yaml":
-        console.out(yaml.safe_dump(data, sort_keys=False, default_flow_style=False).rstrip())
+        console.emit(yaml.safe_dump(data, sort_keys=False, default_flow_style=False).rstrip())
     else:
         console.out(text() if text is not None else str(data))

@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
+from aap_demo.cluster.aap import condition_is_complete
 from aap_demo.infra import crc as infra_crc
 
 Level = str  # "pass" | "fail" | "warn" | "info"
@@ -255,6 +256,22 @@ def _check_security(runner: Any, namespace: str, rec: _Recorder) -> None:
             rec.fail(f"Namespace {namespace} missing PSA labels")
 
 
+def _aap_condition(runner: Any, aap_name: str, namespace: str, kind: str, field: str) -> str:
+    result = runner.run(
+        [
+            "kubectl",
+            "get",
+            "aap",
+            aap_name,
+            "-n",
+            namespace,
+            "-o",
+            f'jsonpath={{.status.conditions[?(@.type=="{kind}")].{field}}}',
+        ]
+    )
+    return result.stdout.strip() if result.ok else ""
+
+
 def _check_aap_deployment(runner: Any, namespace: str, rec: _Recorder) -> None:
     """Ports aap-demo.sh:1168-1234."""
     rec.start("AAP Deployment")
@@ -274,46 +291,14 @@ def _check_aap_deployment(runner: Any, namespace: str, rec: _Recorder) -> None:
     if idle_result.ok and idle_result.stdout.strip() == "true":
         rec.info(f"AAP '{aap_name}' is idle (scaled down)")
     else:
-        successful = runner.run(
-            [
-                "kubectl",
-                "get",
-                "aap",
-                aap_name,
-                "-n",
-                namespace,
-                "-o",
-                'jsonpath={.status.conditions[?(@.type=="Successful")].status}',
-            ]
-        )
-        failure = runner.run(
-            [
-                "kubectl",
-                "get",
-                "aap",
-                aap_name,
-                "-n",
-                namespace,
-                "-o",
-                'jsonpath={.status.conditions[?(@.type=="Failure")].status}',
-            ]
-        )
-        if successful.ok and successful.stdout.strip() == "True":
+        successful = _aap_condition(runner, aap_name, namespace, "Successful", "status")
+        running = _aap_condition(runner, aap_name, namespace, "Running", "status")
+        reason = _aap_condition(runner, aap_name, namespace, "Successful", "reason")
+        failure = _aap_condition(runner, aap_name, namespace, "Failure", "status")
+        if condition_is_complete(successful, running, reason, failure):
             rec.ok(f"AAP '{aap_name}' deployed successfully")
-        elif failure.ok and failure.stdout.strip() == "True":
-            message_result = runner.run(
-                [
-                    "kubectl",
-                    "get",
-                    "aap",
-                    aap_name,
-                    "-n",
-                    namespace,
-                    "-o",
-                    'jsonpath={.status.conditions[?(@.type=="Failure")].message}',
-                ]
-            )
-            fail_message = message_result.stdout.strip() if message_result.ok else ""
+        elif failure == "True":
+            fail_message = _aap_condition(runner, aap_name, namespace, "Failure", "message")
             rec.fail(f"AAP '{aap_name}' has failures: {fail_message or 'unknown'}")
         else:
             rec.warn(f"AAP '{aap_name}' is still reconciling")

@@ -204,6 +204,23 @@ def _below(installed: Tuple[int, int], required: Tuple[int, int]) -> bool:
     )
 
 
+def requested_version(ctx: Any) -> str:
+    """MicroShift floor from ``CRC_VERSION`` or saved ``crc.version``.
+
+    Empty means :data:`MINIMUM_VERSION`. A lower value, such as ``4.21``,
+    keeps the CRC binary already on PATH instead of installing the pinned
+    release. ``crc setup`` for that release needs sudo to grant
+    ``CAP_NET_BIND_SERVICE``; this module does not run ``setcap``.
+    """
+    raw = str(getattr(ctx, "env", {}).get("CRC_VERSION", "") or "").strip()
+    if raw:
+        return raw
+    config = getattr(ctx, "config", None)
+    if config is None:
+        return ""
+    return str(config.get("crc.version", "") or "").strip()
+
+
 def verify_version(ctx: Any) -> bool:
     """Ports ``_verify_crc_version`` (upstream #167).
 
@@ -226,7 +243,7 @@ def verify_version(ctx: Any) -> bool:
         return False
 
     recommended = _version_pair(ctx.env.get("CRC_RECOMMENDED_VERSION", ""), RECOMMENDED_VERSION)
-    minimum = _version_pair(ctx.env.get("CRC_VERSION", ""), MINIMUM_VERSION)
+    minimum = _version_pair(requested_version(ctx), MINIMUM_VERSION)
     shown = _VERSION_RE.match(installed_text.strip())
     shown_text = shown.group(0) if shown else installed_text
 
@@ -240,7 +257,7 @@ def verify_version(ctx: Any) -> bool:
         ctx.console.out("")
 
     if _below(installed, minimum):
-        required = ctx.env.get("CRC_VERSION") or MINIMUM_VERSION
+        required = requested_version(ctx) or MINIMUM_VERSION
         ctx.console.err("")
         ctx.console.err("ERROR: CRC version too old")
         ctx.console.err(f"  Required: {required} or newer")
@@ -293,7 +310,7 @@ def require_supported_bundle(ctx: Any) -> str:
     result = ctx.runner.run(["crc", "version"])
     shown = bundled_microshift_version(result.stdout if result.ok else "")
     installed = parse_version(shown or "")
-    minimum = _version_pair(ctx.env.get("CRC_VERSION", ""), MINIMUM_VERSION)
+    minimum = _version_pair(requested_version(ctx), MINIMUM_VERSION)
     if installed is None or shown is None:
         raise AapDemoError(
             "Could not read the MicroShift version from crc version",
@@ -312,7 +329,7 @@ def require_supported_bundle(ctx: Any) -> str:
         ctx.console.out("")
 
     if _below(installed, minimum):
-        required = ctx.env.get("CRC_VERSION") or MINIMUM_VERSION
+        required = requested_version(ctx) or MINIMUM_VERSION
         raise AapDemoError(
             f"Installed CRC bundles MicroShift {shown_text}; create requires {required} or newer",
             hint=(
@@ -326,7 +343,7 @@ def require_supported_bundle(ctx: Any) -> str:
 
 def _opted_into_older_bundle(ctx: Any, microshift: Optional[str]) -> bool:
     """``CRC_VERSION=4.21`` keeps the installed bundle instead of upgrading."""
-    raw = str(ctx.env.get("CRC_VERSION", "") or "").strip()
+    raw = str(requested_version(ctx) or "").strip()
     if not raw or microshift is None:
         return False
     floor = parse_version(MINIMUM_VERSION)

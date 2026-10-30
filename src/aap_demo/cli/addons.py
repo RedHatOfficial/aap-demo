@@ -34,5 +34,6 @@ def disable(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def addon(ctx: AppContext, args: argparse.Namespace) -> int:
-    action = getattr(args, "addon_action", None) or "addon"
-    raise NotImplementedYetError(f"addon {action}".strip())
+    action = getattr(args, "addon_action", None)
+    command = "addon" if not action else f"addon {action}"
+    raise NotImplementedYetError(command)
