@@ -83,8 +83,10 @@ aap-demo deploy        # Deploy AAP 2.7 (~5–15 min)
 aap-demo status        # Routes, credentials, pod counts
 ```
 
-On first `create`, you are prompted to choose a CRC preset (MicroShift is
-recommended). The choice is saved to `%USERPROFILE%\.aap-demo\config`.
+`aap-demo create` asks for CPUs, memory, disk size, and persistent-volume size.
+Those values are saved to `%USERPROFILE%\.aap-demo\config`. Change the disk
+later with `aap-demo storage`. An existing VM keeps its current disk until
+`aap-demo destroy` and `aap-demo create`.
 
 After deploy, open the AAP route from `aap-demo status`. If your browser shows a
 certificate warning, trust the ingress CA from an elevated PowerShell — see
@@ -97,6 +99,8 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | Command                        | Description                                                        |
 | ------------------------------ | ------------------------------------------------------------------ |
 | `aap-demo create`              | Create OpenShift Local cluster (NFS, CoreDNS, OLM, metrics-server) |
+| `aap-demo storage`             | Show or change the VM disk and persistent-volume size              |
+| `aap-demo storage 160 100`     | Set a 160GB disk and a 100GB persistent-volume pool                |
 | `aap-demo deploy`              | Deploy AAP 2.7 operator and instance via OLM                       |
 | `aap-demo deploy -Force`       | Deploy even if an AAP CR already exists                            |
 | `aap-demo redeploy`            | Clean namespace and redeploy AAP                                   |
@@ -139,8 +143,8 @@ one-shot process environment variable.
 | ------------------- | -------------------------------------------- | -------------------------------------------------- |
 | `CRC_CPUS`          | `8`                                          | VM CPU count                                       |
 | `CRC_MEMORY`        | `16384`                                      | VM memory (MiB)                                    |
-| `CRC_DISK`          | `100`                                        | VM disk (GiB)                                      |
-| `CRC_PV_SIZE`       | `50`                                         | Storage for PVCs (GiB)                             |
+| `CRC_DISK`          | `120`                                        | VM disk (GiB). Prompted on create                  |
+| `CRC_PV_SIZE`       | `70`                                         | Persistent-volume pool (GiB). Must be `< CRC_DISK` |
 | `NFS_BACKING_STORAGE_SIZE` | `5Gi`                                  | LVMS-backed storage reserved for the NFS server      |
 | `NAMESPACE`         | `aap-operator`                               | Kubernetes namespace                               |
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |

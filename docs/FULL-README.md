@@ -66,6 +66,8 @@ Resource allocation for CRC VM:
   Temp swap size in GB [16]:
   CPUs [8]:
   Memory in GB [16]:
+  Disk in GB [120]:
+  Persistent volume storage in GB [70]:
 ```
 
 Host prep for pull secret, libvirt, and CRC setup:
@@ -288,8 +290,8 @@ design, storage, OLM, addons, and cross-platform support).
 ```bash
 CRC_CPUS=8                   # VM CPU count (default: 8)
 CRC_MEMORY=24576             # VM memory in MiB (default: 24576, use 16384 for AAP-only)
-CRC_DISK=100                 # VM disk size in GiB (default: 100)
-CRC_PV_SIZE=70               # Storage reserved for LVMS PVCs in GiB (default: 70, must be < CRC_DISK)
+CRC_DISK=120                 # VM disk size in GiB (default: 120; prompted on create)
+CRC_PV_SIZE=70               # Persistent-volume pool in GiB (default: 70, must be < CRC_DISK; prompted on create)
 NAMESPACE=aap-operator       # Target namespace
 QUIET=true                   # Suppress disclaimer
 ```

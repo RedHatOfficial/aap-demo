@@ -1,3 +1,103 @@
+function Get-AapResolvedCrcStorage {
+  $savedDisk = Get-AapConfigValue 'CRC_DISK'
+  $savedPv = Get-AapConfigValue 'CRC_PV_SIZE'
+  $disk = if ($env:CRC_DISK) { $env:CRC_DISK } elseif ($savedDisk) { $savedDisk } else { '120' }
+  $pvSize = if ($env:CRC_PV_SIZE) { $env:CRC_PV_SIZE } elseif ($savedPv) { $savedPv } else { '70' }
+  return @{ Disk = [string]$disk; PvSize = [string]$pvSize }
+}
+
+function Assert-AapCrcStoragePair {
+  param(
+    [Parameter(Mandatory)][string]$Disk,
+    [Parameter(Mandatory)][string]$PvSize
+  )
+  if ($Disk -notmatch '^[0-9]+$' -or [int]$Disk -le 0) {
+    throw "Invalid disk size: '$Disk' (must be a positive integer in GB)"
+  }
+  if ($PvSize -notmatch '^[0-9]+$' -or [int]$PvSize -le 0) {
+    throw "Invalid persistent volume size: '$PvSize' (must be a positive integer in GB)"
+  }
+  if ([int]$PvSize -ge [int]$Disk) {
+    throw "Persistent volume size (${PvSize}GB) must be less than disk size (${Disk}GB)"
+  }
+}
+
+function Test-AapCrcVmExists {
+  $profileRoot = if ($env:USERPROFILE) { $env:USERPROFILE } elseif ($env:HOME) { $env:HOME } else { $env:TEMP }
+  $machine = Join-Path $profileRoot '.crc\machines\crc'
+  return (Test-Path -LiteralPath $machine)
+}
+
+function Write-AapCrcStorageNotes {
+  param(
+    [Parameter(Mandatory)][string]$Disk,
+    [switch]$Saved
+  )
+  if ($Disk -match '^[0-9]+$' -and [int]$Disk -lt 120) {
+    Write-Host "Note: ${Disk}GB is below the 120GB disk used for a full AAP install. Image pulls and the NFS volume can run out of space at this size."
+  }
+  if (Test-AapCrcVmExists) {
+    Write-Host 'The current cluster keeps its existing disk. Run aap-demo destroy && aap-demo create to build a VM with the saved size.'
+  } elseif ($Saved) {
+    Write-Host 'Saved. The next aap-demo create will use this size.'
+  }
+}
+
+function Set-AapCrcStorageConfig {
+  param(
+    [Parameter(Mandatory)][string]$Disk,
+    [Parameter(Mandatory)][string]$PvSize
+  )
+  Assert-AapCrcStoragePair -Disk $Disk -PvSize $PvSize
+  Set-AapConfigValue 'CRC_DISK' $Disk
+  Set-AapConfigValue 'CRC_PV_SIZE' $PvSize
+  if (Test-AapCommand 'crc') {
+    & crc config set disk-size $Disk
+    if ($LASTEXITCODE -ne 0) { throw 'crc config set disk-size failed' }
+    & crc config set persistent-volume-size $PvSize
+    if ($LASTEXITCODE -ne 0) { throw 'crc config set persistent-volume-size failed' }
+  } else {
+    Write-Host 'crc is not installed. The size is saved for the next aap-demo create.'
+  }
+}
+
+function Invoke-AapDemoStorage {
+  param(
+    [string]$Disk,
+    [string]$PvSize
+  )
+  $current = Get-AapResolvedCrcStorage
+  $targetDisk = $current.Disk
+  $targetPv = $current.PvSize
+  $changing = $false
+
+  if ([string]::IsNullOrWhiteSpace($Disk) -and [string]::IsNullOrWhiteSpace($PvSize)) {
+    Write-Host 'CRC storage:'
+    Write-Host "  Disk: $($current.Disk) GB"
+    Write-Host "  Persistent volume storage: $($current.PvSize) GB"
+    Write-AapCrcStorageNotes -Disk $current.Disk
+    if ($env:QUIET -eq 'true') { return }
+    Write-Host ''
+    Write-Host 'Enter a new size, or press Enter to keep the current value.'
+    $diskChoice = Read-Host "Disk in GB [$($current.Disk)]"
+    if (-not [string]::IsNullOrWhiteSpace($diskChoice)) { $targetDisk = $diskChoice.Trim() }
+    $pvChoice = Read-Host "Persistent volume storage in GB [$($current.PvSize)]"
+    if (-not [string]::IsNullOrWhiteSpace($pvChoice)) { $targetPv = $pvChoice.Trim() }
+    $changing = $true
+  } else {
+    if (-not [string]::IsNullOrWhiteSpace($Disk)) { $targetDisk = $Disk.Trim() }
+    if (-not [string]::IsNullOrWhiteSpace($PvSize)) { $targetPv = $PvSize.Trim() }
+    $changing = $true
+  }
+
+  if (-not $changing) { return }
+  Set-AapCrcStorageConfig -Disk $targetDisk -PvSize $targetPv
+  Write-Host 'CRC storage:'
+  Write-Host "  Disk: $targetDisk GB"
+  Write-Host "  Persistent volume storage: $targetPv GB"
+  Write-AapCrcStorageNotes -Disk $targetDisk -Saved
+}
+
 function Invoke-AapDemoCreate {
   [CmdletBinding()]
   param(
@@ -32,8 +132,9 @@ function Invoke-AapDemoCreate {
 
   $cpus = if ($env:CRC_CPUS) { $env:CRC_CPUS } elseif (Get-AapConfigValue 'CRC_CPUS') { Get-AapConfigValue 'CRC_CPUS' } else { '8' }
   $memory = if ($env:CRC_MEMORY) { $env:CRC_MEMORY } elseif (Get-AapConfigValue 'CRC_MEMORY') { Get-AapConfigValue 'CRC_MEMORY' } else { '16384' }
-  $disk = if ($env:CRC_DISK) { $env:CRC_DISK } else { '100' }
-  $pvSize = if ($env:CRC_PV_SIZE) { $env:CRC_PV_SIZE } else { '50' }
+  $resolvedStorage = Get-AapResolvedCrcStorage
+  $disk = $resolvedStorage.Disk
+  $pvSize = $resolvedStorage.PvSize
 
   if ($env:QUIET -ne 'true') {
     $cpuChoice = Read-Host "CPUs [$cpus]"
@@ -45,16 +146,26 @@ function Invoke-AapDemoCreate {
       $memory = ([int]$memoryChoice.Trim()) * 1024
     }
 
+    $diskChoice = Read-Host "Disk in GB [$disk]"
+    if (-not [string]::IsNullOrWhiteSpace($diskChoice)) { $disk = $diskChoice.Trim() }
+    $pvChoice = Read-Host "Persistent volume storage in GB [$pvSize]"
+    if (-not [string]::IsNullOrWhiteSpace($pvChoice)) { $pvSize = $pvChoice.Trim() }
+    Assert-AapCrcStoragePair -Disk $disk -PvSize $pvSize
+
     Set-AapConfigValue 'CRC_CPUS' $cpus
     Set-AapConfigValue 'CRC_MEMORY' $memory
+    Set-AapConfigValue 'CRC_DISK' $disk
+    Set-AapConfigValue 'CRC_PV_SIZE' $pvSize
   }
+
+  Assert-AapCrcStoragePair -Disk $disk -PvSize $pvSize
 
   & crc config set preset $preset 2>$null | Out-Null
   & crc config set cpus $cpus 2>$null | Out-Null
   & crc config set memory $memory 2>$null | Out-Null
   & crc config set disk-size $disk 2>$null | Out-Null
   & crc config set persistent-volume-size $pvSize 2>$null | Out-Null
-  Write-AapStep "Preset $preset | CPUs $cpus | Memory $memory MiB | Disk ${disk}GB"
+  Write-AapStep "Preset $preset | CPUs $cpus | Memory $memory MiB | Disk ${disk}GB | PV ${pvSize}GB"
 
   if ($crcState -eq 'Unknown') {
     Write-AapStep 'Running crc setup...'

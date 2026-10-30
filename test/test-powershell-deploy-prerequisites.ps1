@@ -64,4 +64,33 @@ if ($deploySource -match 'nfs-local-rwx missing - applying CR with ReadWriteOnce
   throw 'PowerShell deploy must fail clearly instead of silently changing the requested storage mode'
 }
 
+$createSource = Get-Content (Join-Path $repoRoot 'powershell/native/Private/Create.ps1') -Raw
+if ($createSource -notmatch 'Disk in GB' -or $createSource -notmatch 'Persistent volume storage in GB') {
+  throw 'Windows create must prompt for disk and persistent-volume size'
+}
+if ($wrapperSource -notmatch "'create', 'storage'") {
+  throw 'Windows wrapper must keep aap-demo storage interactive'
+}
+$oldDisk = $env:CRC_DISK
+$oldPv = $env:CRC_PV_SIZE
+try {
+  $env:CRC_DISK = '160'
+  $env:CRC_PV_SIZE = '90'
+  $resolved = & $module { Get-AapResolvedCrcStorage }
+  if ($resolved.Disk -ne '160' -or $resolved.PvSize -ne '90') {
+    throw "Resolved storage was $($resolved.Disk)/$($resolved.PvSize)"
+  }
+  & $module { Assert-AapCrcStoragePair -Disk '160' -PvSize '90' }
+  $rejected = $false
+  try {
+    & $module { Assert-AapCrcStoragePair -Disk '90' -PvSize '90' }
+  } catch {
+    $rejected = $true
+  }
+  if (-not $rejected) { throw 'Equal disk and PV size must be rejected' }
+} finally {
+  if ($null -eq $oldDisk) { Remove-Item Env:CRC_DISK -ErrorAction SilentlyContinue } else { $env:CRC_DISK = $oldDisk }
+  if ($null -eq $oldPv) { Remove-Item Env:CRC_PV_SIZE -ErrorAction SilentlyContinue } else { $env:CRC_PV_SIZE = $oldPv }
+}
+
 Write-Output 'PowerShell deploy prerequisite checks passed'
