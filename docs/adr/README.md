@@ -80,6 +80,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [035](035-remove-diagnose-ai.md) | Remove `diagnose --ai` from the Python CLI | Accepted |
 | [036](036-subscription-manifest.md) | Apply a Subscription Manifest Only When Asked | Accepted |
 | [037](037-fleet-systemd-nodes.md) | Fleet Nodes Run systemd as PID 1 | Accepted |
+| [034](034-apme-abbenay-bundled-config.md) | APME Abbenay Bundled Config on Redeploy | Accepted |
 
 ## Creating a New ADR
 

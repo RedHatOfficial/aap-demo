@@ -102,6 +102,12 @@ jobs:
       - name: Run APME image publishing fixture tests
         run: python3 test/test-apme-build-image.py
 
+      - name: Run APME Add repository + AI static tests
+        run: ./test/test-apme-eap-add-repository-ai.sh
+
+      - name: Run APME container delivery tests
+        run: bash test/test-apme-container-delivery.sh
+
       - name: Run local-cache tests
         run: ./test/test-local-cache.sh
 

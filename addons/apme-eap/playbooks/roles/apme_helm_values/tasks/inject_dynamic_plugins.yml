@@ -1,0 +1,18 @@
+---
+# Inject baked APME plugins after RBAC in fetched chart defaults (ansible.builtin.replace replaces all matches by default).
+
+- name: Render dynamic plugin injection snippet  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_portal_dynamic_plugins_snippet: "{{ lookup('template', 'apme-dynamic-plugins-snippet.yml.j2') }}"
+
+- name: Read fetched portal chart values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.slurp:
+    src: "{{ apme_portal_chart_values_path }}"
+  register: apme_portal_chart_values_slurp
+
+- name: Inject baked APME dynamic plugins after RBAC in chart values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_chart_values_path }}"
+    regexp: '(?m)^(        - package: \./dynamic-plugins/dist/backstage-community-plugin-rbac\n          disabled: false\n)'
+    replace: "\\1{{ apme_portal_dynamic_plugins_snippet }}\n"
+  when: (apme_portal_chart_values_slurp.content | b64decode) is not search('ansible-plugin-backstage-apme')

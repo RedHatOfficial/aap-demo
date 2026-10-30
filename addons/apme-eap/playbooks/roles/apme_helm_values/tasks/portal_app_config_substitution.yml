@@ -16,3 +16,17 @@
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '\$\{CUSTOMER_SUPPORT_URL\}'
     replace: "https://access.redhat.com/support"
+
+- name: Apply Add repository button enabled flag in portal app-config  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)(addRepositoryButton:\n              enabled: )true'
+    replace: '\1{{ apme_add_repository_button_enabled | bool | lower }}'
+  when: apme_add_repository_button_enabled is defined
+
+- name: Apply APME enableAi flag in portal app-config  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)(            enableAi: )true'
+    replace: '\1{{ apme_enable_ai | bool | lower }}'
+  when: apme_enable_ai is defined

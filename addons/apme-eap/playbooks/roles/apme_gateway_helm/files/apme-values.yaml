@@ -1,9 +1,9 @@
 ---
 # APME gateway — EAP install (same namespace as portal)
-# APME chart 0.1.8 / application release 2026.9.3.
+# APME chart 0.1.10 / application release 2026.10.4 (engine #733, gateway #739 stack).
 image:
   registry: ghcr.io/ansible
-  tag: "2026.9.3"
+  tag: "2026.10.4"
 
 # OpenShift uses the restricted SCC to assign pod security settings.
 platform: openshift
@@ -78,6 +78,10 @@ persistence:
     size: 2Gi
   postgres:
     size: 2Gi
+  # Abbenay admin config + secrets (portal AI provider settings; ADR-034 bundled config on redeploy)
+  abbenay:
+    enabled: true
+    size: 100Mi
 
 postgres:
   enabled: true
@@ -97,6 +101,19 @@ gateway:
     limits:
       cpu: 500m
       memory: 512Mi
+
+# Abbenay LLM proxy (required for portal Add AI provider / AI remediation).
+# Chart 0.1.10 requires at least one providers entry at install (apme#756); configure
+# real providers in Git Repos → Modernization settings after deploy.
+abbenay:
+  enabled: true
+  token: "apme-demo-abbenay-token"
+  providers:
+    bootstrap-placeholder:
+      engine: ollama
+      baseUrl: "http://127.0.0.1:11434/v1"
+      models:
+        placeholder: {}
 
 ui:
   enabled: false
