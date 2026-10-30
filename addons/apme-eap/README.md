@@ -33,10 +33,9 @@ authentication.
 - AAP execution environment with network access to `get.helm.sh` (the playbook bootstraps a pinned Helm client)
 - AAP deployed (`aap-demo deploy`)
 
-The addon uses the portal Helm chart's standard RHDH image and delivers the APME plugins
-through the chart's runtime OCI plugin installer. The deploy bootstraps the local registry,
-publishes the bundled plugin archive with the AAP execution environment's standard-library
-OCI publisher, and runs `install-dynamic-plugins` in the
+The addon builds a portal container from the portal Helm chart's standard RHDH image. It
+resolves and validates the APME artifact from the external plugin repository, bakes the six
+plugins into that container, and runs `install-dynamic-plugins` against local image paths in the
 chart-provided init container.
 
 **Ansible installation** (auto-installed in venv):
@@ -138,8 +137,12 @@ The addon uses these roles from the official APME welcome pack:
 1. **openshift_apme_setup** - Creates namespace and scaffolder ConfigMap
 2. **apme_pah_integration** - setup-pah remotes, PAH catalog sync flags, APME galaxy seeding
 3. **aap_apme_prerequisites** - Creates AAP OAuth app, generates API token
-4. **apme_oci_push** - Publishes the bundled APME plugin archive to the local registry
-5. **apme_helm_values** - Fetches pinned portal chart defaults (`helm show values`), injects APME OCI plugin entries, renders a small overlay, and writes `.rendered/portal-chart-values.yaml` plus `.rendered/portal-apme-overlay.yaml` (no vendored monolith values file)
+4. **apme_image_build** - Resolves the verified upstream plugin artifact and bakes all six
+   plugins into the portal container image
+5. **apme_helm_values** - Fetches pinned portal chart defaults (`helm show values`), injects
+   local baked-plugin entries, renders a small overlay, and writes
+   `.rendered/portal-chart-values.yaml` plus `.rendered/portal-apme-overlay.yaml` (no vendored
+   monolith values file)
 6. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
 7. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
 8. **apme_gateway_helm** - Installs APME gateway Helm chart
@@ -164,10 +167,11 @@ Roles execute in sequence:
   1. openshift_apme_setup
   2. apme_pah_integration (setup-pah + galaxy facts)
   3. aap_apme_prerequisites
-  4. apme_helm_values (`helm show values` + inject + overlay; substitutions on overlay only)
-  5. apme_scm_secrets (if enabled)
-  6. portal_helm_install
-  7. apme_gateway_helm
+  4. apme_image_build (resolve artifact + bake portal image)
+  5. apme_helm_values (`helm show values` + inject + overlay; substitutions on overlay only)
+  6. apme_scm_secrets (if enabled)
+  7. portal_helm_install
+  8. apme_gateway_helm
   8. post_tasks: seed APME galaxy servers + portal rollout
 ```
 
@@ -222,11 +226,18 @@ During interactive `aap-demo enable apme-eap`, after you choose to configure Git
 1. **First prompt:** `GitHub organization for Git Repositories sync [Automation-Portal-ACME]:` (default from `addons/apme-eap/defaults.yml`)
 2. **Then:** GitHub **App** or **Personal access token** (you do not need both)
 
-The org is **not** read from `~/.aap-demo/apme-eap-vars.yml` (that file is regenerated each deploy). Saved org lives in `~/.aap-demo/apme-eap-github-creds.yml` as `github_catalog_org` (only after you set it interactively or via env), which is copied into `apme_github_catalog_org` in the generated vars file when GitHub is enabled.
+The org is **not** read from `~/.aap-demo/apme-eap-vars.yml` (that file is regenerated each
+deploy). Saved org lives in `~/.aap-demo/apme-eap-github-creds.yml` as `github_catalog_org` (only
+after you set it interactively or via env), which is copied into `apme_github_catalog_org` in the
+generated vars file when GitHub is enabled.
 
-**No sync without credentials:** If you skip GitHub setup, `configure_github_secrets: false` and the portal Helm values omit the GitHub catalog provider (`github: []`). The default org in `defaults.yml` is a prompt/template example only—not an active crawl target.
+**No sync without credentials:** If you skip GitHub setup, `configure_github_secrets: false` and
+the portal Helm values omit the GitHub catalog provider (`github: []`). The default org in
+`defaults.yml` is a prompt/template example only—not an active crawl target.
 
-Non-interactive: when GitHub is enabled (`GITHUB_TOKEN` or GitHub App env vars), **`APME_GITHUB_CATALOG_ORG`** (or `GITHUB_CATALOG_ORG`) is **required**—enable fails if the org is missing. Set both before non-interactive enable:
+Non-interactive: when GitHub is enabled (`GITHUB_TOKEN` or GitHub App env vars),
+**`APME_GITHUB_CATALOG_ORG`** (or `GITHUB_CATALOG_ORG`) is **required**—enable fails if the org
+is missing. Set both before non-interactive enable:
 
 ```bash
 export APME_GITHUB_CATALOG_ORG='Automation-Portal-ACME'
@@ -235,15 +246,25 @@ export GITHUB_TOKEN='ghp_...'   # PAT-only
 aap-demo enable apme-eap
 ```
 
-If GitHub creds come from env only, the org prompt runs on an interactive terminal after creds are detected; from Cursor Agent or CI, export the org env var explicitly.
+If GitHub creds come from env only, the org prompt runs on an interactive terminal after creds
+are detected; from Cursor Agent or CI, export the org env var explicitly.
 
 ### RHDH hub image tag
 
-The RHDH hub container tag defaults to **`1.10`** in `addons/apme-eap/defaults.yml` (`rhdh_image_tag`). Override in `~/.aap-demo/apme-eap-vars.yml` and re-run `aap-demo enable apme-eap`. The standalone portal addon reads the same default for its ARM profile (`DEFAULT_RHDH_TAG` env still overrides). Policy and architecture split (registry vs tag) are documented in [ADR-019](../../docs/adr/019-apme-playbook-addon.md) (**Supported RHDH hub version**).
+The RHDH hub container tag defaults to **`1.10`** in `addons/apme-eap/defaults.yml`
+(`rhdh_image_tag`). Override in `~/.aap-demo/apme-eap-vars.yml` and re-run
+`aap-demo enable apme-eap`. The standalone portal addon reads the same default for its ARM
+profile (`DEFAULT_RHDH_TAG` env still overrides). Policy and architecture split (registry vs tag)
+are documented in [ADR-019](../../docs/adr/019-apme-playbook-addon.md) (**Supported RHDH hub
+version**).
 
 ### Add repository and AI (defaults)
 
-By default the portal enables **Add repository** (`apme_add_repository_button_enabled: true`), **AI remediation UI** (`apme_enable_ai: true`), and the gateway runs **Abbenay** with a bootstrap Helm provider (configure real LLM providers in **Git Repositories → Modernization settings → AI providers** after deploy). The register-git scaffolder uses a single **GitHub repository URL** field (`GitHubRepoUrlField`).
+By default the portal enables **Add repository** (`apme_add_repository_button_enabled: true`),
+**AI remediation UI** (`apme_enable_ai: true`), and the gateway runs **Abbenay** with a bootstrap
+Helm provider (configure real LLM providers in **Git Repositories → Modernization settings → AI
+providers** after deploy). The register-git scaffolder uses a single **GitHub repository URL**
+field (`GitHubRepoUrlField`).
 
 To disable the Add repository button or AI UI without editing templates, set in `~/.aap-demo/apme-eap-vars.yml`:
 
@@ -254,7 +275,13 @@ apme_enable_ai: false
 
 Then run `aap-demo enable apme-eap` again.
 
-**Note:** Chart 0.1.10 requires at least one `abbenay.providers` entry at install; the bundled `bootstrap-placeholder` Ollama stub satisfies validation only. On each enable, `apme_gateway_helm` applies the flat template [`abbenay-config.yaml.j2`](playbooks/roles/apme_gateway_helm/templates/abbenay-config.yaml.j2) (includes `chat: true` for [apme#755](https://github.com/ansible/apme/issues/755)). **Re-enable resets Ansible Modernization Content Engine AI settings** (portal-configured providers are cleared); see [ADR-034](../../docs/adr/034-apme-abbenay-bundled-config.md).
+**Note:** Chart 0.1.10 requires at least one `abbenay.providers` entry at install; the bundled
+`bootstrap-placeholder` Ollama stub satisfies validation only. On each enable,
+`apme_gateway_helm` applies the flat template
+[`abbenay-config.yaml.j2`](playbooks/roles/apme_gateway_helm/templates/abbenay-config.yaml.j2)
+(includes `chat: true` for [apme#755](https://github.com/ansible/apme/issues/755)).
+**Re-enable resets Ansible Modernization Content Engine AI settings** (portal-configured providers
+are cleared); see [ADR-034](../../docs/adr/034-apme-abbenay-bundled-config.md).
 
 For detailed GitHub setup instructions, see the
 [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
@@ -263,8 +290,10 @@ For detailed GitHub setup instructions, see the
 
 Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 
-- **skip_plugin_push** - Skip the runtime OCI plugin push (default: `false`)
-- **apme_oci_push_force** - Re-push the bundled plugin archive (default: `false`)
+- **apme_source_repo** - External GitHub repository for the verified plugin artifact (default: `ansible/ansible-rhdh-plugins`)
+- **apme_source_ref** - `latest` or a full source commit SHA; empty uses `latest`
+- **apme_source_artifact_name** - Optional exact GitHub Actions artifact name
+- **apme_pack_format** - Artifact format, `oci` or `npm` (default: `oci`)
 - **apme_pah_run_setup_pah** - Run `setup-pah` when `~/.aap-demo/galaxy-token` exists (default: `true`)
 - **apme_pah_seed_apme_galaxy_servers** - POST AAP/community galaxy servers to APME gateway (default: `true`)
 - **apme_pah_collections_enabled** - `auto` | `true` | `false` for portal PAH catalog sync (default: `auto`)
@@ -273,22 +302,16 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 - **apme_helm_chart_version** - Override APME gateway chart version
 - **devspaces_base_url** - Enable "Open in DevSpaces" actions
 
-### Local Registry and Plugin Archives
+### Container image and external plugin artifacts
 
-The addon publishes the bundled APME dynamic-plugin archive to the in-cluster registry before
-installing the portal Helm release. On OpenShift Local, that registry is exposed through an
-OpenShift Route, so the registry API can return redirects during blob and manifest operations.
-The publisher follows those redirects automatically.
+The addon resolves the verified six-plugin artifact from
+`ansible/ansible-rhdh-plugins` and builds a portal container with `Containerfile.ci`. The
+archive exists only in a transient build directory; it is not checked into this repository and
+is never pushed to the cluster as a separate runtime plugin image. The finished portal image is
+the only image deployed by the portal chart.
 
-The archive is stored under the repository path expected by the portal's runtime installer:
-
-```text
-registry.apps.127.0.0.1.nip.io/apme/apme-prototype-plugins:<version>
-```
-
-This path is part of the deployment contract. If the archive is pushed to only `apme:<version>`,
-the portal can start successfully but its dynamic-plugin init container will fail with a
-`manifest unknown` error because it requests `apme/apme-prototype-plugins:<version>`.
+For a pinned build, set `apme_source_ref` to the full upstream source commit SHA. To select a
+specific successful artifact from the latest run, set `apme_source_artifact_name`.
 
 When troubleshooting a failed enablement, check the APME deployment report for the first
 registry or portal error, then verify the archive and portal rollout:
@@ -303,9 +326,8 @@ The addon also uses explicit boolean comparisons for standalone Ansible `when` e
 conditional handling in newer Ansible releases and avoid the unavailable `kubernetes.core.k8s_exec`
 client path in the APME execution environment.
 
-For detailed registry troubleshooting, set `APME_OCI_PUSH_DEBUG=1` before enabling the addon. The
-publisher then writes redirect chains, contacted endpoints, and progress for large blob uploads to
-stderr without changing the normal output or registry behavior.
+If image build fails, verify Podman connectivity to the local image registry and that `GH_TOKEN`
+or `GITHUB_TOKEN` can read Actions artifacts from the configured source repository.
 
 ## Differences from Bash Addon
 
@@ -337,14 +359,14 @@ addons/apme-eap/
 │   ├── apme_scm_secrets/
 │   ├── portal_helm_install/
 │   └── apme_gateway_helm/
-└── plugin_packs/                 # Bundled OCI plugin archive and manifest
+└── plugin_packs/                 # Documentation for transient external artifact staging
 ```
 
-## Runtime plugin architecture
+## Container plugin architecture
 
-The standard portal chart image runs `install-dynamic-plugins` against the APME OCI image
-published to the local registry. The plugin archive is bundled under `plugin_packs/` and does
-not require a custom portal hub image.
+The standard portal chart runs `install-dynamic-plugins` against local plugin paths already
+present in the finished portal image. The chart overlay keeps `dynamic.includes` empty so the
+init container does not fetch unrelated plugin bundles from an external registry.
 
 ### Portal Helm values (dynamic)
 
@@ -352,7 +374,7 @@ At install time, **portal_helm_install** passes two values files to Helm (later 
 conflicts):
 
 1. `.rendered/portal-chart-values.yaml` — output of `helm show values` for
-   `portal_helm_chart_version`, plus Ansible injection of APME OCI plugin entries after each
+   `portal_helm_chart_version`, plus Ansible injection of local APME plugin entries after each
    `backstage-community-plugin-rbac` line in that file (Quay disable remains in chart defaults 2.2.10+ and in the overlay).
 2. `.rendered/portal-apme-overlay.yaml` — copied from
    `roles/apme_helm_values/files/portal-apme-overlay.yaml.template` with placeholder substitution
@@ -470,14 +492,14 @@ kubectl get deploy redhat-rhaap-portal -n apme \
   -o jsonpath='{.spec.template.spec.hostAliases}'
 ```
 
-### Portal image or plugin pull fails
+### Portal image pull or plugin initialization fails
 
 **Symptom**: Portal pod stays in `ImagePullBackOff`
 
 **Solution**:
 
-1. Verify the local registry is running: `kubectl get pods -n aap-demo-registry`
-2. Re-push the bundled OCI archive by setting `apme_oci_push_force: true`
+1. Verify the finished portal image is present in the configured image registry.
+2. Check that the image build used the intended external source and artifact name.
 3. Re-deploy: `aap-demo enable apme-eap`
 
 ### Helm bootstrap
@@ -559,10 +581,10 @@ Use AAP admin credentials (same as AAP web UI).
 
 ## Advanced Topics
 
-### Using a Different Plugin Pack
+### Using a Different Plugin Build
 
-Replace the bundled OCI archive and update `plugin-pack.manifest.yml`, then set
-`apme_oci_push_force: true` for the next deployment.
+Set `apme_source_ref` to a full upstream commit SHA, or set `apme_source_artifact_name` to an
+exact artifact from the selected successful GitHub Actions run, then re-enable the addon.
 
 ### Debugging Playbook Execution
 

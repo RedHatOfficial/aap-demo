@@ -6,7 +6,7 @@
 #     --build-arg PLUGIN_PACK_SHA256="$APME_PACK_SHA256" \
 #     --build-arg PLUGIN_PACK_FORMAT="$APME_PACK_FORMAT" /path/to/context
 # Both npm and Docker/OCI packs must contain all six APME plugins.
-ARG BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9
+ARG BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10
 FROM ${BASE_IMAGE}
 
 USER root

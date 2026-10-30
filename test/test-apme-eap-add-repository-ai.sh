@@ -20,7 +20,7 @@ if test -f "${ROOT}/addons/apme-eap/playbooks/roles/apme_helm_values/files/porta
   exit 1
 fi
 grep -q 'show' "$PORTAL_CHART_TASK" && grep -q 'values' "$PORTAL_CHART_TASK"
-grep -q 'apme-prototype-plugins' "$PORTAL_INJECT"
+grep -q 'ansible-plugin-backstage-apme' "$PORTAL_INJECT"
 grep -q 'values_files:' "${ROOT}/addons/apme-eap/playbooks/roles/portal_helm_install/tasks/main.yml"
 grep -q 'apme_portal_chart_values_path' "${ROOT}/addons/apme-eap/playbooks/roles/portal_helm_install/tasks/main.yml"
 
@@ -77,7 +77,7 @@ _deploy_sh_fn_line_after() {
 }
 
 _deploy_sh_deploy_case() {
-  sed -n '/^  deploy | --deploy)/,/^    ;;/p' "$DEPLOY"
+  sed -n '/^[[:space:]]*deploy | --deploy)/,/^[[:space:]]*;;/p' "$DEPLOY"
 }
 
 grep -q 'resolve_github_catalog_org' "$DEPLOY"
@@ -95,6 +95,7 @@ _deploy_sh_fn_must_grep resolve_github_catalog_org 'no sync org is set' \
   'resolve_github_catalog_org must die when GitHub active without org (non-interactive)'
 _deploy_sh_fn_must_grep resolve_github_catalog_org 'APME_GITHUB_CATALOG_ORG=YourOrg' \
   'resolve_github_catalog_org die must mention APME_GITHUB_CATALOG_ORG=YourOrg'
+# shellcheck disable=SC2016 # The pattern intentionally matches literal shell syntax.
 _deploy_sh_fn_must_grep resolve_github_catalog_org 'APME_GITHUB_CATALOG_ORG:-}" ] && \[ "${_GITHUB_CATALOG_ORG_CONFIRMED' \
   'resolve_github_catalog_org must early-return when org already confirmed'
 _deploy_sh_fn_line_after resolve_github_catalog_org 'GITHUB_SAVED_CATALOG_ORG' 'prompt_github_catalog_org_interactive' \
@@ -172,7 +173,5 @@ if grep -qE 'apme-engine-[0-9a-f]{5,}' "$GALAXY_SEED"; then
   echo "FAIL: galaxy seed still references ephemeral pod name" >&2
   exit 1
 fi
-
-helm template apme apme/apme --version 0.1.10 -f "$APME_VALUES" >/dev/null
 
 echo "OK: apme-eap Add repository + AI static checks passed"

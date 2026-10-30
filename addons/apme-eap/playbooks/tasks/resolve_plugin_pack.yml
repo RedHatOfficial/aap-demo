@@ -1,6 +1,0 @@
----
-# Resolve the bundled prototype OCI pack and registry defaults.
-
-- name: Resolve the local plugin delivery inputs only for fallback deployments
-  ansible.builtin.include_tasks: resolve_local_plugin_pack.yml
-  when: apme_preloaded_image_ref | default('') | length == 0

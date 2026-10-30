@@ -70,11 +70,11 @@ Abbenay provider entries.
 - Preserves portal providers on redeploy.
 - Rejected: more Ansible and template complexity; user accepted reset-on-redeploy for demo simplicity.
 
-**Patch ConfigMap seed only**
+### Patch ConfigMap seed only
 
 - Does not update an existing PVC; clusters stay broken until manual exec or PVC wipe.
 
-**Wait for upstream apme chart**
+### Wait for upstream apme chart
 
 - Correct long-term; does not unblock aap-demo demos today.
 

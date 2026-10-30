@@ -542,10 +542,10 @@ assert_equal 30 "$APME_RUN_ID"
 pass 'default source repository and latest selection match the publishing plan'
 
 reset_case
-cp "$repo_root/addons/apme-eap/plugin_packs/apme-prototype-plugins-8593383-20260718025043.oci.tar.gz" "$work/pack.tar.gz"
+make_pack oci
 run_success
 assert_equal oci "$APME_PACK_FORMAT"
-pass 'checked-in real six-plugin OCI pack passes layer inspection and digest checks'
+pass 'resolved six-plugin OCI pack passes layer inspection and digest checks'
 
 make_oci_layout() {
   local config_hash manifest_hash

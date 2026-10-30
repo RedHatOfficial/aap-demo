@@ -1,0 +1,53 @@
+---
+- name: Create transient external plugin artifact directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: apme-plugin-artifact-
+  register: apme_image_build_artifact_dir
+  when:
+    - not ansible_check_mode
+    - apme_oci_tar_resolved is not defined
+
+- name: Fetch the verified external plugin artifact
+  ansible.builtin.command:
+    argv:
+      - bash
+      - "{{ collection_root }}/ci/fetch-plugin-artifact.sh"
+      - "{{ apme_image_build_artifact_dir.path }}"
+  environment:
+    GH_TOKEN: >-
+      {{ github_token | default(lookup('ansible.builtin.env', 'GH_TOKEN'), true)
+         | default(lookup('ansible.builtin.env', 'GITHUB_TOKEN'), true) }}
+    APME_SOURCE_REPO: "{{ apme_image_build_source_repo }}"
+    APME_SOURCE_REF: "{{ apme_image_build_source_ref }}"
+    APME_PACK_FORMAT: "{{ apme_image_build_pack_format }}"
+    APME_ARTIFACT_NAME: "{{ apme_image_build_artifact_name }}"
+  register: apme_image_build_artifact_fetch
+  changed_when: true
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - apme_oci_tar_resolved is not defined
+
+- name: Read verified external artifact metadata
+  ansible.builtin.shell:
+    cmd: >-
+      source "{{ apme_image_build_artifact_dir.path }}/artifact.env" &&
+      printf '%s\n' "$APME_SOURCE_SHA" "$APME_PACK_SHA256" "$APME_PACK_FORMAT" "$APME_ARTIFACT_NAME"
+    executable: /bin/bash
+  register: apme_image_build_artifact_metadata
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - apme_oci_tar_resolved is not defined
+
+- name: Set verified external artifact facts
+  ansible.builtin.set_fact:
+    apme_oci_tar_resolved: "{{ apme_image_build_artifact_dir.path }}/plugin-pack.tar.gz"
+    plugin_sha: "{{ apme_image_build_artifact_metadata.stdout_lines[0] }}"
+    apme_image_build_pack_sha256: "{{ apme_image_build_artifact_metadata.stdout_lines[1] }}"
+    apme_image_build_pack_format: "{{ apme_image_build_artifact_metadata.stdout_lines[2] }}"
+    apme_image_build_artifact_name_resolved: "{{ apme_image_build_artifact_metadata.stdout_lines[3] }}"
+  when:
+    - not ansible_check_mode
+    - apme_oci_tar_resolved is not defined

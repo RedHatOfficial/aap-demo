@@ -68,6 +68,13 @@ class DeploymentImageTests(unittest.TestCase):
             work = Path(directory)
             if prepare:
                 prepare(work)
+            variables = dict(variables)
+            fixture_pack = work / "plugin-pack.tar.gz"
+            fixture_pack.write_bytes(b"transient test artifact")
+            if variables.get("apme_oci_tar_resolved") and not Path(variables["apme_oci_tar_resolved"]).exists():
+                variables["apme_oci_tar_resolved"] = str(fixture_pack)
+            variables.setdefault("apme_image_build_pack_sha256", DIGEST)
+            variables.setdefault("apme_image_build_pack_format", "oci")
             plugin_root = work / "installed-plugins"
             if installed_plugins is not None:
                 for name, identity in installed_plugins.items():
@@ -207,13 +214,10 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertIn("apme_oci_tar_resolved", output)
         self.assertEqual(commands, [])
 
-    def test_prebuilt_pack_resolution_does_not_require_bundled_archive(self):
-        rc, output, _, _ = self.run_roles(
-            {"collection_root": "/nonexistent", "apme_preloaded_image_ref": "quay.io/aapdemo/apme-eap:v1"}, [],
-            tasks=[{"name": "Resolve deployment inputs", "ansible.builtin.include_tasks": str(ADDON / "playbooks/tasks/resolve_plugin_pack.yml")}],
-            check=True,
-        )
-        self.assertEqual(rc, 0, output)
+    def test_prebuilt_mode_has_no_plugin_archive_resolution_step(self):
+        playbook = (ADDON / "playbooks/deploy_apme_portal.yml").read_text()
+        self.assertNotIn("resolve_plugin_pack.yml", playbook)
+        self.assertNotIn("apme_oci_push", playbook)
 
     def test_failed_plugin_check_stops_before_helm_rendering(self):
         rc, output, values, _ = self.run_roles(
@@ -227,7 +231,7 @@ class DeploymentImageTests(unittest.TestCase):
     def test_main_playbook_prebuilt_mode_skips_local_push_and_build(self):
         play = yaml.safe_load((ADDON / "playbooks/deploy_apme_portal.yml").read_text())[0]
         roles = [role for role in play["roles"] if role["role"] in (
-            "apme_preloaded_image", "apme_oci_push", "apme_image_build"
+            "apme_preloaded_image", "apme_image_build"
         )]
         rc, output, _, commands = self.run_roles(
             {"apme_preloaded_image_ref": "quay.io/aapdemo/apme-eap:v1"}, roles, check=True,
@@ -250,7 +254,7 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["tag"], "8593383")
         build = next(c for c in commands if c[0] == "build")
         self.assertIn("--build-arg=PLUGIN_PACK_FORMAT=oci", build)
-        self.assertIn("--build-arg=PLUGIN_PACK_SHA256=sha256:943f67afce1f9d1852df09b74da0126ef73f861e1ffc066e5196cc3701f341c3", build)
+        self.assertIn("--build-arg=PLUGIN_PACK_SHA256=" + DIGEST, build)
         push = next(c for c in commands if c[0] == "push")
         self.assertIn("--digestfile", push)
         self.assertEqual(push[-2:], ["localhost/rhdh-apme-preloaded:8593383",

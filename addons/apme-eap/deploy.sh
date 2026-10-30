@@ -75,14 +75,14 @@ _load_github_creds_from_file() {
   while IFS='=' read -r key value; do
     [ -z "$key" ] && continue
     case "$key" in
-      GITHUB_TOKEN) GITHUB_TOKEN="$value" ;;
-      GITHUB_APP_ID) GITHUB_APP_ID="$value" ;;
-      GITHUB_APP_CLIENT_ID) GITHUB_APP_CLIENT_ID="$value" ;;
-      GITHUB_APP_CLIENT_SECRET) GITHUB_APP_CLIENT_SECRET="$value" ;;
-      GITHUB_APP_PRIVATE_KEY_PATH) GITHUB_APP_PRIVATE_KEY_PATH="$value" ;;
-      GITHUB_OAUTH_CLIENT_ID) GITHUB_OAUTH_CLIENT_ID="$value" ;;
-      GITHUB_OAUTH_CLIENT_SECRET) GITHUB_OAUTH_CLIENT_SECRET="$value" ;;
-      GITHUB_SAVED_CATALOG_ORG) GITHUB_SAVED_CATALOG_ORG="$value" ;;
+    GITHUB_TOKEN) GITHUB_TOKEN="$value" ;;
+    GITHUB_APP_ID) GITHUB_APP_ID="$value" ;;
+    GITHUB_APP_CLIENT_ID) GITHUB_APP_CLIENT_ID="$value" ;;
+    GITHUB_APP_CLIENT_SECRET) GITHUB_APP_CLIENT_SECRET="$value" ;;
+    GITHUB_APP_PRIVATE_KEY_PATH) GITHUB_APP_PRIVATE_KEY_PATH="$value" ;;
+    GITHUB_OAUTH_CLIENT_ID) GITHUB_OAUTH_CLIENT_ID="$value" ;;
+    GITHUB_OAUTH_CLIENT_SECRET) GITHUB_OAUTH_CLIENT_SECRET="$value" ;;
+    GITHUB_SAVED_CATALOG_ORG) GITHUB_SAVED_CATALOG_ORG="$value" ;;
     esac
   done < <(
     python3 - "$creds_file" <<'PY'
@@ -231,25 +231,25 @@ _ensure_skopeo() {
     return 0
   fi
 
-  info "skopeo not found — installing (required for APME plugin OCI push)..."
+  info "skopeo not found — installing (required for portal image cache validation)..."
   case "$(uname -s)" in
-    Darwin)
-      if command -v brew &>/dev/null; then
-        brew install skopeo
-      else
-        die "skopeo not found. Install Homebrew, then: brew install skopeo"
-      fi
-      ;;
-    Linux)
-      if command -v dnf &>/dev/null; then
-        sudo dnf install -y skopeo
-      else
-        die "skopeo not found and cannot auto-install. Install it before enabling apme-eap."
-      fi
-      ;;
-    *)
-      die "skopeo not found. Install skopeo for your platform before enabling apme-eap."
-      ;;
+  Darwin)
+    if command -v brew &>/dev/null; then
+      brew install skopeo
+    else
+      die "skopeo not found. Install Homebrew, then: brew install skopeo"
+    fi
+    ;;
+  Linux)
+    if command -v dnf &>/dev/null; then
+      sudo dnf install -y skopeo
+    else
+      die "skopeo not found and cannot auto-install. Install it before enabling apme-eap."
+    fi
+    ;;
+  *)
+    die "skopeo not found. Install skopeo for your platform before enabling apme-eap."
+    ;;
   esac
 }
 
@@ -284,23 +284,23 @@ _ensure_helm() {
 
   info "helm not found — installing (required for portal Helm chart deployment)..."
   case "$(uname -s)" in
-    Darwin)
-      if command -v brew &>/dev/null; then
-        brew install helm
-      else
-        die "helm not found. Install Homebrew, then: brew install helm"
-      fi
-      ;;
-    Linux)
-      if command -v dnf &>/dev/null; then
-        sudo dnf install -y helm
-      else
-        die "helm not found and cannot auto-install. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-      fi
-      ;;
-    *)
-      die "helm not found. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-      ;;
+  Darwin)
+    if command -v brew &>/dev/null; then
+      brew install helm
+    else
+      die "helm not found. Install Homebrew, then: brew install helm"
+    fi
+    ;;
+  Linux)
+    if command -v dnf &>/dev/null; then
+      sudo dnf install -y helm
+    else
+      die "helm not found and cannot auto-install. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+    fi
+    ;;
+  *)
+    die "helm not found. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+    ;;
   esac
 
   if ! command -v helm &>/dev/null; then
@@ -359,15 +359,15 @@ detect_architecture() {
   arch=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || echo "unknown")
 
   case "$arch" in
-    amd64 | x86_64)
-      echo "x86"
-      ;;
-    arm64 | aarch64)
-      echo "arm"
-      ;;
-    *)
-      die "Unknown architecture: $arch"
-      ;;
+  amd64 | x86_64)
+    echo "x86"
+    ;;
+  arm64 | aarch64)
+    echo "arm"
+    ;;
+  *)
+    die "Unknown architecture: $arch"
+    ;;
   esac
 }
 
@@ -726,16 +726,17 @@ generate_vars_file() {
 
   mkdir -p "$(dirname "$VARS_FILE")"
 
-  # Preserve runtime OCI settings when the generated vars file is regenerated.
-  # This lets users opt into skip/re-push behavior without editing defaults.yml.
-  local skip_plugin_push_value=false
-  local apme_oci_push_force_value=false
+  # Preserve external artifact settings when the generated vars file is regenerated.
+  local apme_source_repo_value=ansible/ansible-rhdh-plugins
+  local apme_source_ref_value=""
+  local apme_source_artifact_name_value=""
+  local apme_pack_format_value=oci
   local preloaded_ref preloaded_secret preloaded_auth preloaded_verify
   local podman_connection=""
   local registry_service_ip=""
   local registry_push_registry=""
-  if command -v podman >/dev/null 2>&1 \
-    && podman system connection list --format '{{.Name}}' 2>/dev/null | grep -qx aap-demo; then
+  if command -v podman >/dev/null 2>&1 &&
+    podman system connection list --format '{{.Name}}' 2>/dev/null | grep -qx aap-demo; then
     podman_connection=aap-demo
   fi
   registry_service_ip=$(kubectl get svc registry -n aap-demo-registry \
@@ -751,17 +752,15 @@ generate_vars_file() {
     preloaded_ref=$(python3 -c 'import json, os; print(json.dumps(os.environ["APME_PRELOADED_IMAGE_REF"]))')
   fi
   if [ -f "$VARS_FILE" ]; then
-    skip_plugin_push_value=$(sed -n 's/^skip_plugin_push:[[:space:]]*//p' "$VARS_FILE" | tail -1)
-    apme_oci_push_force_value=$(sed -n 's/^apme_oci_push_force:[[:space:]]*//p' "$VARS_FILE" | tail -1)
-    case "$skip_plugin_push_value" in
-      true | false) ;;
-      *) skip_plugin_push_value=false ;;
-    esac
-    case "$apme_oci_push_force_value" in
-      true | false) ;;
-      *) apme_oci_push_force_value=false ;;
-    esac
+    apme_source_repo_value=$(sed -n 's/^apme_source_repo:[[:space:]]*//p' "$VARS_FILE" | tail -1 | tr -d '"')
+    apme_source_ref_value=$(sed -n 's/^apme_source_ref:[[:space:]]*//p' "$VARS_FILE" | tail -1 | tr -d '"')
+    apme_source_artifact_name_value=$(sed -n 's/^apme_source_artifact_name:[[:space:]]*//p' "$VARS_FILE" | tail -1 | tr -d '"')
+    apme_pack_format_value=$(sed -n 's/^apme_pack_format:[[:space:]]*//p' "$VARS_FILE" | tail -1 | tr -d '"')
   fi
+  apme_source_repo_value=${APME_SOURCE_REPO:-${apme_source_repo_value:-ansible/ansible-rhdh-plugins}}
+  apme_source_ref_value=${APME_SOURCE_REF:-${apme_source_ref_value:-}}
+  apme_source_artifact_name_value=${APME_ARTIFACT_NAME:-${apme_source_artifact_name_value:-}}
+  apme_pack_format_value=${APME_PACK_FORMAT:-${apme_pack_format_value:-oci}}
 
   local portal_helm_chart_version_value
   portal_helm_chart_version_value=$(
@@ -895,13 +894,17 @@ EOF
 
   cat >>"$VARS_FILE" <<EOF
 
-# OCI registry configuration for chart-native runtime plugin installation
+# Container image registry configuration
 oci_registry: "registry.${CLUSTER_DOMAIN}/apme"
 oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
 apme_image_build_podman_connection: "${podman_connection}"
 apme_image_build_push_registry: "${registry_push_registry}"
-skip_plugin_push: ${skip_plugin_push_value}
-apme_oci_push_force: ${apme_oci_push_force_value}
+
+# Verified external plugin artifact source; the artifact is baked into the portal image.
+apme_source_repo: "${apme_source_repo_value}"
+apme_source_ref: "${apme_source_ref_value}"
+apme_source_artifact_name: "${apme_source_artifact_name_value}"
+apme_pack_format: "${apme_pack_format_value}"
 
 # Optional published portal image. Empty retains the local plugin/build fallback.
 # Example: apme_preloaded_image_ref: quay.io/aapdemo/apme-eap:latest
@@ -1047,38 +1050,38 @@ cleanup() {
 # ---------------------------------------------------------------------------
 
 case "$ACTION" in
-  deploy | --deploy)
-    check_prerequisites
-    detect_architecture
-    discover_environment
-    _CATALOG_ORG_FROM_ENV="${APME_GITHUB_CATALOG_ORG:-${GITHUB_CATALOG_ORG:-}}"
-    _GITHUB_CATALOG_ORG_CONFIRMED=false
-    if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
-      _GITHUB_CATALOG_ORG_CONFIRMED=true
-    fi
-    unset GITHUB_SAVED_CATALOG_ORG
-    prompt_github_token
-    resolve_github_catalog_org
-    if [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] &&
-      _github_integration_active &&
-      [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] &&
-      [ -f "$GITHUB_CREDS_FILE" ]; then
-      _persist_github_catalog_org_in_creds_file
-    fi
-    generate_vars_file
-    setup_venv
-    deploy
-    ;;
+deploy | --deploy)
+  check_prerequisites
+  detect_architecture
+  discover_environment
+  _CATALOG_ORG_FROM_ENV="${APME_GITHUB_CATALOG_ORG:-${GITHUB_CATALOG_ORG:-}}"
+  _GITHUB_CATALOG_ORG_CONFIRMED=false
+  if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
+    _GITHUB_CATALOG_ORG_CONFIRMED=true
+  fi
+  unset GITHUB_SAVED_CATALOG_ORG
+  prompt_github_token
+  resolve_github_catalog_org
+  if [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] &&
+    _github_integration_active &&
+    [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] &&
+    [ -f "$GITHUB_CREDS_FILE" ]; then
+    _persist_github_catalog_org_in_creds_file
+  fi
+  generate_vars_file
+  setup_venv
+  deploy
+  ;;
 
-  --delete | delete | remove)
-    cleanup "$@"
-    ;;
+--delete | delete | remove)
+  cleanup "$@"
+  ;;
 
-  *)
-    echo "Usage: $0 [deploy|--delete [--purge-creds]]"
-    echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
-    echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
-    echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
-    exit 1
-    ;;
+*)
+  echo "Usage: $0 [deploy|--delete [--purge-creds]]"
+  echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
+  echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
+  echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
+  exit 1
+  ;;
 esac

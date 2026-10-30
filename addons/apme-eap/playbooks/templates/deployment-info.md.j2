@@ -18,8 +18,8 @@ Deployment date: {{ ansible_date_time.iso8601 }}
 
 ## Dynamic plugins
 
-- **Plugin image:** {{ oci_registry }}/apme-prototype-plugins:{{ plugin_sha }}
-- **Delivery:** Helm chart `install-dynamic-plugins` init container
+- **Portal image:** {{ apme_preloaded_image_ref | default('') or apme_image_build_target }}
+- **Delivery:** Six verified plugins baked into the portal container image
 
 ## Automation Hub (setup-pah)
 
