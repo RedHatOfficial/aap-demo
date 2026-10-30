@@ -238,6 +238,8 @@ redhat-developer-hub:
             enableAi: true
             enabled: true
             mockMode: false
+            # Hosted welcome-pack / early-access Preview feedback (not plugin default Google Form)
+            feedbackFormUrl: https://red.ht/amce-preview-feedback
           creatorService:
             baseUrl: 127.0.0.1
             port: "8000"
