@@ -16,9 +16,3 @@
       if apme_preloaded_image_pull_secret | default('') | length > 0 else []),
       'registry': apme_preloaded_registry, 'repository': apme_preloaded_repository, 'tag': apme_preloaded_tag}}
       | to_nice_yaml(indent=2, sort_keys=false) | indent(6, true) }}
-
-- name: Load the six APME plugins from the preloaded image
-  ansible.builtin.replace:
-    path: "{{ apme_portal_helm_values_path }}"
-    regexp: 'oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!([a-z0-9-]+)'
-    replace: './dynamic-plugins/dist/\1'

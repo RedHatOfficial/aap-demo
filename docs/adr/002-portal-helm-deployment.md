@@ -40,7 +40,8 @@ kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}'
 | `amd64` | **x86** | Chart default Red Hat hub (`registry.redhat.io/rhdh/...`; tag pinned by chart). **apme-eap** sets hub tag from [`addons/apme-eap/defaults.yml`](../../addons/apme-eap/defaults.yml) `rhdh_image_tag` on both profiles. | Chart default |
 | `arm64` | **ARM** | `quay.io/rhdh-community/rhdh:<rhdh_image_tag>` — tag read from the same `defaults.yml` (`portal/deploy.sh`; default `1.10`) | `registry.redhat.io/rhel9/postgresql-15` |
 
-Override: `PORTAL_ARCH=arm` or `PORTAL_ARCH=x86`. ARM hub tag: `DEFAULT_RHDH_TAG` env (after defaults file). apme-eap: `rhdh_image_tag` in `~/.aap-demo/apme-eap-vars.yml`.
+Override: `PORTAL_ARCH=arm` or `PORTAL_ARCH=x86`. ARM hub tag: `DEFAULT_RHDH_TAG` env (after
+defaults file). apme-eap: `rhdh_image_tag` in `~/.aap-demo/apme-eap-vars.yml`.
 
 ### Shared deployment model
 
@@ -76,7 +77,8 @@ Both profiles use:
                                           Reset dynamic-plugins PVC on install
 ```
 
-`<rhdh_image_tag>` is defined in `addons/apme-eap/defaults.yml`; apme-eap applies it on amd64 and arm64. Standalone portal x86 uses the chart hub tag until values override that.
+`<rhdh_image_tag>` is defined in `addons/apme-eap/defaults.yml`; apme-eap applies it on amd64
+and arm64. Standalone portal x86 uses the chart hub tag until values override that.
 
 ### x86 profile
 
@@ -90,7 +92,8 @@ from `defaults.yml` (see [ADR-019](019-apme-playbook-addon.md)).
 
 Overrides container images because Red Hat RHDH hub images are amd64-only:
 
-1. **RHDH hub:** `quay.io/rhdh-community/rhdh:<rhdh_image_tag>` (multi-arch manifest; tag from `addons/apme-eap/defaults.yml`, same line as apme-eap)
+1. **RHDH hub:** `quay.io/rhdh-community/rhdh:<rhdh_image_tag>` (multi-arch manifest; tag
+   from `addons/apme-eap/defaults.yml`, same line as apme-eap)
 2. **PostgreSQL:** `registry.redhat.io/rhel9/postgresql-15:9.8-1782419742`
 3. **Values structure:** `redhat-developer-hub:` top-level key (chart subchart layout)
 4. **Quay plugin:** Post-Helm ConfigMap patch disables

@@ -209,9 +209,8 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(list(target.iterdir()), [target / 'sentinel'])
         self.assertEqual(len(list(self.dest.iterdir())), 1)
 
-    def test_checked_in_real_six_plugin_pack(self):
-        fixture = REPO / 'addons/apme-eap/plugin_packs/apme-prototype-plugins-8593383-20260718025043.oci.tar.gz'
-        self.success(fixture.read_bytes())
+    def test_resolved_six_plugin_pack(self):
+        self.success(pack())
 
 
 unittest.main(verbosity=2)
