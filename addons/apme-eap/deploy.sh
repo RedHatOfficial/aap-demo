@@ -16,6 +16,17 @@ NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
 GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
 VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
+_LEGACY_GITHUB_CATALOG_ORG="acme-scm"
+_CATALOG_ORG_FROM_ENV=""
+_GITHUB_CATALOG_ORG_CONFIRMED=false
+
+_load_apme_github_catalog_org_default() {
+  APME_GITHUB_CATALOG_ORG_DEFAULT="$(
+    sed -n 's/^apme_github_catalog_org:[[:space:]]*//p' "${SCRIPT_DIR}/defaults.yml" | head -1 | tr -d '"'
+  )"
+  APME_GITHUB_CATALOG_ORG_DEFAULT="${APME_GITHUB_CATALOG_ORG_DEFAULT:-Automation-Portal-ACME}"
+}
+_load_apme_github_catalog_org_default
 
 # Color output
 RED='\033[0;31m'
@@ -29,6 +40,28 @@ error() { echo -e "${RED}ERROR:${NC} $*" >&2; }
 die() {
   error "$*"
   exit 1
+}
+
+_apme_eap_can_prompt() {
+  [ "${QUIET:-false}" = "true" ] && return 1
+  [ -t 0 ] && return 0
+  [ -r /dev/tty ] && return 0
+  return 1
+}
+
+_apme_eap_read_tty() {
+  # Sets REPLY from stdin or /dev/tty when Cursor/aap-demo runs with a piped stdin.
+  local prompt_text="$1"
+  REPLY=""
+  if [ -t 0 ]; then
+    read -r -p "$prompt_text" REPLY
+    return 0
+  fi
+  if [ -r /dev/tty ]; then
+    read -r -p "$prompt_text" REPLY </dev/tty
+    return 0
+  fi
+  return 1
 }
 
 _load_github_creds_from_file() {
@@ -49,6 +82,7 @@ _load_github_creds_from_file() {
       GITHUB_APP_PRIVATE_KEY_PATH) GITHUB_APP_PRIVATE_KEY_PATH="$value" ;;
       GITHUB_OAUTH_CLIENT_ID) GITHUB_OAUTH_CLIENT_ID="$value" ;;
       GITHUB_OAUTH_CLIENT_SECRET) GITHUB_OAUTH_CLIENT_SECRET="$value" ;;
+      GITHUB_SAVED_CATALOG_ORG) GITHUB_SAVED_CATALOG_ORG="$value" ;;
     esac
   done < <(
     python3 - "$creds_file" <<'PY'
@@ -67,16 +101,22 @@ mapping = {
     "github_app_private_key_path": "GITHUB_APP_PRIVATE_KEY_PATH",  # pragma: allowlist secret
     "github_oauth_client_id": "GITHUB_OAUTH_CLIENT_ID",
     "github_oauth_client_secret": "GITHUB_OAUTH_CLIENT_SECRET",  # pragma: allowlist secret
+    "github_catalog_org": "GITHUB_SAVED_CATALOG_ORG",
 }
+
+legacy_org = "acme-scm"
 
 for yaml_key, env_key in mapping.items():
     value = data.get(yaml_key)
     if value is not None and str(value).strip():
+        if yaml_key == "github_catalog_org" and str(value).strip() == legacy_org:
+            continue
         print(f"{env_key}={value}")
 PY
   )
 
   [ -n "${GITHUB_TOKEN:-}" ] && return 0
+  _github_app_config_complete && return 0
   return 1
 }
 
@@ -84,16 +124,25 @@ _load_github_creds_from_file_legacy() {
   local creds_file="$1"
   local existing_token val var env_name
   existing_token=$(grep -E '^github_token:' "$creds_file" 2>/dev/null | sed 's/^github_token:[[:space:]]*//' | tr -d '"' || echo "")
-  [ -n "$existing_token" ] || return 1
-  GITHUB_TOKEN="$existing_token"
-  for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret; do
+  if [ -n "$existing_token" ]; then
+    GITHUB_TOKEN="$existing_token"
+  fi
+  for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret github_catalog_org; do
     val=$(grep -E "^${var}:" "$creds_file" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
     if [ -n "$val" ]; then
       env_name=$(echo "$var" | tr '[:lower:]' '[:upper:]')
+      if [ "$var" = "github_catalog_org" ]; then
+        if [ "$val" = "acme-scm" ]; then
+          continue
+        fi
+        env_name="GITHUB_SAVED_CATALOG_ORG"
+      fi
       printf -v "$env_name" '%s' "$val"
     fi
   done
-  return 0
+  [ -n "${GITHUB_TOKEN:-}" ] && return 0
+  _github_app_config_complete && return 0
+  return 1
 }
 
 _pod_watcher() {
@@ -381,90 +430,204 @@ discover_environment() {
 # GitHub Token Prompt
 # ---------------------------------------------------------------------------
 
-prompt_github_token() {
-  # Allow users to optionally provide GitHub App credentials for APME integration
-  # Follows the pattern from setup-pah and portal addons
+_normalize_github_catalog_org() {
+  local raw="$1"
+  raw="${raw#"${raw%%[![:space:]]*}"}"
+  raw="${raw%"${raw##*[![:space:]]}"}"
+  raw="${raw#https://github.com/}"
+  raw="${raw#http://github.com/}"
+  raw="${raw#/}"
+  raw="${raw%%/*}"
+  printf '%s' "$raw"
+}
 
-  # Check saved credentials file from a previous deploy
+_github_app_config_complete() {
+  [ -n "${GITHUB_APP_ID:-}" ] &&
+    [ -n "${GITHUB_APP_CLIENT_ID:-}" ] &&
+    [ -n "${GITHUB_APP_CLIENT_SECRET:-}" ] &&
+    [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] &&
+    [ -f "${GITHUB_APP_PRIVATE_KEY_PATH}" ]
+}
+
+_github_integration_active() {
+  [ -n "${GITHUB_TOKEN:-}" ] || _github_app_config_complete
+}
+
+resolve_github_catalog_org() {
+  if ! _github_integration_active; then
+    unset APME_GITHUB_CATALOG_ORG
+    return 0
+  fi
+
+  if [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] && [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ]; then
+    return 0
+  fi
+
+  if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
+    APME_GITHUB_CATALOG_ORG="$(_normalize_github_catalog_org "$_CATALOG_ORG_FROM_ENV")"
+    _GITHUB_CATALOG_ORG_CONFIRMED=true
+    return 0
+  fi
+
+  if [ -n "${GITHUB_SAVED_CATALOG_ORG:-}" ]; then
+    APME_GITHUB_CATALOG_ORG="$(_normalize_github_catalog_org "$GITHUB_SAVED_CATALOG_ORG")"
+    return 0
+  fi
+
+  if _apme_eap_can_prompt; then
+    prompt_github_catalog_org_interactive
+    return 0
+  fi
+
+  die "GitHub is configured but no sync org is set. Set APME_GITHUB_CATALOG_ORG=YourOrg (or GITHUB_CATALOG_ORG)."
+}
+
+prompt_github_catalog_org_interactive() {
+  local default="${APME_GITHUB_CATALOG_ORG_DEFAULT}" org_input=""
+
+  if ! _apme_eap_can_prompt; then
+    return 0
+  fi
+
+  echo ""
+  if ! _apme_eap_read_tty "GitHub organization to sync into automation portal [${default}]: "; then
+    APME_GITHUB_CATALOG_ORG="$default"
+    _GITHUB_CATALOG_ORG_CONFIRMED=true
+    return 0
+  fi
+  org_input="$REPLY"
+  if [ -z "$org_input" ]; then
+    APME_GITHUB_CATALOG_ORG="$default"
+  else
+    APME_GITHUB_CATALOG_ORG="$(_normalize_github_catalog_org "$org_input")"
+  fi
+  _GITHUB_CATALOG_ORG_CONFIRMED=true
+}
+
+_clear_github_app_env() {
+  unset GITHUB_APP_ID GITHUB_APP_CLIENT_ID GITHUB_APP_CLIENT_SECRET GITHUB_APP_PRIVATE_KEY_PATH
+  unset GITHUB_OAUTH_CLIENT_ID GITHUB_OAUTH_CLIENT_SECRET
+}
+
+_github_creds_file_comment='# GitHub credentials for APME portal (persisted across deploys)'
+
+_merge_github_token_into_creds_file() {
+  local creds_file="$1"
+  local token="$2"
+  python3 - "$creds_file" "$token" <<'PY'
+import sys
+from pathlib import Path
+import yaml
+path = Path(sys.argv[1])
+data = yaml.safe_load(path.read_text()) or {}
+data["github_token"] = sys.argv[2]
+path.write_text(yaml.safe_dump(data, default_flow_style=False, sort_keys=False))
+PY
+}
+
+_save_github_creds_to_file() {
+  mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
+  if _github_app_config_complete; then
+    cat >"$GITHUB_CREDS_FILE" <<CREDS
+---
+${_github_creds_file_comment}
+github_app_id: "${GITHUB_APP_ID}"
+github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
+github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
+github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
+github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID}}"
+github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET}}"
+CREDS
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      _merge_github_token_into_creds_file "$GITHUB_CREDS_FILE" "$GITHUB_TOKEN"
+    fi
+  elif [ -n "${GITHUB_TOKEN:-}" ]; then
+    cat >"$GITHUB_CREDS_FILE" <<CREDS
+---
+${_github_creds_file_comment}
+github_token: "${GITHUB_TOKEN}"
+CREDS
+  else
+    return 1
+  fi
+  chmod 600 "$GITHUB_CREDS_FILE"
+  return 0
+}
+
+_persist_github_catalog_org_in_creds_file() {
+  [ -f "$GITHUB_CREDS_FILE" ] || return 0
+  [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] || return 0
+  [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] || return 0
+  python3 - "$GITHUB_CREDS_FILE" "$APME_GITHUB_CATALOG_ORG" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+org = sys.argv[2]
+data = yaml.safe_load(path.read_text()) or {}
+data["github_catalog_org"] = org
+path.write_text(yaml.safe_dump(data, default_flow_style=False, sort_keys=False))
+PY
+}
+
+prompt_github_token() {
+  # Optional GitHub App or PAT for APME portal integration
+
   if [ -f "$GITHUB_CREDS_FILE" ]; then
     if _load_github_creds_from_file "$GITHUB_CREDS_FILE" || _load_github_creds_from_file_legacy "$GITHUB_CREDS_FILE"; then
-      if [ -n "${GITHUB_TOKEN:-}" ]; then
+      if [ -n "${GITHUB_TOKEN:-}" ] || _github_app_config_complete; then
         info "GitHub credentials found in $GITHUB_CREDS_FILE — reusing"
         return 0
       fi
     fi
   fi
 
-  # Check environment variables - any token skips the prompt
-  if [ -n "${GITHUB_TOKEN:-}" ]; then
-    info "Using GitHub credentials from environment variables"
-    # Default OAuth vars to App client credentials if not explicitly set
+  if _github_app_config_complete; then
+    info "Using GitHub App credentials from environment variables"
     GITHUB_OAUTH_CLIENT_ID="${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID:-}}"
     GITHUB_OAUTH_CLIENT_SECRET="${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET:-}}"
+    info "Catalog org will be collected next (or set APME_GITHUB_CATALOG_ORG)."
     return 0
   fi
 
-  # Skip prompt if QUIET mode or non-interactive
-  if [ "${QUIET:-false}" = "true" ] || [ ! -t 0 ]; then
-    info "Skipping GitHub configuration (use GITHUB_TOKEN=... to provide, add GITHUB_APP_ID=... for full integration)"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    info "Using GitHub credentials from environment variables"
+    GITHUB_OAUTH_CLIENT_ID="${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID:-}}"
+    GITHUB_OAUTH_CLIENT_SECRET="${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET:-}}"
+    info "Catalog org will be collected next (or set APME_GITHUB_CATALOG_ORG)."
+    return 0
+  fi
+
+  if ! _apme_eap_can_prompt; then
+    info "Skipping GitHub configuration (use GITHUB_TOKEN or GitHub App env vars, or run interactively)"
     return 0
   fi
 
   echo ""
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  info "GitHub App Configuration (Optional)"
+  info "GitHub integration (optional)"
   info ""
-  info "APME integrates with GitHub for repository scanning, quality analysis,"
-  info "and code push operations directly from the portal."
+  info "APME uses GitHub for repository catalog sync, scanning, and PR workflows."
+  info "Configure a GitHub App (recommended for portal push) OR a Personal Access Token."
+  info "You do not need both."
   info ""
-  info "Setup Instructions:"
+  info "GitHub App setup: https://github.com/settings/apps/new"
+  info "  Permissions: Contents + Pull requests (read/write); Metadata read"
+  info "  Install the app on your org; save the .pem to ~/.aap-demo/apme-github-app.pem"
   info ""
-  info "STEP 1: Create GitHub App (https://github.com/settings/apps/new)"
-  info "  GitHub App name: apme-portal-local"
-  info "  Homepage URL: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io"
-  info "  Callback URL: https://redhat-rhaap-portal-apme.apps.127.0.0.1.nip.io/api/auth/github/handler/frame"
-  info "  Webhook: Uncheck 'Active'"
-  info "  Repository permissions (REQUIRED):"
-  info "    • Contents: Read and write"
-  info "    • Pull requests: Read and write"
-  info "    • Metadata: Read-only (automatically selected)"
-  info "  Where can this app be installed?: Any account"
+  info "PAT setup: https://github.com/settings/tokens/new (scope: repo)"
   info ""
-  info "STEP 2: Generate client secret (in your new GitHub App settings)"
-  info "  Navigate to: General → Client secrets"
-  info "  Click: 'Generate a new client secret'"
-  info "  Copy the secret immediately (you won't see it again!)"
-  info ""
-  info "STEP 3: Generate private key (in your GitHub App settings)"
-  info "  Navigate to: General → Private keys"
-  info "  Click: 'Generate a private key'"
-  info "  Save the downloaded .pem file to: ~/.aap-demo/apme-github-app.pem"
-  info ""
-  info "STEP 4: Install the app on your account/organization"
-  info "  Click: 'Install App' (left sidebar)"
-  info "  Select: Your account or organization"
-  info "  Repository access:"
-  info "    • All repositories (recommended for testing), OR"
-  info "    • Only select repositories (choose specific repos)"
-  info "  Click: 'Install'"
-  info ""
-  info "STEP 5: Create Personal Access Token (https://github.com/settings/tokens/new)"
-  info "  Note: APME Portal API Access"
-  info "  Expiration: 90 days (or your preference)"
-  info "  Scopes (REQUIRED):"
-  info "    ☑ repo (Full control of private repositories)"
-  info "      ☑ repo:status"
-  info "      ☑ repo_deployment"
-  info "      ☑ public_repo"
-  info "      ☑ repo:invite"
-  info "      ☑ security_events"
-  info "  Click: 'Generate token' and copy it (starts with ghp_)"
-  info ""
-  info "You can skip this and configure later by editing: $VARS_FILE"
+  info "Skip now and edit later: $VARS_FILE"
   info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo ""
 
-  read -r -p "Do you want to configure GitHub integration now? [y/N]: " configure_choice
+  if ! _apme_eap_read_tty "Do you want to configure GitHub integration now? [y/N]: "; then
+    info "Skipping GitHub integration. You can configure it later."
+    return 0
+  fi
+  configure_choice="$REPLY"
 
   if [[ ! "$configure_choice" =~ ^[Yy]$ ]]; then
     info "Skipping GitHub integration. You can configure it later."
@@ -472,72 +635,64 @@ prompt_github_token() {
   fi
 
   echo ""
-  info "Enter GitHub App credentials:"
-  info "  (Visit your GitHub App settings: https://github.com/settings/apps/<your-app-name>)"
+  read -r -p "Use GitHub App [A] or Personal access token [P]? [A/p]: " auth_mode
+  auth_mode="${auth_mode:-A}"
+
+  info "Repositories from this GitHub org will appear in automation portal catalog (Git Repositories → Sync Now)."
+  prompt_github_catalog_org_interactive
+
+  if [[ "$auth_mode" =~ ^[Pp]$ ]]; then
+    _clear_github_app_env
+    unset GITHUB_TOKEN
+    echo ""
+    info "Personal Access Token (https://github.com/settings/tokens/new, scope: repo)"
+    read -r -s -p "Enter PAT (hidden): " github_token_input
+    echo ""
+    if [ -z "$github_token_input" ]; then
+      warn "PAT required for token-only mode. Skipping GitHub integration."
+      return 0
+    fi
+    GITHUB_TOKEN="$github_token_input"
+    if ! _save_github_creds_to_file; then
+      warn "Could not save GitHub credentials."
+      return 0
+    fi
+    info "✓ GitHub PAT configured (saved to $GITHUB_CREDS_FILE)"
+    info "  Portal sync org: ${APME_GITHUB_CATALOG_ORG}"
+    return 0
+  fi
+
+  unset GITHUB_TOKEN
+  echo ""
+  info "GitHub App credentials (https://github.com/settings/apps/<your-app>)"
   echo ""
 
-  # GitHub App ID
-  info "1. GitHub App ID"
-  info "   Location: General → About → App ID (numeric, e.g., 123456)"
-  read -r -p "   Enter App ID: " github_app_id_input
+  read -r -p "App ID (numeric): " github_app_id_input
   if [ -z "$github_app_id_input" ]; then
-    warn "App ID required for GitHub integration. Skipping."
+    warn "App ID required. Skipping GitHub integration."
     return 0
   fi
 
-  # GitHub App Client ID
-  echo ""
-  info "2. GitHub App Client ID"
-  info "   Location: General → About → Client ID (starts with Iv1. or Iv23.)"
-  read -r -p "   Enter Client ID: " github_app_client_id_input
+  read -r -p "Client ID (Iv1… or Iv23…): " github_app_client_id_input
   if [ -z "$github_app_client_id_input" ]; then
-    warn "App Client ID required. Skipping."
+    warn "Client ID required. Skipping."
     return 0
   fi
 
-  # GitHub App Client Secret
-  echo ""
-  info "3. GitHub App Client Secret"
-  info "   Location: General → Client secrets → Generate/copy the secret"
-  info "   (If you don't have one, click 'Generate a new client secret')"
-  read -r -s -p "   Enter Client Secret (hidden): " github_app_client_secret_input
+  read -r -s -p "Client secret (hidden): " github_app_client_secret_input
   echo ""
   if [ -z "$github_app_client_secret_input" ]; then
-    warn "App Client Secret required. Skipping."
+    warn "Client secret required. Skipping."
     return 0
   fi
 
-  # GitHub App Private Key Path
-  echo ""
-  info "4. GitHub App Private Key"
-  info "   Location: General → Private keys → Generate/download .pem file"
-  info "   (If you don't have one, click 'Generate a private key' - file will download)"
-  info "   Move the downloaded .pem file to: $HOME/.aap-demo/apme-github-app.pem"
-  read -r -p "   Private key path [~/.aap-demo/apme-github-app.pem]: " github_app_private_key_input
+  read -r -p "Private key path [~/.aap-demo/apme-github-app.pem]: " github_app_private_key_input
   github_app_private_key_input="${github_app_private_key_input:-$HOME/.aap-demo/apme-github-app.pem}"
-
-  # Expand ~ to full path
   github_app_private_key_input="${github_app_private_key_input/#\~/$HOME}"
 
   if [ ! -f "$github_app_private_key_input" ]; then
     warn "Private key file not found: $github_app_private_key_input"
-    warn "Download the .pem file from GitHub App settings and move it to the path above."
     warn "Then re-run deployment or edit: $VARS_FILE"
-    return 0
-  fi
-
-  # GitHub Personal Access Token
-  echo ""
-  info "5. GitHub Personal Access Token (PAT)"
-  info "   Location: https://github.com/settings/tokens/new"
-  info "   - Note: 'APME Portal API Access'"
-  info "   - Expiration: 90 days (or your preference)"
-  info "   - Scopes: Check 'repo' (full control of private repositories)"
-  info "   - Generate token and copy it (starts with ghp_)"
-  read -r -s -p "   Enter Personal Access Token (hidden): " github_token_input
-  echo ""
-  if [ -z "$github_token_input" ]; then
-    warn "Personal Access Token required. Skipping."
     return 0
   fi
 
@@ -545,30 +700,18 @@ prompt_github_token() {
   GITHUB_APP_CLIENT_ID="$github_app_client_id_input"
   GITHUB_APP_CLIENT_SECRET="$github_app_client_secret_input"
   GITHUB_APP_PRIVATE_KEY_PATH="$github_app_private_key_input"
-  GITHUB_TOKEN="$github_token_input"
-
   GITHUB_OAUTH_CLIENT_ID="$github_app_client_id_input"
   GITHUB_OAUTH_CLIENT_SECRET="$github_app_client_secret_input"
 
-  # Save credentials so future deploys skip the prompt
-  mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
-  cat >"$GITHUB_CREDS_FILE" <<CREDS
----
-# GitHub credentials for APME portal (persisted across deploys)
-github_token: "${GITHUB_TOKEN}"
-github_app_id: "${GITHUB_APP_ID}"
-github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
-github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
-github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
-github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID}"
-github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET}"
-CREDS
-  chmod 600 "$GITHUB_CREDS_FILE"
+  if ! _save_github_creds_to_file; then
+    warn "Could not save GitHub credentials."
+    return 0
+  fi
 
   info "✓ GitHub App configured (saved to $GITHUB_CREDS_FILE)"
   info "  App ID: $GITHUB_APP_ID"
   info "  Private Key: $GITHUB_APP_PRIVATE_KEY_PATH"
-
+  info "  Portal sync org: ${APME_GITHUB_CATALOG_ORG}"
   return 0
 }
 
@@ -597,6 +740,12 @@ generate_vars_file() {
       *) apme_oci_push_force_value=false ;;
     esac
   fi
+
+  local portal_helm_chart_version_value
+  portal_helm_chart_version_value=$(
+    sed -n 's/^portal_helm_chart_version:[[:space:]]*//p' "${SCRIPT_DIR}/defaults.yml" | head -1 | tr -d '"'
+  )
+  portal_helm_chart_version_value="${portal_helm_chart_version_value:-2.2.10}"
 
   # Extract token for API and registry authentication.
   # CRC kubeconfig uses client certificate auth (no token field), so fall back
@@ -635,7 +784,7 @@ aap_password: "${AAP_PASSWORD}"
 portal_helm_chart_repo: openshift-helm-charts
 portal_helm_chart_repo_url: https://charts.openshift.io/
 portal_helm_chart_name: redhat-rhaap-portal
-portal_helm_chart_version: 2.2.3
+portal_helm_chart_version: ${portal_helm_chart_version_value}
 portal_helm_release_name: redhat-rhaap-portal
 portal_helm_install_timeout: 1800
 
@@ -652,26 +801,23 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 EOF
 
   # GitHub secrets configuration
-  if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_APP_ID:-}" ]; then
-    # Full GitHub App configuration
+  if _github_app_config_complete; then
     cat >>"$VARS_FILE" <<EOF
 
-# GitHub secrets configuration (full GitHub App integration)
+# GitHub secrets configuration (GitHub App integration)
 configure_github_secrets: true
-
-# GitHub Personal Access Token
-github_token: "${GITHUB_TOKEN}"
-
-# GitHub OAuth configuration (for user authentication)
-github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID}"
-github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET}"
-
-# GitHub App configuration (for repository operations)
+github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID}}"
+github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET}}"
 github_app_id: "${GITHUB_APP_ID}"
 github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
 github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
 github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
 EOF
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      cat >>"$VARS_FILE" <<EOF
+github_token: "${GITHUB_TOKEN}"
+EOF
+    fi
   elif [ -n "${GITHUB_TOKEN:-}" ]; then
     # Token-only configuration (limited functionality)
     cat >>"$VARS_FILE" <<EOF
@@ -697,14 +843,11 @@ EOF
 configure_github_secrets: false
 # To enable GitHub integration, provide credentials during deployment or edit this file.
 #
-# Option 1: Token-only (basic scanning, no portal push)
+# Option 1: Token-only (basic scanning)
 # github_token: "ghp_..."
 # configure_github_secrets: true
 #
-# Option 2: Full GitHub App (includes portal push, PR creation)
-# github_token: "ghp_..."
-# github_oauth_client_id: "Iv1...."
-# github_oauth_client_secret: "..."
+# Option 2: GitHub App (portal push, PR creation; PAT not required)
 # github_app_id: "123456"
 # github_app_client_id: "Iv1...."
 # github_app_client_secret: "..."
@@ -712,6 +855,19 @@ configure_github_secrets: false
 # configure_github_secrets: true
 #
 # Setup guide: https://github.com/settings/apps/new
+EOF
+  fi
+
+  if _github_integration_active && [ -n "${APME_GITHUB_CATALOG_ORG:-}" ]; then
+    cat >>"$VARS_FILE" <<EOF
+
+# GitHub catalog crawl org (Git Repositories → Sync Now)
+apme_github_catalog_org: "${APME_GITHUB_CATALOG_ORG}"
+EOF
+  else
+    cat >>"$VARS_FILE" <<EOF
+
+# GitHub catalog crawl org (used when configure_github_secrets is true; default in addons/apme-eap/defaults.yml)
 EOF
   fi
 
@@ -787,6 +943,11 @@ show_routes() {
   fi
 
   info ""
+  warn "Re-running aap-demo enable apme-eap resets the Ansible Modernization Content"
+  warn "Engine to the bundled demo config. AI providers you configured in the automation"
+  warn "portal are cleared — re-add them under Git Repositories → Modernization → AI"
+  warn "providers if you use AI escalation. See docs/adr/034-apme-abbenay-bundled-config.md"
+  info ""
   info "Verify deployment:"
   info "  kubectl get pods -n $NAMESPACE"
   info "  kubectl get route -n $NAMESPACE"
@@ -858,7 +1019,20 @@ case "$ACTION" in
     check_prerequisites
     detect_architecture
     discover_environment
+    _CATALOG_ORG_FROM_ENV="${APME_GITHUB_CATALOG_ORG:-${GITHUB_CATALOG_ORG:-}}"
+    _GITHUB_CATALOG_ORG_CONFIRMED=false
+    if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
+      _GITHUB_CATALOG_ORG_CONFIRMED=true
+    fi
+    unset GITHUB_SAVED_CATALOG_ORG
     prompt_github_token
+    resolve_github_catalog_org
+    if [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] &&
+      _github_integration_active &&
+      [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] &&
+      [ -f "$GITHUB_CREDS_FILE" ]; then
+      _persist_github_catalog_org_in_creds_file
+    fi
     generate_vars_file
     setup_venv
     deploy

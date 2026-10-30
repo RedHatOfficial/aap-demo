@@ -139,7 +139,7 @@ The addon uses these roles from the official APME welcome pack:
 2. **apme_pah_integration** - setup-pah remotes, PAH catalog sync flags, APME galaxy seeding
 3. **aap_apme_prerequisites** - Creates AAP OAuth app, generates API token
 4. **apme_oci_push** - Publishes the bundled APME plugin archive to the local registry
-5. **apme_helm_values** - Generates Helm values for chart-native dynamic plugin installation
+5. **apme_helm_values** - Fetches pinned portal chart defaults (`helm show values`), injects APME OCI plugin entries, renders a small overlay, and writes `.rendered/portal-chart-values.yaml` plus `.rendered/portal-apme-overlay.yaml` (no vendored monolith values file)
 6. **apme_scm_secrets** - Creates GitHub OAuth/App secrets (optional)
 7. **portal_helm_install** - Installs Red Hat Developer Hub Helm chart
 8. **apme_gateway_helm** - Installs APME gateway Helm chart
@@ -164,7 +164,7 @@ Roles execute in sequence:
   1. openshift_apme_setup
   2. apme_pah_integration (setup-pah + galaxy facts)
   3. aap_apme_prerequisites
-  4. apme_helm_values (chart-defined portal image + runtime OCI plugins + PAH sync)
+  4. apme_helm_values (`helm show values` + inject + overlay; substitutions on overlay only)
   5. apme_scm_secrets (if enabled)
   6. portal_helm_install
   7. apme_gateway_helm
@@ -213,6 +213,50 @@ Then re-run:
 aap-demo enable apme-eap
 ```
 
+### GitHub catalog org (Sync Now)
+
+When GitHub integration is enabled, the portal crawls one GitHub **organization** for **Git Repositories → Sync Now**.
+
+During interactive `aap-demo enable apme-eap`, after you choose to configure GitHub:
+
+1. **First prompt:** `GitHub organization for Git Repositories sync [Automation-Portal-ACME]:` (default from `addons/apme-eap/defaults.yml`)
+2. **Then:** GitHub **App** or **Personal access token** (you do not need both)
+
+The org is **not** read from `~/.aap-demo/apme-eap-vars.yml` (that file is regenerated each deploy). Saved org lives in `~/.aap-demo/apme-eap-github-creds.yml` as `github_catalog_org` (only after you set it interactively or via env), which is copied into `apme_github_catalog_org` in the generated vars file when GitHub is enabled.
+
+**No sync without credentials:** If you skip GitHub setup, `configure_github_secrets: false` and the portal Helm values omit the GitHub catalog provider (`github: []`). The default org in `defaults.yml` is a prompt/template example only—not an active crawl target.
+
+Non-interactive: when GitHub is enabled (`GITHUB_TOKEN` or GitHub App env vars), **`APME_GITHUB_CATALOG_ORG`** (or `GITHUB_CATALOG_ORG`) is **required**—enable fails if the org is missing. Set both before non-interactive enable:
+
+```bash
+export APME_GITHUB_CATALOG_ORG='Automation-Portal-ACME'
+export GITHUB_TOKEN='ghp_...'   # PAT-only
+# OR set GitHub App env vars (GITHUB_APP_ID, client id/secret, private key path)
+aap-demo enable apme-eap
+```
+
+If GitHub creds come from env only, the org prompt runs on an interactive terminal after creds are detected; from Cursor Agent or CI, export the org env var explicitly.
+
+### RHDH hub image tag
+
+The RHDH hub container tag defaults to **`1.10`** in `addons/apme-eap/defaults.yml` (`rhdh_image_tag`). Override in `~/.aap-demo/apme-eap-vars.yml` and re-run `aap-demo enable apme-eap`. The standalone portal addon reads the same default for its ARM profile (`DEFAULT_RHDH_TAG` env still overrides). Policy and architecture split (registry vs tag) are documented in [ADR-019](../../docs/adr/019-apme-playbook-addon.md) (**Supported RHDH hub version**).
+
+### Add repository and AI (defaults)
+
+By default the portal enables **Add repository** (`apme_add_repository_button_enabled: true`), **AI remediation UI** (`apme_enable_ai: true`), and the gateway runs **Abbenay** with a bootstrap Helm provider (configure real LLM providers in **Git Repositories → Modernization settings → AI providers** after deploy). The register-git scaffolder uses a single **GitHub repository URL** field (`GitHubRepoUrlField`).
+
+To disable the Add repository button or AI UI without editing templates, set in `~/.aap-demo/apme-eap-vars.yml`:
+
+```yaml
+apme_add_repository_button_enabled: false
+apme_enable_ai: false
+```
+
+Then run `aap-demo enable apme-eap` again.
+
+**Note:** Chart 0.1.10 requires at least one `abbenay.providers` entry at install; the bundled `bootstrap-placeholder` Ollama stub satisfies validation only. On each enable, `apme_gateway_helm` applies the flat template [`abbenay-config.yaml.j2`](playbooks/roles/apme_gateway_helm/templates/abbenay-config.yaml.j2) (includes `chat: true` for [apme#755](https://github.com/ansible/apme/issues/755)). **Re-enable resets Ansible Modernization Content Engine AI settings** (portal-configured providers are cleared); see [ADR-034](../../docs/adr/034-apme-abbenay-bundled-config.md).
+
+
 For detailed GitHub setup instructions, see the
 [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).
 
@@ -225,7 +269,8 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 - **apme_pah_run_setup_pah** - Run `setup-pah` when `~/.aap-demo/galaxy-token` exists (default: `true`)
 - **apme_pah_seed_apme_galaxy_servers** - POST AAP/community galaxy servers to APME gateway (default: `true`)
 - **apme_pah_collections_enabled** - `auto` | `true` | `false` for portal PAH catalog sync (default: `auto`)
-- **portal_helm_chart_version** - Override RHDH chart version
+- **portal_helm_chart_version** - Override RHDH chart version (default in `defaults.yml`: `2.2.10`)
+- **rhdh_image_tag** - RHDH hub image tag (default in `defaults.yml`: `1.10`)
 - **apme_helm_chart_version** - Override APME gateway chart version
 - **devspaces_base_url** - Enable "Open in DevSpaces" actions
 
@@ -289,7 +334,7 @@ addons/apme-eap/
 ├── roles/
 │   ├── openshift_apme_setup/
 │   ├── aap_apme_prerequisites/
-│   ├── apme_helm_values/
+│   ├── apme_helm_values/         # fetch chart values, inject plugins, portal-apme-overlay.yaml.j2
 │   ├── apme_scm_secrets/
 │   ├── portal_helm_install/
 │   └── apme_gateway_helm/
@@ -301,6 +346,21 @@ addons/apme-eap/
 The standard portal chart image runs `install-dynamic-plugins` against the APME OCI image
 published to the local registry. The plugin archive is bundled under `plugin_packs/` and does
 not require a custom portal hub image.
+
+### Portal Helm values (dynamic)
+
+At install time, **portal_helm_install** passes two values files to Helm (later files win on
+conflicts):
+
+1. `.rendered/portal-chart-values.yaml` — output of `helm show values` for
+   `portal_helm_chart_version`, plus Ansible injection of APME OCI plugin entries after each
+   `backstage-community-plugin-rbac` line in that file (Quay disable remains in chart defaults 2.2.10+ and in the overlay).
+2. `.rendered/portal-apme-overlay.yaml` — copied from
+   `roles/apme_helm_values/files/portal-apme-overlay.yaml.template` with placeholder substitution
+
+Playbook substitutions (GitHub catalog org, SSL bypass, hostAliases, and so on) target the
+overlay only. Override `portal_helm_chart_version` in `defaults.yml` or
+`~/.aap-demo/apme-eap-vars.yml`, then redeploy; re-run the parity check after major chart bumps.
 
 ## Troubleshooting
 
@@ -338,7 +398,7 @@ Quick fixes below; root causes and anti-patterns are documented in the deploymen
 `apmeApiFactory` (core APME client API) and `gitRepositoriesExtensionsApiFactory` (catalog UI
 extensions). Registering only the extensions factory leaves `plugin.apme.api` unbound.
 
-**Solution**: Redeploy with current `apme-eap` playbooks (values template includes both
+**Solution**: Redeploy with current `apme-eap` playbooks (overlay registers both
 factories). Hard-refresh the browser after redeploy.
 
 ### Python venv creation fails
