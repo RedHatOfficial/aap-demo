@@ -185,7 +185,9 @@ def test_install_trusts_the_cluster_ca_when_mkcert_is_missing(
     real_is_dir = Path.is_dir
 
     def is_dir(self: Path) -> bool:
-        if str(self) == "/etc/pki/ca-trust/source/anchors":
+        # Windows stringifies this absolute POSIX path with backslashes, so
+        # compare the POSIX form. The Linux anchors directory is the trust path.
+        if self.as_posix() == "/etc/pki/ca-trust/source/anchors":
             return True
         return real_is_dir(self)
 
