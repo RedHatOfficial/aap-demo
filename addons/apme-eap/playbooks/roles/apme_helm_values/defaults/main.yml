@@ -7,6 +7,10 @@ apme_portal_overlay_values_path: "{{ apme_rendered_dir }}/portal-apme-overlay.ya
 # Back-compat: substitution tasks target the overlay only
 apme_portal_helm_values_path: "{{ apme_portal_overlay_values_path }}"
 
+portal_helm_chart_repo_url: "https://charts.openshift.io/"
+portal_helm_chart_name: redhat-rhaap-portal
+portal_helm_chart_version: "2.2.10"
+
 apme_portal_helm_command_env:
   PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"
   HELM_CACHE_HOME: "/tmp/.helm/cache"
