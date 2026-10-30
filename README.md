@@ -7,7 +7,32 @@ version **2.0.0.dev1**. A finished 2.0.0 release is not out yet.
 
 ## Start
 
-You need Python 3.9 or newer, and [pipx](https://pipx.pypa.io/).
+Here is the short path from a new computer to a page you can open.
+
+You will need three things:
+
+- Python 3.9 or newer, and [pipx](https://pipx.pypa.io/). pipx keeps this
+  command in its own corner, away from your other Python tools.
+- [OpenShift Local](https://console.redhat.com/openshift/create/local), so you
+  have the `crc` command, plus `kubectl`.
+- A pull secret from the
+  [Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
+  The cluster uses it to download Red Hat images.
+
+Save the pull secret in the folder the command checks:
+
+```bash
+mkdir -p ~/.local/state/aap-demo
+cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
+```
+
+A file named `pull-secret.json` in that same folder also works.
+
+Give the machine about 8 processors and 24 GB of memory. The first `create`
+builds a virtual machine, so give it a few quiet minutes. Smaller sizes, and
+the extra Linux packages, are in [First deploy](docs/guides/first-deploy.md).
+
+Install the command, build the cluster, and install Ansible Automation Platform:
 
 ```bash
 pipx install aap-demo
@@ -24,6 +49,15 @@ To try AAP 2.6 instead of the usual 2.7 release:
 ```bash
 aap-demo deploy --channel stable-2.6
 ```
+
+With no `--channel` flag, `deploy` uses the default channel, `stable-2.7`.
+
+Open the address `status` prints and sign in with the admin password on that
+screen. `aap-demo version` should print `2.0.0.dev1`.
+
+Tomorrow, `aap-demo start` turns the cluster on and `aap-demo stop` turns it
+off. [Daily use](docs/guides/daily-use.md) covers later days, including a page
+that will not load.
 
 ## Guides
 
@@ -50,4 +84,4 @@ aap-demo deploy --channel stable-2.6
 - [How the new command and the older one fit together](docs/concepts/two-ways-to-run.md)
 - [Notes for the move onto the main download](docs/v2-to-main.md)
 - [Design decisions](docs/adr/README.md)
-- [Contributing](docs/CONTRIBUTING.md)
+- [Contributing](CONTRIBUTING.md)
