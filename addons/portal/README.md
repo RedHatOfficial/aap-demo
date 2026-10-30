@@ -19,10 +19,10 @@ Built on Red Hat Developer Hub (RHDH) with AAP-specific plugins.
 
 | Profile | Cluster CPU | RHDH hub |
 |---------|-------------|----------|
-| x86 | `amd64` | Red Hat chart default |
-| ARM | `arm64` | `quay.io/rhdh-community/rhdh:1.10` (experimental) |
+| x86 | `amd64` | Red Hat chart default hub tag (not read from `defaults.yml` on this addon path) |
+| ARM | `arm64` | `quay.io/rhdh-community/rhdh` tag from `addons/apme-eap/defaults.yml` (`rhdh_image_tag`, default `1.10`; override with `DEFAULT_RHDH_TAG`) |
 
-See [ADR-002](../../docs/adr/002-portal-helm-deployment.md) for full architecture.
+See [ADR-002](../../docs/adr/002-portal-helm-deployment.md) for profiles and [ADR-019](../../docs/adr/019-apme-playbook-addon.md) for the shared `rhdh_image_tag` policy (apme-eap applies that tag on both CPU paths).
 
 ## Prerequisites
 

@@ -9,17 +9,19 @@ openshift_project_name: apme
 portal_helm_chart_repo: openshift-helm-charts
 portal_helm_chart_repo_url: https://charts.openshift.io/
 portal_helm_chart_name: redhat-rhaap-portal
-portal_helm_chart_version: 2.2.3
+portal_helm_chart_version: 2.2.10
 portal_helm_release_name: redhat-rhaap-portal
 portal_helm_install_timeout: 1800
+
+# RHDH hub image tag (portal ARM profile reads this file too; override in apme-eap-vars.yml)
+rhdh_image_tag: "1.10"
 
 # Helm chart configuration (APME gateway)
 apme_helm_chart_repo: apme
 apme_helm_chart_repo_url: https://ansible.github.io/apme
 apme_helm_chart_name: apme
-# Empty selects the repository's latest chart; the fallback is used if that
-# chart cannot be installed or does not become ready.
-apme_helm_chart_version: ""
+# Pinned for Abbenay/chart fixes (apme#734); fallback if install fails.
+apme_helm_chart_version: "0.1.10"
 apme_helm_chart_fallback_version: 0.1.8
 apme_helm_release_name: apme
 
@@ -31,14 +33,20 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 configure_github_secrets: false
 
 # Portal image and plugin delivery
-# Empty image reference preserves the existing local/in-cluster fallback.
+# Empty image reference selects the local build from the external plugin artifact.
 apme_preloaded_image_ref: ""
 apme_preloaded_image_pull_secret: ""
-apme_source_repo: ""
+apme_source_repo: "ansible/ansible-rhdh-plugins"
 apme_source_ref: ""
-skip_plugin_push: false
-apme_oci_push_force: false
-apme_oci_push_python_binary: python3
+apme_source_artifact_name: ""
+apme_pack_format: "oci"
+
+# GitHub org for catalog ansibleGitContents crawl (Sync Now); overridden in apme-eap-vars.yml
+apme_github_catalog_org: "Automation-Portal-ACME"
+
+# Portal app-config (ansible.apme) — override in ~/.aap-demo/apme-eap-vars.yml
+apme_add_repository_button_enabled: true
+apme_enable_ai: true
 
 # setup-pah / Automation Hub integration (see ~/.aap-demo/galaxy-token and pah-config.yml)
 apme_pah_run_setup_pah: true
