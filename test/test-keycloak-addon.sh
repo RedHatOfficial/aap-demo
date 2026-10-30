@@ -135,6 +135,14 @@ grep -q 'group_mapping_entries' "$ROOT_DIR/addons/keycloak/configure.sh" || {
   echo "FAIL: AO explicit group mappings missing"
   exit 1
 }
+grep -q '/admin/realms/' "$ROOT_DIR/test/test-keycloak-live.sh" || {
+  echo "FAIL: live Keycloak test must inspect active realm configuration"
+  exit 1
+}
+grep -q 'Authorization: Bearer' "$ROOT_DIR/test/test-keycloak-live.sh" || {
+  echo "FAIL: live Keycloak test must authenticate to the admin API"
+  exit 1
+}
 grep -q 'is_superuser' "$ROOT_DIR/addons/keycloak/configure.sh" || {
   echo "FAIL: AAP role mapping missing"
   exit 1
