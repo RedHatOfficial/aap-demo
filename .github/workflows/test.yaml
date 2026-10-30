@@ -93,6 +93,9 @@ jobs:
       - name: Run APME CRC OAuth URL tests
         run: ./test/test-apme-eap-oauth.sh
 
+      - name: Run APME Add repository + AI static tests
+        run: ./test/test-apme-eap-add-repository-ai.sh
+
       - name: Run local-cache tests
         run: ./test/test-local-cache.sh
 

@@ -1,5 +1,54 @@
 ---
+- name: Resolve Helm download platform for control host  # noqa var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_helm_platform: >-
+      {{
+        'darwin-arm64' if ansible_system == 'Darwin' and ansible_architecture in ['aarch64', 'arm64']
+        else 'darwin-amd64' if ansible_system == 'Darwin'
+        else 'linux-arm64' if ansible_architecture in ['aarch64', 'arm64']
+        else 'linux-amd64'
+      }}
+
 - name: Check for the pinned Helm client  # noqa var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_helm_binary }}"
+  register: apme_helm_binary_stat
+
+- name: Verify existing Helm client runs on this host  # noqa var-naming[no-role-prefix]
+  ansible.builtin.command: "{{ apme_helm_binary }} version --short"
+  when: apme_helm_binary_stat.stat.exists
+  failed_when: false
+  changed_when: false
+  register: apme_helm_precheck
+
+- name: Remove stale Helm install directory  # noqa var-naming[no-role-prefix]
+  ansible.builtin.file:
+    path: "{{ apme_helm_install_dir }}"
+    state: absent
+  when:
+    - apme_helm_binary_stat.stat.exists
+    - apme_helm_precheck.rc | default(0) != 0
+
+- name: Find cached Helm archives for this version  # noqa var-naming[no-role-prefix]
+  ansible.builtin.find:
+    paths: /tmp
+    patterns: "helm-v{{ apme_helm_version }}-*.tar.gz"
+    file_type: file
+  register: apme_helm_cached_archives
+  when:
+    - apme_helm_binary_stat.stat.exists
+    - apme_helm_precheck.rc | default(0) != 0
+
+- name: Remove stale Helm download archives  # noqa var-naming[no-role-prefix]
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ apme_helm_cached_archives.files | default([]) }}"
+  when:
+    - apme_helm_binary_stat.stat.exists
+    - apme_helm_precheck.rc | default(0) != 0
+
+- name: Recheck pinned Helm client after stale cleanup  # noqa var-naming[no-role-prefix]
   ansible.builtin.stat:
     path: "{{ apme_helm_binary }}"
   register: apme_helm_binary_stat

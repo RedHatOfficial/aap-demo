@@ -8,7 +8,10 @@
     # Use the same Python that runs ansible (avoids brew vs venv module mismatches)
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
     collection_root: "{{ playbook_dir | dirname }}"
-    apme_portal_helm_values_path: "{{ playbook_dir | dirname }}/.rendered/portal-apme-values.yaml"
+    apme_rendered_dir: "{{ playbook_dir | dirname }}/.rendered"
+    apme_portal_chart_values_path: "{{ apme_rendered_dir }}/portal-chart-values.yaml"
+    apme_portal_overlay_values_path: "{{ apme_rendered_dir }}/portal-apme-overlay.yaml"
+    apme_portal_helm_values_path: "{{ apme_portal_overlay_values_path }}"
     # Force use of api_key/host auth instead of kubeconfig
     ansible_kubernetes_context: ~
 

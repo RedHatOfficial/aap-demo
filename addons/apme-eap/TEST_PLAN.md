@@ -38,8 +38,9 @@ Ansible playbooks with `ansible.builtin.uri` to interact with AAP's REST API.
 **Steps**:
 
 1. Run: `./aap-demo.sh enable apme-eap`
-2. Observe console output
-3. Check AAP Web UI for job
+2. When prompted for GitHub: confirm **catalog org** is asked first, then **App or PAT** (not both required)
+3. Observe console output
+4. Check AAP Web UI for job
 
 **Expected Results**:
 
@@ -359,7 +360,75 @@ kubectl get pods -n apme  # Should exist again
 
 ---
 
-### TC-010: Error Handling - Invalid Credentials
+### TC-010: Bundled Ansible Modernization Content Engine config (ADR-034)
+
+**Objective**: Verify enable applies bundled AMCE config with `chat: true` and that re-enable resets portal AI providers.
+
+**Prerequisites**:
+
+- APME addon deployed (`aap-demo enable apme-eap` completed)
+- `KUBECONFIG` points at the demo cluster (e.g. `~/.aap-demo/kubeconfig.microshift`)
+
+**Steps**:
+
+1. After enable, inspect live config on the engine pod.
+2. Configure an LLM provider in the automation portal (**Git Repositories → Modernization → AI providers**).
+3. Inspect config again (expect custom provider present).
+4. Run `aap-demo enable apme-eap` again (full playbook, not `stop`/`start`).
+5. Inspect config and confirm galaxy seeding completes without pod `NotFound` errors.
+
+**Expected Results**:
+
+- After step 1: `config.yaml` contains `chat: true` and bundled `bootstrap-placeholder` provider only.
+- After step 3: additional provider block(s) present in `config.yaml`.
+- After step 4: playbook succeeds; post-task galaxy seed uses `deploy/apme-engine` (no stale pod name).
+- After step 5: custom portal providers **removed**; `chat: true` **still present**; only bundled demo providers remain.
+
+**Validation**:
+
+```bash
+export KUBECONFIG="${KUBECONFIG:-$HOME/.aap-demo/kubeconfig.microshift}"
+CFG=/etc/abbenay-config/abbenay/config.yaml
+kubectl exec -n apme deploy/apme-engine -c abbenay -- cat "$CFG" | grep -E 'chat:|providers:'
+
+# Galaxy API reachable from gateway sidecar after enable
+kubectl exec -n apme deploy/apme-engine -c gateway -- \
+  curl -sf http://127.0.0.1:8080/api/v1/settings/galaxy-servers | head -c 200
+```
+
+**Pass Criteria**: Bundled `chat: true` on every enable; portal-added providers cleared on re-enable; galaxy seed succeeds.
+
+**Reference**: [ADR-034](../../docs/adr/034-apme-abbenay-bundled-config.md)
+
+---
+
+### TC-011: Cluster stop/start vs re-enable (AMCE persistence)
+
+**Objective**: Clarify what persists when the cluster stops versus when apme-eap is enabled again.
+
+**Prerequisites**:
+
+- APME deployed; portal AI provider configured (same as TC-010 step 2–3)
+
+**Steps**:
+
+1. Record `config.yaml` (or note custom provider name).
+2. Run `aap-demo stop`, then `aap-demo start` (wait for cluster and `apme` pods Ready).
+3. Inspect `config.yaml` again.
+4. Run `aap-demo enable apme-eap` and inspect `config.yaml` again.
+
+**Expected Results**:
+
+- After step 3: **custom portal AI settings persist** (PVC unchanged; no redeploy).
+- After step 4: **custom settings cleared** (ADR-034 bundled config applied).
+
+**Validation**: Same `kubectl exec … cat "$CFG"` as TC-010; compare provider sections after steps 3 and 4.
+
+**Pass Criteria**: Stop/start preserves AMCE PVC content; re-enable resets to bundled demo config.
+
+---
+
+### TC-012: Error Handling - Invalid Credentials
 
 **Objective**: Verify error handling when AAP credentials fail
 
@@ -495,7 +564,9 @@ kubectl get pods -n apme  # Should exist again
 | TC-007 | Tar-Free File Copy | ✅ PASS | |
 | TC-008 | Cleanup and Re-Deploy | ✅ PASS | |
 | TC-009 | AAP Not Deployed Error | ✅ PASS | |
-| TC-010 | Invalid Credentials Error | ✅ PASS | |
+| TC-010 | Bundled AMCE config (ADR-034) | | |
+| TC-011 | Stop/start vs re-enable persistence | | |
+| TC-012 | Invalid Credentials Error | ✅ PASS | |
 | PT-001 | Deployment Time | ✅ PASS | X min XX sec |
 | PT-002 | Venv Size | ✅ PASS | XX MB |
 | ST-001 | Token Permissions | ✅ PASS | |

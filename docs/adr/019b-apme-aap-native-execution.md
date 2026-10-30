@@ -362,6 +362,8 @@ chart_ref: "{{ portal_helm_chart_name }}"
 chart_repo_url: "{{ portal_helm_chart_repo_url }}"
 ```
 
+**Historical note (superseded):** ADR-019b is **rejected**; execution follows [ADR-019](019-apme-playbook-addon.md). Issues 7–9 below were written during AAP-native bring-up. **Current policy:** one `rhdh_image_tag` for all CPU paths (see **Supported RHDH hub version** in ADR-019); ARM differs by **registry/image**, not by tag.
+
 ### Issue 7: ARM64 Image Availability
 
 **Problem**: `ImagePullBackOff` - Red Hat registry images don't have ARM64 builds
@@ -370,9 +372,9 @@ chart_repo_url: "{{ portal_helm_chart_repo_url }}"
 no image found in image index for architecture "arm64", variant "v8", OS "linux"
 ```
 
-**Root Cause**: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` is x86_64 only
+**Root Cause**: `registry.redhat.io/rhdh/rhdh-hub-rhel9` is x86_64 only (no arm64 manifest).
 
-**Resolution**: Architecture-aware image selection
+**Resolution**: Architecture-aware **registry/repository** selection; use the same `rhdh_image_tag` from aap-demo defaults on both CPU paths (substituted into Helm values—not separate ARM vs x86 tag pins).
 
 ```yaml
 - name: Detect system architecture
@@ -383,15 +385,15 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
   ansible.builtin.set_fact:
     rhdh_image_registry: "quay.io"
     rhdh_image_repository: "rhdh-community/rhdh"
-    rhdh_image_tag: "1.10"
   when: system_arch in ['aarch64', 'arm64']
 
 - name: Use official Red Hat registry for x86_64
   ansible.builtin.set_fact:
     rhdh_image_registry: "registry.redhat.io"
     rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
-    rhdh_image_tag: "1.9"
   when: system_arch not in ['aarch64', 'arm64']
+
+# Tag: {{ rhdh_image_tag | default('1.10') }} from addons/apme-eap/defaults.yml
 ```
 
 ### Issue 8: Postgres Registry Override
@@ -408,13 +410,13 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
   replace: '\1{{ rhdh_image_registry }}\2'
 ```
 
-### Issue 9: Plugin Compatibility Between RHDH Versions
+### Issue 9: Plugin compatibility on ARM (community hub image)
 
-**Problem**: Init container error - `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found in community RHDH 1.10
+**Problem**: Init container error — `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found when using the community hub on ARM.
 
-**Root Cause**: Community RHDH (1.10) and Red Hat RHDH (1.9) have different plugin sets
+**Root Cause**: Values assume Red Hat packaged RHDH plugin bundles; the community hub image used on ARM may omit some artifacts—not an intentional split of RHDH **version tags** between CPUs (see ADR-019).
 
-**Resolution**: Remove incompatible plugins for community version
+**Resolution**: Remove incompatible plugins for community hub path on ARM64
 
 ```yaml
 - name: Remove incompatible plugins for community RHDH (ARM64)

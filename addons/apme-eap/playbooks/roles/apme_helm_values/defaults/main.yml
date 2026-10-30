@@ -1,4 +1,14 @@
 ---
 # defaults for apme_helm_values
 
-apme_helm_values_template: "{{ role_path }}/files/portal-apme-values.yaml.template"
+apme_rendered_dir: "{{ playbook_dir | dirname }}/.rendered"
+apme_portal_chart_values_path: "{{ apme_rendered_dir }}/portal-chart-values.yaml"
+apme_portal_overlay_values_path: "{{ apme_rendered_dir }}/portal-apme-overlay.yaml"
+# Back-compat: substitution tasks target the overlay only
+apme_portal_helm_values_path: "{{ apme_portal_overlay_values_path }}"
+
+apme_portal_helm_command_env:
+  PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"
+  HELM_CACHE_HOME: "/tmp/.helm/cache"
+  HELM_CONFIG_HOME: "/tmp/.helm/config"
+  HELM_DATA_HOME: "/tmp/.helm/data"
