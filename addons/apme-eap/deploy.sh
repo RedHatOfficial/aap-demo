@@ -461,6 +461,10 @@ resolve_github_catalog_org() {
     return 0
   fi
 
+  if [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] && [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ]; then
+    return 0
+  fi
+
   if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
     APME_GITHUB_CATALOG_ORG="$(_normalize_github_catalog_org "$_CATALOG_ORG_FROM_ENV")"
     _GITHUB_CATALOG_ORG_CONFIRMED=true
@@ -477,7 +481,7 @@ resolve_github_catalog_org() {
     return 0
   fi
 
-  die "GitHub is configured but catalog org is unset. Set APME_GITHUB_CATALOG_ORG=YourOrg (or GITHUB_CATALOG_ORG)."
+  die "GitHub is configured but no sync org is set. Set APME_GITHUB_CATALOG_ORG=YourOrg (or GITHUB_CATALOG_ORG)."
 }
 
 prompt_github_catalog_org_interactive() {
@@ -488,7 +492,7 @@ prompt_github_catalog_org_interactive() {
   fi
 
   echo ""
-  if ! _apme_eap_read_tty "GitHub organization for Git Repositories sync [${default}]: "; then
+  if ! _apme_eap_read_tty "GitHub organization to sync into automation portal [${default}]: "; then
     APME_GITHUB_CATALOG_ORG="$default"
     _GITHUB_CATALOG_ORG_CONFIRMED=true
     return 0
@@ -507,21 +511,12 @@ _clear_github_app_env() {
   unset GITHUB_OAUTH_CLIENT_ID GITHUB_OAUTH_CLIENT_SECRET
 }
 
-_save_github_creds_to_file() {
-  mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
-  if _github_app_config_complete; then
-    cat >"$GITHUB_CREDS_FILE" <<CREDS
----
-# GitHub credentials for APME portal (persisted across deploys)
-github_app_id: "${GITHUB_APP_ID}"
-github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
-github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
-github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
-github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID}}"
-github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET}}"
-CREDS
-    if [ -n "${GITHUB_TOKEN:-}" ]; then
-      python3 - "$GITHUB_CREDS_FILE" "$GITHUB_TOKEN" <<'PY'
+_github_creds_file_comment='# GitHub credentials for APME portal (persisted across deploys)'
+
+_merge_github_token_into_creds_file() {
+  local creds_file="$1"
+  local token="$2"
+  python3 - "$creds_file" "$token" <<'PY'
 import sys
 from pathlib import Path
 import yaml
@@ -530,18 +525,32 @@ data = yaml.safe_load(path.read_text()) or {}
 data["github_token"] = sys.argv[2]
 path.write_text(yaml.safe_dump(data, default_flow_style=False, sort_keys=False))
 PY
+}
+
+_save_github_creds_to_file() {
+  mkdir -p "$(dirname "$GITHUB_CREDS_FILE")"
+  if _github_app_config_complete; then
+    cat >"$GITHUB_CREDS_FILE" <<CREDS
+---
+${_github_creds_file_comment}
+github_app_id: "${GITHUB_APP_ID}"
+github_app_client_id: "${GITHUB_APP_CLIENT_ID}"
+github_app_client_secret: "${GITHUB_APP_CLIENT_SECRET}"
+github_app_private_key_path: "${GITHUB_APP_PRIVATE_KEY_PATH}"
+github_oauth_client_id: "${GITHUB_OAUTH_CLIENT_ID:-${GITHUB_APP_CLIENT_ID}}"
+github_oauth_client_secret: "${GITHUB_OAUTH_CLIENT_SECRET:-${GITHUB_APP_CLIENT_SECRET}}"
+CREDS
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      _merge_github_token_into_creds_file "$GITHUB_CREDS_FILE" "$GITHUB_TOKEN"
     fi
   elif [ -n "${GITHUB_TOKEN:-}" ]; then
     cat >"$GITHUB_CREDS_FILE" <<CREDS
 ---
-# GitHub credentials for APME portal (persisted across deploys)
+${_github_creds_file_comment}
 github_token: "${GITHUB_TOKEN}"
 CREDS
   else
     return 1
-  fi
-  if [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] && [ -n "${APME_GITHUB_CATALOG_ORG:-}" ]; then
-    _persist_github_catalog_org_in_creds_file
   fi
   chmod 600 "$GITHUB_CREDS_FILE"
   return 0
@@ -627,11 +636,12 @@ prompt_github_token() {
     return 0
   fi
 
-  prompt_github_catalog_org_interactive
-
   echo ""
   read -r -p "Use GitHub App [A] or Personal access token [P]? [A/p]: " auth_mode
   auth_mode="${auth_mode:-A}"
+
+  info "Repositories from this GitHub org will appear in automation portal catalog (Git Repositories → Sync Now)."
+  prompt_github_catalog_org_interactive
 
   if [[ "$auth_mode" =~ ^[Pp]$ ]]; then
     _clear_github_app_env
@@ -650,7 +660,7 @@ prompt_github_token() {
       return 0
     fi
     info "✓ GitHub PAT configured (saved to $GITHUB_CREDS_FILE)"
-    info "  Catalog sync org: ${APME_GITHUB_CATALOG_ORG}"
+    info "  Portal sync org: ${APME_GITHUB_CATALOG_ORG}"
     return 0
   fi
 
@@ -703,7 +713,7 @@ prompt_github_token() {
   info "✓ GitHub App configured (saved to $GITHUB_CREDS_FILE)"
   info "  App ID: $GITHUB_APP_ID"
   info "  Private Key: $GITHUB_APP_PRIVATE_KEY_PATH"
-  info "  Catalog sync org: ${APME_GITHUB_CATALOG_ORG}"
+  info "  Portal sync org: ${APME_GITHUB_CATALOG_ORG}"
   return 0
 }
 
