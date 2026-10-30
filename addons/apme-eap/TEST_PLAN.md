@@ -38,7 +38,7 @@ Ansible playbooks with `ansible.builtin.uri` to interact with AAP's REST API.
 **Steps**:
 
 1. Run: `./aap-demo.sh enable apme-eap`
-2. When prompted for GitHub: confirm **catalog org** is asked first, then **App or PAT** (not both required)
+2. When prompted for GitHub: choose **App or PAT**, then **one** catalog org prompt (portal sync wording); not both App and PAT
 3. Observe console output
 4. Check AAP Web UI for job
 
@@ -456,6 +456,37 @@ kubectl exec -n apme deploy/apme-engine -c gateway -- \
 
 ---
 
+### TC-013: GitHub catalog org (portal sync) — manual only
+
+**Objective**: Verify org is collected once per enable, persisted once in creds, for both PAT and App paths. Not covered by `./test/test-apme-eap-add-repository-ai.sh` (static wiring only).
+
+**Prerequisites**:
+
+- `./test/test-apme-eap-add-repository-ai.sh` passes in CI
+- Optional clean slate: `./addons/apme-eap/deploy.sh --delete --purge-creds` (or remove duplicate `github_catalog_org` keys manually)
+
+**Steps (PAT)**:
+
+1. Run interactive enable; answer **y** to GitHub; choose **P**
+2. Enter org when prompted (after A/P); enter PAT
+3. Confirm **no second** org prompt before deploy finishes
+4. Inspect `~/.aap-demo/apme-eap-github-creds.yml`: single `github_catalog_org:` key; vars file contains `apme_github_catalog_org`
+
+**Steps (App)**:
+
+1. Purge creds or use fresh home; enable again; choose **A**
+2. Enter org once (after A/P), then App ID / client / secret / key path
+3. Same checks: one org prompt, one `github_catalog_org` in creds YAML
+
+**Steps (reuse saved org)**:
+
+1. Re-run enable with existing creds file (no `--purge-creds`)
+2. Confirm org is **not** prompted again; overlay/org in vars unchanged
+
+**Pass Criteria**: One interactive org prompt per fresh configure; creds file has at most one logical `github_catalog_org`; portal Git Repositories sync org matches vars.
+
+---
+
 ## Performance Tests
 
 ### PT-001: Initial Deployment Time
@@ -567,6 +598,7 @@ kubectl exec -n apme deploy/apme-engine -c gateway -- \
 | TC-010 | Bundled AMCE config (ADR-034) | | |
 | TC-011 | Stop/start vs re-enable persistence | | |
 | TC-012 | Invalid Credentials Error | ✅ PASS | |
+| TC-013 | GitHub catalog org (manual) | | PAT / App / reuse |
 | PT-001 | Deployment Time | ✅ PASS | X min XX sec |
 | PT-002 | Venv Size | ✅ PASS | XX MB |
 | ST-001 | Token Permissions | ✅ PASS | |
