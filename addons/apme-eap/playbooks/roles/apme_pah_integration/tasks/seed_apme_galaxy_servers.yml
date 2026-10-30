@@ -53,7 +53,7 @@
 
 - name: Set APME gateway exec target (deployment survives engine rollouts)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    apme_pah_gateway_exec_target: "deploy/{{ apme_helm_release_name | default('apme') }}-engine"
+    apme_pah_gateway_exec_target: "{{ apme_engine_deploy }}"
   when: (apme_pah_seed_apme_galaxy_servers | bool) == true
 
 - name: Verify kubectl is available for gateway seeding  # noqa: var-naming[no-role-prefix]
