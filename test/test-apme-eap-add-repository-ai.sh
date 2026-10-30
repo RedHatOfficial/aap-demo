@@ -26,6 +26,11 @@ grep -q 'apme_portal_chart_values_path' "${ROOT}/addons/apme-eap/playbooks/roles
 grep -q 'addRepositoryButton:' "$PORTAL_OVERLAY"
 grep -q 'enabled: true' "$PORTAL_OVERLAY"
 grep -q 'enableAi: true' "$PORTAL_OVERLAY"
+grep -q 'feedbackFormUrl: https://red.ht/amce-preview-feedback' "$PORTAL_OVERLAY"
+if grep -q 'forms.gle/VUvfyTjnVax83GPt6' "$PORTAL_OVERLAY"; then
+  echo "FAIL: portal overlay still references default Google feedback form" >&2
+  exit 1
+fi
 test "$(grep -c 'GitHubRepoUrlFieldExtension' "$PORTAL_OVERLAY")" -ge 1
 grep -q '<github-catalog-org>' "$PORTAL_OVERLAY"
 grep -q 'github-catalog-scm' "$PORTAL_OVERLAY"
