@@ -19,7 +19,8 @@
     release_namespace: "{{ openshift_project_name }}"
     create_namespace: false
     values_files:
-      - "{{ apme_portal_helm_values_path }}"
+      - "{{ apme_portal_chart_values_path }}"
+      - "{{ apme_portal_overlay_values_path }}"
     wait: true
     wait_timeout: "{{ portal_helm_install_timeout }}s"
     api_key: "{{ openshift_token | default(omit) }}"

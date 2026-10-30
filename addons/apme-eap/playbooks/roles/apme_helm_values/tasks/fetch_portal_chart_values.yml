@@ -1,0 +1,47 @@
+---
+# Pin chart defaults from the registry (not vendored in git).
+
+- name: Ensure OpenShift Helm chart repo is present  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_helm_binary | default('helm') }}"
+      - repo
+      - add
+      - openshift-helm-charts
+      - "{{ portal_helm_chart_repo_url }}"
+      - --force-update
+  register: apme_portal_helm_repo_add
+  changed_when: "'has been added' in apme_portal_helm_repo_add.stdout"
+  failed_when: apme_portal_helm_repo_add.rc != 0 and 'already exists' not in apme_portal_helm_repo_add.stderr
+  environment: "{{ apme_portal_helm_command_env }}"
+
+- name: Update OpenShift Helm chart repo index  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_helm_binary | default('helm') }}"
+      - repo
+      - update
+      - openshift-helm-charts
+  changed_when: false
+  environment: "{{ apme_portal_helm_command_env }}"
+
+- name: Fetch default values for pinned portal chart version  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_helm_binary | default('helm') }}"
+      - show
+      - values
+      - "{{ portal_helm_chart_name }}"
+      - "--version"
+      - "{{ portal_helm_chart_version }}"
+      - "--repo"
+      - "{{ portal_helm_chart_repo_url }}"
+  register: apme_portal_chart_values_raw
+  changed_when: false
+  environment: "{{ apme_portal_helm_command_env }}"
+
+- name: Write fetched portal chart values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.copy:
+    dest: "{{ apme_portal_chart_values_path }}"
+    content: "{{ apme_portal_chart_values_raw.stdout }}"
+    mode: "0644"

@@ -1,0 +1,171 @@
+---
+- name: Resolve the external verified plugin artifact
+  ansible.builtin.include_tasks: resolve_external_artifact.yml
+
+- name: Require resolved plugin pack and local registry inputs
+  ansible.builtin.assert:
+    that:
+      - plugin_sha is defined and plugin_sha | length > 0
+      - oci_registry is defined and oci_registry | length > 0
+      - apme_oci_tar_resolved is defined and apme_oci_tar_resolved | length > 0
+      - apme_image_build_pack_sha256 | default('') is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "plugin_sha, oci_registry, apme_oci_tar_resolved and a verified pack SHA256 are required."
+
+- name: Resolve the Podman command
+  ansible.builtin.set_fact:
+    apme_image_build_podman_command: >-
+      {{ [apme_image_build_podman_binary]
+         + (['--connection', apme_image_build_podman_connection]
+            if apme_image_build_podman_connection | default('') | length > 0 else []) }}
+
+- name: Resolve local build references
+  ansible.builtin.set_fact:
+    apme_image_build_target: "{{ oci_registry | regex_replace('/$', '') }}/{{ apme_image_build_name }}:{{ plugin_sha }}"
+    apme_image_build_push_target: >-
+      {{ (apme_image_build_push_registry | default(oci_registry, true) | regex_replace('/$', ''))
+         }}/{{ apme_image_build_name }}:{{ plugin_sha }}
+    apme_image_build_local: "localhost/{{ apme_image_build_name }}:{{ plugin_sha }}"
+    apme_image_build_digest: ""
+    apme_image_build_base: >-
+      {{ apme_image_build_base_arm if ansible_architecture in ['aarch64', 'arm64'] else apme_image_build_base_x86 }}
+
+- name: Inspect the local preloaded image
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_image_build_skopeo_binary }}"
+      - inspect
+      - --tls-verify=false
+      - "docker://{{ apme_image_build_target }}"
+  register: apme_image_build_inspect
+  changed_when: false
+  failed_when: false
+
+- name: Require a valid registry digest before reusing the cached image
+  ansible.builtin.assert:
+    that:
+      - (apme_image_build_inspect.stdout | from_json).Digest is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "Registry returned an invalid digest for {{ apme_image_build_target }}"
+  when:
+    - not ansible_check_mode
+    - apme_image_build_inspect.rc == 0
+    - not apme_image_build_force | bool
+
+- name: Capture the cached registry digest
+  ansible.builtin.set_fact:
+    apme_image_build_digest: "{{ (apme_image_build_inspect.stdout | from_json).Digest }}"
+  when:
+    - not ansible_check_mode
+    - apme_image_build_inspect.rc == 0
+    - not apme_image_build_force | bool
+
+- name: Validate all six plugins before reusing the cached portal image
+  ansible.builtin.command:
+    argv: >-
+      {{ apme_image_build_podman_command + [
+         'run', '--rm', '--pull=always', '--tls-verify=false', '--network=none',
+         '--read-only', '--cap-drop=all', '--security-opt=no-new-privileges',
+         '--entrypoint=python3',
+         apme_image_build_target.rsplit(':', 1)[0] ~ '@' ~ apme_image_build_digest,
+         '-c', lookup('ansible.builtin.file', role_path ~ '/../apme_preloaded_image/files/verify_plugins.py')
+      ] }}
+  register: apme_image_build_cached_validation
+  changed_when: false
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - apme_image_build_inspect.rc == 0
+    - not apme_image_build_force | bool
+
+- name: Build and publish the local preloaded image
+  when:
+    - not ansible_check_mode
+    - >-
+      apme_image_build_force | bool or apme_image_build_inspect.rc != 0 or
+      (apme_image_build_cached_validation.rc | default(1)) != 0
+  block:
+    - name: Create an isolated normalized pack build context
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: apme-image-build-
+      register: apme_image_build_context
+
+    - name: Prepare and build the normalized pack
+      block:
+        - name: Create the extractor directory in the build context
+          ansible.builtin.file:
+            path: "{{ apme_image_build_context.path }}/ci"
+            state: directory
+            mode: "0755"
+
+        - name: Copy verified build inputs
+          ansible.builtin.copy:
+            src: "{{ item.src }}"
+            dest: "{{ apme_image_build_context.path }}/{{ item.dest }}"
+            mode: "0644"
+          loop:
+            - src: "{{ collection_root }}/Containerfile.ci"
+              dest: Containerfile
+            - src: "{{ apme_oci_tar_resolved }}"
+              dest: plugin-pack.tar.gz
+            - src: "{{ collection_root }}/ci/extract-plugin-pack.py"
+              dest: ci/extract-plugin-pack.py
+
+        - name: Build the six-plugin portal image
+          ansible.builtin.command:
+            argv: >-
+              {{ apme_image_build_podman_command + [
+                 'build', '--build-arg=BASE_IMAGE=' ~ apme_image_build_base,
+                 '--build-arg=PLUGIN_PACK_SHA256=' ~ apme_image_build_pack_sha256,
+                 '--build-arg=PLUGIN_PACK_FORMAT=' ~ apme_image_build_pack_format,
+                 '--tag=' ~ apme_image_build_local, apme_image_build_context.path
+              ] }}
+          register: apme_image_build_result
+          changed_when: apme_image_build_result.rc == 0
+
+        - name: Push the portal image to the local registry
+          ansible.builtin.command:
+            argv: >-
+              {{ apme_image_build_podman_command + [
+                 'push', '--tls-verify=false', '--digestfile',
+                 apme_image_build_context.path ~ '/pushed.digest',
+                 apme_image_build_local, 'docker://' ~ apme_image_build_push_target
+              ] }}
+          register: apme_image_build_push
+          changed_when: apme_image_build_push.rc == 0
+
+        - name: Capture the pushed registry digest
+          ansible.builtin.set_fact:
+            apme_image_build_digest: >-
+              {{ lookup('ansible.builtin.file',
+                 apme_image_build_context.path ~ '/pushed.digest') | trim }}
+
+        - name: Require a valid pushed registry digest
+          ansible.builtin.assert:
+            that:
+              - apme_image_build_digest is match('^sha256:[0-9a-f]{64}$')
+            fail_msg: "Podman did not return a valid registry digest; refusing to render an unpinned image."
+
+        - name: Remove the transient local portal image
+          ansible.builtin.command:
+            argv: "{{ apme_image_build_podman_command + ['rmi', apme_image_build_local] }}"
+          register: apme_image_build_remove
+          changed_when: apme_image_build_remove.rc == 0
+          failed_when: false
+      always:
+        - name: Remove the isolated build context
+          ansible.builtin.file:
+            path: "{{ apme_image_build_context.path }}"
+            state: absent
+
+- name: Set local image facts for Helm rendering  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_preloaded_registry: "{{ oci_registry.split('/')[0] }}"
+    apme_preloaded_repository: "{{ apme_image_build_target.rsplit(':', 1)[0].split('/', 1)[1] }}"
+    apme_preloaded_tag: "{{ plugin_sha }}"
+    apme_preloaded_digest: "{{ apme_image_build_digest }}"
+
+- name: Remove the transient external plugin artifact
+  ansible.builtin.file:
+    path: "{{ apme_image_build_artifact_dir.path }}"
+    state: absent
+  when: apme_image_build_artifact_dir.path is defined

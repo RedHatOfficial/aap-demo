@@ -1,5 +1,11 @@
 # Generated/rendered files (created by playbooks)
 .rendered/
 
+# Local enable output (deployment-info copies; timestamped beside addon)
+apme-portal-deployment-*.md
+
+# Helm/chart spike renders (not production playbook output)
+.rendered-spike/
+
 # Temp build context for pre-baked plugins image (build-plugins-image.sh)
 .build/

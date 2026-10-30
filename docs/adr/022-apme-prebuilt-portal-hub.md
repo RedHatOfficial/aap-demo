@@ -252,9 +252,9 @@ symlinks in CI. Init-time patch on `dist-scalprum` only is sufficient.
 
 ### Runtime OCI injection (previous default)
 
-**Superseded** for aap-demo default. Still valid for environments that need deploy-time plugin
-version changes without rebuilding the hub image. Requires registry addon and `apme_oci_push`
-machinery (removed from this addon).
+**Superseded** for this addon. Plugin versions are resolved from the external upstream
+repository and baked into the portal image during deployment; deploy-time plugin OCI injection
+and the `apme_oci_push` machinery are no longer supported.
 
 ### Register APME API via self-service plugin
 

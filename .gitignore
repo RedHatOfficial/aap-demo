@@ -13,6 +13,8 @@ test/testing-framework/
 
 # Linting and pre-commit
 .venv-lint/
+.venv/
+.venv311/
 .pre-commit-cache/
 *.log
 *~

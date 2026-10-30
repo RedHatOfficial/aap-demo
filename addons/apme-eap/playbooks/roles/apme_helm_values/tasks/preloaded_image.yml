@@ -1,0 +1,18 @@
+---
+- name: Require validation before rendering an external image
+  ansible.builtin.assert:
+    that:
+      - ansible_check_mode or apme_preloaded_image_validated | default(false) | bool
+    fail_msg: "The external portal image must pass six-plugin validation before Helm rendering."
+  when: apme_preloaded_image_ref | default('') | length > 0
+
+- name: Replace portal image fields using parsed registry and repository
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^      image:\n        digest: ""\n(?:        [^\n]+\n){4}        tag: "[^\n]+"'
+    replace: >-
+      {{ {'image': {'digest': apme_preloaded_digest | default(''), 'pullPolicy': 'IfNotPresent',
+      'pullSecrets': ([apme_preloaded_image_pull_secret]
+      if apme_preloaded_image_pull_secret | default('') | length > 0 else []),
+      'registry': apme_preloaded_registry, 'repository': apme_preloaded_repository, 'tag': apme_preloaded_tag}}
+      | to_nice_yaml(indent=2, sort_keys=false) | indent(6, true) }}

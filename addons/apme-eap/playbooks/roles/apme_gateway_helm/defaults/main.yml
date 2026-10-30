@@ -4,3 +4,12 @@
 apme_gateway_helm_values_file: "{{ role_path }}/files/apme-values.yaml"
 apme_gateway_helm_validate_certs: "{{ openshift_validate_certs | default(false) }}"
 apme_gateway_helm_timeout: 600
+
+apme_engine_deployment_name: "{{ apme_helm_release_name | default('apme') }}-engine"
+apme_engine_deploy: "deploy/{{ apme_engine_deployment_name }}"
+
+apme_helm_command_env:
+  PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"
+  HELM_CACHE_HOME: "/tmp/.helm/cache"
+  HELM_CONFIG_HOME: "/tmp/.helm/config"
+  HELM_DATA_HOME: "/tmp/.helm/data"

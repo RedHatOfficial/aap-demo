@@ -1,6 +1,6 @@
 # ADR-002: Portal Helm Deployment Architecture (x86 and ARM)
 
-**Status**: Accepted
+**Status**: Proposed
 
 **Date**: 2026-06-26
 
@@ -37,10 +37,11 @@ kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}'
 
 | Cluster CPU | Profile | RHDH hub image | PostgreSQL |
 |-------------|---------|----------------|------------|
-| `amd64` | **x86** | Chart default (`registry.redhat.io/rhdh/...`) | Chart default |
-| `arm64` | **ARM** | `quay.io/rhdh-community/rhdh:1.10` | `registry.redhat.io/rhel9/postgresql-15` |
+| `amd64` | **x86** | Chart default Red Hat hub (`registry.redhat.io/rhdh/...`; tag pinned by chart). **apme-eap** sets hub tag from [`addons/apme-eap/defaults.yml`](../../addons/apme-eap/defaults.yml) `rhdh_image_tag` on both profiles. | Chart default |
+| `arm64` | **ARM** | `quay.io/rhdh-community/rhdh:<rhdh_image_tag>` — tag read from the same `defaults.yml` (`portal/deploy.sh`; default `1.10`) | `registry.redhat.io/rhel9/postgresql-15` |
 
-Override: `PORTAL_ARCH=arm` or `PORTAL_ARCH=x86`.
+Override: `PORTAL_ARCH=arm` or `PORTAL_ARCH=x86`. ARM hub tag: `DEFAULT_RHDH_TAG` env (after
+defaults file). apme-eap: `rhdh_image_tag` in `~/.aap-demo/apme-eap-vars.yml`.
 
 ### Shared deployment model
 
@@ -70,28 +71,34 @@ Both profiles use:
    x86 profile (amd64)                    ARM profile (arm64)
    ───────────────────                    ───────────────────
    global/upstream values                 redhat-developer-hub wrapper
-   Red Hat RHDH hub (chart)               quay.io/rhdh-community/rhdh:1.10
+   Red Hat RHDH hub (chart tag)           quay.io/rhdh-community/rhdh:<rhdh_image_tag>
    Chart PostgreSQL image                 RHEL9 PostgreSQL 15 override
                                           Disable broken quay scaffolder plugin
                                           Reset dynamic-plugins PVC on install
 ```
 
+`<rhdh_image_tag>` is defined in `addons/apme-eap/defaults.yml`; apme-eap applies it on amd64
+and arm64. Standalone portal x86 uses the chart hub tag until values override that.
+
 ### x86 profile
 
 Uses chart defaults with top-level `global` and `upstream` Helm values. Suitable
 for production-like x86 OpenShift clusters. Red Hat supported when deployed on
-supported OpenShift versions per chart certification.
+supported OpenShift versions per chart certification. Hub **tag** on this path
+follows the chart unless you deploy via **apme-eap**, which applies `rhdh_image_tag`
+from `defaults.yml` (see [ADR-019](019-apme-playbook-addon.md)).
 
 ### ARM profile
 
 Overrides container images because Red Hat RHDH hub images are amd64-only:
 
-1. **RHDH hub:** `quay.io/rhdh-community/rhdh:1.10` (multi-arch manifest)
+1. **RHDH hub:** `quay.io/rhdh-community/rhdh:<rhdh_image_tag>` (multi-arch manifest; tag
+   from `addons/apme-eap/defaults.yml`, same line as apme-eap)
 2. **PostgreSQL:** `registry.redhat.io/rhel9/postgresql-15:9.8-1782419742`
 3. **Values structure:** `redhat-developer-hub:` top-level key (chart subchart layout)
 4. **Quay plugin:** Post-Helm ConfigMap patch disables
-   `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` (broken in
-   community RHDH 1.10)
+   `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` (missing from
+   community hub bundle on ARM—not a deliberate lower RHDH version on x86)
 5. **Plugin PVC:** Reset on install so init container reinstalls OCI plugins cleanly
 
 AAP OCI plugin bundles are JavaScript; they install on ARM even though OCI
@@ -169,5 +176,6 @@ when available.
 
 - [ADR-004](004-portal-helm-addon.md) — Initial Helm addon design decisions
 - OpenShift Helm chart: `openshift-helm-charts/redhat-rhaap-portal`
+- [ADR-019](019-apme-playbook-addon.md) — Supported RHDH hub tag (`rhdh_image_tag`) for apme-eap
 - Community RHDH: https://github.com/redhat-developer/rhdh-local
 - AAP Extend docs: Portal installation (Helm, OCI plugins)
