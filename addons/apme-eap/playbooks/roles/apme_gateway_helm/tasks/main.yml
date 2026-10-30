@@ -39,36 +39,21 @@
   ansible.builtin.debug:
     msg: "Gateway PVC storageClass: {{ apme_gateway_storage_class | default('(cluster default)') }}"
 
+- name: Set gateway Helm persistence values overlay  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_gateway_helm_persistence_values: >-
+      {{
+        {'persistence': {'gateway': {'storageClass': apme_gateway_storage_class}}}
+        if apme_gateway_storage_class is defined and apme_gateway_storage_class | length > 0
+        else {}
+      }}
+
 - name: Install or upgrade APME gateway Helm release from latest chart  # noqa: var-naming[no-role-prefix]
   block:
     - name: Install or upgrade APME gateway Helm release  # noqa: var-naming[no-role-prefix]
-      kubernetes.core.helm:
-        name: "{{ apme_helm_release_name }}"
-        chart_ref: "{{ apme_helm_chart_name }}"
-        chart_repo_url: "{{ apme_helm_chart_repo_url }}"
-        chart_version: "{{ apme_helm_chart_version | default(omit, true) }}"
-        release_namespace: "{{ openshift_project_name }}"
-        create_namespace: false
-        values_files:
-          - "{{ apme_gateway_helm_values_file }}"
-        values: >-
-          {{
-            {'persistence': {'gateway': {'storageClass': apme_gateway_storage_class}}}
-            if apme_gateway_storage_class is defined and apme_gateway_storage_class | length > 0
-            else {}
-          }}
-        wait: true
-        wait_timeout: "{{ apme_gateway_helm_timeout }}s"
-        api_key: "{{ openshift_token | default(omit) }}"
-        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
-        host: "{{ openshift_api_url }}"
-        validate_certs: "{{ apme_gateway_helm_validate_certs }}"
-      environment:
-        PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
-        HELM_CACHE_HOME: "/tmp/.helm/cache"
-        HELM_CONFIG_HOME: "/tmp/.helm/config"
-        HELM_DATA_HOME: "/tmp/.helm/data"
-      register: apme_gateway_helm_result
+      ansible.builtin.include_tasks: install_apme_gateway_release.yml
+      vars:
+        apme_gateway_release_chart_version: "{{ apme_helm_chart_version | default(omit, true) }}"
   rescue:
     - name: Report latest APME chart failure  # noqa: var-naming[no-role-prefix]
       ansible.builtin.debug:
@@ -84,33 +69,9 @@
         apme_helm_chart_fallback_version | length == 0
 
     - name: Install or upgrade APME gateway Helm release with pinned fallback  # noqa: var-naming[no-role-prefix]
-      kubernetes.core.helm:
-        name: "{{ apme_helm_release_name }}"
-        chart_ref: "{{ apme_helm_chart_name }}"
-        chart_repo_url: "{{ apme_helm_chart_repo_url }}"
-        chart_version: "{{ apme_helm_chart_fallback_version }}"
-        release_namespace: "{{ openshift_project_name }}"
-        create_namespace: false
-        values_files:
-          - "{{ apme_gateway_helm_values_file }}"
-        values: >-
-          {{
-            {'persistence': {'gateway': {'storageClass': apme_gateway_storage_class}}}
-            if apme_gateway_storage_class is defined and apme_gateway_storage_class | length > 0
-            else {}
-          }}
-        wait: true
-        wait_timeout: "{{ apme_gateway_helm_timeout }}s"
-        api_key: "{{ openshift_token | default(omit) }}"
-        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
-        host: "{{ openshift_api_url }}"
-        validate_certs: "{{ apme_gateway_helm_validate_certs }}"
-      environment:
-        PATH: "{{ apme_helm_install_dir | default('/tmp/apme-helm') }}:/opt/homebrew/bin:/usr/local/bin:{{ ansible_env.PATH | default('/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin') }}"  # yamllint disable-line rule:line-length
-        HELM_CACHE_HOME: "/tmp/.helm/cache"
-        HELM_CONFIG_HOME: "/tmp/.helm/config"
-        HELM_DATA_HOME: "/tmp/.helm/data"
-      register: apme_gateway_helm_result
+      ansible.builtin.include_tasks: install_apme_gateway_release.yml
+      vars:
+        apme_gateway_release_chart_version: "{{ apme_helm_chart_fallback_version }}"
 
 - name: Apply bundled Abbenay config (apme#755 chat capability)  # noqa: var-naming[no-role-prefix]
   block:
@@ -160,7 +121,7 @@
           - exec
           - -n
           - "{{ openshift_project_name }}"
-          - "deploy/{{ apme_helm_release_name | default('apme') }}-engine"
+          - "{{ apme_engine_deploy }}"
           - -c
           - abbenay
           - --
@@ -178,7 +139,7 @@
           - -i
           - -n
           - "{{ openshift_project_name }}"
-          - "deploy/{{ apme_helm_release_name | default('apme') }}-engine"
+          - "{{ apme_engine_deploy }}"
           - -c
           - abbenay
           - --
@@ -195,7 +156,7 @@
         state: patched
         api_version: apps/v1
         kind: Deployment
-        name: "{{ apme_helm_release_name | default('apme') }}-engine"
+        name: "{{ apme_engine_deployment_name }}"
         namespace: "{{ openshift_project_name }}"
         api_key: "{{ openshift_token | default(omit) }}"
         kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
