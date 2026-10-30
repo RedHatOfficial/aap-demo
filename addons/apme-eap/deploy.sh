@@ -16,6 +16,7 @@ NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
 GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
 VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
+APME_PYTHON_BIN="${APME_PYTHON_BIN:-$(command -v python3 2>/dev/null || printf '%s' python3)}"
 _LEGACY_GITHUB_CATALOG_ORG="acme-scm"
 _CATALOG_ORG_FROM_ENV=""
 _GITHUB_CATALOG_ORG_CONFIRMED=false
@@ -40,6 +41,14 @@ error() { echo -e "${RED}ERROR:${NC} $*" >&2; }
 die() {
   error "$*"
   exit 1
+}
+
+_apme_python() {
+  if [ -x "$VENV_DIR/bin/python3" ]; then
+    env -u PYTHONPATH "$VENV_DIR/bin/python3" "$@"
+  else
+    env -u PYTHONPATH "$APME_PYTHON_BIN" "$@"
+  fi
 }
 
 _apme_eap_can_prompt() {
@@ -68,7 +77,7 @@ _load_github_creds_from_file() {
   local creds_file="$1"
   [ -f "$creds_file" ] || return 1
 
-  if ! python3 -c "import yaml" 2>/dev/null; then
+  if ! _apme_python -c "import yaml" 2>/dev/null; then
     return 2
   fi
 
@@ -85,7 +94,7 @@ _load_github_creds_from_file() {
     GITHUB_SAVED_CATALOG_ORG) GITHUB_SAVED_CATALOG_ORG="$value" ;;
     esac
   done < <(
-    python3 - "$creds_file" <<'PY'
+    _apme_python - "$creds_file" <<'PY'
 import sys
 import yaml
 
@@ -182,23 +191,37 @@ setup_venv() {
   # Create venv with full Ansible suite + collections for local playbook execution
   local req_checksum_file="${VENV_DIR}/.requirements_checksum"
   local pip_checksum_file="${VENV_DIR}/.pip_requirements_checksum"
+  local requested_python_version existing_python_version
+
+  requested_python_version=$("$APME_PYTHON_BIN" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')
 
   if [ -d "$VENV_DIR" ] && { [ ! -x "$VENV_DIR/bin/python3" ] || [ ! -x "$VENV_DIR/bin/pip" ]; }; then
     warn "APME venv at $VENV_DIR is incomplete — recreating..."
     rm -rf "$VENV_DIR"
   fi
 
+  if [ -d "$VENV_DIR" ]; then
+    existing_python_version=$(
+      env -u PYTHONPATH "$VENV_DIR/bin/python3" \
+        -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || true
+    )
+    if [ "$existing_python_version" != "$requested_python_version" ]; then
+      warn "APME venv uses Python ${existing_python_version:-unknown}; recreating with Python ${requested_python_version}..."
+      rm -rf "$VENV_DIR"
+    fi
+  fi
+
   if [ ! -d "$VENV_DIR" ]; then
     info "Creating Python venv with Ansible and collections..."
-    python3 -m venv "$VENV_DIR"
+    env -u PYTHONPATH "$APME_PYTHON_BIN" -m venv "$VENV_DIR"
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
 
-    pip install --quiet --upgrade pip
-    pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
+    env -u PYTHONPATH "$VENV_DIR/bin/python3" -m pip install --quiet --upgrade pip
+    env -u PYTHONPATH "$VENV_DIR/bin/python3" -m pip install --quiet -r "${SCRIPT_DIR}/requirements.txt"
     sha256sum "${SCRIPT_DIR}/requirements.txt" >"$pip_checksum_file"
 
-    ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml"
+    env -u PYTHONPATH "$VENV_DIR/bin/ansible-galaxy" collection install -r "${SCRIPT_DIR}/requirements.yml"
     sha256sum "${SCRIPT_DIR}/requirements.yml" >"$req_checksum_file"
 
     info "Venv created at $VENV_DIR (~150MB)"
@@ -209,7 +232,7 @@ setup_venv() {
     # Reinstall pip packages only when requirements.txt changed
     if ! sha256sum --check "$pip_checksum_file" --status 2>/dev/null; then
       info "requirements.txt changed — upgrading pip packages..."
-      pip install --quiet --upgrade -r "${SCRIPT_DIR}/requirements.txt"
+      env -u PYTHONPATH "$VENV_DIR/bin/python3" -m pip install --quiet --upgrade -r "${SCRIPT_DIR}/requirements.txt"
       sha256sum "${SCRIPT_DIR}/requirements.txt" >"$pip_checksum_file"
     else
       info "pip packages up to date (requirements.txt unchanged)"
@@ -218,7 +241,7 @@ setup_venv() {
     # Reinstall collections only when requirements.yml changed
     if ! sha256sum --check "$req_checksum_file" --status 2>/dev/null; then
       info "requirements.yml changed — reinstalling Ansible collections..."
-      ansible-galaxy collection install -r "${SCRIPT_DIR}/requirements.yml" --force
+      env -u PYTHONPATH "$VENV_DIR/bin/ansible-galaxy" collection install -r "${SCRIPT_DIR}/requirements.yml" --force
       sha256sum "${SCRIPT_DIR}/requirements.yml" >"$req_checksum_file"
     else
       info "Ansible collections up to date (requirements.yml unchanged)"
@@ -516,7 +539,7 @@ _github_creds_file_comment='# GitHub credentials for APME portal (persisted acro
 _merge_github_token_into_creds_file() {
   local creds_file="$1"
   local token="$2"
-  python3 - "$creds_file" "$token" <<'PY'
+  _apme_python - "$creds_file" "$token" <<'PY'
 import sys
 from pathlib import Path
 import yaml
@@ -560,7 +583,7 @@ _persist_github_catalog_org_in_creds_file() {
   [ -f "$GITHUB_CREDS_FILE" ] || return 0
   [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] || return 0
   [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] || return 0
-  python3 - "$GITHUB_CREDS_FILE" "$APME_GITHUB_CATALOG_ORG" <<'PY'
+  _apme_python - "$GITHUB_CREDS_FILE" "$APME_GITHUB_CATALOG_ORG" <<'PY'
 import sys
 from pathlib import Path
 
@@ -749,7 +772,7 @@ generate_vars_file() {
   preloaded_auth=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_auth_file '""')
   preloaded_verify=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_verify true)
   if [ -n "${APME_PRELOADED_IMAGE_REF:-}" ]; then
-    preloaded_ref=$(python3 -c 'import json, os; print(json.dumps(os.environ["APME_PRELOADED_IMAGE_REF"]))')
+    preloaded_ref=$(_apme_python -c 'import json, os; print(json.dumps(os.environ["APME_PRELOADED_IMAGE_REF"]))')
   fi
   if [ -f "$VARS_FILE" ]; then
     apme_source_repo_value=$(sed -n 's/^apme_source_repo:[[:space:]]*//p' "$VARS_FILE" | tail -1 | tr -d '"')
@@ -946,7 +969,7 @@ deploy() {
 
   # Run main deployment playbook directly
   # Note: Load defaults first, then vars file so user config takes precedence
-  ansible-playbook "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
+  env -u PYTHONPATH "$VENV_DIR/bin/ansible-playbook" "${SCRIPT_DIR}/playbooks/deploy_apme_portal.yml" \
     -e "@${SCRIPT_DIR}/defaults.yml" \
     -e "@${VARS_FILE}"
 
@@ -1054,6 +1077,7 @@ deploy | --deploy)
   check_prerequisites
   detect_architecture
   discover_environment
+  setup_venv
   _CATALOG_ORG_FROM_ENV="${APME_GITHUB_CATALOG_ORG:-${GITHUB_CATALOG_ORG:-}}"
   _GITHUB_CATALOG_ORG_CONFIRMED=false
   if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
@@ -1069,7 +1093,6 @@ deploy | --deploy)
     _persist_github_catalog_org_in_creds_file
   fi
   generate_vars_file
-  setup_venv
   deploy
   ;;
 
