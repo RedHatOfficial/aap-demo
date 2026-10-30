@@ -1,22 +1,23 @@
 ---
-# Render portal Helm values (replaces render-portal-apme-values.sh)
+# Render portal Helm values: helm show values + inject + overlay (no vendored monolith)
 
-- name: Validate Helm values template exists  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.stat:
-    path: "{{ apme_helm_values_template }}"
-  register: values_template_stat
+- name: Ensure rendered Helm values directory exists  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.file:
+    path: "{{ apme_portal_chart_values_path | dirname }}"
+    state: directory
+    mode: "0755"
 
-- name: Fail when template is missing  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.fail:
-    msg: "Template not found: {{ apme_helm_values_template }}"
-  when: not values_template_stat.stat.exists
+- name: Fetch pinned portal chart default values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: fetch_portal_chart_values.yml
 
-- name: Copy portal Helm values template  # noqa: var-naming[no-role-prefix]
+- name: Inject APME dynamic plugin overrides into chart values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.include_tasks: inject_dynamic_plugins.yml
+
+- name: Copy APME portal Helm values overlay template  # noqa: var-naming[no-role-prefix]
   ansible.builtin.copy:
-    src: "{{ apme_helm_values_template }}"
-    dest: "{{ apme_portal_helm_values_path }}"
+    src: portal-apme-overlay.yaml.template
+    dest: "{{ apme_portal_overlay_values_path }}"
     mode: "0644"
-    remote_src: true
 
 - name: Detect system architecture  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
@@ -26,14 +27,12 @@
   ansible.builtin.set_fact:
     rhdh_image_registry: "quay.io"
     rhdh_image_repository: "rhdh-community/rhdh"
-    rhdh_image_tag: "1.9"
   when: system_arch in ['aarch64', 'arm64']
 
 - name: Use official Red Hat registry for x86_64  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     rhdh_image_registry: "registry.redhat.io"
     rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
-    rhdh_image_tag: "1.9"
   when: system_arch not in ['aarch64', 'arm64']
 
 - name: Override RHDH hub image registry  # noqa: var-naming[no-role-prefix]
@@ -42,11 +41,11 @@
     regexp: "registry: registry\\.redhat\\.io\n        repository: rhdh/rhdh-hub-rhel9"
     replace: "registry: {{ rhdh_image_registry }}\n        repository: {{ rhdh_image_repository }}"
 
-- name: Override RHDH hub image tag  # noqa: var-naming[no-role-prefix]
+- name: Substitute RHDH hub image tag in portal Helm values  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
-    regexp: "repository: {{ rhdh_image_repository }}\n        tag: \"1\\.9\""
-    replace: "repository: {{ rhdh_image_repository }}\n        tag: \"{{ rhdh_image_tag }}\""
+    regexp: '<rhdh-hub-tag>'
+    replace: "{{ rhdh_image_tag | default('1.10') }}"
 
 - name: Render preloaded portal image and local plugin locations
   ansible.builtin.include_tasks: preloaded_image.yml
@@ -249,9 +248,15 @@
 - name: Remove GitHub catalog provider when not configured  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
-    regexp: '(?s)                      github:\n                      - host: github\.com\n                        name: github-acme-scm\n                        orgs:\n                        - name: acme-scm\n                          branches:\n                          - main\n                          - master\n                          crawlDepth: 5\n                          apme:\n                            enabled: true\n                            scanOnRegister: false\n                          schedule:\n                            frequency:\n                              minutes: 30\n                            timeout:\n                              minutes: 30\n'  # yamllint disable-line rule:line-length
+    regexp: '(?s)                      github:\n                      - host: github\.com\n                        name: github-catalog-scm\n                        orgs:\n                        - name: <github-catalog-org>\n                          branches:\n                          - main\n                          - master\n                          crawlDepth: 5\n                          apme:\n                            enabled: true\n                            scanOnRegister: false\n                          schedule:\n                            frequency:\n                              minutes: 30\n                            timeout:\n                              minutes: 30\n'  # yamllint disable-line rule:line-length
     replace: '                      # GitHub catalog provider disabled (configure_github_secrets: false)\n                      github: []\n'  # yamllint disable-line rule:line-length
   when: not (configure_github_secrets | default(false))
+
+- name: Substitute GitHub catalog crawl org in portal Helm values  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '<github-catalog-org>'
+    replace: "{{ apme_github_catalog_org | default('Automation-Portal-ACME') }}"
 
 - name: Read rendered Helm values  # noqa: var-naming[no-role-prefix]
   ansible.builtin.slurp:
@@ -268,11 +273,15 @@
       - rendered_helm_values.content | b64decode is not search('<init-container-image>')
       - rendered_helm_values.content | b64decode is not search('<plugin-sha>')
       - rendered_helm_values.content | b64decode is not search('<oci-registry>')
-    fail_msg: "Unresolved placeholders remain in {{ apme_portal_helm_values_path }}"
+      - rendered_helm_values.content | b64decode is not search('<github-catalog-org>')
+      - rendered_helm_values.content | b64decode is not search('<rhdh-hub-tag>')
+    fail_msg: "Unresolved placeholders remain in {{ apme_portal_overlay_values_path }}"
 
-- name: Display rendered values path  # noqa: var-naming[no-role-prefix]
+- name: Display rendered values paths  # noqa: var-naming[no-role-prefix]
   ansible.builtin.debug:
-    msg: "Rendered portal Helm values: {{ apme_portal_helm_values_path }}"
+    msg:
+      - "Portal chart values (helm show values + inject): {{ apme_portal_chart_values_path }}"
+      - "APME overlay values: {{ apme_portal_overlay_values_path }}"
 
 - name: Require the parsed image fields after all substitutions
   ansible.builtin.assert:

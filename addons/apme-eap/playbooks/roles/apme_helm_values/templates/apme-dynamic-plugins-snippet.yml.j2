@@ -1,0 +1,96 @@
+        - disabled: true
+          package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-quay-dynamic
+        - disabled: false
+          package: ./dynamic-plugins/dist/ansible-plugin-scaffolder-backend-module-backstage-rhaap
+          pluginConfig:
+            dynamicPlugins:
+              backend:
+                ansible.plugin-scaffolder-backend-module-backstage-rhaap: null
+        - disabled: false
+          package: ./dynamic-plugins/dist/ansible-backstage-plugin-catalog-backend-module-rhaap
+        - disabled: false
+          package: ./dynamic-plugins/dist/ansible-plugin-backstage-self-service
+          pluginConfig:
+            dynamicPlugins:
+              frontend:
+                ansible.plugin-backstage-self-service:
+                  dynamicRoutes:
+                  - importName: LandingPage
+                    path: /
+                  - importName: SelfServicePage
+                    path: /self-service
+                  - importName: TemplatesPage
+                    menuItem:
+                      importName: TemplatesSidebarItem
+                    path: /self-service/*
+                  - importName: HistoryPage
+                    menuItem:
+                      importName: HistorySidebarItem
+                    path: /self-service/create/tasks
+                  - importName: EEPage
+                    path: /self-service/ee/*
+                  - importName: EEPage
+                    menuItem:
+                      importName: EEBuilderSidebarItem
+                    path: /self-service/ee
+                  - importName: CollectionsPage
+                    menuItem:
+                      importName: CollectionsSidebarItem
+                    path: /self-service/collections
+                  - importName: CollectionsPage
+                    path: /self-service/collections/*
+                  - importName: GitRepositoriesPage
+                    menuItem:
+                      importName: GitRepositoriesSidebarItem
+                    path: /self-service/repositories
+                  - importName: GitRepositoriesPage
+                    path: /self-service/repositories/*
+                  mountPoints:
+                  - importName: LocationListener
+                    mountPoint: application/listener
+                  - importName: AppThemeFixer
+                    mountPoint: application/listener
+                  - config:
+                      priority: 100
+                    importName: AAPLogoutButton
+                    mountPoint: global.header/profile
+                  providerSettings:
+                  - description: Sign in with RHAAP
+                    provider: ansible.auth.rhaap
+                    title: RHAAP
+                  scaffolderFieldExtensions:
+                  - importName: AAPTokenFieldExtension
+                  - importName: AAPResourcePickerExtension
+                  - importName: AdditionalBuildStepsPickerFieldExtension
+                  - importName: BaseImagePickerFieldExtension
+                  - importName: CollectionsPickerFieldExtension
+                  - importName: EEFileNamePickerFieldExtension
+                  - importName: FileUploadPickerFieldExtension
+                  - importName: PackagesPickerFieldExtension
+                  - importName: MCPServersPickerFieldExtension
+                  - importName: ScmSelectorFieldExtension
+                  - importName: GitHubRepoUrlFieldExtension
+                  signInPage:
+                    importName: SignInPage
+        - disabled: false
+          package: ./dynamic-plugins/dist/ansible-backstage-plugin-auth-backend-module-rhaap-provider
+          pluginConfig: {}
+        - disabled: false
+          package: ./dynamic-plugins/dist/ansible-plugin-backstage-apme
+          pluginConfig:
+            dynamicPlugins:
+              frontend:
+                ansible.plugin-backstage-apme:
+                  apiFactories:
+                  - importName: apmeApiFactory
+                  - importName: gitRepositoriesExtensionsApiFactory
+                  appIcons:
+                  - importName: SecurityIcon
+                    module: '@material-ui/icons'
+                    name: apmeIcon
+        - disabled: false
+          package: ./dynamic-plugins/dist/ansible-backstage-plugin-catalog-backend-module-apme
+          pluginConfig:
+            dynamicPlugins:
+              backend:
+                ansible.backstage-plugin-catalog-backend-module-apme: {}

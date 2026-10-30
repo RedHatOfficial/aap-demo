@@ -111,3 +111,100 @@
         HELM_CONFIG_HOME: "/tmp/.helm/config"
         HELM_DATA_HOME: "/tmp/.helm/data"
       register: apme_gateway_helm_result
+
+- name: Apply bundled Abbenay config (apme#755 chat capability)  # noqa: var-naming[no-role-prefix]
+  block:
+    - name: Render bundled Abbenay config from role template  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.set_fact:
+        abbenay_abbenay_config_path: /etc/abbenay-config/abbenay/config.yaml
+        abbenay_cm_name: "{{ apme_helm_release_name | default('apme') }}-abbenay-config"
+        abbenay_config_rendered: "{{ lookup('template', 'abbenay-config.yaml.j2') }}"
+        abbenay_kubectl_env:
+          KUBECONFIG: "{{ apme_oci_kubeconfig | default(ansible_env.KUBECONFIG | default(''), true) }}"
+
+    - name: Fetch Abbenay seed ConfigMap  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: ConfigMap
+        name: "{{ abbenay_cm_name }}"
+        namespace: "{{ openshift_project_name }}"
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ apme_gateway_helm_validate_certs }}"
+      register: abbenay_cm_info
+
+    - name: Update Abbenay seed ConfigMap from bundled template  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s:
+        state: patched
+        api_version: v1
+        kind: ConfigMap
+        name: "{{ abbenay_cm_name }}"
+        namespace: "{{ openshift_project_name }}"
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ apme_gateway_helm_validate_certs }}"
+        definition:
+          data:
+            config.yaml: "{{ abbenay_config_rendered }}"
+      when:
+        - abbenay_cm_info.resources | length > 0
+        - abbenay_cm_info.resources[0].data.get('config.yaml', '') != abbenay_config_rendered
+      register: abbenay_cm_apply
+
+    - name: Read live Abbenay config from engine pod  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - exec
+          - -n
+          - "{{ openshift_project_name }}"
+          - "deploy/{{ apme_helm_release_name | default('apme') }}-engine"
+          - -c
+          - abbenay
+          - --
+          - cat
+          - "{{ abbenay_abbenay_config_path }}"
+      environment: "{{ abbenay_kubectl_env }}"
+      register: abbenay_live_config_raw
+      changed_when: false
+
+    - name: Write bundled Abbenay config to live PVC  # noqa: var-naming[no-role-prefix]
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - exec
+          - -i
+          - -n
+          - "{{ openshift_project_name }}"
+          - "deploy/{{ apme_helm_release_name | default('apme') }}-engine"
+          - -c
+          - abbenay
+          - --
+          - sh
+          - -c
+          - "cat > {{ abbenay_abbenay_config_path }}"
+        stdin: "{{ abbenay_config_rendered }}"
+      environment: "{{ abbenay_kubectl_env }}"
+      when: abbenay_live_config_raw.stdout != abbenay_config_rendered
+      register: abbenay_pvc_apply
+
+    - name: Restart APME engine after Abbenay config change on PVC  # noqa: var-naming[no-role-prefix]
+      kubernetes.core.k8s:
+        state: patched
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ apme_helm_release_name | default('apme') }}-engine"
+        namespace: "{{ openshift_project_name }}"
+        api_key: "{{ openshift_token | default(omit) }}"
+        kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
+        host: "{{ openshift_api_url }}"
+        validate_certs: "{{ apme_gateway_helm_validate_certs }}"
+        definition:
+          spec:
+            template:
+              metadata:
+                annotations:
+                  apme.eap/abbenayConfigAppliedAt: "{{ ansible_date_time.iso8601 }}"
+      when: abbenay_pvc_apply is changed

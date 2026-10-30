@@ -14,6 +14,8 @@ Validation tests for `aap-demo.sh` command-line interface.
 ./test/test-macos-ingress-ca-trust-state.sh
 ./test/test-fix-ssl-command.sh
 ./test/test-apme-eap-oauth.sh
+./test/test-apme-helm-bootstrap-platform.sh
+./test/test-apme-eap-add-repository-ai.sh
 python3 ./test/test-ao-import-demos.py
 
 # AAP provisioning fast-path test
