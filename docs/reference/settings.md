@@ -27,15 +27,27 @@ The file is `~/.config/aap-demo/config.yaml`.
 
 Defaults when you `create`:
 
-| | Default | Flag | Environment variable |
-| --- | --- | --- | --- |
-| Processors | 8 | `--cpus` | `CRC_CPUS` |
-| Memory | 24576 MB (24 GB) | `--memory` | `CRC_MEMORY` |
-| Disk | 120 GB | `--disk` | `CRC_DISK` |
-| Space for volumes | 100 GB | `--pv-size` | `CRC_PV_SIZE` |
+| | Default | Minimum | Flag | Environment variable | Saved key |
+| --- | --- | --- | --- | --- | --- |
+| Processors | 8 | 2 | `--cpus` | `CRC_CPUS` | `crc.cpus` |
+| Memory | 24576 MB (24 GB) | 8192 MB | `--memory` | `CRC_MEMORY` | `crc.memory_mb` |
+| Disk | 120 GB | 60 GB | `--disk` | `CRC_DISK` | `crc.disk_gb` |
+| Space for volumes | 100 GB | 10 GB | `--pv-size` | `CRC_PV_SIZE` | `crc.pv_size_gb` |
 
-`create` warns if the computer itself has fewer than 4 processors or 10 GB of memory. Set the size before
-the virtual machine exists. Changing it later means `destroy` and `create` again.
+A later source overrides an earlier one:
+
+1. The default in this table
+2. The saved key in `~/.config/aap-demo/config.yaml`
+3. The environment variable
+4. The flag
+
+A value below the minimum stops the command before it changes anything. The error names the flag, the
+environment variable, and the saved key. Correct the one that holds the bad value. The saved key and the
+environment variable are checked before flags are read, so a flag does not get past a bad value from either.
+
+`create` and `deploy` both print the size they resolved. `create` warns if the computer itself has fewer
+than 4 processors or 10 GB of memory. Set the size before the virtual machine exists. Changing it later
+means `destroy` and `create` again, so `deploy` on an existing machine does not resize it.
 
 ```bash
 aap-demo create --cpus 6 --memory 16384 --disk 80 --pv-size 60

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aap_demo.core import config as config_mod
+from aap_demo.core import schema
 from aap_demo.core.errors import ConfigError
 
 
@@ -56,6 +57,38 @@ def test_out_of_range_value_reports_the_json_path() -> None:
         config_mod.resolve(env={"CRC_CPUS": "96"})
     assert "crc.cpus" in str(excinfo.value)
     assert "maximum" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("env", "key", "flag", "variable"),
+    [
+        ({"CRC_CPUS": "1"}, "crc.cpus", "--cpus", "CRC_CPUS"),
+        ({"CRC_MEMORY": "4096"}, "crc.memory_mb", "--memory", "CRC_MEMORY"),
+    ],
+)
+def test_vm_size_below_the_minimum_names_every_place_to_set_it(
+    env: dict, key: str, flag: str, variable: str
+) -> None:
+    with pytest.raises(ConfigError) as excinfo:
+        config_mod.resolve(env=env)
+    assert key in excinfo.value.message
+    assert "less than the minimum" in excinfo.value.message
+    assert excinfo.value.hint == (
+        f"Correct whichever one sets it: the {flag} flag, the {variable} environment variable, "
+        f"or the {key} config key."
+    )
+
+
+def test_an_unknown_key_has_no_place_to_set_it() -> None:
+    with pytest.raises(ConfigError) as excinfo:
+        config_mod.resolve(env={}, file_data={"crc": {"nope": 1}})
+    assert excinfo.value.hint is None
+
+
+def test_section_validation_keeps_the_hint() -> None:
+    with pytest.raises(ConfigError) as excinfo:
+        schema.validate({"cpus": 1}, section_name="crc")
+    assert "--cpus" in (excinfo.value.hint or "")
 
 
 def test_unknown_top_level_key_is_rejected() -> None:
