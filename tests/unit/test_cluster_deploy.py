@@ -727,8 +727,13 @@ def test_deploy_command_exit_code_follows_readiness(
     assert lifecycle.deploy(app_ctx, _args()) == expected
 
 
-def _cluster_state(app_ctx, monkeypatch, status: str) -> list:
-    app_ctx.runner = FakeRunner().ok("crc status", stdout=json.dumps({"crcStatus": status}))
+def _cluster_state(app_ctx, monkeypatch, tmp_path, status: dict, machine: bool = False) -> list:
+    app_ctx.env = {"HOME": str(tmp_path)}
+    if machine:
+        directory = tmp_path / ".crc" / "machines" / "crc"
+        directory.mkdir(parents=True)
+        (directory / "config.json").write_text("{}")
+    app_ctx.runner = FakeRunner().ok("crc status", stdout=json.dumps(status))
     calls: list = []
     monkeypatch.setattr(deploy_mod.bootstrap, "create", lambda ctx: calls.append("create"))
     monkeypatch.setattr(deploy_mod.runtime, "start", lambda ctx: calls.append("start"))
@@ -737,18 +742,35 @@ def _cluster_state(app_ctx, monkeypatch, status: str) -> list:
 
 @pytest.mark.parametrize(
     ("status", "expected"),
-    [("Unknown", ["create"]), ("Stopped", ["start"]), ("Running", [])],
+    [
+        ({"crcStatus": "Unknown"}, ["create"]),
+        # CRC reports Stopped on a host that never had a VM.
+        ({"crcStatus": "Stopped"}, ["create"]),
+        ({"crcStatus": "Stopped", "openshiftVersion": "4.22.3"}, ["start"]),
+        ({"crcStatus": "Running"}, []),
+    ],
 )
 def test_deploy_brings_up_the_cluster_from_any_state(
-    app_ctx, monkeypatch, status, expected
+    app_ctx, monkeypatch, tmp_path, status, expected
 ) -> None:
-    calls = _cluster_state(app_ctx, monkeypatch, status)
+    calls = _cluster_state(app_ctx, monkeypatch, tmp_path, status)
     deploy_mod.ensure_cluster_running(app_ctx)
     assert calls == expected
 
 
-def test_a_failed_create_stops_the_deploy(app_ctx, monkeypatch) -> None:
-    _cluster_state(app_ctx, monkeypatch, "Unknown")
+def test_an_unreadable_status_never_creates_over_an_existing_vm(
+    app_ctx, monkeypatch, tmp_path
+) -> None:
+    calls = _cluster_state(app_ctx, monkeypatch, tmp_path, {}, machine=True)
+    with pytest.raises(ClusterUnreachableError) as excinfo:
+        deploy_mod.ensure_cluster_running(app_ctx)
+    assert "could not be read" in excinfo.value.message
+    assert "which crc" in (excinfo.value.hint or "")
+    assert calls == []
+
+
+def test_a_failed_create_stops_the_deploy(app_ctx, monkeypatch, tmp_path) -> None:
+    _cluster_state(app_ctx, monkeypatch, tmp_path, {"crcStatus": "Unknown"})
 
     def fail(ctx) -> None:
         raise AapDemoError("create failed")

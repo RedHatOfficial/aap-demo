@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aap_demo.cluster import aap as aap_mod
@@ -426,15 +427,29 @@ def ensure_cluster_running(ctx: AppContext) -> str:
     """Ports ``cmd_deploy``'s opening cluster-state branch.
 
     A missing cluster is created and a stopped one is started, so ``deploy``
-    works from any state. Returns the state found before that work.
+    works from any state. CRC reports ``Stopped`` on a host with no VM, so that
+    state alone does not choose between them. A VM whose status cannot be read
+    is an error, because creating over it would hide the real problem. Returns
+    the state found before that work.
     """
     state = infra_crc.get_state(ctx.runner)
-    if state == infra_crc.STATE_NOT_CREATED:
+    if state == infra_crc.STATE_RUNNING:
+        return state
+    home = Path(ctx.env.get("HOME") or Path.home())
+    if not infra_crc.has_instance(ctx.runner, home=home):
         ctx.console.out("No cluster found. Creating one first...")
         bootstrap.create(ctx)
     elif state == infra_crc.STATE_STOPPED:
         ctx.console.out("Cluster is stopped. Starting...")
         runtime.start(ctx)
+    else:
+        raise ClusterUnreachableError(
+            "A CRC VM exists, but its status could not be read",
+            hint=(
+                "Check: crc status, and which crc is first on PATH.\n"
+                "  To replace the VM: aap-demo destroy --yes"
+            ),
+        )
     return state
 
 
