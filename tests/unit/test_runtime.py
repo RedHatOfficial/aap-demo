@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 
 import pytest
 
@@ -131,7 +132,7 @@ def _starting(app_ctx, monkeypatch, status: str) -> FakeRunner:
         "AAP_DEMO_CRC_STABILITY_SLEEP": "0",
     }
     runner = FakeRunner().ok("crc start")
-    runner.ok("crc status", stdout='{"crcStatus": "%s", "openshiftStatus": "Running"}' % status)
+    runner.ok("crc status", stdout=json.dumps({"crcStatus": status, "openshiftStatus": "Running"}))
     runner.ok("kubectl")
     app_ctx.runner = runner
     return runner

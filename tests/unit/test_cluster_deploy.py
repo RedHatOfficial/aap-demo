@@ -9,6 +9,7 @@ silently skipped stage.
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 import pytest
@@ -727,7 +728,7 @@ def test_deploy_command_exit_code_follows_readiness(
 
 
 def _cluster_state(app_ctx, monkeypatch, status: str) -> list:
-    app_ctx.runner = FakeRunner().ok("crc status", stdout='{"crcStatus": "%s"}' % status)
+    app_ctx.runner = FakeRunner().ok("crc status", stdout=json.dumps({"crcStatus": status}))
     calls: list = []
     monkeypatch.setattr(deploy_mod.bootstrap, "create", lambda ctx: calls.append("create"))
     monkeypatch.setattr(deploy_mod.runtime, "start", lambda ctx: calls.append("start"))
