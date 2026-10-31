@@ -298,7 +298,8 @@ def _install_metrics(ctx: AppContext) -> None:
     ctx.console.checkpoint("metrics-server installed")
 
 
-def _install_nfs(ctx: AppContext) -> None:
+def install_nfs(ctx: AppContext) -> None:
+    """Ensure the ``nfs-local-rwx`` StorageClass exists, or raise ``AapDemoError``."""
     ctx.console.step("Setting up NFS storage")
     if ctx.runner.run(["kubectl", "get", "sc", "nfs-local-rwx"]).ok:
         ctx.console.checkpoint("nfs-local-rwx StorageClass already exists")
@@ -374,6 +375,11 @@ def _install_nfs(ctx: AppContext) -> None:
         ],
         detach=True,
     )
+    if not ctx.runner.run(["kubectl", "get", "sc", "nfs-local-rwx"]).ok:
+        raise AapDemoError(
+            "nfs-local-rwx StorageClass is still missing after NFS setup",
+            hint="Check the NFS pods: kubectl get pods -n nfs-storage",
+        )
     ctx.console.checkpoint("nfs-local-rwx StorageClass created")
 
 
@@ -574,7 +580,7 @@ def create(
         ctx.console.checkpoint("Podman remote connection registered")
 
     _install_metrics(ctx)
-    _install_nfs(ctx)
+    install_nfs(ctx)
     coredns.configure(ctx, sleep=sleep)
 
     ctx.console.step("Setting inotify limits")

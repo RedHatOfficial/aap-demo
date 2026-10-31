@@ -143,9 +143,10 @@ def test_healthy_deploy_reaches_a_ready_aap(app_ctx, healthy) -> None:
 
 
 def test_deploy_order_is_bashs(app_ctx, healthy) -> None:
-    """namespace → CoreDNS → CatalogSource → Subscription → CR."""
+    """NFS → namespace → CoreDNS → CatalogSource → Subscription → CR."""
     _run(app_ctx, cr_name="controller")
     order = [
+        healthy.index_of("kubectl get sc nfs-local-rwx"),
         healthy.index_of("kubectl create namespace"),
         healthy.index_of("oc adm policy add-scc-to-group anyuid"),
         healthy.index_of("kubectl get configmap dns-default"),
@@ -191,6 +192,43 @@ def test_unreachable_cluster_fails_before_any_mutation(app_ctx, healthy) -> None
     assert not healthy.called("kubectl create namespace")
 
 
+def test_deploy_installs_missing_rwx_storage_before_the_cr(app_ctx, healthy) -> None:
+    present = iter([1, 0])
+    healthy._rules.insert(
+        0,
+        (
+            ("kubectl", "get", "sc", "nfs-local-rwx"),
+            lambda argv: CompletedCommand(argv=argv, returncode=next(present, 0)),
+        ),
+    )
+    healthy.ok("kubectl get svc nfs-server", stdout="10.43.0.10")
+
+    assert _run(app_ctx, cr_name="controller").ready is True
+
+    inputs = [c.input or "" for c in healthy.calls if c.argv[:2] == ("kubectl", "apply")]
+    provisioner = next(i for i, text in enumerate(inputs) if "name: nfs-local-rwx" in text)
+    cr = next(i for i, text in enumerate(inputs) if "kind: AnsibleAutomationPlatform" in text)
+    assert provisioner < cr
+    assert "10.43.0.10" in inputs[provisioner]
+    assert ("Setting up NFS storage", "done") in app_ctx.console.task_states()
+
+
+def test_missing_rwx_storage_stops_before_any_wait(app_ctx, healthy) -> None:
+    healthy._rules.insert(
+        0, (("kubectl", "get", "sc", "nfs-local-rwx"), CompletedCommand(argv=(), returncode=1))
+    )
+    healthy.ok("kubectl get svc nfs-server", stdout="10.43.0.10")
+
+    with pytest.raises(AapDemoError) as excinfo:
+        _run(app_ctx, cr_name="controller")
+
+    assert "nfs-local-rwx" in excinfo.value.message
+    assert "kubectl get pods -n nfs-storage" in (excinfo.value.hint or "")
+    assert not healthy.called("kubectl get catalogsource")
+    assert not any("kind: AnsibleAutomationPlatform" in (c.input or "") for c in healthy.calls)
+    assert ("Waiting for AAP", "pending") in app_ctx.console.task_states()
+
+
 def test_existing_instance_short_circuits_unless_forced(app_ctx, healthy) -> None:
     listing = (
         ("kubectl", "get", "aap", "-n", NS),
@@ -207,6 +245,7 @@ def test_existing_instance_short_circuits_unless_forced(app_ctx, healthy) -> Non
     assert result.skipped_existing is True
     assert result.aap_name == "aap"
     assert not healthy.called("kubectl create namespace")
+    assert not healthy.called("kubectl get sc nfs-local-rwx")
     assert "already exists" in app_ctx.console.stdout
     assert ("Waiting for AAP", "done") in app_ctx.console.task_states()
     assert _wait_task(app_ctx).note == "AAP is ready"
