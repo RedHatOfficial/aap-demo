@@ -41,8 +41,7 @@ Deploy AAP via a **four-step OLM pipeline** triggered by `aap-demo deploy`:
 | `config/crs/aap-minimal-noingress.yaml` | Lab/k8s without Routes |
 | `config/crs/aap-controller.yaml` | Controller-only variant |
 
-Runtime substitution replaces namespace placeholders. The PowerShell deploy also adjusts Hub storage when
-`nfs-local-rwx` is missing.
+Runtime substitution replaces namespace placeholders.
 
 ### Namespace preparation
 

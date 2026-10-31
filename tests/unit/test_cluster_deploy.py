@@ -269,6 +269,9 @@ def test_a_partial_nfs_install_is_repaired(app_ctx, healthy) -> None:
 
     inputs = [c.input or "" for c in healthy.calls if c.argv[:2] == ("kubectl", "apply")]
     assert any("name: nfs-local-rwx" in text for text in inputs)
+    # A slow start gets the full wait before anything is re-applied.
+    first_wait = next(c for c in healthy.calls if "deployment/nfs-server" in c.argv)
+    assert "--timeout=120s" in first_wait.argv
 
 
 def test_a_failed_nfs_apply_stops_the_deploy(app_ctx, healthy) -> None:

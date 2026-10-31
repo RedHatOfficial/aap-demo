@@ -53,8 +53,7 @@ hub:
   file_storage_access_mode: ReadWriteMany
 ```
 
-The Python and bash deploys stop when `nfs-local-rwx` is absent. The Python deploy first tries to install it. The
-PowerShell deploy falls back to RWO and warns.
+The Python deploy installs `nfs-local-rwx` when it is absent and stops if the class cannot serve storage.
 
 ### LVMS PV reservation
 

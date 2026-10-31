@@ -338,12 +338,13 @@ def install_nfs(ctx: AppContext) -> None:
     """Ensure ``nfs-local-rwx`` can provision storage, or raise ``AapDemoError``.
 
     The StorageClass ships in the provisioner manifest, so its presence alone
-    does not show that anything is serving it. A class whose deployments are
-    not available goes through setup again, which repairs a partial install.
+    does not show that anything is serving it. A class whose deployments stay
+    unavailable goes through setup again, which repairs a partial install. The
+    full wait comes first, so a slow start after ``crc start`` is not re-applied.
     """
     ctx.console.step("Setting up NFS storage")
     if ctx.runner.run(["kubectl", "get", "sc", "nfs-local-rwx"]).ok and _nfs_available(
-        ctx, "nfs-server", "nfs-provisioner", timeout="5s"
+        ctx, "nfs-server", "nfs-provisioner", timeout="120s"
     ):
         ctx.console.checkpoint("nfs-local-rwx StorageClass already exists")
         return

@@ -2,7 +2,8 @@
 
 Ports ``cmd_deploy`` (aap-demo.sh:2018-2083) and ``deploy_latest``
 (aap-demo.sh:2101-2229) as one ordered sequence. The order is bash's and is
-not rearranged (§14 R1's discipline, applied outside ``crc-create.sh``):
+not rearranged (§14 R1's discipline, applied outside ``crc-create.sh``), except
+for the NFS step, which bash leaves to ``create``:
 
     disk space → NFS storage → namespace (SCCs, PSA, pull secret) → CoreDNS →
     signature policy → CatalogSource → catalog wait → OperatorGroup →
