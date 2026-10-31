@@ -65,10 +65,8 @@ def redeploy(ctx: AppContext, args: argparse.Namespace) -> int:
 def redeploy_all(ctx: AppContext, args: argparse.Namespace) -> int:
     """Ports ``cmd_redeploy-all``: destroy, pause, then a fresh cluster and AAP.
 
-    Bash calls ``cmd_deploy``, and that command creates a cluster when none
-    exists. Python ``deploy`` does not, so this command creates the cluster
-    between destroy and deploy. A machine with nothing to delete continues
-    into create; a failed delete does not.
+    A machine with nothing to delete continues into create; a failed delete
+    does not.
     """
     try:
         bootstrap_mod.destroy(ctx)

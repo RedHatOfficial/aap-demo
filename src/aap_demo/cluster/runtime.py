@@ -18,17 +18,37 @@ from aap_demo.cluster import aap as aap_mod
 from aap_demo.cluster import coredns, preflight
 from aap_demo.cluster import scc as scc_mod
 from aap_demo.core.context import AppContext
+from aap_demo.core.errors import AapDemoError
 from aap_demo.exec import kubectl
+from aap_demo.infra import crc as infra_crc
 
 MUST_GATHER_IMAGE = "registry.redhat.io/ansible-automation-platform-26/aap-must-gather-rhel9:latest"
 PROBLEM_POD_TOKENS = ("CrashLoopBackOff", "Error", "ImagePullBackOff")
 
 
 def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> None:
-    """Ports ``cmd_start``: ``crc start``, then re-apply CoreDNS."""
+    """``crc start``, a check that CRC stayed up, then re-apply CoreDNS.
+
+    CRC can exit 0 and stop seconds later, so the exit status alone does not
+    show that the cluster started.
+    """
     ctx.console.out("")
     ctx.console.step("aap-demo start - Starting CRC cluster...")
-    ctx.runner.run(["crc", "start"], sink=ctx.console.log_sink())
+    started = ctx.runner.run(["crc", "start"], sink=ctx.console.log_sink())
+    if not started.ok:
+        raise AapDemoError(
+            f"crc start failed (exit {started.returncode})",
+            hint="Check: crc status",
+        )
+    if not infra_crc.wait_until_stable(
+        ctx.runner,
+        attempts=int(ctx.env.get("AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS)),
+        sleep_seconds=float(
+            ctx.env.get("AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS)
+        ),
+        sleep=sleep,
+    ):
+        raise AapDemoError("CRC did not stay running after start", hint="Check: crc status")
     preflight.setup_kubeconfig(ctx)
     coredns.configure(ctx, sleep=sleep)
     ctx.console.success("CRC cluster started")
