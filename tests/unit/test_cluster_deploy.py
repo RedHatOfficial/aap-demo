@@ -814,6 +814,14 @@ def test_ovn_that_never_becomes_ready_stops_the_deploy(app_ctx, healthy) -> None
     assert not healthy.called("kubectl create namespace")
 
 
+def test_a_bad_ovn_timeout_names_the_variable(app_ctx) -> None:
+    app_ctx.runner = FakeRunner().ok("kubectl get namespace")
+    app_ctx.env = {"AAP_OVN_TIMEOUT": "3m"}
+    with pytest.raises(AapDemoError) as excinfo:
+        deploy_mod.wait_for_ovn(app_ctx, sleep=lambda _s: None)
+    assert excinfo.value.message == "AAP_OVN_TIMEOUT must be a number, got '3m'"
+
+
 def test_missing_ovn_namespace_is_fatal(app_ctx) -> None:
     app_ctx.runner = FakeRunner().fail("kubectl get namespace")
     with pytest.raises(AapDemoError) as excinfo:

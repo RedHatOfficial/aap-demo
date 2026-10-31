@@ -31,7 +31,7 @@ from aap_demo.cluster import bootstrap, catalog_signature, coredns, olm, runtime
 from aap_demo.cluster import namespace as namespace_mod
 from aap_demo.core.console import format_elapsed
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import AapDemoError, ClusterUnreachableError
+from aap_demo.core.errors import AapDemoError, ClusterUnreachableError, env_number
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
@@ -143,7 +143,7 @@ def wait_for_ovn(
             f"OVN namespace '{OVN_NAMESPACE}' was not found",
             hint="The cluster network is not ready for AAP deployment.",
         )
-    timeout = int(ctx.env.get("AAP_OVN_TIMEOUT", OVN_TIMEOUT_SECONDS))
+    timeout = int(env_number(ctx.env, "AAP_OVN_TIMEOUT", OVN_TIMEOUT_SECONDS))
     started = clock()
     while True:
         node_ready, node_desired = _daemonset_ready(ctx, "ovnkube-node")

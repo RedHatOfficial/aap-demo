@@ -6,7 +6,7 @@ against ``aap-demo`` keeps working; 3-7 are refinements of what is currently 1.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 
 class AapDemoError(Exception):
@@ -18,6 +18,17 @@ class AapDemoError(Exception):
         super().__init__(message)
         self.message = message
         self.hint = hint
+
+
+def env_number(env: Any, name: str, default: float) -> float:
+    """A numeric environment variable, or an error naming it instead of a traceback."""
+    raw = env.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise AapDemoError(f"{name} must be a number, got '{raw}'") from None
 
 
 class UsageError(AapDemoError):

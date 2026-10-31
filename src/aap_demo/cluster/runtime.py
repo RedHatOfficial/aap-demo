@@ -18,7 +18,7 @@ from aap_demo.cluster import aap as aap_mod
 from aap_demo.cluster import coredns, preflight
 from aap_demo.cluster import scc as scc_mod
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import AapDemoError
+from aap_demo.core.errors import AapDemoError, env_number
 from aap_demo.exec import kubectl
 from aap_demo.infra import crc as infra_crc
 
@@ -42,9 +42,11 @@ def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> No
         )
     if not infra_crc.wait_until_stable(
         ctx.runner,
-        attempts=int(ctx.env.get("AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS)),
-        sleep_seconds=float(
-            ctx.env.get("AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS)
+        attempts=int(
+            env_number(ctx.env, "AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS)
+        ),
+        sleep_seconds=env_number(
+            ctx.env, "AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS
         ),
         sleep=sleep,
     ):
