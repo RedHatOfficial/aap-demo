@@ -298,10 +298,53 @@ def _install_metrics(ctx: AppContext) -> None:
     ctx.console.checkpoint("metrics-server installed")
 
 
+def _nfs_available(ctx: AppContext, *deployments: str, timeout: str) -> bool:
+    # Detach so kubectl's watch cannot draw on the terminal and leave a
+    # second copy of the live checklist line behind.
+    return ctx.runner.run(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=Available",
+            *(f"deployment/{name}" for name in deployments),
+            "-n",
+            "nfs-storage",
+            f"--timeout={timeout}",
+        ],
+        detach=True,
+    ).ok
+
+
+def _require_nfs_deployment(ctx: AppContext, name: str) -> None:
+    ctx.console.progress(f"Waiting for {name}")
+    if not _nfs_available(ctx, name, timeout="120s"):
+        raise AapDemoError(
+            f"{name} did not become ready, so nfs-local-rwx cannot provision storage",
+            hint="Check the NFS pods: kubectl get pods -n nfs-storage",
+        )
+
+
+def _apply_nfs_manifest(ctx: AppContext, manifest: str, name: str) -> None:
+    ctx.console.progress(f"Applying {name}")
+    applied = kubectl.apply_stdin(ctx.runner, manifest)
+    if not applied.ok:
+        raise AapDemoError(
+            f"Could not apply {name} for nfs-local-rwx",
+            hint=(applied.stderr or applied.stdout or "").strip() or None,
+        )
+
+
 def install_nfs(ctx: AppContext) -> None:
-    """Ensure the ``nfs-local-rwx`` StorageClass exists, or raise ``AapDemoError``."""
+    """Ensure ``nfs-local-rwx`` can provision storage, or raise ``AapDemoError``.
+
+    The StorageClass ships in the provisioner manifest, so its presence alone
+    does not show that anything is serving it. A class whose deployments are
+    not available goes through setup again, which repairs a partial install.
+    """
     ctx.console.step("Setting up NFS storage")
-    if ctx.runner.run(["kubectl", "get", "sc", "nfs-local-rwx"]).ok:
+    if ctx.runner.run(["kubectl", "get", "sc", "nfs-local-rwx"]).ok and _nfs_available(
+        ctx, "nfs-server", "nfs-provisioner", timeout="5s"
+    ):
         ctx.console.checkpoint("nfs-local-rwx StorageClass already exists")
         return
     ctx.console.progress("Granting the privileged SCC")
@@ -330,23 +373,8 @@ def install_nfs(ctx: AppContext) -> None:
     server = packaged.read(packaged.MANIFESTS, "nfs-server.yaml").replace(
         "__DEFAULT_SC__", storage_class
     )
-    ctx.console.progress("Applying the NFS server")
-    kubectl.apply_stdin(ctx.runner, server)
-    ctx.console.progress("Waiting for the NFS server")
-    # Detach so kubectl's watch cannot draw on the terminal and leave a
-    # second copy of the live checklist line behind.
-    ctx.runner.run(
-        [
-            "kubectl",
-            "wait",
-            "--for=condition=Available",
-            "deployment/nfs-server",
-            "-n",
-            "nfs-storage",
-            "--timeout=120s",
-        ],
-        detach=True,
-    )
+    _apply_nfs_manifest(ctx, server, "nfs-server")
+    _require_nfs_deployment(ctx, "nfs-server")
     nfs_ip = kubectl.jsonpath(
         ctx.runner,
         "svc",
@@ -360,21 +388,8 @@ def install_nfs(ctx: AppContext) -> None:
     provisioner = packaged.read(packaged.MANIFESTS, "nfs-provisioner.yaml").replace(
         "__NFS_SERVER_IP__", nfs_ip
     )
-    ctx.console.progress("Applying the NFS provisioner")
-    kubectl.apply_stdin(ctx.runner, provisioner)
-    ctx.console.progress("Waiting for the NFS provisioner")
-    ctx.runner.run(
-        [
-            "kubectl",
-            "wait",
-            "--for=condition=Available",
-            "deployment/nfs-provisioner",
-            "-n",
-            "nfs-storage",
-            "--timeout=120s",
-        ],
-        detach=True,
-    )
+    _apply_nfs_manifest(ctx, provisioner, "nfs-provisioner")
+    _require_nfs_deployment(ctx, "nfs-provisioner")
     if not ctx.runner.run(["kubectl", "get", "sc", "nfs-local-rwx"]).ok:
         raise AapDemoError(
             "nfs-local-rwx StorageClass is still missing after NFS setup",

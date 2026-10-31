@@ -53,7 +53,8 @@ hub:
   file_storage_access_mode: ReadWriteMany
 ```
 
-Deploy logic falls back to RWO when `nfs-local-rwx` is absent (warns in output).
+The Python and bash deploys stop when `nfs-local-rwx` is absent. The Python deploy first tries to install it. The
+PowerShell deploy falls back to RWO and warns.
 
 ### LVMS PV reservation
 

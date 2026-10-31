@@ -229,6 +229,63 @@ def test_missing_rwx_storage_stops_before_any_wait(app_ctx, healthy) -> None:
     assert ("Waiting for AAP", "pending") in app_ctx.console.task_states()
 
 
+def _nfs_wait_fails(healthy, target: str) -> None:
+    healthy._rules.insert(
+        0,
+        (
+            ("kubectl", "wait", "--for=condition=Available", target),
+            CompletedCommand(argv=(), returncode=1),
+        ),
+    )
+
+
+def test_unavailable_nfs_stops_before_any_wait_even_with_the_class_present(
+    app_ctx, healthy
+) -> None:
+    """The class ships with the provisioner, so it can exist with no NFS running."""
+    _nfs_wait_fails(healthy, "deployment/nfs-server")
+    healthy.ok("kubectl get svc nfs-server", stdout="10.43.0.10")
+
+    with pytest.raises(AapDemoError) as excinfo:
+        _run(app_ctx, cr_name="controller")
+
+    assert "nfs-server did not become ready" in excinfo.value.message
+    assert "nfs-local-rwx" in excinfo.value.message
+    assert not healthy.called("kubectl get catalogsource")
+
+
+def test_a_partial_nfs_install_is_repaired(app_ctx, healthy) -> None:
+    calls = iter([1])
+    healthy._rules.insert(
+        0,
+        (
+            ("kubectl", "wait", "--for=condition=Available", "deployment/nfs-server"),
+            lambda argv: CompletedCommand(argv=argv, returncode=next(calls, 0)),
+        ),
+    )
+    healthy.ok("kubectl get svc nfs-server", stdout="10.43.0.10")
+
+    assert _run(app_ctx, cr_name="controller").ready is True
+
+    inputs = [c.input or "" for c in healthy.calls if c.argv[:2] == ("kubectl", "apply")]
+    assert any("name: nfs-local-rwx" in text for text in inputs)
+
+
+def test_a_failed_nfs_apply_stops_the_deploy(app_ctx, healthy) -> None:
+    _nfs_wait_fails(healthy, "deployment/nfs-server")
+    healthy._rules.insert(
+        0,
+        (
+            ("kubectl", "apply", "-f", "-"),
+            CompletedCommand(argv=(), returncode=1, stderr="forbidden"),
+        ),
+    )
+    with pytest.raises(AapDemoError) as excinfo:
+        _run(app_ctx, cr_name="controller")
+    assert "Could not apply nfs-server" in excinfo.value.message
+    assert excinfo.value.hint == "forbidden"
+
+
 def test_existing_instance_short_circuits_unless_forced(app_ctx, healthy) -> None:
     listing = (
         ("kubectl", "get", "aap", "-n", NS),
@@ -318,7 +375,13 @@ def test_missing_csv_after_ten_minutes_is_fatal(app_ctx, healthy) -> None:
 
 def test_csv_that_never_succeeds_warns_instead_of_passing_silently(app_ctx, healthy) -> None:
     """§14 R5: bash's ``kubectl wait … || true`` made this invisible."""
-    healthy._rules.insert(0, (("kubectl", "wait"), CompletedCommand(argv=(), returncode=1)))
+    healthy._rules.insert(
+        0,
+        (
+            ("kubectl", "wait", "--for=jsonpath={.status.phase}=Succeeded"),
+            CompletedCommand(argv=(), returncode=1),
+        ),
+    )
     result = _run(app_ctx, cr_name="controller")
     assert "not Succeeded" in " ".join(result.warnings)
     assert "did not reach Succeeded" in app_ctx.console.stderr
