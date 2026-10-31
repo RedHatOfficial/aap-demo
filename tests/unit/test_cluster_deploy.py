@@ -142,7 +142,7 @@ def test_healthy_deploy_reaches_a_ready_aap(app_ctx, healthy) -> None:
     assert _wait_task(app_ctx).note == "AAP is ready"
 
 
-def test_deploy_shows_the_resolved_vm_size_before_touching_the_cluster(app_ctx, healthy) -> None:
+def test_deploy_run_shows_the_resolved_vm_size_before_its_first_command(app_ctx, healthy) -> None:
     calls_at_report = []
     note = app_ctx.console.note
 

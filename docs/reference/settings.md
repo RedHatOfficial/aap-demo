@@ -42,8 +42,8 @@ A later source overrides an earlier one:
 4. The flag
 
 A value below the minimum stops the command before it changes anything. The error names the flag, the
-environment variable, and the saved key. Correct the one that holds the bad value, because every source is
-checked and a flag does not get past a bad environment variable or saved key.
+environment variable, and the saved key. Correct the one that holds the bad value. The saved key and the
+environment variable are checked before flags are read, so a flag does not get past a bad value from either.
 
 `create` and `deploy` both print the size they resolved. `create` warns if the computer itself has fewer
 than 4 processors or 10 GB of memory. Set the size before the virtual machine exists. Changing it later
