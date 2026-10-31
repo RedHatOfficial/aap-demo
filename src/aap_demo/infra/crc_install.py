@@ -57,6 +57,23 @@ def extract_crc_tarball(archive: Path, dest: Path) -> None:
     _require_crc_binary(dest)
 
 
+def _install_file(source: Path, dest: Path) -> None:
+    """Copy to a temporary name, then rename over ``dest``.
+
+    Overwriting a signed binary in place keeps its inode. macOS then kills the
+    new binary at launch (exit 137) because the kernel's cached signature no
+    longer matches. A rename gives ``dest`` a new inode.
+    """
+    temporary = dest.with_name(f"{dest.name}.tmp{os.getpid()}")
+    try:
+        shutil.copy2(source, temporary)
+        temporary.chmod(0o755)
+        os.replace(temporary, dest)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def extract_crc_zip(archive: Path, dest: Path) -> None:
     with zipfile.ZipFile(archive) as bundle:
         for info in bundle.infolist():
@@ -176,9 +193,7 @@ def _extract_macos_pkg(ctx: Any, archive: Path, dest: Path) -> None:
     for name in _INSTALL_NAMES:
         source = bundled / name
         if source.is_file():
-            target = dest / name
-            shutil.copy2(source, target)
-            target.chmod(0o755)
+            _install_file(source, dest / name)
     _require_crc_binary(dest)
 
 
@@ -261,9 +276,7 @@ def _publish(install_dir: Path, current: Optional[str], home: Path) -> None:
         for name in _INSTALL_NAMES:
             source = install_dir / name
             if source.is_file():
-                dest = target_dir / name
-                shutil.copy2(source, dest)
-                dest.chmod(0o755)
+                _install_file(source, target_dir / name)
 
 
 def _prefer_bin_dir(ctx: Any, bin_dir: Path) -> None:
