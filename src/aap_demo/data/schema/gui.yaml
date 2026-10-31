@@ -1,0 +1,52 @@
+# Web GUI server — design §5.3 `gui:` block, §9.7.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aap-demo/gui"
+type: object
+additionalProperties: false
+title: GUI
+properties:
+  host:
+    type: string
+    const: 127.0.0.1
+    default: 127.0.0.1
+    title: Bind address
+    description: Fixed to loopback. The GUI is unauthenticated by design and must never bind wider.
+    # Deliberately has no flag and no GUI widget: §9.7 makes loopback-only permanent,
+    # so exposing it as a setting would be exposing a footgun.
+    x-cli: false
+    x-config: gui.host
+    x-order: 10
+
+  port:
+    type: integer
+    minimum: 1024
+    maximum: 65535
+    default: 8720
+    title: Port
+    description: Port the GUI server listens on.
+    x-cli: {flag: "--port"}
+    x-config: gui.port
+    x-gui: {group: gui, widget: number, step: 1}
+    x-order: 20
+
+  open_browser:
+    type: boolean
+    default: true
+    title: Open browser
+    description: Open a browser window when the GUI server starts.
+    x-cli: {flag: "--no-browser"}
+    x-config: gui.open_browser
+    x-gui: {group: gui, widget: switch}
+    x-order: 30
+
+  allow_reveal:
+    type: boolean
+    default: false
+    title: Allow credential reveal
+    description: >-
+      Enable the status page's reveal endpoint. Copy-to-clipboard is the default
+      affordance and needs no setting (§9.5.1).
+    x-cli: false
+    x-config: gui.allow_reveal
+    x-gui: {group: gui, widget: switch}
+    x-order: 40

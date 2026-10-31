@@ -98,21 +98,10 @@ jobs:
 
       - name: Install detect-secrets
         run: |
-          pip install detect-secrets
+          pip install 'detect-secrets==1.5.0'
 
       - name: Run detect-secrets
-        run: |
-          # Scan excluding baseline itself
-          detect-secrets scan --exclude-files '\.secrets\.baseline' > /tmp/scan-results.json
-          # Count secrets per file
-          NEW_COUNT=$(jq '[.results[] | length] | add // 0' /tmp/scan-results.json)
-          BASELINE_COUNT=$(jq '[.results[] | length] | add // 0' .secrets.baseline)
-          if [ "$NEW_COUNT" -gt "$BASELINE_COUNT" ]; then
-            echo "New secrets detected! ($NEW_COUNT vs $BASELINE_COUNT baseline)"
-            jq -r '.results | to_entries[] | "\(.key): \(.value | length) secrets"' /tmp/scan-results.json
-            exit 1
-          fi
-          echo "No new secrets ($NEW_COUNT matches baseline)"
+        run: ./scripts/check-secrets.sh
 
   shellformat:
     name: Shell Format Check

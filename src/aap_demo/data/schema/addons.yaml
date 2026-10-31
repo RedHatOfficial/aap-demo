@@ -1,0 +1,30 @@
+# Addon enablement and per-addon options — design §5.3 `addons:` block, §4.4.
+# `options` is a mapping keyed by addon name: addons contribute their own schema
+# document at runtime through Addon.arguments(), merged under addons.options.<name>.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aap-demo/addons"
+type: object
+additionalProperties: false
+title: Addons
+properties:
+  enabled:
+    type: array
+    items: {type: string}
+    default: []
+    title: Enabled addons
+    description: Addons replayed at create time and reported by status.
+    x-cli: false
+    x-env-legacy: ADDONS
+    x-config: addons.enabled
+    x-gui: {group: addons, widget: multiselect}
+    x-order: 10
+
+  options:
+    type: object
+    default: {}
+    title: Addon options
+    description: Per-addon options, keyed by addon name.
+    x-cli: false
+    x-config: addons.options
+    x-gui: {group: addons, widget: object}
+    x-order: 20

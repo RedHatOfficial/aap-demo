@@ -1,0 +1,76 @@
+# In-cluster NFS server for RWX storage on MicroShift
+# Provides nfs-local-rwx StorageClass via nfs-subdir-external-provisioner
+# Backing storage uses topolvm (same LVMS volume group as other PVCs)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nfs-storage
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-backing-storage
+  namespace: nfs-storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: __DEFAULT_SC__
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-server
+  namespace: nfs-storage
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nfs-server
+  template:
+    metadata:
+      labels:
+        app: nfs-server
+    spec:
+      containers:
+        - name: nfs-server
+          image: registry.k8s.io/volume-nfs:0.8
+          ports:
+            - name: nfs
+              containerPort: 2049
+            - name: mountd
+              containerPort: 20048
+            - name: rpcbind
+              containerPort: 111
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: nfs-data
+              mountPath: /exports
+      volumes:
+        - name: nfs-data
+          persistentVolumeClaim:
+            claimName: nfs-backing-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nfs-server
+  namespace: nfs-storage
+spec:
+  ports:
+    - name: nfs
+      port: 2049
+    - name: mountd
+      port: 20048
+    - name: rpcbind
+      port: 111
+  selector:
+    app: nfs-server

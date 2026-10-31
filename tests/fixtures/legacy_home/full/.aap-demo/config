@@ -1,0 +1,10 @@
+# aap-demo configuration
+INFRA=crc
+CRC_PRESET=microshift
+CRC_CPUS=12
+CRC_MEMORY=32768
+
+ADDONS=mcp-server,ao-eap,product-demos
+NAMESPACE="aap-operator"
+UNKNOWN_LEGACY_KEY=whatever
+CRC_CPUS=10

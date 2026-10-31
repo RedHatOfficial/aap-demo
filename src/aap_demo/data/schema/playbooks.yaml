@@ -1,0 +1,88 @@
+# Day-2 playbooks repo integration — design §5.3 `playbooks:` block, §4.8.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aap-demo/playbooks"
+type: object
+additionalProperties: false
+title: Playbooks
+properties:
+  repo_url:
+    type: string
+    default: https://github.com/RedHatOfficial/aap-demo-playbooks.git
+    title: Repository URL
+    description: Git repository the day-2 playbook catalog is cloned from.
+    x-cli: {flag: "--repo-url"}
+    x-config: playbooks.repo_url
+    x-gui: {group: playbooks, widget: text}
+    x-order: 10
+
+  ref:
+    type: string
+    default: main
+    title: Pinned ref
+    description: Tag or branch of the playbooks repo to check out.
+    x-cli: {flag: "--ref"}
+    x-config: playbooks.ref
+    x-gui: {group: playbooks, widget: text}
+    x-order: 20
+
+  repo_path:
+    type: string
+    default: ""
+    title: Authoring checkout
+    description: Local checkout used by `playbooks create`. Empty uses the cached clone.
+    x-cli: {flag: "--repo-path"}
+    x-config: playbooks.repo_path
+    x-gui: {group: playbooks, widget: text}
+    x-order: 30
+
+  ee_image:
+    type: string
+    default: quay.io/redhatofficial/aap-demo-ee
+    title: Execution Environment image
+    description: Container image ansible-navigator runs playbooks in.
+    x-cli: {flag: "--ee-image"}
+    x-config: playbooks.ee_image
+    x-gui: {group: playbooks, widget: text}
+    x-order: 40
+
+  ee_tag:
+    type: string
+    default: "2.0"
+    title: Execution Environment tag
+    description: Tag of the Execution Environment image.
+    x-cli: {flag: "--ee-tag"}
+    x-config: playbooks.ee_tag
+    x-gui: {group: playbooks, widget: text}
+    x-order: 50
+
+  container_engine:
+    type: string
+    enum: [auto, podman, docker]
+    default: auto
+    title: Container engine
+    description: Engine ansible-navigator uses to run the Execution Environment.
+    x-cli: {flag: "--container-engine"}
+    x-config: playbooks.container_engine
+    x-gui: {group: playbooks, widget: select}
+    x-order: 60
+
+  overlay_paths:
+    type: array
+    items: {type: string}
+    default: []
+    title: Overlay paths
+    description: Extra local directories scanned for playbook manifests.
+    x-cli: false
+    x-config: playbooks.overlay_paths
+    x-gui: {group: playbooks, widget: list}
+    x-order: 70
+
+  vars:
+    type: object
+    default: {}
+    title: Persisted playbook variables
+    description: Saved answers for a playbook's declared vars, keyed by playbook name.
+    x-cli: false
+    x-config: playbooks.vars
+    x-gui: {group: playbooks, widget: object}
+    x-order: 80

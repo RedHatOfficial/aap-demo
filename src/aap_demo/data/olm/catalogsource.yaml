@@ -1,0 +1,27 @@
+# CatalogSource for AAP latest releases
+# Uses the official Red Hat operators index
+#
+# Image tag must match your OpenShift/MicroShift version:
+#   - MINC with K8s 1.32 = OCP 4.19 → use v4.19
+#   - OCP 4.20 → use v4.20
+#
+# This requires a valid Red Hat pull secret with registry.redhat.io access
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: redhat-operators
+  namespace: aap-operator
+spec:
+  sourceType: grpc
+  # Override version via AAP_OCP_VERSION env var (default: 4.20)
+  image: registry.redhat.io/redhat/redhat-operator-index:v4.20
+  secrets:
+    - "redhat-operators-pull-secret"
+  grpcPodConfig:
+    securityContextConfig: restricted
+  displayName: Red Hat Operators
+  publisher: Red Hat
+  updateStrategy:
+    registryPoll:
+      interval: 10m

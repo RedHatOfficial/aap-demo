@@ -1,0 +1,31 @@
+# Pre-provisioned PVCs for operator-managed postgres and hub-redis.
+# Created before the AnsibleAutomationPlatform CR so workloads use nfs-local-rwx
+# without making it the cluster default StorageClass.
+#
+# Placeholders: __NAMESPACE__, __AAP_NAME__ (AnsibleAutomationPlatform metadata.name)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-15-__AAP_NAME__-postgres-15-0
+  namespace: __NAMESPACE__
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nfs-local-rwx
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: __AAP_NAME__-hub-redis-data
+  namespace: __NAMESPACE__
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nfs-local-rwx
+  resources:
+    requests:
+      storage: 1Gi

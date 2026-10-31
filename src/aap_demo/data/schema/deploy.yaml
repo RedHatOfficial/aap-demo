@@ -1,0 +1,74 @@
+# AAP deployment settings — design §5.3 `deploy:` block.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aap-demo/deploy"
+type: object
+additionalProperties: false
+title: Deployment
+properties:
+  channel:
+    type: string
+    default: stable-2.7
+    title: Operator channel
+    description: OLM subscription channel for the AAP operator.
+    x-cli: {flag: "--channel"}
+    x-config: deploy.channel
+    x-gui: {group: deploy, widget: text}
+    x-order: 10
+
+  base_domain:
+    type: string
+    default: apps.127.0.0.1.nip.io
+    title: Base domain
+    description: Wildcard domain routes are published under.
+    x-cli: {flag: "--base-domain"}
+    x-env: BASE_DOMAIN
+    x-config: deploy.base_domain
+    x-gui: {group: deploy, widget: text}
+    x-order: 20
+
+  # Bash reads `CR=<name>` and resolves it to config/crs/aap-<name>.yaml
+  # (aap-demo.sh:2429-2438), so the value has always been one of the bundled
+  # names and never a path — the enum is the faithful shape, not a new
+  # restriction, and it gives --cr real choices and the GUI a real select.
+  # `minimal` is bash's `${CR:-minimal}`; `controller` is the light
+  # controller-only stack with EDA and hub disabled.
+  cr:
+    type: string
+    # "" is in the enum on purpose: bash's `${CR:-minimal}` treats an empty
+    # `CR=` as "use the default", and a config migrated before this field had
+    # an enum carries exactly that empty string.
+    enum: ["", minimal, controller, controller-eda, minimal-rwx, minimal-noingress]
+    default: minimal
+    title: AAP custom resource
+    description: Which bundled AAP CR template to apply.
+    x-cli: {flag: "--cr"}
+    x-env: CR
+    x-config: deploy.cr
+    x-gui: {group: deploy, widget: select}
+    x-order: 30
+
+  public_url:
+    type: string
+    default: ""
+    title: Public URL
+    description: External URL the gateway advertises. Empty derives it from the base domain.
+    x-cli: {flag: "--public-url"}
+    x-env: PUBLIC_URL
+    x-config: deploy.public_url
+    x-gui: {group: deploy, widget: text}
+    x-order: 40
+
+  pull_secret_path:
+    type: string
+    default: ""
+    title: Pull secret path
+    description: >
+      Path to the Red Hat pull secret file. Empty uses
+      $XDG_STATE_HOME/aap-demo/pull-secret.txt when that file exists
+      (default ~/.local/state/aap-demo/pull-secret.txt). pull-secret.json
+      in the same directory is also accepted. The tool does not copy the file.
+    x-cli: {flag: "--pull-secret"}
+    x-env: AAP_DEMO_PULL_SECRET
+    x-config: deploy.pull_secret_path
+    x-gui: {group: deploy, widget: text}
+    x-order: 50
