@@ -272,6 +272,17 @@ def test_a_partial_nfs_install_is_repaired(app_ctx, healthy) -> None:
     # A slow start gets the full wait before anything is re-applied.
     first_wait = next(c for c in healthy.calls if "deployment/nfs-server" in c.argv)
     assert "--timeout=120s" in first_wait.argv
+    assert healthy.called(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=Available",
+            "deployment/nfs-server",
+            "-n",
+            "nfs-storage",
+            "--timeout=240s",
+        ]
+    )
 
 
 def test_a_failed_nfs_apply_stops_the_deploy(app_ctx, healthy) -> None:

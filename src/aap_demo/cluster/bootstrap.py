@@ -317,7 +317,8 @@ def _nfs_available(ctx: AppContext, *deployments: str, timeout: str) -> bool:
 
 def _require_nfs_deployment(ctx: AppContext, name: str) -> None:
     ctx.console.progress(f"Waiting for {name}")
-    if not _nfs_available(ctx, name, timeout="120s"):
+    # Bash gives nfs-server two 120s windows, which cover a first image pull.
+    if not _nfs_available(ctx, name, timeout="240s"):
         raise AapDemoError(
             f"{name} did not become ready, so nfs-local-rwx cannot provision storage",
             hint="Check the NFS pods: kubectl get pods -n nfs-storage",
