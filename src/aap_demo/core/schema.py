@@ -154,7 +154,34 @@ def validate(instance: Dict[str, Any], section_name: Optional[str] = None) -> No
         return
     first = errors[0]
     path = first.json_path.lstrip("$.") or "<root>"
-    raise ConfigError(f"{path}: {first.message}")
+    location = list(first.absolute_path)
+    if section_name is not None:
+        location.insert(0, section_name)
+    raise ConfigError(f"{path}: {first.message}", hint=_where_to_set(location))
+
+
+def _where_to_set(location: List[Any]) -> Optional[str]:
+    """The flag, env var, and config key that can change one setting."""
+    if len(location) != 2 or location[0] not in sections():
+        return None
+    name, key = location
+    prop = section(name).get("properties", {}).get(key)
+    if prop is None:
+        return None
+    flags = cli_flag(prop, key)
+    places = [
+        f"the {flags[0]} flag" if flags else "",
+        f"the {prop['x-env']} environment variable" if prop.get("x-env") else "",
+        f"the {prop['x-config']} config key" if prop.get("x-config") else "",
+    ]
+    named = [place for place in places if place]
+    if not named:
+        return None
+    # Config validates before arguments are parsed, so a flag cannot override a
+    # bad env or file value. Point at the source to correct, not a way around it.
+    if len(named) > 1:
+        return f"Correct whichever one sets it: {', '.join(named[:-1])}, or {named[-1]}."
+    return f"Correct {named[0]}."
 
 
 def check_documents() -> None:

@@ -142,6 +142,26 @@ def test_healthy_deploy_reaches_a_ready_aap(app_ctx, healthy) -> None:
     assert _wait_task(app_ctx).note == "AAP is ready"
 
 
+def test_deploy_shows_the_resolved_vm_size_before_touching_the_cluster(app_ctx, healthy) -> None:
+    calls_at_report = []
+    note = app_ctx.console.note
+
+    def spy(text: str) -> None:
+        if "Resolved VM size" in text:
+            calls_at_report.append(len(healthy.calls))
+        note(text)
+
+    app_ctx.console.note = spy
+    app_ctx.config.set("crc.cpus", 6)
+    app_ctx.config.set("crc.memory_mb", 16384)
+
+    _run(app_ctx, cr_name="controller")
+
+    assert "Resolved VM size: 6 CPUs, 16384 MB memory" in app_ctx.console.stdout
+    assert "An existing VM keeps the size it was created with" in app_ctx.console.stdout
+    assert calls_at_report == [0]
+
+
 def test_deploy_order_is_bashs(app_ctx, healthy) -> None:
     """NFS → namespace → CoreDNS → CatalogSource → Subscription → CR."""
     _run(app_ctx, cr_name="controller")
