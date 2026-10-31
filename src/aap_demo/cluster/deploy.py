@@ -108,6 +108,14 @@ def _preset(ctx: AppContext) -> str:
     return str(ctx.config.get("crc.preset", "microshift") or "microshift")
 
 
+def _report_vm_size(ctx: AppContext) -> None:
+    """Show the resolved size. Config loading already rejected values below the schema minimums."""
+    cpus = ctx.config.get("crc.cpus")
+    memory_mb = ctx.config.get("crc.memory_mb")
+    ctx.console.note(f"Resolved VM size: {cpus} CPUs, {memory_mb} MB memory")
+    ctx.console.note("An existing VM keeps the size it was created with")
+
+
 def run(
     ctx: AppContext,
     *,
@@ -134,6 +142,7 @@ def run(
         ]
     )
     ctx.console.step("Infrastructure: OpenShift Local")
+    _report_vm_size(ctx)
     ctx.console.checkpoint("Infrastructure: OpenShift Local")
     ctx.console.step("Connecting to the cluster")
 
