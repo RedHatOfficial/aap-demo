@@ -89,6 +89,7 @@ def _prepare(
     runner.register("ssh", _ssh)
     runner.ok("kubectl get configmap", stdout="router-internal-default nip.io")
     runner.ok("kubectl get sc nfs-local-rwx")
+    runner.ok("kubectl wait --for=condition=Available deployment/nfs-server")
     runner.ok("kubectl get deployment metrics-server")
     runner.ok("kubectl")
     runner.ok("oc")

@@ -2,9 +2,10 @@
 
 Ports ``cmd_deploy`` (aap-demo.sh:2018-2083) and ``deploy_latest``
 (aap-demo.sh:2101-2229) as one ordered sequence. The order is bash's and is
-not rearranged (§14 R1's discipline, applied outside ``crc-create.sh``):
+not rearranged (§14 R1's discipline, applied outside ``crc-create.sh``), except
+for the NFS step, which bash leaves to ``create``:
 
-    disk space → namespace (SCCs, PSA, pull secret) → CoreDNS →
+    disk space → NFS storage → namespace (SCCs, PSA, pull secret) → CoreDNS →
     signature policy → CatalogSource → catalog wait → OperatorGroup →
     Subscription → CSV appears → CSV Succeeded → AAP CR → gateway patch →
     readiness
@@ -25,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from aap_demo.cluster import aap as aap_mod
-from aap_demo.cluster import catalog_signature, coredns, olm
+from aap_demo.cluster import bootstrap, catalog_signature, coredns, olm
 from aap_demo.cluster import namespace as namespace_mod
 from aap_demo.core.console import format_elapsed
 from aap_demo.core.context import AppContext
@@ -125,6 +126,7 @@ def run(
             "Connecting to the cluster",
             "Trusting the ingress certificate",
             "Installing OLM",
+            "Setting up NFS storage",
             "Waiting for the operator catalog",
             "Installing the AAP operator",
             "Creating the AAP instance",
@@ -194,6 +196,10 @@ def run(
 
     if not check_disk_space(ctx):
         raise AapDemoError("Cluster VM is out of disk space")
+
+    # The AAP CR and its PVCs need nfs-local-rwx. Without it they stay Pending
+    # until the readiness wait gives up, so stop before the long waits start.
+    bootstrap.install_nfs(ctx)
 
     channel = str(ctx.config.get("deploy.channel", "stable-2.7") or "stable-2.7")
     ocp_version = catalog_signature.resolve_ocp_version(ctx)

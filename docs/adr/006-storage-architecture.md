@@ -53,7 +53,7 @@ hub:
   file_storage_access_mode: ReadWriteMany
 ```
 
-Deploy logic falls back to RWO when `nfs-local-rwx` is absent (warns in output).
+The Python deploy installs `nfs-local-rwx` when it is absent and stops if the class cannot serve storage.
 
 ### LVMS PV reservation
 

@@ -7,8 +7,8 @@ first, bound to ``nfs-local-rwx``, is how RWX storage gets used without making
 it the cluster default.
 
 The whole thing is a no-op when ``nfs-local-rwx`` does not exist — bash
-returns 0 silently there, and so does this. Standing up the NFS server itself
-is ``crc-create.sh``'s job and therefore phase 4.
+returns 0 silently there, and so does this. ``bootstrap.install_nfs`` stands up
+the NFS server, and ``deploy`` stops before this point if it could not.
 """
 
 from __future__ import annotations

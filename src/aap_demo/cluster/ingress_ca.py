@@ -168,10 +168,19 @@ def _import(ctx: AppContext, path: Path, *, system: str) -> bool:
 
 
 def _import_macos(ctx: AppContext, path: Path) -> bool:
+    """Replace the keychain's ingress CA when sudo needs no password.
+
+    ``CommandRunner`` captures output and leaves stdin on the terminal, so a
+    sudo password prompt would hang behind the checklist. ``sudo -n`` fails
+    instead, and ``install`` then prints the command for the user to run.
+    """
+    if not ctx.runner.run(["sudo", "-n", "true"]).ok:
+        return False
     while True:
         removed = ctx.runner.run(
             [
                 "sudo",
+                "-n",
                 "security",
                 "delete-certificate",
                 "-c",
@@ -184,6 +193,7 @@ def _import_macos(ctx: AppContext, path: Path) -> bool:
     added = ctx.runner.run(
         [
             "sudo",
+            "-n",
             "security",
             "add-trusted-cert",
             "-d",

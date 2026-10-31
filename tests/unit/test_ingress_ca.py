@@ -8,7 +8,7 @@ from pathlib import Path
 
 from aap_demo.cluster import ingress_ca
 from aap_demo.core.context import AppContext
-from aap_demo.exec.runner import FakeRunner
+from aap_demo.exec.runner import CompletedCommand, FakeRunner
 
 PEM_LEAF = ""
 PEM_CA = ""
@@ -88,8 +88,9 @@ def test_install_imports_when_the_keychain_does_not_trust_the_ca(
         stdout='{"data":{"tls.crt":"' + encoded + '"}}',
     )
     runner.fail("security verify-cert")
-    runner.fail("sudo security delete-certificate")
-    runner.ok("sudo security add-trusted-cert")
+    runner.ok("sudo -n true")
+    runner.fail("sudo -n security delete-certificate")
+    runner.ok("sudo -n security add-trusted-cert")
     # The second verify, after import, succeeds. FakeRunner returns the first
     # matching rule, so the post-import check is the same failure. Drive the
     # success by registering verify only as a failure and asserting the import
@@ -100,12 +101,71 @@ def test_install_imports_when_the_keychain_does_not_trust_the_ca(
     trusted = ingress_ca.install(app_ctx, system="Darwin")
 
     assert app_ctx.paths.ingress_ca.is_file()
-    assert runner.called("sudo security add-trusted-cert")
+    assert runner.called("sudo -n security add-trusted-cert")
     # verify-cert is still failing in this runner, so install must not claim trust.
     assert trusted is False
     assert (
         "not trusted yet" in app_ctx.console.stderr or "not trusted yet" in app_ctx.console.stdout
     )
+
+
+def _router_secret(runner: FakeRunner, ca: str) -> None:
+    encoded = base64.b64encode(ca.encode()).decode()
+    runner.ok(
+        [
+            "kubectl",
+            "get",
+            "secret",
+            "router-certs-default",
+            "-n",
+            "openshift-ingress",
+            "-o",
+            "json",
+        ],
+        stdout='{"data":{"tls.crt":"' + encoded + '"}}',
+    )
+
+
+def test_install_never_prompts_when_sudo_needs_a_password(
+    app_ctx: AppContext, tmp_path: Path
+) -> None:
+    """A captured sudo prompt hangs deploy, so the probe is the only sudo call."""
+    runner = FakeRunner()
+    _router_secret(runner, _cert(tmp_path, "ingress-ca"))
+    runner.fail("security verify-cert")
+    runner.fail("sudo -n true", stderr="sudo: a password is required")
+    app_ctx.runner = runner
+
+    assert ingress_ca.install(app_ctx, system="Darwin") is False
+
+    sudo_calls = [command for command in runner.commands if command.startswith("sudo")]
+    assert sudo_calls == ["sudo -n true"]
+    assert app_ctx.paths.ingress_ca.is_file()
+    assert "sudo security add-trusted-cert" in app_ctx.console.stderr
+
+
+def test_install_replaces_every_old_ca_when_sudo_is_passwordless(
+    app_ctx: AppContext, tmp_path: Path
+) -> None:
+    deletes = iter([0, 0, 1])
+    runner = FakeRunner()
+    _router_secret(runner, _cert(tmp_path, "ingress-ca"))
+    runner.ok("security verify-cert")
+    runner.ok("sudo -n true")
+    runner.register(
+        "sudo -n security delete-certificate",
+        lambda argv: CompletedCommand(argv=argv, returncode=next(deletes)),
+    )
+    runner.ok("sudo -n security add-trusted-cert")
+    app_ctx.runner = runner
+
+    assert ingress_ca.install(app_ctx, system="Darwin") is True
+
+    sudo_calls = [command for command in runner.commands if command.startswith("sudo")]
+    assert all(command.startswith("sudo -n ") for command in sudo_calls)
+    assert sum("delete-certificate" in command for command in sudo_calls) == 3
+    assert sudo_calls[0] == "sudo -n true"
+    assert "Ingress CA trusted" in app_ctx.console.stdout
 
 
 def test_install_is_quiet_when_the_ca_is_already_trusted(
@@ -133,7 +193,7 @@ def test_install_is_quiet_when_the_ca_is_already_trusted(
     app_ctx.runner = runner
 
     assert ingress_ca.install(app_ctx, system="Darwin") is True
-    assert not runner.called("sudo security add-trusted-cert")
+    assert not runner.called("sudo")
     assert app_ctx.console.stdout == ""
 
 
