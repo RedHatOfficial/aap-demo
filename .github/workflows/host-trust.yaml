@@ -8,12 +8,14 @@ on:
     branches: [main, master, v2]
     paths:
       - 'src/aap_demo/cluster/ingress_ca.py'
+      - 'src/aap_demo/exec/runner.py'
       - 'tests/system/**'
       - '.github/workflows/host-trust.yaml'
   push:
     branches: [main, master, v2]
     paths:
       - 'src/aap_demo/cluster/ingress_ca.py'
+      - 'src/aap_demo/exec/runner.py'
       - 'tests/system/**'
       - '.github/workflows/host-trust.yaml'
   workflow_dispatch:
@@ -25,6 +27,7 @@ jobs:
   ubuntu:
     name: Ubuntu (system store, NSS, Chrome)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       AAP_DEMO_TEST_HOST_TRUST: "1"
       AAP_DEMO_TEST_REQUIRE_BROWSER: "1"
@@ -50,6 +53,7 @@ jobs:
   fedora:
     name: Fedora (update-ca-trust, NSS)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     container: fedora:42
     env:
       AAP_DEMO_TEST_HOST_TRUST: "1"
