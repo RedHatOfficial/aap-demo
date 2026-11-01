@@ -15,6 +15,7 @@ kind: Config
 clusters:
 - name: microshift
   cluster:
+    certificate-authority-data: QQ==
     server: https://127.0.0.1:6443
 contexts:
 - name: microshift

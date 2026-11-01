@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from aap_demo.core import config as config_mod
 from aap_demo.core import schema
+from aap_demo.core.errors import AapDemoError
 from aap_demo.core.paths import Paths
 
 #: Legacy addon names that no longer exist as addons — they became day-2
@@ -192,14 +193,6 @@ def plan(paths: Paths, *, secrets_available: bool = True) -> Plan:
     resolved = config_mod.resolve(file_data=mapped)
 
     result = Plan(reason="migrate", config_data=resolved.as_dict())
-    result.actions.append(
-        Action(
-            "write-config",
-            f"write {paths.config_file} from {legacy_config}",
-            source=legacy_config,
-            dest=paths.config_file,
-        )
-    )
 
     for retired_name in retired:
         result.warnings.append(
@@ -260,6 +253,16 @@ def plan(paths: Paths, *, secrets_available: bool = True) -> Plan:
             )
         )
 
+    # The config file is what marks the migration as finished, so it comes after
+    # the moves and imports. A run that stops partway is retried from the start.
+    result.actions.append(
+        Action(
+            "write-config",
+            f"write {paths.config_file} from {legacy_config}",
+            source=legacy_config,
+            dest=paths.config_file,
+        )
+    )
     result.actions.append(
         Action("marker", f"write {paths.migrated_marker}", dest=paths.migrated_marker)
     )
@@ -327,7 +330,14 @@ def import_secret(source: Optional[Path], secret_store: Any, log: List[str]) -> 
     if not value:
         return
     name = _secret_name_for(source)
-    secret_store.set(name, value)
+    try:
+        secret_store.set(name, value)
+    except Exception:  # noqa: BLE001 - keyring backends raise their own types
+        # No chain: a backend's message could hold the value.
+        raise AapDemoError(
+            f"Could not import {source} into the credential store",
+            hint="The file was left in place, and the migration will try again.",
+        ) from None
     source.unlink()
     log.append(f"imported {source} into the credential store and deleted the file")
 

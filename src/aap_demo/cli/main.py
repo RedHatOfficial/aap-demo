@@ -585,6 +585,8 @@ def run(
                     console.warn(warning)
         except AapDemoError as exc:
             console.warn(f"configuration migration skipped: {exc.message}")
+        except OSError as exc:
+            console.warn(f"configuration migration skipped: {exc}")
 
     config_path = _config_path(_peek_global(raw_argv, "--config"), environ, paths)
     config_error: Optional[ConfigError] = None

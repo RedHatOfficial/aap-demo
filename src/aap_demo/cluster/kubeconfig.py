@@ -7,9 +7,9 @@ scratch ``KUBECONFIG``, including two uses of process substitution to decode
 embedded cert/key data. This port does the equivalent
 rewrite as a single in-memory dict edit (PyYAML is already a base dependency
 for the config layer) instead: same outcome — one cluster/context/user named
-``aap-demo``, TLS verification disabled the same way bash's
-``--insecure-skip-tls-verify=true`` did — with no dependency on shell process
-substitution and far fewer subprocess calls. ``kubectl config view`` is still
+``aap-demo`` — with no dependency on shell process substitution and far fewer
+subprocess calls. Unlike bash, it keeps the cluster's CA and leaves TLS
+verification on. ``kubectl config view`` is still
 invoked once, against the raw extracted file, to validate it parses as a real
 kubeconfig before rewriting it, mirroring bash's own validation step.
 """
@@ -56,21 +56,22 @@ def _rename(raw: Dict[str, Any]) -> Dict[str, Any]:
     users = data.get("users") or []
 
     if clusters:
-        # Bash builds a *fresh* cluster entry — ``kubectl config set-cluster
-        # aap-demo --server=... --insecure-skip-tls-verify=true`` against a
-        # name that does not exist yet — then unsets the original.
-        # Insecure TLS verification is intentional
-        # for local CRC / MicroShift 127.0.0.1 self-signed certificates (ADR-010).
-        # The result therefore carries the server and
-        # the insecure flag and nothing else: no certificate-authority-data,
-        # no file-form ``certificate-authority`` (which kubectl rejects
-        # outright next to insecure-skip-tls-verify), no proxy-url, no
-        # tls-server-name. Whitelist by construction, not blacklist by
-        # deletion, so nothing bash dropped can survive here either.
+        # Only the server and the CA are kept, so a proxy-url or tls-server-name
+        # can't survive. The API certificate verifies against this CA for the
+        # server name MicroShift writes here, so the name stays as it is.
         cluster_entry = clusters[0]
-        server = (cluster_entry.get("cluster") or {}).get("server")
+        cluster = cluster_entry.get("cluster") or {}
+        authority = cluster.get("certificate-authority-data")
+        if not authority:
+            raise AapDemoError(
+                "Extracted kubeconfig has no cluster CA",
+                hint="OpenShift Local may still be initializing. Wait and retry.",
+            )
         cluster_entry["name"] = CONTEXT_NAME
-        cluster_entry["cluster"] = {"server": server, "insecure-skip-tls-verify": True}
+        cluster_entry["cluster"] = {
+            "server": cluster.get("server"),
+            "certificate-authority-data": authority,
+        }
     if users:
         users[0]["name"] = CONTEXT_NAME
     if contexts:
