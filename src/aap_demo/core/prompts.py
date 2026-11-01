@@ -1,7 +1,8 @@
 """Interactive prompts.
 
 Bash's destructive-action gate is ``read -t 10 -r || true``: it prints what is
-about to be destroyed, waits ten seconds for Enter, and *proceeds anyway* on timeout. Ctrl+C is the only way to say no. That is
+about to be destroyed, waits ten seconds for Enter, and *proceeds
+anyway* on timeout. Ctrl+C is the only way to say no. That is
 reproduced exactly rather than "improved" into a y/N prompt, because scripts
 and CI already rely on the auto-continue, and ``QUIET`` already disables it.
 

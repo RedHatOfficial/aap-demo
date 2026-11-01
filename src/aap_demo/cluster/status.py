@@ -549,7 +549,8 @@ def show_cluster_info(ctx: AppContext, *, total_pods: bool = False) -> None:
     """Ports ``_show_cluster_info``.
 
     Lives here rather than in ``core/console.py`` because every line of it is a
-    cluster query, and ``console.py`` is forbidden from doing anything but write. The console still owns the
+    cluster query, and ``console.py`` is forbidden from doing anything but write. The
+    console still owns the
     writing; this owns the gathering and the layout.
     """
     ns = ctx.namespace
