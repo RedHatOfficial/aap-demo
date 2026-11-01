@@ -165,8 +165,15 @@ class SecretStore:
         account = self._account(name)
         try:
             backend.delete_password(SERVICE, account)
-        except Exception:  # noqa: BLE001 - keyring raises backend-specific "not found"
-            pass
+        except Exception as exc:  # noqa: BLE001 - keyring raises backend-specific "not found"
+            if backend.get_password(SERVICE, account) is not None:
+                from aap_demo.core.errors import AapDemoError
+
+                raise AapDemoError(
+                    f"Could not delete the {name} credential",
+                    hint=f"{self.backend_name} reported {type(exc).__name__}. "
+                    "The credential is still stored.",
+                ) from exc
         index = self._read_index()
         if account in index:
             self._write_index([n for n in index if n != account])
