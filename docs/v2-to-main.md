@@ -78,6 +78,8 @@ Bash `enable fleet` on `v2` stays on the QEMU addon unless the command passes `-
 - The version stays `2.0.0.dev1`. Do not publish `2.0.0`. A push to `main` runs the PyPI workflow only when
   `src/aap_demo/__init__.py` changes, and PyPI keeps each version forever. That trigger lands when this
   cutover merges.
+  This merge does not upload again, because the workflow skips a version already on PyPI. It fails on
+  anything other than `2.0.0.devN`.
 - `aap-demo.sh`, `includes/`, and the bash addon deployers stay. Removing them is Phase 8, not this cutover.
 - QEMU stays the bash fleet default. Python fleet stays Kubernetes-native.
 
