@@ -1,7 +1,7 @@
-"""Pull-secret discovery, secret creation, and ServiceAccount patching.
+"""Pull-secret discovery and the namespace secret.
 
-Ports the second half of ``setup_namespace`` and
-``patch_operator_serviceaccounts``.
+Ports the second half of ``setup_namespace``. Pods pull images with CRI-O's
+global auth file, so the AAP resource and its service accounts need no secret.
 
 The secret's *content* is never read, logged, or emitted as an event: bash
 hands the file to ``kubectl create secret --from-file``, and so does this, so
