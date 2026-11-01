@@ -261,7 +261,7 @@ def test_crio_pull_secret_is_installed_when_the_probe_fails(app_ctx, tmp_path) -
     runner.register("ssh", ssh)
     app_ctx.runner = runner
 
-    bootstrap._assert_crio_pull_secret(app_ctx, key, secret)
+    bootstrap.ensure_crio_pull_secret(app_ctx, key, secret)
 
     install = next(call for call in runner.calls if call.input)
     assert "registry.redhat.io" in install.input
@@ -277,7 +277,7 @@ def test_crio_pull_secret_assert_fails_when_the_file_stays_missing(app_ctx, tmp_
     runner.fail("ssh")
     app_ctx.runner = runner
     try:
-        bootstrap._assert_crio_pull_secret(app_ctx, key, secret)
+        bootstrap.ensure_crio_pull_secret(app_ctx, key, secret)
     except AapDemoError as exc:
         assert "not configured" in exc.message
     else:
@@ -292,7 +292,7 @@ def test_crio_pull_secret_rejects_a_file_without_auths(app_ctx, tmp_path) -> Non
     runner.fail("ssh")
     app_ctx.runner = runner
     try:
-        bootstrap._assert_crio_pull_secret(app_ctx, key, secret)
+        bootstrap.ensure_crio_pull_secret(app_ctx, key, secret)
     except AapDemoError as exc:
         assert "registry auth file" in exc.message
     else:

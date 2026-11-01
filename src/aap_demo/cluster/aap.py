@@ -247,10 +247,6 @@ def create_instance(
     manifest = yaml.safe_dump(document, sort_keys=False, default_flow_style=False)
     kubectl.apply_stdin(ctx.runner, manifest, "-n", ns).check()
 
-    from aap_demo.cluster import pull_secret as pull_secret_mod
-
-    pull_secret_mod.attach_to_workload(ctx, ns, aap_name)
-
     patch_gateway_capability(ctx, namespace=ns, sleep=sleep)
     return aap_name
 
@@ -852,17 +848,9 @@ def wait_ready(
     here; the dashboard is ``aap-demo watch``. The success criterion, the
     60-minute budget, the 10-second interval, and the credential lookup are the same.
     """
-    from aap_demo.cluster import pull_secret as pull_secret_mod
     from aap_demo.exec import kubectl
 
     ns = namespace or ctx.namespace
-
-    def reconcile_pull_secret() -> None:
-        if pull_secret_mod.discover(ctx) is None:
-            return
-        pull_secret_mod.reconcile(ctx, ns, instance_name(ctx, ns) or "aap")
-
-    reconcile_pull_secret()
 
     showed_components = False
 
@@ -878,7 +866,6 @@ def wait_ready(
         return all(state == "done" for _name, state, _detail in rows)
 
     def progress(n: int, elapsed: float, _value: Any) -> None:
-        reconcile_pull_secret()
         if showed_components:
             del n, elapsed
             return

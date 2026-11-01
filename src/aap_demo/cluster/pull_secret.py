@@ -10,9 +10,8 @@ the credential never enters the Python process.
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import List, Optional
 
 from aap_demo.core.context import AppContext
 from aap_demo.core.paths import Paths, display_path
@@ -27,12 +26,6 @@ DEFAULT_FILENAMES = ("pull-secret.txt", "pull-secret.json")
 
 def _home(ctx: AppContext) -> Path:
     return Path(ctx.env.get("HOME") or Path.home())
-
-
-#: Bash sleeps 5s before patching operator SAs because the operator's own
-#: ServiceAccounts are created by the CSV install and do not exist the instant
-#: the CSV reports Succeeded.
-OPERATOR_SA_SETTLE_SECONDS = 5
 
 
 def locate(configured: str, paths: Paths) -> Optional[Path]:
@@ -173,208 +166,9 @@ def ensure(ctx: AppContext, namespace: str) -> Optional[Path]:
     return path
 
 
-def patch_service_accounts(
-    ctx: AppContext,
-    namespace: str,
-    *,
-    sleep: Callable[[float], None] = time.sleep,
-) -> None:
-    """Ports ``patch_operator_serviceaccounts``.
-
-    Bash filters ``kubectl get serviceaccount -o name`` through
-    ``grep -E 'operator|controller'``; the same substring match is applied
-    here rather than a label selector, because the operator's SAs carry no
-    label that is stable across AAP releases.
-    """
-    ctx.console.out("")
-    ctx.console.out("Patching operator ServiceAccounts with pull secret...")
-    sleep(OPERATOR_SA_SETTLE_SECONDS)
-    listing: Any = ctx.runner.run(
-        ["kubectl", "get", "serviceaccount", "-n", namespace, "-o", "name"]
-    )
-    for line in listing.stdout.splitlines():
-        name = line.strip()
-        if not name.startswith("serviceaccount/"):
-            continue
-        name = name[len("serviceaccount/") :]
-        if "operator" not in name and "controller" not in name:
-            continue
-        ctx.runner.run(
-            [
-                "kubectl",
-                "patch",
-                "serviceaccount",
-                name,
-                "-n",
-                namespace,
-                "-p",
-                '{"imagePullSecrets": [{"name": "redhat-operators-pull-secret"}]}',
-            ]
-        )
-    ctx.console.out("  ✓ Operator ServiceAccounts patched")
-
-
-def attach_to_all_service_accounts(ctx: AppContext, namespace: str) -> int:
-    """Give every ServiceAccount in the namespace the pull secret.
-
-    Workload accounts such as ``aap-gateway`` are created by the operator
-    after deploy and do not match the operator/controller name filter. This
-    MicroShift node has no cluster-wide registry credential, so a pod with
-    no imagePullSecret is refused by registry.redhat.io.
-    """
-    import json
-
-    listing = ctx.runner.run(
-        [
-            "kubectl",
-            "get",
-            "serviceaccount",
-            "-n",
-            namespace,
-            "-o",
-            (
-                "jsonpath={range .items[*]}{.metadata.name}"
-                '{"\\t"}{.imagePullSecrets[*].name}{"\\n"}{end}'
-            ),
-        ]
-    )
-    if not listing.ok:
-        return 0
-    patched = 0
-    for line in listing.stdout.splitlines():
-        if not line.strip():
-            continue
-        name, _, pulls = line.partition("\t")
-        existing = pulls.split()
-        if SECRET_NAME in existing:
-            continue
-        merged = [{"name": SECRET_NAME}] + [{"name": item} for item in existing]
-        ctx.runner.run(
-            [
-                "kubectl",
-                "patch",
-                "serviceaccount",
-                name,
-                "-n",
-                namespace,
-                "-p",
-                json.dumps({"imagePullSecrets": merged}),
-            ]
-        )
-        patched += 1
-    return patched
-
-
-_PULL_FAIL_REASONS = frozenset({"ErrImagePull", "ImagePullBackOff"})
-
-
-def _container_waiting_reason(status: dict) -> str:
-    waiting = (status.get("state") or {}).get("waiting") or {}
-    return str(waiting.get("reason") or "")
-
-
-def pull_failed_pod_names(document: dict) -> List[str]:
-    """Pod names whose init or app containers are stuck pulling an image."""
-    names: List[str] = []
-    for pod in document.get("items") or []:
-        if not isinstance(pod, dict):
-            continue
-        status = pod.get("status") or {}
-        containers = list(status.get("initContainerStatuses") or [])
-        containers.extend(status.get("containerStatuses") or [])
-        if any(_container_waiting_reason(item) in _PULL_FAIL_REASONS for item in containers):
-            name = str((pod.get("metadata") or {}).get("name") or "")
-            if name:
-                names.append(name)
-    return names
-
-
-def _restart_pull_failures(ctx: AppContext, namespace: str) -> int:
-    import json
-
-    listing = ctx.runner.run(["kubectl", "get", "pods", "-n", namespace, "-o", "json"])
-    if not listing.ok or not listing.stdout.strip():
-        return 0
-    try:
-        document = json.loads(listing.stdout)
-    except json.JSONDecodeError:
-        return 0
-    names = pull_failed_pod_names(document if isinstance(document, dict) else {})
-    if not names:
-        return 0
-    ctx.runner.run(["kubectl", "delete", "pod", "-n", namespace, "--wait=false", *names])
-    return len(names)
-
-
-def _cr_has_pull_secret(ctx: AppContext, namespace: str, aap_name: str) -> bool:
-    current = kubectl.jsonpath(
-        ctx.runner,
-        "aap",
-        aap_name,
-        "-n",
-        namespace,
-        path="{.spec.image_pull_secrets}",
-    )
-    return SECRET_NAME in current
-
-
-def reconcile(ctx: AppContext, namespace: str, aap_name: str) -> None:
-    """Keep the pull secret on accounts the operator creates after deploy.
-
-    ``image_pull_secrets`` on the AAP custom resource does not reach a
-    ServiceAccount that the operator creates later. Those pods are refused
-    by registry.redhat.io on a MicroShift node that has no node-wide
-    credential. Restarting only the pods already stuck in a pull error lets
-    the new ServiceAccount secret take effect without touching healthy pods.
-    """
-    import json
-
-    if discover(ctx) is None:
-        return
-    if not _cr_has_pull_secret(ctx, namespace, aap_name):
-        ctx.runner.run(
-            [
-                "kubectl",
-                "patch",
-                "aap",
-                aap_name,
-                "-n",
-                namespace,
-                "--type",
-                "merge",
-                "-p",
-                json.dumps({"spec": {"image_pull_secrets": [SECRET_NAME]}}),
-            ]
-        )
-    patched = attach_to_all_service_accounts(ctx, namespace)
-    restarted = _restart_pull_failures(ctx, namespace)
-    if not patched and not restarted:
-        return
-    accounts = f"{patched} service account" if patched == 1 else f"{patched} service accounts"
-    pods = f"{restarted} pod" if restarted == 1 else f"{restarted} pods"
-    if patched and restarted:
-        message = (
-            f"Attached the pull secret to {accounts}; restarting {pods} that could not pull images"
-        )
-    elif patched:
-        message = f"Attached the pull secret to {accounts}"
-    else:
-        message = f"Restarting {pods} that could not pull images"
-    ctx.console.progress(message)
-
-
-def attach_to_workload(ctx: AppContext, namespace: str, aap_name: str) -> None:
-    """Tell the AAP operator to put the pull secret on every pod it creates."""
-    reconcile(ctx, namespace, aap_name)
-
-
 __all__ = [
     "SECRET_NAME",
-    "attach_to_all_service_accounts",
     "attach_to_default_sa",
-    "attach_to_workload",
-    "reconcile",
     "discover",
     "ensure",
-    "patch_service_accounts",
 ]
