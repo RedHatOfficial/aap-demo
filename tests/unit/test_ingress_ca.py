@@ -480,6 +480,24 @@ def test_the_right_certificate_without_server_ca_trust_is_repaired(
     assert nss.flags == "C,,"
 
 
+def test_printed_browser_commands_quote_paths_with_spaces(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
+) -> None:
+    ca = _cert(tmp_path, "ca")
+    home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
+    profile = home / ".mozilla" / "firefox" / "my profile"
+    _nss_database(profile)
+    anchor.write_text(ca, encoding="utf-8")
+    runner = FakeRunner()
+    _router_secret(runner, ca)
+    _Nss(runner, accept_import=False)
+    app_ctx.runner = runner
+
+    assert ingress_ca.install(app_ctx, system="Linux") is False
+
+    assert f"certutil -d 'sql:{profile}' -A" in app_ctx.console.stderr.replace("\n", "")
+
+
 def test_a_failed_browser_import_is_a_warning_with_the_command(
     app_ctx: AppContext, tmp_path: Path, monkeypatch
 ) -> None:

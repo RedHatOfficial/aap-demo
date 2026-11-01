@@ -16,6 +16,7 @@ import hashlib
 import json
 import platform
 import re
+import shlex
 import shutil
 from pathlib import Path
 from typing import List, Optional
@@ -240,7 +241,7 @@ def _import(ctx: AppContext, path: Path, *, system: str) -> List[str]:
             return []
         return [
             "From a terminal in this Mac's desktop session, approve it with: "
-            f"sudo security add-trusted-cert -d -r trustRoot -k {SYSTEM_KEYCHAIN} {path}"
+            f"sudo security add-trusted-cert -d -r trustRoot -k {SYSTEM_KEYCHAIN} {shlex.quote(str(path))}"
         ]
     problems = [
         _import_linux_system(ctx, path, system=system),
@@ -294,7 +295,7 @@ def _import_linux_system(ctx: AppContext, path: Path, *, system: str) -> Optiona
         anchor, update = DEBIAN_ANCHOR, "update-ca-certificates"
     else:
         return "This system has no known CA trust directory. Add the file to its trust store."
-    fix = f"For curl and other system tools, run: sudo cp {path} {anchor} && sudo {update}"
+    fix = f"For curl and other system tools, run: sudo cp {shlex.quote(str(path))} {anchor} && sudo {update}"
     if not ctx.runner.run(["sudo", "-n", "true"]).ok:
         return fix
     if not ctx.runner.run(["sudo", "-n", "cp", str(path), str(anchor)]).ok:
@@ -333,9 +334,10 @@ def _import_nss(ctx: AppContext, path: Path, *, system: str) -> Optional[str]:
             failed.append(database)
     if not failed:
         return None
+    ca = shlex.quote(str(path))
     commands = "; ".join(
-        f"certutil -d sql:{database} -D -n {NSS_NICKNAME}; "
-        f'certutil -d sql:{database} -A -t "C,," -n {NSS_NICKNAME} -i {path}'
+        f"certutil -d {shlex.quote(f'sql:{database}')} -D -n {NSS_NICKNAME}; "
+        f'certutil -d {shlex.quote(f"sql:{database}")} -A -t "C,," -n {NSS_NICKNAME} -i {ca}'
         for database in failed
     )
     return f"Quit the browser, then run: {commands}"
