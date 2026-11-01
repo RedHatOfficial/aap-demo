@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -62,3 +64,11 @@ def test_a_second_copy_of_a_known_secret_is_caught(tmp_path: Path) -> None:
     baseline = _document(tmp_path / "base.json", {"a.py": [_finding("x")]})
     scan = _document(tmp_path / "scan.json", {"a.py": [_finding("x"), _finding("x", 2)]})
     assert _compare().new_findings(scan, baseline)
+
+
+def test_a_document_without_results_is_an_error(tmp_path: Path) -> None:
+    baseline = _document(tmp_path / "base.json", {})
+    scan = tmp_path / "scan.json"
+    scan.write_text("{}", encoding="utf-8")
+    with pytest.raises(KeyError):
+        _compare().new_findings(str(scan), baseline)

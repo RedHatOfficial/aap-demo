@@ -20,7 +20,7 @@ def findings(path: str) -> "Counter[Finding]":
         document = json.load(handle)
     return Counter(
         (filename, item["type"], item["hashed_secret"])
-        for filename, items in document.get("results", {}).items()
+        for filename, items in document["results"].items()
         for item in items
     )
 
