@@ -21,7 +21,7 @@ There are two commands, on purpose.
 | | New command | Older command |
 | --- | --- | --- |
 | How you get it | `pipx install aap-demo` | Clone the repo and run `./install.sh` |
-| What it is | The Python beta, version 2.0.0.dev1 | The bash script `aap-demo.sh` |
+| What it is | The Python beta, version 2.0.0.dev2 | The bash script `aap-demo.sh` |
 | Where your files go | `~/.local/state/aap-demo` | `~/.aap-demo` |
 | What to use it for | Create the cluster, deploy AAP, day-to-day start and stop, Fleet | Anything the new command does not do yet |
 

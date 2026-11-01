@@ -3,7 +3,7 @@
 Ansible Automation Platform, on your own computer, for demos and trying things out.
 
 This is a local tool. Do not use it for a real production system. The published command is a beta,
-version **2.0.0.dev1**. A finished 2.0.0 release is not out yet.
+version **2.0.0.dev2**. A finished 2.0.0 release is not out yet.
 
 ## Start
 
@@ -53,7 +53,7 @@ aap-demo deploy --channel stable-2.6
 With no `--channel` flag, `deploy` uses the default channel, `stable-2.7`.
 
 Open the address `status` prints and sign in with the admin password on that
-screen. `aap-demo version` should print `2.0.0.dev1`.
+screen. `aap-demo version` should print `2.0.0.dev2`.
 
 Tomorrow, `aap-demo start` turns the cluster on and `aap-demo stop` turns it
 off. [Daily use](docs/guides/daily-use.md) covers later days, including a page

@@ -24,7 +24,7 @@ Do not copy them into a system other people depend on.
 
 ## This beta
 
-The command you install with pipx is version **2.0.0.dev1**. That number means the beta of the new command.
+The command you install with pipx is version **2.0.0.dev2**. That number means the beta of the new command.
 A finished 2.0.0 release has not been published. Until that happens, treat what you install as a beta:
 useful, still changing, and not the final download.
 
