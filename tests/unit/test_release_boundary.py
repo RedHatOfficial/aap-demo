@@ -73,6 +73,6 @@ def test_pypi_workflow_publishes_from_main_only() -> None:
     assert "needs: build" in jobs
 
     note = (ROOT / "docs/v2-to-main.md").read_text(encoding="utf-8")
-    assert '__version__ = "2.0.0.dev1"' in note or "`2.0.0.dev1`" in note
+    assert '__version__ = "2.0.0.dev2"' in note or "`2.0.0.dev2`" in note
     assert "Do not publish `2.0.0`" in note
     assert "src/aap_demo/__init__.py" in note

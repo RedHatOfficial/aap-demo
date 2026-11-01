@@ -53,7 +53,7 @@ def test_version_json_and_yaml_are_one_document(tmp_path, capsys) -> None:
         assert rc == 0
         payload = load(captured.out)
         assert isinstance(payload, dict)
-        assert payload["version"] == "2.0.0.dev1"
+        assert payload["version"] == "2.0.0.dev2"
         assert "Password" not in captured.out
         if output == "yaml":
             assert list(yaml.safe_load_all(captured.out)) == [payload]
@@ -67,6 +67,6 @@ def test_quiet_json_version_is_still_one_document(tmp_path, capsys) -> None:
     captured = capsys.readouterr()
     assert rc == 0
     payload = json.loads(captured.out)
-    assert payload["version"] == "2.0.0.dev1"
+    assert payload["version"] == "2.0.0.dev2"
     assert captured.out.strip().startswith("{")
     assert captured.out.strip().endswith("}")

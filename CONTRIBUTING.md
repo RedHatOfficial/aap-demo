@@ -4,7 +4,7 @@ Thanks for helping. This page is how to set up the project, check your change,
 commit it, and open a pull request.
 
 The current command is developed on `main`. The published package on that
-branch is version `2.0.0.dev1`. Open pull requests against `main`.
+branch is version `2.0.0.dev2`. Open pull requests against `main`.
 
 ## Set up
 
@@ -22,7 +22,7 @@ python -m pip install -e ".[dev]"
 On Windows, activate the virtual environment with `.venv\Scripts\activate`.
 
 That install uses the code in your checkout, and it includes pytest and Ruff.
-After it finishes, `aap-demo version` should print `2.0.0.dev1`.
+After it finishes, `aap-demo version` should print `2.0.0.dev2`.
 
 Optional: install the git hooks so formatting and commit-message checks run
 when you commit.
