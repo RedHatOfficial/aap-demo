@@ -4,6 +4,9 @@ Ports ``includes/ingress-ca-trust.sh``. CRC issues a new ``ingress-ca``
 whenever the VM is recreated. A browser that still trusts the previous CA
 reports the current ``*.apps.127.0.0.1.nip.io`` certificate as invalid even
 though the leaf chains to the CA that is serving it.
+
+Chrome, Chromium and Firefox on Linux read NSS databases instead of the system
+store, so Linux needs both. System trust needs sudo. NSS trust does not.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import hashlib
 import json
 import platform
 import re
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -23,6 +27,10 @@ ROUTER_SECRET = "router-certs-default"
 ROUTER_NAMESPACE = "openshift-ingress"
 CA_COMMON_NAME = "ingress-ca"
 SYSTEM_KEYCHAIN = "/Library/Keychains/System.keychain"
+RHEL_ANCHOR = Path("/etc/pki/ca-trust/source/anchors/crc-ingress-ca.crt")
+DEBIAN_ANCHOR = Path("/usr/local/share/ca-certificates/crc-ingress-ca.crt")
+NSS_NICKNAME = "crc-ingress-ca"
+_SHA1_LINE = re.compile(r"^SHA-1 hash: ([0-9A-Fa-f]{40})$", re.MULTILINE)
 _PEM = re.compile(
     r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
     re.DOTALL,
@@ -102,10 +110,7 @@ def system_trusts(ctx: AppContext, path: Path, *, system: Optional[str] = None) 
     if kind == "Darwin":
         result = ctx.runner.run(["security", "verify-cert", "-p", "ssl", "-c", str(path)])
         return bool(result.ok)
-    for candidate in (
-        Path("/etc/pki/ca-trust/source/anchors/crc-ingress-ca.crt"),
-        Path("/usr/local/share/ca-certificates/crc-ingress-ca.crt"),
-    ):
+    for candidate in (RHEL_ANCHOR, DEBIAN_ANCHOR):
         if not candidate.is_file():
             continue
         try:
@@ -115,6 +120,62 @@ def system_trusts(ctx: AppContext, path: Path, *, system: Optional[str] = None) 
         except (OSError, ValueError):
             return False
     return False
+
+
+def _certutil_available(system: str) -> bool:
+    """Windows ships an unrelated ``certutil``, so only Linux counts."""
+    return system == "Linux" and shutil.which("certutil") is not None
+
+
+def _default_nss_database(ctx: AppContext) -> Path:
+    return Path(ctx.env.get("HOME") or Path.home()) / ".pki" / "nssdb"
+
+
+def _nss_databases(ctx: AppContext) -> List[Path]:
+    """Chromium's databases and every Firefox profile on this machine."""
+    home = Path(ctx.env.get("HOME") or Path.home())
+    found = [
+        candidate
+        for candidate in (_default_nss_database(ctx), home / ".local" / "share" / "pki" / "nssdb")
+        if candidate.is_dir()
+    ]
+    firefox = home / ".mozilla" / "firefox"
+    if firefox.is_dir():
+        found.extend(
+            profile for profile in sorted(firefox.iterdir()) if (profile / "cert9.db").is_file()
+        )
+    return found
+
+
+def _nss_holds(ctx: AppContext, database: Path, expected: str) -> bool:
+    """True when the nickname exists in ``database`` and only names the expected CA."""
+    listed = ctx.runner.run(["certutil", "-d", f"sql:{database}", "-L", "-n", NSS_NICKNAME, "-a"])
+    if not listed.ok:
+        return False
+    pems = pem_certificates(listed.stdout)
+    return bool(pems) and all(fingerprint(pem) == expected for pem in pems)
+
+
+def _browser_trust(ctx: AppContext, path: Path, *, system: str) -> str:
+    """Status wording. Trust is reported only after every database was read."""
+    databases = _nss_databases(ctx)
+    if not _certutil_available(system):
+        return "unknown (install nss-tools to check Chrome and Firefox)"
+    if not databases:
+        return "unknown (no Chrome or Firefox certificate database found)"
+    expected = fingerprint(path.read_text(encoding="utf-8"))
+    if all(_nss_holds(ctx, database, expected) for database in databases):
+        return "trusted (Chrome/Firefox NSS)"
+    return "not trusted"
+
+
+def _linux_trust_complete(ctx: AppContext, path: Path, *, system: str) -> bool:
+    if not system_trusts(ctx, path, system=system):
+        return False
+    if _certutil_available(system):
+        return _browser_trust(ctx, path, system=system).startswith("trusted")
+    # No certutil and no browser database is a machine without a browser.
+    return not _nss_databases(ctx)
 
 
 def install(ctx: AppContext, *, system: Optional[str] = None) -> bool:
@@ -145,26 +206,39 @@ def install(ctx: AppContext, *, system: Optional[str] = None) -> bool:
     destination.write_text(pem, encoding="utf-8")
     destination.chmod(0o644)
     kind = system or platform.system()
-    if saved == current and system_trusts(ctx, destination, system=kind):
+    if saved == current and _trust_complete(ctx, destination, system=kind):
         return True
     ctx.console.step("Trusting the ingress CA")
-    trusted = _import(ctx, destination, system=kind)
-    if trusted:
+    problems = _import(ctx, destination, system=kind)
+    if not problems:
         ctx.console.checkpoint("Ingress CA trusted")
         ctx.console.out("  Quit the browser and reopen the AAP URL if it still warns.")
         return True
-    ctx.console.warn(
-        "Ingress CA saved but not trusted yet. "
-        f"On this Mac, approve it with: sudo security add-trusted-cert -d -r trustRoot "
-        f"-k {SYSTEM_KEYCHAIN} {destination}"
-    )
+    for problem in problems:
+        ctx.console.warn(f"Ingress CA saved but not trusted yet. {problem}")
     return False
 
 
-def _import(ctx: AppContext, path: Path, *, system: str) -> bool:
+def _trust_complete(ctx: AppContext, path: Path, *, system: str) -> bool:
     if system == "Darwin":
-        return _import_macos(ctx, path)
-    return _import_linux(ctx, path)
+        return system_trusts(ctx, path, system=system)
+    return _linux_trust_complete(ctx, path, system=system)
+
+
+def _import(ctx: AppContext, path: Path, *, system: str) -> List[str]:
+    """Import the CA and return what still needs the user. Empty means trusted."""
+    if system == "Darwin":
+        if _import_macos(ctx, path):
+            return []
+        return [
+            "From a terminal in this Mac's desktop session, approve it with: "
+            f"sudo security add-trusted-cert -d -r trustRoot -k {SYSTEM_KEYCHAIN} {path}"
+        ]
+    problems = [
+        _import_linux_system(ctx, path, system=system),
+        _import_nss(ctx, path, system=system),
+    ]
+    return [problem for problem in problems if problem]
 
 
 def _import_macos(ctx: AppContext, path: Path) -> bool:
@@ -176,20 +250,15 @@ def _import_macos(ctx: AppContext, path: Path) -> bool:
     """
     if not ctx.runner.run(["sudo", "-n", "true"]).ok:
         return False
-    while True:
-        removed = ctx.runner.run(
-            [
-                "sudo",
-                "-n",
-                "security",
-                "delete-certificate",
-                "-c",
-                CA_COMMON_NAME,
-                SYSTEM_KEYCHAIN,
-            ]
+    # ``delete-certificate -c`` refuses a name that matches more than one
+    # certificate, so each old CA is removed by its hash.
+    listed = ctx.runner.run(
+        ["security", "find-certificate", "-a", "-Z", "-c", CA_COMMON_NAME, SYSTEM_KEYCHAIN]
+    )
+    for sha1 in _SHA1_LINE.findall(listed.stdout if listed.ok else ""):
+        ctx.runner.run(
+            ["sudo", "-n", "security", "delete-certificate", "-Z", sha1, SYSTEM_KEYCHAIN]
         )
-        if not removed.ok:
-            break
     added = ctx.runner.run(
         [
             "sudo",
@@ -207,18 +276,61 @@ def _import_macos(ctx: AppContext, path: Path) -> bool:
     return bool(added.ok) and system_trusts(ctx, path, system="Darwin")
 
 
-def _import_linux(ctx: AppContext, path: Path) -> bool:
-    anchor = Path("/etc/pki/ca-trust/source/anchors/crc-ingress-ca.crt")
-    if anchor.parent.is_dir():
-        copied = ctx.runner.run(["sudo", "cp", str(path), str(anchor)])
-        updated = ctx.runner.run(["sudo", "update-ca-trust"])
-        return bool(copied.ok and updated.ok)
-    debian = Path("/usr/local/share/ca-certificates/crc-ingress-ca.crt")
-    if debian.parent.is_dir():
-        copied = ctx.runner.run(["sudo", "cp", str(path), str(debian)])
-        updated = ctx.runner.run(["sudo", "update-ca-certificates"])
-        return bool(copied.ok and updated.ok)
-    return False
+def _import_linux_system(ctx: AppContext, path: Path, *, system: str) -> Optional[str]:
+    """Update the system store with ``sudo -n``, or say which command to run."""
+    if system_trusts(ctx, path, system=system):
+        return None
+    if RHEL_ANCHOR.parent.is_dir():
+        anchor, update = RHEL_ANCHOR, "update-ca-trust"
+    elif DEBIAN_ANCHOR.parent.is_dir():
+        anchor, update = DEBIAN_ANCHOR, "update-ca-certificates"
+    else:
+        return "This system has no known CA trust directory. Add the file to its trust store."
+    fix = f"For curl and other system tools, run: sudo cp {path} {anchor} && sudo {update}"
+    if not ctx.runner.run(["sudo", "-n", "true"]).ok:
+        return fix
+    if not ctx.runner.run(["sudo", "-n", "cp", str(path), str(anchor)]).ok:
+        return fix
+    return None if ctx.runner.run(["sudo", "-n", update]).ok else fix
+
+
+def _import_nss(ctx: AppContext, path: Path, *, system: str) -> Optional[str]:
+    """Replace a missing or stale CA in each browser database, then read it back."""
+    databases = _nss_databases(ctx)
+    if not _certutil_available(system):
+        if not databases:
+            return None
+        return (
+            "Chrome and Firefox need certutil. Install nss-tools "
+            "(libnss3-tools on Debian and Ubuntu), then run aap-demo deploy again."
+        )
+    if not databases:
+        database = _default_nss_database(ctx)
+        database.mkdir(parents=True, exist_ok=True)
+        created = ctx.runner.run(["certutil", "-d", f"sql:{database}", "-N", "--empty-password"])
+        if not created.ok:
+            return f"Could not create the browser certificate database in {database}."
+        databases = [database]
+    expected = fingerprint(path.read_text(encoding="utf-8"))
+    failed = []
+    for database in databases:
+        if _nss_holds(ctx, database, expected):
+            continue
+        target = f"sql:{database}"
+        ctx.runner.run(["certutil", "-d", target, "-D", "-n", NSS_NICKNAME])
+        ctx.runner.run(
+            ["certutil", "-d", target, "-A", "-t", "C,,", "-n", NSS_NICKNAME, "-i", str(path)]
+        )
+        if not _nss_holds(ctx, database, expected):
+            failed.append(database)
+    if not failed:
+        return None
+    commands = "; ".join(
+        f"certutil -d sql:{database} -D -n {NSS_NICKNAME}; "
+        f'certutil -d sql:{database} -A -t "C,," -n {NSS_NICKNAME} -i {path}'
+        for database in failed
+    )
+    return f"Quit the browser, then run: {commands}"
 
 
 def describe(ctx: AppContext, *, system: Optional[str] = None) -> dict:
@@ -238,7 +350,10 @@ def describe(ctx: AppContext, *, system: Optional[str] = None) -> dict:
     if kind == "Darwin":
         browser = "trusted (macOS keychain)" if trusted else "not trusted"
     else:
-        browser = "trusted (system ca-trust)" if trusted else "not trusted"
+        try:
+            browser = _browser_trust(ctx, path, system=kind)
+        except (OSError, ValueError):
+            browser = "not trusted"
     return {
         "ingress_ca_file": str(path),
         "system_trust": "trusted" if trusted else "not trusted",
