@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,10 @@ import pytest
 #: machine. ``crc``, for one, shells out to ``/usr/bin/security``, and on macOS
 #: that can raise a Keychain dialog.
 _ALLOWED = frozenset({"bash", "git", "openssl", Path(sys.executable).name})
+
+#: Stand-ins that fail, ahead of the real tools on PATH. They stop what an allowed
+#: program, such as a bash script under test, starts on its own.
+_STUBBED = ("crc", "kubectl", "oc", "podman", "security", "ssh", "sudo")
 
 _RealPopen = subprocess.Popen
 
@@ -29,8 +34,19 @@ class _GuardedPopen(_RealPopen):  # type: ignore[type-arg]
         super().__init__(args, *pargs, **kwargs)
 
 
+@pytest.fixture(scope="session")
+def _stub_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    directory = tmp_path_factory.mktemp("stubbed-tools")
+    for name in _STUBBED:
+        stub = directory / name
+        stub.write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
+        stub.chmod(0o755)
+    return directory
+
+
 @pytest.fixture(autouse=True)
-def _no_host_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_host_tools(monkeypatch: pytest.MonkeyPatch, _stub_dir: Path) -> None:
+    monkeypatch.setenv("PATH", f"{_stub_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     # subprocess.run and check_output look Popen up here, so this also covers
     # code that does not go through SubprocessRunner.
     monkeypatch.setattr(subprocess, "Popen", _GuardedPopen)
