@@ -42,6 +42,9 @@ class AppContext:
     #: behaves differently when the namespace was set explicitly vs. defaulted.
     namespace_explicit: bool = False
 
+    #: A flag or environment variable set the VM size, so ``create`` does not ask.
+    vm_size_explicit: bool = False
+
     @property
     def namespace(self) -> str:
         return self.config.get("core.namespace", "aap-operator")

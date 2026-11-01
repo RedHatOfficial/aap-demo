@@ -45,7 +45,13 @@ A value below the minimum stops the command before it changes anything. The erro
 environment variable, and the saved key. Correct the one that holds the bad value. The saved key and the
 environment variable are checked before flags are read, so a flag does not get past a bad value from either.
 
-`create` and `deploy` both print the size they resolved. `create` warns if the computer itself has fewer
+`create` asks for processors and memory when it is about to make a new virtual machine in a terminal. Press
+Enter to keep the value shown. Your answers are saved as `crc.cpus` and `crc.memory_mb`. It does not ask when
+`--cpus`, `--memory`, `CRC_CPUS` or `CRC_MEMORY` is set, with `--quiet`, with structured output, or without a
+terminal. `AAP_DEMO_INTERACTIVE=1` makes it ask without a terminal.
+
+`create` and `deploy` both print the size they resolved. `create` stops before starting the virtual machine if
+the size is more than the computer has. Linux swap counts toward memory. It also warns if the computer has fewer
 than 4 processors or 10 GB of memory. Set the size before the virtual machine exists. Changing it later
 means `destroy` and `create` again, so `deploy` on an existing machine does not resize it.
 

@@ -76,6 +76,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [032](032-fleet-v2-addon.md) | Fleet v2 Addon | Accepted |
 | [032](032-open-issues-remediation-strategy.md) | Open Issue Remediation Strategy | Proposed |
 | [033](033-apme-local-oci-plugin-publishing.md) | APME Local OCI Plugin Publishing | Accepted |
+| [034](034-create-vm-size-prompt.md) | VM Size Prompt and Host Fit Check on Create | Accepted |
 
 ## Creating a New ADR
 
