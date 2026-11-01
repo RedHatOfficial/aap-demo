@@ -159,8 +159,8 @@ def _nss_holds(ctx: AppContext, database: Path, expected: str) -> bool:
     for line in table.stdout.splitlines() if table.ok else []:
         fields = line.split()
         if len(fields) == 2 and fields[0] == NSS_NICKNAME:
-            server_flags = fields[1].split(",")[0]
-            return "C" in server_flags or "T" in server_flags
+            # In the first field, only C trusts a CA to issue server certificates.
+            return "C" in fields[1].split(",")[0]
     return False
 
 

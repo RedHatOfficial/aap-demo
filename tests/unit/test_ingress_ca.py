@@ -6,6 +6,8 @@ import base64
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from aap_demo.cluster import ingress_ca
 from aap_demo.core.context import AppContext
 from aap_demo.exec.runner import CompletedCommand, FakeRunner
@@ -455,8 +457,9 @@ def test_an_empty_default_directory_is_initialized(
     assert nss.created == [f"sql:{home / '.pki' / 'nssdb'}"]
 
 
-def test_the_right_certificate_without_ca_trust_is_repaired(
-    app_ctx: AppContext, tmp_path: Path, monkeypatch
+@pytest.mark.parametrize("flags", [",,", "T,,"])
+def test_the_right_certificate_without_server_ca_trust_is_repaired(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch, flags: str
 ) -> None:
     ca = _cert(tmp_path, "ca")
     home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
@@ -468,7 +471,7 @@ def test_the_right_certificate_without_ca_trust_is_repaired(
     _router_secret(runner, ca)
     nss = _Nss(runner)
     nss.databases = {f"sql:{database}": ca}
-    nss.flags = ",,"
+    nss.flags = flags
     app_ctx.runner = runner
 
     assert ingress_ca.describe(app_ctx, system="Linux")["browser_trust"] == "not trusted"
