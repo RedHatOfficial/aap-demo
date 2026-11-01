@@ -1,10 +1,11 @@
 name: Publish to PyPI
 
 # Publishes the development release that reserves the aap-demo name.
-# 2.0.0.dev0 is not installed by `pip install aap-demo`.
+# A 2.0.0.devN version is not installed by `pip install aap-demo`.
 # A push publishes only when src/aap_demo/__init__.py changes, because PyPI
 # keeps each version forever. Publish from main. That is where this workflow
-# lands with the v2 cutover. The first upload is workflow_dispatch.
+# lands with the v2 cutover. A version already on PyPI is skipped, and any
+# version other than 2.0.0.devN fails the check job.
 on:
   workflow_dispatch:
   push:
@@ -16,8 +17,28 @@ permissions:
   contents: read
 
 jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.state.outputs.published }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Check the version against PyPI
+        id: state
+        run: python .github/scripts/pypi_version_state.py
+
   build:
     name: Build
+    needs: check
+    if: needs.check.outputs.published == 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
