@@ -1,4 +1,4 @@
-"""The CommandRunner seam and its FakeRunner double (design §7.2)."""
+"""The CommandRunner seam and its FakeRunner double."""
 
 from __future__ import annotations
 
@@ -141,7 +141,7 @@ def test_env_override_is_merged_not_replaced() -> None:
 
 
 def test_runner_never_uses_shell() -> None:
-    """shell=True would reintroduce per-platform quoting divergence (§6.1)."""
+    """shell=True would reintroduce per-platform quoting divergence."""
     import ast
     import inspect
 

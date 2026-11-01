@@ -1,4 +1,4 @@
-"""PyYAML must stay in pure-Python mode (design §5.1).
+"""PyYAML must stay in pure-Python mode.
 
 The libyaml C extension is a speed optimization for large documents and nothing
 else. A config file, an addon manifest, and a playbook manifest are a few

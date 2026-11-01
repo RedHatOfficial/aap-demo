@@ -1,4 +1,4 @@
-"""Phase 2 cluster operations over FakeRunner."""
+"""Day-2 cluster operations over FakeRunner."""
 
 from __future__ import annotations
 

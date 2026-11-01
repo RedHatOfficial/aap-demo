@@ -1,4 +1,4 @@
-"""Golden-file tests for every rendered manifest (design §14 R6).
+"""Golden-file tests for every rendered manifest.
 
 R6's instruction is explicit: switching from bash's ``awk``/``sed`` text
 munging to real YAML manipulation is the right call, *and* the rendered output

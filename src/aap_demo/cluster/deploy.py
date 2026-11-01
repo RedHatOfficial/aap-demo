@@ -1,8 +1,8 @@
-"""The deploy orchestration — one entry point ``cli/`` and ``gui/`` share (§2.1).
+"""The deploy orchestration — one entry point ``cli/`` and ``gui/`` share.
 
-Ports ``cmd_deploy`` (aap-demo.sh:2018-2083) and ``deploy_latest``
-(aap-demo.sh:2101-2229) as one ordered sequence. The order is bash's and is
-not rearranged (§14 R1's discipline, applied outside ``crc-create.sh``), except
+Ports ``cmd_deploy`` and ``deploy_latest``
+ as one ordered sequence. The order is bash's and is
+not rearranged, except
 for the NFS step, which bash leaves to ``create``:
 
     OVN → disk space → NFS storage → namespace (SCCs, PSA, pull secret) → CoreDNS →
@@ -12,11 +12,11 @@ for the NFS step, which bash leaves to ``create``:
 
 Two things bash does here are deliberately **not** ported:
 
-* ``_load_local_cache`` (aap-demo.sh:2217). §2.2's mapping table removes it
+* ``_load_local_cache``. It is removed
   from the deploy path outright — image caching becomes a day-2 operation
-  (§4.8.5) and the deploy path stops branching on whether an addon is enabled.
-* ``_aap_demo_run_addon_wire`` (aap-demo.sh:2065). Addon wiring needs the
-  addon registry, which is phase 5.
+ and the deploy path stops branching on whether an addon is enabled.
+* ``_aap_demo_run_addon_wire``. Addon wiring belongs to
+  the addon registry, not the deploy path.
 """
 
 from __future__ import annotations
@@ -36,11 +36,11 @@ from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
 
-#: ``_check_disk_space`` thresholds (aap-demo.sh:589-618).
+#: ``_check_disk_space`` thresholds.
 DISK_ERROR_PERCENT = 95
 DISK_WARN_PERCENT = 80
 
-#: ``_wait_for_ovn_ready`` (aap-demo.sh:933).
+#: ``_wait_for_ovn_ready``.
 OVN_NAMESPACE = "openshift-ovn-kubernetes"
 OVN_TIMEOUT_SECONDS = 180
 OVN_POLL_SECONDS = 5
@@ -306,7 +306,7 @@ def run(
     result.csv = csv_name
 
     if not olm.wait_csv_succeeded(ctx, ns, csv_name):
-        # §14 R5: bash's `|| true` made this indistinguishable from success.
+        # Bash's `|| true` made this indistinguishable from success.
         ctx.console.warn(f"CSV {csv_name} did not reach Succeeded — continuing as bash did")
         result.warnings.append(f"csv {csv_name} not Succeeded")
 
@@ -395,7 +395,7 @@ def _report_readiness(
     operator_elapsed: Optional[float] = None,
     aap_elapsed: Optional[float] = None,
 ) -> None:
-    """Ports ``watch_aap``'s terminal summary (aap-demo.sh:2607-2634)."""
+    """Ports ``watch_aap``'s terminal summary."""
     if readiness.ready:
         ctx.console.success("AAP deployment successful!")
     else:

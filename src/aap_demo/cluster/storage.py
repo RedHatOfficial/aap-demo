@@ -1,6 +1,6 @@
 """Pre-provisioned PVCs for the operator-managed workloads.
 
-Ports ``_ensure_aap_storage_pvcs`` (aap-demo.sh:2400-2422). The operator would
+Ports ``_ensure_aap_storage_pvcs``. The operator would
 otherwise create postgres and hub-redis PVCs against the cluster *default*
 StorageClass, which on this cluster is ``topolvm-provisioner``; creating them
 first, bound to ``nfs-local-rwx``, is how RWX storage gets used without making
@@ -27,7 +27,7 @@ def render_pvcs(template: str, *, namespace: str, aap_name: str) -> str:
     """Ports the ``sed -e s/__NAMESPACE__/…/g -e s/__AAP_NAME__/…/g`` pipeline.
 
     Kept as literal placeholder substitution rather than YAML manipulation:
-    unlike the CR and OLM edits (§14 R6), these placeholders are *designed*
+    unlike the CR and OLM edits, these placeholders are *designed*
     substitution points that appear inside composed names
     (``postgres-15-__AAP_NAME__-postgres-15-0``), not values a YAML path could
     address.

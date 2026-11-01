@@ -1,8 +1,8 @@
 """Kubeconfig/context preflight — ports ``setup_kubeconfig`` and
-``verify_cluster_type`` (aap-demo.sh:264-320).
+``verify_cluster_type``.
 
 Bash runs ``setup_kubeconfig`` from the dispatch block *before* every command
-that touches a cluster (aap-demo.sh:2861-2874): it checks ``kubectl`` exists,
+that touches a cluster: it checks ``kubectl`` exists,
 exports ``KUBECONFIG`` to the ``--kubeconfig`` override or the resolved
 default, re-extracts the kubeconfig over SSH when ``kubectl cluster-info``
 fails, and applies ``--context`` with ``kubectl config use-context``. The
@@ -29,8 +29,8 @@ from aap_demo.exec import ssh as ssh_mod
 from aap_demo.exec.runner import EnvRunner
 from aap_demo.infra import crc as infra_crc
 
-#: Bash uses a 2-second connect timeout for the refresh attempt specifically
-#: (aap-demo.sh:283), not ``CRC_SSH_OPTS``' 10 seconds.
+#: Bash uses a 2-second connect timeout for the refresh attempt specifically,
+#: not ``CRC_SSH_OPTS``' 10 seconds.
 REFRESH_CONNECT_TIMEOUT = 2
 
 
@@ -42,7 +42,7 @@ def _export(ctx: AppContext, path: Path) -> None:
 
 
 def _refresh_from_vm(ctx: AppContext, path: Path) -> bool:
-    """Ports the SSH re-extraction inside ``setup_kubeconfig`` (aap-demo.sh:277-292).
+    """Ports the SSH re-extraction inside ``setup_kubeconfig``.
 
     Bash writes the *raw* remote kubeconfig here (no rename — that is only
     ``cmd_kubeconfig``'s job) and any failure is silent: the stale kubeconfig
@@ -66,7 +66,7 @@ def _refresh_from_vm(ctx: AppContext, path: Path) -> bool:
 
 
 def _apply_context(ctx: AppContext) -> None:
-    """Ports the ``--context`` block (aap-demo.sh:296-306)."""
+    """Ports the ``--context`` block."""
     name = ctx.kube_context
     if not name:
         return
@@ -81,7 +81,7 @@ def _apply_context(ctx: AppContext) -> None:
 def setup_kubeconfig(
     ctx: AppContext, *, which: Optional[Callable[[str], Optional[str]]] = None
 ) -> Path:
-    """Ports ``setup_kubeconfig`` (aap-demo.sh:264-307). Returns the path in use.
+    """Ports ``setup_kubeconfig``. Returns the path in use.
 
     ``which`` is resolved on each call. A default argument would capture
     ``shutil.which`` at import, so a test patch — and a kubectl installed
@@ -98,7 +98,7 @@ def setup_kubeconfig(
     override = ctx.kubeconfig_override
     if override is not None:
         # Bash exits 1 rather than falling back when an explicit
-        # --kubeconfig does not exist (aap-demo.sh:267-271).
+        # --kubeconfig does not exist.
         if not override.is_file():
             raise AapDemoError(f"Kubeconfig file not found: {override}")
         _export(ctx, override)
@@ -115,7 +115,7 @@ def setup_kubeconfig(
 
 
 def warn_cluster_state(ctx: AppContext, runner: Any = None) -> None:
-    """Ports ``verify_cluster_type`` (aap-demo.sh:2853-2874).
+    """Ports ``verify_cluster_type``.
 
     Bash prints these with plain ``echo`` — stdout — before the command's own
     output, and never fails on them. Suppressed for structured JSON/YAML output.

@@ -24,11 +24,11 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    # CLI parsing is stdlib argparse (design §3.1) — no Click, no Typer, no Pydantic.
-    "pyyaml>=6.0",        # config, manifests, --output yaml. Pure-Python loaders only (§5.1).
-    "jsonschema>=4.0",    # config / manifest validation against the schema documents (§9.3)
-    "keyring>=24.0",      # OS-native credential storage (§5.5)
-    "argcomplete>=3.0",   # bash/zsh completion over the argparse parser (§3.1)
+    # CLI parsing is stdlib argparse — no Click, no Typer, no Pydantic.
+    "pyyaml>=6.0",        # config, manifests, --output yaml. Pure-Python loaders only.
+    "jsonschema>=4.0",    # config / manifest validation against the schema documents
+    "keyring>=24.0",      # OS-native credential storage
+    "argcomplete>=3.0",   # bash/zsh completion over the argparse parser
     "rich>=13.0",         # live terminal presentation (--output rich)
     # No platformdirs: config/cache/state dirs are hand-rolled strict XDG paths
     # on every OS right now, not native-per-OS. See core/paths.py's docstring.
@@ -79,7 +79,7 @@ extend-exclude = ["docs/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-# The 3.9 floor (§8.1) forbids PEP 585/604 syntax in any runtime-evaluated
+# The 3.9 floor forbids PEP 585/604 syntax in any runtime-evaluated
 # position -- type aliases, TypeVar bounds, dataclass field types without
 # `from __future__ import annotations`. Rather than allow it in some files and
 # not others, the whole family stays off until the floor moves to 3.10.

@@ -1,4 +1,4 @@
-"""``setup_namespace`` and ``_grant_sccs`` — order and both grant paths (§14 R3).
+"""``setup_namespace`` and ``_grant_sccs`` — order and both grant paths.
 
 R3's mitigation names this file's job: assert the exact call order via
 ``FakeRunner``, in both SCC branches. The order assertions use

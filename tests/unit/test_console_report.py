@@ -1,4 +1,4 @@
-"""``core/console.py``: the stdout/stderr split (design §2.2).
+"""``core/console.py``: the stdout/stderr split.
 
 ``report()`` is report *content* — always stdout, whatever the severity glyph.
 ``failure()``/``warn()`` stay stderr-only, for actual error conditions.

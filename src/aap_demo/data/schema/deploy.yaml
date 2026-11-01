@@ -1,4 +1,4 @@
-# AAP deployment settings — design §5.3 `deploy:` block.
+# AAP deployment settings.
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "aap-demo/deploy"
 type: object
@@ -26,8 +26,8 @@ properties:
     x-gui: {group: deploy, widget: text}
     x-order: 20
 
-  # Bash reads `CR=<name>` and resolves it to config/crs/aap-<name>.yaml
-  # (aap-demo.sh:2429-2438), so the value has always been one of the bundled
+  # Bash reads `CR=<name>` and resolves it to config/crs/aap-<name>.yaml,
+  # so the value has always been one of the bundled
   # names and never a path — the enum is the faithful shape, not a new
   # restriction, and it gives --cr real choices and the GUI a real select.
   # `minimal` is bash's `${CR:-minimal}`; `controller` is the light

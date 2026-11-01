@@ -1,4 +1,4 @@
-"""``cli/observe.py``: the ``status`` and ``diagnose`` command bodies (design §3.3)."""
+"""``cli/observe.py``: the ``status`` and ``diagnose`` command bodies."""
 
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ def test_diagnose_returns_0_when_fully_healthy(
 def test_diagnose_returns_0_when_issues_exist_but_the_cluster_is_reachable(
     app_ctx: AppContext, fake_runner: FakeRunner
 ) -> None:
-    """Bash exits 1 only on lost connectivity (aap-demo.sh:1046); §3.4 keeps
+    """Bash exits 1 only on lost connectivity; aap-demo keeps
     0/1/2 exactly as bash used them, so found issues still exit 0."""
     fake_runner.ok(
         "crc status -o json", stdout='{"crcStatus": "Running", "diskUse": 99, "diskSize": 100}'

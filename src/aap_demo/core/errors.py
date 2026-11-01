@@ -1,4 +1,4 @@
-"""Error hierarchy and the exit codes it maps to (design §3.4).
+"""Error hierarchy and the exit codes it maps to.
 
 Codes 0/1/2 are preserved exactly as the bash tool used them so anything scripted
 against ``aap-demo`` keeps working; 3-7 are refinements of what is currently 1.
@@ -69,8 +69,7 @@ class ConfigError(AapDemoError):
 class NotImplementedYetError(AapDemoError):
     """A command whose bash behavior has not been ported to Python yet.
 
-    Phase 0 ships the whole command surface as a skeleton; commands outside the
-    phase-0 scope raise this rather than pretending to succeed.
+    These commands raise this rather than pretending to succeed.
     """
 
     exit_code = 1

@@ -1,4 +1,4 @@
-"""``cluster/status.py``: ``aap-demo status`` data gathering (design §2.2).
+"""``cluster/status.py``: ``aap-demo status`` data gathering.
 
 ``version_mod.version_info``/``remote_url`` are monkeypatched to a canned
 value throughout — they have their own git-plumbing behavior (untested here
@@ -199,7 +199,7 @@ def test_gather_marks_ao_enabled_from_config(
 ) -> None:
     _register_running_cluster(fake_runner)
     # "ao" is already in config, so _ao_credentials skips the namespace probe
-    # and goes straight to the secret lookup (aap-demo.sh:1856-1862).
+    # and goes straight to the secret lookup.
     fake_runner.ok(
         ["kubectl", "get", "secret", "-n", "automation-orchestrator", "-o", "name"], stdout=""
     )
@@ -382,7 +382,7 @@ def test_render_text_aligns_aap_and_plain_namespace_rows(app_ctx: AppContext) ->
 
 
 def test_render_text_prints_source_even_when_unknown(app_ctx: AppContext) -> None:
-    """Bash prints ``Source:`` unconditionally (aap-demo.sh:1731)."""
+    """Bash prints ``Source:`` unconditionally."""
     report = status_mod.StatusReport(tool_version="1.0.0 (abc)", built="today")
     report.cluster_state = status_mod.infra_crc.STATE_RUNNING
 

@@ -1,9 +1,9 @@
-"""YAML configuration: load, layered resolution, validation, save (design §5.1, §5.3).
+"""YAML configuration: load, layered resolution, validation, save.
 
 Comments in ``config.yaml`` are ours, not the user's: the header block is
 regenerated on every write rather than round-tripped, which is what lets the
 file keep a schema-driven key order without a comment-preserving YAML library
-(§5.1, option 1).
+.
 
 PyYAML is used in pure-Python mode only — ``safe_load``/``safe_dump``, never
 ``CSafeLoader``/``CSafeDumper`` — so installing aap-demo never needs a compiler.
@@ -208,7 +208,7 @@ def resolve(
     """Layer defaults < file < env < explicit overrides, then validate once.
 
     One validator call over the merged result is what makes a bad value read the
-    same whether it arrived from a flag, an env var, the file, or the API (§9.3).
+    same whether it arrived from a flag, an env var, the file, or the API.
     """
     data = schema.defaults()
     data["schema_version"] = SCHEMA_VERSION

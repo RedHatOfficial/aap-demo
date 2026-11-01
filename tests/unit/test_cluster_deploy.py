@@ -1,4 +1,4 @@
-"""``cluster/deploy.py`` and the phase-3 CLI commands.
+"""``cluster/deploy.py`` and the deploy CLI commands.
 
 The deploy path is long, so the fixture below registers a *whole healthy
 deploy* and the individual tests break one thing each. That keeps every test
@@ -410,7 +410,7 @@ def test_missing_csv_after_ten_minutes_is_fatal(app_ctx, healthy) -> None:
 
 
 def test_csv_that_never_succeeds_warns_instead_of_passing_silently(app_ctx, healthy) -> None:
-    """§14 R5: bash's ``kubectl wait … || true`` made this invisible."""
+    """Bash's ``kubectl wait … || true`` made this invisible."""
     healthy._rules.insert(
         0,
         (

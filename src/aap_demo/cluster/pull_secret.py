@@ -1,11 +1,11 @@
 """Pull-secret discovery, secret creation, and ServiceAccount patching.
 
-Ports the second half of ``setup_namespace`` (aap-demo.sh:2350-2379) and
-``patch_operator_serviceaccounts`` (aap-demo.sh:2089-2103).
+Ports the second half of ``setup_namespace`` and
+``patch_operator_serviceaccounts``.
 
 The secret's *content* is never read, logged, or emitted as an event: bash
 hands the file to ``kubectl create secret --from-file``, and so does this, so
-the credential never enters the Python process (§5.5, R30).
+the credential never enters the Python process.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def _home(ctx: AppContext) -> Path:
 
 #: Bash sleeps 5s before patching operator SAs because the operator's own
 #: ServiceAccounts are created by the CSV install and do not exist the instant
-#: the CSV reports Succeeded (aap-demo.sh:2092).
+#: the CSV reports Succeeded.
 OPERATOR_SA_SETTLE_SECONDS = 5
 
 
@@ -111,7 +111,7 @@ def attach_to_default_sa(ctx: AppContext, namespace: str) -> None:
     """Merge, never replace — pods on the default SA (postgres, redis) need it.
 
     Bash builds the merged array with the new secret *first* and the existing
-    entries after it (aap-demo.sh:2369-2375); order is preserved here because
+    entries after it; order is preserved here because
     the kubelet tries pull secrets in list order.
     """
     ctx.console.progress("Adding the pull secret to the default ServiceAccount")
@@ -179,7 +179,7 @@ def patch_service_accounts(
     *,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
-    """Ports ``patch_operator_serviceaccounts`` (aap-demo.sh:2089).
+    """Ports ``patch_operator_serviceaccounts``.
 
     Bash filters ``kubectl get serviceaccount -o name`` through
     ``grep -E 'operator|controller'``; the same substring match is applied

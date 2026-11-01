@@ -1,4 +1,4 @@
-"""Package version plus git build metadata when running from a checkout (§8.2).
+"""Package version plus git build metadata when running from a checkout.
 
 Git metadata is meaningful only from a source tree; an installed wheel reports
 its site-packages location instead. Nothing here may raise when ``git`` is

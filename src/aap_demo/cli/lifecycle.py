@@ -1,10 +1,10 @@
-"""Cluster and AAP lifecycle commands (design §12.4).
+"""Cluster and AAP lifecycle commands.
 
 ``deploy``, ``clean``, ``redeploy``, ``redeploy-all``, ``setup``, ``create`` and
 ``destroy`` are implemented. ``start``, ``stop`` and ``repair`` stay in this
 module because they are thin wrappers, not stubs.
 The command functions are thin: every decision lives in ``cluster/``, which
-is what lets the GUI reach the same behavior without importing ``cli/`` (§2.2).
+is what lets the GUI reach the same behavior without importing ``cli/``.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from aap_demo.core.errors import AapDemoError
 from aap_demo.core.output import is_structured, render
 from aap_demo.infra import crc as infra_crc
 
-#: ``read -t 10`` before the destructive clean (aap-demo.sh:748).
+#: ``read -t 10`` before the destructive clean.
 CLEAN_CONFIRM_SECONDS = 10
 
 
@@ -36,7 +36,7 @@ def create(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def deploy(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_deploy`` (aap-demo.sh:2018).
+    """Ports ``cmd_deploy``.
 
     Exit status follows bash: reaching the CR and then timing out in
     ``watch_aap`` is a failure (bash's ``return 1``), while the
@@ -50,7 +50,7 @@ def deploy(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def redeploy(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_redeploy`` (aap-demo.sh:1902): clean, pause, deploy."""
+    """Ports ``cmd_redeploy``: clean, pause, deploy."""
     _clean(ctx)
     time.sleep(2)
     ctx.console.out("")
@@ -80,7 +80,7 @@ def redeploy_all(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def setup(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_setup`` (aap-demo.sh:2013), which is one ``echo`` and nothing else.
+    """Ports ``cmd_setup``, which is one ``echo`` and nothing else.
 
     The help text says "Run setup only (storage, coredns)", but that work
     moved into ``crc-create.sh`` long ago and the command has been a pointer

@@ -1,5 +1,5 @@
 """``diagnostics/checks.py``: ``aap-demo diagnose`` (minus ``--ai``) over
-realistic fixture cluster states (design §7.2's "no cluster, pending PVC,
+realistic fixture cluster states ("no cluster, pending PVC,
 missing supplementalGroups, ..." states, each becoming a fixture + a test).
 """
 
@@ -21,7 +21,7 @@ def test_unreachable_cluster_stops_after_the_cluster_section(fake_runner: FakeRu
     assert len(report.sections) == 1
     assert report.sections[0].name == "Cluster"
     assert any(c.level == "fail" for c in report.sections[0].checks)
-    # Bash returns 1 immediately (aap-demo.sh:1041-1045) — no Storage/Security/
+    # Bash returns 1 immediately — no Storage/Security/
     # AAP Deployment/DNS section, and no kubectl calls beyond cluster-info.
     assert not fake_runner.called("kubectl get")
 

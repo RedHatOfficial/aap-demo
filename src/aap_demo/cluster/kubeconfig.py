@@ -1,11 +1,10 @@
-"""Kubeconfig extraction and renaming (design §2.2: ``cmd_kubeconfig`` →
-``cluster/kubeconfig.py::sync()``).
+"""Kubeconfig extraction and renaming, ported from ``cmd_kubeconfig``.
 
 Bash performs the rename — the generic ``microshift``/``user`` names CRC ships
 collide across clusters, so it renames them to a unique ``aap-demo`` context —
 via a dozen individual ``kubectl config ...`` subcommands run against a
 scratch ``KUBECONFIG``, including two uses of process substitution to decode
-embedded cert/key data (aap-demo.sh:1606-1683). This port does the equivalent
+embedded cert/key data. This port does the equivalent
 rewrite as a single in-memory dict edit (PyYAML is already a base dependency
 for the config layer) instead: same outcome — one cluster/context/user named
 ``aap-demo``, TLS verification disabled the same way bash's
@@ -59,8 +58,8 @@ def _rename(raw: Dict[str, Any]) -> Dict[str, Any]:
     if clusters:
         # Bash builds a *fresh* cluster entry — ``kubectl config set-cluster
         # aap-demo --server=... --insecure-skip-tls-verify=true`` against a
-        # name that does not exist yet — then unsets the original
-        # (aap-demo.sh:1653-1657). Insecure TLS verification is intentional
+        # name that does not exist yet — then unsets the original.
+        # Insecure TLS verification is intentional
         # for local CRC / MicroShift 127.0.0.1 self-signed certificates (ADR-010).
         # The result therefore carries the server and
         # the insecure flag and nothing else: no certificate-authority-data,
@@ -107,7 +106,7 @@ def _validate(runner: Any, raw_text: str) -> None:
 def write_private(destination: Path, text: str) -> Path:
     """Write ``text`` to ``destination`` so it is never world-readable.
 
-    Ports bash's ``mktemp`` + ``chmod 600`` + ``mv`` (aap-demo.sh:1631-1673):
+    Ports bash's ``mktemp`` + ``chmod 600`` + ``mv``:
     the file is created 0600 *before* any content is written and then renamed
     into place, so cluster-admin credentials never exist at the process umask,
     not even for the instant between ``write_text`` and ``chmod``.
@@ -128,7 +127,7 @@ def write_private(destination: Path, text: str) -> Path:
 
 
 def sync(runner: Any, *, key: Path, destination: Path, validate: bool = True) -> Path:
-    """Ports ``cmd_kubeconfig`` (aap-demo.sh:1606-1683). Returns ``destination``."""
+    """Ports ``cmd_kubeconfig``. Returns ``destination``."""
     raw_text = extract_raw(runner, key)
 
     if validate:

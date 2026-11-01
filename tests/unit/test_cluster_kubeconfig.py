@@ -1,6 +1,4 @@
-"""``cluster/kubeconfig.py``: extraction, validation, and the rename (design
-§2.2: ``cmd_kubeconfig`` → ``cluster/kubeconfig.py::sync()``).
-"""
+"""``cluster/kubeconfig.py``: extraction, validation, and the rename."""
 
 from __future__ import annotations
 

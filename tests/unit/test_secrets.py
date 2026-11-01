@@ -1,4 +1,4 @@
-"""SecretStore contract tests (design §5.5).
+"""SecretStore contract tests.
 
 The two that must never be deleted: the no-backend hard-failure path, and the
 assertion that this module has no filesystem write path at all.
@@ -46,7 +46,7 @@ def backed_store() -> SecretStore:
 
 
 def test_construction_never_resolves_the_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A keyring-less machine must still be able to run `status` and `deploy` (§5.5.3)."""
+    """A keyring-less machine must still be able to run `status` and `deploy`."""
     import keyring
 
     def explode() -> None:
@@ -150,7 +150,7 @@ _FILESYSTEM_MODULES = {"os", "io", "shutil", "pathlib", "tempfile", "os.path"}
 
 
 def test_secrets_module_has_no_filesystem_write_path() -> None:
-    """§5.5 is explicit: SecretStore must have no code path that opens a file.
+    """SecretStore must have no code path that opens a file.
 
     The name index therefore lives in the keyring itself. This test is the thing
     that stops a future 'small' cache file from reintroducing plaintext secrets

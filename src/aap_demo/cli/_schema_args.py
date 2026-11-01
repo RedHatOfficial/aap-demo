@@ -1,4 +1,4 @@
-"""Generate argparse arguments from a JSON Schema document (design §9.3).
+"""Generate argparse arguments from a JSON Schema document.
 
 Three deliberate omissions, each with a reason:
 
@@ -25,12 +25,12 @@ _TYPES = {"string": str, "integer": int, "number": float}
 #: Options that may be hand-written because they are verbs or output modifiers,
 #: not settings — they have no config or GUI analogue. ``test_schema_parity``
 #: fails on any optional argument outside this list that is not schema-derived.
-#: The design's §3.1 allowlist is the first group; the rest are per-command
+#: The global options are the first group; the rest are per-command
 #: modifiers of the same kind (a flag that changes what a command *does*, not a
 #: value it persists).
 CLI_ONLY_OPTIONS = frozenset(
     {
-        # §3.1's explicit allowlist
+        # Global options
         "--output",
         "--quiet",
         "-q",

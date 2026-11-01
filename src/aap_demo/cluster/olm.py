@@ -3,16 +3,16 @@
 Two halves:
 
 * :func:`ensure_installed` ports ``addons/olm/deploy.sh``. Per the design's
-  three-tier model (§4.5) ``olm`` is a **built-in**, not an addon, so it lands
+  three-tier model ``olm`` is a **built-in**, not an addon, so it lands
   here rather than as an addon plugin — MicroShift ships no OLM and nothing
   else in the deploy path works without it.
-* :func:`install_operator` ports the OLM half of ``deploy_latest``
-  (aap-demo.sh:2101-2214): render and apply the three manifests, wait for the
+* :func:`install_operator` ports the OLM half of ``deploy_latest``:
+  render and apply the three manifests, wait for the
   catalog, wait for the CSV.
 
-**§14 R6 applies to the renderers below.** Bash patches these manifests with
+**The renderers below are structural on purpose.** Bash patches these manifests with
 ``sed`` on substrings. That is reproduced here as real YAML manipulation,
-which is R6's own recommendation, and the golden-file tests in
+and the golden-file tests in
 ``tests/unit/test_olm_render.py`` pin every rendered document against what
 bash's ``sed`` pipeline actually emits.
 
@@ -56,17 +56,17 @@ OPERATORS_NAMESPACE = "operators"
 OPERATORHUB_CATALOG = "operatorhubio-catalog"
 
 CSV_PREFIX = "aap-operator."
-#: ``for i in $(seq 1 60)`` at 10s — ten minutes (aap-demo.sh:2196-2204).
+#: ``for i in $(seq 1 60)`` at 10s — ten minutes.
 CSV_APPEAR_ATTEMPTS = 60
 CSV_APPEAR_INTERVAL = 10
-#: ``kubectl wait --timeout=600s`` (aap-demo.sh:2214).
+#: ``kubectl wait --timeout=600s``.
 CSV_SUCCEED_TIMEOUT = 600
 
 _INDEX_TAG_RE = re.compile(r"redhat-operator-index:v[0-9.]*")
 
 
 # ---------------------------------------------------------------------------
-# Manifest rendering (§14 R6)
+# Manifest rendering
 # ---------------------------------------------------------------------------
 
 
@@ -241,7 +241,7 @@ def wait_for_csv(
 def wait_csv_succeeded(ctx: AppContext, namespace: str, csv_name: str) -> bool:
     """Ports the ``kubectl wait … || true`` on the CSV phase — without the ``|| true``.
 
-    §14 R5: bash discards this result, so a CSV that never reaches Succeeded
+    Bash discards this result, so a CSV that never reaches Succeeded
     looks identical to one that did and the failure only surfaces much later
     as a missing operator. The result is returned here and the caller warns.
     """

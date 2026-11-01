@@ -1,4 +1,4 @@
-"""The event/progress abstraction (design §9.4)."""
+"""The event/progress abstraction."""
 
 from __future__ import annotations
 

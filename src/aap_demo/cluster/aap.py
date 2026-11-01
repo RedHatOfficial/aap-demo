@@ -1,9 +1,9 @@
 """The AnsibleAutomationPlatform CR: render, apply, patch, wait, tear down.
 
-Ports ``create_aap_instance`` (aap-demo.sh:2424), ``_patch_gateway_capability``
-(aap-demo.sh:2477) and ``_clean_operator``'s AAP half (aap-demo.sh:750-780).
+Ports ``create_aap_instance``, ``_patch_gateway_capability``
+ and ``_clean_operator``'s AAP half.
 
-**§14 R6 applies to :func:`render_cr`.** Bash injects ``route_host`` with an
+**Rendering :func:`render_cr` is structural on purpose.** Bash injects ``route_host`` with an
 awk line-insertion keyed on the literal text ``storage_type: file``:
 
     awk -v host=… '/storage_type: file/{print; print "    route_host: " host; next} {print}'
@@ -51,7 +51,7 @@ def _as_list(value: Any) -> List[Any]:
     return []
 
 
-#: ``cr_name="${CR:-minimal}"`` (aap-demo.sh:2429).
+#: ``cr_name="${CR:-minimal}"``.
 DEFAULT_CR = "minimal"
 CR_FILENAME = "aap-{name}.yaml"
 
@@ -59,11 +59,11 @@ CR_FILENAME = "aap-{name}.yaml"
 GATEWAY_ATTEMPTS = 60
 GATEWAY_INTERVAL = 5
 
-#: ``watch_aap``'s budget (aap-demo.sh:2529).
+#: ``watch_aap``'s budget.
 WATCH_TIMEOUT = 3600
 WATCH_INTERVAL = 10
 
-#: ``watch_aap``'s secret-name fallbacks (aap-demo.sh:2601).
+#: ``watch_aap``'s secret-name fallbacks.
 ADMIN_SECRET_FALLBACKS = (
     "aap-admin-password",
     "aap-controller-admin-password",
@@ -96,7 +96,7 @@ def cr_metadata_name(document: Dict[str, Any]) -> str:
 
 
 def route_host_for(namespace: str) -> str:
-    """``aap-hub-<ns>.apps.127.0.0.1.nip.io`` (aap-demo.sh:2464)."""
+    """``aap-hub-<ns>.apps.127.0.0.1.nip.io``."""
     return f"aap-hub-{namespace}.apps.127.0.0.1.nip.io"
 
 
@@ -158,11 +158,11 @@ def cr_template_name(document: Dict[str, Any], *, namespace: str) -> str:
 
 
 def public_url_for(ctx: AppContext) -> Optional[str]:
-    """Ports the PUBLIC_URL auto-construction (aap-demo.sh:2441-2456).
+    """Ports the PUBLIC_URL auto-construction.
 
     ``POD_NAME``/``POD_NAMESPACE``/``BASE_DOMAIN`` stay raw env vars rather
     than schema fields: they exist only for the one off-cluster deployment
-    shape the noingress CR serves, and §3.2's env list keeps them working.
+    shape the noingress CR serves, and their environment variables keep them working.
     """
     configured = str(ctx.config.get("deploy.public_url", "") or "")
     if configured:
@@ -189,7 +189,7 @@ def instance_name(ctx: AppContext, namespace: Optional[str] = None) -> str:
 
 
 def existing_instance(ctx: AppContext, namespace: Optional[str] = None) -> str:
-    """Ports the ``AAP_EXISTS`` short-circuit probe in ``cmd_deploy`` (aap-demo.sh:2057)."""
+    """Ports the ``AAP_EXISTS`` short-circuit probe in ``cmd_deploy``."""
     ns = namespace or ctx.namespace
     listing = ctx.runner.run(["kubectl", "get", "aap", "-n", ns])
     if not listing.ok:
@@ -262,7 +262,7 @@ def patch_gateway_capability(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> bool:
-    """Ports ``_patch_gateway_capability`` (aap-demo.sh:2477).
+    """Ports ``_patch_gateway_capability``.
 
     The gateway binds a privileged port, so its ``api`` container needs
     NET_BIND_SERVICE. OpenShift Local's restricted SCC also needs supplemental
@@ -844,14 +844,13 @@ def wait_ready(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> AapReadiness:
-    """The non-interactive half of ``watch_aap`` (aap-demo.sh:2521-2609).
+    """The non-interactive half of ``watch_aap``.
 
     ``watch_aap`` is two things at once: a full-screen, ``clear``-ing status
     dashboard, and the deploy path's terminal wait for
     ``conditions[type=Successful].status == "True"``. Only the second belongs
-    to phase 3; the dashboard is ``aap-demo watch``, which §12.4 puts in
-    phase 2. The success criterion, the 60-minute budget, the 10-second
-    interval, and the credential lookup are the same.
+    here; the dashboard is ``aap-demo watch``. The success criterion, the
+    60-minute budget, the 10-second interval, and the credential lookup are the same.
     """
     from aap_demo.cluster import pull_secret as pull_secret_mod
     from aap_demo.exec import kubectl
@@ -926,7 +925,7 @@ def teardown(
     which: Optional[Callable[[str], Optional[str]]] = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
-    """Ports ``_clean_operator``'s deletion half (aap-demo.sh:750-784).
+    """Ports ``_clean_operator``'s deletion half.
 
     The owner-reference strip is load-bearing, not tidiness: the AAP CR's
     children carry ``blockOwnerDeletion: true``, so deleting the namespace
@@ -951,7 +950,7 @@ def teardown(
         ctx.console.progress("Cleaning up OLM resources")
         sdk_mod.cleanup(ctx, OPERATOR_PACKAGE, ns)
         # `operator-sdk cleanup` scales OLM's own deployments down on some
-        # versions; bash scales them straight back up (aap-demo.sh:758).
+        # versions; bash scales them straight back up.
         ctx.runner.run(
             [
                 "kubectl",

@@ -1,4 +1,4 @@
-"""``core/waiting.py`` — the one poll primitive (design §14 R5).
+"""``core/waiting.py`` — the one poll primitive.
 
 Every test here runs on an injected clock; none of them sleep.
 """

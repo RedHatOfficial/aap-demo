@@ -1,4 +1,4 @@
-"""SSH access to the CRC VM (design §2.2 mapping table, R10).
+"""SSH access to the CRC VM.
 
 Key detection and remote command execution go through the normal
 ``CommandRunner`` seam like any other subprocess call. Only
@@ -64,7 +64,7 @@ def ssh_options(key: Path, *, connect_timeout: int = 10) -> List[str]:
 
 
 def interactive_ssh_options(key: Path) -> List[str]:
-    """Exactly the options bash's ``cmd_ssh`` passes (aap-demo.sh:1596-1604).
+    """Exactly the options bash's ``cmd_ssh`` passes.
 
     Deliberately *not* ``CRC_SSH_OPTS``: ``BatchMode=yes`` would disable
     password/passphrase prompting, so a passphrase-protected key could not be
@@ -97,8 +97,8 @@ def remote_argv(
     # every remote token has to be quoted *here*, or a script passed as
     # ``python3 -c <source>`` arrives as bare shell words and dies on the
     # first parenthesis. Bash never hit this because it always passed one
-    # already-quoted string (includes/olm-catalog-signature.sh:88,
-    # aap-demo.sh:1751). Caught by the phase-3 live deploy, which reported
+    # already-quoted string (includes/olm-catalog-signature.sh).
+    # Caught by a live deploy, which reported
     # "Could not relax signature policy via SSH" for a VM that was reachable.
     argv.append(" ".join(shlex.quote(token) for token in remote))
     return argv
@@ -127,10 +127,10 @@ def interactive_shell(
     exit_func: Callable[[int], Any] = sys.exit,
     is_windows: Optional[bool] = None,
 ) -> None:
-    """Ports ``cmd_ssh`` (aap-demo.sh:1596-1604): ``exec ssh -p 2222 ...``.
+    """Ports ``cmd_ssh``: ``exec ssh -p 2222 ...``.
 
-    This deliberately bypasses ``CommandRunner``/``SubprocessRunner`` (design
-    §2.2's "only exec/runner.py may call subprocess" rule, and §14 R10):
+    This deliberately bypasses ``CommandRunner``/``SubprocessRunner`` (the
+    "only exec/runner.py may call subprocess" rule):
     the bash original replaces the current process with an interactive ssh
     session, and any wrapper that captures stdout/stderr — which is the
     entire point of ``CommandRunner`` — would break that interactive session

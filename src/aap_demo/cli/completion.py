@@ -1,7 +1,7 @@
-"""``aap-demo completion`` — phase 0 stub.
+"""``aap-demo completion`` — not implemented yet.
 
 bash/zsh completion is backed by argcomplete over the argparse parser; fish and
-PowerShell get hand-written scripts shipped as package data (design §3.1).
+PowerShell get hand-written scripts shipped as package data.
 """
 
 from __future__ import annotations

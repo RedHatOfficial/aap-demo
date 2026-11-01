@@ -1,4 +1,4 @@
-"""``cli/ops.py::redhat_status`` (design §3.3 phase 1: ``cmd_redhat_status``).
+"""``cli/ops.py::redhat_status``.
 
 Fetches via ``curl`` through the ``CommandRunner`` (see the docstring on
 ``_fetch_rss`` for why), so a realistic RSS payload is fed in as the curl

@@ -26,7 +26,7 @@ from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
 
 # ---------------------------------------------------------------------------
-# Implemented in phase 0
+# Version and configuration
 # ---------------------------------------------------------------------------
 
 
@@ -111,7 +111,7 @@ def config(ctx: AppContext, args: argparse.Namespace) -> int:
             )
         if not config_file.is_file():
             config_mod.write(config_file, ctx.config.as_dict())
-        # Through the runner seam like every other subprocess (§2.2), with
+        # Through the runner seam like every other subprocess, with
         # capture off so the editor inherits the terminal.
         return ctx.runner.run([editor, str(config_file)], capture=False).returncode
 
@@ -161,7 +161,7 @@ def _config_secrets(ctx: AppContext, args: argparse.Namespace) -> int:
         return 0
 
     if action == "set":
-        # Never an argv value: it would land in shell history (§5.5.2).
+        # Never an argv value: it would land in shell history.
         if not sys.stdin.isatty():
             value = sys.stdin.read().strip()
         else:
@@ -196,15 +196,15 @@ def _config_secrets(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Implemented in phase 1
+# Read-only commands
 # ---------------------------------------------------------------------------
 
 
 def ssh(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_ssh`` (aap-demo.sh:1596-1604).
+    """Ports ``cmd_ssh``.
 
     See ``exec/ssh.py::interactive_shell`` for why this bypasses the
-    ``CommandRunner`` capture path entirely (design §14 R10).
+    ``CommandRunner`` capture path entirely.
     """
     key = ssh_mod.detect_ssh_key(ssh_mod.crc_machines_dir(ctx.env))
     if key is None:
@@ -214,7 +214,7 @@ def ssh(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def kubeconfig(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_kubeconfig`` (aap-demo.sh:1606-1683)."""
+    """Ports ``cmd_kubeconfig``."""
     ctx.console.out("")
     ctx.console.step("aap-demo kubeconfig - Syncing local aap-demo kubeconfig...")
     ctx.console.out("")
@@ -286,14 +286,12 @@ def _unescape_xml_entities(text: str) -> str:
 
 
 def _fetch_rss(runner: Any) -> str:
-    """Ports the ``curl -s --connect-timeout 5`` fetch (aap-demo.sh:841).
+    """Ports the ``curl -s --connect-timeout 5`` fetch.
 
     Goes through ``CommandRunner`` (curl, as bash already shells out to)
     rather than a Python HTTP client, so it stays inside the single
-    "everything is a subprocess call the runner mediates" seam (§7.2) and is
-    FakeRunner-testable without adding an HTTP-client dependency the design
-    doc's mapping table suggested (``httpx``/``urllib``) but nothing else in
-    phase 1 needs.
+    "everything is a subprocess call the runner mediates" seam and is
+    FakeRunner-testable without adding an HTTP-client dependency.
     """
     try:
         result = runner.run(
@@ -306,7 +304,7 @@ def _fetch_rss(runner: Any) -> str:
 
 
 def _parse_incidents(rss_content: str) -> List[Dict[str, str]]:
-    """Ports the active-incident RSS parse (aap-demo.sh:849-874)."""
+    """Ports the active-incident RSS parse."""
     collapsed = rss_content.replace("\n", " ")
     incidents: List[Dict[str, str]] = []
     for match in _ITEM_RE.finditer(collapsed):
@@ -332,7 +330,7 @@ def _parse_incidents(rss_content: str) -> List[Dict[str, str]]:
 
 
 def redhat_status(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_redhat_status`` (aap-demo.sh:834-883).
+    """Ports ``cmd_redhat_status``.
 
     Bash prints the header *before* fetching, so a failed fetch still shows
     it; the same order is kept here.
@@ -356,7 +354,7 @@ def redhat_status(ctx: AppContext, args: argparse.Namespace) -> int:
     ctx.console.out("=================")
     if not incidents:
         # Report content, not an error condition: bash printed all of this to
-        # stdout, glyph included (aap-demo.sh:869-880).
+        # stdout, glyph included.
         ctx.console.report("No active registry-related incidents", status="ok", indent=2)
     else:
         for incident in incidents:
@@ -372,7 +370,7 @@ def redhat_status(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 stubs
+# Day-2 operations
 # ---------------------------------------------------------------------------
 
 

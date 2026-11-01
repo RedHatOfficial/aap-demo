@@ -137,7 +137,7 @@ ADRs document:
 **Use the `/aap-addon-development` skill** to:
 - Create new addons with proper structure
 - Generate `deploy.sh` with deploy and delete modes
-- Register addon in `AVAILABLE_ADDONS` (aap-demo.sh:3002)
+- Register addon in `AVAILABLE_ADDONS` in `aap-demo.sh`
 - Document dependencies and prerequisites
 - Test enable/disable lifecycle
 

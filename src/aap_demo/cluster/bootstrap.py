@@ -1,7 +1,7 @@
-"""MicroShift ``create`` and ``destroy`` (design §12.4 phase 4).
+"""MicroShift ``create`` and ``destroy``.
 
 Ports ``includes/crc-create.sh`` for the MicroShift preset and ``cmd_destroy``.
-The OpenShift preset is phase 4b and is refused here. Step order matches bash,
+The OpenShift preset is refused here. Step order matches bash,
 including the CoreDNS configuration at the end and the post-create stability
 wait from upstream #199.
 """
@@ -485,7 +485,7 @@ def create(
     if preset != "microshift":
         raise AapDemoError(
             "The OpenShift preset is not available in this release",
-            hint="Use the MicroShift preset. Full OpenShift support is a later phase.",
+            hint="Use the MicroShift preset.",
         )
 
     home = Path(ctx.env.get("HOME") or Path.home())

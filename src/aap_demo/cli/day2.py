@@ -1,4 +1,4 @@
-"""Day-2 playbook commands — phase 0 stubs (the day2 package lands in phase 6b).
+"""Day-2 playbook commands — not implemented yet.
 
 Named ``day2`` rather than ``playbooks`` because ``cli/ops.py`` already carries
 idle/ssh/config; the user-facing noun everywhere is still "playbooks".

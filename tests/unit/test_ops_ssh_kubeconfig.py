@@ -1,6 +1,6 @@
-"""``cli/ops.py``: ``ssh`` and ``kubeconfig`` command bodies (design §3.3 phase 1).
+"""``cli/ops.py``: ``ssh`` and ``kubeconfig`` command bodies.
 
-``ssh`` replaces the process on success (design §14 R10), so these tests only
+``ssh`` replaces the process on success, so these tests only
 exercise it through ``exec/ssh.py::interactive_shell``'s injectable seams —
 never the real ``os.execvp`` default — to avoid actually spawning ssh.
 """
@@ -167,7 +167,7 @@ def test_oc_exec_sets_kubeconfig_and_hides_the_home_directory(tmp_path: Path) ->
 
 
 def test_config_edit_goes_through_the_runner(app_ctx: AppContext, fake_runner: FakeRunner) -> None:
-    """Only ``exec/runner.py`` may call subprocess (design §2.2)."""
+    """Only ``exec/runner.py`` may call subprocess."""
     app_ctx.env = {"EDITOR": "vi"}
     fake_runner.ok(["vi"])
 

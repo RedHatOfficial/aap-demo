@@ -2,18 +2,18 @@
 
 Two entry points, both of which ``deploy`` touches:
 
-* :func:`verify` ports ``verify_coredns`` (aap-demo.sh:2231-2260), which
+* :func:`verify` ports ``verify_coredns``, which
   ``deploy_latest`` calls immediately after ``setup_namespace``. It is a
   *detector*: it re-configures only when the rewrite rule is missing, or
   present but malformed (a Corefile containing both ``router-internal-default``
   and a stray ``baseDomain:`` is the malformed shape bash learned to spot).
 * :func:`configure` ports ``configure_coredns`` (includes/crc-create.sh:58).
   ``verify`` shells out to it in bash by re-sourcing ``crc-create.sh`` with
-  ``AAP_DEMO_CONFIGURE_COREDNS_ONLY=1``; here it is simply a call. The rest of
-  ``crc-create.sh`` is phase 4 — only this function is on the deploy path.
+  ``AAP_DEMO_CONFIGURE_COREDNS_ONLY=1``; here it is simply a call. Only this
+  function is on the deploy path.
 
 The re-patch after the first attempt is not defensive padding: MicroShift's
-DNS controller overwrites the ConfigMap during startup (§14 R1), so bash
+DNS controller overwrites the ConfigMap during startup, so bash
 patches, waits, checks, and patches again before giving up with a warning.
 """
 
@@ -195,7 +195,7 @@ def read_corefile(ctx: AppContext) -> str:
 
 
 def needs_configuration(corefile: str) -> bool:
-    """Ports ``verify_coredns``'s two-branch test (aap-demo.sh:2240-2249).
+    """Ports ``verify_coredns``'s two-branch test.
 
     Note the asymmetry, preserved deliberately: a Corefile *with* the rewrite
     is only considered broken when it also mentions ``baseDomain:`` — the
@@ -303,7 +303,7 @@ def configure(
 
 
 def verify(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> bool:
-    """Ports ``verify_coredns`` (aap-demo.sh:2231). Never fails the deploy."""
+    """Ports ``verify_coredns``. Never fails the deploy."""
     corefile = read_corefile(ctx)
     if not corefile:
         # No DNS ConfigMap at all — not a MicroShift-shaped cluster, or the API

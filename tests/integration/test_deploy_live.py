@@ -1,4 +1,4 @@
-"""Phase 3 against a real cluster (design §12.4: "first ``@pytest.mark.integration``").
+"""The deploy path against a real cluster.
 
 Three kinds of test here, in increasing cost:
 
@@ -285,5 +285,5 @@ def _delete_namespace(ctx, name: str) -> None:
 
 
 def _scc_granted(ctx, name: str, namespace: str) -> bool:
-    """All three grant shapes (§14 R3 plus the one this live run turned up)."""
+    """All three grant shapes."""
     return scc.grant_present(ctx, name, namespace)

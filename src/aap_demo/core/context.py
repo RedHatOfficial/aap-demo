@@ -3,7 +3,7 @@
 Every seam the test suite substitutes hangs off this object: the runner, the
 console, the secret store, and the event emitter. ``cluster/``, ``addons/``,
 ``gui/``, and ``desktop/`` all receive one of these; none of them import
-``cli/`` (design §2.2).
+``cli/``.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class AppContext:
     kubeconfig_override: Optional[Path] = None
     kube_context: Optional[str] = None
 
-    #: Preserves bash's ``_NAMESPACE_EXPLICIT`` (aap-demo.sh:59) — ``test``
+    #: Preserves bash's ``_NAMESPACE_EXPLICIT`` — ``test``
     #: behaves differently when the namespace was set explicitly vs. defaulted.
     namespace_explicit: bool = False
 

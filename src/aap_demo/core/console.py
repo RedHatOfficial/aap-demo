@@ -549,7 +549,7 @@ class Console:
         cluster-state word, the AAP CR name in a padded namespace row). Doing
         that through ``out(..., color=...)`` would color the whole line and,
         worse, shift padded columns; this keeps the escape codes inside
-        ``console.py`` (§2.2) while the caller owns the layout.
+        ``console.py`` while the caller owns the layout.
         """
         return self._paint(text, color)
 

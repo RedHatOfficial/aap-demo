@@ -1,4 +1,4 @@
-"""Live-cluster fixtures (design §7.3 — the ``integration`` marker).
+"""Live-cluster fixtures.
 
 Every test in this package needs a real CRC/MicroShift cluster. None of them
 may *fail* when one is absent: ``pyproject.toml`` deselects the marker by

@@ -1,4 +1,4 @@
-"""Read-only observation commands (design §2.2, §3.3 phase 1)."""
+"""Read-only observation commands."""
 
 from __future__ import annotations
 
@@ -14,14 +14,11 @@ from aap_demo.diagnostics import report as diagnose_report
 
 
 def status(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_status`` (aap-demo.sh:1685-1884).
+    """Ports ``cmd_status``.
 
-    Bash also runs ``_check_for_updates`` (aap-demo.sh:2792) before ``status``.
-    That is **deliberately deferred**, not forgotten: §12.3 replaces the
-    ``git fetch``-and-prompt mechanism with a release-manifest check
-    (``core/updater.py``, §10.5) that only exists once the ``update`` command
-    and the signed-release pipeline do — phase 2/3 work. Porting the git
-    version now would build the thing the design deletes.
+    Bash also runs ``_check_for_updates`` before ``status``.
+    That is deliberately not ported. The ``git fetch``-and-prompt mechanism is
+    meant to be replaced by a release-manifest check, not carried over.
     """
     report = status_mod.gather(ctx)
     if not is_structured(ctx.output):
@@ -49,9 +46,9 @@ def diagnose(ctx: AppContext, args: argparse.Namespace) -> int:
     else:
         diagnose_report.render_text(ctx.console, report)
 
-    # Bash returns 1 *only* when kubectl cannot connect (aap-demo.sh:1046):
+    # Bash returns 1 *only* when kubectl cannot connect:
     # issues found on a reachable cluster still exit 0. That is deliberate,
-    # not an oversight — §3.4 requires exit codes 0/1/2 stay "exactly as today
+    # not an oversight — exit codes must 0/1/2 stay "exactly as today
     # for anything scripted against the tool", and scripts today read
     # `diagnose`'s status as "did we get a report?", not "is everything
     # green?". Callers that want the issue count read --output json.

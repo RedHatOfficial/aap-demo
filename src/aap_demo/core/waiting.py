@@ -1,15 +1,15 @@
-"""One polling primitive for every long wait (design §14 R5).
+"""One polling primitive for every long wait.
 
-R5's finding is that bash's waits use ``kubectl wait … || true``, ``|| true``
+Bash's waits use ``kubectl wait … || true``, ``|| true``
 around the catalog poll, and bare ``for i in $(seq …)`` loops, so a timeout is
-indistinguishable from success at the call site. Every phase-3 wait goes
+indistinguishable from success at the call site. Every deploy wait goes
 through :func:`wait_for` instead: it returns a :class:`WaitResult` whose
 ``ok`` the caller *must* look at, and the clock and the sleep are injected so
 the unit tests run in microseconds instead of the real 10-minute budgets.
 
-This module is not in the design's §2.1 tree. It lives in ``core/`` rather
-than being duplicated across the seven ``cluster/`` modules that need it,
-because R5 asks for exactly one helper with exactly one timeout policy.
+It lives in ``core/`` rather than being duplicated across the seven
+``cluster/`` modules that need it, so there is one helper with one timeout
+policy.
 """
 
 from __future__ import annotations

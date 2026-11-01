@@ -1,9 +1,6 @@
-"""``aap-demo diagnose`` checks (design §2.2: ``cmd_diagnose`` (+``_check_*``) →
-``diagnostics/checks.py`` + ``report.py`` + ``ai.py``).
+"""``aap-demo diagnose`` checks, ported from ``cmd_diagnose`` and its ``_check_*``.
 
-``--ai`` (``ai.py``, shelling out to the ``claude`` CLI) is explicitly out of
-scope for phase 1 — it is stubbed at the CLI layer (``cli/observe.py``) rather
-than here.
+``--ai`` is handled at the CLI layer (``cli/observe.py``), not here.
 """
 
 from __future__ import annotations
@@ -56,7 +53,7 @@ class DiagnoseReport:
 
 class _Recorder:
     """Ports the ``_check_pass``/``_check_fail``/``_check_warn``/``_check_info``
-    closures defined inline in bash's ``cmd_diagnose`` (aap-demo.sh:1020-1028)."""
+    closures defined inline in bash's ``cmd_diagnose``."""
 
     def __init__(self) -> None:
         self.section = Section(name="")
@@ -95,7 +92,7 @@ def _kubectl_lines(runner: Any, *args: str) -> List[str]:
 
 
 def _check_cluster(runner: Any, rec: _Recorder) -> bool:
-    """Returns whether the cluster is reachable. Ports aap-demo.sh:1030-1053."""
+    """Returns whether the cluster is reachable."""
     rec.start("Cluster")
     crc_state = infra_crc.get_state(runner)
     if crc_state == infra_crc.STATE_RUNNING:
@@ -114,7 +111,7 @@ def _check_cluster(runner: Any, rec: _Recorder) -> bool:
 
 
 def _check_storage(runner: Any, rec: _Recorder) -> None:
-    """Ports aap-demo.sh:1058-1093."""
+    """Check the storage classes and NFS server."""
     rec.start("Storage")
 
     if runner.run(["kubectl", "get", "sc", "topolvm-provisioner"]).ok:
@@ -167,7 +164,7 @@ def _check_storage(runner: Any, rec: _Recorder) -> None:
 
 
 def _check_security(runner: Any, namespace: str, rec: _Recorder) -> None:
-    """Ports aap-demo.sh:1098-1163."""
+    """Check the namespace security settings."""
     rec.start("Security")
 
     ns_exists = runner.run(["kubectl", "get", "namespace", namespace]).ok
@@ -273,7 +270,7 @@ def _aap_condition(runner: Any, aap_name: str, namespace: str, kind: str, field:
 
 
 def _check_aap_deployment(runner: Any, namespace: str, rec: _Recorder) -> None:
-    """Ports aap-demo.sh:1168-1234."""
+    """Check the AAP deployment."""
     rec.start("AAP Deployment")
 
     name_result = runner.run(
@@ -330,7 +327,7 @@ def _check_aap_deployment(runner: Any, namespace: str, rec: _Recorder) -> None:
 
 
 def _check_dns(runner: Any, rec: _Recorder) -> None:
-    """Ports aap-demo.sh:1239-1246."""
+    """Check cluster DNS."""
     rec.start("DNS")
     running = _count(
         _kubectl_lines(runner, "get", "pods", "-n", "openshift-dns", "--no-headers"), "Running"
@@ -342,14 +339,14 @@ def _check_dns(runner: Any, rec: _Recorder) -> None:
 
 
 def run(runner: Any, namespace: str) -> DiagnoseReport:
-    """Ports ``cmd_diagnose`` (aap-demo.sh:1012-1300), minus ``--ai`` (§2.2)."""
+    """Ports ``cmd_diagnose``, minus ``--ai``."""
     report = DiagnoseReport()
     rec = _Recorder()
 
     reachable = _check_cluster(runner, rec)
     report.sections.append(rec.section)
     if not reachable:
-        # Bash returns 1 immediately here (aap-demo.sh:1041-1045) — no further
+        # Bash returns 1 immediately here — no further
         # section, and no summary, is printed when kubectl cannot connect.
         report.cluster_reachable = False
         report.issues = rec.issues
