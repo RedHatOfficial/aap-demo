@@ -244,10 +244,15 @@ def create_instance(
     document = yaml.safe_load(manifest)
     annotations = (document.setdefault("metadata", {})).setdefault("annotations", {})
     annotations["aap-demo/cr"] = name
+    from aap_demo.cluster import pull_secret as pull_secret_mod
+
+    # Set this when the instance is created. Patching it in afterward makes the
+    # operator restart redis, postgres and the gateway once its first pass ends,
+    # after every component has already reported that it is ready.
+    if pull_secret_mod.discover(ctx) is not None:
+        document.setdefault("spec", {})["image_pull_secrets"] = [pull_secret_mod.SECRET_NAME]
     manifest = yaml.safe_dump(document, sort_keys=False, default_flow_style=False)
     kubectl.apply_stdin(ctx.runner, manifest, "-n", ns).check()
-
-    from aap_demo.cluster import pull_secret as pull_secret_mod
 
     pull_secret_mod.attach_to_workload(ctx, ns, aap_name)
 

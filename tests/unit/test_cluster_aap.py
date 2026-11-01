@@ -137,6 +137,40 @@ def test_create_instance_applies_into_the_namespace(app_ctx) -> None:
     assert cr_apply.argv == ("kubectl", "apply", "-f", "-", "-n", "other")
 
 
+def _applied_cr(runner) -> dict:
+    applied = [c for c in runner.calls if "kind: AnsibleAutomationPlatform" in (c.input or "")]
+    assert len(applied) == 1
+    return yaml.safe_load(applied[0].input)
+
+
+def test_create_instance_sets_the_pull_secret_when_it_creates_the_cr(
+    app_ctx, monkeypatch, tmp_path
+) -> None:
+    """A later patch would restart redis, postgres and the gateway after deploy reports ready."""
+    from aap_demo.cluster import pull_secret as pull_secret_mod
+
+    monkeypatch.setattr(pull_secret_mod, "discover", lambda _ctx: tmp_path / "pull-secret.txt")
+    monkeypatch.setattr(pull_secret_mod, "attach_to_workload", lambda *_args: None)
+    runner = _create_runner()
+    app_ctx.runner = runner
+
+    aap_mod.create_instance(app_ctx, cr_name="minimal", namespace=NS, sleep=lambda _s: None)
+
+    assert _applied_cr(runner)["spec"]["image_pull_secrets"] == [pull_secret_mod.SECRET_NAME]
+
+
+def test_create_instance_leaves_the_pull_secret_out_without_a_file(app_ctx, monkeypatch) -> None:
+    from aap_demo.cluster import pull_secret as pull_secret_mod
+
+    monkeypatch.setattr(pull_secret_mod, "discover", lambda _ctx: None)
+    runner = _create_runner()
+    app_ctx.runner = runner
+
+    aap_mod.create_instance(app_ctx, cr_name="minimal", namespace=NS, sleep=lambda _s: None)
+
+    assert "image_pull_secrets" not in _applied_cr(runner)["spec"]
+
+
 def test_cr_defaults_to_minimal_when_config_is_empty(app_ctx) -> None:
     app_ctx.config.set("deploy.cr", "")
     runner = _create_runner()
