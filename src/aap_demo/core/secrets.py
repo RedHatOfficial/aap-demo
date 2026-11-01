@@ -173,7 +173,7 @@ class SecretStore:
                     f"Could not delete the {name} credential",
                     hint=f"{self.backend_name} reported {type(exc).__name__}. "
                     "The credential is still stored.",
-                ) from exc
+                ) from None
         index = self._read_index()
         if account in index:
             self._write_index([n for n in index if n != account])

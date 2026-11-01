@@ -202,6 +202,8 @@ def test_a_failed_delete_is_reported_and_stays_listed(backed_store: SecretStore)
     with pytest.raises(AapDemoError, match="Could not delete") as caught:
         backed_store.delete("admin-password")
     assert "s3cret" not in (caught.value.hint or "")
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__
     assert backed_store.get("admin-password") == "s3cret"
     assert [ref.name for ref in backed_store.list()] == ["admin-password"]
 
