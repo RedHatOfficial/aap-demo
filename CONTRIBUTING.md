@@ -38,7 +38,7 @@ tools is in [Linting](docs/LINTING.md).
 
 ## Test
 
-For a Python change, run the same checks the `v2` pull request workflow runs:
+For a Python change, run the same checks the pull request workflow runs:
 
 ```bash
 python -m pytest tests/unit -q
@@ -87,7 +87,7 @@ Commitizen. Keep each body line within 100 characters.
 
 ## Open a pull request
 
-Push your branch and open the pull request against `v2`.
+Push your branch and open the pull request against `main`.
 
 The title uses the same conventional format as the commit subject. Fill in the
 pull request template. The test plan should list the commands you ran and what
