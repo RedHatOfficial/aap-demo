@@ -5,7 +5,7 @@ Ports ``cmd_deploy`` (aap-demo.sh:2018-2083) and ``deploy_latest``
 not rearranged (§14 R1's discipline, applied outside ``crc-create.sh``), except
 for the NFS step, which bash leaves to ``create``:
 
-    disk space → NFS storage → namespace (SCCs, PSA, pull secret) → CoreDNS →
+    OVN → disk space → NFS storage → namespace (SCCs, PSA, pull secret) → CoreDNS →
     signature policy → CatalogSource → catalog wait → OperatorGroup →
     Subscription → CSV appears → CSV Succeeded → AAP CR → gateway patch →
     readiness
@@ -23,14 +23,15 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aap_demo.cluster import aap as aap_mod
-from aap_demo.cluster import bootstrap, catalog_signature, coredns, olm
+from aap_demo.cluster import bootstrap, catalog_signature, coredns, olm, runtime
 from aap_demo.cluster import namespace as namespace_mod
 from aap_demo.core.console import format_elapsed
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import AapDemoError, ClusterUnreachableError
+from aap_demo.core.errors import AapDemoError, ClusterUnreachableError, env_number
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
@@ -38,6 +39,11 @@ from aap_demo.infra import crc as infra_crc
 #: ``_check_disk_space`` thresholds (aap-demo.sh:589-618).
 DISK_ERROR_PERCENT = 95
 DISK_WARN_PERCENT = 80
+
+#: ``_wait_for_ovn_ready`` (aap-demo.sh:933).
+OVN_NAMESPACE = "openshift-ovn-kubernetes"
+OVN_TIMEOUT_SECONDS = 180
+OVN_POLL_SECONDS = 5
 
 
 @dataclass
@@ -104,6 +110,59 @@ def check_disk_space(ctx: AppContext) -> bool:
     return True
 
 
+def _daemonset_ready(ctx: AppContext, name: str) -> Tuple[int, int]:
+    """``(ready, desired)`` pods, with an unreadable figure as 0."""
+
+    def read(field_name: str) -> int:
+        raw = kubectl.jsonpath(
+            ctx.runner,
+            "daemonset",
+            name,
+            "-n",
+            OVN_NAMESPACE,
+            path=f"{{.status.{field_name}}}",
+        )
+        return int(raw) if raw.isdigit() else 0
+
+    return read("numberReady"), read("desiredNumberScheduled")
+
+
+def wait_for_ovn(
+    ctx: AppContext,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Ports ``_wait_for_ovn_ready``.
+
+    The API can answer while OVN is still crash-looping, and pods then cannot
+    get a sandbox. Stop here rather than in a long operator or AAP wait.
+    """
+    if not kubectl.exists(ctx.runner, "namespace", OVN_NAMESPACE):
+        raise AapDemoError(
+            f"OVN namespace '{OVN_NAMESPACE}' was not found",
+            hint="The cluster network is not ready for AAP deployment.",
+        )
+    timeout = int(env_number(ctx.env, "AAP_OVN_TIMEOUT", OVN_TIMEOUT_SECONDS))
+    started = clock()
+    while True:
+        node_ready, node_desired = _daemonset_ready(ctx, "ovnkube-node")
+        master_ready, master_desired = _daemonset_ready(ctx, "ovnkube-master")
+        if 0 < node_desired == node_ready and 0 < master_desired == master_ready:
+            ctx.console.checkpoint("OVN networking is ready")
+            return
+        if clock() - started >= timeout:
+            raise AapDemoError(
+                f"OVN networking was not ready after {timeout}s",
+                hint=f"Check: kubectl get pods -n {OVN_NAMESPACE} -o wide",
+            )
+        ctx.console.progress(
+            f"Waiting for OVN: node {node_ready}/{node_desired}, "
+            f"master {master_ready}/{master_desired}"
+        )
+        sleep(OVN_POLL_SECONDS)
+
+
 def _preset(ctx: AppContext) -> str:
     return str(ctx.config.get("crc.preset", "microshift") or "microshift")
 
@@ -133,6 +192,7 @@ def run(
             "Infrastructure: OpenShift Local",
             "Connecting to the cluster",
             "Trusting the ingress certificate",
+            "Waiting for cluster networking",
             "Installing OLM",
             "Setting up NFS storage",
             "Waiting for the operator catalog",
@@ -162,6 +222,9 @@ def run(
 
     if not infra_crc.verify_version(ctx):
         raise AapDemoError("CRC version check failed")
+
+    ctx.console.step("Waiting for cluster networking")
+    wait_for_ovn(ctx, sleep=sleep, clock=clock)
 
     if not ctx.force:
         existing = aap_mod.existing_instance(ctx, ns)
@@ -361,24 +424,33 @@ def _report_readiness(
 
 
 def ensure_cluster_running(ctx: AppContext) -> str:
-    """Ports ``cmd_deploy``'s opening cluster-state branch (aap-demo.sh:2025-2033).
+    """Ports ``cmd_deploy``'s opening cluster-state branch.
 
-    Only *reports* here: ``create`` and ``start`` are phase 4 and phase 2, so
-    a not-created or stopped cluster raises with bash's own next-step text
-    rather than silently doing nothing.
+    A missing cluster is created and a stopped one is started, so ``deploy``
+    works from any state. CRC reports ``Stopped`` on a host with no VM, so that
+    state alone does not choose between them. A VM whose status cannot be read
+    is an error, because creating over it would hide the real problem. Returns
+    the state found before that work.
     """
     state = infra_crc.get_state(ctx.runner)
-    if state == infra_crc.STATE_NOT_CREATED:
+    if state == infra_crc.STATE_RUNNING:
+        return state
+    home = Path(ctx.env.get("HOME") or Path.home())
+    if not infra_crc.has_instance(ctx.runner, home=home):
+        ctx.console.out("No cluster found. Creating one first...")
+        bootstrap.create(ctx)
+    elif state == infra_crc.STATE_STOPPED:
+        ctx.console.out("Cluster is stopped. Starting...")
+        runtime.start(ctx)
+    else:
         raise ClusterUnreachableError(
-            "No cluster found.",
-            hint="Run: aap-demo create",
-        )
-    if state == infra_crc.STATE_STOPPED:
-        raise ClusterUnreachableError(
-            "Cluster is stopped.",
-            hint="Run: crc start",
+            "A CRC VM exists, but its status could not be read",
+            hint=(
+                "Check: crc status, and which crc is first on PATH.\n"
+                "  To replace the VM: aap-demo destroy --yes"
+            ),
         )
     return state
 
 
-__all__ = ["DeployResult", "check_disk_space", "ensure_cluster_running", "run"]
+__all__ = ["DeployResult", "check_disk_space", "ensure_cluster_running", "run", "wait_for_ovn"]

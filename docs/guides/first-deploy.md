@@ -74,8 +74,8 @@ aap-demo deploy
 aap-demo status
 ```
 
-`deploy` installs AAP 2.7 unless you [choose another version](choose-a-version.md). It also starts a cluster
-that was stopped. It does not add extra demo content.
+`deploy` installs AAP 2.7 unless you [choose another version](choose-a-version.md). It creates a cluster
+if there is none and starts one that was stopped. It does not add extra demo content.
 
 `status` prints the web address and the admin password. Open that address in your browser.
 

@@ -9,6 +9,7 @@ silently skipped stage.
 
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 import pytest
@@ -92,6 +93,7 @@ def healthy(app_ctx, tmp_path, monkeypatch) -> FakeRunner:
     runner.ok("operator-sdk olm status")
     runner.ok("crc status")
     runner.ok("kubectl get namespace")
+    runner.ok("kubectl get daemonset", stdout="1")
     runner.ok("kubectl create namespace")
     runner.ok("oc adm policy add-scc-to-group")
     runner.ok("kubectl label namespace")
@@ -725,18 +727,106 @@ def test_deploy_command_exit_code_follows_readiness(
     assert lifecycle.deploy(app_ctx, _args()) == expected
 
 
-def test_deploy_refuses_when_no_cluster_exists(app_ctx) -> None:
-    app_ctx.runner = FakeRunner().ok("crc status", stdout='{"crcStatus": "Unknown"}')
-    with pytest.raises(ClusterUnreachableError) as excinfo:
-        lifecycle.deploy(app_ctx, _args())
-    assert "aap-demo create" in (excinfo.value.hint or "")
+def _cluster_state(app_ctx, monkeypatch, tmp_path, status: dict, machine: bool = False) -> list:
+    app_ctx.env = {"HOME": str(tmp_path)}
+    if machine:
+        directory = tmp_path / ".crc" / "machines" / "crc"
+        directory.mkdir(parents=True)
+        (directory / "config.json").write_text("{}")
+    app_ctx.runner = FakeRunner().ok("crc status", stdout=json.dumps(status))
+    calls: list = []
+    monkeypatch.setattr(deploy_mod.bootstrap, "create", lambda ctx: calls.append("create"))
+    monkeypatch.setattr(deploy_mod.runtime, "start", lambda ctx: calls.append("start"))
+    return calls
 
 
-def test_deploy_refuses_when_the_cluster_is_stopped(app_ctx) -> None:
-    app_ctx.runner = FakeRunner().ok("crc status", stdout='{"crcStatus": "Stopped"}')
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ({"crcStatus": "Unknown"}, ["create"]),
+        # CRC reports Stopped on a host that never had a VM.
+        ({"crcStatus": "Stopped"}, ["create"]),
+        ({"crcStatus": "Stopped", "openshiftVersion": "4.22.3"}, ["start"]),
+        ({"crcStatus": "Running"}, []),
+    ],
+)
+def test_deploy_brings_up_the_cluster_from_any_state(
+    app_ctx, monkeypatch, tmp_path, status, expected
+) -> None:
+    calls = _cluster_state(app_ctx, monkeypatch, tmp_path, status)
+    deploy_mod.ensure_cluster_running(app_ctx)
+    assert calls == expected
+
+
+def test_an_unreadable_status_never_creates_over_an_existing_vm(
+    app_ctx, monkeypatch, tmp_path
+) -> None:
+    calls = _cluster_state(app_ctx, monkeypatch, tmp_path, {}, machine=True)
     with pytest.raises(ClusterUnreachableError) as excinfo:
+        deploy_mod.ensure_cluster_running(app_ctx)
+    assert "could not be read" in excinfo.value.message
+    assert "which crc" in (excinfo.value.hint or "")
+    assert calls == []
+
+
+def test_a_failed_create_stops_the_deploy(app_ctx, monkeypatch, tmp_path) -> None:
+    _cluster_state(app_ctx, monkeypatch, tmp_path, {"crcStatus": "Unknown"})
+
+    def fail(ctx) -> None:
+        raise AapDemoError("create failed")
+
+    monkeypatch.setattr(deploy_mod.bootstrap, "create", fail)
+    monkeypatch.setattr(
+        deploy_mod, "run", lambda ctx, **kw: pytest.fail("deploy must not continue")
+    )
+    with pytest.raises(AapDemoError):
         lifecycle.deploy(app_ctx, _args())
-    assert "crc start" in (excinfo.value.hint or "")
+
+
+def _ovn(runner: FakeRunner, ready) -> None:
+    runner.register(
+        "kubectl get daemonset",
+        lambda argv: CompletedCommand(
+            argv=argv,
+            returncode=0,
+            stdout="1" if "desiredNumberScheduled" in argv[-1] else next(ready),
+        ),
+    )
+
+
+def test_ovn_wait_ends_when_every_pod_is_ready(app_ctx) -> None:
+    runner = FakeRunner().ok("kubectl get namespace")
+    _ovn(runner, iter(["0", "1", "1", "1"]))
+    app_ctx.runner = runner
+    clock = Clock()
+    deploy_mod.wait_for_ovn(app_ctx, sleep=clock.sleep, clock=clock)
+    assert clock.now == deploy_mod.OVN_POLL_SECONDS
+
+
+def test_ovn_that_never_becomes_ready_stops_the_deploy(app_ctx, healthy) -> None:
+    healthy._rules.insert(
+        0, (("kubectl", "get", "daemonset"), CompletedCommand(argv=(), returncode=0, stdout="0"))
+    )
+    app_ctx.env = {**app_ctx.env, "AAP_OVN_TIMEOUT": "10"}
+    with pytest.raises(AapDemoError) as excinfo:
+        _run(app_ctx, cr_name="controller")
+    assert "OVN networking was not ready after 10s" in excinfo.value.message
+    assert not healthy.called("kubectl create namespace")
+
+
+def test_a_bad_ovn_timeout_names_the_variable(app_ctx) -> None:
+    app_ctx.runner = FakeRunner().ok("kubectl get namespace")
+    app_ctx.env = {"AAP_OVN_TIMEOUT": "3m"}
+    with pytest.raises(AapDemoError) as excinfo:
+        deploy_mod.wait_for_ovn(app_ctx, sleep=lambda _s: None)
+    assert excinfo.value.message == "AAP_OVN_TIMEOUT must be a number, got '3m'"
+
+
+def test_missing_ovn_namespace_is_fatal(app_ctx) -> None:
+    app_ctx.runner = FakeRunner().fail("kubectl get namespace")
+    with pytest.raises(AapDemoError) as excinfo:
+        deploy_mod.wait_for_ovn(app_ctx, sleep=lambda _s: None)
+    assert "openshift-ovn-kubernetes" in excinfo.value.message
 
 
 def _args():

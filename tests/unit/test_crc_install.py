@@ -96,3 +96,20 @@ def test_remove_old_bundle_cache_deletes_only_the_named_version(tmp_path: Path) 
     assert crc_install.remove_old_bundle_cache(tmp_path, "4.21.0") == 1
     assert not old.exists()
     assert keep.is_dir()
+
+
+def test_install_file_gives_the_target_a_new_inode(tmp_path: Path) -> None:
+    """macOS kills a signed binary overwritten in place, with exit 137."""
+    source = tmp_path / "new"
+    source.write_text("new")
+    dest = tmp_path / "crc"
+    dest.write_text("old")
+    earlier = tmp_path / "earlier"
+    os.link(dest, earlier)
+
+    crc_install._install_file(source, dest)
+
+    assert dest.read_text() == "new"
+    # A hard link to the old inode keeps the old bytes only after a rename.
+    assert earlier.read_text() == "old"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["crc", "earlier", "new"]

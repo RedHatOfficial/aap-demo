@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import base64
+import json
+
+import pytest
 
 from aap_demo.cluster import runtime
+from aap_demo.core.errors import AapDemoError
 from aap_demo.exec.runner import CompletedCommand, FakeRunner
 
 
@@ -118,3 +122,40 @@ def test_analyze_sends_diagnostics_to_claude(app_ctx) -> None:
     assert runtime.analyze(app_ctx, which=lambda _name: "/usr/bin/claude") == 0
     assert runner.called("claude -p")
     assert "Restart the gateway pod." in app_ctx.console.stdout
+
+
+def _starting(app_ctx, monkeypatch, status: str) -> FakeRunner:
+    monkeypatch.setattr(runtime.preflight, "setup_kubeconfig", lambda ctx: None)
+    monkeypatch.setattr(runtime.coredns, "configure", lambda ctx, sleep: True)
+    app_ctx.env = {
+        "AAP_DEMO_CRC_STABILITY_ATTEMPTS": "3",
+        "AAP_DEMO_CRC_STABILITY_SLEEP": "0",
+    }
+    runner = FakeRunner().ok("crc start")
+    runner.ok("crc status", stdout=json.dumps({"crcStatus": status, "openshiftStatus": "Running"}))
+    runner.ok("kubectl")
+    app_ctx.runner = runner
+    return runner
+
+
+def test_start_reports_success_once_crc_stays_up(app_ctx, monkeypatch) -> None:
+    _starting(app_ctx, monkeypatch, "Running")
+    runtime.start(app_ctx, sleep=lambda _s: None)
+    assert "CRC cluster started" in app_ctx.console.stdout
+
+
+def test_start_fails_when_crc_start_fails(app_ctx, monkeypatch) -> None:
+    runner = _starting(app_ctx, monkeypatch, "Running")
+    runner._rules.insert(0, (("crc", "start"), CompletedCommand(argv=(), returncode=3)))
+    with pytest.raises(AapDemoError) as excinfo:
+        runtime.start(app_ctx, sleep=lambda _s: None)
+    assert "exit 3" in excinfo.value.message
+    assert "CRC cluster started" not in app_ctx.console.stdout
+
+
+def test_start_fails_when_crc_exits_zero_and_then_stops(app_ctx, monkeypatch) -> None:
+    _starting(app_ctx, monkeypatch, "Stopped")
+    with pytest.raises(AapDemoError) as excinfo:
+        runtime.start(app_ctx, sleep=lambda _s: None)
+    assert "did not stay running" in excinfo.value.message
+    assert "CRC cluster started" not in app_ctx.console.stdout
