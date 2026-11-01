@@ -45,12 +45,14 @@ def test_explicit_kubeconfig_is_exported_to_every_later_call(
     override = tmp_path / "mine.yaml"
     override.write_text("apiVersion: v1\n")
     app_ctx.kubeconfig_override = override
+    fake_runner.ok("kubectl --kubeconfig", stdout="https://127.0.0.1:6443")
 
     preflight.setup_kubeconfig(app_ctx, which=lambda name: "/usr/bin/kubectl")
 
     # No connectivity probe and no refresh for an explicit --kubeconfig
     # (bash takes the override branch and skips both).
-    assert fake_runner.calls == []
+    assert not fake_runner.called("kubectl cluster-info")
+    assert not fake_runner.called("ssh")
 
     fake_runner.ok("kubectl get ns")
     app_ctx.runner.run(["kubectl", "get", "ns"])
@@ -82,6 +84,7 @@ def test_unreachable_cluster_refreshes_the_kubeconfig_over_ssh(
 
     fake_runner.fail("kubectl cluster-info")
     fake_runner.ok("ssh -p 2222", stdout="apiVersion: v1\nkind: Config\n")
+    fake_runner.ok("kubectl --kubeconfig", stdout="https://127.0.0.1:6443")
 
     path = preflight.setup_kubeconfig(app_ctx)
 

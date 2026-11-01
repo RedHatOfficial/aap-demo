@@ -228,3 +228,18 @@ def _write_and_ok(argv, dest):
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text("#!/bin/sh\n")
     return CompletedCommand(argv=argv, returncode=0)
+
+
+@pytest.mark.parametrize(
+    ("kind", "apply"),
+    [
+        ("CatalogSource", lambda ctx: olm.apply_catalogsource(ctx, NS, "4.22")),
+        ("OperatorGroup", lambda ctx: olm.apply_operatorgroup(ctx, NS)),
+        ("Subscription", lambda ctx: olm.apply_subscription(ctx, NS, "stable-2.7")),
+    ],
+)
+def test_a_rejected_manifest_stops_the_deploy(app_ctx, kind, apply) -> None:
+    app_ctx.runner = FakeRunner().fail("kubectl apply -f -", stderr="forbidden")
+    with pytest.raises(AapDemoError, match=f"Could not apply the {kind}") as caught:
+        apply(app_ctx)
+    assert caught.value.hint == "forbidden"

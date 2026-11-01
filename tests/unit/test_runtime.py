@@ -159,3 +159,15 @@ def test_start_fails_when_crc_exits_zero_and_then_stops(app_ctx, monkeypatch) ->
         runtime.start(app_ctx, sleep=lambda _s: None)
     assert "did not stay running" in excinfo.value.message
     assert "CRC cluster started" not in app_ctx.console.stdout
+
+
+def test_idle_reports_a_rejected_patch(app_ctx) -> None:
+    runner = FakeRunner()
+    runner.ok(["kubectl", "get", "aap", "-n", "aap-operator", "-o"], stdout="demo")
+    runner.ok(["kubectl", "get", "aap", "demo", "-n", "aap-operator", "-o"], stdout="false")
+    runner.fail("kubectl patch", stderr="admission webhook denied")
+    app_ctx.runner = runner
+    with pytest.raises(AapDemoError, match="Could not set idle_aap") as caught:
+        runtime.idle(app_ctx, "true")
+    assert "admission webhook denied" in (caught.value.hint or "")
+    assert "set to idle" not in app_ctx.console.stdout
