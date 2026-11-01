@@ -13,6 +13,11 @@ from aap_demo.core.paths import Paths
 from aap_demo.core.secrets import InMemorySecretStore
 from aap_demo.exec.runner import FakeRunner
 
+# Tests must never reach the developer's real credential store. On macOS that
+# can raise a Keychain dialog. A test that needs a backend supplies its own. The
+# variable also covers any child process a test starts.
+os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.fail.Keyring"
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 

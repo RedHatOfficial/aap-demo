@@ -57,6 +57,10 @@ def test_construction_never_resolves_the_keyring(monkeypatch: pytest.MonkeyPatch
     SecretStore().scoped("portal")  # scoping must not resolve either
 
 
+def test_the_suite_cannot_reach_the_real_credential_store() -> None:
+    assert SecretStore().available() is False
+
+
 def test_resolution_happens_once(monkeypatch: pytest.MonkeyPatch) -> None:
     import keyring
 
