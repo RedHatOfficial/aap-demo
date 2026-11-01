@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aap_demo.cluster import pull_secret
+import pytest
+
+from aap_demo.cluster import pull_secret, storage
 from aap_demo.core.context import AppContext
+from aap_demo.core.errors import AapDemoError
+from aap_demo.exec.runner import FakeRunner
 
 
 def _write(path: Path, text: str = "{}\n") -> Path:
@@ -60,3 +64,31 @@ def test_unset_hint_uses_a_tilde_when_state_is_under_home(
     assert "~/state/pull-secret.txt" in hint
     assert "config set pull-secret" in hint
     assert "pull-secret.json" in hint
+
+
+def test_a_rejected_secret_stops_before_the_service_account(app_ctx: AppContext) -> None:
+    _write(app_ctx.paths.pull_secret)
+    app_ctx.config.set("deploy.pull_secret_path", "")
+    runner = FakeRunner().ok("kubectl delete secret").fail("kubectl create secret", stderr="denied")
+    app_ctx.runner = runner
+    with pytest.raises(AapDemoError, match="Could not create") as caught:
+        pull_secret.ensure(app_ctx, "aap-operator")
+    assert caught.value.hint == "denied"
+    assert not runner.called("kubectl patch serviceaccount")
+
+
+def test_a_rejected_service_account_patch_is_reported(app_ctx: AppContext) -> None:
+    runner = FakeRunner().ok("kubectl get serviceaccount", stdout="")
+    runner.fail("kubectl patch serviceaccount", stderr="forbidden")
+    app_ctx.runner = runner
+    with pytest.raises(AapDemoError, match="default ServiceAccount") as caught:
+        pull_secret.attach_to_default_sa(app_ctx, "aap-operator")
+    assert caught.value.hint == "forbidden"
+
+
+def test_rejected_pvcs_stop_the_deploy(app_ctx: AppContext) -> None:
+    runner = FakeRunner().ok("kubectl get sc").fail("kubectl apply -f -", stderr="quota exceeded")
+    app_ctx.runner = runner
+    with pytest.raises(AapDemoError, match="Could not create the PVCs") as caught:
+        storage.ensure_aap_pvcs(app_ctx, aap_name="aap", namespace="aap-operator")
+    assert caught.value.hint == "quota exceeded"

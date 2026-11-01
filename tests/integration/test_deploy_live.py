@@ -206,10 +206,12 @@ def test_deployed_aap_has_running_pods(live_ctx, deployed) -> None:
     assert result.ok
     pods = json.loads(result.stdout)["items"]
     assert pods, "no pods in the namespace"
+    # OLM starts a short-lived catalog pod on every registry poll (10 minutes).
     unhealthy = [
         pod["metadata"]["name"]
         for pod in pods
         if pod["status"].get("phase") not in ("Running", "Succeeded")
+        and "olm.catalogSource" not in pod["metadata"].get("labels", {})
     ]
     assert not unhealthy, f"pods not Running/Succeeded: {unhealthy}"
 
