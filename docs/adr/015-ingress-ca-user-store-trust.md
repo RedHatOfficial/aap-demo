@@ -97,7 +97,8 @@ Requires `nss-tools` package (`certutil`). Without it, system trust may work for
 curl but browsers remain untrusted.
 
 The Python CLI (`cluster/ingress_ca.py`) replaces only a missing or stale entry and
-reads each database back before it reports browser trust. It does not install
+reads each database's certificate and trust flags back before it reports browser
+trust. It does not install
 `nss-tools`. It warns with the package name when a browser database exists, and
 stays quiet on a machine with neither `certutil` nor a browser database. System
 trust uses `sudo -n` and prints the command when sudo needs a password.

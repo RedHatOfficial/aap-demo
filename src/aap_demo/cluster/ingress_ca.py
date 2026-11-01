@@ -137,7 +137,7 @@ def _nss_databases(ctx: AppContext) -> List[Path]:
     found = [
         candidate
         for candidate in (_default_nss_database(ctx), home / ".local" / "share" / "pki" / "nssdb")
-        if candidate.is_dir()
+        if (candidate / "cert9.db").is_file()
     ]
     firefox = home / ".mozilla" / "firefox"
     if firefox.is_dir():
@@ -148,12 +148,20 @@ def _nss_databases(ctx: AppContext) -> List[Path]:
 
 
 def _nss_holds(ctx: AppContext, database: Path, expected: str) -> bool:
-    """True when the nickname exists in ``database`` and only names the expected CA."""
+    """True when the nickname names only the expected CA and may issue server certs."""
     listed = ctx.runner.run(["certutil", "-d", f"sql:{database}", "-L", "-n", NSS_NICKNAME, "-a"])
     if not listed.ok:
         return False
     pems = pem_certificates(listed.stdout)
-    return bool(pems) and all(fingerprint(pem) == expected for pem in pems)
+    if not pems or any(fingerprint(pem) != expected for pem in pems):
+        return False
+    table = ctx.runner.run(["certutil", "-d", f"sql:{database}", "-L"])
+    for line in table.stdout.splitlines() if table.ok else []:
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == NSS_NICKNAME:
+            server_flags = fields[1].split(",")[0]
+            return "C" in server_flags or "T" in server_flags
+    return False
 
 
 def _browser_trust(ctx: AppContext, path: Path, *, system: str) -> str:

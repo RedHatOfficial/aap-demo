@@ -257,6 +257,7 @@ class _Nss:
 
     def __init__(self, runner: FakeRunner, *, accept_import: bool = True) -> None:
         self.databases: dict = {}
+        self.flags = "C,,"
         self.created: list = []
         self.accept_import = accept_import
         runner.register("certutil", self._run)
@@ -265,12 +266,18 @@ class _Nss:
         target = argv[argv.index("-d") + 1]
         if "-N" in argv:
             self.created.append(target)
+        elif "-L" in argv and "-n" not in argv:
+            listed = (
+                f"{ingress_ca.NSS_NICKNAME}    {self.flags}\n" if target in self.databases else ""
+            )
+            return CompletedCommand(argv=argv, returncode=0, stdout=listed)
         elif "-L" in argv and target in self.databases:
             return CompletedCommand(argv=argv, returncode=0, stdout=self.databases[target])
         elif "-D" in argv and target in self.databases:
             del self.databases[target]
         elif "-A" in argv and self.accept_import:
             self.databases[target] = Path(argv[argv.index("-i") + 1]).read_text(encoding="utf-8")
+            self.flags = argv[argv.index("-t") + 1]
         else:
             return CompletedCommand(argv=argv, returncode=1)
         return CompletedCommand(argv=argv, returncode=0)
@@ -293,6 +300,12 @@ def _linux_host(
     return home, anchor
 
 
+def _nss_database(path: Path) -> Path:
+    path.mkdir(parents=True)
+    (path / "cert9.db").touch()
+    return path
+
+
 def _saved(app_ctx: AppContext, pem: str) -> None:
     app_ctx.paths.ingress_ca.parent.mkdir(parents=True, exist_ok=True)
     app_ctx.paths.ingress_ca.write_text(pem, encoding="utf-8")
@@ -304,7 +317,7 @@ def test_recreated_cluster_replaces_a_stale_ca_in_every_browser_database(
     old, new = _cert(tmp_path, "old-ca"), _cert(tmp_path, "new-ca")
     home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
     chromium = home / ".local" / "share" / "pki" / "nssdb"
-    chromium.mkdir(parents=True)
+    _nss_database(chromium)
     profile = home / ".mozilla" / "firefox" / "abc.default"
     profile.mkdir(parents=True)
     (profile / "cert9.db").touch()
@@ -330,7 +343,7 @@ def test_system_trust_does_not_hide_a_stale_browser_database(
     old, new = _cert(tmp_path, "old-ca"), _cert(tmp_path, "new-ca")
     home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
     database = home / ".pki" / "nssdb"
-    database.mkdir(parents=True)
+    _nss_database(database)
     anchor.write_text(new, encoding="utf-8")
     _saved(app_ctx, new)
     runner = FakeRunner()
@@ -355,7 +368,7 @@ def test_linux_never_prompts_for_sudo_and_still_updates_the_browser(
     ca = _cert(tmp_path, "ca")
     home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
     database = home / ".pki" / "nssdb"
-    database.mkdir(parents=True)
+    _nss_database(database)
     runner = FakeRunner()
     _router_secret(runner, ca)
     runner.fail("sudo -n true", stderr="sudo: a password is required")
@@ -377,7 +390,7 @@ def test_missing_certutil_with_a_browser_database_is_not_reported_as_trusted(
 ) -> None:
     ca = _cert(tmp_path, "ca")
     home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch, certutil=False)
-    (home / ".pki" / "nssdb").mkdir(parents=True)
+    _nss_database(home / ".pki" / "nssdb")
     anchor.write_text(ca, encoding="utf-8")
     runner = FakeRunner()
     _router_secret(runner, ca)
@@ -425,13 +438,52 @@ def test_first_browser_database_is_created_before_the_import(
     assert nss.databases == {target: ca}
 
 
+def test_an_empty_default_directory_is_initialized(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
+) -> None:
+    ca = _cert(tmp_path, "ca")
+    home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
+    (home / ".pki" / "nssdb").mkdir(parents=True)
+    anchor.write_text(ca, encoding="utf-8")
+    runner = FakeRunner()
+    _router_secret(runner, ca)
+    nss = _Nss(runner)
+    app_ctx.runner = runner
+
+    assert ingress_ca.install(app_ctx, system="Linux") is True
+
+    assert nss.created == [f"sql:{home / '.pki' / 'nssdb'}"]
+
+
+def test_the_right_certificate_without_ca_trust_is_repaired(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
+) -> None:
+    ca = _cert(tmp_path, "ca")
+    home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
+    database = home / ".pki" / "nssdb"
+    _nss_database(database)
+    anchor.write_text(ca, encoding="utf-8")
+    _saved(app_ctx, ca)
+    runner = FakeRunner()
+    _router_secret(runner, ca)
+    nss = _Nss(runner)
+    nss.databases = {f"sql:{database}": ca}
+    nss.flags = ",,"
+    app_ctx.runner = runner
+
+    assert ingress_ca.describe(app_ctx, system="Linux")["browser_trust"] == "not trusted"
+    assert ingress_ca.install(app_ctx, system="Linux") is True
+
+    assert nss.flags == "C,,"
+
+
 def test_a_failed_browser_import_is_a_warning_with_the_command(
     app_ctx: AppContext, tmp_path: Path, monkeypatch
 ) -> None:
     ca = _cert(tmp_path, "ca")
     home, anchor = _linux_host(app_ctx, tmp_path, monkeypatch)
     database = home / ".pki" / "nssdb"
-    database.mkdir(parents=True)
+    _nss_database(database)
     anchor.write_text(ca, encoding="utf-8")
     runner = FakeRunner()
     _router_secret(runner, ca)
