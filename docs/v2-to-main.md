@@ -82,6 +82,8 @@ Bash `enable fleet` on `v2` stays on the QEMU addon unless the command passes `-
   anything other than `2.0.0.devN`.
 - `aap-demo.sh`, `includes/`, and the bash addon deployers stay. Removing them is Phase 8, not this cutover.
 - QEMU stays the bash fleet default. Python fleet stays Kubernetes-native.
+- Contributors branch from `main` and open pull requests against it. `CONTRIBUTING.md` already says so.
+  Until this cutover merges, keep sending pull requests for the Python command to `v2`.
 
 ## The pull request into main
 
