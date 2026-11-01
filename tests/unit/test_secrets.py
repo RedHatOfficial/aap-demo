@@ -13,7 +13,7 @@ from typing import Dict, Optional
 import pytest
 
 from aap_demo.core import secrets as secrets_mod
-from aap_demo.core.errors import PrerequisiteError
+from aap_demo.core.errors import AapDemoError, PrerequisiteError
 from aap_demo.core.secrets import SERVICE, InMemorySecretStore, SecretStore
 
 
@@ -190,6 +190,22 @@ def test_get_set_delete_round_trip(backed_store: SecretStore) -> None:
     assert backed_store.get("admin-password") == "s3cret"
     backed_store.delete("admin-password")
     assert backed_store.get("admin-password") is None
+
+
+def test_a_failed_delete_is_reported_and_stays_listed(backed_store: SecretStore) -> None:
+    backed_store.set("admin-password", "s3cret")
+
+    def refuse(service: str, account: str) -> None:
+        raise RuntimeError("locked with s3cret")
+
+    backed_store._keyring.delete_password = refuse  # type: ignore[union-attr]
+    with pytest.raises(AapDemoError, match="Could not delete") as caught:
+        backed_store.delete("admin-password")
+    assert "s3cret" not in (caught.value.hint or "")
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__
+    assert backed_store.get("admin-password") == "s3cret"
+    assert [ref.name for ref in backed_store.list()] == ["admin-password"]
 
 
 def test_delete_is_idempotent(backed_store: SecretStore) -> None:
