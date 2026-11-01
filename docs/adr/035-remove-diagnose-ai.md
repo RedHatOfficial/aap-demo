@@ -10,13 +10,17 @@
 
 ## Context
 
-`aap-demo diagnose --ai` passes pod logs and events to `claude -p`. That ties a general command to one vendor's CLI and login. It also hands text that a workload controls to an agent with no tool limits, and it doesn't use the project's troubleshooting skill.
+`aap-demo diagnose --ai` passes pod logs and events to `claude -p`. That ties a general command to
+one vendor's CLI and login. It also hands text that a workload controls to an agent with no tool
+limits, and it doesn't use the project's troubleshooting skill.
 
-An agent can already run `aap-demo diagnose` and work from the output, using `AGENTS.md` and the project skills.
+An agent can already run `aap-demo diagnose` and work from the output, using `AGENTS.md` and the
+project skills.
 
 ## Decision
 
-The Python CLI has no `--ai` flag. `aap-demo diagnose --ai` is a usage error, and the `diagnose` report no longer suggests it.
+The Python CLI has no `--ai` flag. `aap-demo diagnose --ai` is a usage error, and the `diagnose`
+report no longer suggests it.
 
 The bash CLI keeps its `--ai` flag, because the bash tree isn't changing in this cutover.
 
@@ -44,7 +48,8 @@ Closes the tool access problem, but keeps the vendor dependency and can't use th
 
 ### Make the agent configurable
 
-Each CLI has its own flags for turning off tools, so this adds the most to build and maintain, with no known demand.
+Each CLI has its own flags for turning off tools, so this adds the most to build and maintain, with
+no known demand.
 
 ## References
 
