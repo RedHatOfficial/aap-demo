@@ -78,8 +78,10 @@ def test_sync_renames_cluster_context_and_user(
     written = yaml.safe_load(destination.read_text())
     assert written["current-context"] == "aap-demo"
     assert written["clusters"][0]["name"] == "aap-demo"
-    assert written["clusters"][0]["cluster"]["insecure-skip-tls-verify"] is True
-    assert "certificate-authority-data" not in written["clusters"][0]["cluster"]
+    assert written["clusters"][0]["cluster"] == {
+        "server": "https://127.0.0.1:6443",
+        "certificate-authority-data": "QQ==",
+    }
     assert written["contexts"][0]["name"] == "aap-demo"
     assert written["contexts"][0]["context"]["cluster"] == "aap-demo"
     assert written["contexts"][0]["context"]["user"] == "aap-demo"
@@ -109,21 +111,36 @@ users:
 """
 
 
-def test_sync_drops_the_file_form_certificate_authority(
+def test_sync_refuses_a_kubeconfig_without_an_inline_ca(
     fake_runner: FakeRunner, ssh_key: Path, tmp_path: Path
 ) -> None:
-    """``certificate-authority`` alongside ``insecure-skip-tls-verify`` is a
-    kubeconfig kubectl rejects outright. Bash never produced one: it built a
-    fresh cluster entry (server + insecure flag only) instead of deleting keys
-    from a copy, which also dropped proxy-url/tls-server-name."""
+    """A path to a CA on the VM means nothing on this machine, and dropping
+    verification instead would hide the problem."""
     fake_runner.ok("ssh -p 2222", stdout=FILE_FORM_CA_KUBECONFIG)
     fake_runner.ok("kubectl config view", stdout=FILE_FORM_CA_KUBECONFIG)
+    destination = tmp_path / "kubeconfig.microshift"
+
+    with pytest.raises(AapDemoError, match="no cluster CA"):
+        kubeconfig_mod.sync(fake_runner, key=ssh_key, destination=destination)
+    assert not destination.exists()
+
+
+def test_sync_keeps_only_the_server_and_the_ca(
+    fake_runner: FakeRunner, ssh_key: Path, tmp_path: Path
+) -> None:
+    raw = SAMPLE_KUBECONFIG.replace(
+        "    server: https://127.0.0.1:6443\n",
+        "    server: https://127.0.0.1:6443\n    proxy-url: http://proxy.example.com:3128\n",
+    )
+    assert "proxy-url" in raw
+    fake_runner.ok("ssh -p 2222", stdout=raw)
+    fake_runner.ok("kubectl config view", stdout=raw)
     destination = tmp_path / "kubeconfig.microshift"
 
     kubeconfig_mod.sync(fake_runner, key=ssh_key, destination=destination)
 
     cluster = yaml.safe_load(destination.read_text())["clusters"][0]["cluster"]
-    assert cluster == {"server": "https://127.0.0.1:6443", "insecure-skip-tls-verify": True}
+    assert set(cluster) == {"server", "certificate-authority-data"}
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows does not store Unix mode 0600")

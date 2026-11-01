@@ -15,6 +15,7 @@ import pytest
 
 from aap_demo.core import config as config_mod
 from aap_demo.core import migration
+from aap_demo.core.errors import AapDemoError
 from aap_demo.core.paths import Paths
 from aap_demo.core.secrets import InMemorySecretStore
 
@@ -306,3 +307,50 @@ def test_collapsed_layout_moves_no_state(tmp_path: Path, fixtures_dir: Path) -> 
     assert not any(a.kind == "move" for a in plan.actions)
     assert (root / "kubeconfig.microshift").is_file()
     assert (root / "config.yaml").is_file()
+
+
+class _LockedStore(InMemorySecretStore):
+    def set(self, name: str, value: str) -> None:
+        raise RuntimeError(f"locked: {value}")
+
+
+def test_a_failed_credential_import_is_retried(legacy) -> None:
+    paths = legacy("full")
+    with pytest.raises(AapDemoError, match="Could not import") as caught:
+        migration.apply(paths, migration.plan(paths), secret_store=_LockedStore())
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+    assert not paths.config_file.exists()
+    assert (paths.legacy_dir / "galaxy-token").is_file()
+
+    retry = migration.plan(paths)
+    assert retry.reason == "migrate"
+    store = InMemorySecretStore()
+    migration.apply(paths, retry, secret_store=store)
+    assert paths.config_file.is_file()
+    assert paths.kubeconfig.is_file()
+    assert store.list()
+    assert not (paths.legacy_dir / "galaxy-token").exists()
+
+
+def test_a_failed_move_is_retried(legacy, monkeypatch: pytest.MonkeyPatch) -> None:
+    paths = legacy("full")
+    real_move = migration._move
+
+    def refuse(source, dest) -> None:
+        raise PermissionError("read only")
+
+    monkeypatch.setattr(migration, "_move", refuse)
+    with pytest.raises(OSError):
+        migration.apply(paths, migration.plan(paths), secret_store=InMemorySecretStore())
+    assert not paths.config_file.exists()
+
+    monkeypatch.setattr(migration, "_move", real_move)
+    migration.apply(paths, migration.plan(paths), secret_store=InMemorySecretStore())
+    assert paths.config_file.is_file()
+    assert paths.kubeconfig.is_file()
+
+
+def test_the_config_file_is_written_after_the_moves_and_imports(legacy) -> None:
+    paths = legacy("full")
+    kinds = [action.kind for action in migration.plan(paths).actions]
+    assert kinds[-2:] == ["write-config", "marker"]
