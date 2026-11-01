@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -149,3 +151,18 @@ def test_runner_never_uses_shell() -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.keyword) and node.arg == "shell":
             pytest.fail("exec/runner.py passes shell= to subprocess")
+
+
+def test_unit_tests_cannot_run_installed_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "ran"
+    tool = tmp_path / "crc"
+    tool.write_text(f"#!/bin/sh\ntouch {marker}\n", encoding="utf-8")
+    tool.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(PrerequisiteError):
+        SubprocessRunner().run(["crc", "version"])
+    with pytest.raises(FileNotFoundError, match="blocked in unit tests"):
+        subprocess.run(["crc", "version"], check=False)
+    assert not marker.exists()
