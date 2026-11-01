@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Commands
-description: What each aap-demo command does in the 2.0.0.dev1 beta.
+description: What each aap-demo command does in the 2.0.0.dev2 beta.
 tags: [cli, reference]
 status: draft
 stale_after: 2027-01-28
@@ -10,7 +10,7 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 # Commands
 
-These are the commands in the new `aap-demo` (version 2.0.0.dev1). Jobs that are not listed as working here
+These are the commands in the new `aap-demo` (version 2.0.0.dev2). Jobs that are not listed as working here
 still run with [the older command](../guides/older-command.md).
 
 ## You will use these
@@ -34,7 +34,7 @@ still run with [the older command](../guides/older-command.md).
 | `redeploy-all` | Delete the cluster, create it again, and install AAP. |
 | `destroy` | Delete the cluster. `--reset` also clears saved settings. |
 | `update` | Upgrade the pipx install of the command. |
-| `version` | Print `2.0.0.dev1` and how this copy was installed. |
+| `version` | Print `2.0.0.dev2` and how this copy was installed. |
 | `enable fleet` | Add the practice machines. `--no-import` skips registering them in AAP. |
 | `disable fleet` | Turn those machines off. Leaves their AAP registration. |
 | `fleet list` | Show the practice machines. |

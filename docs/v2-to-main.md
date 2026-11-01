@@ -2,7 +2,7 @@
 
 People installing the product should start at the [guides](guides/index.md), not here.
 This note is the install and state-path record for proposing the Python beta on `v2` as `main`.
-It does not change either install. The package version stays `2.0.0.dev1`.
+It does not change either install. The package version stays `2.0.0.dev2`.
 
 As of 29 October 2026 the draft pull request into `main` is
 [#264](https://github.com/RedHatOfficial/aap-demo/pull/264).
@@ -66,7 +66,7 @@ Python state is strict XDG on every OS. With the defaults (`XDG_*` unset):
 config, cache, and state under one directory. That is the escape hatch for CI and for a migration overlap.
 It is not the path for a normal install. Python does not search `~/.aap-demo` for the pull secret.
 
-`src/aap_demo/__init__.py` sets `__version__ = "2.0.0.dev1"`.
+`src/aap_demo/__init__.py` sets `__version__ = "2.0.0.dev2"`.
 
 Python `enable fleet` is Kubernetes-native: pods in namespace `fleet`. `--no-import` skips AAP registration.
 Bash `enable fleet` on `v2` stays on the QEMU addon unless the command passes `--backend kube-native`.
@@ -75,7 +75,7 @@ Bash `enable fleet` on `v2` stays on the QEMU addon unless the command passes `-
 
 - The beta wording stays until Adam says otherwise. Do not rewrite the README so that this tree claims to be
   the supported release.
-- The version stays `2.0.0.dev1`. Do not publish `2.0.0`. A push to `main` runs the PyPI workflow only when
+- The version stays `2.0.0.dev2`. Do not publish `2.0.0`. A push to `main` runs the PyPI workflow only when
   `src/aap_demo/__init__.py` changes, and PyPI keeps each version forever. That trigger lands when this
   cutover merges.
   This merge does not upload again, because the workflow skips a version already on PyPI. It fails on
