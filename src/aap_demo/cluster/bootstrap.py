@@ -19,9 +19,11 @@ from typing import Any, Callable, Optional, Tuple
 from aap_demo import data as packaged
 from aap_demo.cluster import coredns, pull_secret
 from aap_demo.cluster import kubeconfig as kubeconfig_mod
+from aap_demo.core import config as config_mod
 from aap_demo.core import prompts
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, PrerequisiteError
+from aap_demo.core.output import is_structured
 from aap_demo.core.paths import display_path
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
@@ -95,6 +97,60 @@ def _resources(ctx: AppContext) -> Tuple[int, int, int, int]:
             f"crc.pv_size_gb ({pv_gb}GB) must be less than crc.disk_gb ({disk_gb}GB)"
         )
     return cpus, memory_mb, disk_gb, pv_gb
+
+
+def _swap_mb() -> int:
+    """Linux swap counts toward what a VM can use. macOS manages its own."""
+    meminfo = Path("/proc/meminfo")
+    if platform.system() != "Linux" or not meminfo.is_file():
+        return 0
+    for line in meminfo.read_text(encoding="utf-8").splitlines():
+        if line.startswith("SwapTotal:"):
+            return int(line.split()[1]) // 1024
+    return 0
+
+
+def _require_host_fit(cpus: int, memory_mb: int, host: HostResources) -> None:
+    """Stop before ``crc start`` when the VM cannot run here. An unread host is not checked."""
+    host_cpus, host_memory_mb = host
+    if host_cpus <= 0 or host_memory_mb <= 0:
+        return
+    usable_mb = host_memory_mb + _swap_mb()
+    if cpus <= host_cpus and memory_mb <= usable_mb:
+        return
+    raise AapDemoError(
+        f"This VM does not fit this computer: it asks for {cpus} CPUs and {memory_mb} MB, "
+        f"and the computer has {host_cpus} CPUs and {usable_mb} MB",
+        hint=(
+            f"Choose a smaller size: aap-demo create --cpus {min(cpus, host_cpus)} "
+            f"--memory {min(memory_mb, host_memory_mb)}. Or change CRC_CPUS and CRC_MEMORY, "
+            "or crc.cpus and crc.memory_mb in the config file, if one of those sets it."
+        ),
+    )
+
+
+def _ask_vm_size(ctx: AppContext, host: HostResources, *, which: Callable) -> None:
+    """Ask before the first VM. Keep the answer for the next ``create``. See ADR-034."""
+    if ctx.vm_size_explicit or ctx.quiet or is_structured(ctx.output):
+        return
+    if not prompts.can_ask(ctx.env):
+        return
+    home = Path(ctx.env.get("HOME") or Path.home())
+    if which("crc") is not None and infra_crc.has_instance(ctx.runner, home=home):
+        return
+    current = (int(ctx.config.get("crc.cpus")), int(ctx.config.get("crc.memory_mb")))
+    chosen = prompts.vm_size(ctx.console, cpus=current[0], memory_mb=current[1], host=host)
+    if chosen == current:
+        return
+    _require_host_fit(chosen[0], chosen[1], host)
+    ctx.config.set("crc.cpus", chosen[0])
+    ctx.config.set("crc.memory_mb", chosen[1])
+    # Saves these two keys only. Config.save would also write flag and env values.
+    path = ctx.config.path or ctx.paths.config_file
+    saved = config_mod.read_yaml(path) if path.is_file() else {}
+    saved.setdefault("schema_version", config_mod.SCHEMA_VERSION)
+    saved.setdefault("crc", {}).update(cpus=chosen[0], memory_mb=chosen[1])
+    config_mod.write(path, saved)
 
 
 def _persistent_store_ok(ctx: AppContext) -> bool:
@@ -448,6 +504,11 @@ def create(
                 ),
             )
 
+    host_info = host if host is not None else _host_resources(ctx.runner)
+    _ask_vm_size(ctx, host_info, which=which)
+    vm_cpus, vm_memory, disk_gb, pv_gb = _resources(ctx)
+    _require_host_fit(vm_cpus, vm_memory, host_info)
+
     bundled, upgraded = infra_crc.ensure_managed_crc(ctx, which=which)
     if upgraded and state != infra_crc.STATE_NOT_CREATED:
         ctx.console.out(
@@ -487,7 +548,7 @@ def create(
     ctx.console.step("MicroShift")
     ctx.console.checkpoint(f"MicroShift: {bundled}")
     ctx.console.step("Checking host resources")
-    cpus, memory_mb = host if host is not None else _host_resources(ctx.runner)
+    cpus, memory_mb = host_info
     if cpus > 0 and memory_mb > 0:
         if cpus < 4 or memory_mb < 10240:
             ctx.console.warn("MicroShift requires at least 4 CPUs and 10GB RAM.")
@@ -501,7 +562,6 @@ def create(
     ctx.runner.run(["crc", "config", "set", "preset", "microshift"])
     ctx.console.progress("CRC preset: microshift")
 
-    vm_cpus, vm_memory, disk_gb, pv_gb = _resources(ctx)
     if state == infra_crc.STATE_NOT_CREATED:
         ctx.console.progress("Running CRC setup...")
         setup = ctx.runner.run(["crc", "setup"], sink=ctx.console.log_sink())

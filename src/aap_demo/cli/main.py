@@ -435,6 +435,7 @@ def build_context(
         ),
         kube_context=getattr(args, "context", None),
         namespace_explicit=bool(getattr(args, "_namespace_explicit", False)),
+        vm_size_explicit=bool(getattr(args, "_vm_size_explicit", False)),
     )
     ctx.events = EventEmitter(sink=ConsoleSink(console, verbose=ctx.verbose))
     return ctx
@@ -609,6 +610,10 @@ def run(
     )
     secrets = SecretStore(backend=str(config.get("secrets.backend", "auto")))
     args._namespace_explicit = "core" in overrides and "namespace" in overrides["core"]
+    args._vm_size_explicit = bool(
+        {"cpus", "memory_mb"} & set(overrides.get("crc", {}))
+        or {"CRC_CPUS", "CRC_MEMORY"} & set(environ)
+    )
 
     ctx = build_context(
         args,
