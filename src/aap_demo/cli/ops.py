@@ -59,8 +59,10 @@ def config(ctx: AppContext, args: argparse.Namespace) -> int:
             "config requires a subcommand: get, set, list, edit, path, migrate, secrets"
         )
 
+    config_file = ctx.config.path or ctx.paths.config_file
+
     if action == "path":
-        ctx.console.out(str(ctx.paths.config_file))
+        ctx.console.out(str(config_file))
         return 0
 
     if action == "list":
@@ -105,13 +107,13 @@ def config(ctx: AppContext, args: argparse.Namespace) -> int:
         if not editor:
             raise UsageError(
                 "no editor configured",
-                hint=f"Set $EDITOR or $VISUAL, or edit {ctx.paths.config_file} directly.",
+                hint=f"Set $EDITOR or $VISUAL, or edit {config_file} directly.",
             )
-        if not ctx.paths.config_file.is_file():
-            config_mod.write(ctx.paths.config_file, ctx.config.as_dict())
+        if not config_file.is_file():
+            config_mod.write(config_file, ctx.config.as_dict())
         # Through the runner seam like every other subprocess (§2.2), with
         # capture off so the editor inherits the terminal.
-        return ctx.runner.run([editor, str(ctx.paths.config_file)], capture=False).returncode
+        return ctx.runner.run([editor, str(config_file)], capture=False).returncode
 
     if action == "migrate":
         return _config_migrate(ctx, args)

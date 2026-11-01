@@ -26,7 +26,7 @@ from aap_demo.core import config as config_mod
 from aap_demo.core import output as output_mod
 from aap_demo.core.console import Console
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import AapDemoError, UsageError
+from aap_demo.core.errors import AapDemoError, ConfigError, UsageError
 from aap_demo.core.events import ConsoleSink, EventEmitter
 from aap_demo.core.paths import Paths, resolve_paths
 from aap_demo.core.secrets import SecretStore
@@ -390,6 +390,21 @@ def _config_path(args_config: Optional[str], env: Mapping[str, str], paths: Path
     return Path(explicit).expanduser() if explicit else paths.config_file
 
 
+def _config_error_hint(path: Path) -> str:
+    return (
+        f"Fix {path} with 'aap-demo config edit'. "
+        "Environment variables can also set configuration values."
+    )
+
+
+def _runs_without_config(args: argparse.Namespace) -> bool:
+    """Commands that must keep working so a user can repair a bad configuration."""
+    command = getattr(args, "command", None)
+    if command in (None, "help", "version"):
+        return True
+    return command == "config" and getattr(args, "config_action", None) in ("path", "edit")
+
+
 def _peek_global(argv: Sequence[str], name: str) -> Optional[str]:
     """Read a global option before the real parser exists (config path, quiet)."""
     for i, token in enumerate(argv):
@@ -571,10 +586,20 @@ def run(
             console.warn(f"configuration migration skipped: {exc.message}")
 
     config_path = _config_path(_peek_global(raw_argv, "--config"), environ, paths)
-    file_data = config_mod.read_yaml(config_path)
-    resolved = config_mod.resolve(file_data=file_data, env=environ, path=config_path)
+    config_error: Optional[ConfigError] = None
+    try:
+        file_data = config_mod.read_yaml(config_path)
+        resolved = config_mod.resolve(file_data=file_data, env=environ, path=config_path)
+    except ConfigError as exc:
+        # Parsing still needs values for its defaults, so use the schema's. The
+        # command is refused below unless it can run without the configuration.
+        file_data = {}
+        resolved = config_mod.resolve(env={}, path=config_path)
+        config_error = ConfigError(exc.message, hint=_config_error_hint(config_path))
 
     if not raw_argv:
+        if config_error is not None:
+            console.error(config_error.message, hint=config_error.hint)
         console.notice(DISCLAIMER)
         console.out(WELCOME)
         home = Path(environ.get("HOME") or Path.home())
@@ -586,6 +611,9 @@ def run(
 
     args, supplied, parser = _parse(raw_argv, resolved.as_dict())
 
+    if config_error is not None and not _runs_without_config(args):
+        raise config_error
+
     if getattr(args, "command", None) in (None, "help"):
         parser.print_help()
         return 0
@@ -593,9 +621,13 @@ def run(
     _apply_set_overrides(getattr(args, "set", None) or [], environ)
 
     overrides = collect_overrides(supplied)
-    config = config_mod.resolve(
-        file_data=file_data, env=environ, overrides=overrides, path=config_path
-    )
+    if config_error is not None:
+        console.error(config_error.message, hint=config_error.hint)
+        config = resolved
+    else:
+        config = config_mod.resolve(
+            file_data=file_data, env=environ, overrides=overrides, path=config_path
+        )
 
     quiet = bool(getattr(args, "quiet", False)) or bool(config.get("core.quiet"))
     if not quiet:

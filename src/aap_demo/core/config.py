@@ -69,10 +69,26 @@ def _deep_merge(base: Dict[str, Any], overlay: Mapping[str, Any]) -> Dict[str, A
     return out
 
 
+def _yaml_problem(exc: yaml.YAMLError) -> str:
+    """The parser's reason and position, without its multi-line source excerpt."""
+    problem = getattr(exc, "problem", None) or "could not parse the file"
+    mark = getattr(exc, "problem_mark", None)
+    if mark is None:
+        return str(problem)
+    return f"{problem} (line {mark.line + 1}, column {mark.column + 1})"
+
+
 def read_yaml(path: Path) -> Dict[str, Any]:
     if not path.is_file():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"{path}: invalid YAML: {_yaml_problem(exc)}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"{path}: not UTF-8 text") from exc
+    except OSError as exc:
+        raise ConfigError(f"{path}: cannot read the file: {exc.strerror or exc}") from exc
     if data is None:
         return {}
     if not isinstance(data, dict):
