@@ -44,8 +44,6 @@ aap-demo must-gather
 `repair` is the one to try after the laptop sleeps and the site will not load. `must-gather` collects a folder
 of logs you can hand to someone else.
 
-`aap-demo diagnose --ai` adds a written guess from the Claude command-line tool, if you have that tool installed.
-
 ## Remove AAP, or remove everything
 
 ```bash

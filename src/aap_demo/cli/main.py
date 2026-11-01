@@ -196,11 +196,9 @@ def build_parser(
     add("status", "Show cluster and AAP status").set_defaults(func=observe.status)
     add("watch", "Watch AAP deployment status").set_defaults(func=observe.watch)
 
-    p = add("diagnose", "Check environment health and identify common issues")
-    p.add_argument(
-        "--ai", action="store_true", help="Analyze issues with Claude AI (requires the claude CLI)"
+    add("diagnose", "Check environment health and identify common issues").set_defaults(
+        func=observe.diagnose
     )
-    p.set_defaults(func=observe.diagnose)
 
     p = add("must-gather", "Collect AAP and cluster diagnostics")
     p.add_argument("dest", nargs="?", metavar="DIR", help="Output directory")

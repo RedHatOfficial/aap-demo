@@ -77,6 +77,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [032](032-open-issues-remediation-strategy.md) | Open Issue Remediation Strategy | Proposed |
 | [033](033-apme-local-oci-plugin-publishing.md) | APME Local OCI Plugin Publishing | Accepted |
 | [034](034-create-vm-size-prompt.md) | VM Size Prompt and Host Fit Check on Create | Accepted |
+| [035](035-remove-diagnose-ai.md) | Remove `diagnose --ai` from the Python CLI | Accepted |
 
 ## Creating a New ADR
 

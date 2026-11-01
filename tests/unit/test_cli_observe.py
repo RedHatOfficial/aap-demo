@@ -62,23 +62,12 @@ def test_status_json_output_is_well_formed(app_ctx: AppContext, fake_runner: Fak
 # -- diagnose -------------------------------------------------------------
 
 
-def test_diagnose_ai_requires_the_claude_cli(
-    app_ctx: AppContext, fake_runner: FakeRunner, monkeypatch
-) -> None:
-    fake_runner.fail("crc status -o json")
-    fake_runner.fail("kubectl cluster-info")
-    monkeypatch.setattr("aap_demo.cluster.runtime.shutil.which", lambda _name: None)
-    rc = observe.diagnose(app_ctx, _ns(ai=True))
-    assert rc == 1
-    assert "claude" in app_ctx.console.stderr
-
-
 def test_diagnose_returns_1_when_cluster_unreachable(
     app_ctx: AppContext, fake_runner: FakeRunner
 ) -> None:
     fake_runner.fail("crc status -o json")
     fake_runner.fail("kubectl cluster-info")
-    rc = observe.diagnose(app_ctx, _ns(ai=False))
+    rc = observe.diagnose(app_ctx, _ns())
     assert rc == 1
     assert "Cannot proceed without cluster connectivity" in app_ctx.console.stdout
 
@@ -108,7 +97,7 @@ def test_diagnose_returns_0_when_fully_healthy(
     )
     fake_runner.ok(["kubectl", "get", "pods", "-n", "openshift-dns", "--no-headers"], stdout="")
 
-    rc = observe.diagnose(app_ctx, _ns(ai=False))
+    rc = observe.diagnose(app_ctx, _ns())
 
     # Missing storage classes and no namespace are warnings/info, not
     # failures, on a cluster that has never been deployed to.
@@ -142,7 +131,7 @@ def test_diagnose_returns_0_when_issues_exist_but_the_cluster_is_reachable(
     )
     fake_runner.ok(["kubectl", "get", "pods", "-n", "openshift-dns", "--no-headers"], stdout="")
 
-    rc = observe.diagnose(app_ctx, _ns(ai=False))
+    rc = observe.diagnose(app_ctx, _ns())
 
     assert rc == 0
     # Every report line — checks and summary — is stdout, and each check line
@@ -158,7 +147,7 @@ def test_diagnose_json_output(app_ctx: AppContext, fake_runner: FakeRunner) -> N
     fake_runner.fail("kubectl cluster-info")
     app_ctx.output = "json"
 
-    rc = observe.diagnose(app_ctx, _ns(ai=False))
+    rc = observe.diagnose(app_ctx, _ns())
 
     assert rc == 1
     payload = json.loads(app_ctx.console.stdout)
