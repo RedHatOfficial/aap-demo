@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -381,9 +382,8 @@ def test_linux_never_prompts_for_sudo_and_still_updates_the_browser(
 
     assert [c for c in runner.commands if c.startswith("sudo")] == ["sudo -n true"]
     assert nss.databases == {f"sql:{database}": ca}
-    assert f"sudo cp {app_ctx.paths.ingress_ca} {anchor} && sudo update-ca-trust" in (
-        app_ctx.console.stderr
-    )
+    ca_arg = shlex.quote(str(app_ctx.paths.ingress_ca))
+    assert f"sudo cp {ca_arg} {anchor} && sudo update-ca-trust" in (app_ctx.console.stderr)
     assert "On this Mac" not in app_ctx.console.stderr
 
 
@@ -495,7 +495,7 @@ def test_printed_browser_commands_quote_paths_with_spaces(
 
     assert ingress_ca.install(app_ctx, system="Linux") is False
 
-    assert f"certutil -d 'sql:{profile}' -A" in app_ctx.console.stderr.replace("\n", "")
+    assert f"certutil -d {shlex.quote(f'sql:{profile}')} -A" in app_ctx.console.stderr
 
 
 def test_a_failed_browser_import_is_a_warning_with_the_command(
@@ -513,5 +513,5 @@ def test_a_failed_browser_import_is_a_warning_with_the_command(
 
     assert ingress_ca.install(app_ctx, system="Linux") is False
 
-    assert f"certutil -d sql:{database} -A" in app_ctx.console.stderr
+    assert f"certutil -d {shlex.quote(f'sql:{database}')} -A" in app_ctx.console.stderr
     assert "Ingress CA trusted" not in app_ctx.console.stdout

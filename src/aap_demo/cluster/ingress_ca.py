@@ -239,9 +239,10 @@ def _import(ctx: AppContext, path: Path, *, system: str) -> List[str]:
     if system == "Darwin":
         if _import_macos(ctx, path):
             return []
+        ca = shlex.quote(str(path))
         return [
             "From a terminal in this Mac's desktop session, approve it with: "
-            f"sudo security add-trusted-cert -d -r trustRoot -k {SYSTEM_KEYCHAIN} {shlex.quote(str(path))}"
+            f"sudo security add-trusted-cert -d -r trustRoot -k {SYSTEM_KEYCHAIN} {ca}"
         ]
     problems = [
         _import_linux_system(ctx, path, system=system),
@@ -295,7 +296,8 @@ def _import_linux_system(ctx: AppContext, path: Path, *, system: str) -> Optiona
         anchor, update = DEBIAN_ANCHOR, "update-ca-certificates"
     else:
         return "This system has no known CA trust directory. Add the file to its trust store."
-    fix = f"For curl and other system tools, run: sudo cp {shlex.quote(str(path))} {anchor} && sudo {update}"
+    ca = shlex.quote(str(path))
+    fix = f"For curl and other system tools, run: sudo cp {ca} {anchor} && sudo {update}"
     if not ctx.runner.run(["sudo", "-n", "true"]).ok:
         return fix
     if not ctx.runner.run(["sudo", "-n", "cp", str(path), str(anchor)]).ok:
