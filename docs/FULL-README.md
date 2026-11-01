@@ -291,7 +291,6 @@ QUIET=true                   # Suppress disclaimer
 
 ```bash
 aap-demo diagnose              # Quick health check — identifies common issues
-aap-demo diagnose --ai         # Health check + AI-powered analysis (requires claude CLI)
 aap-demo must-gather           # Collect full diagnostics for support
 aap-demo status                # Check cluster and AAP status
 aap-demo ssh                   # SSH into cluster node for debugging
@@ -307,11 +306,6 @@ If `oc login` has switched `~/.aap-demo/kubeconfig.microshift` to a remote API,
 cluster commands stop with `Kubeconfig points at a remote cluster` instead of
 deploying there. Switch back with `kubectl config use-context microshift`, or
 refresh the local file with `aap-demo kubeconfig`.
-
-`aap-demo diagnose --ai` runs the same checks, then sends the results plus pod logs
-and events to [Claude](https://claude.ai) for AI-powered root cause analysis and fix
-suggestions. Requires the `claude` CLI
-([Claude Code](https://docs.anthropic.com/en/docs/claude-code)).
 
 `aap-demo must-gather` collects aap-demo config, CRC status, storage/PVC/pod/event
 data, and runs the official [AAP must-gather](https://github.com/ansible/aap-must-gather)
