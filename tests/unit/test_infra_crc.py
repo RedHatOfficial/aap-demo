@@ -1,4 +1,4 @@
-"""``infra/crc.py`` over realistic ``crc status -o json`` captures (design §7.1)."""
+"""``infra/crc.py`` over realistic ``crc status -o json`` captures."""
 
 from __future__ import annotations
 

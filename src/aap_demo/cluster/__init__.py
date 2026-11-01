@@ -1,3 +1,3 @@
-"""Cluster-level operations. Never imports ``cli/`` (design §2.2)."""
+"""Cluster-level operations. Never imports ``cli/``."""
 
 from __future__ import annotations

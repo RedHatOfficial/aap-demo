@@ -5,9 +5,6 @@ description: The new command is the one to install. The older command still cove
 tags: [compatibility, bash, beta]
 status: draft
 stale_after: 2027-01-28
-generated:
-  by: cursor-agent/grok-4.7
-  at: 2026-10-29T00:30:00Z
 resource: https://github.com/RedHatOfficial/aap-demo
 sources:
   - id: v2-to-main

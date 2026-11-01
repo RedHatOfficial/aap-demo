@@ -1,9 +1,7 @@
-"""Renders a ``DiagnoseReport`` to the terminal (design §2.2).
+"""Renders a ``DiagnoseReport`` to the terminal.
 
-Kept separate from ``checks.py`` per the design's mapping table
-(``cmd_diagnose`` → ``diagnostics/checks.py`` + ``report.py`` + ``ai.py``),
-even though phase 1 has no ``ai.py`` — ``--ai`` is out of scope here and is
-rejected at the CLI layer (``cli/observe.py::diagnose``).
+Kept separate from ``checks.py``. ``--ai`` is handled at the CLI layer
+(``cli/observe.py::diagnose``).
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from aap_demo.diagnostics.checks import DiagnoseReport
 
 #: Check level → the glyph key ``Console.report`` prefixes. Every one of these
 #: lines is report *content*, so it goes to stdout regardless of severity, the
-#: way bash's ``_check_pass``/``_check_fail``/… all did (aap-demo.sh:1020-1028).
+#: way bash's ``_check_pass``/``_check_fail``/… all did.
 _STATUS_BY_LEVEL = {
     "pass": "ok",
     "fail": "fail",
@@ -28,7 +26,7 @@ CHECK_INDENT = 2
 
 
 def render_text(console: Any, report: DiagnoseReport) -> None:
-    """Ports the section/summary printing in ``cmd_diagnose`` (aap-demo.sh:1012-1300)."""
+    """Ports the section/summary printing in ``cmd_diagnose``."""
     console.out("")
     console.step("aap-demo diagnose - Checking environment health...")
     console.out("")

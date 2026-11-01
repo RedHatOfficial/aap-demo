@@ -1,4 +1,4 @@
-"""Legacy ``~/.aap-demo`` → YAML + XDG-style layout migration (design §12.2).
+"""Legacy ``~/.aap-demo`` → YAML + XDG-style layout migration.
 
 Two guarantees drive the shape of this module:
 
@@ -32,16 +32,16 @@ from aap_demo.core import schema
 from aap_demo.core.paths import Paths
 
 #: Legacy addon names that no longer exist as addons — they became day-2
-#: playbooks (§4.8.5). Dropping them silently would look like data loss.
+#: playbooks. Dropping them silently would look like data loss.
 RETIRED_ADDONS = {
     "registry": "playbooks run registry-mirror",
     "local-cache": "playbooks run image-store",
 }
 
-#: Legacy addon aliases collapsed by the registry (§4.7).
+#: Legacy addon aliases collapsed by the registry.
 ADDON_ALIASES = {"ao-eap": "ao"}
 
-#: Legacy state files moved into <state>/ (§5.2 table). ``(source, destination)``
+#: Legacy state files moved into <state>/. ``(source, destination)``
 #: is resolved against the legacy dir and the new state dir respectively.
 STATE_MOVES: Tuple[Tuple[str, str], ...] = (
     ("kubeconfig.microshift", "kubeconfig.microshift"),

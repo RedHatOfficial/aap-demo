@@ -1,8 +1,6 @@
-"""``aap-demo status`` data gathering (design §2.2: ``cmd_status`` →
-``cli/observe.py::status`` + per-addon ``status()`` hooks).
+"""``aap-demo status`` data gathering, ported from ``cmd_status``.
 
-The addon registry (§4) doesn't exist yet — it lands in phase 5+6 — so the
-"Addons:" section here reads ``addons.enabled`` from config directly (the
+The "Addons:" section here reads ``addons.enabled`` from config directly (the
 same list ``_addons_list`` read from the legacy ``ADDONS=`` config line) and
 falls back to bash's own ``ao``-namespace heuristic for the one addon whose
 enabled state is also independently observable on the cluster.
@@ -26,8 +24,8 @@ from aap_demo.core.paths import display_path
 from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
 
-#: Ports ``AVAILABLE_ADDONS`` (aap-demo.sh:2617). ``ao-eap`` is folded into
-#: ``ao`` in the rewrite (design §4.5) and product-demo domain addons other
+#: Ports ``AVAILABLE_ADDONS``. ``ao-eap`` is folded into
+#: ``ao`` in the rewrite and product-demo domain addons other
 #: than ``product-demo-satellite`` are hidden from status, same as bash.
 AVAILABLE_ADDONS = (
     "mcp-server",
@@ -40,7 +38,7 @@ AVAILABLE_ADDONS = (
     "product-demo-satellite",
 )
 
-#: Ports the secret-name fallback chain in ``cmd_status`` (aap-demo.sh:1832).
+#: Ports the secret-name fallback chain in ``cmd_status``.
 ADMIN_SECRET_FALLBACKS = (
     "myaap-admin-password",
     "aap-admin-password",
@@ -48,7 +46,7 @@ ADMIN_SECRET_FALLBACKS = (
     "custom-admin-password",
 )
 
-#: The remote diagnostic one-liner bash runs over SSH (aap-demo.sh:1751-1769),
+#: The remote diagnostic one-liner bash runs over SSH,
 #: unchanged so the printed VM block matches bash byte-for-byte. Built as a
 #: joined list, rather than one triple-quoted block, only so the long
 #: MicroShift-version line can wrap under the line-length limit.
@@ -100,7 +98,7 @@ class CredentialInfo:
     password: str
 
     def as_dict(self) -> Dict[str, Any]:
-        # Emitting credentials in status is intentional parity with aap-demo.sh:751
+        # Emitting credentials in status is intentional parity with the bash tool
         # for developer login to the local development web UI.
         return {"namespace": self.namespace, "username": self.username, "password": self.password}
 
@@ -367,7 +365,7 @@ def _addon_statuses(runner: Any, addons_enabled: List[str]) -> List[AddonStatus]
 
 
 def gather(ctx: AppContext) -> StatusReport:
-    """Ports ``cmd_status`` (aap-demo.sh:1685-1884)."""
+    """Ports ``cmd_status``."""
     runner = ctx.runner
     info = version_mod.version_info(runner)
     report = StatusReport(
@@ -439,7 +437,7 @@ def gather(ctx: AppContext) -> StatusReport:
 
 
 def render_text(console: Any, report: StatusReport) -> None:
-    """Ports the printing half of ``cmd_status`` (aap-demo.sh:1685-1884)."""
+    """Ports the printing half of ``cmd_status``."""
     console.out("")
     console.step("AAP Demo Status")
     console.out("===============")
@@ -448,8 +446,8 @@ def render_text(console: Any, report: StatusReport) -> None:
     console.out("")
     console.out(f"Infra:       {report.infra}")
 
-    # Bash prints "Cluster:     " followed by a *colored word* and no glyph
-    # (aap-demo.sh:1701-1714); a ✓/⚠/✗ prefix here would be output the bash
+    # Bash prints "Cluster:     " followed by a *colored word* and no glyph;
+    # a ✓/⚠/✗ prefix here would be output the bash
     # tool never had, and all three states go to stdout.
     if report.cluster_state == infra_crc.STATE_RUNNING:
         name_suffix = f" ({report.cluster_name})" if report.cluster_name else ""
@@ -490,7 +488,7 @@ def render_text(console: Any, report: StatusReport) -> None:
 
     console.out("")
     console.out(f"Kubeconfig:  {report.kubeconfig}")
-    # Bash prints Source: unconditionally (aap-demo.sh:1731), even when the
+    # Bash prints Source: unconditionally, even when the
     # repo root or branch is unknown.
     branch_suffix = f" (branch: {report.branch})" if report.branch else ""
     console.out(f"Source:      {report.source or ''}{branch_suffix}")
@@ -510,7 +508,7 @@ def render_text(console: Any, report: StatusReport) -> None:
     else:
         for ns in report.namespaces:
             # Bash colors *only* the CR name and keeps %-30s alignment for
-            # every row (aap-demo.sh:1782-1795) — no glyph, no line-wide color,
+            # every row — no glyph, no line-wide color,
             # so an AAP row lines up with a plain one.
             line = f"  {ns.name:<30} {ns.pods_running}/{ns.pods_total} pods"
             if ns.aap_name:
@@ -548,11 +546,11 @@ def render_text(console: Any, report: StatusReport) -> None:
 
 
 def show_cluster_info(ctx: AppContext, *, total_pods: bool = False) -> None:
-    """Ports ``_show_cluster_info`` (aap-demo.sh:550).
+    """Ports ``_show_cluster_info``.
 
-    Lives here rather than in ``core/console.py`` (which §2.2's mapping table
-    names) because every line of it is a cluster query, and ``console.py`` is
-    forbidden from doing anything but write. The console still owns the
+    Lives here rather than in ``core/console.py`` because every line of it is a
+    cluster query, and ``console.py`` is forbidden from doing anything but write. The
+    console still owns the
     writing; this owns the gathering and the layout.
     """
     ns = ctx.namespace

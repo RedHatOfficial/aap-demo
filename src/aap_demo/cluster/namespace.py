@@ -1,6 +1,6 @@
-"""Namespace creation, PSA labels, SCC grants, pull secret (design §14 R3).
+"""Namespace creation, PSA labels, SCC grants, pull secret.
 
-Ports ``setup_namespace`` (aap-demo.sh:2297-2379). **The order is the
+Ports ``setup_namespace``. **The order is the
 contract**, and R3 names getting it wrong as the single most common failure
 mode in the current tool. It is, in bash's sequence:
 
@@ -32,7 +32,7 @@ from aap_demo.exec import kubectl
 from aap_demo.exec.runner import EnvRunner
 
 #: Bash polls 15 times at 2s while a namespace finishes terminating
-#: (aap-demo.sh:2303-2308) — 30 seconds, then force-clears.
+#: — 30 seconds, then force-clears.
 TERMINATING_ATTEMPTS = 15
 TERMINATING_INTERVAL = 2
 
@@ -48,7 +48,7 @@ def phase(ctx: AppContext, namespace: str) -> str:
 
 
 def _force_clear_finalizers(ctx: AppContext, namespace: str) -> None:
-    """Ports the ``kubectl replace --raw …/finalize`` escape hatch (aap-demo.sh:2313).
+    """Ports the ``kubectl replace --raw …/finalize`` escape hatch.
 
     Bash pipes the namespace JSON through ``python3 -c`` to blank
     ``spec.finalizers``; here that is just ``json`` in-process, but the API
@@ -92,7 +92,7 @@ def clear_terminating(
 
 
 def _prepend_oc_to_path(ctx: AppContext, which: Callable[[str], Optional[str]]) -> None:
-    """Step 3 — CRC ships an ``oc`` the host may not have (aap-demo.sh:2318)."""
+    """Step 3 — CRC ships an ``oc`` the host may not have."""
     extra = scc_mod.oc_env_path(ctx, which=which)
     if not extra:
         return

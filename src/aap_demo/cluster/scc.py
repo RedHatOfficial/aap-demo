@@ -1,10 +1,10 @@
-"""SCC grants for every service account in the namespace (design §14 R3).
+"""SCC grants for every service account in the namespace.
 
-Ports ``_grant_sccs`` (aap-demo.sh:2262-2295). Two implementations, kept
+Ports ``_grant_sccs``. Two implementations, kept
 because they are not equivalent: ``oc adm policy add-scc-to-group`` and a
 ``kubectl`` fallback that creates a ClusterRoleBinding named
 ``system:openshift:scc:<scc>:<ns>``. ``diagnose`` already has to recognize
-both (aap-demo.sh:1106-1113), so collapsing them here would silently change
+both, so collapsing them here would silently change
 what a fresh deploy leaves behind on a machine without ``oc``.
 
 *Three* shapes have to be recognized, though, not two — see
@@ -35,7 +35,7 @@ def group_for(namespace: str) -> str:
 
 
 def binding_name(scc: str, namespace: str) -> str:
-    """The fallback path's ClusterRoleBinding name (aap-demo.sh:2285)."""
+    """The fallback path's ClusterRoleBinding name."""
     return f"system:openshift:scc:{scc}:{namespace}"
 
 
@@ -97,7 +97,7 @@ def grant_namespace_sccs(
 def oc_env_path(
     ctx: AppContext, *, which: Callable[[str], Optional[str]] = shutil.which
 ) -> Optional[str]:
-    """Ports the ``crc oc-env`` PATH prepend in ``setup_namespace`` (aap-demo.sh:2318-2322).
+    """Ports the ``crc oc-env`` PATH prepend in ``setup_namespace``.
 
     Bash only reaches for CRC's bundled ``oc`` when ``oc`` is missing but
     ``crc`` is present, and it takes the *first* directory of the first
@@ -123,7 +123,7 @@ def oc_env_path(
 def shared_binding_name(scc: str) -> str:
     """The name a modern ``oc adm policy add-scc-to-group`` actually creates.
 
-    Found on a live MicroShift 4.22 cluster during phase-3 validation, and it
+    Found on a live MicroShift 4.22 cluster during live validation, and it
     is a *third* shape neither bash's grant paths nor ``cmd_diagnose``'s two
     detections know about. ``oc`` no longer edits the SCC object's ``groups``
     list (``kubectl get scc anyuid -o jsonpath='{.groups}'`` still reports only
@@ -132,9 +132,9 @@ def shared_binding_name(scc: str) -> str:
 
         system:openshift:scc:anyuid -> [system:serviceaccounts:<ns>, …]
 
-    which is neither ``.groups`` (aap-demo.sh:1106) nor the per-namespace
-    ``system:openshift:scc:<scc>:<ns>`` the kubectl fallback creates
-    (aap-demo.sh:2285). A ``diagnose`` that checks only the first two reports a
+    which is neither ``.groups`` nor the per-namespace
+    ``system:openshift:scc:<scc>:<ns>`` the kubectl fallback creates.
+    A ``diagnose`` that checks only the first two reports a
     false "SCCs not granted" on this cluster.
     """
     return f"system:openshift:scc:{scc}"

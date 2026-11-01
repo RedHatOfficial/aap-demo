@@ -1,4 +1,4 @@
-"""Day-2 cluster operations that are not deploy or create (design §12.4 phase 2).
+"""Day-2 cluster operations that are not deploy or create.
 
 ``start`` and ``stop`` move the CRC VM. ``idle`` scales the AAP CR.
 ``repair`` re-grants SCCs, fixes CoreDNS, and restarts stuck pods.
@@ -134,8 +134,7 @@ def repair(
 ) -> None:
     """Ports ``cmd_repair``: SCCs, CoreDNS, and a restart of stuck pods.
 
-    ``install_ingress_ca_trust`` is still the phase-4 ``trust/`` package and is
-    not called here.
+    Ingress CA trust is installed by create and deploy, not here.
     """
     ctx.console.out("Running repair...")
     ctx.console.out("")

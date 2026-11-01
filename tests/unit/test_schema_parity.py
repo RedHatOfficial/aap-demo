@@ -1,4 +1,4 @@
-"""The enforcement without which §9.3 is just a convention (design §14 R17).
+"""Keeps the schema, CLI flags and environment variables in step.
 
 Two directions matter. Forward: every schema property reaches a CLI flag, a
 config path, and (where declared) an env var. Inverse — the important one: no

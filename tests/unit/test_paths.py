@@ -1,8 +1,8 @@
-"""Path classification, not literal strings (design §5.2, §6.1).
+"""Path classification, not literal strings.
 
 Runs on the macOS, Linux, and Windows CI runners. It asserts the *classification*
 — which class a file belongs to and which accessor returns it — as well as the
-literal XDG roots, since §5.2 now mandates the same strict XDG-style layout
+literal XDG roots, since aap-demo uses the same strict XDG-style layout
 under ``$HOME`` on every OS (a deliberate deviation from platformdirs' native
 per-OS conventions — see the module docstring in ``core/paths.py``), so unlike
 native per-OS directories, the literal roots are *not* expected to differ
@@ -34,7 +34,7 @@ def test_native_roots_are_absolute() -> None:
 
 
 def test_roots_are_strict_xdg_under_home(tmp_path: Path) -> None:
-    """§5.2: config/cache/state land under ``~/.config``, ``~/.cache``,
+    """Config, cache and state land under ``~/.config``, ``~/.cache``,
     ``~/.local/state`` on every OS, not a platform-native directory."""
     paths = resolve_paths(env={"HOME": str(tmp_path)})
     assert paths.config_dir == tmp_path / ".config" / "aap-demo"

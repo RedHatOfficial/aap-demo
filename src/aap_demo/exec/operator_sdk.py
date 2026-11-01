@@ -1,8 +1,8 @@
 """``operator-sdk`` discovery, auto-install, and invocation.
 
 Ports ``ensure_operator_sdk`` and the ``operator-sdk`` calls in
-``addons/olm/deploy.sh``, plus ``deploy_operator_sdk`` (aap-demo.sh:2381) and
-the ``operator-sdk cleanup`` in ``_clean_operator`` (aap-demo.sh:755).
+``addons/olm/deploy.sh``, plus ``deploy_operator_sdk`` and
+the ``operator-sdk cleanup`` in ``_clean_operator``.
 
 The download stays a ``curl`` invocation through the ``CommandRunner`` rather
 than becoming ``urllib``: it is the one place the tool reaches the public
@@ -103,12 +103,12 @@ def olm_status(ctx: Any) -> Any:
 
 
 def cleanup(ctx: Any, package: str, namespace: str) -> Any:
-    """``operator-sdk cleanup <package> -n <ns>`` (aap-demo.sh:755)."""
+    """``operator-sdk cleanup <package> -n <ns>``."""
     return ctx.runner.run(["operator-sdk", "cleanup", package, "-n", namespace])
 
 
 def run_bundle(ctx: Any, bundle_image: str, namespace: str) -> Any:
-    """Ports ``deploy_operator_sdk`` (aap-demo.sh:2381)."""
+    """Ports ``deploy_operator_sdk``."""
     return ctx.runner.run(
         [
             "operator-sdk",

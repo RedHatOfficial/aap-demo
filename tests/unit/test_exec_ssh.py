@@ -1,5 +1,5 @@
 """``exec/ssh.py``: key detection, remote exec, and the R10 process-replacement
-bypass (design §2.2, §14 R10).
+bypass.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def test_remote_argv_defaults_to_sudo(tmp_path: Path) -> None:
 def test_remote_argv_quotes_a_script_so_the_remote_shell_cannot_split_it(
     tmp_path: Path,
 ) -> None:
-    """The phase-3 live-deploy bug: an unquoted ``python3 -c`` died on ``(``."""
+    """A live-deploy bug: an unquoted ``python3 -c`` died on ``(``."""
     key = tmp_path / "id_ed25519"
     script = 'import json\nprint("hi")'
     argv = ssh_mod.remote_argv(key, "python3", "-c", script)
@@ -124,7 +124,7 @@ def test_interactive_shell_execs_on_posix(tmp_path: Path) -> None:
     program, argv = calls[0]
     assert program == "ssh"
     # Byte-for-byte bash's ``exec ssh -p 2222 -i KEY -o StrictHostKeyChecking=no
-    # -o UserKnownHostsFile=/dev/null core@127.0.0.1`` (aap-demo.sh:1603) —
+    # -o UserKnownHostsFile=/dev/null core@127.0.0.1`` —
     # notably *not* CRC_SSH_OPTS, whose BatchMode=yes would make a
     # passphrase-protected key unusable in an interactive session.
     assert argv == [

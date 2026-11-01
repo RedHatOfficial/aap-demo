@@ -1,5 +1,4 @@
-"""Packaged YAML the tool applies to a cluster (design §2.2: ``config/**`` →
-``src/aap_demo/data/**``, loaded via ``importlib.resources``).
+"""Packaged YAML the tool applies to a cluster, loaded via ``importlib.resources``.
 
 The bash tool located these relative to ``SCRIPT_DIR``, which only works from a
 git checkout. As package data they work from a wheel too, which is the whole

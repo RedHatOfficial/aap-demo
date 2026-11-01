@@ -8,7 +8,7 @@ demo-only and deliberately narrow — it marks *one* registry
 ``insecureAcceptAnything`` in the CRC VM's ``/etc/containers/policy.json`` and
 reloads CRI-O — and it is gated on the cluster actually being 4.22+.
 
-The wait loop is where §14 R5 bites hardest: bash's version can run ten
+The wait loop matters most here: bash's version can run ten
 minutes and its caller reads a bare exit status. :func:`wait_for_catalog_ready`
 returns a :class:`CatalogWait` naming *why* it stopped, so the deploy path can
 print bash's specific message for each failure shape instead of a generic one.

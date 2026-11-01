@@ -1,4 +1,4 @@
-# Ingress CA trust — design §5.3 `trust:` block, §6.2.
+# Ingress CA trust.
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "aap-demo/trust"
 type: object

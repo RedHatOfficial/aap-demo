@@ -1,4 +1,4 @@
-"""The only module in the package that reads or writes a credential (design §5.5).
+"""The only module in the package that reads or writes a credential.
 
 Three properties are load-bearing and must survive any refactor:
 
@@ -6,14 +6,13 @@ Three properties are load-bearing and must survive any refactor:
    ``SecretStore`` access. Most commands (``create``, ``deploy``, ``status``,
    ``diagnose``) need no credential at all, and a headless box with no Secret
    Service provider must keep running them. Resolving eagerly would turn a
-   keyring-less machine into a machine where ``aap-demo status`` fails (§5.5.3
-   escape 2).
+   keyring-less machine into a machine where ``aap-demo status`` fails.
 
 2. **Hard failure, never a fallback.** If the resolved backend is
    ``keyring.backends.fail.Keyring`` we exit 3 with a platform-specific message.
    There is deliberately no encrypted-file fallback: a machine-derived key next
    to its own ciphertext is obfuscation, and the mode rots into "secrets in a
-   file" the first time someone makes the passphrase optional for CI (§5.5.3).
+   file" the first time someone makes the passphrase optional for CI.
 
 3. **No filesystem path of any kind.** This module opens no file, and
    ``tests/unit/test_secrets.py`` asserts that by inspecting its source. The
@@ -106,7 +105,7 @@ class SecretStore:
         return type(backend).__name__
 
     def available(self) -> bool:
-        """Probe without raising. Used only by the migration's skip path (§12.2)."""
+        """Probe without raising. Used only by the migration's skip path."""
         from aap_demo.core.errors import PrerequisiteError
 
         try:

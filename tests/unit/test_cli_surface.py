@@ -1,4 +1,4 @@
-"""CLI surface parity with the bash tool (design §12.4 phase-0 exit criterion).
+"""CLI surface parity with the bash tool.
 
 ``BASH_COMMANDS`` is transcribed from ``show_help`` in ``aap-demo.sh`` (the
 COMMANDS blocks at lines 424-504). The exit criterion is that ``--help``
@@ -47,10 +47,10 @@ BASH_COMMANDS = [
     "redeploy-all",
 ]
 
-#: Aliases the bash dispatch case accepts (aap-demo.sh:2876-2972).
+#: Aliases the bash dispatch case accepts.
 BASH_ALIASES = {"rh-status": "redhat-status", "deploy-all": "deploy"}
 
-#: New in the rewrite (§3.3 "New commands").
+#: New in the rewrite.
 NEW_COMMANDS = ["addon", "playbooks", "gui", "completion", "oc", "fleet"]
 
 
@@ -121,7 +121,7 @@ def test_help_title_matches_bash(help_text: str) -> None:
     assert "aap-demo - Deploy AAP 2.7 to OpenShift Local" in help_text
 
 
-# -- global option parity (§3.2) -------------------------------------------
+# -- global option parity -------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -223,7 +223,7 @@ def test_version_command_supports_json(tmp_path, capsys) -> None:
 
 @pytest.mark.parametrize(
     "command",
-    # deploy/redeploy/clean/setup left this list in phase 3; they now reach a
+    # deploy/redeploy/clean/setup left this list; they now reach a
     # real cluster and are covered by tests/unit/test_cluster_deploy.py.
     ["gui"],
 )

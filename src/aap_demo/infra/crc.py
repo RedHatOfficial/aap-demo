@@ -1,7 +1,7 @@
 """OpenShift Local (CRC) backend queries via the ``CommandRunner`` seam.
 
 Ports the parts of ``includes/infra-crc.sh`` and ``includes/infra-api.sh``
-needed by the phase-1 read-only commands (design §2.2 mapping table).
+needed by the read-only commands.
 """
 
 from __future__ import annotations
@@ -81,9 +81,8 @@ def status_json(runner: Any) -> Dict[str, Any]:
     """``crc status -o json``, tolerating a missing, hung, or broken ``crc``.
 
     Mirrors the bash pattern of piping through a throwaway ``python3 -c``
-    parser and falling back to "unknown" on any failure (aap-demo.sh:1035,
-    includes/infra-crc.sh) — here that fallback is just an empty dict. A hang
-    is the same outcome as a failure: callers must not block on the daemon.
+    parser and falling back to "unknown" on any failure — here that fallback is just an empty
+    dict. A hang is the same outcome as a failure: callers must not block on the daemon.
     """
     try:
         result = runner.run(
@@ -136,7 +135,7 @@ def get_name(preset: str) -> str:
     back to querying ``crc config get preset`` live, defaulting to
     "microshift" only when crc reports it unset. The Python config layer
     already resolves env (``CRC_PRESET``) over the saved file over a
-    "microshift" schema default (§5.3), which covers the same cases except
+    "microshift" schema default, which covers the same cases except
     one: a preset set directly via ``crc config set preset`` without ever
     going through aap-demo. That live-crc fallback is not reproduced here —
     a live cluster is needed to judge how much it matters in practice.
@@ -145,7 +144,7 @@ def get_name(preset: str) -> str:
 
 
 def disk_usage_percent(data: Dict[str, Any]) -> int:
-    """Ports the disk-usage percentage calc in ``cmd_diagnose`` (aap-demo.sh:1080).
+    """Ports the disk-usage percentage calc in ``cmd_diagnose``.
 
     Mirrors bash's ``d.get('diskUse',0)`` / ``d.get('diskSize',1)`` exactly:
     the default applies only when the key is *absent*, not when it is present
@@ -161,7 +160,7 @@ def disk_usage_percent(data: Dict[str, Any]) -> int:
 
 
 def prune_images(ctx: Any) -> int:
-    """Ports ``_prune_unused_images`` (aap-demo.sh:569).
+    """Ports ``_prune_unused_images``.
 
     Counts the ``Deleted`` lines ``crictl rmi --prune`` prints, the way bash's
     ``grep -ci deleted`` does, and never fails the caller: reclaiming disk is

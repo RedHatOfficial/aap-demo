@@ -1,4 +1,4 @@
-# Day-2 playbooks repo integration — design §5.3 `playbooks:` block, §4.8.
+# Day-2 playbooks repo integration.
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "aap-demo/playbooks"
 type: object

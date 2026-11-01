@@ -5,9 +5,6 @@ description: Start, stop, pause, and check a cluster you already created.
 tags: [operations, status]
 status: draft
 stale_after: 2027-01-28
-generated:
-  by: cursor-agent/grok-4.7
-  at: 2026-10-29T00:30:00Z
 resource: https://github.com/RedHatOfficial/aap-demo
 ---
 

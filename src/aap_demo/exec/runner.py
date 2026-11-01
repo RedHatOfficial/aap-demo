@@ -1,10 +1,10 @@
-"""The single subprocess seam (design §2.2, §7.2).
+"""The single subprocess seam.
 
 Only this module may call ``subprocess``. Everything else takes a
 ``CommandRunner``. That is what makes "did we grant the SCCs before the first
 pod-creating apply?" a one-line assertion, and it is the single place Windows
 quoting, timeouts, and environment propagation are handled. ``shell=True`` is
-never used, so no quoting divergence arises across platforms (§6.1).
+never used, so no quoting divergence arises across platforms.
 """
 
 from __future__ import annotations
@@ -165,7 +165,7 @@ class SubprocessRunner:
         timeout: Optional[float],
         detach: bool = False,
     ) -> CompletedCommand:
-        """Line-by-line stdout/stderr as ``kind="log"`` events (§9.4)."""
+        """Line-by-line stdout/stderr as ``kind="log"`` events."""
         lines: List[str] = []
         try:
             proc = subprocess.Popen(  # noqa: S603 - argv list, never shell=True
@@ -213,8 +213,8 @@ class SubprocessRunner:
 class EnvRunner:
     """Wraps a runner so every call carries a fixed environment overlay.
 
-    This is how bash's ``export KUBECONFIG=...`` (``setup_kubeconfig``,
-    aap-demo.sh:264) survives the port: the preflight resolves the kubeconfig
+    This is how bash's ``export KUBECONFIG=...`` (``setup_kubeconfig``)
+    survives the port: the preflight resolves the kubeconfig
     once and wraps ``ctx.runner``, so every later ``kubectl``/``oc``/``ssh``
     call sees it without threading an ``env=`` argument through every call
     site. A per-call ``env`` still wins over the overlay.

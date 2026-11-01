@@ -1,15 +1,15 @@
-"""XDG-style filesystem layout (design §5.2).
+"""XDG-style filesystem layout.
 
 Four classes rather than three: *config* is what a human writes, *secret* is a
-credential and does not live on the filesystem at all (§5.5), *state* is
+credential and does not live on the filesystem at all, *state* is
 machine-generated non-secret data whose loss costs the user something, and
 *cache* is anything reconstructible.
 
 ``AAP_DEMO_DIR`` collapses every root back under one directory. That is not a
 legacy wart: it is the documented escape hatch for CI and for the migration
-overlap (§12.2), where both the bash and Python tools must see one layout.
+overlap, where both the bash and Python tools must see one layout.
 
-DELIBERATE DEVIATION from §5.2 as originally written: the design doc calls for
+DELIBERATE DEVIATION from the platform norm: the original design called for
 platformdirs' *native per-OS* directories (macOS ``~/Library/Application
 Support``, Windows ``%APPDATA%``). The maintainer overrode that for the CLI/
 core: **every OS uses strict XDG-style paths under ``$HOME`` right now**
@@ -17,7 +17,7 @@ core: **every OS uses strict XDG-style paths under ``$HOME`` right now**
 ``$XDG_CONFIG_HOME``/``$XDG_CACHE_HOME``/``$XDG_STATE_HOME`` when set. This is
 intentional, not a bug — do not "fix" it back to platform-native conventions.
 Native-per-OS is expected to be revisited specifically when a web GUI/desktop
-app is built (§9), not before. Because that revisit is coming, this resolves
+app is built, not before. Because that revisit is coming, this resolves
 the XDG env vars by hand against the ``env``/``home`` this function already
 takes, rather than reaching for platformdirs' OS-detecting entry point (or
 even its ``platformdirs.unix.Unix`` class, which reads ``os.environ``
@@ -37,7 +37,7 @@ APP_NAME = "aap-demo"
 LEGACY_DIR_NAME = ".aap-demo"
 
 #: (env var, default segments under $HOME) per XDG Base Directory root we use.
-#: No XDG_DATA_HOME entry: this app has no filesystem "data" class (§5.2) —
+#: No XDG_DATA_HOME entry: this app has no filesystem "data" class —
 #: config/cache/state plus the keyring-backed secret class cover everything.
 _XDG_ROOTS: Dict[str, Tuple[str, Tuple[str, ...]]] = {
     "config": ("XDG_CONFIG_HOME", (".config",)),

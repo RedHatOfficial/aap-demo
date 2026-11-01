@@ -1,6 +1,5 @@
 """``cluster/preflight.py`` and its wiring into ``cli/main.py::run`` — the port
-of bash's ``setup_kubeconfig``/``verify_cluster_type`` (aap-demo.sh:264-320,
-2861-2874).
+of bash's ``setup_kubeconfig``/``verify_cluster_type``.
 
 The bug these cover: the preflight existed nowhere, so ``--kubeconfig`` and
 ``--context`` were parsed and then silently ignored, and every ``kubectl``

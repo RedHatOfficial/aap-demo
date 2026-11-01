@@ -1,7 +1,7 @@
-"""Root command group, global options, and dispatch (design §3).
+"""Root command group, global options, and dispatch.
 
 ``--help`` is framework-generated, but its *content* is a faithful port of the
-bash ``show_help`` (aap-demo.sh:424): the same commands, the same grouping, and
+bash ``show_help``: the same commands, the same grouping, and
 the same ENVIRONMENT / EXAMPLES / REQUIREMENTS trailer.
 """
 
@@ -90,7 +90,7 @@ class _Formatter(argparse.RawDescriptionHelpFormatter):
 def _add_global_options(
     parser: argparse.ArgumentParser, resolved: Mapping[str, Any], suppress: bool
 ) -> None:
-    """Global options: the schema-derived ones plus §3.1's CLI-only allowlist."""
+    """Global options: the schema-derived ones plus the CLI-only allowlist."""
     add_schema_arguments(parser, "core", resolved=resolved.get("core", {}), suppress=suppress)
     default = argparse.SUPPRESS if suppress else None
     parser.add_argument(
@@ -416,7 +416,7 @@ def _peek_global(argv: Sequence[str], name: str) -> Optional[str]:
 
 
 def _apply_set_overrides(pairs: Sequence[str], env: Dict[str, str]) -> None:
-    """``--set KEY=VALUE`` replaces bash's blanket ``export "$arg"`` (§3.2)."""
+    """``--set KEY=VALUE`` replaces bash's blanket ``export "$arg"``."""
     for pair in pairs:
         if "=" not in pair:
             raise UsageError(f"--set expects KEY=VALUE, got: {pair}")
@@ -473,11 +473,11 @@ def _parse(
 
 
 #: Commands that get bash's ``setup_kubeconfig`` + ``verify_cluster_type``
-#: preflight (the ``*`` branch of the dispatch case, aap-demo.sh:2861-2874).
+#: preflight (the ``*`` branch of the dispatch case).
 #: Only *ported* commands are listed: an unported command raises
 #: ``NotImplementedYetError`` before touching a cluster, so running the
 #: preflight for it would turn a clear "not yet implemented" into a spurious
-#: kubectl/kubeconfig failure. Later phases add their names here as they land.
+#: kubectl/kubeconfig failure.
 #: ``create``/``deploy``/``redeploy``… take ``setup_kubeconfig`` *without* the
 #: warning — see :data:`SELF_MANAGED_COMMANDS`.
 CLUSTER_COMMANDS = frozenset(
@@ -499,7 +499,7 @@ CLUSTER_COMMANDS = frozenset(
     }
 )
 
-#: Bash's *other* preflight branch (aap-demo.sh:2942-2945): these get
+#: Bash's *other* preflight branch: these get
 #: ``setup_kubeconfig`` but not ``verify_cluster_type``, because they handle
 #: cluster state themselves — ``deploy`` starts or creates the cluster rather
 #: than warning about it, and printing "No cluster exists" immediately before
@@ -572,7 +572,7 @@ def run(
     secrets = SecretStore()
 
     # The one-time legacy migration runs before config is read, and is cheap on
-    # every subsequent invocation because it checks for config.yaml first (§12.2).
+    # every subsequent invocation because it checks for config.yaml first.
     if not any(token in raw_argv for token in ("-h", "--help")):
         try:
             plan, log = migration.migrate_if_needed(paths, env=environ, secret_store=secrets)

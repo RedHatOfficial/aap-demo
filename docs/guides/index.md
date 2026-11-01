@@ -5,9 +5,6 @@ description: Install, deploy, choose a version, and look after the cluster.
 tags: [guides]
 status: draft
 stale_after: 2027-01-28
-generated:
-  by: cursor-agent/grok-4.7
-  at: 2026-10-29T00:30:00Z
 resource: https://github.com/RedHatOfficial/aap-demo
 ---
 

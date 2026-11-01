@@ -1,4 +1,4 @@
-"""JSON Schema documents — the single source of truth (design §9.3).
+"""JSON Schema documents — the single source of truth.
 
 Neither an argparse argument nor a GUI form field may introduce a setting that
 is not defined here. The documents are hand-written YAML shipped as package
@@ -41,7 +41,7 @@ def _read_schema_files() -> Dict[str, Dict[str, Any]]:
         if not entry.name.endswith(".yaml"):
             continue
         # Pure-Python SafeLoader only: never CSafeLoader, so installing the tool
-        # never needs a compiler (§5.1).
+        # never needs a compiler.
         docs[entry.name[: -len(".yaml")]] = yaml.safe_load(entry.read_text(encoding="utf-8"))
     return docs
 
@@ -102,7 +102,7 @@ def defaults() -> Dict[str, Any]:
 
 
 def env_map() -> Dict[str, Tuple[str, str]]:
-    """``ENV_VAR -> (section, key)``, including the legacy names (§3.2, §12.2).
+    """``ENV_VAR -> (section, key)``, including the legacy names.
 
     This is the same table that makes the env vars work, so the migration has no
     second mapping to drift against.
@@ -143,7 +143,7 @@ def validate(instance: Dict[str, Any], section_name: Optional[str] = None) -> No
     """Validate against the root document or one section.
 
     Errors are reported by ``json_path`` so a bad value reads the same whether it
-    came from a flag, an env var, the config file, or the API (§9.3).
+    came from a flag, an env var, the config file, or the API.
     """
     from aap_demo.core.errors import ConfigError
 

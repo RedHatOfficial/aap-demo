@@ -1,4 +1,4 @@
-# OpenShift Local (CRC) VM sizing and preset — design §5.3 `crc:` block, §9.3 worked example.
+# OpenShift Local (CRC) VM sizing and preset.
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "aap-demo/crc"
 type: object
@@ -10,7 +10,7 @@ properties:
     enum: [microshift, openshift]
     default: microshift
     title: Preset
-    description: OpenShift Local preset. microshift is the v1 target; openshift lands in phase 4b.
+    description: OpenShift Local preset. Only microshift is available in this release.
     x-cli: {flag: "--preset"}
     x-env: CRC_PRESET
     x-config: crc.preset

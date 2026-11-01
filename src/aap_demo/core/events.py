@@ -1,4 +1,4 @@
-"""The one progress-reporting abstraction (design §9.4).
+"""The one progress-reporting abstraction.
 
 The core concept is an *event stream*, not an SSE stream. Long-running core
 operations need progress reporting for the CLI anyway; defining it once means

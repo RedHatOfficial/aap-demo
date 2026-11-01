@@ -5,9 +5,6 @@ description: A local way to run Ansible Automation Platform for demos, not a pro
 tags: [overview, beta]
 status: draft
 stale_after: 2027-01-28
-generated:
-  by: cursor-agent/grok-4.7
-  at: 2026-10-29T00:30:00Z
 resource: https://github.com/RedHatOfficial/aap-demo
 sources:
   - id: v2-to-main

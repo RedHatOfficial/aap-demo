@@ -1,4 +1,4 @@
-"""Legacy ``~/.aap-demo`` -> YAML + XDG-style layout migration (design §12.2).
+"""Legacy ``~/.aap-demo`` -> YAML + XDG-style layout migration.
 
 Parameterized over ``tests/fixtures/legacy_home/``, which covers exactly the
 cases the design names: a full config, an empty config, a config with only
@@ -295,7 +295,7 @@ def test_skip_migration_env_var_is_honored(legacy) -> None:
 
 
 def test_collapsed_layout_moves_no_state(tmp_path: Path, fixtures_dir: Path) -> None:
-    """AAP_DEMO_DIR keeps everything under one root, so nothing relocates (§12.2)."""
+    """AAP_DEMO_DIR keeps everything under one root, so nothing relocates."""
     root = tmp_path / "collapsed"
     shutil.copytree(fixtures_dir / "legacy_home" / "full" / ".aap-demo", root)
     paths = Paths(config_dir=root, cache_dir=root, state_dir=root, legacy_dir=root, collapsed=True)

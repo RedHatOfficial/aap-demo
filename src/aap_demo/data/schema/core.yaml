@@ -1,5 +1,5 @@
-# Core settings — design §5.3 `core:` block.
-# Authored as YAML because a human maintains it and the comments are the field docs (§9.3).
+# Core settings.
+# Authored as YAML because a human maintains it and the comments are the field docs.
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "aap-demo/core"
 type: object
@@ -40,7 +40,7 @@ properties:
       rich is the live terminal (default). basic is a plain professional log.
       json and yaml are structured machine output.
     # --output is a genuinely CLI-shaped option and is hand-written on the global
-    # parser (§3.1 allowlist); the schema owns only its persisted default.
+    # parser; the schema owns only its persisted default.
     x-cli: false
     x-env: AAP_DEMO_OUTPUT
     x-config: core.output

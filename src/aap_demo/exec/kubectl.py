@@ -1,9 +1,9 @@
-"""Thin ``kubectl`` helpers over the ``CommandRunner`` seam (design §2.1).
+"""Thin ``kubectl`` helpers over the ``CommandRunner`` seam.
 
 Functions, not a client class: every call still goes through the runner the
 tests substitute, and the argv stays visible at the call site so a
-``FakeRunner`` assertion reads like the bash line it ports. Phase-1's
-``cluster/status.py`` predates this module and still builds its argv inline;
+``FakeRunner`` assertion reads like the bash line it ports. ``cluster/status.py``
+predates this module and still builds its argv inline;
 it is not retrofitted here because that would mean re-reviewing output the
 maintainer already verified byte-for-byte against bash.
 """

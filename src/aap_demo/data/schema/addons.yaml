@@ -1,4 +1,4 @@
-# Addon enablement and per-addon options — design §5.3 `addons:` block, §4.4.
+# Addon enablement and per-addon options.
 # `options` is a mapping keyed by addon name: addons contribute their own schema
 # document at runtime through Addon.arguments(), merged under addons.options.<name>.
 $schema: "https://json-schema.org/draft/2020-12/schema"

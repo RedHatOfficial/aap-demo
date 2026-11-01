@@ -1,4 +1,4 @@
-"""``aap-demo gui`` — phase 0 stub (the GUI lands in phase 7)."""
+"""``aap-demo gui`` — not implemented yet."""
 
 from __future__ import annotations
 

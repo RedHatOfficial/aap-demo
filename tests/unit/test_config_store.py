@@ -1,4 +1,4 @@
-"""config.yaml round-trip, header regeneration, and layered resolution (§5.1, §5.3)."""
+"""config.yaml round-trip, header regeneration, and layered resolution."""
 
 from __future__ import annotations
 

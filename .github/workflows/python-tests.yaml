@@ -58,7 +58,7 @@ jobs:
 
       - name: Run unit tests
         # The default marker selection excludes `integration` and `slow`, so no
-        # cluster and no network are required (design §7.3).
+        # cluster and no network are required.
         run: python -m pytest tests/unit -q
 
       - name: Verify the CLI entry point starts

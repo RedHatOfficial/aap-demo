@@ -5,9 +5,6 @@ description: Copy-paste path from a new computer to an AAP page you can open.
 tags: [example, deploy]
 status: draft
 stale_after: 2027-01-28
-generated:
-  by: cursor-agent/grok-4.7
-  at: 2026-10-29T00:30:00Z
 resource: https://github.com/RedHatOfficial/aap-demo
 ---
 
