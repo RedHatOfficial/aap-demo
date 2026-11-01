@@ -1,7 +1,6 @@
 """Renders a ``DiagnoseReport`` to the terminal.
 
-Kept separate from ``checks.py``. ``--ai`` is handled at the CLI layer
-(``cli/observe.py::diagnose``).
+Kept separate from ``checks.py``.
 """
 
 from __future__ import annotations
@@ -50,4 +49,3 @@ def render_text(console: Any, report: DiagnoseReport) -> None:
         console.report(f"{report.issues} issue(s), {report.warnings} warning(s)", status="fail")
         console.out("")
         console.out("For detailed diagnostics: aap-demo must-gather")
-        console.out("For AI-assisted analysis:  aap-demo diagnose --ai")

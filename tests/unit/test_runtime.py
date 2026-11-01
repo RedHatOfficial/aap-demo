@@ -109,21 +109,6 @@ def test_watch_prints_the_success_summary(app_ctx) -> None:
     assert "Password: secret" in app_ctx.console.stdout
 
 
-def test_analyze_refuses_a_missing_claude_cli(app_ctx) -> None:
-    assert runtime.analyze(app_ctx, which=lambda _name: None) == 1
-    assert "claude" in app_ctx.console.stderr
-
-
-def test_analyze_sends_diagnostics_to_claude(app_ctx) -> None:
-    runner = FakeRunner()
-    runner.ok("kubectl", stdout="gateway-0 0/1 CrashLoopBackOff 1 1m\n")
-    runner.ok("claude -p", stdout="Restart the gateway pod.\n")
-    app_ctx.runner = runner
-    assert runtime.analyze(app_ctx, which=lambda _name: "/usr/bin/claude") == 0
-    assert runner.called("claude -p")
-    assert "Restart the gateway pod." in app_ctx.console.stdout
-
-
 def _starting(app_ctx, monkeypatch, status: str) -> FakeRunner:
     monkeypatch.setattr(runtime.preflight, "setup_kubeconfig", lambda ctx: None)
     monkeypatch.setattr(runtime.coredns, "configure", lambda ctx, sleep: True)

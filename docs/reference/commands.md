@@ -26,7 +26,7 @@ still run with [the older command](../guides/older-command.md).
 | `ssh` | Open a shell on the cluster machine. |
 | `oc …` | Run `oc` against this cluster. Everything after `oc` is passed through. |
 | `kubeconfig` | Refresh the login file and the `aap-demo` context in `~/.kube/config`. |
-| `diagnose` | Print a health report. `--ai` asks the Claude command-line tool to comment. |
+| `diagnose` | Print a health report. |
 | `repair` | Fix the usual breakage after the laptop sleeps. |
 | `must-gather` | Collect logs into a folder. An optional path picks the folder. |
 | `clean` | Remove AAP and keep the cluster. |

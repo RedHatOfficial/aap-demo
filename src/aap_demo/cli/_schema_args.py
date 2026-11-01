@@ -50,7 +50,6 @@ CLI_ONLY_OPTIONS = frozenset(
         "-V",
         # per-command verb modifiers
         "--reset",
-        "--ai",
         "--all",
         "--dry-run",
         "--check",

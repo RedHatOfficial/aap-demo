@@ -1,4 +1,4 @@
-"""``diagnostics/checks.py``: ``aap-demo diagnose`` (minus ``--ai``) over
+"""``diagnostics/checks.py``: ``aap-demo diagnose`` over
 realistic fixture cluster states ("no cluster, pending PVC,
 missing supplementalGroups, ..." states, each becoming a fixture + a test).
 """

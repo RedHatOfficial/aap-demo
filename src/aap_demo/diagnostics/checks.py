@@ -1,7 +1,4 @@
-"""``aap-demo diagnose`` checks, ported from ``cmd_diagnose`` and its ``_check_*``.
-
-``--ai`` is handled at the CLI layer (``cli/observe.py``), not here.
-"""
+"""``aap-demo diagnose`` checks, ported from ``cmd_diagnose`` and its ``_check_*``."""
 
 from __future__ import annotations
 
@@ -339,7 +336,7 @@ def _check_dns(runner: Any, rec: _Recorder) -> None:
 
 
 def run(runner: Any, namespace: str) -> DiagnoseReport:
-    """Ports ``cmd_diagnose``, minus ``--ai``."""
+    """Ports ``cmd_diagnose``."""
     report = DiagnoseReport()
     rec = _Recorder()
 

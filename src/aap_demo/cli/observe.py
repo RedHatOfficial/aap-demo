@@ -38,7 +38,7 @@ def watch(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def diagnose(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_diagnose``, including ``--ai`` when the flag is set."""
+    """Ports ``cmd_diagnose``, without bash's ``--ai``."""
     report = diagnose_checks.run(ctx.runner, ctx.namespace)
 
     if is_structured(ctx.output):
@@ -52,12 +52,7 @@ def diagnose(ctx: AppContext, args: argparse.Namespace) -> int:
     # for anything scripted against the tool", and scripts today read
     # `diagnose`'s status as "did we get a report?", not "is everything
     # green?". Callers that want the issue count read --output json.
-    status = 1 if not report.cluster_reachable else 0
-    if getattr(args, "ai", False):
-        ai_status = runtime_mod.analyze(ctx)
-        if ai_status != 0:
-            return ai_status
-    return status
+    return 1 if not report.cluster_reachable else 0
 
 
 def must_gather(ctx: AppContext, args: argparse.Namespace) -> int:
