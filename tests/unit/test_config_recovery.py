@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, Sequence
 
 import pytest
+import yaml
 
 from aap_demo.cli.main import main, run
 from aap_demo.core import config as config_mod
@@ -115,3 +116,13 @@ def test_a_good_config_still_applies(tmp_path: Path, capsys: pytest.CaptureFixtu
     path.write_text("crc:\n  cpus: 9\n", encoding="utf-8")
     assert _run(["config", "get", "crc.cpus"], path, FakeRunner()) == 0
     assert capsys.readouterr().out.strip() == "9"
+
+
+def test_config_set_writes_the_selected_file(tmp_path: Path) -> None:
+    selected = tmp_path / "selected.yaml"
+    selected.write_text("crc:\n  cpus: 9\n")
+    assert _run(["config", "set", "crc.memory_mb", "26624"], selected, FakeRunner()) == 0
+    saved = yaml.safe_load(selected.read_text())
+    assert saved["crc"]["memory_mb"] == 26624
+    assert saved["crc"]["cpus"] == 9
+    assert not (tmp_path / "aap-demo" / "config.yaml").exists()

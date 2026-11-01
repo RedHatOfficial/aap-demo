@@ -92,12 +92,10 @@ def config(ctx: AppContext, args: argparse.Namespace) -> int:
             raise UsageError(
                 f"unknown config key: {args.key}",
             )
-        file_config = config_mod.Config(
-            config_mod.read_yaml(ctx.paths.config_file), path=ctx.paths.config_file
-        )
+        file_config = config_mod.Config(config_mod.read_yaml(config_file), path=config_file)
         merged = config_mod.resolve(file_data=file_config.data, env={})
         merged.set(key, args.value)
-        merged.save(ctx.paths.config_file)
+        merged.save(config_file)
         shown = args.key if args.key in CONFIG_KEY_ALIASES else key
         ctx.console.success(f"{shown} = {merged.get(key)}")
         return 0

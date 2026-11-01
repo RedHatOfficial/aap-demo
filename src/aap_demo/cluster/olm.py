@@ -179,19 +179,29 @@ def ensure_installed(
 # ---------------------------------------------------------------------------
 
 
+def _apply(ctx: AppContext, kind: str, manifest: str) -> None:
+    """Stop on a rejected manifest. A CSV left by an earlier install would pass the later waits."""
+    applied = kubectl.apply_stdin(ctx.runner, manifest)
+    if not applied.ok:
+        raise AapDemoError(
+            f"Could not apply the {kind}",
+            hint=applied.stderr.strip() or "Check: kubectl get events -n aap-operator",
+        )
+
+
 def apply_catalogsource(ctx: AppContext, namespace: str, ocp_version: str) -> None:
     ctx.console.progress(f"Creating CatalogSource (OCP {ocp_version})")
-    kubectl.apply_stdin(ctx.runner, render_catalogsource(namespace, ocp_version))
+    _apply(ctx, "CatalogSource", render_catalogsource(namespace, ocp_version))
 
 
 def apply_operatorgroup(ctx: AppContext, namespace: str) -> None:
     ctx.console.progress("Creating OperatorGroup")
-    kubectl.apply_stdin(ctx.runner, render_operatorgroup(namespace))
+    _apply(ctx, "OperatorGroup", render_operatorgroup(namespace))
 
 
 def apply_subscription(ctx: AppContext, namespace: str, channel: str) -> None:
     ctx.console.progress("Creating Subscription")
-    kubectl.apply_stdin(ctx.runner, render_subscription(namespace, channel))
+    _apply(ctx, "Subscription", render_subscription(namespace, channel))
 
 
 def find_csv(ctx: AppContext, namespace: str) -> str:

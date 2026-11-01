@@ -76,6 +76,9 @@ See [Choose a version](../guides/choose-a-version.md).
 | Cluster certificate | `~/.local/state/aap-demo/certs/` |
 | Cache | `~/.cache/aap-demo` |
 
+Cluster commands stop if the kubeconfig points at a remote API server, which `oc login` can cause. Set
+`AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true` to target that server on purpose.
+
 `AAP_DEMO_DIR` puts settings, state, and cache under one folder you choose. That is for CI and for unusual
 layouts, not for a normal install.
 

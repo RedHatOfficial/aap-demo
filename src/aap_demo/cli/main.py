@@ -509,6 +509,9 @@ CLUSTER_COMMANDS = frozenset(
 #: because bash runs it with no kubeconfig preflight.
 SELF_MANAGED_COMMANDS = frozenset({"deploy", "deploy-all", "redeploy", "redeploy-all", "create"})
 
+#: These never talk to the Kubernetes API, so the remote cluster check skips them.
+NO_REMOTE_CHECK_COMMANDS = frozenset({"kubeconfig", "ssh", "stop", "redhat-status", "rh-status"})
+
 
 def _fleet_list(ctx: AppContext, args: argparse.Namespace) -> int:
     from aap_demo.addons import get
@@ -545,7 +548,7 @@ def _preflight(ctx: AppContext, command: str, args: argparse.Namespace) -> None:
         return
     if command not in CLUSTER_COMMANDS:
         return
-    preflight.setup_kubeconfig(ctx)
+    preflight.setup_kubeconfig(ctx, guard=command not in NO_REMOTE_CHECK_COMMANDS)
     preflight.warn_cluster_state(ctx)
 
 

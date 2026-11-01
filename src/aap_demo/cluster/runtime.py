@@ -110,7 +110,7 @@ def idle(ctx: AppContext, state: Optional[str]) -> int:
 
 def _patch_idle(ctx: AppContext, name: str, namespace: str, idle_aap: bool) -> None:
     payload = "true" if idle_aap else "false"
-    ctx.runner.run(
+    patched = ctx.runner.run(
         [
             "kubectl",
             "patch",
@@ -124,6 +124,11 @@ def _patch_idle(ctx: AppContext, name: str, namespace: str, idle_aap: bool) -> N
             f'{{"spec":{{"idle_aap":{payload}}}}}',
         ]
     )
+    if not patched.ok:
+        raise AapDemoError(
+            f"Could not set idle_aap to {payload} on AAP '{name}'",
+            hint=patched.stderr.strip() or f"Check: kubectl get aap {name} -n {namespace}",
+        )
 
 
 def repair(
