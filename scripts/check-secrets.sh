@@ -26,22 +26,7 @@ trap 'rm -f "$tmp"' EXIT
 # scan without --baseline prints JSON and leaves the baseline file alone.
 detect-secrets scan --exclude-files '\.secrets\.baseline' >"$tmp"
 
-python3 - "$tmp" .secrets.baseline <<'PY'
-import json
-import sys
-
-def count(path: str) -> int:
-    with open(path, encoding="utf-8") as handle:
-        document = json.load(handle)
-    return sum(len(findings) for findings in document.get("results", {}).values())
-
-new = count(sys.argv[1])
-old = count(sys.argv[2])
-if new > old:
-    print(f"New secrets detected ({new} vs {old} baseline)", file=sys.stderr)
-    sys.exit(1)
-print(f"No new secrets ({new} vs baseline {old})")
-PY
+python3 scripts/compare_secrets.py "$tmp" .secrets.baseline
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git diff --exit-code -- .secrets.baseline

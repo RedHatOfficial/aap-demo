@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from aap_demo.core.context import AppContext
+from aap_demo.core.errors import AapDemoError
 from aap_demo.core.paths import Paths, display_path
 from aap_demo.exec import kubectl
 
@@ -115,7 +116,7 @@ def attach_to_default_sa(ctx: AppContext, namespace: str) -> None:
     merged = [{"name": SECRET_NAME}] + [{"name": name} for name in existing]
     import json
 
-    ctx.runner.run(
+    patched = ctx.runner.run(
         [
             "kubectl",
             "patch",
@@ -127,6 +128,11 @@ def attach_to_default_sa(ctx: AppContext, namespace: str) -> None:
             json.dumps({"imagePullSecrets": merged}),
         ]
     )
+    if not patched.ok:
+        raise AapDemoError(
+            "Could not add the pull secret to the default ServiceAccount",
+            hint=patched.stderr.strip() or f"Check: kubectl get serviceaccount -n {namespace}",
+        )
     ctx.console.progress("Pull secret added to the default ServiceAccount")
 
 
@@ -149,7 +155,7 @@ def ensure(ctx: AppContext, namespace: str) -> Optional[Path]:
     # Delete-then-create, as bash does: `kubectl create secret` has no --force
     # and a stale secret from a previous pull-secret file must not survive.
     kubectl.delete(ctx.runner, "secret", SECRET_NAME, "-n", namespace)
-    ctx.runner.run(
+    created = ctx.runner.run(
         [
             "kubectl",
             "create",
@@ -162,6 +168,11 @@ def ensure(ctx: AppContext, namespace: str) -> Optional[Path]:
             namespace,
         ]
     )
+    if not created.ok:
+        raise AapDemoError(
+            f"Could not create the {SECRET_NAME} secret",
+            hint=created.stderr.strip() or f"Check the pull secret file: {path}",
+        )
     attach_to_default_sa(ctx, namespace)
     return path
 

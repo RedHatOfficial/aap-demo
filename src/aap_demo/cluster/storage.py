@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from aap_demo import data
 from aap_demo.core.context import AppContext
+from aap_demo.core.errors import AapDemoError
 from aap_demo.exec import kubectl
 
 STORAGE_CLASS = "nfs-local-rwx"
@@ -46,7 +47,12 @@ def ensure_aap_pvcs(ctx: AppContext, *, aap_name: str, namespace: Optional[str] 
         return False
     ctx.console.progress("Ensuring postgres and hub-redis PVCs use nfs-local-rwx")
     manifest = render_pvcs(data.read(data.MANIFESTS, PVC_MANIFEST), namespace=ns, aap_name=aap_name)
-    kubectl.apply_stdin(ctx.runner, manifest)
+    applied = kubectl.apply_stdin(ctx.runner, manifest)
+    if not applied.ok:
+        raise AapDemoError(
+            f"Could not create the PVCs that use {STORAGE_CLASS}",
+            hint=applied.stderr.strip() or f"Check: kubectl get pvc -n {ns}",
+        )
     return True
 
 
