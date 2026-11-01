@@ -61,7 +61,7 @@ def can_ask(env: Mapping[str, str]) -> bool:
 
 
 def _whole_number(label: str, raw: str) -> int:
-    if not raw.isdigit() or int(raw) <= 0:
+    if not (raw.isascii() and raw.isdigit()) or int(raw) <= 0:
         raise AapDemoError(f"Invalid {label}: '{raw}'", hint="Enter a positive whole number.")
     return int(raw)
 

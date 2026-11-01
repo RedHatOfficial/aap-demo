@@ -48,7 +48,9 @@ def test_end_of_input_keeps_the_defaults(app_ctx) -> None:
     assert _ask(app_ctx.console)[0] == (8, 24576)
 
 
-@pytest.mark.parametrize("answers", [("x", ""), ("0", ""), ("-1", ""), ("", "1.5"), ("", "0")])
+@pytest.mark.parametrize(
+    "answers", [("x", ""), ("0", ""), ("-1", ""), ("²", ""), ("", "1.5"), ("", "0")]
+)
 def test_invalid_answers_stop(app_ctx, answers) -> None:
     with pytest.raises(AapDemoError, match="Invalid"):
         _ask(app_ctx.console, *answers)
