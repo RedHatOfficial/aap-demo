@@ -153,6 +153,7 @@ def test_runner_never_uses_shell() -> None:
             pytest.fail("exec/runner.py passes shell= to subprocess")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the stand-in tool is a POSIX script")
 def test_unit_tests_cannot_run_installed_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
