@@ -29,6 +29,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from aap_demo.cluster import aap as aap_mod
 from aap_demo.cluster import bootstrap, catalog_signature, coredns, olm, runtime
 from aap_demo.cluster import namespace as namespace_mod
+from aap_demo.cluster import pull_secret as pull_secret_mod
 from aap_demo.core.console import format_elapsed
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, ClusterUnreachableError, env_number
@@ -175,6 +176,19 @@ def _report_vm_size(ctx: AppContext) -> None:
     ctx.console.note("An existing VM keeps the size it was created with")
 
 
+def _ensure_node_pull_secret(ctx: AppContext) -> None:
+    """Make sure CRI-O can pull AAP's images. A cluster may not have been made by ``create``.
+
+    CRI-O's global auth file covers every pod on the node, so nothing has to add
+    a pull secret to the AAP resource or its service accounts.
+    """
+    secret = pull_secret_mod.discover(ctx)
+    key = ssh_mod.detect_ssh_key(ssh_mod.crc_machines_dir(ctx.env))
+    if secret is None or key is None:
+        return
+    bootstrap.ensure_crio_pull_secret(ctx, key, secret)
+
+
 def run(
     ctx: AppContext,
     *,
@@ -193,6 +207,7 @@ def run(
             "Connecting to the cluster",
             "Trusting the ingress certificate",
             "Waiting for cluster networking",
+            "Checking the CRI-O pull secret",
             "Installing OLM",
             "Setting up NFS storage",
             "Waiting for the operator catalog",
@@ -249,6 +264,8 @@ def run(
                 _finish_wait(ctx, readiness)
                 _report_times(ctx, None, aap_elapsed)
             return result
+
+    _ensure_node_pull_secret(ctx)
 
     ctx.console.step("Installing OLM")
     olm.ensure_installed(ctx)

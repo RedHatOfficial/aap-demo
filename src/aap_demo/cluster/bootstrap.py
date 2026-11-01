@@ -212,7 +212,7 @@ def _crio_pull_secret_configured(ctx: AppContext, key: Path) -> bool:
     return bool(result.ok and "configured" in result.stdout)
 
 
-def _assert_crio_pull_secret(ctx: AppContext, key: Path, secret: Path) -> None:
+def ensure_crio_pull_secret(ctx: AppContext, key: Path, secret: Path) -> None:
     """Require CRI-O's global pull secret before create continues.
 
     CRC post-start is supposed to write ``/etc/crio/openshift-pull-secret``
@@ -628,7 +628,7 @@ def create(
         raise AapDemoError("No CRC SSH key found. Cannot configure nip.io baseDomain.")
 
     _wait_ssh(ctx, key, sleep=sleep)
-    _assert_crio_pull_secret(ctx, key, secret)
+    ensure_crio_pull_secret(ctx, key, secret)
     _grow_root(ctx, key)
     _configure_nipio(ctx, key, sleep=sleep)
 

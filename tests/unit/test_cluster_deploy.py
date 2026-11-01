@@ -833,3 +833,31 @@ def _args():
     import argparse
 
     return argparse.Namespace()
+
+
+def test_deploy_checks_the_node_pull_secret_when_it_can_reach_the_vm(
+    app_ctx, ssh_key, tmp_path, monkeypatch
+) -> None:
+    secret = tmp_path / "pull-secret.txt"
+    secret.write_text('{"auths": {"registry.redhat.io": {}}}\n', encoding="utf-8")
+    app_ctx.config.set("deploy.pull_secret_path", str(secret))
+    called = []
+    monkeypatch.setattr(
+        deploy_mod.bootstrap, "ensure_crio_pull_secret", lambda *args: called.append(args[2])
+    )
+
+    deploy_mod._ensure_node_pull_secret(app_ctx)
+
+    assert called == [secret]
+
+
+def test_deploy_skips_the_node_pull_secret_without_a_file(app_ctx, ssh_key, monkeypatch) -> None:
+    app_ctx.config.set("deploy.pull_secret_path", "")
+    monkeypatch.setattr(deploy_mod.pull_secret_mod, "discover", lambda _ctx: None)
+    monkeypatch.setattr(
+        deploy_mod.bootstrap,
+        "ensure_crio_pull_secret",
+        lambda *_args: pytest.fail("must not run without a pull secret file"),
+    )
+
+    deploy_mod._ensure_node_pull_secret(app_ctx)
