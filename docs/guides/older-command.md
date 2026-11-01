@@ -8,7 +8,7 @@ stale_after: 2027-01-28
 resource: https://github.com/RedHatOfficial/aap-demo
 sources:
   - id: v2-to-main
-    resource: https://github.com/RedHatOfficial/aap-demo/blob/v2/docs/v2-to-main.md
+    resource: https://github.com/RedHatOfficial/aap-demo/blob/main/docs/v2-to-main.md
     title: v2 to main
     author: human:aknochow
     last_modified: 2026-10-28T00:00:00Z

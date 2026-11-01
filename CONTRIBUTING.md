@@ -3,9 +3,8 @@
 Thanks for helping. This page is how to set up the project, check your change,
 commit it, and open a pull request.
 
-Check out the `v2` branch. That is where the current command is developed.
-The published package on that branch is version `2.0.0.dev1`. Open pull
-requests for this command against `v2`.
+The current command is developed on `main`. The published package on that
+branch is version `2.0.0.dev1`. Open pull requests against `main`.
 
 ## Set up
 
@@ -14,7 +13,6 @@ You need Python 3.9 or newer, and git.
 ```bash
 git clone https://github.com/RedHatOfficial/aap-demo.git
 cd aap-demo
-git checkout v2
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -40,7 +38,7 @@ tools is in [Linting](docs/LINTING.md).
 
 ## Test
 
-For a Python change, run the same checks the `v2` pull request workflow runs:
+For a Python change, run the same checks the pull request workflow runs:
 
 ```bash
 python -m pytest tests/unit -q
@@ -89,7 +87,7 @@ Commitizen. Keep each body line within 100 characters.
 
 ## Open a pull request
 
-Push your branch and open the pull request against `v2`.
+Push your branch and open the pull request against `main`.
 
 The title uses the same conventional format as the commit subject. Fill in the
 pull request template. The test plan should list the commands you ran and what
