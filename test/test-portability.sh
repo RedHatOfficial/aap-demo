@@ -6,7 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cli="${repo_root}/aap-demo.sh"
 
 if grep -Fq 'compgen -G' "$cli"; then
-  echo "FAIL: mkcert path detection still depends on compgen" >&2
+  echo "FAIL: aap-demo.sh still uses compgen -G" >&2
   exit 1
 fi
 if grep -Fq 'client-certificate=<' "$cli" || grep -Fq 'client-key=<' "$cli"; then

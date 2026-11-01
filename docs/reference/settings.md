@@ -1,0 +1,85 @@
+---
+type: Reference
+title: Settings
+description: Default cluster size, the AAP channel, and the folders aap-demo uses.
+tags: [config, paths, channel]
+status: draft
+stale_after: 2027-01-28
+resource: https://github.com/RedHatOfficial/aap-demo
+---
+
+# Settings
+
+Change a setting for one run with a flag, or save it:
+
+```bash
+aap-demo config set deploy.channel stable-2.6
+aap-demo config list
+aap-demo config path
+```
+
+The file is `~/.config/aap-demo/config.yaml`.
+
+## Cluster size
+
+Defaults when you `create`:
+
+| | Default | Minimum | Flag | Environment variable | Saved key |
+| --- | --- | --- | --- | --- | --- |
+| Processors | 8 | 2 | `--cpus` | `CRC_CPUS` | `crc.cpus` |
+| Memory | 24576 MB (24 GB) | 8192 MB | `--memory` | `CRC_MEMORY` | `crc.memory_mb` |
+| Disk | 120 GB | 60 GB | `--disk` | `CRC_DISK` | `crc.disk_gb` |
+| Space for volumes | 100 GB | 10 GB | `--pv-size` | `CRC_PV_SIZE` | `crc.pv_size_gb` |
+
+A later source overrides an earlier one:
+
+1. The default in this table
+2. The saved key in `~/.config/aap-demo/config.yaml`
+3. The environment variable
+4. The flag
+
+A value below the minimum stops the command before it changes anything. The error names the flag, the
+environment variable, and the saved key. Correct the one that holds the bad value. The saved key and the
+environment variable are checked before flags are read, so a flag does not get past a bad value from either.
+
+`create` asks for processors and memory when it is about to make a new virtual machine in a terminal. Press
+Enter to keep the value shown. Your answers are saved as `crc.cpus` and `crc.memory_mb`. It does not ask when
+`--cpus`, `--memory`, `CRC_CPUS` or `CRC_MEMORY` is set, with `--quiet`, with structured output, or without a
+terminal. `AAP_DEMO_INTERACTIVE=1` makes it ask without a terminal.
+
+`create` and `deploy` both print the size they resolved. `create` stops before starting the virtual machine if
+the size is more than the computer has. Linux swap counts toward memory. It also warns if the computer has fewer
+than 4 processors or 10 GB of memory. Set the size before the virtual machine exists. Changing it later
+means `destroy` and `create` again, so `deploy` on an existing machine does not resize it.
+
+```bash
+aap-demo create --cpus 6 --memory 16384 --disk 80 --pv-size 60
+```
+
+## AAP version
+
+| | |
+| --- | --- |
+| Default channel | `stable-2.7` |
+| Flag | `--channel` on `deploy` |
+| Saved key | `deploy.channel` |
+
+See [Choose a version](../guides/choose-a-version.md).
+
+## Where files go
+
+| What | Where |
+| --- | --- |
+| Settings | `~/.config/aap-demo/config.yaml` |
+| Pull secret | `~/.local/state/aap-demo/pull-secret.txt` |
+| Kubeconfig | `~/.local/state/aap-demo/kubeconfig.microshift` |
+| Cluster certificate | `~/.local/state/aap-demo/certs/` |
+| Cache | `~/.cache/aap-demo` |
+
+Cluster commands stop if the kubeconfig points at a remote API server, which `oc login` can cause. Set
+`AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true` to target that server on purpose.
+
+`AAP_DEMO_DIR` puts settings, state, and cache under one folder you choose. That is for CI and for unusual
+layouts, not for a normal install.
+
+The older bash command uses `~/.aap-demo` instead. The new command does not look there.

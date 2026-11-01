@@ -69,7 +69,7 @@ install_python_tools() {
   pip install \
     pre-commit \
     yamllint \
-    detect-secrets \
+    'detect-secrets==1.5.0' \
     commitizen
 
   # Try ansible-lint (will fail gracefully if Python < 3.10)

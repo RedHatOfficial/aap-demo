@@ -30,7 +30,7 @@ _aap_demo() {
     'destroy:Delete entire MINC cluster (MINC)'
     'stop:Stop MINC cluster gracefully (MINC)'
     'repair:Repair MINC after podman crash (MINC)'
-    'setup:Run setup only - storage, coredns, mkcert (MINC)'
+    'setup:Run setup only - storage, coredns (MINC)'
     'kubeconfig:Sync MINC kubeconfig (MINC)'
     'redeploy-all:Destroy cluster and redeploy fresh (MINC)'
     'keycloak:Configure local Keycloak OIDC consumers'

@@ -1,0 +1,63 @@
+---
+# AAP CR for external clusters (k3s, containerd, etc.) where ingress is managed separately
+# Use with: aap-demo deploy CR=minimal-noingress PUBLIC_URL=https://...
+#
+# Required substitutions:
+#   https://aap.example.com - External URL where AAP will be accessed (e.g., https://aap.apps.ocp.example.com)
+#
+apiVersion: aap.ansible.com/v1alpha1
+kind: AnsibleAutomationPlatform
+metadata:
+  name: aap
+spec:
+  no_log: false
+
+  # Disable built-in ingress/route creation - external cluster manages ingress
+  ingress_type: none
+
+  # External URL for AAP gateway (must match the ingress/route created separately)
+  # The operator automatically sets CSRF_TRUSTED_ORIGINS from this URL
+  public_base_url: https://aap.example.com
+
+  # Gateway API container security context
+  # Required on vanilla k8s (non-OpenShift) where SCCs don't auto-assign group 0
+  # runAsGroup: 0 allows writing to /run/supervisor/ which is group-writable
+  api:
+    security_context:
+      runAsUser: 1000
+      runAsGroup: 0
+
+  controller:
+    disabled: false
+    ingress_type: none
+    # Fix git "dubious ownership" and collection download permissions
+    # Ensure all AWX operations run as awx user (996) to prevent root-owned artifacts
+    security_context_settings:
+      runAsUser: 996   # awx UID — all container processes run as awx user
+      fsGroup: 996     # awx GID — group ownership on project volume
+    # GIT_CONFIG vars allow git to access repos regardless of ownership (safety fallback)
+    task_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: safe.directory
+      - name: GIT_CONFIG_VALUE_0
+        value: "*"
+    ee_extra_env: |
+      - name: GIT_CONFIG_COUNT
+        value: "1"
+      - name: GIT_CONFIG_KEY_0
+        value: safe.directory
+      - name: GIT_CONFIG_VALUE_0
+        value: "*"
+
+  eda:
+    disabled: false
+    ingress_type: none
+
+  hub:
+    disabled: false
+    ingress_type: none
+    storage_type: file
+    file_storage_access_mode: ReadWriteOnce
+    file_storage_size: 5Gi
