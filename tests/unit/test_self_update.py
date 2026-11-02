@@ -10,7 +10,7 @@ import pytest
 from aap_demo.core import self_update
 from aap_demo.core.errors import AapDemoError, PrerequisiteError
 from aap_demo.core.version import VersionInfo
-from aap_demo.exec.runner import FakeRunner
+from aap_demo.exec.runner import CompletedCommand, FakeRunner
 
 PIPX = "/usr/bin/pipx"
 
@@ -51,8 +51,9 @@ def test_update_upgrades_a_pypi_pipx_install(app_ctx, monkeypatch) -> None:
         self_update.LIST_TIMEOUT,
         self_update.UPGRADE_TIMEOUT,
     ]
-    assert "Current: 2.0.0.dev0" in app_ctx.console.stdout
-    assert "Update complete" in app_ctx.console.stdout
+    assert "Installed: 2.0.0.dev0" in app_ctx.console.stdout
+    assert "pipx upgrade finished" in app_ctx.console.stdout
+    assert "aap-demo version" in app_ctx.console.stdout
 
 
 def test_update_warns_when_pipx_tracks_a_git_url(app_ctx, monkeypatch) -> None:
@@ -63,7 +64,7 @@ def test_update_warns_when_pipx_tracks_a_git_url(app_ctx, monkeypatch) -> None:
     assert self_update.run(app_ctx) == 0
 
     assert "tracks git+https://" in app_ctx.console.stderr
-    assert "pipx install --force aap-demo" in app_ctx.console.stdout
+    assert "pipx install --force aap-demo" in app_ctx.console.stderr
     assert app_ctx.runner.called([PIPX, "upgrade", "aap-demo"])
 
 
@@ -75,7 +76,7 @@ def test_update_warns_for_a_relative_path_install(app_ctx, monkeypatch) -> None:
     assert self_update.run(app_ctx) == 0
 
     assert "tracks path/to/aap-demo" in app_ctx.console.stderr
-    assert "pipx install --force aap-demo" in app_ctx.console.stdout
+    assert "pipx install --force aap-demo" in app_ctx.console.stderr
 
 
 def test_update_warns_when_pipx_omits_package_or_url(app_ctx, monkeypatch) -> None:
@@ -90,7 +91,7 @@ def test_update_warns_when_pipx_omits_package_or_url(app_ctx, monkeypatch) -> No
     assert self_update.run(app_ctx) == 0
 
     assert "did not report package_or_url" in app_ctx.console.stderr
-    assert "treated as the published release" in app_ctx.console.stdout
+    assert "treated as the published release" in app_ctx.console.stderr
     assert runner.called([PIPX, "upgrade", "aap-demo"])
 
 
@@ -101,7 +102,7 @@ def test_update_says_when_this_command_is_a_checkout(app_ctx, monkeypatch) -> No
 
     assert self_update.run(app_ctx) == 0
 
-    assert "source checkout" in app_ctx.console.stdout
+    assert "source checkout" in app_ctx.console.stderr
 
 
 def test_update_requires_pipx(app_ctx, monkeypatch) -> None:
@@ -148,3 +149,57 @@ def test_update_reports_a_pipx_upgrade_timeout(app_ctx, monkeypatch) -> None:
 
     with pytest.raises(AapDemoError, match="pipx upgrade timed out after 600s"):
         self_update.run(app_ctx)
+
+
+def _upgrade_says(app_ctx, monkeypatch, text: str, *, stream: str = "stdout") -> None:
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: _info())
+    runner = FakeRunner()
+    runner.ok([PIPX, "list", "--json"], stdout=_listing())
+    runner.register(
+        [PIPX, "upgrade", "aap-demo"],
+        CompletedCommand(argv=(PIPX, "upgrade", "aap-demo"), returncode=0, **{stream: text}),
+    )
+    app_ctx.runner = runner
+
+
+def test_update_names_both_versions_even_when_pipx_wraps_the_line(app_ctx, monkeypatch) -> None:
+    _upgrade_says(
+        app_ctx,
+        monkeypatch,
+        "upgrading aap-demo...\n"
+        "upgraded package aap-demo from 2.0.0.dev1 to 2.0.0.dev2 (location:\n"
+        "/Users/someone/.local/pipx/venvs/aap-demo)\n",
+    )
+
+    assert self_update.run(app_ctx) == 0
+
+    assert "Updated 2.0.0.dev1 to 2.0.0.dev2" in app_ctx.console.stdout
+    assert "location" not in app_ctx.console.stdout
+
+
+def test_update_says_when_it_is_already_the_latest(app_ctx, monkeypatch) -> None:
+    _upgrade_says(
+        app_ctx,
+        monkeypatch,
+        "aap-demo is already at latest version 2.0.0.dev2 (location: /x)\n",
+        stream="stderr",
+    )
+
+    assert self_update.run(app_ctx) == 0
+
+    assert "Already on the latest release, 2.0.0.dev2" in app_ctx.console.stdout
+
+
+def test_update_reports_a_failed_upgrade_with_pipx_output(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: _info())
+    runner = FakeRunner()
+    runner.ok([PIPX, "list", "--json"], stdout=_listing())
+    runner.fail([PIPX, "upgrade", "aap-demo"], returncode=1, stderr="No space left on device")
+    app_ctx.runner = runner
+
+    with pytest.raises(AapDemoError, match="pipx upgrade exited 1") as caught:
+        self_update.run(app_ctx)
+
+    assert "No space left on device" in (caught.value.hint or "")

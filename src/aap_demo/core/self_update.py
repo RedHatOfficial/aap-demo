@@ -8,6 +8,7 @@ in a second command.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from typing import Any, Optional, Sequence
@@ -22,16 +23,16 @@ LIST_TIMEOUT = 60.0
 UPGRADE_TIMEOUT = 600.0
 
 
+TITLE = "Updating aap-demo"
+STEPS = ("Checking the install", "Upgrading with pipx")
+
+_UPGRADED = re.compile(r"upgraded package aap-demo from (\S+) to (\S+)")
+_LATEST = re.compile(r"aap-demo is already at latest version (\S+)")
+
+
 def run(ctx: AppContext) -> int:
     """Upgrade the pipx install and report how this command was installed."""
     info = version_info(ctx.runner)
-    ctx.console.out(f"Current: {info.version}")
-    if info.install_mode == "checkout":
-        ctx.console.out(
-            "This command is a source checkout. "
-            "The update applies to the pipx install, not this tree."
-        )
-
     pipx = shutil.which("pipx")
     if not pipx:
         raise PrerequisiteError(
@@ -39,22 +40,41 @@ def run(ctx: AppContext) -> int:
             hint="Install pipx, then run: pipx install aap-demo",
         )
 
+    ctx.console.tasks(list(STEPS), title=TITLE)
+    ctx.console.step(STEPS[0])
     source = _installed_source(ctx, pipx)
+    if info.install_mode == "checkout":
+        ctx.console.warn(
+            "This command is a source checkout. "
+            "The update applies to the pipx install, not this tree."
+        )
     if _is_direct_source(source):
-        ctx.console.warn(f"This pipx install tracks {source}")
-        ctx.console.out("The published release is: pipx install --force aap-demo")
+        ctx.console.warn(
+            f"This pipx install tracks {source}. "
+            "The published release is: pipx install --force aap-demo"
+        )
+    ctx.console.checkpoint(f"Installed: {info.version}")
 
-    ctx.console.out("Upgrading the pipx install...")
-    result = _run_pipx(
-        ctx,
-        [pipx, "upgrade", PACKAGE],
-        timeout=UPGRADE_TIMEOUT,
-        capture=False,
-        action="upgrade",
-    )
+    ctx.console.step(STEPS[1], timed=True)
+    result = _run_pipx(ctx, [pipx, "upgrade", PACKAGE], timeout=UPGRADE_TIMEOUT, action="upgrade")
+    output = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
     if result.returncode != 0:
-        return result.returncode
-    ctx.console.out("Update complete. Run `aap-demo version` to see the installed release.")
+        raise AapDemoError(
+            f"pipx upgrade exited {result.returncode}",
+            hint=output or "Run: pipx upgrade aap-demo",
+        )
+    upgraded = _UPGRADED.search(output)
+    latest = _LATEST.search(output)
+    if upgraded:
+        summary = f"Updated {upgraded.group(1)} to {upgraded.group(2)}"
+    elif latest:
+        summary = f"Already on the latest release, {latest.group(1)}"
+    else:
+        summary = "pipx upgrade finished"
+    ctx.console.checkpoint("Upgraded with pipx")
+    ctx.console.finish_checklist()
+    ctx.console.success(summary)
+    ctx.console.next_steps([("aap-demo version", "Show the installed release")])
     return 0
 
 
@@ -102,10 +122,10 @@ def _installed_source(ctx: AppContext, pipx: str) -> str:
         )
     if gaps:
         missing = " and ".join(gaps)
-        ctx.console.warn(f"pipx did not report {missing} for aap-demo")
-        ctx.console.out(
-            "The install is being treated as the published release. "
-            "If it tracks a git URL or a path, switch with: pipx install --force aap-demo"
+        ctx.console.warn(
+            f"pipx did not report {missing} for aap-demo, so the install is treated as the "
+            "published release. If it tracks a git URL or a path, switch with: "
+            "pipx install --force aap-demo"
         )
     return source
 
