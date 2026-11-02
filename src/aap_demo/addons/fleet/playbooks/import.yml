@@ -41,7 +41,7 @@
     - name: Require an AAP subscription
       when: state == 'present'
       ansible.builtin.assert:
-        that: controller_config.json.license_info | default({}) | length > 0
+        that: controller_config.json.license_info.valid_key | default(false) | bool
         fail_msg: >-
           AAP has no subscription, so it can't register Fleet hosts. Run aap-demo deploy
           --manifest PATH --auto-license, then enable fleet again, or use enable fleet --no-import.

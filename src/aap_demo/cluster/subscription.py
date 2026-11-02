@@ -43,13 +43,25 @@ def locate(configured: str, paths: Paths) -> Optional[Path]:
     return None
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect must not carry the admin password or the manifest to another host."""
+
+    def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def _open(request: urllib.request.Request, *, timeout: float, context: ssl.SSLContext) -> Any:
+    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=context))
+    return opener.open(request, timeout=timeout)
+
+
 def _call(
     route: str,
     password: str,
     cafile: Path,
     *,
     body: Optional[bytes] = None,
-    opener: Callable[..., Any] = urllib.request.urlopen,
+    opener: Callable[..., Any] = _open,
 ) -> Tuple[int, Dict[str, Any]]:
     token = base64.b64encode(f"admin:{password}".encode()).decode()
     request = urllib.request.Request(
@@ -90,14 +102,17 @@ def ensure(
     route: str,
     password: str,
     read: Callable[[str], str] = input,
-    opener: Callable[..., Any] = urllib.request.urlopen,
+    opener: Callable[..., Any] = _open,
 ) -> None:
     """Never fails the deploy: AAP works without a subscription."""
     cafile = ctx.paths.ingress_ca
     if not route or not password or not cafile.is_file():
         return
     try:
-        _status, current = _call(route, password, cafile, opener=opener)
+        status, current = _call(route, password, cafile, opener=opener)
+        if status != 200:
+            ctx.console.warn(f"Could not read the AAP subscription: HTTP {status}")
+            return
         info = current.get("license_info")
         if isinstance(info, dict) and info.get("valid_key"):
             return

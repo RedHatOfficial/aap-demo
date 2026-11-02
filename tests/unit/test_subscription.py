@@ -28,13 +28,16 @@ class _Response(io.BytesIO):
 
 
 class _Api:
-    def __init__(self, *, licensed: bool = False, post: Any = None) -> None:
+    def __init__(self, *, licensed: bool = False, post: Any = None, get: Any = None) -> None:
         self.licensed = licensed
         self.post = post
+        self.get = get
         self.posts: List[Dict[str, Any]] = []
 
     def __call__(self, request: Any, **_: Any) -> Any:
         if request.data is None:
+            if isinstance(self.get, Exception):
+                raise self.get
             info = {"valid_key": True} if self.licensed else {}
             return _Response(json.dumps({"license_info": info}).encode())
         self.posts.append(json.loads(request.data))
@@ -178,3 +181,17 @@ def test_without_the_ingress_ca_nothing_is_sent(ready: AppContext) -> None:
     api = _Api()
     _run(ready, api)
     assert api.posts == []
+
+
+def test_a_failed_subscription_read_applies_nothing(ready: AppContext) -> None:
+    ready.config.set("deploy.auto_license", True)
+    _manifest(ready.paths.config_dir)
+    api = _Api(get=urllib.error.HTTPError("u", 503, "Down", None, io.BytesIO(b"{}")))  # type: ignore[arg-type]
+    _run(ready, api)
+    assert api.posts == []
+    assert "HTTP 503" in ready.console.stdout + ready.console.stderr
+
+
+def test_redirects_are_not_followed() -> None:
+    handler = subscription._NoRedirect()
+    assert handler.redirect_request(None, None, 307, "", {}, "https://other.example/") is None

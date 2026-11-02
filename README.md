@@ -19,6 +19,8 @@ You will need three things:
   [Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
   The cluster uses it to download Red Hat images.
 
+[Install](docs/guides/install.md) has more on getting the command and updating it.
+
 Save the pull secret in the folder the command checks:
 
 ```bash
@@ -26,7 +28,8 @@ mkdir -p ~/.config/aap-demo
 cp ~/Downloads/pull-secret.txt ~/.config/aap-demo/pull-secret.txt
 ```
 
-A file named `pull-secret.json` in that same folder also works.
+A file named `pull-secret.json` in that same folder also works. To keep it somewhere else, see
+[Save your pull secret](docs/guides/first-deploy.md#1-save-your-pull-secret).
 
 Give the machine about 8 processors and 24 GB of memory. The first `create`
 builds a virtual machine, so give it a few quiet minutes. Smaller sizes, and
@@ -42,7 +45,8 @@ aap-demo status
 ```
 
 `create` builds the local cluster. `deploy` installs Ansible Automation Platform.
-`status` prints the web address and the admin password.
+`status` prints the web address and the admin password. [First deploy](docs/guides/first-deploy.md)
+walks through each step.
 
 To try AAP 2.6 instead of the usual 2.7 release:
 
@@ -50,7 +54,8 @@ To try AAP 2.6 instead of the usual 2.7 release:
 aap-demo deploy --channel stable-2.6
 ```
 
-With no `--channel` flag, `deploy` uses the default channel, `stable-2.7`.
+With no `--channel` flag, `deploy` uses the default channel, `stable-2.7`. See
+[Choose a version](docs/guides/choose-a-version.md).
 
 Open the address `status` prints and sign in with the admin password on that
 screen.
