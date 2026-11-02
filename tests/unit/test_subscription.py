@@ -66,7 +66,13 @@ def _manifest(folder: Path, name: str = "manifest_x_1.zip", age: int = 0) -> Pat
 
 
 def _run(ctx: AppContext, api: _Api, answer: str = "") -> None:
-    subscription.ensure(ctx, route="aap.test", password="pw", opener=api, read=lambda _q: answer)
+    subscription.ensure(
+        ctx,
+        route="aap.test",
+        password="pw",  # pragma: allowlist secret
+        opener=api,
+        read=lambda _q: answer,
+    )
 
 
 def test_explicit_path_wins_and_is_not_replaced(app_ctx: AppContext, tmp_path: Path) -> None:
@@ -131,7 +137,7 @@ def test_auto_license_applies_without_asking(ready: AppContext) -> None:
     subscription.ensure(
         ready,
         route="aap.test",
-        password="pw",
+        password="pw",  # pragma: allowlist secret
         opener=api,
         read=lambda _q: pytest.fail("must not ask"),
     )
