@@ -55,15 +55,33 @@ def remember_namespace_uid(ctx: AppContext, key: str, uid: str) -> None:
     save_options(ctx, fleet)
 
 
-def forget_cluster_identity(ctx: AppContext) -> None:
-    """Drop the token and UIDs of namespaces on a cluster that no longer exists."""
+def forget_cluster_state(ctx: AppContext) -> None:
+    """Drop what described a cluster that no longer exists.
+
+    The node list stays, so the next ``enable fleet`` builds the same nodes.
+    """
     fleet = fleet_options(ctx)
-    stale = [k for k in ("namespace_token", "namespace_uid", "runner_namespace_uid") if k in fleet]
-    if not stale:
+    stale = [
+        key
+        for key in ("namespace_token", "namespace_uid", "runner_namespace_uid", "import")
+        if key in fleet
+    ]
+    was_enabled = "fleet" in enabled_names(ctx)
+    if not stale and not was_enabled:
         return
     for key in stale:
         del fleet[key]
+    if was_enabled:
+        set_enabled(ctx, False)
     save_options(ctx, fleet)
+
+
+def forget_namespace_uid(ctx: AppContext, key: str) -> None:
+    """The namespace is gone, so its UID can't describe anything on this cluster."""
+    fleet = fleet_options(ctx)
+    if key in fleet:
+        del fleet[key]
+        save_options(ctx, fleet)
 
 
 def namespace_for(ctx: AppContext) -> str:

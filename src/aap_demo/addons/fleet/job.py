@@ -16,6 +16,7 @@ from aap_demo.addons.fleet.ee import discover_image
 from aap_demo.addons.fleet.gateway import aap_namespace
 from aap_demo.addons.fleet.resources import read_text
 from aap_demo.addons.fleet.state import (
+    forget_namespace_uid,
     namespace_token_for,
     namespace_uid_for,
     remember_namespace_token,
@@ -264,6 +265,8 @@ def _token_for(ctx: AppContext, namespace: str, *, create: bool, uid_key: str) -
             )
         if not create:
             return None
+        # Also covers a cluster deleted outside aap-demo, for example with crc delete.
+        forget_namespace_uid(ctx, uid_key)
         token = stored or secrets.token_hex(16)
         remember_namespace_token(ctx, token)
         return token

@@ -861,3 +861,10 @@ def test_deploy_skips_the_node_pull_secret_without_a_file(app_ctx, ssh_key, monk
     )
 
     deploy_mod._ensure_node_pull_secret(app_ctx)
+
+
+def test_times_list_components_in_the_order_they_finished(app_ctx) -> None:
+    deploy_mod._report_times(app_ctx, 60, 300, {"hub": 280.0, "gateway": 100.0})
+    out = app_ctx.console.stdout
+    assert "gateway" in out and "hub" in out
+    assert out.index("gateway") < out.index("hub")

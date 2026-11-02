@@ -791,3 +791,29 @@ def test_teardown_on_a_missing_namespace_is_a_no_op(app_ctx) -> None:
     assert aap_mod.teardown(app_ctx, namespace=NS, which=_which()) is False
     assert "nothing to clean" in app_ctx.console.stdout
     assert not runner.called("kubectl delete")
+
+
+def _finished_components(app_ctx, monkeypatch, conditions):
+    monkeypatch.setattr(
+        aap_mod, "_component_rows", lambda ctx, ns: [("gateway", "done", ""), ("hub", "done", "")]
+    )
+    answers = iter(conditions)
+    monkeypatch.setattr(aap_mod, "successful_condition", lambda ctx, ns: next(answers))
+    app_ctx.runner = FakeRunner().ok("kubectl")
+
+
+def test_wait_ready_lets_the_operator_finish(app_ctx, monkeypatch) -> None:
+    clock = Clock()
+    _finished_components(app_ctx, monkeypatch, ["False", "False", "True"])
+    result = aap_mod.wait_ready(app_ctx, namespace=NS, interval=5, sleep=clock.sleep, clock=clock)
+    assert result.ready is True
+    assert set(result.component_times) == {"gateway", "hub"}
+    assert clock() >= 10
+
+
+def test_wait_ready_stays_ready_if_the_operator_never_says_so(app_ctx, monkeypatch) -> None:
+    clock = Clock()
+    _finished_components(app_ctx, monkeypatch, ["False"] * 100)
+    result = aap_mod.wait_ready(app_ctx, namespace=NS, interval=5, sleep=clock.sleep, clock=clock)
+    assert result.ready is True
+    assert clock() <= aap_mod.SETTLE_TIMEOUT + 5
