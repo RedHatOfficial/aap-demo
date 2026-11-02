@@ -94,7 +94,9 @@ def _route_for_pods(ctx: AppContext, namespace: str, pods: dict) -> str:
         if any(endpoints[pod] != pods[pod] for pod in endpoints):
             continue
         services.add(name)
-    if len(services) != 1:
+    # The operator creates more than one service for the gateway (aap and aap-api).
+    # All of them reach only the ready gateway pods, so the single route decides.
+    if not services:
         return ""
     hosts = []
     for item in _items(ctx, "route", namespace):

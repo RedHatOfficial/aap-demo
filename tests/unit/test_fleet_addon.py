@@ -13,6 +13,7 @@ import yaml
 from aap_demo.addons import get, names
 from aap_demo.addons.fleet import job as fleet_job
 from aap_demo.addons.fleet import resources
+from aap_demo.addons.fleet.resources import read_text
 from aap_demo.cli import addons as addons_cli
 from aap_demo.cli.main import build_parser
 from aap_demo.core.errors import AddonError, PrerequisiteError, UsageError
@@ -192,17 +193,22 @@ def _cluster_runner(
     runner.register(["kubectl", "get", "secret"], get_secret)
     runner.ok(["kubectl", "get", "secrets"], stdout="")
     runner.ok(["kubectl", "apply"])
-    if wait_ok:
-        runner.ok(["kubectl", "wait"])
-    else:
-        runner.fail(["kubectl", "wait"], stderr="timed out")
+    outcome = "Complete" if wait_ok else "Failed"
+    runner.ok(
+        ["kubectl", "get", "job"],
+        stdout=json.dumps({"status": {"conditions": [{"type": outcome, "status": "True"}]}}),
+    )
     runner.ok(["kubectl", "delete"])
     runner.ok(["kubectl", "logs"], stdout="boom")
     return runner
 
 
 def _gateway_chain(
-    *, owned: bool = True, spoof_route: bool = False, deployment_controller: bool = True
+    *,
+    owned: bool = True,
+    spoof_route: bool = False,
+    deployment_controller: bool = True,
+    api_service: bool = False,
 ) -> FakeRunner:
     labels = {
         "app.kubernetes.io/component": "aap-gateway",
@@ -273,6 +279,13 @@ def _gateway_chain(
             }
         ]
     }
+    if api_service:
+        services["items"].append(
+            {
+                "metadata": {"name": "aap-api"},
+                "spec": {"selector": {**labels, "app.kubernetes.io/part-of": "aap"}},
+            }
+        )
     routes = [
         {
             "metadata": {"name": "aap"},
@@ -1104,3 +1117,32 @@ def test_a_missing_namespace_drops_its_stale_uid(app_ctx) -> None:
     app_ctx.runner = FakeRunner().fail("kubectl get namespace", stderr="(NotFound) not found")
     assert fleet_job._token_for(app_ctx, "fleet", create=True, uid_key="namespace_uid") == "t"
     assert "namespace_uid" not in app_ctx.config.get("addons.options")["fleet"]
+
+
+def test_gateway_accepts_the_operators_second_service(app_ctx) -> None:
+    """The operator also creates aap-api, which selects the same gateway pods."""
+    app_ctx.runner = _gateway_chain(api_service=True)
+
+    from aap_demo.addons.fleet.gateway import gateway_url
+
+    assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
+
+
+def test_a_failed_job_ends_the_wait_right_away(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "aap_demo.core.waiting.time.sleep",
+        lambda _s: pytest.fail("must not poll again after the job failed"),
+    )
+    conditions = [{"type": "Failed", "status": "True"}]
+    app_ctx.runner = FakeRunner().ok(
+        ["kubectl", "get", "job"], stdout=json.dumps({"status": {"conditions": conditions}})
+    )
+    assert fleet_job._job_succeeded(app_ctx, "x", "fleet-runner") is False
+
+
+def test_import_names_a_missing_subscription() -> None:
+    playbook = yaml.safe_load(read_text("playbooks/import.yml"))
+    tasks = playbook[0]["tasks"]
+    names = [task["name"] for task in tasks]
+    assert names.index("Require an AAP subscription") < names.index("Inventory")
+    assert next(t for t in tasks if t["name"] == "Read the AAP subscription")["no_log"] is True

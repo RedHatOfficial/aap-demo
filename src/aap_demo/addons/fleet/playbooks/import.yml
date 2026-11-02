@@ -24,6 +24,29 @@
         ca_path: "{{ aap_ca_path if (aap_ca_path | default('') | length) > 0 else omit }}"
         status_code: [200, 401, 403]
 
+    # Controller refuses new hosts without a subscription, and the module reports
+    # that as a bare permission error.
+    - name: Read the AAP subscription
+      when: state == 'present'
+      no_log: true
+      ansible.builtin.uri:
+        url: "{{ aap_hostname }}/api/controller/v2/config/"
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: "{{ aap_validate_certs | default(true) | bool }}"
+        ca_path: "{{ aap_ca_path if (aap_ca_path | default('') | length) > 0 else omit }}"
+      register: controller_config
+
+    - name: Require an AAP subscription
+      when: state == 'present'
+      ansible.builtin.assert:
+        that: controller_config.json.license_info | default({}) | length > 0
+        fail_msg: >-
+          AAP has no subscription, so it can't register Fleet hosts. Add one in the AAP web
+          console and run aap-demo enable fleet again, or run aap-demo enable fleet --no-import.
+        quiet: true
+
     - name: Inventory
       when: manage_inventory | bool and state == 'present'
       ansible.controller.inventory:
