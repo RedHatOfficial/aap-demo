@@ -354,6 +354,18 @@ def test_destroy_deletes_the_vm_without_a_prompt_when_assumed_yes(app_ctx, tmp_p
     assert "CRC cluster deleted" in app_ctx.console.stdout
 
 
+def test_destroy_forgets_fleets_namespace_identity(app_ctx, tmp_path) -> None:
+    _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Running"}')
+    app_ctx.assume_yes = True
+    fleet = {"namespace": "fleet", "namespace_token": "t", "namespace_uid": "u"}
+    fleet["runner_namespace_uid"] = "r"
+    app_ctx.config.set("addons.options", {"fleet": fleet})
+
+    bootstrap.destroy(app_ctx, sleep=lambda _s: None, which=lambda name: "/bin/" + name)
+
+    assert app_ctx.config.get("addons.options")["fleet"] == {"namespace": "fleet"}
+
+
 def test_destroy_preserves_config_when_delete_fails(app_ctx) -> None:
     runner = FakeRunner()
     runner.ok(
