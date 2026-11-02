@@ -39,6 +39,8 @@ METRICS_SERVER_URL = (
     "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml"
 )
 NIPIO_DOMAIN = "127.0.0.1.nip.io"
+METRICS_APPLY_RETRIES = 2
+METRICS_APPLY_RETRY_SECONDS = 15
 
 HostResources = Tuple[int, int]
 
@@ -321,12 +323,19 @@ def _configure_nipio(ctx: AppContext, key: Path, *, sleep: Callable[[float], Non
     ctx.console.warn("MicroShift API not ready after 5 minutes — continuing anyway")
 
 
-def _install_metrics(ctx: AppContext) -> None:
+def _install_metrics(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> None:
     ctx.console.step("Installing metrics-server")
     if ctx.runner.run(["kubectl", "get", "deployment", "metrics-server", "-n", "kube-system"]).ok:
         ctx.console.checkpoint("metrics-server already installed")
         return
+    # The manifest is on GitHub, so a brief network problem shouldn't end create.
     applied = ctx.runner.run(["kubectl", "apply", "-f", METRICS_SERVER_URL])
+    for _attempt in range(METRICS_APPLY_RETRIES):
+        if applied.ok:
+            break
+        ctx.console.progress("Could not fetch metrics-server. Trying again")
+        sleep(METRICS_APPLY_RETRY_SECONDS)
+        applied = ctx.runner.run(["kubectl", "apply", "-f", METRICS_SERVER_URL])
     if not applied.ok:
         raise AapDemoError(
             f"Failed to apply metrics-server: {applied.stderr.strip() or applied.stdout.strip()}",
@@ -656,7 +665,7 @@ def create(
         ctx.console.progress("podman --connection aap-demo build .")
         ctx.console.checkpoint("Podman remote connection registered")
 
-    _install_metrics(ctx)
+    _install_metrics(ctx, sleep=sleep)
     install_nfs(ctx)
     coredns.configure(ctx, sleep=sleep)
 
