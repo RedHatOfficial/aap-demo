@@ -758,6 +758,11 @@ def destroy(
     if not deleted.ok:
         raise AapDemoError("CRC delete failed — config preserved")
     ctx.console.checkpoint("CRC cluster deleted")
+    # Those namespaces went with the VM. Keeping their UIDs would make Fleet
+    # refuse the next cluster.
+    from aap_demo.addons.fleet.state import forget_cluster_identity
+
+    forget_cluster_identity(ctx)
 
     if podman:
         ctx.console.step("Removing the podman connection")
