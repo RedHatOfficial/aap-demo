@@ -213,7 +213,7 @@ def resolve(
     data = schema.defaults()
     data["schema_version"] = SCHEMA_VERSION
     if file_data:
-        data = _deep_merge(data, file_data)
+        data = _deep_merge(data, _without_generated_text_output(file_data))
     data = _deep_merge(data, env_overlay(env))
     if overrides:
         data = _deep_merge(data, overrides)
@@ -229,6 +229,21 @@ def resolve(
     config = Config(data, path=path)
     config.validate()
     return config
+
+
+def _without_generated_text_output(file_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Drop ``core.output: text`` from a config file so the default applies.
+
+    The first beta wrote ``text`` into every new config file as the default.
+    ``text`` now means ``basic``, so those files kept the plain log after rich
+    became the default, without anyone choosing it. ``--output text`` and
+    ``AAP_DEMO_OUTPUT=text`` still mean ``basic``.
+    """
+    data = dict(file_data)
+    core = data.get("core")
+    if isinstance(core, dict) and core.get("output") == "text":
+        data["core"] = {key: value for key, value in core.items() if key != "output"}
+    return data
 
 
 def load(

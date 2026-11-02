@@ -361,3 +361,39 @@ def test_paint_while_reraises_the_command_error() -> None:
         assert str(exc) == "crc failed"
     else:
         raise AssertionError("paint_while must surface the command error")
+
+
+class _Tty(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_a_warning_wraps_at_words_on_a_terminal(monkeypatch) -> None:
+    import os
+
+    monkeypatch.setattr(
+        "shutil.get_terminal_size", lambda fallback=None: os.terminal_size((60, 24))
+    )
+    stderr = _Tty()
+    console = Console(stdout=_Tty(), stderr=stderr, style="basic", color=False)
+    text = (
+        "This install tracks git+https://example.com/aap-demo.git@feat/x, "
+        "not the published release."
+    )
+
+    console.warn(text)
+
+    lines = stderr.getvalue().splitlines()
+    assert len(lines) > 1
+    assert all(len(line) <= 59 for line in lines)
+    assert lines[1].startswith("  ")
+    assert " ".join(part.strip() for part in lines).endswith("not the published release.")
+
+
+def test_a_warning_in_a_pipe_stays_on_one_line() -> None:
+    stderr = io.StringIO()
+    console = Console(stdout=io.StringIO(), stderr=stderr, style="basic", color=False)
+
+    console.warn("word " * 40)
+
+    assert len(stderr.getvalue().splitlines()) == 1

@@ -50,8 +50,9 @@ def test_update_upgrades_a_pypi_pipx_install(app_ctx, monkeypatch) -> None:
     assert [call.timeout for call in app_ctx.runner.calls] == [
         self_update.LIST_TIMEOUT,
         self_update.UPGRADE_TIMEOUT,
+        self_update.LIST_TIMEOUT,
     ]
-    assert "Installed: 2.0.0.dev0" in app_ctx.console.stdout
+    assert "Installed 2.0.0.dev0" in app_ctx.console.stdout
     assert "pipx upgrade finished" in app_ctx.console.stdout
     assert "aap-demo version" in app_ctx.console.stdout
 
@@ -188,7 +189,7 @@ def test_update_says_when_it_is_already_the_latest(app_ctx, monkeypatch) -> None
 
     assert self_update.run(app_ctx) == 0
 
-    assert "Already on the latest release, 2.0.0.dev2" in app_ctx.console.stdout
+    assert "Already up to date: 2.0.0.dev2" in app_ctx.console.stdout
 
 
 def test_update_reports_a_failed_upgrade_with_pipx_output(app_ctx, monkeypatch) -> None:
@@ -203,3 +204,61 @@ def test_update_reports_a_failed_upgrade_with_pipx_output(app_ctx, monkeypatch) 
         self_update.run(app_ctx)
 
     assert "No space left on device" in (caught.value.hint or "")
+
+
+def _versioned(version: str, spec: str = "aap-demo") -> str:
+    return json.dumps(
+        {
+            "venvs": {
+                "aap-demo": {
+                    "metadata": {
+                        "main_package": {
+                            "package": "aap-demo",
+                            "package_or_url": spec,
+                            "package_version": version,
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+
+def _pipx_versions(app_ctx, monkeypatch, before: str, after: str, spec: str = "aap-demo") -> None:
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: _info())
+    listings = iter([_versioned(before, spec), _versioned(after, spec)])
+    runner = FakeRunner()
+    runner.register(
+        [PIPX, "list", "--json"],
+        lambda argv: CompletedCommand(argv=tuple(argv), returncode=0, stdout=next(listings)),
+    )
+    runner.ok([PIPX, "upgrade", "aap-demo"], stdout="pipx says something new\n")
+    app_ctx.runner = runner
+
+
+def test_update_compares_the_versions_pipx_reports(app_ctx, monkeypatch) -> None:
+    _pipx_versions(app_ctx, monkeypatch, "2.0.0.dev2", "2.0.0.dev3")
+
+    assert self_update.run(app_ctx) == 0
+
+    assert "Installed 2.0.0.dev2" in app_ctx.console.stdout
+    assert "Updated 2.0.0.dev2 to 2.0.0.dev3" in app_ctx.console.stdout
+
+
+def test_update_says_when_nothing_changed(app_ctx, monkeypatch) -> None:
+    _pipx_versions(app_ctx, monkeypatch, "2.0.0.dev2", "2.0.0.dev2")
+
+    assert self_update.run(app_ctx) == 0
+
+    assert "Already up to date: 2.0.0.dev2" in app_ctx.console.stdout
+
+
+def test_update_of_a_branch_install_says_it_was_reinstalled(app_ctx, monkeypatch) -> None:
+    spec = "git+https://github.com/RedHatOfficial/aap-demo.git@feat/x"
+    _pipx_versions(app_ctx, monkeypatch, "2.0.0.dev2", "2.0.0.dev2", spec)
+
+    assert self_update.run(app_ctx) == 0
+
+    assert f"Reinstalled 2.0.0.dev2 from {spec}" in app_ctx.console.stdout
+    assert "To switch back: pipx install --force aap-demo" in app_ctx.console.stderr
