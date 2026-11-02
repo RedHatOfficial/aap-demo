@@ -1104,6 +1104,7 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     assert "ExecStart=/bin/bash /entrypoint/entrypoint.sh setup" in units["fleet-setup.service"]
     assert "ExecStop=/bin/bash /entrypoint/entrypoint.sh save" in units["fleet-setup.service"]
     assert "Wants=fleet-setup.service" in units["fleet.target"]
+    assert "multi-user.target" not in units["fleet.target"]
     entry_map = next(
         task["kubernetes.core.k8s"]["definition"]
         for task in plays[0]["tasks"]

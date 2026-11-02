@@ -31,7 +31,8 @@ mounted into `/etc/systemd/system`:
 - `fleet-setup.service` runs the entrypoint's setup at every boot: restore the saved `/etc`, install
   `sshd` if missing, write the `ansible` user's key and sudoers file, then start `sshd` and anything
   else the restored `/etc` enables. Its stop step saves `/etc` to the disk at every shutdown.
-- `fleet.target` pulls in `multi-user.target` and `fleet-setup.service`.
+- `fleet.target` starts only `fleet-setup.service`, which starts `multi-user.target` after the restore,
+  so no service starts with the image's `/etc`.
 
 A `preStop` hook sends `SIGRTMIN+3`, systemd's clean halt, because systemd ignores the `SIGTERM`
 that Kubernetes sends.

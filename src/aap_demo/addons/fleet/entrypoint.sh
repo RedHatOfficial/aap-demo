@@ -120,9 +120,10 @@ ssh-keygen -A
 mkdir -p /run/sshd
 save_etc
 
-# The restored /etc can enable more services than the image did. Load them,
-# then start sshd and everything else multi-user.target now wants. --no-block
-# because this unit is ordered before sshd and is still running.
+# fleet.target starts only this unit, so nothing else has started with the
+# image's /etc. Load what the restored /etc enables, then start sshd and
+# multi-user.target. --no-block because this unit is ordered before sshd and
+# is still running.
 systemctl daemon-reload
 systemctl enable "${ssh_unit}"
 systemctl --no-block start multi-user.target "${ssh_unit}"

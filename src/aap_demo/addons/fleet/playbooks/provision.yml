@@ -10,8 +10,10 @@
   # state and scope come from extra-vars. Defaulting a variable to itself
   # is a recursive template, so this play does not set those names.
   vars:
-    # systemd is PID 1 in each node. fleet.target is the boot target, so
-    # fleet-setup runs at every boot and saves /etc at every shutdown.
+    # systemd is PID 1 in each node. fleet.target is the boot target and
+    # starts only fleet-setup, which restores /etc and then starts
+    # multi-user.target, so no service starts with the image's /etc. It also
+    # saves /etc at every shutdown.
     fleet_units:
       fleet-setup.service: |
         [Unit]
@@ -29,9 +31,8 @@
       fleet.target: |
         [Unit]
         Description=aap-demo Fleet node
-        Requires=multi-user.target
         Wants=fleet-setup.service
-        After=multi-user.target
+        After=fleet-setup.service
         AllowIsolate=yes
   tasks:
     - name: Fleet node service account
