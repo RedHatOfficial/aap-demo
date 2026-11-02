@@ -1,5 +1,8 @@
 #!/bin/bash
-# Process inside a fleet pod. The CLI does not execute this file.
+# Runs inside a fleet pod. The CLI does not execute this file.
+#   seed   init container: copy the image's /usr and /var onto the node disk
+#   setup  fleet-setup.service at boot, under systemd as PID 1
+#   save   fleet-setup.service at shutdown or reboot: keep /etc on the disk
 set -euo pipefail
 
 # Copy the image's package paths onto an empty disk once. The main
@@ -22,6 +25,10 @@ fi
 # everything else in /etc lives under /var, which is on the disk.
 ETC_SAVE=/var/lib/fleet-etc
 
+# The pod mounts these unit files from a ConfigMap, so they are never saved
+# or restored.
+UNIT_FILES=(systemd/system/fleet-setup.service systemd/system/fleet.target)
+
 restore_etc() {
   [[ -d ${ETC_SAVE} ]] || return 0
   cp -a /etc/resolv.conf /tmp/fleet-resolv.conf
@@ -40,13 +47,23 @@ restore_etc() {
 save_etc() {
   mkdir -p "${ETC_SAVE}"
   find "${ETC_SAVE}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  local unit excludes=()
+  for unit in "${UNIT_FILES[@]}"; do
+    excludes+=("--exclude=./${unit}")
+  done
   tar -C /etc \
     --exclude=resolv.conf \
     --exclude=hosts \
     --exclude=hostname \
     --exclude=fleet \
+    "${excludes[@]}" \
     -cf - . | tar -C "${ETC_SAVE}" -xpf -
 }
+
+if [[ ${1:-} == save ]]; then
+  save_etc
+  exit 0
+fi
 
 # dpkg's statoverride file is on the disk, but the groups it names were
 # created in /etc and disappeared with the previous pod.
@@ -63,6 +80,11 @@ fix_debian_overrides() {
 
 restore_etc
 fix_debian_overrides
+
+ssh_unit=sshd.service
+if [[ ${ID} == debian ]]; then
+  ssh_unit=ssh.service
+fi
 
 if [[ ${ID} == debian ]]; then
   if ! command -v sshd >/dev/null 2>&1; then
@@ -97,4 +119,11 @@ chmod 600 /home/ansible/.ssh/authorized_keys
 ssh-keygen -A
 mkdir -p /run/sshd
 save_etc
-exec /usr/sbin/sshd -D -e
+
+# fleet.target starts only this unit, so nothing else has started with the
+# image's /etc. Load what the restored /etc enables, then start sshd and
+# multi-user.target. --no-block because this unit is ordered before sshd and
+# is still running.
+systemctl daemon-reload
+systemctl enable "${ssh_unit}"
+systemctl --no-block start multi-user.target "${ssh_unit}"

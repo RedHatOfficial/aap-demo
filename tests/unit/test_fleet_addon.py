@@ -492,6 +492,11 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert scc["allowedCapabilities"] == ["SYS_CHROOT", "AUDIT_WRITE"]
     assert scc["allowPrivilegedContainer"] is False
     assert scc["runAsUser"] == {"type": "MustRunAs", "uid": 0}
+    assert scc["seLinuxContext"] == {
+        "type": "MustRunAs",
+        "seLinuxOptions": {"type": "container_init_t"},
+    }
+    assert not any("setsebool" in " ".join(call.argv) for call in app_ctx.runner.calls)
     scc_role = next(document for document in applied if document.get("kind") == "ClusterRole")
     assert scc_role["metadata"]["name"] == "system:openshift:scc:aap-demo-fleet"
     assert scc_role["rules"] == [
@@ -1029,6 +1034,11 @@ def test_packaged_files_load_through_importlib() -> None:
     ):
         assert resources.read_text(name)
     script = resources.read_text("entrypoint.sh")
+    assert "exec /usr/sbin/sshd" not in script
+    assert "if [[ ${1:-} == save ]]; then" in script
+    assert 'systemctl enable "${ssh_unit}"' in script
+    assert "systemctl --no-block start multi-user.target" in script
+    assert "--exclude=./${unit}" in script
     assert "dnf reinstall -y openssh-server sudo" in script
     assert "apt-get install -y --reinstall openssh-server sudo" in script
     assert "ETC_SAVE=/var/lib/fleet-etc" in script
@@ -1081,6 +1091,23 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     mounted = {item["mountPath"]: item.get("subPath") for item in mounts}
     assert mounted["/usr"] == "usr"
     assert mounted["/var"] == "var"
+    assert mounted["/etc/systemd/system/fleet-setup.service"] == "fleet-setup.service"
+    assert mounted["/etc/systemd/system/fleet.target"] == "fleet.target"
+    node_container = deploy["spec"]["template"]["spec"]["containers"][0]
+    assert node_container["command"] == ["/sbin/init", "--unit=fleet.target"]
+    assert node_container["lifecycle"]["preStop"]["exec"]["command"][-1] == "kill -s RTMIN+3 1"
+    units = plays[0]["vars"]["fleet_units"]
+    assert "ExecStart=/bin/bash /entrypoint/entrypoint.sh setup" in units["fleet-setup.service"]
+    assert "ExecStop=/bin/bash /entrypoint/entrypoint.sh save" in units["fleet-setup.service"]
+    assert "Wants=fleet-setup.service" in units["fleet.target"]
+    assert "multi-user.target" not in units["fleet.target"]
+    entry_map = next(
+        task["kubernetes.core.k8s"]["definition"]
+        for task in plays[0]["tasks"]
+        if task["name"] == "Entrypoint"
+    )
+    assert set(entry_map["data"]) == {"entrypoint.sh", "fleet-setup.service", "fleet.target"}
+    assert "aap-demo/fleet-units" in deploy["spec"]["template"]["metadata"]["annotations"]
     assert deploy["spec"]["strategy"]["type"] == "Recreate"
     disk = next(task for task in plays[0]["tasks"] if task["name"] == "Node disk")
     assert disk["when"] == "state == 'present' or scope == 'node'"
