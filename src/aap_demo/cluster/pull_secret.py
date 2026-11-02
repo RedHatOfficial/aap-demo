@@ -23,6 +23,7 @@ SECRET_NAME = "redhat-operators-pull-secret"
 #: Drop names under the XDG state directory. The Red Hat console downloads
 #: ``pull-secret.txt``; ``pull-secret.json`` is the reserved state file.
 DEFAULT_FILENAMES = ("pull-secret.txt", "pull-secret.json")
+DOWNLOAD_URL = "https://console.redhat.com/openshift/install/pull-secret"
 
 
 def _home(ctx: AppContext) -> Path:
@@ -34,18 +35,19 @@ def locate(configured: str, paths: Paths) -> Optional[Path]:
 
     An explicit path (config, ``--pull-secret``, or ``AAP_DEMO_PULL_SECRET``)
     wins and is not replaced by a default when that file is missing. An empty
-    setting uses the first file that exists under the state directory:
-    ``pull-secret.txt``, then ``pull-secret.json``. ``~/.aap-demo`` is not
-    searched.
+    setting uses the first file that exists in the config directory, then in
+    the state directory: ``pull-secret.txt``, then ``pull-secret.json``. The file
+    is not moved or copied. ``~/.aap-demo`` is not searched.
     """
     raw = configured.strip()
     if raw:
         path = Path(raw).expanduser()
         return path if path.is_file() else None
-    for name in DEFAULT_FILENAMES:
-        candidate = paths.state_dir / name
-        if candidate.is_file():
-            return candidate
+    for folder in (paths.config_dir, paths.state_dir):
+        for name in DEFAULT_FILENAMES:
+            candidate = folder / name
+            if candidate.is_file():
+                return candidate
     return None
 
 
@@ -66,11 +68,12 @@ def configured_path(ctx: AppContext) -> Optional[Path]:
 def unset_hint(ctx: AppContext) -> str:
     """Where to drop the file, and the command for a path kept somewhere else."""
     home = _home(ctx)
-    drop = display_path(ctx.paths.state_dir / DEFAULT_FILENAMES[0], home)
+    drop = display_path(ctx.paths.config_dir / DEFAULT_FILENAMES[0], home)
     return (
+        f"Download it from {DOWNLOAD_URL}\n"
         f"Save it as {drop} and it is used automatically.\n"
         "pull-secret.json in that directory is also accepted.\n"
-        "Or run: aap-demo config set pull-secret ~/path/to/pull-secret.txt"
+        "Or pass --pull-secret PATH, or run: aap-demo config set pull-secret PATH"
     )
 
 
@@ -78,14 +81,13 @@ def welcome_note(paths: Paths, configured: str, home: Path) -> str:
     """Extra welcome lines when no pull secret can be found yet."""
     if locate(configured, paths) is not None:
         return ""
-    drop = display_path(paths.state_dir / DEFAULT_FILENAMES[0], home)
+    drop = display_path(paths.config_dir / DEFAULT_FILENAMES[0], home)
     return (
         "\n"
-        "Pull secret (download from "
-        "https://console.redhat.com/openshift/install/pull-secret):\n"
+        f"Pull secret (download from {DOWNLOAD_URL}):\n"
         f"    Save it as {drop} and it is used automatically.\n"
         "    pull-secret.json in that directory is also accepted.\n"
-        "    Or: aap-demo config set pull-secret ~/path/to/pull-secret.txt"
+        "    Or pass --pull-secret PATH, or: aap-demo config set pull-secret PATH"
     )
 
 

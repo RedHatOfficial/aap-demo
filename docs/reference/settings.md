@@ -71,10 +71,14 @@ See [Choose a version](../guides/choose-a-version.md).
 | What | Where |
 | --- | --- |
 | Settings | `~/.config/aap-demo/config.yaml` |
-| Pull secret | `~/.local/state/aap-demo/pull-secret.txt` |
+| Pull secret | `~/.config/aap-demo/pull-secret.txt`, or the same name in `~/.local/state/aap-demo/` |
+| Subscription manifest | Newest `manifest*.zip` in `~/.config/aap-demo/`, then `~/.local/state/aap-demo/` |
 | Kubeconfig | `~/.local/state/aap-demo/kubeconfig.microshift` |
 | Cluster certificate | `~/.local/state/aap-demo/certs/` |
 | Cache | `~/.cache/aap-demo` |
+
+`deploy` applies a subscription manifest only if you agree. `--auto-license`, `AAP_DEMO_AUTO_LICENSE=true`, or
+`aap-demo config set auto-license true` applies it without asking. See [Subscription](../guides/subscription.md).
 
 Cluster commands stop if the kubeconfig points at a remote API server, which `oc login` can cause. Set
 `AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true` to target that server on purpose.

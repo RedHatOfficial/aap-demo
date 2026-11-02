@@ -60,11 +60,11 @@ REQUIREMENTS:
     For all deployments:
     - kubectl
     - Pull secret from https://console.redhat.com/openshift/install/pull-secret
-      Save it as ~/.local/state/aap-demo/pull-secret.txt and it is used automatically.
-      pull-secret.json in that directory is also accepted.
-      Or: aap-demo config set pull-secret ~/path/to/pull-secret.txt
+      Save it as ~/.config/aap-demo/pull-secret.txt and it is used automatically.
+      pull-secret.json there, or either name in ~/.local/state/aap-demo, also works.
+      Or pass --pull-secret PATH, or: aap-demo config set pull-secret PATH
       One command can override that with AAP_DEMO_PULL_SECRET.
-      XDG_STATE_HOME or AAP_DEMO_DIR moves that directory.
+      XDG_CONFIG_HOME, XDG_STATE_HOME, or AAP_DEMO_DIR moves those directories.
 """
 
 WELCOME = """\

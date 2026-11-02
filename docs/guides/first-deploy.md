@@ -31,8 +31,8 @@ A pull secret lets the cluster download Red Hat images. Download one from the
 [Red Hat console](https://console.redhat.com/openshift/install/pull-secret), then:
 
 ```bash
-mkdir -p ~/.local/state/aap-demo
-cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
+mkdir -p ~/.config/aap-demo
+cp ~/Downloads/pull-secret.txt ~/.config/aap-demo/pull-secret.txt
 ```
 
 A file named `pull-secret.json` in that same folder also works. The command does not look in `~/.aap-demo`.
@@ -75,6 +75,8 @@ aap-demo status
 if there is none and starts one that was stopped. It does not add extra demo content.
 
 `status` prints the web address and the admin password. Open that address in your browser.
+
+AAP runs without a subscription, but it needs one before it can add hosts. See [Subscription](subscription.md).
 
 ## Your cluster login file
 

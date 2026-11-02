@@ -17,6 +17,7 @@ The [project home page](../README.md) is the short start. These pages are the re
 - [Install](guides/install.md) - Put the `aap-demo` command on your computer and update it later.
 - [First deploy](guides/first-deploy.md) - Create the local cluster and install Ansible Automation Platform.
 - [Choose a version](guides/choose-a-version.md) - Deploy AAP 2.7 or try 2.6.
+- [Subscription](guides/subscription.md) - Get a manifest and apply it, or sign in through AAP.
 - [Daily use](guides/daily-use.md) - Start, stop, pause, and check the cluster.
 - [Add-ons](guides/addons.md) - Extra demo machines and the pieces the new command does not install yet.
 - [The older command](guides/older-command.md) - Keep using the bash command for work that has not moved over.

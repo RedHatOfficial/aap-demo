@@ -113,7 +113,7 @@ def test_help_keeps_the_bash_requirements(help_text: str) -> None:
     assert "libvirt-daemon" in help_text
     assert "kubectl" in help_text
     assert "pull-secret" in help_text
-    assert "~/.local/state/aap-demo/pull-secret.txt" in help_text
+    assert "~/.config/aap-demo/pull-secret.txt" in help_text
     assert "used automatically" in help_text
 
 
@@ -176,7 +176,7 @@ def test_welcome_names_the_xdg_pull_secret(tmp_path, capsys) -> None:
     rc = run([], env={"HOME": str(home), "QUIET": ""})
     out = capsys.readouterr().out
     assert rc == 0
-    assert "~/.local/state/aap-demo/pull-secret.txt" in out
+    assert "~/.config/aap-demo/pull-secret.txt" in out
     assert "config set pull-secret" in out
 
 

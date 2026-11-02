@@ -56,12 +56,12 @@ def test_legacy_directory_is_not_searched(app_ctx: AppContext) -> None:
     assert pull_secret.discover(app_ctx) is None
 
 
-def test_unset_hint_uses_a_tilde_when_state_is_under_home(
+def test_unset_hint_uses_a_tilde_when_config_is_under_home(
     app_ctx: AppContext, tmp_path: Path
 ) -> None:
     app_ctx.env = {"HOME": str(tmp_path)}
     hint = pull_secret.unset_hint(app_ctx)
-    assert "~/state/pull-secret.txt" in hint
+    assert "~/config/pull-secret.txt" in hint
     assert "config set pull-secret" in hint
     assert "pull-secret.json" in hint
 
@@ -92,3 +92,15 @@ def test_rejected_pvcs_stop_the_deploy(app_ctx: AppContext) -> None:
     with pytest.raises(AapDemoError, match="Could not create the PVCs") as caught:
         storage.ensure_aap_pvcs(app_ctx, aap_name="aap", namespace="aap-operator")
     assert caught.value.hint == "quota exceeded"
+
+
+def test_the_config_folder_comes_before_the_state_folder(app_ctx: AppContext) -> None:
+    app_ctx.config.set("deploy.pull_secret_path", "")
+    _write(app_ctx.paths.state_dir / "pull-secret.txt")
+    imported = _write(app_ctx.paths.config_dir / "pull-secret.txt")
+    assert pull_secret.discover(app_ctx) == imported
+
+
+def test_the_hint_names_the_flag_and_the_download(app_ctx: AppContext) -> None:
+    hint = pull_secret.unset_hint(app_ctx)
+    assert "--pull-secret PATH" in hint and pull_secret.DOWNLOAD_URL in hint

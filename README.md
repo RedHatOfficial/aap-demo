@@ -22,8 +22,8 @@ You will need three things:
 Save the pull secret in the folder the command checks:
 
 ```bash
-mkdir -p ~/.local/state/aap-demo
-cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
+mkdir -p ~/.config/aap-demo
+cp ~/Downloads/pull-secret.txt ~/.config/aap-demo/pull-secret.txt
 ```
 
 A file named `pull-secret.json` in that same folder also works.
@@ -53,7 +53,13 @@ aap-demo deploy --channel stable-2.6
 With no `--channel` flag, `deploy` uses the default channel, `stable-2.7`.
 
 Open the address `status` prints and sign in with the admin password on that
-screen. `aap-demo version` should print `2.0.0.dev1`.
+screen.
+
+AAP runs without a subscription, but it needs one before it can add hosts. Nothing
+is applied unless you choose to. [Subscription](docs/guides/subscription.md) shows
+how to apply one, by signing in to AAP or by giving `aap-demo` a manifest file.
+
+ `aap-demo version` should print `2.0.0.dev1`.
 
 Tomorrow, `aap-demo start` turns the cluster on and `aap-demo stop` turns it
 off. [Daily use](docs/guides/daily-use.md) covers later days, including a page
@@ -66,6 +72,7 @@ that will not load.
 | Install or update the command | [Install](docs/guides/install.md) |
 | Put a cluster and AAP on this computer | [First deploy](docs/guides/first-deploy.md) |
 | Choose AAP 2.6 or 2.7 | [Choose a version](docs/guides/choose-a-version.md) |
+| Apply a subscription to AAP | [Subscription](docs/guides/subscription.md) |
 | Start, stop, and check on it later | [Daily use](docs/guides/daily-use.md) |
 | Add demo machines or other extras | [Add-ons](docs/guides/addons.md) |
 | Keep using a feature the new command does not have yet | [The older command](docs/guides/older-command.md) |

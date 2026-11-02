@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from aap_demo.cluster import aap as aap_mod
-from aap_demo.cluster import bootstrap, catalog_signature, coredns, olm, runtime
+from aap_demo.cluster import bootstrap, catalog_signature, coredns, olm, runtime, subscription
 from aap_demo.cluster import namespace as namespace_mod
 from aap_demo.cluster import pull_secret as pull_secret_mod
 from aap_demo.core.console import format_elapsed
@@ -262,6 +262,7 @@ def run(
                     readiness.csv,
                 )
                 _finish_wait(ctx, readiness)
+                _ensure_subscription(ctx, readiness)
                 _report_times(ctx, None, aap_elapsed, readiness.component_times)
             return result
 
@@ -344,6 +345,7 @@ def run(
             readiness.csv or result.csv,
         )
         _finish_wait(ctx, readiness)
+        _ensure_subscription(ctx, readiness)
         _report_readiness(ctx, readiness, ns, operator_elapsed, aap_elapsed)
 
     return result
@@ -387,6 +389,11 @@ def _finish_wait(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:
     """Check off the timed wait so its duration freezes when ``wait_ready`` returns."""
     note = "AAP is ready" if readiness.ready else "AAP did not become ready"
     ctx.console.checkpoint(note)
+
+
+def _ensure_subscription(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:
+    if readiness.ready:
+        subscription.ensure(ctx, route=readiness.route, password=readiness.password)
 
 
 def _report_times(
