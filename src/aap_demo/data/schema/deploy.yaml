@@ -63,10 +63,9 @@ properties:
     default: ""
     title: Pull secret path
     description: >
-      Path to the Red Hat pull secret file. Empty uses
-      $XDG_STATE_HOME/aap-demo/pull-secret.txt when that file exists
-      (default ~/.local/state/aap-demo/pull-secret.txt). pull-secret.json
-      in the same directory is also accepted. The tool does not copy the file.
+      Path to the Red Hat pull secret file. Empty uses the first pull-secret.txt,
+      then pull-secret.json, found in the config directory, the state directory,
+      or ~/.aap-demo. The tool does not copy the file.
     x-cli: {flag: "--pull-secret"}
     x-env: AAP_DEMO_PULL_SECRET
     x-config: deploy.pull_secret_path
@@ -79,7 +78,8 @@ properties:
     title: Subscription manifest path
     description: >
       Path to a Red Hat subscription manifest. Empty uses the newest manifest*.zip
-      in the config directory, then in the state directory. The tool does not copy the file.
+      in the config directory, then the state directory, then ~/.aap-demo. The tool
+      does not copy the file.
     x-cli: {flag: "--manifest"}
     x-env: AAP_DEMO_MANIFEST
     x-config: deploy.manifest_path

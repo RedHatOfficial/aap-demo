@@ -71,8 +71,8 @@ See [Choose a version](../guides/choose-a-version.md).
 | What | Where |
 | --- | --- |
 | Settings | `~/.config/aap-demo/config.yaml` |
-| Pull secret | `~/.config/aap-demo/pull-secret.txt`, or the same name in `~/.local/state/aap-demo/` |
-| Subscription manifest | Newest `manifest*.zip` in `~/.config/aap-demo/`, then `~/.local/state/aap-demo/` |
+| Pull secret | `~/.config/aap-demo/pull-secret.txt`, or the same name in `~/.local/state/aap-demo/` or `~/.aap-demo/` |
+| Subscription manifest | Newest `manifest*.zip` in `~/.config/aap-demo/`, then `~/.local/state/aap-demo/`, then `~/.aap-demo/` |
 | Kubeconfig | `~/.local/state/aap-demo/kubeconfig.microshift` |
 | Cluster certificate | `~/.local/state/aap-demo/certs/` |
 | Cache | `~/.cache/aap-demo` |

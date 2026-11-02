@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-11-01
+**Date**: 2026-11-01 (Updated: 2026-11-02)
 
 **Authors**: aap-demo maintainers
 
@@ -29,7 +29,10 @@ If AAP has no subscription and a manifest is found:
 - With no terminal, or with `--yes`, it does not apply it and says how to.
 
 A missing or rejected manifest is a note or a warning, not a failed deploy, because AAP works
-without one. The pull secret gets the same two search folders.
+without one. The pull secret gets the same search folders.
+
+Updated 2026-11-02: both searches also look in `~/.aap-demo`, after the state directory. Users who keep a
+pull secret there for the older command no longer need a second copy.
 
 ## Consequences
 

@@ -92,6 +92,13 @@ def test_config_folder_comes_first_and_newest_wins(app_ctx: AppContext) -> None:
     assert subscription.locate("", app_ctx.paths).name == "manifest_state.zip"
 
 
+def test_the_older_command_folder_is_searched_last(app_ctx: AppContext) -> None:
+    legacy = _manifest(app_ctx.paths.legacy_dir, "manifest_legacy.zip")
+    assert subscription.locate("", app_ctx.paths) == legacy
+    state = _manifest(app_ctx.paths.state_dir, "manifest_state.zip", age=50)
+    assert subscription.locate("", app_ctx.paths) == state
+
+
 def test_a_licensed_aap_is_left_alone(ready: AppContext) -> None:
     _manifest(ready.paths.config_dir)
     ready.config.set("deploy.auto_license", True)

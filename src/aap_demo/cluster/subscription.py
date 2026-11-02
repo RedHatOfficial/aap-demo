@@ -29,14 +29,14 @@ def locate(configured: str, paths: Paths) -> Optional[Path]:
     """The manifest to use, or None.
 
     An explicit path wins and is not replaced by a default when it is missing.
-    Otherwise the newest match in the config directory, then in the state
-    directory. The file is only read, never moved or copied.
+    Otherwise the newest match in the first of :attr:`Paths.drop_folders`
+    that has one. The file is only read, never moved or copied.
     """
     raw = configured.strip()
     if raw:
         path = Path(raw).expanduser()
         return path if path.is_file() else None
-    for folder in (paths.config_dir, paths.state_dir):
+    for folder in paths.drop_folders:
         found = [path for path in folder.glob(MANIFEST_GLOB) if path.is_file()]
         if found:
             return max(found, key=lambda path: path.stat().st_mtime)
