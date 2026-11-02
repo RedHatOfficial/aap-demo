@@ -35,8 +35,8 @@ mkdir -p ~/.config/aap-demo
 cp ~/Downloads/pull-secret.txt ~/.config/aap-demo/pull-secret.txt
 ```
 
-A file named `pull-secret.json` in that same folder also works, and so does `~/.local/state/aap-demo/`.
-The command does not look in `~/.aap-demo`.
+A file named `pull-secret.json` in that same folder also works, and so do `~/.local/state/aap-demo/` and
+`~/.aap-demo/`, the older command's folder, so one file can serve both commands.
 
 To point at a file somewhere else:
 

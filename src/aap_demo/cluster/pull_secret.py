@@ -35,15 +35,16 @@ def locate(configured: str, paths: Paths) -> Optional[Path]:
 
     An explicit path (config, ``--pull-secret``, or ``AAP_DEMO_PULL_SECRET``)
     wins and is not replaced by a default when that file is missing. An empty
-    setting uses the first file that exists in the config directory, then in
-    the state directory: ``pull-secret.txt``, then ``pull-secret.json``. The file
-    is not moved or copied. ``~/.aap-demo`` is not searched.
+    setting uses the first file that exists in :attr:`Paths.drop_folders`
+    (the config directory, the state directory, then ``~/.aap-demo``):
+    ``pull-secret.txt``, then ``pull-secret.json``. The file is not moved or
+    copied.
     """
     raw = configured.strip()
     if raw:
         path = Path(raw).expanduser()
         return path if path.is_file() else None
-    for folder in (paths.config_dir, paths.state_dir):
+    for folder in paths.drop_folders:
         for name in DEFAULT_FILENAMES:
             candidate = folder / name
             if candidate.is_file():

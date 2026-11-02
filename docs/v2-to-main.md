@@ -64,7 +64,8 @@ Python state is strict XDG on every OS. With the defaults (`XDG_*` unset):
 
 `XDG_STATE_HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME` move those roots. `AAP_DEMO_DIR` collapses
 config, cache, and state under one directory. That is the escape hatch for CI and for a migration overlap.
-It is not the path for a normal install. Python does not search `~/.aap-demo` for the pull secret.
+It is not the path for a normal install. Python also finds a pull secret or manifest in `~/.aap-demo`, after the
+config and state directories, so one file can serve both commands.
 
 `src/aap_demo/__init__.py` sets `__version__ = "2.0.0.dev2"`.
 

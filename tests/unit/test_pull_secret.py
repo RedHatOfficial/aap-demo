@@ -50,10 +50,12 @@ def test_a_missing_explicit_path_does_not_fall_back(app_ctx: AppContext, tmp_pat
     assert pull_secret.discover(app_ctx) is None
 
 
-def test_legacy_directory_is_not_searched(app_ctx: AppContext) -> None:
+def test_legacy_directory_is_searched_last(app_ctx: AppContext) -> None:
     app_ctx.config.set("deploy.pull_secret_path", "")
-    _write(app_ctx.paths.legacy_dir / "pull-secret.txt")
-    assert pull_secret.discover(app_ctx) is None
+    legacy = _write(app_ctx.paths.legacy_dir / "pull-secret.txt", "legacy\n")
+    assert pull_secret.discover(app_ctx) == legacy
+    state = _write(app_ctx.paths.state_dir / "pull-secret.txt", "state\n")
+    assert pull_secret.discover(app_ctx) == state
 
 
 def test_unset_hint_uses_a_tilde_when_config_is_under_home(

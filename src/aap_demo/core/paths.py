@@ -31,7 +31,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
 APP_NAME = "aap-demo"
 LEGACY_DIR_NAME = ".aap-demo"
@@ -111,6 +111,20 @@ class Paths:
     @property
     def migrated_marker(self) -> Path:
         return self.legacy_dir / "MIGRATED.txt"
+
+    @property
+    def drop_folders(self) -> Tuple[Path, ...]:
+        """Where a hand-placed pull secret or manifest is found, in search order.
+
+        The config directory, the state directory, then ``~/.aap-demo``, which
+        the older command reads, so one file can serve both. A folder that
+        repeats, as under ``AAP_DEMO_DIR``, is searched once.
+        """
+        folders: List[Path] = []
+        for folder in (self.config_dir, self.state_dir, self.legacy_dir):
+            if folder not in folders:
+                folders.append(folder)
+        return tuple(folders)
 
     def ensure_dirs(self) -> None:
         for path in (self.config_dir, self.cache_dir, self.state_dir):

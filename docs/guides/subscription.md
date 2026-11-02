@@ -76,6 +76,7 @@ aap-demo config set auto-license true
 3. The saved path, from `aap-demo config set manifest PATH`
 4. The newest `manifest*.zip` in `~/.config/aap-demo/`
 5. The newest `manifest*.zip` in `~/.local/state/aap-demo/`
+6. The newest `manifest*.zip` in `~/.aap-demo/`, the older command's folder
 
 An AAP that already has a subscription is left alone. Delete the `.zip` from your Downloads folder afterward: it is
 a credential, so don't commit it or share it.
