@@ -125,6 +125,7 @@ when RHEL 9 compatibility is no longer required.
 - `aap-demo fleet destroy` deletes Controller objects first, then the namespace.
   Deleting the namespace deletes the disks.
 - `/etc` is rebuilt on each start (sudoers, host keys). Cluster DNS stays intact.
+  ADR-037 runs systemd as PID 1 and also saves `/etc` at shutdown.
 - The default disk is 2Gi. A large update needs a larger `disk_size` before the first create.
 - Users must choose the Python v2 or Bash v1 backend when both are available.
 - ADR-026 describes the Bash QEMU fleet. This record does not replace it.

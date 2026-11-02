@@ -79,6 +79,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [034](034-create-vm-size-prompt.md) | VM Size Prompt and Host Fit Check on Create | Accepted |
 | [035](035-remove-diagnose-ai.md) | Remove `diagnose --ai` from the Python CLI | Accepted |
 | [036](036-subscription-manifest.md) | Apply a Subscription Manifest Only When Asked | Accepted |
+| [037](037-fleet-systemd-nodes.md) | Fleet Nodes Run systemd as PID 1 | Accepted |
 
 ## Creating a New ADR
 

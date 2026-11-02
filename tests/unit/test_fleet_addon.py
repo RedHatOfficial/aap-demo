@@ -109,6 +109,14 @@ EE_CONTROLLERS = json.dumps(
 EE_PLATFORMS = json.dumps({"items": [{"metadata": {"name": "aap", "uid": "aap-uid"}}]})
 
 
+@pytest.fixture(autouse=True)
+def _no_vm_ssh(monkeypatch) -> list:
+    """The SELinux boolean is set over SSH to the VM. test_fleet_node covers it."""
+    calls: list = []
+    monkeypatch.setattr("aap_demo.addons.fleet.node.allow_systemd", lambda ctx: calls.append(ctx))
+    return calls
+
+
 def _which(present):
     def which(name: str):
         if name in present:
@@ -401,7 +409,7 @@ def test_enable_fleet_needs_the_execution_environment(app_ctx, monkeypatch) -> N
     assert not any(command.split()[0].endswith("ansible-playbook") for command in joined)
 
 
-def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> None:
+def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch, _no_vm_ssh) -> None:
     _pull_secret(app_ctx)
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()
@@ -418,6 +426,7 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     assert "ping job template" in app_ctx.console.stdout
     runs = _playbook_runs(app_ctx.runner)
     assert [name for name, _text, _job in runs] == ["provision.yml", "import.yml"]
+    assert len(_no_vm_ssh) == 1
     keygen = next(call for call in app_ctx.runner.calls if "ssh-keygen" in call.argv[0])
     assert list(keygen.argv[1:5]) == ["-t", "rsa", "-b", "3072"]
     provision, imported = (text for _name, text, _job in runs)
@@ -1029,6 +1038,11 @@ def test_packaged_files_load_through_importlib() -> None:
     ):
         assert resources.read_text(name)
     script = resources.read_text("entrypoint.sh")
+    assert "exec /usr/sbin/sshd" not in script
+    assert "if [[ ${1:-} == save ]]; then" in script
+    assert 'systemctl enable "${ssh_unit}"' in script
+    assert "systemctl --no-block start multi-user.target" in script
+    assert "--exclude=./${unit}" in script
     assert "dnf reinstall -y openssh-server sudo" in script
     assert "apt-get install -y --reinstall openssh-server sudo" in script
     assert "ETC_SAVE=/var/lib/fleet-etc" in script
@@ -1081,6 +1095,22 @@ def test_playbooks_parse_and_name_their_modules() -> None:
     mounted = {item["mountPath"]: item.get("subPath") for item in mounts}
     assert mounted["/usr"] == "usr"
     assert mounted["/var"] == "var"
+    assert mounted["/etc/systemd/system/fleet-setup.service"] == "fleet-setup.service"
+    assert mounted["/etc/systemd/system/fleet.target"] == "fleet.target"
+    node_container = deploy["spec"]["template"]["spec"]["containers"][0]
+    assert node_container["command"] == ["/sbin/init", "--unit=fleet.target"]
+    assert node_container["lifecycle"]["preStop"]["exec"]["command"][-1] == "kill -s RTMIN+3 1"
+    units = plays[0]["vars"]["fleet_units"]
+    assert "ExecStart=/bin/bash /entrypoint/entrypoint.sh setup" in units["fleet-setup.service"]
+    assert "ExecStop=/bin/bash /entrypoint/entrypoint.sh save" in units["fleet-setup.service"]
+    assert "Wants=fleet-setup.service" in units["fleet.target"]
+    entry_map = next(
+        task["kubernetes.core.k8s"]["definition"]
+        for task in plays[0]["tasks"]
+        if task["name"] == "Entrypoint"
+    )
+    assert set(entry_map["data"]) == {"entrypoint.sh", "fleet-setup.service", "fleet.target"}
+    assert "aap-demo/fleet-units" in deploy["spec"]["template"]["metadata"]["annotations"]
     assert deploy["spec"]["strategy"]["type"] == "Recreate"
     disk = next(task for task in plays[0]["tasks"] if task["name"] == "Node disk")
     assert disk["when"] == "state == 'present' or scope == 'node'"

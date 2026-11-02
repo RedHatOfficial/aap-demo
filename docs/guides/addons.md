@@ -31,6 +31,24 @@ Add `--no-import` if you want the machines without that registration.
 
 `disable fleet` turns the machines off and leaves the registration in place. `fleet destroy` removes both.
 
+### Reboots and services
+
+Each machine runs systemd, so `sudo reboot`, `systemctl`, and the `service` and `systemd_service` modules work.
+A reboot restarts the machine's container, usually within two minutes. Installed packages, `/etc`, and enabled services are
+still there afterward. `enable fleet` turns on the `container_manage_cgroup` SELinux setting on the cluster VM,
+which systemd needs.
+
+`ansible.builtin.reboot` needs one extra option. The machines share the cluster's kernel, so the boot ID the module
+checks by default never changes, and the module waits until it times out:
+
+```yaml
+- name: Reboot a Fleet machine
+  ansible.builtin.reboot:
+    boot_time_command: cut -d' ' -f22 /proc/1/stat
+```
+
+Packages that set file capabilities, such as `httpd`, do not install on these machines.
+
 ## Everything else
 
 Portal, Automation Orchestrator, product demos, a local cache of container images, and the MCP server are not
