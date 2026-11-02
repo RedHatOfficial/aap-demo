@@ -98,4 +98,13 @@ def vm_size(
     return chosen_cpus, chosen_memory
 
 
-__all__ = ["can_ask", "timed_continue", "vm_size"]
+def confirm(question: str, *, read: Callable[[str], str] = input) -> bool:
+    """Yes only on an explicit yes. Enter and end of input mean no."""
+    try:
+        answer = read(question).strip().lower()
+    except EOFError:
+        return False
+    return answer in ("y", "yes")
+
+
+__all__ = ["can_ask", "confirm", "timed_continue", "vm_size"]

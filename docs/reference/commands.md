@@ -18,7 +18,7 @@ still run with [the older command](../guides/older-command.md).
 | Command | What it does |
 | --- | --- |
 | `create` | Build the local MicroShift cluster. |
-| `deploy` | Install AAP. Default channel is `stable-2.7`. See [Choose a version](../guides/choose-a-version.md). |
+| `deploy` | Install AAP. Default channel is `stable-2.7`. See [Choose a version](../guides/choose-a-version.md) and [Subscription](../guides/subscription.md). |
 | `status` | Show the web address, the admin password, and whether things are up. |
 | `start` / `stop` | Turn the cluster on or off. |
 | `idle true` / `idle false` | Pause or wake AAP. No word after `idle` prints the current state. |

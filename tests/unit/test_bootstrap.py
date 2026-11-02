@@ -223,7 +223,7 @@ def test_create_requires_a_pull_secret(app_ctx, tmp_path) -> None:
     except AapDemoError as exc:
         assert "Pull secret" in exc.message
         assert "config set pull-secret" in (exc.hint or "")
-        assert str(app_ctx.paths.state_dir / "pull-secret.txt") in (exc.hint or "")
+        assert str(app_ctx.paths.config_dir / "pull-secret.txt") in (exc.hint or "")
     else:
         raise AssertionError("missing pull secret must fail")
 

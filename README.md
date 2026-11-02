@@ -19,14 +19,17 @@ You will need three things:
   [Red Hat console](https://console.redhat.com/openshift/install/pull-secret).
   The cluster uses it to download Red Hat images.
 
+[Install](docs/guides/install.md) has more on getting the command and updating it.
+
 Save the pull secret in the folder the command checks:
 
 ```bash
-mkdir -p ~/.local/state/aap-demo
-cp ~/Downloads/pull-secret.txt ~/.local/state/aap-demo/pull-secret.txt
+mkdir -p ~/.config/aap-demo
+cp ~/Downloads/pull-secret.txt ~/.config/aap-demo/pull-secret.txt
 ```
 
-A file named `pull-secret.json` in that same folder also works.
+A file named `pull-secret.json` in that same folder also works. To keep it somewhere else, see
+[Save your pull secret](docs/guides/first-deploy.md#1-save-your-pull-secret).
 
 Give the machine about 8 processors and 24 GB of memory. The first `create`
 builds a virtual machine, so give it a few quiet minutes. Smaller sizes, and
@@ -42,7 +45,8 @@ aap-demo status
 ```
 
 `create` builds the local cluster. `deploy` installs Ansible Automation Platform.
-`status` prints the web address and the admin password.
+`status` prints the web address and the admin password. [First deploy](docs/guides/first-deploy.md)
+walks through each step.
 
 To try AAP 2.6 instead of the usual 2.7 release:
 
@@ -50,10 +54,17 @@ To try AAP 2.6 instead of the usual 2.7 release:
 aap-demo deploy --channel stable-2.6
 ```
 
-With no `--channel` flag, `deploy` uses the default channel, `stable-2.7`.
+With no `--channel` flag, `deploy` uses the default channel, `stable-2.7`. See
+[Choose a version](docs/guides/choose-a-version.md).
 
 Open the address `status` prints and sign in with the admin password on that
-screen. `aap-demo version` should print `2.0.0.dev1`.
+screen.
+
+AAP runs without a subscription, but it needs one before it can add hosts. Nothing
+is applied unless you choose to. [Subscription](docs/guides/subscription.md) shows
+how to apply one, by signing in to AAP or by giving `aap-demo` a manifest file.
+
+ `aap-demo version` should print `2.0.0.dev1`.
 
 Tomorrow, `aap-demo start` turns the cluster on and `aap-demo stop` turns it
 off. [Daily use](docs/guides/daily-use.md) covers later days, including a page
@@ -66,6 +77,7 @@ that will not load.
 | Install or update the command | [Install](docs/guides/install.md) |
 | Put a cluster and AAP on this computer | [First deploy](docs/guides/first-deploy.md) |
 | Choose AAP 2.6 or 2.7 | [Choose a version](docs/guides/choose-a-version.md) |
+| Apply a subscription to AAP | [Subscription](docs/guides/subscription.md) |
 | Start, stop, and check on it later | [Daily use](docs/guides/daily-use.md) |
 | Add demo machines or other extras | [Add-ons](docs/guides/addons.md) |
 | Keep using a feature the new command does not have yet | [The older command](docs/guides/older-command.md) |

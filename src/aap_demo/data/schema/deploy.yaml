@@ -72,3 +72,29 @@ properties:
     x-config: deploy.pull_secret_path
     x-gui: {group: deploy, widget: text}
     x-order: 50
+
+  manifest_path:
+    type: string
+    default: ""
+    title: Subscription manifest path
+    description: >
+      Path to a Red Hat subscription manifest. Empty uses the newest manifest*.zip
+      in the config directory, then in the state directory. The tool does not copy the file.
+    x-cli: {flag: "--manifest"}
+    x-env: AAP_DEMO_MANIFEST
+    x-config: deploy.manifest_path
+    x-gui: {group: deploy, widget: text}
+    x-order: 60
+
+  auto_license:
+    type: boolean
+    default: false
+    title: Apply the subscription automatically
+    description: >
+      Apply a found subscription manifest to AAP without asking. It uses capacity from
+      your subscription, so it is off by default.
+    x-cli: {flag: "--auto-license"}
+    x-env: AAP_DEMO_AUTO_LICENSE
+    x-config: deploy.auto_license
+    x-gui: {group: deploy, widget: switch}
+    x-order: 70

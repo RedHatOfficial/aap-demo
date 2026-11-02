@@ -34,6 +34,9 @@ from aap_demo.infra import crc as infra_crc
 CONFIG_KEY_ALIASES = {
     "pull-secret": "deploy.pull_secret_path",
     "pull_secret": "deploy.pull_secret_path",
+    "manifest": "deploy.manifest_path",
+    "auto-license": "deploy.auto_license",
+    "auto_license": "deploy.auto_license",
 }
 
 

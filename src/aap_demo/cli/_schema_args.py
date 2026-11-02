@@ -103,7 +103,8 @@ def add_schema_arguments(
 
         prop_type = prop.get("type")
         if prop_type == "boolean":
-            kwargs["action"] = "store_true" if not default else "store_false"
+            # From the schema: a saved true must not turn the flag into an off switch.
+            kwargs["action"] = "store_true" if not prop.get("default") else "store_false"
         elif prop_type in _TYPES:
             kwargs["type"] = _TYPES[prop_type]
             if "enum" in prop:
