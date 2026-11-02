@@ -188,3 +188,19 @@ def test_a_refreshed_kubeconfig_is_checked_again(
     app_ctx.runner = runner
     with pytest.raises(AapDemoError, match="remote cluster"):
         preflight.setup_kubeconfig(app_ctx, which=_no_crc)
+
+
+def test_an_unusable_refresh_leaves_the_file_alone(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app_ctx.env = {"HOME": str(tmp_path)}
+    key = tmp_path / "id_ed25519"
+    key.write_text("fake")
+    monkeypatch.setattr(preflight.ssh_mod, "detect_ssh_key", lambda _dir: key)
+    app_ctx.kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+    app_ctx.kubeconfig.write_text("")
+    runner = FakeRunner().fail("kubectl cluster-info")
+    runner.ok("ssh -p 2222", stdout="not a mapping")
+    app_ctx.runner = runner
+    preflight.setup_kubeconfig(app_ctx, which=_no_crc)
+    assert app_ctx.kubeconfig.read_text() == ""

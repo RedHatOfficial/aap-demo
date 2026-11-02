@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from aap_demo.cli import main as main_mod
 from aap_demo.cluster import preflight
@@ -88,7 +89,7 @@ def test_unreachable_cluster_refreshes_the_kubeconfig_over_ssh(
 
     path = preflight.setup_kubeconfig(app_ctx)
 
-    assert path.read_text() == "apiVersion: v1\nkind: Config\n"
+    assert yaml.safe_load(path.read_text())["current-context"] == "aap-demo"
     ssh_call = next(c for c in fake_runner.calls if c.argv[0] == "ssh")
     # Bash's refresh uses a 2-second connect timeout, not CRC_SSH_OPTS' 10.
     assert "ConnectTimeout=2" in ssh_call.argv
