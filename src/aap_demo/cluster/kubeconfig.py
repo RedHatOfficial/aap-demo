@@ -127,6 +127,17 @@ def write_private(destination: Path, text: str) -> Path:
     return destination
 
 
+def render(raw_text: str) -> str:
+    """The VM's kubeconfig as the ``aap-demo`` file this tool writes everywhere."""
+    try:
+        parsed = yaml.safe_load(raw_text)
+    except yaml.YAMLError as exc:
+        raise AapDemoError("Extracted kubeconfig is invalid", hint=str(exc)) from exc
+    if not isinstance(parsed, dict):
+        raise AapDemoError("Extracted kubeconfig is invalid")
+    return yaml.safe_dump(_rename(parsed), sort_keys=False)
+
+
 def sync(runner: Any, *, key: Path, destination: Path, validate: bool = True) -> Path:
     """Ports ``cmd_kubeconfig``. Returns ``destination``."""
     raw_text = extract_raw(runner, key)
@@ -134,16 +145,7 @@ def sync(runner: Any, *, key: Path, destination: Path, validate: bool = True) ->
     if validate:
         _validate(runner, raw_text)
 
-    try:
-        parsed = yaml.safe_load(raw_text)
-    except yaml.YAMLError as exc:
-        raise AapDemoError("Extracted kubeconfig is invalid", hint=str(exc)) from exc
-    if not isinstance(parsed, dict):
-        raise AapDemoError("Extracted kubeconfig is invalid")
-
-    renamed = _rename(parsed)
-
-    return write_private(destination, yaml.safe_dump(renamed, sort_keys=False))
+    return write_private(destination, render(raw_text))
 
 
 def default_kubeconfig_file(home: Path) -> Path:

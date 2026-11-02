@@ -28,7 +28,7 @@ from __future__ import annotations
 import base64
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 import yaml
@@ -62,6 +62,8 @@ GATEWAY_INTERVAL = 5
 #: ``watch_aap``'s budget.
 WATCH_TIMEOUT = 3600
 WATCH_INTERVAL = 10
+#: AAP 2.7 sets Successful=True about a minute after its components finish.
+SETTLE_TIMEOUT = 180
 
 #: ``watch_aap``'s secret-name fallbacks.
 ADMIN_SECRET_FALLBACKS = (
@@ -377,6 +379,7 @@ class AapReadiness:
     password: str = ""
     csv: str = ""
     version: str = ""
+    component_times: Dict[str, float] = field(default_factory=dict)
 
 
 def installed_version(ctx: AppContext, namespace: str, *, csv: str = "") -> str:
@@ -853,6 +856,8 @@ def wait_ready(
     ns = namespace or ctx.namespace
 
     showed_components = False
+    started = clock()
+    component_times: Dict[str, float] = {}
 
     def attempt(_n: int) -> bool:
         nonlocal showed_components
@@ -863,6 +868,9 @@ def wait_ready(
         showed_components = True
         ctx.events.progress(_component_progress(rows))
         ctx.console.set_children(rows)
+        for name, state, _detail in rows:
+            if state == "done":
+                component_times.setdefault(name, clock() - started)
         return all(state == "done" for _name, state, _detail in rows)
 
     def progress(n: int, elapsed: float, _value: Any) -> None:
@@ -885,6 +893,18 @@ def wait_ready(
         sleep=sleep,
         clock=clock,
     )
+    if result.ok and showed_components:
+        # Components are done, and the operator hasn't said so yet. It isn't a
+        # failure if it never does: AAP 2.7 can finish with Successful=False.
+        ctx.events.progress("Waiting for the operator to finish")
+        waiting.wait_for(
+            lambda _n: successful_condition(ctx, ns) == "True",
+            timeout=SETTLE_TIMEOUT,
+            interval=interval,
+            description="AAP Successful condition",
+            sleep=sleep,
+            clock=clock,
+        )
     route = kubectl.jsonpath(ctx.runner, "route", "-n", ns, path="{.items[0].spec.host}")
     csv = kubectl.jsonpath(ctx.runner, "csv", "-n", ns, path="{.items[0].metadata.name}")
     version = installed_version(ctx, ns, csv=csv)
@@ -894,6 +914,7 @@ def wait_ready(
         route=route,
         password=admin_password(ctx, ns),
         csv=csv,
+        component_times=component_times,
         version=version,
     )
 

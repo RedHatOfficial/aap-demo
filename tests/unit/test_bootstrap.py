@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from aap_demo.cluster import bootstrap
 from aap_demo.core.errors import AapDemoError
 from aap_demo.exec.runner import CompletedCommand, FakeRunner
@@ -354,16 +356,24 @@ def test_destroy_deletes_the_vm_without_a_prompt_when_assumed_yes(app_ctx, tmp_p
     assert "CRC cluster deleted" in app_ctx.console.stdout
 
 
-def test_destroy_forgets_fleets_namespace_identity(app_ctx, tmp_path) -> None:
+NODE = {"name": "fleet-ubi9", "os": "ubi9"}
+
+
+def test_destroy_forgets_what_described_the_old_cluster(app_ctx, tmp_path) -> None:
     _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Running"}')
     app_ctx.assume_yes = True
     fleet = {"namespace": "fleet", "namespace_token": "t", "namespace_uid": "u"}
-    fleet["runner_namespace_uid"] = "r"
+    fleet.update({"runner_namespace_uid": "r", "import": True, "nodes": [NODE]})
     app_ctx.config.set("addons.options", {"fleet": fleet})
+    app_ctx.config.set("addons.enabled", ["fleet", "other"])
 
     bootstrap.destroy(app_ctx, sleep=lambda _s: None, which=lambda name: "/bin/" + name)
 
-    assert app_ctx.config.get("addons.options")["fleet"] == {"namespace": "fleet"}
+    assert app_ctx.config.get("addons.options")["fleet"] == {
+        "namespace": "fleet",
+        "nodes": [NODE],
+    }
+    assert app_ctx.config.get("addons.enabled") == ["other"]
 
 
 def test_destroy_preserves_config_when_delete_fails(app_ctx) -> None:
@@ -452,3 +462,25 @@ def test_create_keeps_an_older_bundle_when_config_lowers_the_floor(app_ctx, tmp_
 
     assert "Installing CRC" not in app_ctx.console.stdout
     assert runner.called("crc setup")
+
+
+def test_metrics_server_survives_a_brief_network_problem(app_ctx) -> None:
+    results = iter([1, 0])
+    runner = FakeRunner().fail("kubectl get deployment metrics-server")
+    runner.register(
+        ["kubectl", "apply", "-f"],
+        lambda argv, **_: CompletedCommand(argv=tuple(argv), returncode=next(results)),
+    )
+    runner.ok("kubectl patch")
+    app_ctx.runner = runner
+    slept = []
+    bootstrap._install_metrics(app_ctx, sleep=slept.append)
+    assert slept == [bootstrap.METRICS_APPLY_RETRY_SECONDS]
+
+
+def test_metrics_server_still_fails_when_the_network_stays_down(app_ctx) -> None:
+    runner = FakeRunner().fail("kubectl get deployment metrics-server")
+    runner.fail(["kubectl", "apply", "-f"], stderr="lookup github.com: no such host")
+    app_ctx.runner = runner
+    with pytest.raises(AapDemoError, match="no such host"):
+        bootstrap._install_metrics(app_ctx, sleep=lambda _s: None)

@@ -49,6 +49,8 @@ from aap_demo.core.errors import AapDemoError
 from aap_demo.exec import kubectl
 from aap_demo.exec import operator_sdk as sdk
 
+OLM_INSTALL_RETRIES = 2
+OLM_INSTALL_RETRY_SECONDS = 15
 SUBSCRIPTION_CRD = "subscriptions.operators.coreos.com"
 OLM_NAMESPACE = "olm"
 OPERATORS_NAMESPACE = "operators"
@@ -124,7 +126,10 @@ def _delete_operatorhub_catalog(ctx: AppContext) -> None:
 
 
 def ensure_installed(
-    ctx: AppContext, *, which: Optional[Callable[[str], Optional[str]]] = None
+    ctx: AppContext,
+    *,
+    which: Optional[Callable[[str], Optional[str]]] = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> bool:
     """Ports ``addons/olm/deploy.sh``'s deploy action.
 
@@ -154,7 +159,17 @@ def ensure_installed(
                 ctx.console.note(line.strip())
         return True
 
-    if sdk.olm_install(ctx).ok:
+    # operator-sdk looks up the OLM release on GitHub, so a brief network problem
+    # fails it within seconds.
+    installed = sdk.olm_install(ctx)
+    for _attempt in range(OLM_INSTALL_RETRIES):
+        if installed.ok or is_installed(ctx):
+            break
+        ctx.console.progress("OLM install failed. Trying again")
+        sleep(OLM_INSTALL_RETRY_SECONDS)
+        installed = sdk.olm_install(ctx)
+
+    if installed.ok:
         _delete_operatorhub_catalog(ctx)
         return True
 
@@ -170,7 +185,11 @@ def ensure_installed(
     kubectl.delete(ctx.runner, "namespace", OPERATORS_NAMESPACE)
     raise AapDemoError(
         "OLM installation failed",
-        hint="OLM is required for AAP deployments. Try: aap-demo enable olm",
+        hint=(
+            f"{(installed.stderr or installed.stdout or '').strip()[-500:]}\n"
+            "  OLM is required for AAP deployments. Check the network, then run "
+            "aap-demo deploy again."
+        ).strip(),
     )
 
 

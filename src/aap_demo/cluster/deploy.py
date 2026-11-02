@@ -262,7 +262,7 @@ def run(
                     readiness.csv,
                 )
                 _finish_wait(ctx, readiness)
-                _report_times(ctx, None, aap_elapsed)
+                _report_times(ctx, None, aap_elapsed, readiness.component_times)
             return result
 
     _ensure_node_pull_secret(ctx)
@@ -390,9 +390,15 @@ def _finish_wait(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:
 
 
 def _report_times(
-    ctx: AppContext, operator_elapsed: Optional[float], aap_elapsed: Optional[float]
+    ctx: AppContext,
+    operator_elapsed: Optional[float],
+    aap_elapsed: Optional[float],
+    components: Optional[Dict[str, float]] = None,
 ) -> None:
-    """Operator install, AAP reconcile, and the sum of those two."""
+    """Operator install, AAP reconcile, and the sum of those two.
+
+    Each component shows when it finished, counted from the start of the AAP wait.
+    """
     if operator_elapsed is None and aap_elapsed is None:
         return
     ctx.console.out("Installation time")
@@ -400,6 +406,8 @@ def _report_times(
         ctx.console.out(f"  Operator  {format_elapsed(operator_elapsed)}")
     if aap_elapsed is not None:
         ctx.console.out(f"  AAP       {format_elapsed(aap_elapsed)}")
+        for name, elapsed in sorted((components or {}).items(), key=lambda item: item[1]):
+            ctx.console.out(f"    {name:<10} done at {format_elapsed(elapsed)}")
     measured = [value for value in (operator_elapsed, aap_elapsed) if value is not None]
     ctx.console.out(f"  Total     {format_elapsed(sum(measured))}")
     ctx.console.out("")
@@ -419,7 +427,7 @@ def _report_readiness(
         ctx.console.warn("Deployment not complete after 60 minutes")
         ctx.console.out("The AAP instance is installed. Its Successful condition was not True.")
     ctx.console.out("")
-    _report_times(ctx, operator_elapsed, aap_elapsed)
+    _report_times(ctx, operator_elapsed, aap_elapsed, readiness.component_times)
     if readiness.version:
         ctx.console.out(f"Version: {readiness.version}")
     if readiness.csv:

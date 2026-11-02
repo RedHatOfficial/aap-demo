@@ -85,15 +85,39 @@ def test_partial_install_is_cleaned_up_and_fatal(app_ctx) -> None:
     runner = FakeRunner()
     runner.ok("kubectl cluster-info")
     runner.fail(["kubectl", "get", "crd", olm.SUBSCRIPTION_CRD])
-    runner.fail("operator-sdk olm install")
+    runner.fail("operator-sdk olm install", stderr="dial tcp: lookup api.github.com")
     runner.ok("kubectl delete namespace")
     app_ctx.runner = runner
 
     with pytest.raises(AapDemoError) as excinfo:
-        olm.ensure_installed(app_ctx, which=_which("operator-sdk", "kubectl"))
+        olm.ensure_installed(
+            app_ctx, which=_which("operator-sdk", "kubectl"), sleep=lambda _s: None
+        )
     assert "OLM installation failed" in excinfo.value.message
+    assert "enable olm" not in (excinfo.value.hint or "")
     assert runner.called("kubectl delete namespace olm")
     assert runner.called("kubectl delete namespace operators")
+    assert "lookup api.github.com" in (excinfo.value.hint or "")
+    installs = [c for c in runner.calls if c.argv[:3] == ("operator-sdk", "olm", "install")]
+    assert len(installs) == 1 + olm.OLM_INSTALL_RETRIES
+
+
+def test_a_brief_install_failure_is_retried(app_ctx) -> None:
+    results = iter([1, 0])
+    runner = FakeRunner()
+    runner.ok("kubectl cluster-info")
+    runner.fail(["kubectl", "get", "crd", olm.SUBSCRIPTION_CRD])
+    runner.ok("kubectl delete")
+    runner.register(
+        ["operator-sdk", "olm", "install"],
+        lambda argv, **_: CompletedCommand(argv=tuple(argv), returncode=next(results)),
+    )
+    app_ctx.runner = runner
+    slept = []
+    assert olm.ensure_installed(
+        app_ctx, which=_which("operator-sdk", "kubectl"), sleep=slept.append
+    )
+    assert slept == [olm.OLM_INSTALL_RETRY_SECONDS]
 
 
 def test_unreachable_cluster_fails_before_touching_operator_sdk(app_ctx) -> None:

@@ -26,6 +26,7 @@ aap-demo fleet destroy
 ```
 
 `enable fleet` creates two machines by default, `fleet-ubi9` and `fleet-ubi10`, and registers them in AAP.
+Registering needs a subscription in AAP. Without one, use `aap-demo enable fleet --no-import`.
 Add `--no-import` if you want the machines without that registration.
 
 `disable fleet` turns the machines off and leaves the registration in place. `fleet destroy` removes both.
