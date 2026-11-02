@@ -55,6 +55,17 @@ def remember_namespace_uid(ctx: AppContext, key: str, uid: str) -> None:
     save_options(ctx, fleet)
 
 
+def forget_cluster_identity(ctx: AppContext) -> None:
+    """Drop the token and UIDs of namespaces on a cluster that no longer exists."""
+    fleet = fleet_options(ctx)
+    stale = [k for k in ("namespace_token", "namespace_uid", "runner_namespace_uid") if k in fleet]
+    if not stale:
+        return
+    for key in stale:
+        del fleet[key]
+    save_options(ctx, fleet)
+
+
 def namespace_for(ctx: AppContext) -> str:
     raw = fleet_options(ctx).get("namespace")
     text = str(raw).strip() if raw else ""
