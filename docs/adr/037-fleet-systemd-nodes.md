@@ -20,8 +20,8 @@ Two things stop it on MicroShift:
 
 - CRI-O prepares a systemd container (a writable cgroup and tmpfs mounts) only when the container's
   command is init itself, not a wrapper script that later runs init.
-- SELinux on the CRC VM blocks the cgroup write until the `container_manage_cgroup` boolean is on.
-  Without it, systemd exits at boot with `Failed to create /init.scope control group`.
+- SELinux confines containers to `container_t`, which may not write cgroups. systemd exits at boot with
+  `Failed to create /init.scope control group: Permission denied`.
 
 ## Decision
 
@@ -37,10 +37,12 @@ mounted into `/etc/systemd/system`:
 A `preStop` hook sends `SIGRTMIN+3`, systemd's clean halt, because systemd ignores the `SIGTERM`
 that Kubernetes sends.
 
-`enable fleet` and `fleet add` turn on `container_manage_cgroup` on the CRC VM over SSH with
-`setsebool -P`, so it stays on across VM restarts. A VM that already has it on is left alone.
+The `aap-demo-fleet` SCC sets the SELinux type to `container_init_t`, the type container-selinux provides
+for a container whose PID 1 is systemd. It may write its own cgroup. The MCS level still comes from the
+namespace, so the nodes stay separated from other pods. Only pods admitted under this SCC, which are the Fleet
+nodes, get the type. The VM's SELinux booleans are not changed.
 
-The images, the security context constraint, and the disk layout from ADR-032 do not change.
+The images and the disk layout from ADR-032 do not change. The SCC changes only its SELinux type.
 
 ## Consequences
 
@@ -58,8 +60,7 @@ The images, the security context constraint, and the disk layout from ADR-032 do
 - `ansible.builtin.reboot` needs `boot_time_command: cut -d' ' -f22 /proc/1/stat`. A container
   shares the cluster VM's kernel, so the default boot ID check never changes and the module times
   out after the node has rebooted.
-- `container_manage_cgroup` lets every container on the VM write its own cgroup. This is a local
-  demo cluster, so the wider permission is accepted.
+- `container_init_t` must exist in the VM's container-selinux policy. The CRC MicroShift bundle ships it.
 - Kubernetes backs off a container that restarts often, so many reboots in a few minutes take longer
   each time.
 
@@ -78,6 +79,12 @@ The images, the security context constraint, and the disk layout from ADR-032 do
 
 CRI-O does not prepare the container for systemd when the command is a script, and systemd exits
 at boot.
+
+### Turn on the `container_manage_cgroup` boolean
+
+Works, but changes SELinux for every container on the VM, and needs SSH to the VM. Normal containers
+mount `/sys/fs/cgroup` read-only, so the practical effect is small, but `container_init_t` grants the same
+access to the Fleet nodes only.
 
 ### Switch to the `ubi-init` images
 

@@ -489,6 +489,9 @@ def _node_account(namespace: str) -> Dict[str, Any]:
     }
 
 
+SELINUX_TYPE = "container_init_t"
+
+
 def _fleet_scc() -> Dict[str, Any]:
     return {
         "apiVersion": "security.openshift.io/v1",
@@ -506,7 +509,11 @@ def _fleet_scc() -> Dict[str, Any]:
         "readOnlyRootFilesystem": False,
         "requiredDropCapabilities": ["MKNOD"],
         "runAsUser": {"type": "MustRunAs", "uid": 0},
-        "seLinuxContext": {"type": "MustRunAs"},
+        # container_init_t is container-selinux's type for a container whose
+        # PID 1 is systemd. It may write its own cgroup, which container_t may
+        # not, so the VM's container_manage_cgroup boolean stays off. The MCS
+        # level still comes from the namespace.
+        "seLinuxContext": {"type": "MustRunAs", "seLinuxOptions": {"type": SELINUX_TYPE}},
         "supplementalGroups": {"type": "RunAsAny"},
         "volumes": [
             "configMap",

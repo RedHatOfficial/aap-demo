@@ -7,7 +7,6 @@ import json
 from typing import Any, Dict, cast
 
 from aap_demo.addons.fleet import images, runner, sshkey
-from aap_demo.addons.fleet import node as fleet_node
 from aap_demo.addons.fleet.ee import discover_image
 from aap_demo.addons.fleet.job import delete_fleet_scc, delete_owned_namespace, runner_namespace
 from aap_demo.addons.fleet.state import (
@@ -44,7 +43,6 @@ class FleetAddon:
         # A later --no-import must not forget that Controller objects exist.
         if not (no_import and fleet.get("import") is True):
             fleet["import"] = not no_import
-        fleet_node.allow_systemd(ctx)
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
         _commit_fleet(ctx, fleet)
         if not no_import:
@@ -154,7 +152,6 @@ class FleetAddon:
         private, public = sshkey.load_or_create(ctx)
         fleet = fleet_options(ctx)
         fleet["nodes"] = nodes
-        fleet_node.allow_systemd(ctx)
         runner.provision(ctx, nodes, public_key=public, state="present", scope="all")
         _commit_fleet(ctx, fleet)
         if fleet.get("import", True) is not False:

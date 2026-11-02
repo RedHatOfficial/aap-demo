@@ -109,14 +109,6 @@ EE_CONTROLLERS = json.dumps(
 EE_PLATFORMS = json.dumps({"items": [{"metadata": {"name": "aap", "uid": "aap-uid"}}]})
 
 
-@pytest.fixture(autouse=True)
-def _no_vm_ssh(monkeypatch) -> list:
-    """The SELinux boolean is set over SSH to the VM. test_fleet_node covers it."""
-    calls: list = []
-    monkeypatch.setattr("aap_demo.addons.fleet.node.allow_systemd", lambda ctx: calls.append(ctx))
-    return calls
-
-
 def _which(present):
     def which(name: str):
         if name in present:
@@ -409,7 +401,7 @@ def test_enable_fleet_needs_the_execution_environment(app_ctx, monkeypatch) -> N
     assert not any(command.split()[0].endswith("ansible-playbook") for command in joined)
 
 
-def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch, _no_vm_ssh) -> None:
+def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> None:
     _pull_secret(app_ctx)
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()
@@ -426,7 +418,6 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch, _no_vm
     assert "ping job template" in app_ctx.console.stdout
     runs = _playbook_runs(app_ctx.runner)
     assert [name for name, _text, _job in runs] == ["provision.yml", "import.yml"]
-    assert len(_no_vm_ssh) == 1
     keygen = next(call for call in app_ctx.runner.calls if "ssh-keygen" in call.argv[0])
     assert list(keygen.argv[1:5]) == ["-t", "rsa", "-b", "3072"]
     provision, imported = (text for _name, text, _job in runs)
@@ -501,6 +492,11 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch, _no_vm
     assert scc["allowedCapabilities"] == ["SYS_CHROOT", "AUDIT_WRITE"]
     assert scc["allowPrivilegedContainer"] is False
     assert scc["runAsUser"] == {"type": "MustRunAs", "uid": 0}
+    assert scc["seLinuxContext"] == {
+        "type": "MustRunAs",
+        "seLinuxOptions": {"type": "container_init_t"},
+    }
+    assert not any("setsebool" in " ".join(call.argv) for call in app_ctx.runner.calls)
     scc_role = next(document for document in applied if document.get("kind") == "ClusterRole")
     assert scc_role["metadata"]["name"] == "system:openshift:scc:aap-demo-fleet"
     assert scc_role["rules"] == [
