@@ -22,6 +22,7 @@ from aap_demo.addons.fleet.state import (
     remember_namespace_token,
     remember_namespace_uid,
 )
+from aap_demo.core import waiting
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
@@ -41,6 +42,7 @@ FLEET_SCC_ROLE = "system:openshift:scc:aap-demo-fleet"
 FLEET_SCC_BINDING = "fleet-ssh-scc"
 _PLAYBOOK_ROOT = "/opt/fleet/playbooks"
 _JOB_TIMEOUT_SECONDS = 600
+_JOB_POLL_SECONDS = 5
 _EXTRA_ROOT = "/opt/fleet/extra"
 _PLAYBOOK_PURPOSES = {
     "provision.yml": "creating/updating Fleet node pods and persistent storage",
@@ -55,6 +57,32 @@ def runner_namespace(fleet_ns: str) -> str:
         return candidate
     digest = hashlib.sha256(fleet_ns.encode()).hexdigest()[:8]
     return f"fleet-runner-{digest}"
+
+
+def _job_succeeded(ctx: AppContext, name: str, namespace: str) -> bool:
+    """Stop at the Job's result. ``kubectl wait`` sits out its timeout on a failed Job."""
+    outcome = {"status": ""}
+
+    def finished(_n: int) -> bool:
+        read = ctx.runner.run(["kubectl", "get", "job", name, "-n", namespace, "-o", "json"])
+        try:
+            status = _as_dict(json.loads(read.stdout or "{}").get("status"))
+        except json.JSONDecodeError:
+            return False
+        for condition in status.get("conditions") or []:
+            if isinstance(condition, dict) and condition.get("status") == "True":
+                if condition.get("type") in ("Complete", "Failed"):
+                    outcome["status"] = str(condition["type"])
+                    return True
+        return False
+
+    waiting.wait_for(
+        finished,
+        timeout=_JOB_TIMEOUT_SECONDS,
+        interval=_JOB_POLL_SECONDS,
+        description=f"Fleet job {name}",
+    )
+    return outcome["status"] == "Complete"
 
 
 def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None:
@@ -87,20 +115,9 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
             f"Fleet job submitted to {job_ns}: {purpose}; waiting up to "
             f"{_JOB_TIMEOUT_SECONDS // 60} minutes for completion"
         )
-        waited = ctx.runner.run(
-            [
-                "kubectl",
-                "wait",
-                "--for=condition=complete",
-                f"job/{name}",
-                "-n",
-                job_ns,
-                f"--timeout={_JOB_TIMEOUT_SECONDS}s",
-            ]
-        )
-        if not waited.ok:
+        if not _job_succeeded(ctx, name, job_ns):
             logs = ctx.runner.run(["kubectl", "logs", f"job/{name}", "-n", job_ns])
-            detail = (logs.stdout or logs.stderr or waited.stderr or "").strip()
+            detail = (logs.stdout or logs.stderr or "").strip()
             playbook_error = AddonError(
                 f"playbook failed: {playbook.name}",
                 hint=detail[-2000:] or None,
