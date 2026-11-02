@@ -11,7 +11,8 @@ import pytest
 import yaml
 
 from aap_demo.addons import get, names
-from aap_demo.addons.fleet import job, resources
+from aap_demo.addons.fleet import job as fleet_job
+from aap_demo.addons.fleet import resources
 from aap_demo.cli import addons as addons_cli
 from aap_demo.cli.main import build_parser
 from aap_demo.core.errors import AddonError, PrerequisiteError, UsageError
@@ -1101,5 +1102,5 @@ def test_a_missing_namespace_drops_its_stale_uid(app_ctx) -> None:
         "addons.options", {"fleet": {"namespace_token": "t", "namespace_uid": "old"}}
     )
     app_ctx.runner = FakeRunner().fail("kubectl get namespace", stderr="(NotFound) not found")
-    assert job._token_for(app_ctx, "fleet", create=True, uid_key="namespace_uid") == "t"
+    assert fleet_job._token_for(app_ctx, "fleet", create=True, uid_key="namespace_uid") == "t"
     assert "namespace_uid" not in app_ctx.config.get("addons.options")["fleet"]
