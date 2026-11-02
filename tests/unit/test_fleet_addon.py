@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from aap_demo.addons import get, names
-from aap_demo.addons.fleet import resources
+from aap_demo.addons.fleet import job, resources
 from aap_demo.cli import addons as addons_cli
 from aap_demo.cli.main import build_parser
 from aap_demo.core.errors import AddonError, PrerequisiteError, UsageError
@@ -1093,3 +1093,13 @@ def test_help_lists_enable_disable_and_fleet() -> None:
     help_text = build_parser().format_help()
     for command in ("enable", "disable", "fleet"):
         assert command in help_text
+
+
+def test_a_missing_namespace_drops_its_stale_uid(app_ctx) -> None:
+    """A cluster deleted outside aap-demo must not block the next enable."""
+    app_ctx.config.set(
+        "addons.options", {"fleet": {"namespace_token": "t", "namespace_uid": "old"}}
+    )
+    app_ctx.runner = FakeRunner().fail("kubectl get namespace", stderr="(NotFound) not found")
+    assert job._token_for(app_ctx, "fleet", create=True, uid_key="namespace_uid") == "t"
+    assert "namespace_uid" not in app_ctx.config.get("addons.options")["fleet"]

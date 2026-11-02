@@ -60,9 +60,9 @@ def _export(ctx: AppContext, path: Path) -> None:
 def _refresh_from_vm(ctx: AppContext, path: Path) -> bool:
     """Ports the SSH re-extraction inside ``setup_kubeconfig``.
 
-    Bash writes the *raw* remote kubeconfig here (no rename — that is only
-    ``cmd_kubeconfig``'s job) and any failure is silent: the stale kubeconfig
-    is simply left in place for the command to fail against on its own.
+    Any failure is silent: the stale kubeconfig is simply left in place for the
+    command to fail against on its own. Unlike bash, this writes the same
+    ``aap-demo`` file that ``aap-demo kubeconfig`` does, not the raw VM file.
     """
     key = ssh_mod.detect_ssh_key(ssh_mod.crc_machines_dir(ctx.env))
     if key is None:
@@ -77,7 +77,11 @@ def _refresh_from_vm(ctx: AppContext, path: Path) -> bool:
     )
     if not result.ok or not result.stdout.strip():
         return False
-    kubeconfig_mod.write_private(path, result.stdout)
+    try:
+        rendered = kubeconfig_mod.render(result.stdout)
+    except AapDemoError:
+        return False
+    kubeconfig_mod.write_private(path, rendered)
     return True
 
 
