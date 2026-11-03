@@ -2046,14 +2046,15 @@ cmd_status() {
   _fleet_v2_err=$(mktemp)
   # set -e would exit on a failing assignment before the rc could be read.
   _fleet_v2_rc=0
-  _fleet_v2_rows=$("${_fleet_kubectl[@]}" get pods -A \
+  # -A because the Fleet namespace is configurable. The label keeps the list
+  # small, and the timeout keeps a stopped cluster from slowing status down.
+  _fleet_v2_rows=$("${_fleet_kubectl[@]}" --request-timeout=5s get pods -A \
     -l app.kubernetes.io/name=fleet-node \
     --no-headers \
     -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
     2>"$_fleet_v2_err") || _fleet_v2_rc=$?
   if [ "$_fleet_v2_rc" -ne 0 ]; then
-    echo "Kubernetes-native Fleet: kubectl failed"
-    sed 's/^/  /' "$_fleet_v2_err"
+    echo "Kubernetes-native Fleet: kubectl failed ($(head -1 "$_fleet_v2_err" | cut -c1-120))"
     rm -f "$_fleet_v2_err"
   elif [ -n "$_fleet_v2_rows" ]; then
     rm -f "$_fleet_v2_err"
@@ -3033,6 +3034,13 @@ watch_aap() {
 # Fleet nodes: managed RHEL VMs for AAP demos (addon)
 # ---------------------------------------------------------------------------
 
+_fleet_is_python_entry_point() {
+  case "$1" in
+    *.exe) return 0 ;;
+  esac
+  head -1 "$1" 2>/dev/null | grep -Eq '^#!.*python'
+}
+
 _fleet_delegate_v2() {
   local python_bin=""
   local candidate
@@ -3051,19 +3059,23 @@ _fleet_delegate_v2() {
     fi
   fi
 
+  # The installed Python release comes before a checkout's .venv, so a stale
+  # .venv cannot shadow it. Only a pipx/pip entry point counts: a Python
+  # shebang, or an .exe launcher on Windows. Anything else named aap-demo
+  # (this bash script, a wrapper) is skipped.
+  if [ -z "$python_bin" ]; then
+    candidate=$(command -v aap-demo 2>/dev/null || true)
+    if [ -n "$candidate" ] && _fleet_is_python_entry_point "$candidate"; then
+      "$candidate" "${forwarded[@]}"
+      return
+    fi
+  fi
+
   for candidate in "${SCRIPT_DIR}/.venv/bin/python" "${SCRIPT_DIR}/.venv/bin/python3"; do
     if [ -z "$python_bin" ] && [ -x "$candidate" ] && "$candidate" -c 'import yaml' >/dev/null 2>&1; then
       python_bin="$candidate"
     fi
   done
-
-  if [ -z "$python_bin" ]; then
-    candidate=$(command -v aap-demo 2>/dev/null || true)
-    if [ -n "$candidate" ] && ! head -1 "$candidate" 2>/dev/null | grep -qi bash; then
-      "$candidate" "${forwarded[@]}"
-      return
-    fi
-  fi
 
   if [ -z "$python_bin" ] && command -v python3 >/dev/null 2>&1 \
     && python3 -c 'import yaml' >/dev/null 2>&1; then
@@ -3397,6 +3409,16 @@ cmd_enable() {
         return
         ;;
       qemu)
+        # --no-import only means something to the kube-native backend.
+        local _fleet_qemu_args=() _fleet_arg
+        for _fleet_arg in "$@"; do
+          if [ "$_fleet_arg" = "--no-import" ]; then
+            printf 'WARNING: %s\n' "--no-import is ignored for the qemu backend (it applies to --backend kube-native)" >&2
+          else
+            _fleet_qemu_args+=("$_fleet_arg")
+          fi
+        done
+        set -- ${_fleet_qemu_args[@]+"${_fleet_qemu_args[@]}"}
         ;;
       all)
         _err "Fleet backend 'all' cannot be enabled"
