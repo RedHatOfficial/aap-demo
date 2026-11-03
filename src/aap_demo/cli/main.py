@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from aap_demo import __version__
 from aap_demo.cli import addons as addons_cli
 from aap_demo.cli import completion as completion_cli
 from aap_demo.cli import day2, lifecycle, observe, ops
@@ -24,6 +23,7 @@ from aap_demo.cluster import pull_secret as pull_secret_mod
 from aap_demo.core import bash_v1, migration, schema
 from aap_demo.core import config as config_mod
 from aap_demo.core import output as output_mod
+from aap_demo.core import version as version_mod
 from aap_demo.core.console import Console
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, ConfigError, UsageError
@@ -147,7 +147,7 @@ def build_parser(
         "-V",
         "--version",
         action="version",
-        version=f"aap-demo {__version__}",
+        version=f"aap-demo {version_mod.short_version()}",
         help="Show aap-demo version and exit",
     )
 

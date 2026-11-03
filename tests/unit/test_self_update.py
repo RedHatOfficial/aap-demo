@@ -262,3 +262,22 @@ def test_update_of_a_branch_install_says_it_was_reinstalled(app_ctx, monkeypatch
 
     assert f"Reinstalled 2.0.0.dev2 from {spec}" in app_ctx.console.stdout
     assert "To switch back: pipx install --force aap-demo" in app_ctx.console.stderr
+
+
+def test_update_shows_the_commit_of_a_git_install(app_ctx, monkeypatch) -> None:
+    spec = "git+https://github.com/RedHatOfficial/aap-demo.git@27b505d"
+    info = VersionInfo(
+        version="2.0.0.dev0",
+        source="/tmp/aap-demo",
+        install_mode="git",
+        full_version="2.0.0.dev0+g27b505d",
+        installed_from=spec,
+        git_sha="27b505d",
+    )
+    monkeypatch.setattr(self_update.shutil, "which", lambda _name: PIPX)
+    monkeypatch.setattr(self_update, "version_info", lambda _runner: info)
+    app_ctx.runner = _runner(spec)
+
+    assert self_update.run(app_ctx) == 0
+
+    assert "Installed 2.0.0.dev0+g27b505d" in app_ctx.console.stdout
