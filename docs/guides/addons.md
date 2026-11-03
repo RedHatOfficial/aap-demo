@@ -61,4 +61,4 @@ aap-demo-v1 enable portal
 ```
 
 Each of those extras will move to the new command on its own. Until a page says otherwise, the older command
-is the way to install them. Nothing you already run with the older command is being removed in this beta.
+is the way to install them. Nothing you already run with the older command is being removed in this release candidate.

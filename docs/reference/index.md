@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Reference
-description: Commands and settings for the 2.0.0.dev2 command.
+description: Commands and settings for the 2.0.0rc0 command.
 tags: [reference]
 status: draft
 stale_after: 2027-01-28

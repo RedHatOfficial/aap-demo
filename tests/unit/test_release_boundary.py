@@ -1,4 +1,4 @@
-"""The v2 beta stays 2.0.0.devN and does not publish 2.0.0."""
+"""The Python command publishes 2.0.0 pre-releases only, never the final 2.0.0."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def _http_error(code: int):
     return opener
 
 
-def test_package_version_stays_a_development_release() -> None:
+def test_package_version_stays_a_pre_release() -> None:
     assert _state_script().is_allowed(__version__)
 
 
@@ -41,8 +41,26 @@ def test_the_check_reads_the_real_package_version() -> None:
     assert _state_script().read_version(text) == __version__
 
 
-@pytest.mark.parametrize("version", ["2.0.0", "2.0.0rc1", "2.0.0.dev", "2.1.0.dev1", "2.0.0.dev1x"])
-def test_only_a_2_0_0_development_version_may_publish(version: str) -> None:
+@pytest.mark.parametrize("version", ["2.0.0.dev3", "2.0.0a1", "2.0.0b1", "2.0.0rc0", "2.0.0rc12"])
+def test_a_2_0_0_pre_release_may_publish(version: str) -> None:
+    assert _state_script().is_allowed(version)
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "2.0.0",
+        "2.0.0.rc0",  # PEP 440 normal form has no dot before rc
+        "2.0.0rc",
+        "2.0.0.dev",
+        "2.0.0.post1",
+        "2.0.0rc1.dev1",
+        "2.1.0rc1",
+        "2.1.0.dev1",
+        "2.0.0.dev1x",
+    ],
+)
+def test_only_a_2_0_0_pre_release_may_publish(version: str) -> None:
     assert not _state_script().is_allowed(version)
 
 
@@ -73,6 +91,6 @@ def test_pypi_workflow_publishes_from_main_only() -> None:
     assert "needs: build" in jobs
 
     note = (ROOT / "docs/v2-to-main.md").read_text(encoding="utf-8")
-    assert '__version__ = "2.0.0.dev2"' in note or "`2.0.0.dev2`" in note
+    assert '__version__ = "2.0.0rc0"' in note or "`2.0.0rc0`" in note
     assert "Do not publish `2.0.0`" in note
     assert "src/aap_demo/__init__.py" in note

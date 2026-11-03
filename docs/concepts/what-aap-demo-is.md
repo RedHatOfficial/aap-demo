@@ -2,7 +2,7 @@
 type: Concept
 title: What aap-demo is
 description: A local way to run Ansible Automation Platform for demos, not a production installer.
-tags: [overview, beta]
+tags: [overview, release-candidate]
 status: draft
 stale_after: 2027-01-28
 resource: https://github.com/RedHatOfficial/aap-demo
@@ -22,11 +22,11 @@ or try an idea without asking for a shared cluster.
 It is a community tool. Red Hat does not support it as a product, and the settings it chooses are for a laptop.
 Do not copy them into a system other people depend on.
 
-## This beta
+## This release candidate
 
-The command you install with pipx is version **2.0.0.dev2**. That number means the beta of the new command.
-A finished 2.0.0 release has not been published. Until that happens, treat what you install as a beta:
-useful, still changing, and not the final download.
+The command you install with pipx is version **2.0.0rc0**, the first release candidate of the new command.
+It follows the 2.0.0.devN betas. A finished 2.0.0 release has not been published. Until that happens, treat
+what you install as a release candidate: close to final, but it can still change before 2.0.0.
 
 The usual deploy installs AAP 2.7. You can ask for 2.6 instead. See [Choose a version](../guides/choose-a-version.md).
 
@@ -36,4 +36,4 @@ The usual deploy installs AAP 2.7. You can ask for 2.6 instead. See [Choose a ve
 - Ansible Automation Platform on that cluster.
 - A web address on this computer, and an admin password from `aap-demo status`.
 
-The full OpenShift preset is not available in this beta. The command will say so if you ask for it.
+The full OpenShift preset is not available in this release candidate. The command will say so if you ask for it.

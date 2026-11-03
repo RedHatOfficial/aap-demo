@@ -16,7 +16,9 @@ import urllib.request
 from pathlib import Path
 
 PACKAGE_FILE = Path("src/aap_demo/__init__.py")
-ALLOWED_VERSION = re.compile(r"2\.0\.0\.dev\d+")
+#: A 2.0.0 pre-release in PEP 440 normal form: devN, aN, bN, or rcN. The final
+#: 2.0.0 is refused until the release boundary is lifted on purpose.
+ALLOWED_VERSION = re.compile(r"2\.0\.0(?:\.dev|a|b|rc)\d+")
 VERSION_LINE = re.compile(r'^__version__ = "([^"]+)"$', re.MULTILINE)
 
 
@@ -45,7 +47,11 @@ def is_published(version: str, *, opener=urllib.request.urlopen) -> bool:
 def main() -> int:
     version = read_version(PACKAGE_FILE.read_text(encoding="utf-8"))
     if not is_allowed(version):
-        print(f"Refusing to publish {version}: expected 2.0.0.devN", file=sys.stderr)
+        print(
+            f"Refusing to publish {version}: expected a 2.0.0 pre-release "
+            "(2.0.0.devN, 2.0.0aN, 2.0.0bN, or 2.0.0rcN)",
+            file=sys.stderr,
+        )
         return 1
     published = is_published(version)
     print(f"{version} on PyPI: {published}")
