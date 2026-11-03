@@ -71,16 +71,19 @@ to the Python package entry point.
 **To resolve this:**
 
 1. Remove the old symlink:
+
    ```bash
    rm ~/.local/bin/aap-demo
    ```
 
 2. Reinstall the Python package so pipx creates the correct symlink:
+
    ```bash
    pipx reinstall aap-demo
    ```
 
 3. Verify the Python version is active:
+
    ```bash
    aap-demo version
    # Should show: 2.0.0.dev2
