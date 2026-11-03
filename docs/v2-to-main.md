@@ -1,8 +1,8 @@
 # v2 to main
 
 People installing the product should start at the [guides](guides/index.md), not here.
-This note is the install and state-path record for proposing the Python beta on `v2` as `main`.
-It does not change either install. The package version stays `2.0.0.dev2`.
+This note is the install and state-path record for proposing the Python release candidate on `v2` as `main`.
+It does not change either install. The package version is `2.0.0rc0`.
 
 As of 29 October 2026 the draft pull request into `main` is
 [#264](https://github.com/RedHatOfficial/aap-demo/pull/264).
@@ -37,9 +37,9 @@ Bash `enable fleet` on `main` is the QEMU addon. That branch has no `--backend` 
 
 ## If you use v2
 
-`v2` is a beta. The supported release line remains `main`.
+`v2` is a release candidate. The supported release line remains `main`.
 
-Install the published beta with pipx. pip and uv install the same release:
+Install the published release candidate with pipx. pip and uv install the same release:
 
 ```bash
 pipx install aap-demo
@@ -59,7 +59,7 @@ the Python package with pipx:
 ```
 ⚠️  File exists at /Users/user/.local/bin/aap-demo and points to /path/to/aap-demo.sh, not /Users/user/Library/Application
     Support/pipx/venvs/aap-demo/bin/aap-demo. Not modifying.
-  installed package aap-demo 2.0.0.dev2, installed using Python 3.15.2
+  installed package aap-demo 2.0.0rc0, installed using Python 3.15.2
   These apps are now available
     - aap-demo (symlink missing or pointing to unexpected location)
 done! ✨ 🌟 ✨
@@ -86,7 +86,7 @@ to the Python package entry point.
 
    ```bash
    aap-demo version
-   # Should show: 2.0.0.dev2
+   # Should show: 2.0.0rc0
    ```
 
 Your bash checkout remains untouched. You can still run `./aap-demo.sh` directly from the repository if needed,
@@ -108,20 +108,20 @@ config, cache, and state under one directory. That is the escape hatch for CI an
 It is not the path for a normal install. Python also finds a pull secret or manifest in `~/.aap-demo`, after the
 config and state directories, so one file can serve both commands.
 
-`src/aap_demo/__init__.py` sets `__version__ = "2.0.0.dev2"`.
+`src/aap_demo/__init__.py` sets `__version__ = "2.0.0rc0"`.
 
 Python `enable fleet` is Kubernetes-native: pods in namespace `fleet`. `--no-import` skips AAP registration.
 Bash `enable fleet` on `v2` stays on the QEMU addon unless the command passes `--backend kube-native`.
 
 ## What stays true on merge day
 
-- The beta wording stays until Adam says otherwise. Do not rewrite the README so that this tree claims to be
-  the supported release.
-- The version stays `2.0.0.dev2`. Do not publish `2.0.0`. A push to `main` runs the PyPI workflow only when
+- The release candidate wording stays until Adam says otherwise. Do not rewrite the README so that this tree
+  claims to be the supported release.
+- The version is `2.0.0rc0`. Do not publish `2.0.0`. A push to `main` runs the PyPI workflow only when
   `src/aap_demo/__init__.py` changes, and PyPI keeps each version forever. That trigger lands when this
   cutover merges.
   This merge does not upload again, because the workflow skips a version already on PyPI. It fails on
-  anything other than `2.0.0.devN`.
+  anything other than a 2.0.0 pre-release: `2.0.0.devN`, `2.0.0aN`, `2.0.0bN`, or `2.0.0rcN`.
 - `aap-demo.sh`, `includes/`, and the bash addon deployers stay. Removing them is separate work, not this cutover.
 - QEMU stays the bash fleet default. Python fleet stays Kubernetes-native.
 - Contributors branch from `main` and open pull requests against it. `CONTRIBUTING.md` already says so.
