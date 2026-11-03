@@ -168,3 +168,15 @@ def test_non_mapping_file_is_a_config_error(tmp_path: Path) -> None:
     target.write_text("- a\n- b\n")
     with pytest.raises(ConfigError):
         config_mod.read_yaml(target)
+
+
+def test_a_generated_text_output_in_the_file_uses_the_default() -> None:
+    config = config_mod.resolve(file_data={"core": {"output": "text"}}, env={})
+    assert config.get("core.output") == "rich"
+
+
+def test_an_explicit_text_output_still_means_basic() -> None:
+    config = config_mod.resolve(
+        file_data={"core": {"output": "text"}}, env={"AAP_DEMO_OUTPUT": "text"}
+    )
+    assert config.get("core.output") == "basic"

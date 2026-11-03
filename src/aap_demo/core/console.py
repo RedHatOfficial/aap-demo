@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
+import textwrap
 import threading
 import time
 from dataclasses import dataclass, field
@@ -680,11 +682,32 @@ class Console:
         """A genuine warning. Above the live spinner when one is running, otherwise stderr."""
         if self.quiet:
             return
-        line = f"{self.glyphs['warn']} {text}"
-        if self._rich is not None and (self._status is not None or self._task_live is not None):
+        live = self._rich is not None and (self._status is not None or self._task_live is not None)
+        line = self._wrap_notice(self.glyphs["warn"], text, self._stdout if live else self._stderr)
+        if live:
             self._rich_print(line, "yellow")
             return
         self.err(line, color="yellow")
+
+    def _wrap_notice(self, glyph: str, text: str, stream: Any) -> str:
+        """Wrap a warning at word boundaries to the terminal width.
+
+        Continuation lines are indented under the text, not the glyph. A pipe
+        or a log keeps one line, so it can be searched. ``stream`` is where the
+        warning goes: only a terminal there gets wrapped.
+        """
+        if not getattr(stream, "isatty", lambda: False)():
+            return f"{glyph} {text}"
+        width = shutil.get_terminal_size((100, 24)).columns - 1
+        prefix = f"{glyph} "
+        return textwrap.fill(
+            text,
+            width=max(40, width),
+            initial_indent=prefix,
+            subsequent_indent=" " * len(prefix),
+            break_long_words=False,
+            break_on_hyphens=False,
+        )
 
     def info(self, text: str) -> None:
         self.out(f"{self.glyphs['info']} {text}")
