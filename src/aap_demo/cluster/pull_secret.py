@@ -20,9 +20,10 @@ from aap_demo.exec import kubectl
 
 SECRET_NAME = "redhat-operators-pull-secret"
 
-#: Drop names under the XDG state directory. The Red Hat console downloads
-#: ``pull-secret.txt``; ``pull-secret.json`` is the reserved state file.
-DEFAULT_FILENAMES = ("pull-secret.txt", "pull-secret.json")
+#: Names searched in each drop folder. The Red Hat console downloads
+#: ``pull-secret.txt``; ``pull-secret.json`` is the reserved state file; a bare
+#: ``pull-secret`` is a name the bash tool also accepts in ``~/.aap-demo``.
+DEFAULT_FILENAMES = ("pull-secret.txt", "pull-secret.json", "pull-secret")
 DOWNLOAD_URL = "https://console.redhat.com/openshift/install/pull-secret"
 
 
@@ -37,7 +38,7 @@ def locate(configured: str, paths: Paths) -> Optional[Path]:
     wins and is not replaced by a default when that file is missing. An empty
     setting uses the first file that exists in :attr:`Paths.drop_folders`
     (the config directory, the state directory, then ``~/.aap-demo``):
-    ``pull-secret.txt``, then ``pull-secret.json``. The file is not moved or
+    ``pull-secret.txt``, then ``pull-secret.json``, then ``pull-secret``. The file is not moved or
     copied.
     """
     raw = configured.strip()
