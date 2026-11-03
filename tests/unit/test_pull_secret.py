@@ -106,3 +106,17 @@ def test_the_config_folder_comes_before_the_state_folder(app_ctx: AppContext) ->
 def test_the_hint_names_the_flag_and_the_download(app_ctx: AppContext) -> None:
     hint = pull_secret.unset_hint(app_ctx)
     assert "--pull-secret PATH" in hint and pull_secret.DOWNLOAD_URL in hint
+
+
+def test_legacy_directory_accepts_the_bare_bash_name(app_ctx: AppContext) -> None:
+    """Bash also reads ``~/.aap-demo/pull-secret`` with no extension."""
+    app_ctx.config.set("deploy.pull_secret_path", "")
+    bare = _write(app_ctx.paths.legacy_dir / "pull-secret", "legacy\n")
+    assert pull_secret.discover(app_ctx) == bare
+
+
+def test_an_extension_wins_over_the_bare_name(app_ctx: AppContext) -> None:
+    app_ctx.config.set("deploy.pull_secret_path", "")
+    _write(app_ctx.paths.legacy_dir / "pull-secret", "bare\n")
+    txt = _write(app_ctx.paths.legacy_dir / "pull-secret.txt", "txt\n")
+    assert pull_secret.discover(app_ctx) == txt
