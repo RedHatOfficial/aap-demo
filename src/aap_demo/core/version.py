@@ -99,11 +99,6 @@ def display_version(sha: str = UNKNOWN) -> str:
     return __version__
 
 
-def short_version() -> str:
-    """``-V``: no git call, only pip's record of a git install."""
-    return display_version(direct_source().get("sha", UNKNOWN))
-
-
 def _git(runner: Any, root: Path, args: list) -> str:
     try:
         result = runner.run(["git", "-C", str(root), *args], capture=True)

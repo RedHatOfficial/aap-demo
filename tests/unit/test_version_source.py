@@ -90,11 +90,17 @@ def test_version_text_for_a_release_is_unchanged(monkeypatch) -> None:
     assert "published release" not in text
 
 
-def test_short_version_adds_the_commit_for_a_git_install(monkeypatch) -> None:
+def test_dash_v_matches_the_version_command(monkeypatch, capsys) -> None:
+    import pytest
+
+    from aap_demo.cli.main import run
+
+    monkeypatch.setattr(version_mod, "_repo_root", lambda: None)
     monkeypatch.setattr(version_mod, "_direct_url", lambda: GIT_RECORD)
-    assert version_mod.short_version() == f"{__version__}+g27b505d"
-    monkeypatch.setattr(version_mod, "_direct_url", lambda: {})
-    assert version_mod.short_version() == __version__
+    with pytest.raises(SystemExit) as exc:
+        run(["-V"], env={"HOME": "/nonexistent", "QUIET": "1"})
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == f"aap-demo {__version__}+g27b505d\n"
 
 
 def test_unreadable_metadata_never_raises(monkeypatch) -> None:

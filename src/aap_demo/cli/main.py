@@ -82,6 +82,26 @@ DISCLAIMER = (
 )
 
 
+class _VersionAction(argparse.Action):
+    """``-V``: the same version line as ``aap-demo version``.
+
+    Built only when ``-V`` is given, so a checkout's ``git`` call does not run
+    on every command.
+    """
+
+    def __init__(self, option_strings: Sequence[str], dest: str, **kwargs: Any) -> None:
+        kwargs.setdefault("nargs", 0)
+        kwargs.setdefault("default", argparse.SUPPRESS)
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser: argparse.ArgumentParser, *_args: Any, **_kwargs: Any) -> None:
+        info = version_mod.version_info()
+        # stdout, like argparse's own version action.
+        sys.stdout.write(f"aap-demo {info.full_version or info.version}\n")
+        sys.stdout.flush()
+        parser.exit()
+
+
 class _Formatter(argparse.RawDescriptionHelpFormatter):
     def __init__(self, prog: str) -> None:
         super().__init__(prog, max_help_position=28, width=100)
@@ -146,8 +166,7 @@ def build_parser(
     parser.add_argument(
         "-V",
         "--version",
-        action="version",
-        version=f"aap-demo {version_mod.short_version()}",
+        action=_VersionAction,
         help="Show aap-demo version and exit",
     )
 
