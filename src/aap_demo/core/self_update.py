@@ -55,7 +55,7 @@ def run(ctx: AppContext) -> int:
             "To switch back: pipx install --force aap-demo"
         )
     # A git install keeps the release's version number; the commit tells it apart.
-    shown = info.full_version if info.install_mode == "git" else (before or info.version)
+    shown = info.full_version if info.install_mode in ("git", "vcs") else (before or info.version)
     ctx.console.checkpoint(f"Installed {shown}")
 
     ctx.console.step(STEPS[1], timed=True)

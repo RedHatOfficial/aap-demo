@@ -42,6 +42,22 @@ def test_an_archive_url_install_is_not_called_local() -> None:
     assert version_mod.direct_source(record)["mode"] == "archive"
 
 
+def test_another_vcs_is_not_called_an_archive() -> None:
+    record = {
+        "url": "https://hg.example.com/aap-demo",
+        "vcs_info": {"vcs": "hg", "commit_id": "abcdef123456", "requested_revision": "tip"},
+    }
+    assert version_mod.direct_source(record) == {
+        "mode": "vcs",
+        "spec": "hg+https://hg.example.com/aap-demo@tip",
+        "sha": "abcdef1",
+    }
+
+
+def test_an_unknown_record_type_is_ignored() -> None:
+    assert version_mod.direct_source({"url": "https://example.com/x"}) == {}
+
+
 def test_an_index_install_has_no_direct_source() -> None:
     assert version_mod.direct_source({}) == {}
 

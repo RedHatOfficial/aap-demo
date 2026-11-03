@@ -32,7 +32,7 @@ DIST_NAME = "aap-demo"
 class VersionInfo:
     version: str
     source: str
-    install_mode: str  # "checkout" | "package" | "git" | "local" | "archive"
+    install_mode: str  # "checkout" | "package" | "git" | "vcs" | "local" | "archive"
     full_version: str = ""
     installed_from: str = ""
     git_sha: str = UNKNOWN
@@ -67,23 +67,29 @@ def _direct_url() -> Dict[str, Any]:
 
 
 def direct_source(record: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
-    """``mode``, ``spec`` and ``sha`` for a git, local-path or archive-URL install, else {}.
+    """``mode``, ``spec`` and ``sha`` for a direct (non-index) install, else {}.
 
-    ``spec`` is the ``git+URL@ref`` string a user would pass to pipx again.
+    PEP 610 has three record types: ``vcs_info``, ``dir_info`` and
+    ``archive_info``. ``spec`` is the string a user would pass to pipx again,
+    such as ``git+URL@ref``. A record of none of those types is ignored.
     """
     data = _direct_url() if record is None else record
     url = str(data.get("url") or "")
     if not url:
         return {}
     vcs = data.get("vcs_info")
-    if isinstance(vcs, dict) and vcs.get("vcs") == "git":
+    if isinstance(vcs, dict):
+        kind = str(vcs.get("vcs") or "vcs")
         commit = str(vcs.get("commit_id") or "")
         ref = str(vcs.get("requested_revision") or "")
-        spec = f"git+{url}@{ref}" if ref else f"git+{url}"
-        return {"mode": "git", "spec": spec, "sha": commit[:7] or UNKNOWN}
+        spec = f"{kind}+{url}@{ref}" if ref else f"{kind}+{url}"
+        mode = "git" if kind == "git" else "vcs"
+        return {"mode": mode, "spec": spec, "sha": commit[:7] or UNKNOWN}
     if isinstance(data.get("dir_info"), dict):
         return {"mode": "local", "spec": url, "sha": UNKNOWN}
-    return {"mode": "archive", "spec": url, "sha": UNKNOWN}
+    if isinstance(data.get("archive_info"), dict):
+        return {"mode": "archive", "spec": url, "sha": UNKNOWN}
+    return {}
 
 
 def display_version(sha: str = UNKNOWN) -> str:
@@ -156,10 +162,11 @@ def remote_url(runner: Any = None) -> str:
 
 def render_text(info: VersionInfo) -> str:
     lines = [f"aap-demo {info.full_version or info.version}"]
-    if info.install_mode == "git":
+    if info.install_mode in ("git", "vcs"):
         lines.append(f"  commit:   {info.git_sha}")
         lines.append(f"  from:     {info.installed_from}")
-        lines.append("  note:     a git install, not the published release")
+        kind = "git" if info.install_mode == "git" else "version control"
+        lines.append(f"  note:     a {kind} install, not the published release")
     elif info.install_mode == "local":
         lines.append(f"  from:     {info.installed_from}")
         lines.append("  note:     a local path install, not the published release")
