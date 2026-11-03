@@ -34,8 +34,8 @@ Add `--no-import` if you want the machines without that registration.
 ### Reboots and services
 
 Each machine runs systemd, so `sudo reboot`, `systemctl`, and the `service` and `systemd_service` modules work.
-A reboot restarts the machine's container, usually within two minutes. Installed packages, `/etc`, and enabled services are
-still there afterward.
+A reboot restarts the machine's container, usually within two minutes. Installed packages, `/etc`, and enabled
+services are still there afterward.
 
 `ansible.builtin.reboot` needs one extra option. The machines share the cluster's kernel, so the boot ID the module
 checks by default never changes, and the module waits until it times out:
