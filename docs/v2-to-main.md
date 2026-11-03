@@ -51,6 +51,44 @@ Check out `v2` only to change the code. `./install.sh` on `v2` still installs th
 `~/.local/bin/aap-demo`. pipx installs the Python command on that same path, so move or remove the bash
 command first. Do not use `mkdir ~/.aap-demo` for the Python tool.
 
+### Migrating from bash to Python
+
+If you have the bash version installed via `./install.sh`, you'll encounter a symlink conflict when installing
+the Python package with pipx:
+
+```
+⚠️  File exists at /Users/user/.local/bin/aap-demo and points to /path/to/aap-demo.sh, not /Users/user/Library/Application
+    Support/pipx/venvs/aap-demo/bin/aap-demo. Not modifying.
+  installed package aap-demo 2.0.0.dev2, installed using Python 3.15.2
+  These apps are now available
+    - aap-demo (symlink missing or pointing to unexpected location)
+done! ✨ 🌟 ✨
+```
+
+The old symlink at `~/.local/bin/aap-demo` points to the bash script, but pipx wants to create its own symlink
+to the Python package entry point.
+
+**To resolve this:**
+
+1. Remove the old symlink:
+   ```bash
+   rm ~/.local/bin/aap-demo
+   ```
+
+2. Reinstall the Python package so pipx creates the correct symlink:
+   ```bash
+   pipx reinstall aap-demo
+   ```
+
+3. Verify the Python version is active:
+   ```bash
+   aap-demo version
+   # Should show: 2.0.0.dev2
+   ```
+
+Your bash checkout remains untouched. You can still run `./aap-demo.sh` directly from the repository if needed,
+but the `aap-demo` command in your PATH now points to the Python version.
+
 Python state is strict XDG on every OS. With the defaults (`XDG_*` unset):
 
 | What | Path |
