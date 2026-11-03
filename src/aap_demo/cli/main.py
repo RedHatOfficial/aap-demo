@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from aap_demo import __version__
 from aap_demo.cli import addons as addons_cli
 from aap_demo.cli import completion as completion_cli
 from aap_demo.cli import day2, lifecycle, observe, ops
@@ -24,6 +23,7 @@ from aap_demo.cluster import pull_secret as pull_secret_mod
 from aap_demo.core import bash_v1, migration, schema
 from aap_demo.core import config as config_mod
 from aap_demo.core import output as output_mod
+from aap_demo.core import version as version_mod
 from aap_demo.core.console import Console
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, ConfigError, UsageError
@@ -80,6 +80,26 @@ DISCLAIMER = (
     "aap-demo is a community demo tool. It is not supported by Red Hat and is "
     "not intended for production use."
 )
+
+
+class _VersionAction(argparse.Action):
+    """``-V``: the same version line as ``aap-demo version``.
+
+    Built only when ``-V`` is given, so a checkout's ``git`` call does not run
+    on every command.
+    """
+
+    def __init__(self, option_strings: Sequence[str], dest: str, **kwargs: Any) -> None:
+        kwargs.setdefault("nargs", 0)
+        kwargs.setdefault("default", argparse.SUPPRESS)
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser: argparse.ArgumentParser, *_args: Any, **_kwargs: Any) -> None:
+        info = version_mod.version_info()
+        # stdout, like argparse's own version action.
+        sys.stdout.write(f"aap-demo {info.full_version or info.version}\n")
+        sys.stdout.flush()
+        parser.exit()
 
 
 class _Formatter(argparse.RawDescriptionHelpFormatter):
@@ -146,8 +166,7 @@ def build_parser(
     parser.add_argument(
         "-V",
         "--version",
-        action="version",
-        version=f"aap-demo {__version__}",
+        action=_VersionAction,
         help="Show aap-demo version and exit",
     )
 
