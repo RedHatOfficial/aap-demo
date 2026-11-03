@@ -397,3 +397,12 @@ def test_a_warning_in_a_pipe_stays_on_one_line() -> None:
     console.warn("word " * 40)
 
     assert len(stderr.getvalue().splitlines()) == 1
+
+
+def test_a_warning_to_a_redirected_stderr_stays_on_one_line() -> None:
+    stderr = io.StringIO()
+    console = Console(stdout=_Tty(), stderr=stderr, style="basic", color=False)
+
+    console.warn("word " * 40)
+
+    assert len(stderr.getvalue().splitlines()) == 1
