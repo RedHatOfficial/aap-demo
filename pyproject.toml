@@ -89,6 +89,9 @@ ignore = ["UP006", "UP007", "UP035", "UP037", "UP045"]
 python_version = "3.9"
 warn_unused_ignores = true
 
+# commitizen versions the bash tool: it bumps VERSION (1.x) only. The Python
+# package's version is __version__ in src/aap_demo/__init__.py, which hatch
+# reads, and is bumped by hand. The two are separate on purpose.
 [tool.commitizen]
 name = "cz_conventional_commits"
 tag_format = "v$version"

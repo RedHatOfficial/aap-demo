@@ -12,18 +12,49 @@ ADR-034.
 
 from __future__ import annotations
 
+import importlib
 import sys
+import time
 from typing import Any, Callable, Mapping, Optional, Tuple
 
 from aap_demo.core.errors import AapDemoError
+
+
+def _wait_for_enter_windows(seconds: float, *, msvcrt: Any = None, clock: Any = None) -> None:
+    """Windows has no ``select`` on console handles, so poll ``msvcrt`` instead.
+
+    Enter ends the wait early; other keys are read and ignored. A stdin that is
+    not a console returns immediately, as ``read -t`` does on a non-tty.
+    """
+    if msvcrt is None:
+        msvcrt = importlib.import_module("msvcrt")
+    if clock is None:
+        clock = time
+    try:
+        if not sys.stdin.isatty():
+            return
+    except (AttributeError, OSError, ValueError):
+        return
+    deadline = clock.monotonic() + seconds
+    while clock.monotonic() < deadline:
+        if msvcrt.kbhit():
+            if msvcrt.getwch() in ("\r", "\n"):
+                return
+            continue
+        clock.sleep(0.05)
 
 
 def _wait_for_enter(seconds: float) -> None:
     """Block for up to ``seconds`` waiting on a line from stdin.
 
     ``select`` on a non-tty or a closed stdin returns immediately, which is
-    the behavior bash's ``read -t`` has there too.
+    the behavior bash's ``read -t`` has there too. Windows uses
+    :func:`_wait_for_enter_windows`, because ``select`` there only takes sockets.
     """
+    if sys.platform == "win32":
+        _wait_for_enter_windows(seconds)
+        return
+
     import select
 
     stream = sys.stdin

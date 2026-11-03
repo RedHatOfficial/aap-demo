@@ -389,3 +389,75 @@ def test_maybe_offer_skips_a_non_tty(tmp_path: Path, monkeypatch) -> None:
     bash_v1.maybe_offer({"PATH": str(launcher.parent), "HOME": str(tmp_path)})
 
     assert called == []
+
+
+def _bare_checkout(tmp_path: Path) -> Path:
+    """aap-demo.sh with its includes but no .venv and no src/, like an installed bash tree."""
+    import shutil
+
+    root = tmp_path / "checkout"
+    root.mkdir()
+    shutil.copy2(REPO_ROOT / "aap-demo.sh", root / "aap-demo.sh")
+    shutil.copytree(REPO_ROOT / "includes", root / "includes")
+    if (REPO_ROOT / "VERSION").exists():
+        shutil.copy2(REPO_ROOT / "VERSION", root / "VERSION")
+    return root
+
+
+def _fake_aap_demo(bindir: Path, shebang: str) -> None:
+    launcher = bindir / "aap-demo"
+    launcher.write_text(
+        f'{shebang}\nprintf "%s\\n" "$@" > "$AAP_DEMO_RECORD"\n',
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+@pytest.mark.parametrize(
+    ("shebang", "used"),
+    [("#!/bin/sh", False), ("#!/usr/bin/env python3", True)],
+)
+def test_bash_fleet_prefers_an_installed_python_aap_demo(
+    tmp_path: Path, shebang: str, used: bool
+) -> None:
+    env, record = _bash_delegation_env(tmp_path)
+    del env["AAP_DEMO_PYTHON"]
+    bindir = tmp_path / "bin"
+    _fake_aap_demo(bindir, shebang)
+    # The stand-in body is shell: a python3 shim on PATH runs it with sh, so
+    # only the first line decides whether bash treats it as the Python CLI.
+    shim = bindir / "python3"
+    shim.write_text('#!/bin/sh\nexec /bin/sh "$@"\n', encoding="utf-8")
+    shim.chmod(0o755)
+    root = _bare_checkout(tmp_path)
+    result = subprocess.run(
+        ["bash", str(root / "aap-demo.sh"), "disable", "fleet", "--backend", "kube-native"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    if used:
+        assert result.returncode == 0, result.stderr
+        assert _recorded_python_args(record) == ["disable", "fleet"]
+    else:
+        assert _recorded_python_args(record) == []
+        assert result.returncode != 0
+
+
+def test_bash_qemu_fleet_warns_that_no_import_is_ignored() -> None:
+    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+    qemu = source.split('_fleet_delegate_v2 enable fleet "$@"', 1)[1].split("all)", 1)[0]
+    assert "--no-import is ignored for the qemu backend" in qemu
+    assert '"--no-import" ]' in qemu
+
+
+def test_bash_fleet_delegation_tries_the_installed_cli_before_the_checkout_venv() -> None:
+    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+    body = source.split("_fleet_delegate_v2() {", 1)[1].split("\n}\n", 1)[0]
+    assert body.index("_fleet_is_python_entry_point") < body.index(".venv/bin/python")
+    assert "grep -qi bash" not in body
