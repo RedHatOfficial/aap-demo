@@ -32,7 +32,7 @@ DIST_NAME = "aap-demo"
 class VersionInfo:
     version: str
     source: str
-    install_mode: str  # "checkout" | "package" | "git" | "local"
+    install_mode: str  # "checkout" | "package" | "git" | "local" | "archive"
     full_version: str = ""
     installed_from: str = ""
     git_sha: str = UNKNOWN
@@ -67,7 +67,7 @@ def _direct_url() -> Dict[str, Any]:
 
 
 def direct_source(record: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
-    """``mode``, ``spec`` and ``sha`` for a git or local-path install, else {}.
+    """``mode``, ``spec`` and ``sha`` for a git, local-path or archive-URL install, else {}.
 
     ``spec`` is the ``git+URL@ref`` string a user would pass to pipx again.
     """
@@ -81,7 +81,9 @@ def direct_source(record: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
         ref = str(vcs.get("requested_revision") or "")
         spec = f"git+{url}@{ref}" if ref else f"git+{url}"
         return {"mode": "git", "spec": spec, "sha": commit[:7] or UNKNOWN}
-    return {"mode": "local", "spec": url, "sha": UNKNOWN}
+    if isinstance(data.get("dir_info"), dict):
+        return {"mode": "local", "spec": url, "sha": UNKNOWN}
+    return {"mode": "archive", "spec": url, "sha": UNKNOWN}
 
 
 def display_version(sha: str = UNKNOWN) -> str:
@@ -161,6 +163,9 @@ def render_text(info: VersionInfo) -> str:
     elif info.install_mode == "local":
         lines.append(f"  from:     {info.installed_from}")
         lines.append("  note:     a local path install, not the published release")
+    elif info.install_mode == "archive":
+        lines.append(f"  from:     {info.installed_from}")
+        lines.append("  note:     installed from a file URL, not the package index")
     if info.install_mode == "checkout":
         lines.append(f"  commit:   {info.git_sha} ({info.git_branch})")
         lines.append(f"  built:    {info.git_date}")

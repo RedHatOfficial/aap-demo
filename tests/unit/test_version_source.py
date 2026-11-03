@@ -5,7 +5,7 @@ from __future__ import annotations
 from aap_demo import __version__
 from aap_demo.core import version as version_mod
 
-SHA = "27b505d4c1e2f3a4b5c6d7e8f90123456789abcd"
+SHA = "27b505d4c1e2f3a4b5c6d7e8f90123456789abcd"  # pragma: allowlist secret
 GIT_RECORD = {
     "url": "https://github.com/RedHatOfficial/aap-demo.git",
     "vcs_info": {"vcs": "git", "commit_id": SHA, "requested_revision": "27b505d"},
@@ -32,6 +32,14 @@ def test_a_local_path_install_is_reported_as_local() -> None:
         "spec": "file:///home/me/aap-demo",
         "sha": "unknown",
     }
+
+
+def test_an_archive_url_install_is_not_called_local() -> None:
+    record = {
+        "url": "https://example.com/aap_demo-2.0.0.dev2-py3-none-any.whl",
+        "archive_info": {"hashes": {"sha256": "0" * 64}},
+    }
+    assert version_mod.direct_source(record)["mode"] == "archive"
 
 
 def test_an_index_install_has_no_direct_source() -> None:
