@@ -107,7 +107,7 @@ repos:
         name: detect-secrets
         entry: >-
           scripts/require-tool.sh detect-secrets-hook
-          "pip install detect-secrets"
+          "pip install detect-secrets==1.5.0"
         language: system
         args: ['--baseline', '.secrets.baseline']
         exclude: ^(\.git/|\.github/|test/)

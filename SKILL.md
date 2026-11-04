@@ -283,9 +283,6 @@ docs/adr/024-ao-pr-testing-addon.md.
 # Run automated health checks
 aap-demo diagnose
 
-# AI-powered root cause analysis (requires claude CLI)
-aap-demo diagnose --ai
-
 # Full diagnostic bundle for complex issues
 aap-demo must-gather
 ```

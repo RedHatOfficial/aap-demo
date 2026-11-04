@@ -1,0 +1,2 @@
+CRC_PRESET=microshift
+ADDONS=registry,local-cache,mcp-server

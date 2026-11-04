@@ -1,0 +1,18 @@
+# Subscription for AAP operator
+# Installs the ansible-automation-platform operator from the catalog
+#
+# Placeholders substituted at runtime:
+#   namespace: aap -> actual namespace
+#   channel: stable-2.7 -> actual channel (stable-2.5, stable-2.6, etc.)
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ansible-automation-platform
+  namespace: aap
+spec:
+  channel: stable-2.7
+  installPlanApproval: Automatic
+  name: ansible-automation-platform-operator
+  source: redhat-operators
+  sourceNamespace: aap-operator

@@ -178,10 +178,10 @@ Scans for accidentally committed secrets.
 **Run manually**:
 
 ```bash
-# Scan for secrets
-detect-secrets scan
+# Read-only scan. Requires detect-secrets 1.5.0 and does not rewrite the baseline.
+make check-secrets
 
-# Update baseline
+# Record a new allowlist entry. This is the command that writes .secrets.baseline.
 detect-secrets scan --baseline .secrets.baseline
 
 # Audit findings
@@ -468,7 +468,7 @@ ls -la .git/hooks/
 
 ```bash
 # Install missing linters
-pip install pre-commit yamllint ansible-lint detect-secrets
+pip install pre-commit yamllint ansible-lint 'detect-secrets==1.5.0'
 npm install -g markdownlint-cli @commitlint/cli @commitlint/config-conventional
 brew install shellcheck shfmt  # macOS
 ```

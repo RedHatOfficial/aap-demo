@@ -1,4 +1,4 @@
-# ADR-016: Fleet Addon — Local QEMU VMs as Managed Nodes
+# ADR-026: Fleet Addon — Local QEMU VMs as Managed Nodes
 
 **Status**: Accepted
 

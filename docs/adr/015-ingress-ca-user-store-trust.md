@@ -96,6 +96,13 @@ Existing entries with the same nickname are deleted before re-import.
 Requires `nss-tools` package (`certutil`). Without it, system trust may work for
 curl but browsers remain untrusted.
 
+The Python CLI (`cluster/ingress_ca.py`) replaces only a missing or stale entry and
+reads each database's certificate and trust flags back before it reports browser
+trust. It does not install
+`nss-tools`. It warns with the package name when a browser database exists, and
+stays quiet on a machine with neither `certutil` nor a browser database. System
+trust uses `sudo -n` and prints the command when sudo needs a password.
+
 ### Linux â€” system trust (requires sudo, not user store)
 
 After user-store NSS import, also attempt system trust for CLI tools:
@@ -164,7 +171,7 @@ When already trusted, commands stay silent. Import failures are warnings only â€
 ### Neutral
 
 - Ingress CA trust is orthogonal to CoreDNS nip.io resolution (ADR-007)
-- mkcert for other local certs is separate (`aap-demo.sh` preflight messaging)
+- Deploy trusts the cluster ingress CA. It does not install or require mkcert.
 - Windows `curl.exe` may still need `--ssl-no-revoke` for Schannel revocation checks
 
 ## Alternatives Considered
