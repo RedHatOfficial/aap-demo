@@ -14,18 +14,22 @@ python_cli_installed() {
 python_cli_note() {
   echo "  ~/.local/bin/aap-demo is the Python aap-demo command. Leaving it in place."
   echo "  The bash script still runs directly: ${SCRIPT_DIR}/aap-demo.sh"
-  echo "  To switch back to bash: pipx uninstall aap-demo && ${SCRIPT_DIR}/install.sh"
+  echo "  To switch back to bash, remove it with the tool that installed it, then rerun install.sh:"
+  echo "    pipx uninstall aap-demo   (or: pip uninstall aap-demo)"
+  echo "    ${SCRIPT_DIR}/install.sh"
 }
 
 # Uninstall
 if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "uninstall" ]; then
   echo "Uninstalling aap-demo..."
+  # The completions belong to the bash command, so they go either way.
+  rm -f ~/.zsh/completions/_aap-demo
+  rm -f ~/.local/share/bash-completion/completions/aap-demo
   if python_cli_installed; then
+    echo "  ✓ Bash completions removed"
     python_cli_note
   else
     rm -f "$CLI_LINK"
-    rm -f ~/.zsh/completions/_aap-demo
-    rm -f ~/.local/share/bash-completion/completions/aap-demo
     echo "  ✓ Binary and completions removed"
   fi
   if [ -f "${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}" ]; then

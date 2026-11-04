@@ -38,9 +38,15 @@ fi
 grep -q 'pipx uninstall aap-demo' <<<"$out"
 echo "✓ install_keeps_python_cli"
 
+mkdir -p "$PY_HOME/.zsh/completions"
+touch "$PY_HOME/.zsh/completions/_aap-demo"
 HOME="$PY_HOME" bash "$SCRIPT_DIR/install.sh" --uninstall >/dev/null
 [ -L "$PY_HOME/.local/bin/aap-demo" ] || {
   echo "uninstall removed the Python command" >&2
+  exit 1
+}
+[ ! -e "$PY_HOME/.zsh/completions/_aap-demo" ] || {
+  echo "uninstall left the bash completions" >&2
   exit 1
 }
 echo "✓ uninstall_keeps_python_cli"
