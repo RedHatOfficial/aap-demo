@@ -100,14 +100,24 @@ def status_json(runner: Any) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def get_state(runner: Any) -> str:
-    """Ports ``_infra_crc_get_state`` (includes/infra-crc.sh:92)."""
-    crc_status = status_json(runner).get("crcStatus", "Unknown")
+def state_from_status(data: Dict[str, Any]) -> str:
+    """The state for a ``crc status -o json`` answer (``{}`` when CRC did not answer)."""
+    crc_status = data.get("crcStatus", "Unknown")
     if crc_status == "Running":
         return STATE_RUNNING
     if crc_status == "Stopped":
         return STATE_STOPPED
     return STATE_NOT_CREATED
+
+
+def get_state(runner: Any) -> str:
+    """Ports ``_infra_crc_get_state`` (includes/infra-crc.sh:92)."""
+    return state_from_status(status_json(runner))
+
+
+def machine_exists(home: Path) -> bool:
+    """True when CRC's machine directory holds a VM, whether or not CRC answers."""
+    return (home / ".crc" / "machines" / "crc" / "config.json").is_file()
 
 
 def has_instance(runner: Any, *, home: Optional[Path] = None) -> bool:
@@ -123,8 +133,7 @@ def has_instance(runner: Any, *, home: Optional[Path] = None) -> bool:
         return True
     if status == "Stopped" and str(data.get("openshiftVersion") or "").strip():
         return True
-    root = home if home is not None else Path.home()
-    return (root / ".crc" / "machines" / "crc" / "config.json").is_file()
+    return machine_exists(home if home is not None else Path.home())
 
 
 def get_name(preset: str) -> str:

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from aap_demo.cluster.aap import condition_is_complete
+from aap_demo.diagnostics import crc_host
 from aap_demo.infra import crc as infra_crc
 
 Level = str  # "pass" | "fail" | "warn" | "info"
@@ -88,7 +89,7 @@ def _kubectl_lines(runner: Any, *args: str) -> List[str]:
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-def _check_cluster(runner: Any, rec: _Recorder) -> bool:
+def _check_cluster(runner: Any, rec: _Recorder, *, unresponsive: bool = False) -> bool:
     """Returns whether the cluster is reachable."""
     rec.start("Cluster")
     crc_state = infra_crc.get_state(runner)
@@ -96,6 +97,8 @@ def _check_cluster(runner: Any, rec: _Recorder) -> bool:
         rec.ok("OpenShift Local running")
     elif crc_state == infra_crc.STATE_STOPPED:
         rec.fail("OpenShift Local is stopped — run: crc start")
+    elif unresponsive:
+        rec.fail("OpenShift Local is not responding — see the host checks above")
     else:
         rec.fail("OpenShift Local cluster not found — run: aap-demo create")
 
@@ -335,12 +338,19 @@ def _check_dns(runner: Any, rec: _Recorder) -> None:
         rec.warn("CoreDNS pods not found in openshift-dns")
 
 
-def run(runner: Any, namespace: str) -> DiagnoseReport:
-    """Ports ``cmd_diagnose``."""
+def run(
+    runner: Any, namespace: str, *, host: Optional[crc_host.HostProbe] = None
+) -> DiagnoseReport:
+    """Ports ``cmd_diagnose``, plus host-side CRC checks when ``host`` is given."""
     report = DiagnoseReport()
     rec = _Recorder()
 
-    reachable = _check_cluster(runner, rec)
+    unresponsive = False
+    if host is not None:
+        unresponsive = crc_host.check(host, rec).unresponsive
+        report.sections.append(rec.section)
+
+    reachable = _check_cluster(runner, rec, unresponsive=unresponsive)
     report.sections.append(rec.section)
     if not reachable:
         # Bash returns 1 immediately here — no further

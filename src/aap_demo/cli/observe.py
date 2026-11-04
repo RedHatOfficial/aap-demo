@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from aap_demo.cluster import runtime as runtime_mod
 from aap_demo.cluster import status as status_mod
@@ -10,6 +11,7 @@ from aap_demo.core import output
 from aap_demo.core.context import AppContext
 from aap_demo.core.output import is_structured
 from aap_demo.diagnostics import checks as diagnose_checks
+from aap_demo.diagnostics import crc_host as diagnose_crc_host
 from aap_demo.diagnostics import report as diagnose_report
 
 
@@ -39,7 +41,9 @@ def watch(ctx: AppContext, args: argparse.Namespace) -> int:
 
 def diagnose(ctx: AppContext, args: argparse.Namespace) -> int:
     """Ports ``cmd_diagnose``, without bash's ``--ai``."""
-    report = diagnose_checks.run(ctx.runner, ctx.namespace)
+    home = Path(ctx.env.get("HOME") or Path.home())
+    host = diagnose_crc_host.HostProbe.live(ctx.runner, home)
+    report = diagnose_checks.run(ctx.runner, ctx.namespace, host=host)
 
     if is_structured(ctx.output):
         output.render(ctx.console, report.as_dict(), output=ctx.output)

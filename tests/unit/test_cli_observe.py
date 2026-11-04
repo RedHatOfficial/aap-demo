@@ -62,6 +62,53 @@ def test_status_json_output_is_well_formed(app_ctx: AppContext, fake_runner: Fak
 # -- diagnose -------------------------------------------------------------
 
 
+def _healthy_host(**overrides):
+    from aap_demo.diagnostics.crc_host import HostProbe
+
+    values = dict(
+        system="Darwin",
+        which_crc=lambda: "/usr/local/bin/crc",
+        crc_version=lambda: "CRC version: 2.64.0\n",
+        status=lambda: {"crcStatus": "Running"},
+        machine_exists=lambda: True,
+        daemons=lambda: ["/usr/local/bin/crc daemon --log-level debug"],
+        port_open=lambda host, port: True,
+        resolve=lambda path: path,
+    )
+    values.update(overrides)
+    return HostProbe(**values)
+
+
+@pytest.fixture(autouse=True)
+def _stub_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aap_demo.diagnostics import crc_host
+
+    stub = classmethod(lambda cls, runner, home: _healthy_host())
+    monkeypatch.setattr(crc_host.HostProbe, "live", stub)
+
+
+def test_diagnose_names_a_hung_crc_instead_of_a_missing_cluster(
+    app_ctx: AppContext, fake_runner: FakeRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aap_demo.diagnostics import crc_host
+
+    hung = _healthy_host(status=lambda: {}, daemons=lambda: [], port_open=lambda h, p: False)
+    monkeypatch.setattr(crc_host.HostProbe, "live", classmethod(lambda cls, runner, home: hung))
+    fake_runner.fail("crc status -o json")
+    fake_runner.fail("kubectl cluster-info")
+
+    rc = observe.diagnose(app_ctx, _ns())
+
+    out = app_ctx.console.stdout
+    assert rc == 1
+    assert "a 'crc start' may be hung" in out
+    assert "crc daemon is not running" in out
+    assert "127.0.0.1:2222" in out
+    assert "crc cleanup && crc setup" in out
+    assert "OpenShift Local is not responding" in out
+    assert "cluster not found" not in out
+
+
 def test_diagnose_returns_1_when_cluster_unreachable(
     app_ctx: AppContext, fake_runner: FakeRunner
 ) -> None:
