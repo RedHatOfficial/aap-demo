@@ -130,3 +130,25 @@ def test_diagnose_without_a_host_probe_keeps_the_old_sections(fake_runner: Any) 
     fake_runner.fail("kubectl cluster-info")
     report = diagnose_checks.run(fake_runner, "aap-operator")
     assert [s.name for s in report.sections] == ["Cluster"]
+
+
+class _HangingRunner:
+    """Every command times out, as a stuck host would."""
+
+    def __init__(self) -> None:
+        self.timeouts: List[Optional[float]] = []
+
+    def run(self, argv: List[str], timeout: Optional[float] = None, **_: Any) -> Any:
+        self.timeouts.append(timeout)
+        raise TimeoutError(" ".join(argv))
+
+
+def test_live_probes_are_bounded_and_survive_a_hang(tmp_path: Any, monkeypatch: Any) -> None:
+    monkeypatch.setattr(crc_host.shutil, "which", lambda name: f"/usr/bin/{name}")
+    runner = _HangingRunner()
+    probe = crc_host.HostProbe.live(runner, tmp_path)
+
+    assert probe.crc_version() == ""
+    assert probe.daemons() is None
+    assert probe.status() == {}
+    assert runner.timeouts and all(t is not None for t in runner.timeouts)

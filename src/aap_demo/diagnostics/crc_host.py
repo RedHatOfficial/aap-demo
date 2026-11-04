@@ -20,6 +20,8 @@ from aap_demo.infra import crc as infra_crc
 
 #: ``crc`` forwards the VM's SSH here on macOS (vfkit, user-mode networking).
 SSH_FORWARD = ("127.0.0.1", 2222)
+#: Bound on ``crc version`` and ``ps`` so a stuck host cannot hang diagnose.
+PROBE_TIMEOUT_SECONDS = 6.0
 FIX_HINT = "Fix: crc stop; pkill -f 'crc daemon'; crc cleanup && crc setup; then aap-demo start"
 
 
@@ -41,13 +43,19 @@ class HostProbe:
     @classmethod
     def live(cls, runner: Any, home: Path) -> "HostProbe":
         def version() -> str:
-            result = runner.run(["crc", "version"], timeout=infra_crc.STATUS_TIMEOUT_SECONDS * 3)
+            try:
+                result = runner.run(["crc", "version"], timeout=PROBE_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 - a hung crc must not hang diagnose
+                return ""
             return result.stdout if result.ok else ""
 
         def daemons() -> Optional[List[str]]:
             if shutil.which("ps") is None:
                 return None
-            result = runner.run(["ps", "-axo", "command="])
+            try:
+                result = runner.run(["ps", "-axo", "command="], timeout=PROBE_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 - a hung or failing ps must not hang diagnose
+                return None
             if not result.ok:
                 return None
             return daemon_lines(result.stdout)
