@@ -3,14 +3,31 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_LINK="$HOME/.local/bin/aap-demo"
+
+# True when ~/.local/bin/aap-demo is the Python command (pipx or pip), not a
+# link to this checkout's aap-demo.sh. install.sh must not replace or remove it.
+python_cli_installed() {
+  [ -f "$CLI_LINK" ] && head -1 "$CLI_LINK" 2>/dev/null | grep -Eq '^#!.*python'
+}
+
+python_cli_note() {
+  echo "  ~/.local/bin/aap-demo is the Python aap-demo command. Leaving it in place."
+  echo "  The bash script still runs directly: ${SCRIPT_DIR}/aap-demo.sh"
+  echo "  To switch back to bash: pipx uninstall aap-demo && ${SCRIPT_DIR}/install.sh"
+}
 
 # Uninstall
 if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "uninstall" ]; then
   echo "Uninstalling aap-demo..."
-  rm -f ~/.local/bin/aap-demo
-  rm -f ~/.zsh/completions/_aap-demo
-  rm -f ~/.local/share/bash-completion/completions/aap-demo
-  echo "  ✓ Binary and completions removed"
+  if python_cli_installed; then
+    python_cli_note
+  else
+    rm -f "$CLI_LINK"
+    rm -f ~/.zsh/completions/_aap-demo
+    rm -f ~/.local/share/bash-completion/completions/aap-demo
+    echo "  ✓ Binary and completions removed"
+  fi
   if [ -f "${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}" ]; then
     config_file="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
     sed -i.bak '/^ADDONS=/d' "$config_file"
@@ -25,6 +42,11 @@ fi
 
 echo "Installing aap-demo..."
 echo ""
+
+if python_cli_installed; then
+  python_cli_note
+  exit 0
+fi
 
 # Check dependencies
 MISSING_DEPS=""
