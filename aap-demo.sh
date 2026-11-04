@@ -3078,11 +3078,23 @@ watch_aap() {
 # Fleet nodes: managed RHEL VMs for AAP demos (addon)
 # ---------------------------------------------------------------------------
 
+# A pip/pipx entry point: an .exe launcher on Windows, a python shebang, or
+# pip's /bin/sh wrapper that execs python, written when the interpreter path
+# has a space or is too long for a shebang (pipx on macOS).
 _fleet_is_python_entry_point() {
+  local first="" second=""
   case "$1" in
     *.exe) return 0 ;;
   esac
-  head -1 "$1" 2>/dev/null | grep -Eq '^#!.*python'
+  [ -f "$1" ] || return 1
+  { IFS= read -r first && IFS= read -r second; } <"$1" 2>/dev/null || true
+  case "$first" in
+    '#!'*python*) return 0 ;;
+  esac
+  case "$first" in
+    '#!/bin/sh'*) case "$second" in "'''exec' "*python*) return 0 ;; esac ;;
+  esac
+  return 1
 }
 
 _fleet_delegate_v2() {

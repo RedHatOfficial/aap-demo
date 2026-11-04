@@ -449,6 +449,41 @@ def test_bash_fleet_prefers_an_installed_python_aap_demo(
         assert result.returncode != 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="aap-demo.sh requires a POSIX Bash environment")
+def test_bash_fleet_uses_pips_sh_wrapper_entry_point(tmp_path: Path) -> None:
+    # pip writes this wrapper when the interpreter path has a space, which is
+    # where pipx installs on macOS ("Application Support").
+    env, record = _bash_delegation_env(tmp_path)
+    del env["AAP_DEMO_PYTHON"]
+    venv = tmp_path / "Application Support" / "venv" / "bin"
+    venv.mkdir(parents=True)
+    python = venv / "python"
+    python.write_text(
+        '#!/bin/sh\nshift\nprintf "%s\\n" "$@" > "$AAP_DEMO_RECORD"\n',
+        encoding="utf-8",
+    )
+    python.chmod(0o755)
+    launcher = tmp_path / "bin" / "aap-demo"
+    launcher.write_text(
+        "#!/bin/sh\n" + "'''exec' " + f'"{python}" "$0" "$@"\n' + "' '''\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+    root = _bare_checkout(tmp_path)
+    result = subprocess.run(
+        ["bash", str(root / "aap-demo.sh"), "disable", "fleet", "--backend", "kube-native"],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _recorded_python_args(record) == ["disable", "fleet"]
+
+
 def test_bash_qemu_fleet_warns_that_no_import_is_ignored() -> None:
     source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
     qemu = source.split('_fleet_delegate_v2 enable fleet "$@"', 1)[1].split("all)", 1)[0]

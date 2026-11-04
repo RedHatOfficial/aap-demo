@@ -92,6 +92,9 @@ to the Python package entry point.
 Your bash checkout remains untouched. You can still run `./aap-demo.sh` directly from the repository if needed,
 but the `aap-demo` command in your PATH now points to the Python version.
 
+After that, `./install.sh` (and `install.sh --uninstall`) leaves the Python command in place and prints
+how to switch back: remove it with `pipx uninstall aap-demo` (or `pip uninstall aap-demo`), then rerun `./install.sh`.
+
 Python state is strict XDG on every OS. With the defaults (`XDG_*` unset):
 
 | What | Path |
