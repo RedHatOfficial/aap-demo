@@ -3,14 +3,14 @@ name: Python Unit Tests
 
 on:
   pull_request:
-    branches: [main, master, v2, v1-python-rewrite]
+    branches: [main, master]
     paths:
       - 'src/**'
       - 'tests/**'
       - 'pyproject.toml'
       - '.github/workflows/python-tests.yaml'
   push:
-    branches: [main, master, v2, v1-python-rewrite]
+    branches: [main, master]
     paths:
       - 'src/**'
       - 'tests/**'
