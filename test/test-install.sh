@@ -60,3 +60,31 @@ if [ -e "$PY_HOME/.local/bin/aap-demo" ] || [ -L "$PY_HOME/.local/bin/aap-demo" 
   exit 1
 fi
 echo "✓ uninstall_removes_bash_link"
+
+# pip's /bin/sh wrapper, used when the interpreter path has a space (pipx on
+# macOS lives under "Application Support"), is the Python command too.
+SH_HOME="$(mktemp -d)"
+trap 'rm -rf "$TEST_HOME" "$PY_HOME" "$SH_HOME"' EXIT
+SH_BIN="$SH_HOME/Application Support/venv/bin"
+mkdir -p "$SH_BIN" "$SH_HOME/.local/bin"
+cat >"$SH_BIN/aap-demo" <<WRAPPER
+#!/bin/sh
+'''exec' "$SH_BIN/python" "\$0" "\$@"
+' '''
+WRAPPER
+chmod +x "$SH_BIN/aap-demo"
+ln -s "$SH_BIN/aap-demo" "$SH_HOME/.local/bin/aap-demo"
+
+HOME="$SH_HOME" bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
+if [ "$(readlink "$SH_HOME/.local/bin/aap-demo")" != "$SH_BIN/aap-demo" ]; then
+  echo "install.sh replaced the pip sh-wrapper command" >&2
+  exit 1
+fi
+echo "✓ install_keeps_pip_sh_wrapper"
+
+HOME="$SH_HOME" bash "$SCRIPT_DIR/install.sh" --uninstall >/dev/null
+[ -L "$SH_HOME/.local/bin/aap-demo" ] || {
+  echo "uninstall removed the pip sh-wrapper command" >&2
+  exit 1
+}
+echo "✓ uninstall_keeps_pip_sh_wrapper"

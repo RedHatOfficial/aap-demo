@@ -7,8 +7,20 @@ CLI_LINK="$HOME/.local/bin/aap-demo"
 
 # True when ~/.local/bin/aap-demo is the Python command (pipx or pip), not a
 # link to this checkout's aap-demo.sh. install.sh must not replace or remove it.
+# pip writes a python shebang or, when the interpreter path has a space or is
+# too long for a shebang (pipx on macOS lives under "Application Support"), a
+# /bin/sh wrapper whose second line execs that python.
 python_cli_installed() {
-  [ -f "$CLI_LINK" ] && head -1 "$CLI_LINK" 2>/dev/null | grep -Eq '^#!.*python'
+  local first="" second=""
+  [ -f "$CLI_LINK" ] || return 1
+  { IFS= read -r first && IFS= read -r second; } <"$CLI_LINK" 2>/dev/null || true
+  case "$first" in
+    '#!'*python*) return 0 ;;
+  esac
+  case "$first" in
+    '#!/bin/sh'*) case "$second" in "'''exec' "*python*) return 0 ;; esac ;;
+  esac
+  return 1
 }
 
 python_cli_note() {
