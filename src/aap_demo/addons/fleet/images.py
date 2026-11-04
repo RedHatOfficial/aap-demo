@@ -22,7 +22,7 @@ OS_IDS = tuple(IMAGES)
 DEFAULT_NODES = tuple({"name": f"fleet-{os_id}", "os": os_id} for os_id in OS_IDS)
 
 SCM_URL = "https://github.com/RedHatOfficial/aap-demo.git"
-SCM_BRANCH = "v2"
+SCM_BRANCH = "main"
 
 INVENTORY = "aap-demo-fleet"
 CREDENTIAL = "aap-demo-fleet-ssh"

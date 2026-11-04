@@ -4,8 +4,7 @@ name: Publish to PyPI
 # release candidate). pip installs a pre-release only when no final release
 # exists or it is named, as in `pip install 'aap-demo==<version>'`.
 # A push publishes only when src/aap_demo/__init__.py changes, because PyPI
-# keeps each version forever. Publish from main. That is where this workflow
-# lands with the v2 cutover. A version already on PyPI is skipped, and any
+# keeps each version forever. Publish from main. A version already on PyPI is skipped, and any
 # version that is not a pre-release of the next major release fails the check
 # job (see .github/scripts/pypi_version_state.py).
 on:
