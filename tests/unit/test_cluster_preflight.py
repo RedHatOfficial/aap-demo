@@ -164,8 +164,15 @@ def test_unknown_context_with_no_contexts_at_all(
     ],
 )
 def test_cluster_state_warning(
-    app_ctx: AppContext, fake_runner: FakeRunner, status_json: str, expected: str
+    app_ctx: AppContext,
+    fake_runner: FakeRunner,
+    status_json: str,
+    expected: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # No CRC machine directory, whatever the developer's own ~/.crc holds.
+    monkeypatch.setenv("HOME", str(tmp_path))
     fake_runner.ok("crc status -o json", stdout=status_json)
     preflight.warn_cluster_state(app_ctx)
     assert expected in app_ctx.console.stdout
@@ -243,6 +250,7 @@ def test_run_rejects_an_unknown_context(
 def test_run_warns_when_no_cluster_exists_for_redhat_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
     """bash's ``verify_cluster_type`` covers redhat-status too (the ``*`` branch)."""
     monkeypatch.setattr(preflight.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(preflight.ssh_mod, "detect_ssh_key", lambda _dir: None)
@@ -273,3 +281,19 @@ def test_unported_commands_skip_the_preflight(
     rc = main_mod.main(["gui", "--config", str(tmp_path / "c.yaml")], runner=FakeRunner())
     assert rc == 1
     assert "not yet implemented" in capsys.readouterr().err
+
+
+def test_a_vm_crc_cannot_answer_for_is_not_called_missing(
+    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path
+) -> None:
+    machine = tmp_path / ".crc" / "machines" / "crc"
+    machine.mkdir(parents=True)
+    (machine / "config.json").write_text("{}", encoding="utf-8")
+    app_ctx.env["HOME"] = str(tmp_path)
+    fake_runner.fail("crc status -o json")
+
+    preflight.warn_cluster_state(app_ctx)
+
+    out = app_ctx.console.stdout
+    assert "CRC is not responding, but a cluster exists" in out
+    assert "No cluster exists" not in out

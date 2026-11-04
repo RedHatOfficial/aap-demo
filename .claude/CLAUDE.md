@@ -62,6 +62,11 @@ oc adm policy add-scc-to-group privileged system:serviceaccounts:aap-operator
 **Symptom**: Pods evicted or images fail to pull
 **Fix**: `aap-demo ssh` then `sudo crictl rmi --prune` to clean unused images
 
+### `crc start` hangs at "Waiting until ssh is available"
+**Symptom**: `aap-demo create` sits on "Starting CRC" after "CRC VM is up"; `diagnose` reports CRC not answering
+**Cause**: The `crc daemon`, which carries the VM's network, is not running or runs a different `crc` (`~/.crc/bin/crc` links to an old install)
+**Fix**: `crc stop; pkill -f 'crc daemon'; crc cleanup && crc setup`, then `aap-demo start`. `aap-demo diagnose` shows the daemon and the 127.0.0.1:2222 SSH forward under "OpenShift Local host"
+
 ### Commands target a remote cluster
 **Symptom**: `Kubeconfig points at a remote cluster`, or `AAP not found in namespace aap-operator` while the CRC VM is running
 **Cause**: `oc login` changed the current context of `~/.aap-demo/kubeconfig.microshift`
