@@ -21,16 +21,16 @@ pipx install aap-demo
 aap-demo version
 ```
 
-You should see version `2.0.0rc0`.
+You should see version `2.0.0rc1`.
 
 These install the same release candidate:
 
 ```bash
-pip install 'aap-demo==2.0.0rc0'
+pip install 'aap-demo==2.0.0rc1'
 uv tool install aap-demo
 ```
 
-If a plain `pip install aap-demo` says it cannot find a version, use the `2.0.0rc0` line above.
+If a plain `pip install aap-demo` says it cannot find a version, use the `2.0.0rc1` line above.
 pip often skips pre-release versions, such as release candidates, unless you name them.
 
 ## Update

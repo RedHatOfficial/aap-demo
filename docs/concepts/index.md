@@ -10,5 +10,5 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 # Concepts
 
-- [What aap-demo is](what-aap-demo-is.md) - A local demo tool, and what the 2.0.0rc0 release candidate is.
+- [What aap-demo is](what-aap-demo-is.md) - A local demo tool, and what the 2.0.0rc1 release candidate is.
 - [Two ways to run it](two-ways-to-run.md) - The new command and the older one, and why both still matter.
