@@ -143,8 +143,8 @@ one-shot process environment variable.
 | ------------------- | -------------------------------------------- | -------------------------------------------------- |
 | `CRC_CPUS`          | `8`                                          | VM CPU count                                       |
 | `CRC_MEMORY`        | `16384`                                      | VM memory (MiB)                                    |
-| `CRC_DISK`          | `120`                                        | VM disk (GiB). Prompted on create                  |
-| `CRC_PV_SIZE`       | `70`                                         | Persistent-volume pool (GiB). Must be `< CRC_DISK` |
+| `CRC_DISK`          | `120`                                        | VM disk (GiB). Minimum 31. Prompted on create      |
+| `CRC_PV_SIZE`       | `70`                                         | Persistent-volume pool (GiB). Minimum 15 and `< CRC_DISK` |
 | `NFS_BACKING_STORAGE_SIZE` | `5Gi`                                  | LVMS-backed storage reserved for the NFS server      |
 | `NAMESPACE`         | `aap-operator`                               | Kubernetes namespace                               |
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |

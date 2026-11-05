@@ -43,6 +43,24 @@ else
   pass "non-numeric disk size is rejected"
 fi
 
+if aap_demo_validate_crc_storage 31 15; then
+  pass "31GB disk and 15GB PV pool is the OpenShift Local minimum"
+else
+  fail "31GB disk and 15GB PV pool should be valid"
+fi
+
+if aap_demo_validate_crc_storage 30 20 >"${TEST_DIR}/validate-30.out" 2>"${TEST_DIR}/validate-30.err"; then
+  fail "30GB disk should be rejected"
+fi
+grep -q 'at least 31GB' "${TEST_DIR}/validate-30.err" || fail "30GB disk should name the OpenShift Local minimum: $(cat "${TEST_DIR}/validate-30.err")"
+pass "30GB disk is rejected before it can be saved"
+
+if aap_demo_validate_crc_storage 31 14 >"${TEST_DIR}/validate-14.out" 2>"${TEST_DIR}/validate-14.err"; then
+  fail "14GB PV pool should be rejected"
+fi
+grep -q 'at least 15GB' "${TEST_DIR}/validate-14.err" || fail "14GB PV pool should name the OpenShift Local minimum: $(cat "${TEST_DIR}/validate-14.err")"
+pass "14GB persistent-volume pool is rejected"
+
 resolve_home="${TEST_DIR}/resolve-home"
 mkdir -p "${resolve_home}/.aap-demo"
 printf '%s\n' 'CRC_DISK=150' 'CRC_PV_SIZE=80' >"${resolve_home}/.aap-demo/config"
@@ -170,8 +188,24 @@ cat >"${TEST_DIR}/bin/crc" <<'MOCK_CRC'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${AAP_DEMO_TEST_CRC_LOG:?}"
-case "$1" in
-  config) exit 0 ;;
+case "$*" in
+  "config set disk-size 32")
+    printf 'disk-size value 32 is invalid, must be greater than or equal to 31\n' >&2
+    exit 1
+    ;;
+  "config set persistent-volume-size 16")
+    printf 'persistent-volume-size value 16 is invalid, must be greater than or equal to 15\n' >&2
+    exit 1
+    ;;
+  "config set "*)
+    exit 0
+    ;;
+  daemon)
+    exit 0
+    ;;
+  "status --output json")
+    printf '%s\n' '{"crcStatus":"Stopped","openshiftStatus":"Stopped"}'
+    ;;
   *)
     printf 'unexpected crc args: %s\n' "$*" >&2
     exit 2
@@ -219,6 +253,40 @@ if cli storage 90 90 >/tmp/aap-demo-storage-equal.out 2>&1; then
 fi
 pass "aap-demo storage rejects a PV pool as large as the disk"
 
+if cli storage 30 20 >/tmp/aap-demo-storage-below-crc-minimum.out 2>&1; then
+  fail "storage below the OpenShift Local minimum should be rejected"
+fi
+grep -q 'at least 31GB' /tmp/aap-demo-storage-below-crc-minimum.out || fail "storage 30 20 should name the disk minimum: $(cat /tmp/aap-demo-storage-below-crc-minimum.out)"
+grep -q '^CRC_DISK=200$' "${TEST_DIR}/home/.aap-demo/config" || fail "rejected 30GB disk should leave the saved disk unchanged"
+grep -q '^CRC_PV_SIZE=90$' "${TEST_DIR}/home/.aap-demo/config" || fail "rejected 30GB disk should leave the saved PV pool unchanged"
+if grep -qx 'config set disk-size 30' "${TEST_DIR}/crc.log"; then
+  fail "storage 30 20 should fail before crc config set"
+fi
+pass "aap-demo storage 30 20 does not save a disk OpenShift Local rejects"
+
+if cli storage 32 16 >/tmp/aap-demo-storage-crc-reject.out 2>&1; then
+  fail "crc must be able to reject a disk that passes local checks"
+fi
+grep -q 'saved size was not changed' /tmp/aap-demo-storage-crc-reject.out || fail "crc rejection should say the saved size was not changed: $(cat /tmp/aap-demo-storage-crc-reject.out)"
+grep -q '^CRC_DISK=200$' "${TEST_DIR}/home/.aap-demo/config" || fail "a crc disk rejection should leave the saved disk unchanged"
+grep -q '^CRC_PV_SIZE=90$' "${TEST_DIR}/home/.aap-demo/config" || fail "a crc disk rejection should leave the saved PV pool unchanged"
+grep -qx 'config set disk-size 32' "${TEST_DIR}/crc.log" || fail "crc should see the rejected disk size"
+if grep -qx 'config set persistent-volume-size 16' "${TEST_DIR}/crc.log"; then
+  fail "persistent-volume size should not be sent after disk-size is rejected"
+fi
+pass "aap-demo storage keeps the saved size when crc rejects the disk"
+
+if cli storage 40 16 >/tmp/aap-demo-storage-crc-reject-pv.out 2>&1; then
+  fail "crc must be able to reject a persistent-volume size that passes local checks"
+fi
+grep -q 'saved size was not changed' /tmp/aap-demo-storage-crc-reject-pv.out || fail "pv rejection should say the saved size was not changed: $(cat /tmp/aap-demo-storage-crc-reject-pv.out)"
+grep -q '^CRC_DISK=200$' "${TEST_DIR}/home/.aap-demo/config" || fail "a crc PV rejection should leave the saved disk unchanged"
+grep -q '^CRC_PV_SIZE=90$' "${TEST_DIR}/home/.aap-demo/config" || fail "a crc PV rejection should leave the saved PV pool unchanged"
+grep -qx 'config set disk-size 40' "${TEST_DIR}/crc.log" || fail "crc should receive the requested disk before the PV rejection"
+grep -qx 'config set persistent-volume-size 16' "${TEST_DIR}/crc.log" || fail "crc should receive the rejected PV size"
+grep -qx 'config set disk-size 200' "${TEST_DIR}/crc.log" || fail "a rejected PV size should restore the previous crc disk size"
+pass "aap-demo storage restores the previous disk when crc rejects the PV pool"
+
 mkdir -p "${TEST_DIR}/home/.crc/machines/crc"
 existing_output="$(cli storage)"
 printf '%s\n' "$existing_output" | grep -q 'aap-demo destroy && aap-demo create' || fail "existing cluster should explain that the disk changes on recreate: ${existing_output}"
@@ -226,6 +294,92 @@ pass "existing cluster keeps its disk until recreate"
 
 help_output="$(cli help)"
 printf '%s\n' "$help_output" | grep -q 'storage \[DISK_GB\] \[PV_GB\]' || fail "help should document aap-demo storage"
+printf '%s\n' "$help_output" | grep -q 'at least 31GB' || fail "help should document the OpenShift Local disk minimum"
 pass "help documents aap-demo storage"
+
+run_rejected_create() {
+  local label="$1"
+  local disk="${2:-}"
+  local pv="${3:-}"
+  local seeded_config="$4"
+  local home="${TEST_DIR}/create-${label}"
+  mkdir -p "${home}/.aap-demo" "${home}/.crc"
+  printf '%s\n' "$seeded_config" >"${home}/.aap-demo/config"
+  : >"${TEST_DIR}/crc.log"
+  set +e
+  if [ -n "$disk" ]; then
+    env -u VM_DISK_SIZE -u VM_PV_SIZE \
+      HOME="$home" \
+      AAP_DEMO_CONFIG="${home}/.aap-demo/config" \
+      AAP_DEMO_TEST_CRC_LOG="${TEST_DIR}/crc.log" \
+      PATH="${TEST_DIR}/bin:${PATH}" \
+      QUIET=true \
+      CRC_CPUS=8 \
+      CRC_MEMORY=16384 \
+      CRC_DISK="$disk" \
+      CRC_PV_SIZE="$pv" \
+      SCRIPT_DIR="$REPO_ROOT" \
+      "${REPO_ROOT}/includes/crc-create.sh" \
+      >"${TEST_DIR}/create-${label}.out" 2>"${TEST_DIR}/create-${label}.err"
+  else
+    env -u CRC_DISK -u CRC_PV_SIZE -u VM_DISK_SIZE -u VM_PV_SIZE \
+      HOME="$home" \
+      AAP_DEMO_CONFIG="${home}/.aap-demo/config" \
+      AAP_DEMO_TEST_CRC_LOG="${TEST_DIR}/crc.log" \
+      PATH="${TEST_DIR}/bin:${PATH}" \
+      QUIET=true \
+      CRC_CPUS=8 \
+      CRC_MEMORY=16384 \
+      SCRIPT_DIR="$REPO_ROOT" \
+      "${REPO_ROOT}/includes/crc-create.sh" \
+      >"${TEST_DIR}/create-${label}.out" 2>"${TEST_DIR}/create-${label}.err"
+  fi
+  local status=$?
+  set -e
+  return "$status"
+}
+
+if run_rejected_create below-min 30 20 $'CRC_DISK=120\nCRC_PV_SIZE=70'; then
+  fail "create should stop when CRC_DISK is below the OpenShift Local minimum: $(cat "${TEST_DIR}/create-below-min.out" "${TEST_DIR}/create-below-min.err")"
+fi
+grep -q 'at least 31GB' "${TEST_DIR}/create-below-min.err" || fail "create should name the disk minimum: $(cat "${TEST_DIR}/create-below-min.err")"
+grep -q '^CRC_DISK=120$' "${TEST_DIR}/create-below-min/.aap-demo/config" || fail "create should not replace a saved disk with a rejected size"
+if grep -q '^CRC_DISK=30$' "${TEST_DIR}/create-below-min/.aap-demo/config"; then
+  fail "create saved CRC_DISK=30 after OpenShift Local would reject it"
+fi
+if grep -q 'Resources:' "${TEST_DIR}/create-below-min.out"; then
+  fail "create should not report resources after rejecting the disk"
+fi
+if grep -q 'crc start' "${TEST_DIR}/crc.log" || grep -q 'config set disk-size 30' "${TEST_DIR}/crc.log"; then
+  fail "create should not start or send a 30GB disk: $(cat "${TEST_DIR}/crc.log")"
+fi
+pass "create stops before start when CRC_DISK is below 31GB"
+
+if run_rejected_create crc-reject 32 16 $'CRC_DISK=120\nCRC_PV_SIZE=70'; then
+  fail "create should stop when crc rejects the disk: $(cat "${TEST_DIR}/create-crc-reject.out" "${TEST_DIR}/create-crc-reject.err")"
+fi
+grep -q 'saved size was not changed' "${TEST_DIR}/create-crc-reject.err" || fail "create should report the crc rejection: $(cat "${TEST_DIR}/create-crc-reject.err")"
+grep -q '^CRC_DISK=120$' "${TEST_DIR}/create-crc-reject/.aap-demo/config" || fail "create should keep the saved disk when crc rejects the new size"
+if grep -q '^CRC_DISK=32$' "${TEST_DIR}/create-crc-reject/.aap-demo/config"; then
+  fail "create saved CRC_DISK=32 after crc rejected it"
+fi
+if grep -q 'Resources:' "${TEST_DIR}/create-crc-reject.out"; then
+  fail "create should not report resources after crc rejects the disk"
+fi
+grep -qx 'config set disk-size 32' "${TEST_DIR}/crc.log" || fail "create should send the rejected disk size to crc"
+if grep -q 'crc start' "${TEST_DIR}/crc.log"; then
+  fail "create should not start after crc rejects the disk"
+fi
+pass "create stops before start when crc rejects the disk"
+
+if run_rejected_create saved-below '' '' $'CRC_DISK=30\nCRC_PV_SIZE=20'; then
+  fail "create should stop when the saved size is below the OpenShift Local minimum: $(cat "${TEST_DIR}/create-saved-below.out" "${TEST_DIR}/create-saved-below.err")"
+fi
+grep -q 'at least 31GB' "${TEST_DIR}/create-saved-below.err" || fail "saved 30GB disk should fail validation: $(cat "${TEST_DIR}/create-saved-below.err")"
+grep -q '^CRC_DISK=30$' "${TEST_DIR}/create-saved-below/.aap-demo/config" || fail "create should leave the previously saved disk in place"
+if grep -q 'Resources:' "${TEST_DIR}/create-saved-below.out" || grep -q 'config set disk-size 30' "${TEST_DIR}/crc.log" || grep -q 'crc start' "${TEST_DIR}/crc.log"; then
+  fail "create should not apply or start a saved disk OpenShift Local rejects: $(cat "${TEST_DIR}/crc.log")"
+fi
+pass "create does not start from a saved disk OpenShift Local rejects"
 
 echo "CRC storage command tests passed"
