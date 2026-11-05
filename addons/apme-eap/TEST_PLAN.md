@@ -38,7 +38,8 @@ Ansible playbooks with `ansible.builtin.uri` to interact with AAP's REST API.
 **Steps**:
 
 1. Run: `./aap-demo.sh enable apme-eap`
-2. When prompted for GitHub: choose **App or PAT**, then **one** catalog org prompt (portal sync wording); not both App and PAT
+2. When prompted for GitHub: choose **App or PAT**, then **one** catalog org prompt
+   (portal sync wording); not both App and PAT
 3. Observe console output
 4. Check AAP Web UI for job
 
@@ -362,7 +363,8 @@ kubectl get pods -n apme  # Should exist again
 
 ### TC-010: Bundled Ansible Modernization Content Engine config (ADR-034)
 
-**Objective**: Verify enable applies bundled AMCE config with `chat: true` and that re-enable resets portal AI providers.
+**Objective**: Verify enable applies bundled AMCE config with `chat: true` and that
+re-enable resets portal AI providers.
 
 **Prerequisites**:
 
@@ -396,7 +398,8 @@ kubectl exec -n apme deploy/apme-engine -c gateway -- \
   curl -sf http://127.0.0.1:8080/api/v1/settings/galaxy-servers | head -c 200
 ```
 
-**Pass Criteria**: Bundled `chat: true` on every enable; portal-added providers cleared on re-enable; galaxy seed succeeds.
+**Pass Criteria**: Bundled `chat: true` on every enable; portal-added providers
+cleared on re-enable; galaxy seed succeeds.
 
 **Reference**: [ADR-034](../../docs/adr/034-apme-abbenay-bundled-config.md)
 
@@ -458,19 +461,23 @@ kubectl exec -n apme deploy/apme-engine -c gateway -- \
 
 ### TC-013: GitHub catalog org (portal sync) — manual only
 
-**Objective**: Verify org is collected once per enable, persisted once in creds, for both PAT and App paths. Not covered by `./test/test-apme-eap-add-repository-ai.sh` (static wiring only).
+**Objective**: Verify org is collected once per enable, persisted once in creds, for
+both PAT and App paths. Not covered by
+`./test/test-apme-eap-add-repository-ai.sh` (static wiring only).
 
 **Prerequisites**:
 
 - `./test/test-apme-eap-add-repository-ai.sh` passes in CI
-- Optional clean slate: `./addons/apme-eap/deploy.sh --delete --purge-creds` (or remove duplicate `github_catalog_org` keys manually)
+- Optional clean slate: `./addons/apme-eap/deploy.sh --delete --purge-creds`
+  (or remove duplicate `github_catalog_org` keys manually)
 
 **Steps (PAT)**:
 
 1. Run interactive enable; answer **y** to GitHub; choose **P**
 2. Enter org when prompted (after A/P); enter PAT
 3. Confirm **no second** org prompt before deploy finishes
-4. Inspect `~/.aap-demo/apme-eap-github-creds.yml`: single `github_catalog_org:` key; vars file contains `apme_github_catalog_org`
+4. Inspect `~/.aap-demo/apme-eap-github-creds.yml`: single
+   `github_catalog_org:` key; vars file contains `apme_github_catalog_org`
 
 **Steps (App)**:
 
@@ -483,7 +490,8 @@ kubectl exec -n apme deploy/apme-engine -c gateway -- \
 1. Re-run enable with existing creds file (no `--purge-creds`)
 2. Confirm org is **not** prompted again; overlay/org in vars unchanged
 
-**Pass Criteria**: One interactive org prompt per fresh configure; creds file has at most one logical `github_catalog_org`; portal Git Repositories sync org matches vars.
+**Pass Criteria**: One interactive org prompt per fresh configure; creds file has at
+most one logical `github_catalog_org`; portal Git Repositories sync org matches vars.
 
 ---
 
