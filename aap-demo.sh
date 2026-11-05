@@ -546,7 +546,7 @@ _help_addon_summary() {
       printf '%s\n' "Cache container images locally (~30GB). save, load, or clear"
       ;;
     ollama)
-      printf '%s\n' "Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)"
+      printf '%s\n' "Deploy with aap-demo enable ollama (qwen2.5:3b, wires into AO as llm_provider)"
       ;;
     keycloak)
       printf '%s\n' "Keycloak OIDC provider for local AAP and AO authentication tests"
@@ -644,7 +644,7 @@ Addons
 Other
   config            Configure aap-demo settings
   update            Pull latest code and reinstall
-  v2                Run the Python v2 CLI
+  v2 [args...]      Run the Python v2 CLI (for example: aap-demo v2 deploy)
   version           Show version and build timestamp
   help              Show this help
 
@@ -680,15 +680,14 @@ Notes
   fleet               add, list, remove, destroy
                       --backend qemu|kube-native|all
                       add [N] --image <path> creates N RHEL VMs (requires: enable fleet)
-                      qemu is the legacy Bash v1 backend and uses local QEMU VMs
-                      kube-native uses Kubernetes pod-backed nodes
+                      (legacy Bash v1; local QEMU VMs only)
+                      Kubernetes-native fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
                       --no-import with --backend kube-native skips AAP registration
                       disable --backend kube-native delegates to the Python addon
   local-cache         save, load, or clear. Saves images from a running cluster
   keycloak configure  [--target aap|ao|all] [--map-groups] [--apply]
                       Dry-run unless --apply
                       --map-groups aligns Keycloak groups with AAP roles and AO groups
-  v2                  Example: aap-demo v2 deploy
   aliases             deploy-all = deploy, rh-status = redhat-status
 
 Available addons
