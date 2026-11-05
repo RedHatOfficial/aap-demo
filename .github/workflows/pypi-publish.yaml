@@ -122,11 +122,16 @@ jobs:
       - name: Find the release
         id: existing
         run: |
-          if gh release view "v$VERSION" >/dev/null 2>&1; then
+          # Only "release not found" means missing. Any other error (API
+          # outage, auth) fails here instead of looking like a missing release.
+          if out=$(gh release view "v$VERSION" --json tagName 2>&1); then
             echo "v$VERSION already has a release; nothing to do"
             echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
+          elif printf '%s\n' "$out" | grep -q 'release not found'; then
             echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            printf '%s\n' "$out" >&2
+            exit 1
           fi
 
       - name: Download the published files from PyPI

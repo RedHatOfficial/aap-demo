@@ -104,6 +104,12 @@ def test_release_tags_the_commit_that_set_the_version() -> None:
     assert 'gh release view "v$VERSION"' in job
 
 
+def test_only_a_missing_release_counts_as_missing() -> None:
+    job = _release_job()
+    assert "grep -q 'release not found'" in job
+    assert ">/dev/null 2>&1" not in job
+
+
 def test_check_reports_the_version_for_the_release_job() -> None:
     workflow = (ROOT / ".github/workflows/pypi-publish.yaml").read_text(encoding="utf-8")
     assert "version: ${{ steps.state.outputs.version }}" in workflow
