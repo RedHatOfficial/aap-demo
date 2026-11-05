@@ -100,8 +100,10 @@ jobs:
       && (needs.publish.result == 'success'
           || (needs.publish.result == 'skipped' && needs.check.outputs.published == 'true'))
     runs-on: ubuntu-latest
+    # One group per version: runs for the same version take turns, and a
+    # queued release for one version never replaces another version's.
     concurrency:
-      group: github-release
+      group: github-release-${{ needs.check.outputs.version }}
       cancel-in-progress: false
     permissions:
       contents: write

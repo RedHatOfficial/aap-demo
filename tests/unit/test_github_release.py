@@ -104,6 +104,12 @@ def test_release_tags_the_commit_that_set_the_version() -> None:
     assert 'gh release view "v$VERSION"' in job
 
 
+def test_release_runs_queue_per_version() -> None:
+    job = _release_job()
+    assert "group: github-release-${{ needs.check.outputs.version }}" in job
+    assert "cancel-in-progress: false" in job
+
+
 def test_only_a_missing_release_counts_as_missing() -> None:
     job = _release_job()
     assert "grep -q 'release not found'" in job
