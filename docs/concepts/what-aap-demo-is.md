@@ -24,7 +24,7 @@ Do not copy them into a system other people depend on.
 
 ## This release candidate
 
-The command you install with pipx is version **2.0.0rc0**, the first release candidate of the new command.
+The command you install with pipx is version **2.0.0rc1**, a release candidate of the new command.
 It follows the 2.0.0.devN betas. A finished 2.0.0 release has not been published. Until that happens, treat
 what you install as a release candidate: close to final, but it can still change before 2.0.0.
 
