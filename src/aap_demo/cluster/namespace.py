@@ -126,7 +126,7 @@ def ensure(
     ctx.runner.run(["kubectl", "create", "namespace", ns])
 
     _prepend_oc_to_path(ctx, resolve)
-    scc_mod.grant_namespace_sccs(ctx, ns, which=resolve)
+    scc_mod.require_namespace_sccs(ctx, ns, which=resolve)
     label(ctx, ns)
 
     path = pull_secret_mod.ensure(ctx, ns)

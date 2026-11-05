@@ -143,7 +143,7 @@ def repair(
     """
     ctx.console.out("Running repair...")
     ctx.console.out("")
-    scc_mod.grant_namespace_sccs(ctx, which=which)
+    scc_mod.require_namespace_sccs(ctx, which=which)
     coredns.verify(ctx, sleep=sleep)
     listing = ctx.runner.run(["kubectl", "get", "pods", "-n", ctx.namespace, "--no-headers"])
     restarted = False
