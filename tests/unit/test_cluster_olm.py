@@ -173,7 +173,12 @@ def test_operator_sdk_download_failure_is_fatal_with_the_url(
     app_ctx.runner = FakeRunner().fail("curl")
     with pytest.raises(AapDemoError) as excinfo:
         sdk.ensure_available(app_ctx, which=_which())
-    assert "operator-sdk" in (excinfo.value.hint or "")
+    hint = excinfo.value.hint or ""
+    assert "Retry" in hint
+    assert sdk.download_url("Linux", "x86_64") in hint
+    command = app_ctx.runner.commands[0]
+    assert "--connect-timeout 30" in command
+    assert "--speed-time 60" in command
 
 
 def test_unsupported_platform_is_a_prerequisite_error() -> None:
