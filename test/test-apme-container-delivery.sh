@@ -26,15 +26,15 @@ if test -e "$ADDON/scripts/push_oci_archive.py"; then
   fail "runtime OCI archive publisher must be removed"
 fi
 
-grep -q 'ansible/ansible-rhdh-plugins' "$DEFAULTS" ||
-  fail "external plugin source repository must be configurable"
-grep -q 'resolve_external_artifact.yml' "$IMAGE_BUILD" ||
-  fail "local image builds must resolve the external artifact"
-grep -q 'fetch-plugin-artifact.sh' "$ARTIFACT_RESOLVER" ||
-  fail "local image builds must resolve the external artifact"
-grep -q 'APME_ARTIFACT_NAME' "$ARTIFACT_RESOLVER" ||
-  fail "local image builds must support an exact upstream artifact name"
-grep -q 'Containerfile.ci' "$IMAGE_BUILD" ||
-  fail "local image builds must bake the normalized artifact into a container"
+grep -q 'ansible/ansible-rhdh-plugins' "$DEFAULTS" \
+  || fail "external plugin source repository must be configurable"
+grep -q 'resolve_external_artifact.yml' "$IMAGE_BUILD" \
+  || fail "local image builds must resolve the external artifact"
+grep -q 'fetch-plugin-artifact.sh' "$ARTIFACT_RESOLVER" \
+  || fail "local image builds must resolve the external artifact"
+grep -q 'APME_ARTIFACT_NAME' "$ARTIFACT_RESOLVER" \
+  || fail "local image builds must support an exact upstream artifact name"
+grep -q 'Containerfile.ci' "$IMAGE_BUILD" \
+  || fail "local image builds must bake the normalized artifact into a container"
 
 echo "OK: APME container delivery contract"

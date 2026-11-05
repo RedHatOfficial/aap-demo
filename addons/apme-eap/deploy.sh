@@ -84,14 +84,14 @@ _load_github_creds_from_file() {
   while IFS='=' read -r key value; do
     [ -z "$key" ] && continue
     case "$key" in
-    GITHUB_TOKEN) GITHUB_TOKEN="$value" ;;
-    GITHUB_APP_ID) GITHUB_APP_ID="$value" ;;
-    GITHUB_APP_CLIENT_ID) GITHUB_APP_CLIENT_ID="$value" ;;
-    GITHUB_APP_CLIENT_SECRET) GITHUB_APP_CLIENT_SECRET="$value" ;;
-    GITHUB_APP_PRIVATE_KEY_PATH) GITHUB_APP_PRIVATE_KEY_PATH="$value" ;;
-    GITHUB_OAUTH_CLIENT_ID) GITHUB_OAUTH_CLIENT_ID="$value" ;;
-    GITHUB_OAUTH_CLIENT_SECRET) GITHUB_OAUTH_CLIENT_SECRET="$value" ;;
-    GITHUB_SAVED_CATALOG_ORG) GITHUB_SAVED_CATALOG_ORG="$value" ;;
+      GITHUB_TOKEN) GITHUB_TOKEN="$value" ;;
+      GITHUB_APP_ID) GITHUB_APP_ID="$value" ;;
+      GITHUB_APP_CLIENT_ID) GITHUB_APP_CLIENT_ID="$value" ;;
+      GITHUB_APP_CLIENT_SECRET) GITHUB_APP_CLIENT_SECRET="$value" ;;
+      GITHUB_APP_PRIVATE_KEY_PATH) GITHUB_APP_PRIVATE_KEY_PATH="$value" ;;
+      GITHUB_OAUTH_CLIENT_ID) GITHUB_OAUTH_CLIENT_ID="$value" ;;
+      GITHUB_OAUTH_CLIENT_SECRET) GITHUB_OAUTH_CLIENT_SECRET="$value" ;;
+      GITHUB_SAVED_CATALOG_ORG) GITHUB_SAVED_CATALOG_ORG="$value" ;;
     esac
   done < <(
     _apme_python - "$creds_file" <<'PY'
@@ -256,23 +256,23 @@ _ensure_skopeo() {
 
   info "skopeo not found — installing (required for portal image cache validation)..."
   case "$(uname -s)" in
-  Darwin)
-    if command -v brew &>/dev/null; then
-      brew install skopeo
-    else
-      die "skopeo not found. Install Homebrew, then: brew install skopeo"
-    fi
-    ;;
-  Linux)
-    if command -v dnf &>/dev/null; then
-      sudo dnf install -y skopeo
-    else
-      die "skopeo not found and cannot auto-install. Install it before enabling apme-eap."
-    fi
-    ;;
-  *)
-    die "skopeo not found. Install skopeo for your platform before enabling apme-eap."
-    ;;
+    Darwin)
+      if command -v brew &>/dev/null; then
+        brew install skopeo
+      else
+        die "skopeo not found. Install Homebrew, then: brew install skopeo"
+      fi
+      ;;
+    Linux)
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y skopeo
+      else
+        die "skopeo not found and cannot auto-install. Install it before enabling apme-eap."
+      fi
+      ;;
+    *)
+      die "skopeo not found. Install skopeo for your platform before enabling apme-eap."
+      ;;
   esac
 }
 
@@ -307,23 +307,23 @@ _ensure_helm() {
 
   info "helm not found — installing (required for portal Helm chart deployment)..."
   case "$(uname -s)" in
-  Darwin)
-    if command -v brew &>/dev/null; then
-      brew install helm
-    else
-      die "helm not found. Install Homebrew, then: brew install helm"
-    fi
-    ;;
-  Linux)
-    if command -v dnf &>/dev/null; then
-      sudo dnf install -y helm
-    else
-      die "helm not found and cannot auto-install. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-    fi
-    ;;
-  *)
-    die "helm not found. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
-    ;;
+    Darwin)
+      if command -v brew &>/dev/null; then
+        brew install helm
+      else
+        die "helm not found. Install Homebrew, then: brew install helm"
+      fi
+      ;;
+    Linux)
+      if command -v dnf &>/dev/null; then
+        sudo dnf install -y helm
+      else
+        die "helm not found and cannot auto-install. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+      fi
+      ;;
+    *)
+      die "helm not found. Install Helm 3.10+ from https://helm.sh/docs/intro/install/"
+      ;;
   esac
 
   if ! command -v helm &>/dev/null; then
@@ -382,15 +382,15 @@ detect_architecture() {
   arch=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || echo "unknown")
 
   case "$arch" in
-  amd64 | x86_64)
-    echo "x86"
-    ;;
-  arm64 | aarch64)
-    echo "arm"
-    ;;
-  *)
-    die "Unknown architecture: $arch"
-    ;;
+    amd64 | x86_64)
+      echo "x86"
+      ;;
+    arm64 | aarch64)
+      echo "arm"
+      ;;
+    *)
+      die "Unknown architecture: $arch"
+      ;;
   esac
 }
 
@@ -467,11 +467,11 @@ _normalize_github_catalog_org() {
 }
 
 _github_app_config_complete() {
-  [ -n "${GITHUB_APP_ID:-}" ] &&
-    [ -n "${GITHUB_APP_CLIENT_ID:-}" ] &&
-    [ -n "${GITHUB_APP_CLIENT_SECRET:-}" ] &&
-    [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] &&
-    [ -f "${GITHUB_APP_PRIVATE_KEY_PATH}" ]
+  [ -n "${GITHUB_APP_ID:-}" ] \
+    && [ -n "${GITHUB_APP_CLIENT_ID:-}" ] \
+    && [ -n "${GITHUB_APP_CLIENT_SECRET:-}" ] \
+    && [ -n "${GITHUB_APP_PRIVATE_KEY_PATH:-}" ] \
+    && [ -f "${GITHUB_APP_PRIVATE_KEY_PATH}" ]
 }
 
 _github_integration_active() {
@@ -758,8 +758,8 @@ generate_vars_file() {
   local podman_connection=""
   local registry_service_ip=""
   local registry_push_registry=""
-  if command -v podman >/dev/null 2>&1 &&
-    podman system connection list --format '{{.Name}}' 2>/dev/null | grep -qx aap-demo; then
+  if command -v podman >/dev/null 2>&1 \
+    && podman system connection list --format '{{.Name}}' 2>/dev/null | grep -qx aap-demo; then
     podman_connection=aap-demo
   fi
   registry_service_ip=$(kubectl get svc registry -n aap-demo-registry \
@@ -1073,38 +1073,38 @@ cleanup() {
 # ---------------------------------------------------------------------------
 
 case "$ACTION" in
-deploy | --deploy)
-  check_prerequisites
-  detect_architecture
-  discover_environment
-  setup_venv
-  _CATALOG_ORG_FROM_ENV="${APME_GITHUB_CATALOG_ORG:-${GITHUB_CATALOG_ORG:-}}"
-  _GITHUB_CATALOG_ORG_CONFIRMED=false
-  if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
-    _GITHUB_CATALOG_ORG_CONFIRMED=true
-  fi
-  unset GITHUB_SAVED_CATALOG_ORG
-  prompt_github_token
-  resolve_github_catalog_org
-  if [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] &&
-    _github_integration_active &&
-    [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] &&
-    [ -f "$GITHUB_CREDS_FILE" ]; then
-    _persist_github_catalog_org_in_creds_file
-  fi
-  generate_vars_file
-  deploy
-  ;;
+  deploy | --deploy)
+    check_prerequisites
+    detect_architecture
+    discover_environment
+    setup_venv
+    _CATALOG_ORG_FROM_ENV="${APME_GITHUB_CATALOG_ORG:-${GITHUB_CATALOG_ORG:-}}"
+    _GITHUB_CATALOG_ORG_CONFIRMED=false
+    if [ -n "${_CATALOG_ORG_FROM_ENV:-}" ]; then
+      _GITHUB_CATALOG_ORG_CONFIRMED=true
+    fi
+    unset GITHUB_SAVED_CATALOG_ORG
+    prompt_github_token
+    resolve_github_catalog_org
+    if [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] \
+      && _github_integration_active \
+      && [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] \
+      && [ -f "$GITHUB_CREDS_FILE" ]; then
+      _persist_github_catalog_org_in_creds_file
+    fi
+    generate_vars_file
+    deploy
+    ;;
 
---delete | delete | remove)
-  cleanup "$@"
-  ;;
+  --delete | delete | remove)
+    cleanup "$@"
+    ;;
 
-*)
-  echo "Usage: $0 [deploy|--delete [--purge-creds]]"
-  echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
-  echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
-  echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
-  exit 1
-  ;;
+  *)
+    echo "Usage: $0 [deploy|--delete [--purge-creds]]"
+    echo "  deploy              - Deploy APME using official welcome pack playbooks (local execution)"
+    echo "  --delete            - Remove APME namespace and resources (preserve GitHub creds by default)"
+    echo "  --delete --purge-creds - Also remove ~/.aap-demo/apme-eap-github-creds.yml and private key"
+    exit 1
+    ;;
 esac
