@@ -665,6 +665,7 @@ COMMANDS:
                     Interactive runs also ask for disk and persistent-volume size
     storage [DISK_GB] [PV_GB]
                     Show or change the OpenShift Local disk and persistent-volume pool
+                    Disk must be at least 31GB and the PV pool at least 15GB
                     Example: aap-demo storage 160 100
     destroy [--reset] [--skip-cache] Delete local cluster (--reset also clears config)
     stop            Stop local cluster gracefully
@@ -678,8 +679,8 @@ COMMANDS:
 
 ENVIRONMENT:
     AAP_VERSION=2.6|2.7  AAP version to deploy (default: 2.7)
-    CRC_DISK            VM disk size in GiB (default: 120)
-    CRC_PV_SIZE         Persistent-volume pool in GiB (default: 70, must be < CRC_DISK)
+    CRC_DISK            VM disk size in GiB (default: 120, minimum 31)
+    CRC_PV_SIZE         Persistent-volume pool in GiB (default: 70, minimum 15, must be < CRC_DISK)
     QUIET=true          Skip the CPU, memory, and storage prompts
     AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
     AAP_PERSISTENT_IMAGE_STORE=true
@@ -1111,10 +1112,10 @@ cmd_storage() {
     fi
   fi
 
-  aap_demo_save_crc_storage
   if ! aap_demo_apply_crc_storage_config "$CRC_DISK" "$CRC_PV_SIZE"; then
     exit 1
   fi
+  aap_demo_save_crc_storage
   aap_demo_print_crc_storage "$CRC_DISK" "$CRC_PV_SIZE"
   aap_demo_note_crc_storage_limits "$CRC_DISK"
   if ! aap_demo_note_existing_crc_disk; then

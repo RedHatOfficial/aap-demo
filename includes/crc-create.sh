@@ -352,6 +352,7 @@ if [ -f "$_crc_config_file" ]; then
 fi
 
 aap_demo_resolve_crc_storage
+_crc_persist_storage=false
 
 if _crc_should_prompt_resources; then
   echo ""
@@ -397,10 +398,10 @@ if _crc_should_prompt_resources; then
     exit 1
   fi
   aap_demo_note_crc_storage_limits "$CRC_DISK"
+  _crc_persist_storage=true
 
   _save_config_key "CRC_CPUS" "$CRC_CPUS"
   _save_config_key "CRC_MEMORY" "$CRC_MEMORY"
-  aap_demo_save_crc_storage
 else
   CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-${_DEFAULT_CPUS}}}"
   CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$((_DEFAULT_MEMORY_GB * 1024))}}"
@@ -421,16 +422,18 @@ for _var_name in CRC_CPUS CRC_MEMORY CRC_DISK CRC_PV_SIZE; do
   fi
 done
 
-# PV size must be less than disk size to leave room for the root filesystem
-if [ "$CRC_PV_SIZE" -ge "$CRC_DISK" ]; then
-  printf "${_RED}▸${_NC} CRC_PV_SIZE (${CRC_PV_SIZE}GB) must be less than CRC_DISK (${CRC_DISK}GB)\n"
+if ! aap_demo_validate_crc_storage "$CRC_DISK" "$CRC_PV_SIZE"; then
   exit 1
 fi
 
 crc config set cpus "$CRC_CPUS" 2>/dev/null || true
 crc config set memory "$CRC_MEMORY" 2>/dev/null || true
-crc config set disk-size "$CRC_DISK" 2>/dev/null || true
-crc config set persistent-volume-size "$CRC_PV_SIZE" 2>/dev/null || true
+if ! aap_demo_apply_crc_storage_config "$CRC_DISK" "$CRC_PV_SIZE"; then
+  exit 1
+fi
+if [ "${_crc_persist_storage:-false}" = "true" ]; then
+  aap_demo_save_crc_storage
+fi
 
 printf "${_GREEN}▸${_NC} Resources: ${CRC_CPUS} CPUs, $((CRC_MEMORY / 1024))GB RAM, ${CRC_DISK}GB disk (${CRC_PV_SIZE}GB for PVs)\n"
 

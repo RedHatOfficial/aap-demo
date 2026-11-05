@@ -11,11 +11,11 @@ function Assert-AapCrcStoragePair {
     [Parameter(Mandatory)][string]$Disk,
     [Parameter(Mandatory)][string]$PvSize
   )
-  if ($Disk -notmatch '^[0-9]+$' -or [int]$Disk -le 0) {
-    throw "Invalid disk size: '$Disk' (must be a positive integer in GB)"
+  if ($Disk -notmatch '^[0-9]+$' -or [int]$Disk -lt 31) {
+    throw "Invalid disk size: '$Disk' (OpenShift Local requires at least 31GB)"
   }
-  if ($PvSize -notmatch '^[0-9]+$' -or [int]$PvSize -le 0) {
-    throw "Invalid persistent volume size: '$PvSize' (must be a positive integer in GB)"
+  if ($PvSize -notmatch '^[0-9]+$' -or [int]$PvSize -lt 15) {
+    throw "Invalid persistent volume size: '$PvSize' (OpenShift Local requires at least 15GB)"
   }
   if ([int]$PvSize -ge [int]$Disk) {
     throw "Persistent volume size (${PvSize}GB) must be less than disk size (${Disk}GB)"
@@ -49,16 +49,28 @@ function Set-AapCrcStorageConfig {
     [Parameter(Mandatory)][string]$PvSize
   )
   Assert-AapCrcStoragePair -Disk $Disk -PvSize $PvSize
-  Set-AapConfigValue 'CRC_DISK' $Disk
-  Set-AapConfigValue 'CRC_PV_SIZE' $PvSize
   if (Test-AapCommand 'crc') {
+    $previousDisk = Get-AapConfigValue 'CRC_DISK'
+    if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+      $PSNativeCommandUseErrorActionPreference = $false
+    }
+    $ErrorActionPreference = 'Continue'
     & crc config set disk-size $Disk
-    if ($LASTEXITCODE -ne 0) { throw 'crc config set disk-size failed' }
+    if ($LASTEXITCODE -ne 0) {
+      throw "OpenShift Local rejected disk size ${Disk}GB. The saved size was not changed."
+    }
     & crc config set persistent-volume-size $PvSize
-    if ($LASTEXITCODE -ne 0) { throw 'crc config set persistent-volume-size failed' }
+    if ($LASTEXITCODE -ne 0) {
+      if ($previousDisk -and $previousDisk -ne $Disk) {
+        & crc config set disk-size $previousDisk | Out-Null
+      }
+      throw "OpenShift Local rejected persistent volume size ${PvSize}GB. The saved size was not changed."
+    }
   } else {
     Write-Host 'crc is not installed. The size is saved for the next aap-demo create.'
   }
+  Set-AapConfigValue 'CRC_DISK' $Disk
+  Set-AapConfigValue 'CRC_PV_SIZE' $PvSize
 }
 
 function Invoke-AapDemoStorage {
@@ -154,8 +166,6 @@ function Invoke-AapDemoCreate {
 
     Set-AapConfigValue 'CRC_CPUS' $cpus
     Set-AapConfigValue 'CRC_MEMORY' $memory
-    Set-AapConfigValue 'CRC_DISK' $disk
-    Set-AapConfigValue 'CRC_PV_SIZE' $pvSize
   }
 
   Assert-AapCrcStoragePair -Disk $disk -PvSize $pvSize
@@ -163,8 +173,7 @@ function Invoke-AapDemoCreate {
   & crc config set preset $preset 2>$null | Out-Null
   & crc config set cpus $cpus 2>$null | Out-Null
   & crc config set memory $memory 2>$null | Out-Null
-  & crc config set disk-size $disk 2>$null | Out-Null
-  & crc config set persistent-volume-size $pvSize 2>$null | Out-Null
+  Set-AapCrcStorageConfig -Disk $disk -PvSize $pvSize
   Write-AapStep "Preset $preset | CPUs $cpus | Memory $memory MiB | Disk ${disk}GB | PV ${pvSize}GB"
 
   if ($crcState -eq 'Unknown') {

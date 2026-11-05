@@ -10,6 +10,15 @@ aap_demo_crc_pv_default() {
   printf '%s\n' 70
 }
 
+# OpenShift Local rejects smaller values in `crc config set`.
+aap_demo_crc_disk_minimum() {
+  printf '%s\n' 31
+}
+
+aap_demo_crc_pv_minimum() {
+  printf '%s\n' 15
+}
+
 aap_demo_crc_storage_config_file() {
   if [ -n "${AAP_DEMO_CONFIG:-}" ]; then
     printf '%s\n' "$AAP_DEMO_CONFIG"
@@ -61,12 +70,15 @@ aap_demo_resolve_crc_storage() {
 aap_demo_validate_crc_storage() {
   local disk="$1"
   local pv="$2"
-  if ! [[ "$disk" =~ ^[0-9]+$ ]] || [ "$disk" -le 0 ]; then
-    printf "Invalid disk size: '%s' (must be a positive integer in GB)\n" "$disk" >&2
+  local disk_min pv_min
+  disk_min="$(aap_demo_crc_disk_minimum)"
+  pv_min="$(aap_demo_crc_pv_minimum)"
+  if ! [[ "$disk" =~ ^[0-9]+$ ]] || [ "$disk" -lt "$disk_min" ]; then
+    printf "Invalid disk size: '%s' (OpenShift Local requires at least %sGB)\n" "$disk" "$disk_min" >&2
     return 1
   fi
-  if ! [[ "$pv" =~ ^[0-9]+$ ]] || [ "$pv" -le 0 ]; then
-    printf "Invalid persistent volume size: '%s' (must be a positive integer in GB)\n" "$pv" >&2
+  if ! [[ "$pv" =~ ^[0-9]+$ ]] || [ "$pv" -lt "$pv_min" ]; then
+    printf "Invalid persistent volume size: '%s' (OpenShift Local requires at least %sGB)\n" "$pv" "$pv_min" >&2
     return 1
   fi
   if [ "$pv" -ge "$disk" ]; then
@@ -148,16 +160,21 @@ aap_demo_note_existing_crc_disk() {
 aap_demo_apply_crc_storage_config() {
   local disk="$1"
   local pv="$2"
+  local previous_disk=""
   if ! command -v crc >/dev/null 2>&1; then
     printf 'crc is not installed. The size is saved for the next aap-demo create.\n'
     return 0
   fi
+  previous_disk="$(aap_demo_config_value CRC_DISK)"
   if ! crc config set disk-size "$disk"; then
-    printf 'Saved the size, but crc config set disk-size failed.\n' >&2
+    printf 'OpenShift Local rejected disk size %sGB. The saved size was not changed.\n' "$disk" >&2
     return 1
   fi
   if ! crc config set persistent-volume-size "$pv"; then
-    printf 'Saved the size, but crc config set persistent-volume-size failed.\n' >&2
+    if [ -n "$previous_disk" ] && [ "$previous_disk" != "$disk" ]; then
+      crc config set disk-size "$previous_disk" >/dev/null 2>&1 || true
+    fi
+    printf 'OpenShift Local rejected persistent volume size %sGB. The saved size was not changed.\n' "$pv" >&2
     return 1
   fi
 }
