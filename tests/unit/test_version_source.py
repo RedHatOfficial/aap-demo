@@ -1,0 +1,111 @@
+"""``aap-demo version`` says when the install came from git or a local path."""
+
+from __future__ import annotations
+
+from aap_demo import __version__
+from aap_demo.core import version as version_mod
+
+SHA = "27b505d4c1e2f3a4b5c6d7e8f90123456789abcd"  # pragma: allowlist secret
+GIT_RECORD = {
+    "url": "https://github.com/RedHatOfficial/aap-demo.git",
+    "vcs_info": {"vcs": "git", "commit_id": SHA, "requested_revision": "27b505d"},
+}
+
+
+def test_a_git_install_reports_the_commit_and_the_spec() -> None:
+    assert version_mod.direct_source(GIT_RECORD) == {
+        "mode": "git",
+        "spec": "git+https://github.com/RedHatOfficial/aap-demo.git@27b505d",
+        "sha": "27b505d",
+    }
+
+
+def test_a_git_install_without_a_ref_has_no_at_suffix() -> None:
+    record = {"url": GIT_RECORD["url"], "vcs_info": {"vcs": "git", "commit_id": SHA}}
+    assert version_mod.direct_source(record)["spec"] == f"git+{GIT_RECORD['url']}"
+
+
+def test_a_local_path_install_is_reported_as_local() -> None:
+    record = {"url": "file:///home/me/aap-demo", "dir_info": {"editable": True}}
+    assert version_mod.direct_source(record) == {
+        "mode": "local",
+        "spec": "file:///home/me/aap-demo",
+        "sha": "unknown",
+    }
+
+
+def test_an_archive_url_install_is_not_called_local() -> None:
+    record = {
+        "url": "https://example.com/aap_demo-2.0.0.dev2-py3-none-any.whl",
+        "archive_info": {"hashes": {"sha256": "0" * 64}},
+    }
+    assert version_mod.direct_source(record)["mode"] == "archive"
+
+
+def test_another_vcs_is_not_called_an_archive() -> None:
+    record = {
+        "url": "https://hg.example.com/aap-demo",
+        "vcs_info": {"vcs": "hg", "commit_id": "abcdef123456", "requested_revision": "tip"},
+    }
+    assert version_mod.direct_source(record) == {
+        "mode": "vcs",
+        "spec": "hg+https://hg.example.com/aap-demo@tip",
+        "sha": "abcdef1",
+    }
+
+
+def test_an_unknown_record_type_is_ignored() -> None:
+    assert version_mod.direct_source({"url": "https://example.com/x"}) == {}
+
+
+def test_an_index_install_has_no_direct_source() -> None:
+    assert version_mod.direct_source({}) == {}
+
+
+def test_version_text_for_a_git_install(monkeypatch) -> None:
+    monkeypatch.setattr(version_mod, "_repo_root", lambda: None)
+    monkeypatch.setattr(version_mod, "_direct_url", lambda: GIT_RECORD)
+
+    info = version_mod.version_info()
+    text = version_mod.render_text(info)
+
+    assert info.install_mode == "git"
+    assert info.version == __version__
+    assert info.full_version == f"{__version__}+g27b505d"
+    assert text.splitlines()[0] == f"aap-demo {__version__}+g27b505d"
+    assert "from:     git+https://github.com/RedHatOfficial/aap-demo.git@27b505d" in text
+    assert "not the published release" in text
+
+
+def test_version_text_for_a_release_is_unchanged(monkeypatch) -> None:
+    monkeypatch.setattr(version_mod, "_repo_root", lambda: None)
+    monkeypatch.setattr(version_mod, "_direct_url", lambda: {})
+
+    info = version_mod.version_info()
+    text = version_mod.render_text(info)
+
+    assert info.install_mode == "package"
+    assert text.splitlines()[0] == f"aap-demo {__version__}"
+    assert "from:" not in text
+    assert "published release" not in text
+
+
+def test_dash_v_matches_the_version_command(monkeypatch, capsys) -> None:
+    import pytest
+
+    from aap_demo.cli.main import run
+
+    monkeypatch.setattr(version_mod, "_repo_root", lambda: None)
+    monkeypatch.setattr(version_mod, "_direct_url", lambda: GIT_RECORD)
+    with pytest.raises(SystemExit) as exc:
+        run(["-V"], env={"HOME": "/nonexistent", "QUIET": "1"})
+    assert exc.value.code == 0
+    assert capsys.readouterr().out == f"aap-demo {__version__}+g27b505d\n"
+
+
+def test_unreadable_metadata_never_raises(monkeypatch) -> None:
+    def boom(_name):
+        raise RuntimeError("no metadata")
+
+    monkeypatch.setattr(version_mod.metadata, "distribution", boom)
+    assert version_mod.direct_source() == {}

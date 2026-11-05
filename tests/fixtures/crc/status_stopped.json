@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "crcStatus": "Stopped",
+  "openshiftStatus": "",
+  "openshiftVersion": "",
+  "diskUse": 0,
+  "diskSize": 0,
+  "ramUse": 0,
+  "ramSize": 0,
+  "preset": "microshift"
+}

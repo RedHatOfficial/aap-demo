@@ -64,9 +64,9 @@ validate-manifests: ## Validate Kubernetes manifests with kubeconform
 	done
 	@echo "✓ Manifest validation complete"
 
-check-secrets: ## Scan for secrets with detect-secrets
+check-secrets: ## Scan for secrets with detect-secrets 1.5.0 (read-only)
 	@echo "Scanning for secrets..."
-	@detect-secrets scan --baseline .secrets.baseline
+	@./scripts/check-secrets.sh
 	@echo "✓ No secrets detected"
 
 clean-lint: ## Clean linting caches and temporary files

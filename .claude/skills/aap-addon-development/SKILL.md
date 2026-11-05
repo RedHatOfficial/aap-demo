@@ -697,7 +697,7 @@ Before considering addon complete:
 - [ ] `deploy.sh` exists and is executable
 - [ ] Deploy mode works (`aap-demo enable <addon>`)
 - [ ] Delete mode works (`aap-demo disable <addon>`)
-- [ ] Registered in `AVAILABLE_ADDONS` (aap-demo.sh:3002)
+- [ ] Registered in `AVAILABLE_ADDONS` in `aap-demo.sh`
 - [ ] `README.md` exists with Quick Start, Prerequisites, Troubleshooting
 - [ ] Dependencies documented (AAP, other addons, external tools)
 - [ ] Prerequisites checked in deploy.sh

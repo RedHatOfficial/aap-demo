@@ -50,7 +50,6 @@ KUBECONFIG="$HOME/.aap-demo/kubeconfig.microshift" ./test/test-keycloak-live.sh
 - ✓ `idle [true|false]` arg parsing
 - ✓ `idle notabool` shows error
 - ✓ `diagnose` runs without cluster
-- ✓ `diagnose --ai` flag parsing
 - ✓ `enable` / `disable` (no args shows usage)
 - ✓ `enable fake-addon` errors
 - ✓ `deploy-all`, `redeploy-all` aliases recognized

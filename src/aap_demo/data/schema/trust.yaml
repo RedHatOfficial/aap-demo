@@ -1,0 +1,17 @@
+# Ingress CA trust.
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aap-demo/trust"
+type: object
+additionalProperties: false
+title: Trust
+properties:
+  install_ca:
+    type: boolean
+    default: true
+    title: Install ingress CA
+    description: Import the cluster ingress CA into the OS trust store.
+    x-cli: {flag: "--no-install-ca"}
+    x-env: AAP_DEMO_TRUST_CA
+    x-config: trust.install_ca
+    x-gui: {group: trust, widget: switch}
+    x-order: 10
