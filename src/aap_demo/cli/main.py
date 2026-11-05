@@ -1,8 +1,8 @@
 """Root command group, global options, and dispatch.
 
-``--help`` is framework-generated, but its *content* is a faithful port of the
-bash ``show_help``: the same commands, the same grouping, and
-the same ENVIRONMENT / EXAMPLES / REQUIREMENTS trailer.
+``--help`` is framework-generated. It keeps the bash command set and the
+ENVIRONMENT / EXAMPLES / REQUIREMENTS trailer. Bash ``show_help`` groups
+that command set by task.
 """
 
 from __future__ import annotations
