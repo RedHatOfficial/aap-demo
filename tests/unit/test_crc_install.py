@@ -9,6 +9,10 @@ import os
 import tarfile
 from pathlib import Path
 
+import pytest
+
+from aap_demo.core.errors import AapDemoError
+from aap_demo.exec.download import CONNECT_TIMEOUT_SECONDS, SPEED_LIMIT_BYTES, SPEED_TIME_SECONDS
 from aap_demo.exec.runner import CompletedCommand, FakeRunner
 from aap_demo.infra import crc_install
 from aap_demo.infra.crc import managed_crc_release
@@ -69,6 +73,24 @@ def test_install_linux_tarball_verifies_the_checksum_and_prefers_the_binary(
     assert (tmp_path / ".local" / "bin" / "crc").read_bytes() == b"#!/bin/sh\n"
     assert app_ctx.env["PATH"].split(os.pathsep)[0] == str(install_dir)
     assert managed_crc_release() in str(install_dir)
+
+
+def test_a_stalled_crc_download_names_the_url_and_asks_for_a_retry(app_ctx, fake_runner) -> None:
+    app_ctx.env["AAP_DEMO_CRC_INSTALL_OS"] = "Linux"
+    app_ctx.env["AAP_DEMO_CRC_INSTALL_MACHINE"] = "x86_64"
+    fake_runner.fail("curl")
+
+    with pytest.raises(AapDemoError, match="Failed to download CRC") as caught:
+        crc_install.install_managed_release(app_ctx, current=None)
+
+    url = crc_install.mirror_url(managed_crc_release(), "sha256sum.txt")
+    assert url in (caught.value.hint or "")
+    assert "Retry" in (caught.value.hint or "")
+    command = fake_runner.commands[0]
+    assert f"--connect-timeout {CONNECT_TIMEOUT_SECONDS}" in command
+    assert f"--speed-limit {SPEED_LIMIT_BYTES}" in command
+    assert f"--speed-time {SPEED_TIME_SECONDS}" in command
+    assert command.endswith(url)
 
 
 def test_extract_gzip_odc_unpacks_the_macos_payload_layout(tmp_path: Path) -> None:

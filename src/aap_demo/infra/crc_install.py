@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import IO, Any, Optional, cast
 
 from aap_demo.core.errors import AapDemoError, PrerequisiteError
+from aap_demo.exec.download import curl_argv
+from aap_demo.exec.download import failed as download_failed
 from aap_demo.infra.crc import managed_crc_release
 
 MIRROR = "https://mirror.openshift.com/pub/openshift-v4/clients/crc/{release}/{name}"
@@ -165,12 +167,9 @@ def remove_old_bundle_cache(home: Path, version: str) -> int:
 
 
 def _curl(ctx: Any, url: str, dest: Path) -> None:
-    result = ctx.runner.run(["curl", "-fsSL", "--retry", "3", "-o", str(dest), url])
+    result = ctx.runner.run(curl_argv(url, str(dest)))
     if not result.ok or not dest.is_file():
-        raise AapDemoError(
-            "Failed to download CRC",
-            hint=f"Download it from {url}",
-        )
+        raise download_failed("CRC", url)
 
 
 def _extract_macos_pkg(ctx: Any, archive: Path, dest: Path) -> None:
