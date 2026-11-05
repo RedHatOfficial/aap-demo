@@ -86,35 +86,5 @@ else
   echo "  ✓ kubernetes.core already installed"
 fi
 
-# Check for mkcert if MINC_MKCERT is enabled (default: true)
-# Note: mkcert is auto-installed during setup if not present
-if [ "${MINC_MKCERT:-true}" = "true" ]; then
-  if ! command -v mkcert &>/dev/null; then
-    echo ""
-    echo "ℹ  mkcert not found - will be auto-installed during setup"
-    echo "   (installs to ~/.local/bin/mkcert from GitHub releases)"
-    echo ""
-    echo "   Or disable with: MINC_MKCERT=false"
-    echo ""
-  else
-    # Check if mkcert CA is installed (mkcert -install was run)
-    MKCERT_CA="$(mkcert -CAROOT 2>/dev/null)/rootCA.pem"
-    if [ ! -f "$MKCERT_CA" ]; then
-      echo ""
-      echo "✗  mkcert CA not initialized - run 'mkcert -install' first"
-      echo ""
-      echo "   mkcert is installed but the CA is not set up."
-      echo "   This is required for browsers and podman to trust certificates."
-      echo ""
-      echo "   Run:  mkcert -install"
-      echo ""
-      echo "   Or disable: MINC_MKCERT=false aap-demo"
-      echo ""
-    else
-      echo "  ✓ mkcert installed and CA initialized (trusted SSL certs enabled)"
-    fi
-  fi
-fi
-
 echo "  ✓ All required dependencies found"
 echo ""

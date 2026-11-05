@@ -11,7 +11,6 @@ aap-demo create          # Create local MicroShift cluster
 aap-demo deploy          # Deploy AAP 2.7
 aap-demo status          # Show cluster status, routes, credentials
 aap-demo diagnose        # Quick health check (cluster, storage, SCCs, pods)
-aap-demo diagnose --ai   # Health check + AI-powered root cause analysis (requires claude CLI)
 aap-demo must-gather     # Collect full diagnostics for troubleshooting
 aap-demo idle true       # Scale down AAP to save resources (operator deploys only)
 aap-demo idle false      # Scale back up
@@ -63,6 +62,11 @@ oc adm policy add-scc-to-group privileged system:serviceaccounts:aap-operator
 **Symptom**: Pods evicted or images fail to pull
 **Fix**: `aap-demo ssh` then `sudo crictl rmi --prune` to clean unused images
 
+### `crc start` hangs at "Waiting until ssh is available"
+**Symptom**: `aap-demo create` sits on "Starting CRC" after "CRC VM is up"; `diagnose` reports CRC not answering
+**Cause**: The `crc daemon`, which carries the VM's network, is not running or runs a different `crc` (`~/.crc/bin/crc` links to an old install)
+**Fix**: `crc stop; pkill -f 'crc daemon'; crc cleanup && crc setup`, then `aap-demo start`. `aap-demo diagnose` shows the daemon and the 127.0.0.1:2222 SSH forward under "OpenShift Local host"
+
 ### Commands target a remote cluster
 **Symptom**: `Kubeconfig points at a remote cluster`, or `AAP not found in namespace aap-operator` while the CRC VM is running
 **Cause**: `oc login` changed the current context of `~/.aap-demo/kubeconfig.microshift`
@@ -97,10 +101,9 @@ ansible/                       # Ansible playbook alternative
 
 1. Run `aap-demo diagnose` first to identify obvious issues
 2. If diagnose shows failures, suggest the specific fix listed
-3. For complex issues, suggest `aap-demo diagnose --ai` for AI-powered root cause analysis
-4. If still unclear, run `aap-demo must-gather` to collect full diagnostics
-5. Check `aap-demo status` for routes and credentials
-6. For deployment issues, check operator logs: `kubectl logs -l app.kubernetes.io/managed-by=aap-gateway-operator -n aap-operator --tail=50`
+3. If still unclear, run `aap-demo must-gather` to collect full diagnostics
+4. Check `aap-demo status` for routes and credentials
+5. For deployment issues, check operator logs: `kubectl logs -l app.kubernetes.io/managed-by=aap-gateway-operator -n aap-operator --tail=50`
 
 ## Contributing to aap-demo
 
@@ -137,7 +140,7 @@ ADRs document:
 **Use the `/aap-addon-development` skill** to:
 - Create new addons with proper structure
 - Generate `deploy.sh` with deploy and delete modes
-- Register addon in `AVAILABLE_ADDONS` (aap-demo.sh:3002)
+- Register addon in `AVAILABLE_ADDONS` in `aap-demo.sh`
 - Document dependencies and prerequisites
 - Test enable/disable lifecycle
 

@@ -96,7 +96,7 @@ automatically activate this venv.
 **Purpose**: Secret detection and prevention
 **Files**: All files
 **Config**: `.secrets.baseline`
-**Command**: `detect-secrets scan`
+**Command**: `make check-secrets` (detect-secrets 1.5.0, read-only)
 
 ### 6. commitlint
 

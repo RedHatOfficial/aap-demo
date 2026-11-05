@@ -38,7 +38,6 @@ This environment includes characteristics specific to local development:
 | Deploy AAP 2.7 | `aap-demo deploy` |
 | Check status & creds | `aap-demo status` |
 | Health check | `aap-demo diagnose` |
-| AI-powered diagnostics | `aap-demo diagnose --ai` |
 | Collect full diagnostics | `aap-demo must-gather` |
 | Scale down (save resources) | `aap-demo idle true` |
 | Scale back up | `aap-demo idle false` |

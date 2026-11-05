@@ -3,14 +3,47 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_LINK="$HOME/.local/bin/aap-demo"
+
+# True when ~/.local/bin/aap-demo is the Python command (pipx or pip), not a
+# link to this checkout's aap-demo.sh. install.sh must not replace or remove it.
+# pip writes a python shebang or, when the interpreter path has a space or is
+# too long for a shebang (pipx on macOS lives under "Application Support"), a
+# /bin/sh wrapper whose second line execs that python.
+python_cli_installed() {
+  local first="" second=""
+  [ -f "$CLI_LINK" ] || return 1
+  { IFS= read -r first && IFS= read -r second; } <"$CLI_LINK" 2>/dev/null || true
+  case "$first" in
+    '#!'*python*) return 0 ;;
+  esac
+  case "$first" in
+    '#!/bin/sh'*) case "$second" in "'''exec' "*python*) return 0 ;; esac ;;
+  esac
+  return 1
+}
+
+python_cli_note() {
+  echo "  ~/.local/bin/aap-demo is the Python aap-demo command. Leaving it in place."
+  echo "  The bash script still runs directly: ${SCRIPT_DIR}/aap-demo.sh"
+  echo "  To switch back to bash, remove it with the tool that installed it, then rerun install.sh:"
+  echo "    pipx uninstall aap-demo   (or: pip uninstall aap-demo)"
+  echo "    ${SCRIPT_DIR}/install.sh"
+}
 
 # Uninstall
 if [ "${1:-}" = "--uninstall" ] || [ "${1:-}" = "uninstall" ]; then
   echo "Uninstalling aap-demo..."
-  rm -f ~/.local/bin/aap-demo
+  # The completions belong to the bash command, so they go either way.
   rm -f ~/.zsh/completions/_aap-demo
   rm -f ~/.local/share/bash-completion/completions/aap-demo
-  echo "  ✓ Binary and completions removed"
+  if python_cli_installed; then
+    echo "  ✓ Bash completions removed"
+    python_cli_note
+  else
+    rm -f "$CLI_LINK"
+    echo "  ✓ Binary and completions removed"
+  fi
   if [ -f "${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}" ]; then
     config_file="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
     sed -i.bak '/^ADDONS=/d' "$config_file"
@@ -25,6 +58,11 @@ fi
 
 echo "Installing aap-demo..."
 echo ""
+
+if python_cli_installed; then
+  python_cli_note
+  exit 0
+fi
 
 # Check dependencies
 MISSING_DEPS=""
