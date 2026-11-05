@@ -517,66 +517,89 @@ verify_cluster_type() {
 # -----------------------------------------------------------------------------
 # Help
 # -----------------------------------------------------------------------------
+# One-line addon blurbs already documented in help. Names with no blurb are
+# still printed from AVAILABLE_ADDONS so the catalog cannot drift.
+_help_addon_summary() {
+  case "$1" in
+    fleet)
+      printf '%s\n' "Managed nodes for demos (requires AAP)"
+      ;;
+    mcp-server)
+      printf '%s\n' "MCP server for AI assistants (required by ao)"
+      ;;
+    portal)
+      printf '%s\n' "Self-Service Portal (Helm; auto-detects arm64 vs amd64). Requires AAP 2.6+ and registry.redhat.io credentials (Helm auto-installed if missing)"
+      ;;
+    portal-operator)
+      printf '%s\n' "AAP Automation Portal Operator (Technology Preview, AMD64 only)"
+      ;;
+    setup-pah)
+      printf '%s\n' "Configure Private Automation Hub remotes and credentials"
+      ;;
+    ao)
+      printf '%s\n' "Automation Orchestrator (prompts for LLM or no LLM)"
+      ;;
+    ao-pr-testing)
+      printf '%s\n' "PR validation workflow and read-only OpenShift MCP (requires ao)"
+      ;;
+    local-cache)
+      printf '%s\n' "Cache container images locally (~30GB). save, load, or clear"
+      ;;
+    ollama)
+      printf '%s\n' "Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)"
+      ;;
+    keycloak)
+      printf '%s\n' "Keycloak OIDC provider for local AAP and AO authentication tests"
+      ;;
+    *) ;;
+  esac
+}
+
+_help_print_addons() {
+  local addon summary
+  local -a help_addons=()
+  read -r -a help_addons <<<"${AVAILABLE_ADDONS-}"
+  for addon in "${help_addons[@]}"; do
+    [ -z "$addon" ] && continue
+    summary="$(_help_addon_summary "$addon")"
+    if [ -n "$summary" ]; then
+      printf '  %-24s %s\n' "$addon" "$summary"
+    else
+      printf '  %s\n' "$addon"
+    fi
+  done
+}
+
 show_welcome() {
   cat <<EOF
 aap-demo - Deploy AAP $AAP_VERSION to OpenShift Local
 
 Usage: aap-demo [options] <command>
 
-Commands:
-  deploy          Deploy AAP $AAP_VERSION
-  status          Show cluster and AAP status
-  idle [true|false] Scale down/up AAP to save resources
-  diagnose [--ai] Check environment health (--ai for Claude analysis)
-  must-gather      Collect diagnostic info (AAP + cluster)
-  v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
-  clean           Remove AAP deployment
+Cluster
+  create            Create the OpenShift Local cluster
+  start             Start a stopped cluster
+  stop              Stop the cluster
+  ssh               SSH into the cluster node
 
-Cluster management:
-  create          Create OpenShift Local cluster
-  destroy         Delete cluster (--reset to clear config, --skip-cache to bypass image caching)
-  stop            Stop cluster
-  ssh             SSH into cluster node
+AAP
+  deploy            Deploy AAP $AAP_VERSION
+  status            Show cluster and AAP status
+  idle              Scale AAP down or up
 
-Addons:
-  enable fleet       Enable Fleet managed VMs for demos (requires AAP)
-                      Use --backend kube-native for the Python v2 Fleet addon
-                      Add --no-import with that backend to skip AAP registration
-  enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
-  enable mcp-server  Enable MCP server for AI assistants
+Health
+  diagnose          Check environment health
 
-Fleet commands (legacy Bash v1; local QEMU VMs only; requires: enable fleet):
-  fleet --backend qemu|kube-native|all <action>
-  fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
-  fleet list                    List running fleet node VMs
-  fleet remove [N|name]         Remove fleet node VMs
-  fleet destroy                 Remove all VMs and AAP resources
+Addons
+  enable            Enable an addon
+  fleet             Manage fleet node VMs
 
-Kubernetes-native fleet: aap-demo fleet list  (Kubernetes pod-backed nodes)
+Examples
+  aap-demo create
+  aap-demo deploy
+  aap-demo status
 
-Addons:
-  enable portal    Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
-                   Requires: AAP 2.6+, registry.redhat.io credentials (Helm auto-installed if missing)
-  enable portal-operator
-                  Enable the AAP 2.7 Automation Portal Operator (Technology Preview; AMD64 only)
-  enable mcp-server Enable MCP server for AI assistants (required by ao)
-  enable setup-pah Configure Private Automation Hub remotes and credentials
-  enable ao       Install Automation Orchestrator (prompts for LLM or no LLM)
-  enable ao-pr-testing Install PR validation workflow and read-only OpenShift MCP (requires ao)
-  enable local-cache Cache container images locally (~30GB) to speed up deploys
-  enable ollama   Deploy Ollama LLM server with qwen2.5:3b (wires into AO as llm_provider)
-  enable keycloak  Deploy Keycloak OIDC provider for local AAP/AO authentication tests
-  keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
-                  Configure Keycloak OIDC consumers; dry-run unless --apply
-
-Examples:
-  aap-demo deploy                              # Deploy AAP $AAP_VERSION
-  aap-demo enable fleet                        # Enable fleet addon
-  aap-demo fleet add 3 --image ~/rhel9.qcow2  # Create 3 managed VMs
-  aap-demo enable portal                       # Enable Self-Service Portal
-  aap-demo enable setup-pah                    # Configure Private Automation Hub
-
-Run 'aap-demo.sh help' for full documentation.
+Run 'aap-demo help' for the full command reference.
 EOF
 }
 
@@ -584,106 +607,109 @@ show_help() {
   cat <<EOF
 aap-demo - Deploy AAP $AAP_VERSION to OpenShift Local
 
-USAGE:
-    aap-demo [OPTIONS] <COMMAND>
+Usage: aap-demo [options] <command>
 
-OPTIONS:
-    --kubeconfig=FILE   Path to kubeconfig file (default: ~/.aap-demo/kubeconfig.microshift)
-    --context=NAME      kubectl context to use (default: current context)
-    NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
-    QUIET=true          Suppress disclaimer
-    FORCE=true          Force reinstall even if AAP exists
-    AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true
-                        Allow a remote kubeconfig context. Default is to
-                        refuse, so oc login cannot retarget deploy or enable.
+Cluster
+  create            Create the OpenShift Local cluster
+  start             Start a stopped cluster (re-applies CoreDNS config)
+  stop              Stop the cluster
+  ssh               SSH into the cluster node
+  destroy           Delete the local cluster
+  repair            Repair the cluster after a crash
+  trust-ca          Repair ingress certificate trust only
+  setup             Run setup only (storage, CoreDNS)
+  kubeconfig        Extract and merge kubeconfig
+  redeploy-all      Destroy the cluster and redeploy fresh
 
-COMMANDS (all infrastructure types):
-    deploy          Deploy AAP $AAP_VERSION (operator + CR)
-    status          Show cluster and AAP status
-    clean           Remove AAP deployment
-    watch           Watch AAP deployment status
-    redeploy        Clean AAP and redeploy
-    idle [true|false] Scale down/up AAP to save resources
-                    No arg: show current state
-                    true:   scale down all components
-                    false:  scale up all components
-    diagnose [--ai] Check environment health and identify common issues
-                    Checks: cluster, storage, SCCs, pods, PVCs, DNS
-                    --ai: analyze issues with Claude AI (requires 'claude' CLI)
-    must-gather [dir] Collect AAP and cluster diagnostics
-                    Uses AAP must-gather image for AAP-specific collection
-                    Output saved to must-gather.local.<timestamp> (or specified dir)
-    v2 [args...]     Run the Python v2 CLI (for example: aap-demo.sh v2 deploy)
-    enable [addon]  Enable an addon (fleet, olm, console, registry, mcp-server, portal)
-                    Fleet backends: --backend qemu|kube-native
-                    --no-import with --backend kube-native skips AAP registration
-    disable [addon] Disable an addon
-                    Fleet: --backend kube-native delegates to the Python addon
-    fleet --backend qemu|kube-native|all <action>
-    fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
-    fleet remove [N|name]  Remove last N VMs or a specific VM by name
-    fleet list             List running fleet node VMs
-    fleet destroy          Remove all VMs and AAP resources
-    (legacy Bash v1; local QEMU VMs only)
-    Kubernetes-native fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
-    enable [addon]  Enable an addon (ao, ao-pr-testing, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
-                    portal-operator is Technology Preview and AMD64 only
-    keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
-                    Configure Keycloak OIDC consumers; dry-run unless --apply
-                    --map-groups aligns Keycloak groups with AAP roles and AO groups
-    disable [addon] Disable an addon
-                    local-cache: Cache container images locally (~30GB).
-                    Saves images from a running cluster for fast reloads.
-                    Usage: enable local-cache [save|load|clear]
-    redhat-status   Check Red Hat registry status (alias: rh-status)
-    config          Configure aap-demo settings
-    update          Pull latest code and reinstall
-    version         Show aap-demo version and build timestamp
-    help            Show this help
+AAP
+  deploy            Deploy AAP $AAP_VERSION (operator + CR)
+  status            Show cluster and AAP status
+  watch             Watch deployment status
+  idle              Scale AAP down or up
+  clean             Remove the AAP deployment
+  redeploy          Clean and redeploy AAP
+  wire              Re-run addon wiring
 
-COMMANDS:
-    create          Create OpenShift Local cluster
-    destroy [--reset] [--skip-cache] Delete local cluster (--reset also clears config)
-    stop            Stop local cluster gracefully
-    start           Start stopped cluster (re-applies CoreDNS config)
-    ssh             SSH into cluster node
-    repair          Repair cluster after crash
-    trust-ca        Repair ingress certificate trust only
-    setup           Run setup only (storage, coredns)
-    kubeconfig      Extract and merge kubeconfig
-    redeploy-all    Destroy cluster and redeploy fresh
+Health
+  diagnose          Check environment health
+  must-gather       Collect AAP and cluster diagnostics
+  redhat-status     Check Red Hat registry status
 
-ENVIRONMENT:
-    AAP_VERSION=2.6|2.7  AAP version to deploy (default: 2.7)
-    AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
-    AAP_PERSISTENT_IMAGE_STORE=true
-                        Keep CRI-O image storage on a persistent qcow2 disk
-                        (Linux/libvirt only; macOS uses the OCI image cache)
-    AAP_IMAGE_STORE_DISK Path to the persistent image disk
-    AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
-    AAP_IMAGE_STORE_FORMAT=true
-                        Explicitly format a blank persistent disk once
+Addons
+  enable            Enable an addon
+  disable           Disable an addon
+  fleet             Manage fleet node VMs
+  keycloak          Configure Keycloak OIDC for AAP and AO
 
-EXAMPLES:
-    aap-demo create                              # Create OpenShift Local cluster
-    aap-demo deploy                              # Deploy AAP $AAP_VERSION
-    aap-demo enable fleet                        # Enable fleet addon
-    aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
-    aap-demo fleet list                          # Show running fleet nodes
-    aap-demo status                              # Show cluster and AAP status
-    aap-demo stop                                # Stop cluster
-    aap-demo start                               # Start stopped cluster
-    aap-demo ssh                                 # SSH into cluster node
-    aap-demo enable setup-pah                    # Configure Private Automation Hub remotes
+Other
+  config            Configure aap-demo settings
+  update            Pull latest code and reinstall
+  v2                Run the Python v2 CLI
+  version           Show version and build timestamp
+  help              Show this help
 
-REQUIREMENTS:
-    - OpenShift Local — https://console.redhat.com/openshift/create/local
-    - On Linux: libvirt-daemon, libvirt-daemon-driver-storage, qemu-kvm
+Options
+  --kubeconfig=FILE   Path to kubeconfig file (default: ~/.aap-demo/kubeconfig.microshift)
+  --context=NAME      kubectl context to use (default: current context)
+  --backend=NAME      Fleet backend: qemu, kube-native, or all
 
-    For all deployments:
-    - kubectl
-    - Pull secret at ~/.aap-demo/pull-secret.txt (from console.redhat.com)
+Environment
+  NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
+  QUIET=true          Suppress the disclaimer
+  FORCE=true          Force reinstall even if AAP exists
+  AAP_VERSION=2.6|2.7 AAP version to deploy (default: 2.7)
+  AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true
+                      Allow a remote kubeconfig context. Default is to
+                      refuse, so oc login cannot retarget deploy or enable.
+  AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
+  AAP_PERSISTENT_IMAGE_STORE=true
+                      Keep CRI-O image storage on a persistent qcow2 disk
+                      (Linux/libvirt only; macOS uses the OCI image cache)
+  AAP_IMAGE_STORE_DISK Path to the persistent image disk
+  AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
+  AAP_IMAGE_STORE_FORMAT=true
+                      Explicitly format a blank persistent disk once
 
+Notes
+  idle                No argument shows state; true scales down; false scales up
+  diagnose            Checks cluster, storage, SCCs, pods, PVCs, and DNS
+  diagnose --ai       Analyze issues with Claude (requires the claude CLI)
+  must-gather [dir]   Uses the AAP must-gather image. Output is
+                      must-gather.local.<timestamp>, or the directory given
+  destroy             --reset also clears config; --skip-cache skips the image cache
+  fleet               add, list, remove, destroy
+                      --backend qemu|kube-native|all
+                      add [N] --image <path> creates N RHEL VMs (requires: enable fleet)
+                      qemu is the legacy Bash v1 backend and uses local QEMU VMs
+                      kube-native uses Kubernetes pod-backed nodes
+                      --no-import with --backend kube-native skips AAP registration
+                      disable --backend kube-native delegates to the Python addon
+  local-cache         save, load, or clear. Saves images from a running cluster
+  keycloak configure  [--target aap|ao|all] [--map-groups] [--apply]
+                      Dry-run unless --apply
+                      --map-groups aligns Keycloak groups with AAP roles and AO groups
+  v2                  Example: aap-demo v2 deploy
+  aliases             deploy-all = deploy, rh-status = redhat-status
+
+Available addons
+EOF
+  _help_print_addons
+  cat <<EOF
+
+Examples
+  aap-demo create
+  aap-demo deploy
+  aap-demo status
+  aap-demo enable portal
+  aap-demo idle true
+
+Requirements
+  - OpenShift Local — https://console.redhat.com/openshift/create/local
+  - On Linux: libvirt-daemon, libvirt-daemon-driver-storage, qemu-kvm
+
+  For all deployments:
+  - kubectl
+  - Pull secret at ~/.aap-demo/pull-secret.txt (from console.redhat.com)
 EOF
 }
 

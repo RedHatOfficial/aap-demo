@@ -74,6 +74,71 @@ else
   _fail "obsolete_atf_command_removed - test command is still available"
 fi
 
+# Test 2a2: help is one grouped index and still documents the command surface
+echo "Test 2a2: help groups commands without dropping the command surface"
+welcome_output=$("$AAP_DEMO_SH" 2>&1 || true)
+dash_help=$("$AAP_DEMO_SH" --help 2>&1 || true)
+help_ok=true
+for section in Cluster AAP Health Addons Other Options Environment Notes Examples Requirements "Available addons"; do
+  if ! printf '%s\n' "$help_output" | grep -qx "$section"; then
+    echo "  missing section: $section"
+    help_ok=false
+  fi
+done
+enable_count=$(printf '%s\n' "$help_output" | grep -c '^  enable ') || true
+disable_count=$(printf '%s\n' "$help_output" | grep -c '^  disable ') || true
+if [ "$enable_count" -ne 1 ] || [ "$disable_count" -ne 1 ]; then
+  echo "  enable/disable should each appear once (enable=$enable_count disable=$disable_count)"
+  help_ok=false
+fi
+if printf '%s\n' "$help_output" | grep -q 'COMMANDS (all infrastructure types)'; then
+  echo "  old split COMMANDS heading is still present"
+  help_ok=false
+fi
+for command_line in \
+  '^  wire ' '^  trust-ca ' '^  redeploy-all ' '^  keycloak ' '^  v2 ' \
+  '^  redhat-status ' '^  must-gather '; do
+  if ! printf '%s\n' "$help_output" | grep -q "$command_line"; then
+    echo "  missing command: $command_line"
+    help_ok=false
+  fi
+done
+for detail in \
+  rh-status deploy-all \
+  --kubeconfig --context --backend --reset --skip-cache --ai kube-native \
+  --no-import local-cache portal-operator ao-pr-testing apme-eap \
+  product-demo-satellite AAP_DEMO_ALLOW_REMOTE_KUBECONFIG \
+  AAP_PERSISTENT_IMAGE_STORE AAP_IMAGE_STORE_DISK must-gather.local \
+  'pull-secret.txt'; do
+  if ! printf '%s\n' "$help_output" | grep -q -- "$detail"; then
+    echo "  missing detail: $detail"
+    help_ok=false
+  fi
+done
+addon_list=$(sed -n 's/^AVAILABLE_ADDONS="\(.*\)"/\1/p' "$AAP_DEMO_SH")
+read -r -a addons_expected <<<"$addon_list"
+for addon in "${addons_expected[@]}"; do
+  if ! printf '%s\n' "$help_output" | grep -Eq "^  ${addon}( |$)"; then
+    echo "  addon missing from help: $addon"
+    help_ok=false
+  fi
+done
+welcome_addon_sections=$(printf '%s\n' "$welcome_output" | grep -c '^Addons$' || true)
+if [ "$welcome_addon_sections" -ne 1 ] \
+  || ! printf '%s\n' "$welcome_output" | grep -q "aap-demo help"; then
+  echo "  welcome should be one short index that points at aap-demo help"
+  help_ok=false
+fi
+if [ "$dash_help" != "$help_output" ]; then
+  echo "  --help and help differ"
+  help_ok=false
+fi
+if [ "$help_ok" = true ]; then
+  _pass "help_grouped_by_task"
+else
+  _fail "help_grouped_by_task"
+fi
+
 # Test 2b: persistent storage is shown under the VM section
 echo "Test 2b: status places persistent storage under VM"
 vm_section_line=$(grep -n '^  echo "VM:"' "$AAP_DEMO_SH" | cut -d: -f1)
