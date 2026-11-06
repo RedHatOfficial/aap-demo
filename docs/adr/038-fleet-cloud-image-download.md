@@ -46,8 +46,8 @@ cache name derived from the URL, and it is downloaded again on each request
 unless `FLEET_IMAGE_SHA256` is set. A pinned image is stored under that digest
 and reused only when the file matches it and the saved source metadata agrees.
 Two URLs that share a filename do not share a cache entry unless both are
-pinned to the same digest. The resolved local
-path is saved as `FLEET_IMAGE` for the next enable or `fleet add`. A later
+pinned to the same digest. The resolved local path is saved as `FLEET_IMAGE`
+for the next enable or `fleet add`. A later
 request that passes a URL goes through this cache check again; a saved local
 path is used as a local file.
 
