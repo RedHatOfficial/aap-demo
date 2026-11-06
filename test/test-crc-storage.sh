@@ -184,15 +184,40 @@ cat "${TEST_DIR}/prompt-invalid.out" "${TEST_DIR}/prompt-invalid.err" | grep -q 
 pass "prompt rejects a non-numeric disk size"
 
 mkdir -p "${TEST_DIR}/bin" "${TEST_DIR}/home/.aap-demo"
+CRC_DISK_STATE="${TEST_DIR}/crc-disk-state"
+: >"$CRC_DISK_STATE"
 cat >"${TEST_DIR}/bin/crc" <<'MOCK_CRC'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${AAP_DEMO_TEST_CRC_LOG:?}"
-case "$*" in
-  "config set disk-size 32")
-    printf 'disk-size value 32 is invalid, must be greater than or equal to 31\n' >&2
-    exit 1
+state="${AAP_DEMO_TEST_CRC_DISK_STATE:?}"
+value=""
+case "$1 $2 $3" in
+  "config get disk-size")
+    if [ -s "$state" ]; then
+      value="$(tr -d '[:space:]' <"$state")"
+    fi
+    if [ -n "$value" ]; then
+      printf 'disk-size : %s\n' "$value"
+    else
+      printf "Configuration property 'disk-size' is not set. Default value '31' is used\n"
+    fi
+    exit 0
     ;;
+  "config unset disk-size")
+    : >"$state"
+    exit 0
+    ;;
+  "config set disk-size")
+    if [ "${4:-}" = "32" ]; then
+      printf 'disk-size value 32 is invalid, must be greater than or equal to 31\n' >&2
+      exit 1
+    fi
+    printf '%s\n' "$4" >"$state"
+    exit 0
+    ;;
+esac
+case "$*" in
   "config set persistent-volume-size 16")
     printf 'persistent-volume-size value 16 is invalid, must be greater than or equal to 15\n' >&2
     exit 1
@@ -219,6 +244,7 @@ cli() {
     HOME="${TEST_DIR}/home" \
     AAP_DEMO_CONFIG="${TEST_DIR}/home/.aap-demo/config" \
     AAP_DEMO_TEST_CRC_LOG="${TEST_DIR}/crc.log" \
+    AAP_DEMO_TEST_CRC_DISK_STATE="$CRC_DISK_STATE" \
     PATH="${TEST_DIR}/bin:${PATH}" \
     QUIET=true \
     "${REPO_ROOT}/aap-demo.sh" "$@"
@@ -285,7 +311,78 @@ grep -q '^CRC_PV_SIZE=90$' "${TEST_DIR}/home/.aap-demo/config" || fail "a crc PV
 grep -qx 'config set disk-size 40' "${TEST_DIR}/crc.log" || fail "crc should receive the requested disk before the PV rejection"
 grep -qx 'config set persistent-volume-size 16' "${TEST_DIR}/crc.log" || fail "crc should receive the rejected PV size"
 grep -qx 'config set disk-size 200' "${TEST_DIR}/crc.log" || fail "a rejected PV size should restore the previous crc disk size"
+[ "$(tr -d '[:space:]' <"$CRC_DISK_STATE")" = "200" ] || fail "a rejected PV size should leave crc disk-size at the previous value"
 pass "aap-demo storage restores the previous disk when crc rejects the PV pool"
+
+rollback_storage() {
+  local label="$1"
+  local seeded_disk="${2:-}"
+  local seeded_config="${3:-}"
+  local home="${TEST_DIR}/rollback-${label}"
+  local state="${TEST_DIR}/rollback-${label}.disk"
+  local log="${TEST_DIR}/rollback-${label}.log"
+  mkdir -p "$home"
+  if [ -n "$seeded_config" ]; then
+    mkdir -p "${home}/.aap-demo"
+    printf '%s\n' "$seeded_config" >"${home}/.aap-demo/config"
+  fi
+  if [ -n "$seeded_disk" ]; then
+    printf '%s\n' "$seeded_disk" >"$state"
+  else
+    : >"$state"
+  fi
+  : >"$log"
+  set +e
+  env -u CRC_DISK -u CRC_PV_SIZE -u VM_DISK_SIZE -u VM_PV_SIZE \
+    HOME="$home" \
+    AAP_DEMO_CONFIG="${home}/.aap-demo/config" \
+    AAP_DEMO_TEST_CRC_LOG="$log" \
+    AAP_DEMO_TEST_CRC_DISK_STATE="$state" \
+    PATH="${TEST_DIR}/bin:${PATH}" \
+    QUIET=true \
+    "${REPO_ROOT}/aap-demo.sh" storage 40 16 \
+    >"${TEST_DIR}/rollback-${label}.out" 2>"${TEST_DIR}/rollback-${label}.err"
+  local status=$?
+  set -e
+  return "$status"
+}
+
+if rollback_storage fresh-unset; then
+  fail "a fresh config should still fail when crc rejects the PV size: $(cat "${TEST_DIR}/rollback-fresh-unset.out" "${TEST_DIR}/rollback-fresh-unset.err")"
+fi
+grep -q 'saved size was not changed' "${TEST_DIR}/rollback-fresh-unset.err" || fail "fresh config PV rejection should say the saved size was not changed: $(cat "${TEST_DIR}/rollback-fresh-unset.err")"
+grep -qx 'config unset disk-size' "${TEST_DIR}/rollback-fresh-unset.log" || fail "an unset CRC disk should be unset again after a PV rejection: $(cat "${TEST_DIR}/rollback-fresh-unset.log")"
+if [ -s "${TEST_DIR}/rollback-fresh-unset.disk" ]; then
+  fail "an unset CRC disk was left configured: $(cat "${TEST_DIR}/rollback-fresh-unset.disk")"
+fi
+if [ -f "${TEST_DIR}/rollback-fresh-unset/.aap-demo/config" ] && grep -q '^CRC_DISK=' "${TEST_DIR}/rollback-fresh-unset/.aap-demo/config"; then
+  fail "a fresh config should not save the rejected size: $(cat "${TEST_DIR}/rollback-fresh-unset/.aap-demo/config")"
+fi
+pass "aap-demo storage unsets a new disk when crc rejects the PV pool on a fresh config"
+
+if rollback_storage fresh-crc 120; then
+  fail "a fresh aap-demo config should still fail when crc rejects the PV size: $(cat "${TEST_DIR}/rollback-fresh-crc.out" "${TEST_DIR}/rollback-fresh-crc.err")"
+fi
+grep -q 'saved size was not changed' "${TEST_DIR}/rollback-fresh-crc.err" || fail "CRC-backed disk should be described as unchanged: $(cat "${TEST_DIR}/rollback-fresh-crc.err")"
+grep -qx 'config set disk-size 120' "${TEST_DIR}/rollback-fresh-crc.log" || fail "the CRC disk setting should be restored when aap-demo has no saved disk: $(cat "${TEST_DIR}/rollback-fresh-crc.log")"
+[ "$(tr -d '[:space:]' <"${TEST_DIR}/rollback-fresh-crc.disk")" = "120" ] || fail "CRC disk-size should be back to 120: $(cat "${TEST_DIR}/rollback-fresh-crc.disk")"
+if [ -f "${TEST_DIR}/rollback-fresh-crc/.aap-demo/config" ] && grep -q '^CRC_DISK=' "${TEST_DIR}/rollback-fresh-crc/.aap-demo/config"; then
+  fail "a fresh config should not save the rejected size: $(cat "${TEST_DIR}/rollback-fresh-crc/.aap-demo/config")"
+fi
+pass "aap-demo storage restores the CRC disk when aap-demo has no saved size"
+
+if rollback_storage crc-not-config 120 $'CRC_DISK=200\nCRC_PV_SIZE=90'; then
+  fail "crc PV rejection should fail even when the saved size differs: $(cat "${TEST_DIR}/rollback-crc-not-config.out" "${TEST_DIR}/rollback-crc-not-config.err")"
+fi
+grep -qx 'config set disk-size 120' "${TEST_DIR}/rollback-crc-not-config.log" || fail "rollback should use the CRC disk, not the aap-demo config: $(cat "${TEST_DIR}/rollback-crc-not-config.log")"
+if grep -qx 'config set disk-size 200' "${TEST_DIR}/rollback-crc-not-config.log"; then
+  fail "rollback restored the aap-demo config disk instead of the CRC disk"
+fi
+grep -q '^CRC_DISK=200$' "${TEST_DIR}/rollback-crc-not-config/.aap-demo/config" || fail "the saved disk should stay unchanged"
+if grep -q '^CRC_DISK=40$' "${TEST_DIR}/rollback-crc-not-config/.aap-demo/config"; then
+  fail "the rejected disk was saved"
+fi
+pass "aap-demo storage rolls CRC back to its own disk size"
 
 mkdir -p "${TEST_DIR}/home/.crc/machines/crc"
 existing_output="$(cli storage)"
@@ -312,6 +409,7 @@ run_rejected_create() {
       HOME="$home" \
       AAP_DEMO_CONFIG="${home}/.aap-demo/config" \
       AAP_DEMO_TEST_CRC_LOG="${TEST_DIR}/crc.log" \
+      AAP_DEMO_TEST_CRC_DISK_STATE="$CRC_DISK_STATE" \
       PATH="${TEST_DIR}/bin:${PATH}" \
       QUIET=true \
       CRC_CPUS=8 \
@@ -326,6 +424,7 @@ run_rejected_create() {
       HOME="$home" \
       AAP_DEMO_CONFIG="${home}/.aap-demo/config" \
       AAP_DEMO_TEST_CRC_LOG="${TEST_DIR}/crc.log" \
+      AAP_DEMO_TEST_CRC_DISK_STATE="$CRC_DISK_STATE" \
       PATH="${TEST_DIR}/bin:${PATH}" \
       QUIET=true \
       CRC_CPUS=8 \

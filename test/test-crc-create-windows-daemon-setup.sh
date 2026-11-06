@@ -30,6 +30,9 @@ case "$*" in
   "status --output json")
     printf '%s\n' '{"crcStatus":"Stopped","openshiftStatus":"Stopped"}'
     ;;
+  "config get disk-size")
+    printf 'disk-size : 120\n'
+    ;;
   "config set "*)
     ;;
   "setup --show-progressbars")
