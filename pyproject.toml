@@ -61,6 +61,18 @@ path = "src/aap_demo/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/aap_demo"]
 
+# Product-demos installers stay shell scripts. The wheel has to carry them or
+# `pipx install aap-demo` cannot run `aap-demo enable product-demos`.
+[tool.hatch.build.targets.wheel.force-include]
+"addons/product-demos" = "aap_demo/bundled_addons/product-demos"
+"addons/product-demos-base" = "aap_demo/bundled_addons/product-demos-base"
+"addons/product-demo-linux" = "aap_demo/bundled_addons/product-demo-linux"
+"addons/product-demo-windows" = "aap_demo/bundled_addons/product-demo-windows"
+"addons/product-demo-network" = "aap_demo/bundled_addons/product-demo-network"
+"addons/product-demo-cloud" = "aap_demo/bundled_addons/product-demo-cloud"
+"addons/product-demo-openshift" = "aap_demo/bundled_addons/product-demo-openshift"
+"addons/product-demo-satellite" = "aap_demo/bundled_addons/product-demo-satellite"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

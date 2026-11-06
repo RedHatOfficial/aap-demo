@@ -48,6 +48,7 @@ EXAMPLES:
     aap-demo create                  # Create OpenShift Local cluster
     aap-demo deploy                  # Deploy AAP 2.7
     aap-demo status                  # Show cluster and AAP status
+    aap-demo enable product-demos    # Install Ansible product demos
     aap-demo stop                    # Stop cluster
     aap-demo start                   # Start stopped cluster
     aap-demo ssh                     # SSH into cluster node
@@ -255,7 +256,7 @@ def build_parser(
     _add_config_command(add, sub)
 
     # -- addons -------------------------------------------------------------
-    p = add("enable", "Enable an addon")
+    p = add("enable", "Enable an addon (fleet or product-demos)")
     p.add_argument("addon", nargs="?", help="Addon name; omit to list available addons")
     p.add_argument("addon_args", nargs="*", metavar="ARGS", help="Addon-specific arguments")
     p.add_argument(
@@ -556,7 +557,7 @@ def _fleet_destroy(ctx: AppContext, args: argparse.Namespace) -> int:
 
 def _preflight(ctx: AppContext, command: str, args: argparse.Namespace) -> None:
     """Bash's pre-dispatch ``setup_kubeconfig`` + ``verify_cluster_type``."""
-    if _fleet_needs_cluster(command, args):
+    if _addon_needs_cluster(command, args):
         preflight.setup_kubeconfig(ctx)
         preflight.warn_cluster_state(ctx)
         return
@@ -569,12 +570,17 @@ def _preflight(ctx: AppContext, command: str, args: argparse.Namespace) -> None:
     preflight.warn_cluster_state(ctx)
 
 
-def _fleet_needs_cluster(command: str, args: argparse.Namespace) -> bool:
-    """Kubeconfig preflight for fleet only. ``enable portal`` stays an addon error."""
+def _addon_needs_cluster(command: str, args: argparse.Namespace) -> bool:
+    """Kubeconfig preflight for addons this command can install.
+
+    ``enable portal`` stays an addon error and does not touch the cluster.
+    """
+    from aap_demo.addons import needs_cluster
+
     if command == "fleet":
         return True
-    if command in {"enable", "disable"} and getattr(args, "addon", None) == "fleet":
-        return True
+    if command in {"enable", "disable"}:
+        return needs_cluster(getattr(args, "addon", None))
     return False
 
 

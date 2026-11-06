@@ -74,7 +74,7 @@ fi
 
 echo "Checking for product-demos-base..."
 
-if ! grep -q "product-demos-base" ~/.aap-demo/config 2>/dev/null; then
+if ! apd_base_is_recorded; then
   echo "product-demos-base not found. Installing dependency..."
   echo ""
 

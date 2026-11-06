@@ -23,7 +23,7 @@ There are two commands, on purpose.
 | How you get it | `pipx install aap-demo` | Clone the repo and run `./install.sh` |
 | What it is | The Python release candidate, version 2.0.0rc1 | The bash script `aap-demo.sh` |
 | Where your files go | `~/.local/state/aap-demo` | `~/.aap-demo` |
-| What to use it for | Create the cluster, deploy AAP, day-to-day start and stop, Fleet | Anything the new command does not do yet |
+| What to use it for | Create the cluster, deploy AAP, day-to-day start and stop, Fleet, product demos | Anything the new command does not do yet |
 
 You can keep both. If the older command is installed as `aap-demo`, rename it to `aap-demo-v1` before you
 install the new one, so the new command is the one that runs. The steps are in
