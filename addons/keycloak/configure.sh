@@ -176,7 +176,7 @@ AAP_PAYLOAD="$(jq -nc \
 AO_PAYLOAD="$(jq -nc \
   --arg name "$AO_NAME" --arg issuer "$ISSUER" --arg client_secret "$AO_SECRET" --arg redirect "$AO_REDIRECT_URI" \
   --argjson disable_tls_verify "$([ "$KEYCLOAK_INSECURE_TLS" = true ] && echo true || echo false)" \
-  '{name:$name,enabled:true,configuration:{provider_type:"oidc",idp_type:"custom",auto_discovery:true,issuer_url:$issuer,client_id:"aap-demo-ao",client_secret:$client_secret,redirect_uri:$redirect,scopes:"openid profile email groups",claim_mapping:{subject:"sub",email:"email",username:"preferred_username",first_name:"given_name",last_name:"family_name"},group_jmespath_expression:"groups[*]",group_mapping_entries:[],allow_all_authenticated:true,enable_rp_initiated_logout:true,disable_tls_verify:$disable_tls_verify}}')"
+  '{name:$name,enabled:true,configuration:{provider_type:"oidc",idp_type:"custom",auto_discovery:true,issuer_url:$issuer,client_id:"aap-demo-ao",client_secret:$client_secret,redirect_uri:$redirect,scopes:"openid",claim_mapping:{subject:"sub",email:"email",username:"preferred_username",first_name:"given_name",last_name:"family_name"},group_jmespath_expression:"groups[*]",group_mapping_entries:[],allow_all_authenticated:true,enable_rp_initiated_logout:true,disable_tls_verify:$disable_tls_verify}}')"
 
 print_plan() {
   echo "Keycloak OIDC configuration plan"
@@ -252,16 +252,8 @@ fi
 
 if [ "$TARGET" != aap ]; then
   AO_PASSWORD="$(kubectl get secret automation-orchestrator-initial-admin-password -n automation-orchestrator -o jsonpath='{.data.password}' | base64 -d)"
-  AO_COOKIE="$REQUEST_DIR/ao.cookie"
-  CSRF="$(curl_local -f -X POST -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/csrf_token" | jq -r .csrf_token)"
-  [ -n "$CSRF" ] || {
-    echo "ERROR: AO CSRF token request failed" >&2
-    exit 1
-  }
-  AO_CSRF_AUTH="$REQUEST_DIR/ao-csrf.conf"
-  printf 'header = "X-CSRF-Token: %s"\n' "$CSRF" >"$AO_CSRF_AUTH"
   printf '%s' "$(jq -nc --arg p "$AO_PASSWORD" '{username:"admin",password:$p}')" >"$REQUEST_DIR/ao-login.json"
-  AO_TOKEN="$(curl_local -f -X POST -b "$AO_COOKIE" -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/login" --config "$AO_CSRF_AUTH" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
+  AO_TOKEN="$(curl_local -f -X POST "https://${AO_HOST}/api/v1/auth/login" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
   [ -n "$AO_TOKEN" ] && [ "$AO_TOKEN" != null ] || {
     echo "ERROR: AO admin login failed" >&2
     exit 1
@@ -285,7 +277,7 @@ if [ "$TARGET" != aap ]; then
         AO_GROUPS_PAYLOAD="$(printf '%s' "$AO_GROUPS_PAYLOAD" | jq --arg value "$group" --arg id "$group_id" '. + [{idp_group_value:$value,mapped_group_id:$id}]')"
       done
       AO_CURRENT="$(curl_local -f "${AO_BASE}/${AO_ID}" --config "$AO_AUTH")"
-      AO_PAYLOAD="$(printf '%s' "$AO_CURRENT" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" '{name,enabled,configuration:(.configuration | del(.client_secret) | .group_mapping_entries=$mappings | .allow_all_authenticated=false)}')"
+      AO_PAYLOAD="$(printf '%s' "$AO_CURRENT" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" --arg scopes "openid" '{name,enabled,configuration:(.configuration | del(.client_secret) | .scopes=$scopes | .group_mapping_entries=$mappings | .allow_all_authenticated=false)}')"
       echo "  AO group mappings: $(printf '%s' "$AO_PAYLOAD" | jq '.configuration.group_mapping_entries | length')"
     fi
     printf '%s' "$AO_PAYLOAD" >"$REQUEST_DIR/ao.json"
