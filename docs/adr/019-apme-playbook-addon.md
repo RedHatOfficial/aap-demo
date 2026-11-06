@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD013 -->
 # ADR-019: APME Playbook Addon
 
-**Status:** Accepted
+**Status:** Proposed
 **Date:** 2026-07-21
 **Author:** Chad Ferman
 
@@ -121,6 +121,18 @@ addons/apme-playbook/
 - Self-contained addon (no external zip dependency)
 - Can be updated by copying new welcome pack
 - Clear diff of local modifications
+
+### Supported RHDH hub version
+
+aap-demo targets one **RHDH hub container tag** for Automation Portal deployments, aligned with the RHDH line used with the portal Helm chart—not different tags per CPU architecture.
+
+- **Canonical default:** `rhdh_image_tag` in [`addons/apme-eap/defaults.yml`](../../addons/apme-eap/defaults.yml) (currently `"1.10"`).
+- **apme-eap:** The tag is substituted into portal Helm values on **both** amd64 and arm64 via the `<rhdh-hub-tag>` placeholder in `apme_helm_values`.
+- **Architecture chooses registry/repository only:**
+  - **amd64:** `registry.redhat.io/rhdh/rhdh-hub-rhel9:<rhdh_image_tag>`
+  - **arm64:** `quay.io/rhdh-community/rhdh:<rhdh_image_tag>` (Red Hat hub image is amd64-only; see ADR-002)
+- **Override:** set `rhdh_image_tag` in `~/.aap-demo/apme-eap-vars.yml` and re-run `aap-demo enable apme-eap`.
+- **Standalone `enable portal` (x86):** uses the chart-pinned Red Hat hub tag unless extended later; ARM profile reads the same `defaults.yml` key (see ADR-002).
 
 ## Implementation
 
@@ -344,7 +356,6 @@ chart_ref: "{{ portal_helm_chart_repo_url }}{{ portal_helm_chart_name }}"
 # After (correct)
 chart_ref: "{{ portal_helm_chart_name }}"
 chart_repo_url: "{{ portal_helm_chart_repo_url }}"
-## References
 ```
 
 ### Issue 4: Postgres Registry Override
@@ -361,13 +372,37 @@ chart_repo_url: "{{ portal_helm_chart_repo_url }}"
   replace: '\1{{ rhdh_image_registry }}\2'
 ```
 
-### Issue 5: Plugin Compatibility Between RHDH Versions Community needed for arm
+### Issue 5: ARM64 Image Availability
 
-**Problem**: Init container error - `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found in community RHDH 1.10
+**Problem**: `ImagePullBackOff` on arm64 — Red Hat registry RHDH hub images have no arm64 manifest.
 
-**Root Cause**: Community RHDH (1.10) and Red Hat RHDH (1.9) have different plugin sets
+**Root Cause**: `registry.redhat.io/rhdh/rhdh-hub-rhel9` is x86_64 only (at any supported tag).
 
-**Resolution**: Remove incompatible plugins for community version
+**Resolution**: Select **registry and repository** by CPU; keep the **same** `rhdh_image_tag` from `defaults.yml` on both paths (community multi-arch hub on ARM). See **Supported RHDH hub version** above.
+
+```yaml
+- name: Use community RHDH images for ARM64
+  ansible.builtin.set_fact:
+    rhdh_image_registry: "quay.io"
+    rhdh_image_repository: "rhdh-community/rhdh"
+  when: system_arch in ['aarch64', 'arm64']
+
+- name: Use official Red Hat registry for x86_64
+  ansible.builtin.set_fact:
+    rhdh_image_registry: "registry.redhat.io"
+    rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
+  when: system_arch not in ['aarch64', 'arm64']
+
+# Hub tag: substitute <rhdh-hub-tag> with {{ rhdh_image_tag | default('1.10') }}
+```
+
+### Issue 6: Plugin compatibility on ARM (community hub image)
+
+**Problem**: Init container error — `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found on ARM.
+
+**Root Cause**: Portal values and dynamic-plugin lists assume **Red Hat packaged RHDH** content; the **community hub image** used on ARM may not ship the same bundled community plugin artifacts—not because x86 and ARM run different **RHDH version tags** by policy.
+
+**Resolution**: Remove or disable incompatible plugins for the community hub path on ARM64.
 
 ```yaml
 - name: Remove incompatible plugins for community RHDH (ARM64)
@@ -419,7 +454,7 @@ The APME namespace and portal deployment itself remain unchanged between approac
 - [ADR-022](022-apme-prebuilt-portal-hub.md): Pre-built portal hub image, init contract, and Git Repositories fixes
 - [ADR-019b](019b-apme-aap-native-execution.md): Rejected AAP-native execution approach
 - [ADR-008](008-addon-system.md): Addon system architecture
-- [ADR-004](004-portal-helm-addon.md): Portal Helm addon (similar dual-path pattern)
+- [ADR-002](002-portal-helm-deployment.md): Portal Helm addon (ARM profile and hub tag sourcing)
 - [APME Welcome Pack](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr): Official APME deployment documentation
 - [APME GitHub Repository](https://github.com/ansible/apme): APME source code
 - [addons/apme-playbook/README.md](../../addons/apme-playbook/README.md): Addon documentation

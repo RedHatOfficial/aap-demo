@@ -1,0 +1,19 @@
+{# Abbenay config — bundled on every apme-eap deploy (ConfigMap seed + PVC). #}
+{# Keep providers in sync with apme-values.yaml; chat: true for apme#755. #}
+{# Redeploy overwrites portal AI provider settings on the Abbenay PVC. #}
+# ADR-070: HTTP admin on loopback; token from ABBENAY_API_TOKEN env
+server:
+  host: "127.0.0.1"
+  api_token_env: ABBENAY_API_TOKEN
+providers:
+  bootstrap-placeholder:
+    engine: ollama
+    base_url: "http://127.0.0.1:11434/v1"
+    models:
+      placeholder: {}
+consumers:
+  apme:
+    token_env: APME_ABBENAY_TOKEN
+    capabilities:
+      inline_policy: true
+      chat: true

@@ -1,14 +1,6 @@
 ---
 # Create secrets-scm for GitHub OAuth App + GitHub App (replaces setup-github-secrets.sh)
 
-- name: Validate GitHub token is provided  # noqa: var-naming[no-role-prefix]
-  ansible.builtin.assert:
-    that:
-      - github_token is defined and github_token | length > 0
-    fail_msg: >-
-      configure_github_secrets is true but github_token is missing.
-      Provide GITHUB_TOKEN environment variable or edit {{ lookup('env', 'HOME') }}/.aap-demo/apme-eap-vars.yml
-
 - name: Check if full GitHub OAuth/App configuration is provided  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     github_full_config: "{{
@@ -19,6 +11,17 @@
       (github_app_client_secret is defined and github_app_client_secret | length > 0) and
       (github_app_private_key_path is defined and github_app_private_key_path | length > 0)
     }}"
+
+- name: Validate GitHub credentials for configure_github_secrets  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.assert:
+    that:
+      - >-
+        (github_token is defined and github_token | length > 0)
+        or (github_full_config | bool)
+    fail_msg: >-
+      configure_github_secrets is true but neither github_token nor a complete GitHub App
+      configuration was provided. Set GITHUB_TOKEN or GitHub App vars in
+      {{ lookup('env', 'HOME') }}/.aap-demo/apme-eap-vars.yml
 
 - name: Warn if using token-only mode  # noqa: var-naming[no-role-prefix]
   ansible.builtin.debug:
@@ -52,9 +55,12 @@
       stringData:
         github-token: "{{ github_token }}"
   no_log: true
-  when: (github_full_config | bool) == false
+  when:
+    - (github_full_config | bool) == false
+    - github_token is defined
+    - github_token | length > 0
 
-- name: Create or update secrets-scm (full config mode)  # noqa: var-naming[no-role-prefix]
+- name: Create or update secrets-scm (full App config, optional PAT)  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s:
     state: present
     api_key: "{{ openshift_token | default(omit) }}"
@@ -68,13 +74,23 @@
       metadata:
         name: "{{ apme_scm_secrets_secret_name }}"
       type: Opaque
-      stringData:
-        github-oauth-client-id: "{{ github_oauth_client_id }}"
-        github-oauth-client-secret: "{{ github_oauth_client_secret }}"
-        github-app-id: "{{ github_app_id }}"
-        github-app-client-id: "{{ github_app_client_id }}"
-        github-app-client-secret: "{{ github_app_client_secret }}"
-        github-app-private-key: "{{ github_app_private_key_file.content | b64decode }}"
-        github-token: "{{ github_token }}"
+      stringData: "{{ _apme_scm_string_data }}"
+  vars:
+    _apme_scm_string_data: >-
+      {{
+        {
+          'github-oauth-client-id': github_oauth_client_id,
+          'github-oauth-client-secret': github_oauth_client_secret,
+          'github-app-id': github_app_id,
+          'github-app-client-id': github_app_client_id,
+          'github-app-client-secret': github_app_client_secret,
+          'github-app-private-key': github_app_private_key_file.content | b64decode,
+        }
+        | combine(
+            {'github-token': github_token}
+            if (github_token is defined and github_token | length > 0)
+            else {}
+          )
+      }}
   no_log: true
   when: (github_full_config | bool) == true

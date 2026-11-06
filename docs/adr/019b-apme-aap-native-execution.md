@@ -6,6 +6,11 @@
 **Author:** Chad Ferman
 **Reason:** Overcomplex and adds multiple new support needs like
 
+**Operational addendum (2026-10-21):** The original AAP-native proposal below remains
+rejected and is retained as history. The current addon runs playbooks locally in its
+venv. The [image-delivery addendum](#operational-addendum-quay-image-delivery-2026-10-21)
+records CI publishing and optional prebuilt image consumption without changing that status.
+
 ## Context
 
 ADR-019 established the `apme-eap` addon using official APME playbooks via a bash wrapper with an isolated Python virtual environment. While functional, this approach had drawbacks:
@@ -362,6 +367,8 @@ chart_ref: "{{ portal_helm_chart_name }}"
 chart_repo_url: "{{ portal_helm_chart_repo_url }}"
 ```
 
+**Historical note (superseded):** ADR-019b is **rejected**; execution follows [ADR-019](019-apme-playbook-addon.md). Issues 7–9 below were written during AAP-native bring-up. **Current policy:** one `rhdh_image_tag` for all CPU paths (see **Supported RHDH hub version** in ADR-019); ARM differs by **registry/image**, not by tag.
+
 ### Issue 7: ARM64 Image Availability
 
 **Problem**: `ImagePullBackOff` - Red Hat registry images don't have ARM64 builds
@@ -370,9 +377,9 @@ chart_repo_url: "{{ portal_helm_chart_repo_url }}"
 no image found in image index for architecture "arm64", variant "v8", OS "linux"
 ```
 
-**Root Cause**: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` is x86_64 only
+**Root Cause**: `registry.redhat.io/rhdh/rhdh-hub-rhel9` is x86_64 only (no arm64 manifest).
 
-**Resolution**: Architecture-aware image selection
+**Resolution**: Architecture-aware **registry/repository** selection; use the same `rhdh_image_tag` from aap-demo defaults on both CPU paths (substituted into Helm values—not separate ARM vs x86 tag pins).
 
 ```yaml
 - name: Detect system architecture
@@ -383,15 +390,15 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
   ansible.builtin.set_fact:
     rhdh_image_registry: "quay.io"
     rhdh_image_repository: "rhdh-community/rhdh"
-    rhdh_image_tag: "1.10"
   when: system_arch in ['aarch64', 'arm64']
 
 - name: Use official Red Hat registry for x86_64
   ansible.builtin.set_fact:
     rhdh_image_registry: "registry.redhat.io"
     rhdh_image_repository: "rhdh/rhdh-hub-rhel9"
-    rhdh_image_tag: "1.9"
   when: system_arch not in ['aarch64', 'arm64']
+
+# Tag: {{ rhdh_image_tag | default('1.10') }} from addons/apme-eap/defaults.yml
 ```
 
 ### Issue 8: Postgres Registry Override
@@ -408,13 +415,13 @@ no image found in image index for architecture "arm64", variant "v8", OS "linux"
   replace: '\1{{ rhdh_image_registry }}\2'
 ```
 
-### Issue 9: Plugin Compatibility Between RHDH Versions
+### Issue 9: Plugin compatibility on ARM (community hub image)
 
-**Problem**: Init container error - `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found in community RHDH 1.10
+**Problem**: Init container error — `backstage-community-plugin-scaffolder-backend-module-quay-dynamic` not found when using the community hub on ARM.
 
-**Root Cause**: Community RHDH (1.10) and Red Hat RHDH (1.9) have different plugin sets
+**Root Cause**: Values assume Red Hat packaged RHDH plugin bundles; the community hub image used on ARM may omit some artifacts—not an intentional split of RHDH **version tags** between CPUs (see ADR-019).
 
-**Resolution**: Remove incompatible plugins for community version
+**Resolution**: Remove incompatible plugins for community hub path on ARM64
 
 ```yaml
 - name: Remove incompatible plugins for community RHDH (ARM64)
@@ -469,6 +476,117 @@ See [TEST_PLAN.md](../../addons/apme-eap/TEST_PLAN.md) for comprehensive test ca
 - MicroShift compatibility and tar-free file copy
 - Error handling and security validation
 - Performance benchmarks
+
+## Operational Addendum: Quay Image Delivery (2026-10-21)
+
+### Scope and Execution Boundary
+
+The [APME image workflow](../../.github/workflows/apme-eap-image.yaml) builds a portal
+image containing all six APME plugins and publishes only to `quay.io/aapdemo/apme-eap`.
+Image production runs in GitHub Actions; deployment remains the local wrapper/playbook
+flow. Choosing a prebuilt image removes the local plugin push/image build from that
+deployment, without requiring AAP-native execution or changing this ADR's rejected status.
+
+Manual dispatch accepts `source_repo`, `source_ref`, and `publish_latest`. Matching
+addon/workflow pushes to `main` publish only with repository variable
+`APME_QUAY_PUBLISH_ENABLED=true`; pull requests never publish. There is no schedule or
+upstream repository trigger. Each build resolves current inputs once and shares them
+between native AMD64 and ARM64 jobs.
+
+### Provenance, Credentials, and Publication Policy
+
+`source_repo` defaults to `ansible/ansible-rhdh-plugins`; `ansible/apme` is an explicit
+alternative when it owns the complete pack. `source_ref=latest` selects the newest
+completed successful Actions run on the upstream default branch; an exact full lowercase
+40-character SHA selects the newest successful run for that commit. No branch-name or
+short-SHA input is accepted, and unusable artifacts do not cause fallback to an older run.
+
+Exactly one non-expired artifact must match `APME_PACK_FORMAT` (`oci` by default, or `npm`),
+with `apme`/`plugin` in its name; Docker/build/image records are excluded. The workflow
+exposes `pack_format`. OCI names have an `oci` token; npm names have an `npm` token or
+a plain `.tar.gz` suffix without `oci`. Zero or ambiguous matches fail with candidate
+names. The standalone resolver accepts `APME_ARTIFACT_NAME` to override automatic
+name/format filtering. Downloads may be ZIP-wrapped packs or raw gzip packs from
+`archive: false` uploads. The resolver checks the payload digest when present,
+calculates the pack SHA256, and validates all six expected plugin
+identities. Extraction checks the digest and plugin set again. Incomplete four-plugin
+packs, checksum mismatches, malformed archives, and wrong identities fail before publishing.
+
+Actions repository secrets are `APME_ARTIFACT_TOKEN` (upstream Actions read access),
+`QUAY_USERNAME` / `QUAY_TOKEN` (target repository push/pull), and
+`REGISTRY_REDHAT_USERNAME` / `REGISTRY_REDHAT_PASSWORD` when the AMD64 base requires
+authentication. The workflow's own `GITHUB_TOKEN` has only `contents: read` and does not
+replace those credentials. Registry logins use stdin and environment-backed credential
+helpers. Credentials must stay outside the repository. Runner access to
+`ubuntu-24.04-arm` is also an operational prerequisite.
+
+The resolve job retains `plugin-pack.tar.gz` and shell-safe `artifact.env` as
+`apme-resolved-pack` for one day. Provenance includes repository/SHA, upstream run ID,
+artifact ID/name, pack filename/format, and pack SHA256; OCI labels and the publishing
+summary carry corresponding metadata. Retain that evidence and the final manifest digest.
+
+For `T=apme-<full-source-sha>-<first-12-hex-pack-digest>`, CI publishes `T-amd64` from
+`registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` and `T-arm64` from
+`quay.io/rhdh-community/rhdh:1.9`. Only after both builds succeed does it publish `T` as a
+manifest containing exactly `linux/amd64` and `linux/arm64`, verifying its remote digest
+and platform set. A failed job can leave an architecture tag; publishing is not atomic.
+
+Architecture and manifest publication check remote tags immediately before pushing and
+refuse existing tags or uncertain registry responses. Rebuilt bytes cannot overwrite an
+existing release through these commands. Local single-architecture pushes always use an
+architecture suffix. Retry failed jobs only for tags still absent; reuse a published
+digest after a later failure, or use new source/pack inputs for a full republish.
+Checks do not configure Quay tag protection or provide atomicity across independent
+publishers. Deploy the recorded manifest digest. `latest` is a moving convenience alias.
+The first live dispatch must use `publish_latest=false` with the gate closed. After live
+validation, set `APME_QUAY_PUBLISH_ENABLED=true`: matching main pushes promote `latest`,
+while manual runs promote only with `publish_latest=true`. A premature manual latest
+request fails before resolution; a manifest verification failure blocks promotion. This
+gate governs CI, not explicit aliases from the single-architecture local build wrapper.
+
+### Deployment, Private Pulls, and Fallback
+
+An empty `apme_preloaded_image_ref` remains the default. A fully qualified immutable tag
+or `quay.io/aapdemo/apme-eap@sha256:...` opts into prebuilt delivery. Skopeo inspects and
+pins the digest, and Podman verifies all six plugin identities in an isolated read-only
+container before Helm renders local `./dynamic-plugins/dist/...` paths. The cluster selects
+the architecture child from the manifest; the deployment host must support that image
+architecture for local validation. Check mode cannot establish live validity. Turning off
+`apme_preloaded_image_verify` skips only the Skopeo lookup, not the six-plugin check.
+
+Public repositories can use an empty `apme_preloaded_image_pull_secret`. Private pulls
+need separate cluster credentials: configure that optional Secret name and
+`apme_preloaded_image_auth_file` with an absolute path to a containers auth file containing
+inline credentials for the selected registry. The role uses the file locally, creates or
+updates a namespaced `kubernetes.io/dockerconfigjson` Secret with only that registry, and
+renders the name in image `pullSecrets`. An empty name creates no Secret; the cluster
+must then pull anonymously or use separately managed credentials. Local login does not
+configure cluster pulls, and publication does not make a private repository public.
+
+Without a prebuilt reference, the addon resolves the bundled OCI pack, runs
+`apme_oci_push` then `apme_image_build`, and publishes via Podman to the local registry.
+Cached images must pass the six-plugin checker before reuse; invalid caches rebuild and
+failed rebuilds stop deployment. Custom packs require an independently verified SHA256.
+Fallback Helm fields use the node-supported external registry route, preserve its
+repository namespace, and pin the cached or newly pushed registry digest with an empty
+tag. This prevents `IfNotPresent` from retaining old bytes after a forced/repair rebuild.
+The internal service endpoint is used only where required for plugin OCI delivery.
+With `skip_plugin_push: true`, both push and build are skipped and runtime OCI delivery
+assumes the archive is already published. The fallback does not fetch GitHub artifacts;
+fresh upstream selection belongs to the CI/local publishing command. The Ansible
+`apme_source_repo` / `apme_source_ref` defaults do not trigger an upstream fetch.
+
+### Verification Status
+
+The [Task 6 execution record](../../addons/apme-eap/TEST_PLAN.md#task-6-execution-record--2026-10-21)
+separates offline evidence from pending live checks. Resolver/extractor/build-wrapper
+fixture tests and syntax checks do not prove a registry push or cluster rollout. Live
+Quay publication, base-image and runner access, both architecture manifests, public/private
+pulls, x86/ARM64 prebuilt deployment, local fallback/Podman-machine publication, and
+`latest` promotion remain pending. The publishing credentials were unset in the validation
+process; no live workflow or cluster deployment was run. Keep the gate closed until the
+test plan's live acceptance checks are recorded. See the [README](../../addons/apme-eap/README.md)
+for operational configuration and the test plan's CI-001 through CI-004 for exact checks.
 
 ## References
 

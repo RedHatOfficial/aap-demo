@@ -1,0 +1,283 @@
+name: APME EAP image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'addons/apme-eap/**'
+      - 'addons/apme-eap/ci/**'
+      - '.github/workflows/apme-eap-image.yaml'
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Upstream ref (latest or a full 40-character commit SHA)
+        type: string
+        default: latest
+        required: true
+      source_repo:
+        description: Upstream repository (owner/repo)
+        type: string
+        default: ansible/ansible-rhdh-plugins
+        required: true
+      pack_format:
+        description: Upstream plugin pack format
+        type: choice
+        options: [oci, npm]
+        default: oci
+        required: true
+      publish_latest:
+        description: Also update latest (requires the validated publishing gate)
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+# Serialize all publishers, including dispatches from different branches.
+concurrency:
+  group: apme-eap-quay-publishing
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  IMAGE: quay.io/aapdemo/apme-eap
+
+jobs:
+  resolve:
+    # Bootstrap: dispatch publish_latest=false, check both tags and the manifest,
+    # then set repository variable APME_QUAY_PUBLISH_ENABLED=true to enable main.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+       vars.APME_QUAY_PUBLISH_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      immutable_tag: ${{ steps.resolve.outputs.immutable_tag }}
+      source_repo: ${{ steps.resolve.outputs.source_repo }}
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      run_id: ${{ steps.resolve.outputs.run_id }}
+      artifact_id: ${{ steps.resolve.outputs.artifact_id }}
+      pack_format: ${{ steps.resolve.outputs.pack_format }}
+      pack_sha256: ${{ steps.resolve.outputs.pack_sha256 }}
+    steps:
+      - name: Require validation before latest
+        env:
+          REQUEST_LATEST: ${{ inputs.publish_latest || false }}
+          PUBLISH_ENABLED: ${{ vars.APME_QUAY_PUBLISH_ENABLED }}
+        run: |
+          if [[ "$REQUEST_LATEST" == true && "$PUBLISH_ENABLED" != true ]]; then
+            echo '::error::First dispatch with publish_latest=false and verify both architecture tags and manifest.'
+            echo '::error::Then set APME_QUAY_PUBLISH_ENABLED=true before requesting latest.'
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install resolver tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh jq unzip podman skopeo
+      - name: Resolve and verify all six plugins
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.APME_ARTIFACT_TOKEN }}
+          APME_SOURCE_REF: ${{ inputs.source_ref || 'latest' }}
+          APME_SOURCE_REPO: ${{ inputs.source_repo || 'ansible/ansible-rhdh-plugins' }}
+          APME_PACK_FORMAT: ${{ inputs.pack_format || 'oci' }}
+        run: |
+          set +x
+          bash addons/apme-eap/ci/fetch-plugin-artifact.sh "$RUNNER_TEMP/resolved"
+          source "$RUNNER_TEMP/resolved/artifact.env"
+          PLUGIN_PACK_SHA256="$APME_PACK_SHA256" PLUGIN_PACK_FORMAT="$APME_PACK_FORMAT" \
+            python3 addons/apme-eap/ci/extract-plugin-pack.py \
+            --archive "$RUNNER_TEMP/resolved/plugin-pack.tar.gz" --dest "$RUNNER_TEMP/verified-plugins"
+          pack_hex="${APME_PACK_SHA256#sha256:}"
+          {
+            printf 'immutable_tag=apme-%s-%s\n' "$APME_SOURCE_SHA" "${pack_hex:0:12}"
+            printf 'source_repo=%s\nsource_sha=%s\n' "$APME_SOURCE_REPO" "$APME_SOURCE_SHA"
+            printf 'run_id=%s\nartifact_id=%s\n' "$APME_RUN_ID" "$APME_ARTIFACT_ID"
+            printf 'pack_format=%s\npack_sha256=%s\n' "$APME_PACK_FORMAT" "$APME_PACK_SHA256"
+          } >> "$GITHUB_OUTPUT"
+      - name: Retain verified pack for this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: apme-resolved-pack
+          path: |
+            ${{ runner.temp }}/resolved/plugin-pack.tar.gz
+            ${{ runner.temp }}/resolved/artifact.env
+          retention-days: 1
+          if-no-files-found: error
+
+  build:
+    needs: resolve
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runner: ubuntu-24.04
+            base_image: registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9
+          - architecture: arm64
+            runner: ubuntu-24.04-arm
+            base_image: quay.io/rhdh-community/rhdh:1.9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: apme-resolved-pack
+          path: ${{ runner.temp }}/resolved
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq podman skopeo
+      - name: Build and publish architecture image
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          BASE_IMAGE: ${{ matrix.base_image }}
+          APME_PACK_SHA256: ${{ needs.resolve.outputs.pack_sha256 }}
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+          REGISTRY_REDHAT_USERNAME: ${{ matrix.architecture == 'amd64' && secrets.REGISTRY_REDHAT_USERNAME || '' }}
+          REGISTRY_REDHAT_PASSWORD: ${{ matrix.architecture == 'amd64' && secrets.REGISTRY_REDHAT_PASSWORD || '' }}
+        run: |
+          set +x
+          bash addons/apme-eap/ci/build-image.sh --pack-dir "$RUNNER_TEMP/resolved" \
+            --architecture "$ARCHITECTURE" --output-dir "$RUNNER_TEMP/build-output" --push --reuse-existing
+
+  manifest:
+    needs: [resolve, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: apme-resolved-pack
+          path: ${{ runner.temp }}/resolved
+      - name: Install manifest tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq podman skopeo
+      - name: Assemble, verify, and optionally promote the manifest
+        env:
+          IMMUTABLE_TAG: ${{ needs.resolve.outputs.immutable_tag }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          REQUEST_LATEST: ${{ inputs.publish_latest || false }}
+          PUBLISH_ENABLED: ${{ vars.APME_QUAY_PUBLISH_ENABLED }}
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+        run: |
+          set +x
+          set -euo pipefail
+          fail() { printf '::error::%s\n' "$*" >&2; exit 1; }
+          source "$RUNNER_TEMP/resolved/artifact.env"
+          pack_hex="${APME_PACK_SHA256#sha256:}"
+          [[ "$APME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$pack_hex" =~ ^[0-9a-f]{64}$ &&
+             "$IMMUTABLE_TAG" == "apme-$APME_SOURCE_SHA-${pack_hex:0:12}" ]] ||
+            fail 'Resolved source/pack does not match immutable tag'
+          : "${QUAY_USERNAME:?Missing QUAY_USERNAME}" "${QUAY_TOKEN:?Missing QUAY_TOKEN}"
+          umask 077
+          auth_dir="$(mktemp -d "$RUNNER_TEMP/apme-manifest.XXXXXX")"
+          trap 'rm -rf -- "$auth_dir"' EXIT
+          # Match build-image.sh: credentials travel through pipes, never files.
+          mkdir "$auth_dir/bin"
+          cat > "$auth_dir/bin/docker-credential-apme-env" <<'HELPER'
+          #!/usr/bin/env bash
+          set +x
+          set -euo pipefail
+          case "${1:-}" in
+            get)
+              [[ "$(cat)" == quay.io ]] || exit 1
+              jq -en '{Username: env.QUAY_USERNAME, Secret: env.QUAY_TOKEN}
+                | select(.Username != null and .Secret != null)'
+              ;;
+            store | erase) cat >/dev/null ;;
+            *) exit 1 ;;
+          esac
+          HELPER
+          chmod 700 "$auth_dir/bin/docker-credential-apme-env"
+          export PATH="$auth_dir/bin:$PATH"
+          export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
+          printf '%s\n' '{"auths":{},"credHelpers":{"quay.io":"apme-env"}}' > "$REGISTRY_AUTH_FILE"
+          # Bind manifest children to the immutable images verified by the build jobs.
+          architecture_digests=()
+          for arch in amd64 arm64; do
+            skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
+              "docker://$IMAGE:$IMMUTABLE_TAG-$arch" > "$auth_dir/image-$arch.json" \
+              || fail "Cannot inspect immutable $arch image"
+            jq -e '.schemaVersion == 2 and (has("manifests") | not) and
+              (.mediaType == "application/vnd.oci.image.manifest.v1+json" or
+               .mediaType == "application/vnd.docker.distribution.manifest.v2+json") and
+              (.config | type == "object") and (.layers | type == "array")' \
+              "$auth_dir/image-$arch.json" >/dev/null || fail "Invalid immutable $arch image manifest"
+            architecture_digest="$(skopeo manifest-digest "$auth_dir/image-$arch.json")" \
+              || fail "Cannot compute immutable $arch image digest"
+            [[ "$architecture_digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
+              || fail "Invalid immutable $arch image digest"
+            architecture_digests+=("$architecture_digest")
+          done
+          if skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
+            "docker://$IMAGE:$IMMUTABLE_TAG" > "$auth_dir/manifest.json" 2> "$auth_dir/inspect.error"; then
+            publication=reused
+            digest="$(skopeo manifest-digest "$auth_dir/manifest.json")"
+          else
+            grep -Eiq '(^|[^a-z_])(manifest unknown|name unknown)(:|[[:space:]]|$)' \
+              "$auth_dir/inspect.error" || fail 'Cannot confirm immutable manifest is absent'
+            printf '%s\n' "$QUAY_TOKEN" | podman login --authfile "$REGISTRY_AUTH_FILE" \
+              --username "$QUAY_USERNAME" --password-stdin quay.io
+            podman manifest create apme-release
+            for arch in amd64 arm64; do
+              podman manifest add --authfile "$REGISTRY_AUTH_FILE" \
+                apme-release "docker://$IMAGE:$IMMUTABLE_TAG-$arch"
+            done
+            # Recheck immediately before writing; a concurrent publisher must not be overwritten.
+            bash addons/apme-eap/ci/require-unpublished.sh "$IMAGE:$IMMUTABLE_TAG" \
+              --authfile "$REGISTRY_AUTH_FILE"
+            podman manifest push --all --authfile "$REGISTRY_AUTH_FILE" \
+              --digestfile "$auth_dir/manifest.digest" apme-release "docker://$IMAGE:$IMMUTABLE_TAG"
+            publication=published
+            digest="$(cat "$auth_dir/manifest.digest")"
+            skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
+              "docker://$IMAGE:$IMMUTABLE_TAG" > "$auth_dir/manifest.json"
+          fi
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'Invalid manifest digest'
+          [[ "$(skopeo manifest-digest "$auth_dir/manifest.json")" == "$digest" ]] || fail 'Manifest digest mismatch'
+          jq -e '.schemaVersion == 2 and (.manifests | length == 2) and
+            ([.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"])' \
+            "$auth_dir/manifest.json" >/dev/null || fail 'Expected exactly linux/amd64 and linux/arm64'
+          jq -e --arg amd64 "${architecture_digests[0]}" --arg arm64 "${architecture_digests[1]}" \
+            'all(.manifests[]; .digest == ({amd64: $amd64, arm64: $arm64}[.platform.architecture]))' \
+            "$auth_dir/manifest.json" >/dev/null || fail 'Manifest child digests do not match architecture images'
+          {
+            printf '### APME image %s\n\n' "$publication"
+            printf 'Image: `%s:%s`\n\nDigest: `%s@%s`\n\n' "$IMAGE" "$IMMUTABLE_TAG" "$IMAGE" "$digest"
+            printf 'Architectures: `%s-amd64`, `%s-arm64`\n\n' "$IMMUTABLE_TAG" "$IMMUTABLE_TAG"
+            printf 'Upstream: `%s@%s`\n\nRun: `%s`; artifact: `%s` (`%s`)\n\n' \
+              "$APME_SOURCE_REPO" "$APME_SOURCE_SHA" "$APME_RUN_ID" "$APME_ARTIFACT_ID" "$APME_ARTIFACT_NAME"
+            printf 'Pack: `%s`; SHA256: `%s`\n\n' "$APME_PACK_FORMAT" "$APME_PACK_SHA256"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$PUBLISH_ENABLED" == true ]] && \
+            { [[ "$EVENT_NAME" == push && "$EVENT_REF" == refs/heads/main ]] || \
+              [[ "$EVENT_NAME" == workflow_dispatch && "$REQUEST_LATEST" == true ]]; }; then
+            skopeo copy --all --preserve-digests --authfile "$REGISTRY_AUTH_FILE" \
+              --digestfile "$auth_dir/latest.digest" "docker://$IMAGE@$digest" "docker://$IMAGE:latest"
+            [[ "$(cat "$auth_dir/latest.digest")" == "$digest" ]] || fail 'Latest copy digest mismatch'
+            skopeo inspect --authfile "$REGISTRY_AUTH_FILE" --raw \
+              "docker://$IMAGE:latest" > "$auth_dir/latest.json"
+            [[ "$(skopeo manifest-digest "$auth_dir/latest.json")" == "$digest" ]] || fail 'Latest digest mismatch'
+            printf 'Updated `latest` to `%s`.\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Published immutable tags only; `latest` was not requested or enabled.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
