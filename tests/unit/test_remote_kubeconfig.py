@@ -156,7 +156,7 @@ def test_preflight_guards_commands_that_use_the_api(
         main_mod.preflight, "setup_kubeconfig", lambda ctx, guard=True: seen.append(guard)
     )
     monkeypatch.setattr(main_mod.preflight, "warn_cluster_state", lambda ctx: None)
-    monkeypatch.setattr(main_mod, "_fleet_needs_cluster", lambda command, args: False)
+    monkeypatch.setattr(main_mod, "_addon_needs_cluster", lambda command, args: False)
     main_mod._preflight(app_ctx, command, None)  # type: ignore[arg-type]
     assert seen == [guard]
 

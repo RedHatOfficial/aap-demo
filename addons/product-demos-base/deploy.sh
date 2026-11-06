@@ -43,13 +43,11 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   DOMAIN_ADDONS=("product-demos" "product-demo-linux" "product-demo-windows" "product-demo-network" "product-demo-cloud" "product-demo-openshift" "product-demo-satellite")
   ENABLED_DOMAINS=()
 
-  if [ -f ~/.aap-demo/config ]; then
-    for domain in "${DOMAIN_ADDONS[@]}"; do
-      if grep -q "$domain" ~/.aap-demo/config 2>/dev/null; then
-        ENABLED_DOMAINS+=("$domain")
-      fi
-    done
-  fi
+  for domain in "${DOMAIN_ADDONS[@]}"; do
+    if apd_addon_enabled "$domain"; then
+      ENABLED_DOMAINS+=("$domain")
+    fi
+  done
 
   if [ ${#ENABLED_DOMAINS[@]} -gt 0 ]; then
     echo "⚠ Cannot remove product-demos-base while domain addons are enabled:"
