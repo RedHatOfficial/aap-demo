@@ -129,6 +129,13 @@ jobs:
       - name: Run AO PR testing model configuration test
         run: bash ./test/test-ao-pr-testing-model.sh
 
+      - name: Run Fleet addon tests
+        run: |
+          ./test/test-fleet-prerequisites.sh
+          ./test/test-fleet-enable.sh
+          ./test/test-fleet-image.sh
+          ./test/test-cli-parsing.sh
+
   dry-run:
     name: Dry Run Test
     runs-on: ubuntu-latest

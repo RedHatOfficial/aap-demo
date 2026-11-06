@@ -187,16 +187,9 @@ for arg in "$@"; do
     --backend)
       PENDING_FLAG="backend"
       ;;
-    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | keycloak | v2 | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | keycloak | v2 | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
-        fleet)
-          if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
-            EXTRA_ARGS+=("$arg")
-          else
-            COMMAND="fleet"
-          fi
-          ;;
         keycloak)
           if [ -z "$COMMAND" ]; then COMMAND="keycloak"; else EXTRA_ARGS+=("$arg"); fi
           ;;
@@ -213,6 +206,19 @@ for arg in "$@"; do
           ;;
         *) COMMAND="$arg" ;;
       esac
+      ;;
+    fleet)
+      # fleet is both a command and an addon name. enable/disable must keep it
+      # as an addon; otherwise the token overwrites the command.
+      if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
+        EXTRA_ARGS+=("$arg")
+      elif [ -n "$COMMAND" ]; then
+        echo "Unknown argument for '$COMMAND': $arg"
+        echo "Run '$0 help' for usage"
+        exit 1
+      else
+        COMMAND="fleet"
+      fi
       ;;
     destroy)
       # Fleet owns destroy as a subcommand; otherwise destroy is top-level.
@@ -235,7 +241,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
+    mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -540,6 +546,7 @@ Cluster management:
 
 Addons:
   enable fleet       Enable Fleet managed VMs for demos (requires AAP)
+                      QEMU is the default and can download a CentOS Stream cloud image
                       Use --backend kube-native for the Python v2 Fleet addon
                       Add --no-import with that backend to skip AAP registration
   enable portal      Enable Self-Service Portal (Helm; auto-detects arm64 vs amd64)
@@ -547,7 +554,7 @@ Addons:
 
 Fleet commands (legacy Bash v1; local QEMU VMs only; requires: enable fleet):
   fleet --backend qemu|kube-native|all <action>
-  fleet add <N> --image <path>  Create N RHEL VMs as AAP managed nodes
+  fleet add <N> [--image <path-or-url>]  Create N managed VMs as AAP nodes
   fleet list                    List running fleet node VMs
   fleet remove [N|name]         Remove fleet node VMs
   fleet destroy                 Remove all VMs and AAP resources
@@ -571,8 +578,9 @@ Addons:
 
 Examples:
   aap-demo deploy                              # Deploy AAP $AAP_VERSION
-  aap-demo enable fleet                        # Enable fleet addon
-  aap-demo fleet add 3 --image ~/rhel9.qcow2  # Create 3 managed VMs
+  aap-demo enable fleet                               # Enable QEMU fleet and bring in a QCOW2
+  FLEET_DOWNLOAD_IMAGE=true aap-demo enable fleet     # Download CentOS Stream 9 without prompting
+  aap-demo fleet add 3 --image ~/rhel9.qcow2          # Create 3 managed VMs from a local image
   aap-demo enable portal                       # Enable Self-Service Portal
   aap-demo enable setup-pah                    # Configure Private Automation Hub
 
@@ -620,7 +628,7 @@ COMMANDS (all infrastructure types):
     disable [addon] Disable an addon
                     Fleet: --backend kube-native delegates to the Python addon
     fleet --backend qemu|kube-native|all <action>
-    fleet add [N] --image <path>  Create N managed RHEL VMs (requires: enable fleet)
+    fleet add [N] --image <path-or-url>  Create N managed VMs (requires: enable fleet)
     fleet remove [N|name]  Remove last N VMs or a specific VM by name
     fleet list             List running fleet node VMs
     fleet destroy          Remove all VMs and AAP resources
@@ -663,12 +671,18 @@ ENVIRONMENT:
     AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
     AAP_IMAGE_STORE_FORMAT=true
                         Explicitly format a blank persistent disk once
+    FLEET_IMAGE         Local QCOW2 path or http(s) URL used by Fleet
+    FLEET_IMAGE_URL     Download this URL when FLEET_IMAGE is unset
+    FLEET_DOWNLOAD_IMAGE=true
+                        Download CentOS Stream 9 GenericCloud for this architecture
+    FLEET_IMAGE_SHA256  SHA256 to require before accepting a downloaded QCOW2
 
 EXAMPLES:
     aap-demo create                              # Create OpenShift Local cluster
     aap-demo deploy                              # Deploy AAP $AAP_VERSION
-    aap-demo enable fleet                        # Enable fleet addon
-    aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
+    aap-demo enable fleet                            # Enable QEMU fleet and bring in a QCOW2
+    FLEET_DOWNLOAD_IMAGE=true aap-demo enable fleet  # Download CentOS Stream 9 without prompting
+    aap-demo fleet add 3 --image ~/rhel9.qcow2       # Create 3 managed VMs from a local image
     aap-demo fleet list                          # Show running fleet nodes
     aap-demo status                              # Show cluster and AAP status
     aap-demo stop                                # Stop cluster
@@ -3187,19 +3201,16 @@ cmd_fleet_qemu() {
       count="${count:-1}"
       image="${image:-${FLEET_IMAGE:-}}"
 
-      if [ -z "$image" ]; then
-        _err "No QCOW2 image specified"
-        echo ""
-        echo "Usage: aap-demo fleet add [count] --image <path-to-qcow2>"
-        echo ""
-        echo "  count    Number of VMs to create (default: 1)"
-        echo "  --image  Path to a RHEL/CentOS QCOW2 cloud image"
+      _verify_cluster || return 1
+      fleet_check_prereqs || return 1
+      if ! fleet_acquire_image "$image"; then
         return 1
       fi
-
-      image=$(cd "$(dirname "$image")" 2>/dev/null && echo "$(pwd)/$(basename "$image")")
-
-      _verify_cluster || return 1
+      image="${FLEET_ACQUIRED_IMAGE:-}"
+      if [ -z "$image" ]; then
+        _err "Fleet did not resolve a QCOW2 image"
+        return 1
+      fi
       fleet_check_prereqs "$image" || return 1
       fleet_create_all "$count" "$image"
       _fleet_save_image_config "$image"
@@ -3244,13 +3255,14 @@ cmd_fleet_qemu() {
       echo "Usage: aap-demo fleet <subcommand>"
       echo ""
       echo "Subcommands:"
-      echo "  add [count] --image <path>   Create fleet node VMs"
+      echo "  add [count] --image <path-or-url>  Create fleet node VMs"
       echo "  remove [count|name]          Remove fleet node VMs"
       echo "  list                         List fleet node VMs"
       echo "  destroy                      Remove all VMs and AAP resources"
       echo ""
       echo "Options:"
-      echo "  --image <path>    Path to RHEL/CentOS QCOW2 cloud image"
+      echo "  --image <path-or-url>  Local QCOW2 or http(s) URL"
+      echo "  FLEET_DOWNLOAD_IMAGE=true  Download CentOS Stream 9 GenericCloud"
       echo "  FLEET_NODE_MEM=N   VM memory in MB (default: 1024)"
       echo "  FLEET_NODE_CPUS=N  VM CPU count (default: 2)"
       echo ""
@@ -3839,7 +3851,7 @@ case "$COMMAND" in
     ;;
   fleet)
     reject_windows_deferred_addon fleet || exit 1
-    cmd_fleet "${EXTRA_ARGS[@]}"
+    cmd_fleet "${EXTRA_ARGS[@]}" || exit
     ;;
   enable)
     reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
@@ -3849,7 +3861,7 @@ case "$COMMAND" in
         check_python_windows || exit 1
         ;;
     esac
-    cmd_enable "${EXTRA_ARGS[@]}"
+    cmd_enable "${EXTRA_ARGS[@]}" || exit
     ;;
   wire)
     cmd_wire
