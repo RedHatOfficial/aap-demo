@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import stat
 from pathlib import Path
 
@@ -101,7 +102,7 @@ def test_enable_runs_the_installer_and_records_it(app_ctx, monkeypatch) -> None:
     assert deploy_call.env["NAMESPACE"] == "aap-operator"
     assert deploy_call.env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "0"
     assert wire_call.argv[0:2] == ("bash", str(wire_script()))
-    assert wire_call.argv[2].endswith("product-demos-base/lib.sh")
+    assert Path(wire_call.argv[2]) == scripts_root() / "product-demos-base" / "lib.sh"
     assert app_ctx.config.get("addons.enabled") == ["product-demos", "product-demos-base"]
     assert "Product demos installed" in app_ctx.console.stdout
     assert not (app_ctx.paths.state_dir / "galaxy-token").exists()
@@ -133,7 +134,9 @@ def test_enable_passes_domain_selection_and_a_galaxy_token(app_ctx, monkeypatch)
     assert deploy_call.argv[-1] == "--ignored"
     assert deploy_call.env["PRODUCT_DEMOS_DOMAINS"] == "linux cloud"
     assert seen["token"] == "offline-token\n"
-    assert seen["mode"] == 0o600
+    # Windows reports DOS attributes, not Unix mode 0600.
+    if os.name != "nt":
+        assert seen["mode"] == 0o600
     assert not (app_ctx.paths.state_dir / "galaxy-token").exists()
 
 
