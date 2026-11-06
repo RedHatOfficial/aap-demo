@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -101,7 +102,7 @@ def test_release_tags_the_commit_that_set_the_version() -> None:
     assert '-S "__version__ = \\"$VERSION\\""' in job
     assert '--target "$target"' in job
     assert "--prerelease" in job
-    assert 'gh release view "v$VERSION"' in job
+    assert 'github_release_state.py "$VERSION"' in job
 
 
 def test_release_runs_queue_per_version() -> None:
@@ -110,10 +111,71 @@ def test_release_runs_queue_per_version() -> None:
     assert "cancel-in-progress: false" in job
 
 
-def test_only_a_missing_release_counts_as_missing() -> None:
-    job = _release_job()
-    assert "grep -q 'release not found'" in job
-    assert ">/dev/null 2>&1" not in job
+def _state():
+    path = ROOT / ".github/scripts/github_release_state.py"
+    spec = importlib.util.spec_from_file_location("github_release_state", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _Gh:
+    """Stands in for gh: answers ``release view`` and records every call."""
+
+    def __init__(self, view: subprocess.CompletedProcess, delete_rc: int = 0) -> None:
+        self.view = view
+        self.delete_rc = delete_rc
+        self.calls: list = []
+
+    def __call__(self, argv: list) -> subprocess.CompletedProcess:
+        self.calls.append(argv)
+        if argv[:3] == ["gh", "release", "view"]:
+            return self.view
+        if argv[:3] == ["gh", "release", "delete"]:
+            return subprocess.CompletedProcess(argv, self.delete_rc, "", "delete failed")
+        raise AssertionError(f"unexpected gh call {argv}")
+
+
+def _view(rc: int = 0, *, draft: bool = False, author: str = "", stderr: str = ""):
+    stdout = json.dumps({"isDraft": draft, "author": {"login": author}}) if rc == 0 else ""
+    return subprocess.CompletedProcess(["gh"], rc, stdout, stderr)
+
+
+def test_a_published_release_is_left_alone() -> None:
+    gh = _Gh(_view(draft=False, author="github-actions[bot]"))
+    assert _state().release_exists("2.0.0rc1", run=gh) is True
+    assert len(gh.calls) == 1
+
+
+def test_a_missing_release_is_created() -> None:
+    gh = _Gh(_view(1, stderr="release not found"))
+    assert _state().release_exists("2.0.0rc1", run=gh) is False
+
+
+def test_an_api_error_fails_instead_of_looking_missing() -> None:
+    gh = _Gh(_view(1, stderr="HTTP 502: Bad Gateway"))
+    with pytest.raises(SystemExit, match="HTTP 502"):
+        _state().release_exists("2.0.0rc1", run=gh)
+
+
+def test_a_draft_left_by_an_interrupted_run_is_deleted_and_recreated() -> None:
+    gh = _Gh(_view(draft=True, author="github-actions[bot]"))
+    assert _state().release_exists("2.0.0rc1", run=gh) is False
+    assert gh.calls[-1] == ["gh", "release", "delete", "v2.0.0rc1", "--yes"]
+
+
+def test_a_failed_draft_delete_fails_the_job() -> None:
+    gh = _Gh(_view(draft=True, author="github-actions[bot]"), delete_rc=1)
+    with pytest.raises(SystemExit, match="delete v2.0.0rc1 failed"):
+        _state().release_exists("2.0.0rc1", run=gh)
+
+
+def test_a_draft_someone_else_made_is_never_deleted() -> None:
+    gh = _Gh(_view(draft=True, author="aknochow"))
+    with pytest.raises(SystemExit, match="draft release made by aknochow"):
+        _state().release_exists("2.0.0rc1", run=gh)
+    assert all(call[:3] != ["gh", "release", "delete"] for call in gh.calls)
 
 
 def test_check_reports_the_version_for_the_release_job() -> None:
