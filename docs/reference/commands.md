@@ -37,6 +37,8 @@ still run with [the older command](../guides/older-command.md).
 | `version` | Print `2.0.0rc1` and how this copy was installed. A git install adds the commit, as in `2.0.0rc1+g27b505d`, and the `git+...@ref` it came from. |
 | `enable fleet` | Add the practice machines. `--no-import` skips registering them in AAP. |
 | `disable fleet` | Turn those machines off. Leaves their AAP registration. |
+| `enable product-demos` | Install the Ansible product demos into AAP. Needs `bash`, `curl`, and `jq`. |
+| `disable product-demos` | Drop that addon from settings. The templates stay in AAP. |
 | `fleet list` | Show the practice machines. |
 | `fleet add --os ubi9` | Add one machine. `--name` picks the name. `ubi10` is the other choice. |
 | `fleet remove NAME` | Remove that one machine. |
@@ -50,7 +52,8 @@ These names exist so old habits are not a mystery, and they stop with "not imple
 
 `addon`, `playbooks`, `gui`, `completion`
 
-`enable` and `disable` with a name other than `fleet` stop with "only fleet is implemented."
-`enable` with no name prints `fleet`.
+`enable` and `disable` accept `fleet` and the product demo addons (`product-demos`,
+`product-demo-satellite`, and a single domain such as `product-demo-linux`). Any other name stops
+with the list of implemented addons. `enable` with no name prints that list.
 
-Use the older command for portal, Automation Orchestrator, product demos, and the image cache.
+Use the older command for portal, Automation Orchestrator, and the image cache.

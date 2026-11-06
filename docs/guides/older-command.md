@@ -17,8 +17,8 @@ sources:
 # The older command
 
 Some jobs still belong to the original bash command: the self-service portal, Automation Orchestrator,
-the product demos, and a handful of others. That command keeps working. Use it for those jobs, and use the
-new command for create, deploy, and day-to-day cluster care.
+and a handful of others. That command keeps working. Use it for those jobs, and use the new command for
+create, deploy, day-to-day cluster care, and product demos (`aap-demo enable product-demos`).
 
 ## Install it from a checkout
 
