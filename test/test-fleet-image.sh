@@ -43,11 +43,14 @@ hash_bytes() {
 }
 
 IMAGE_HASH=$(hash_bytes "$IMAGE_BYTES")
+# A valid digest that does not match IMAGE_BYTES. Repeated characters stay
+# below the secret scanner's entropy limit.
+WRONG_DIGEST="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 checksum_for() {
   local filename="$1"
   local hash="$2"
-  printf '%s\n' "SHA256 (other.qcow2) = 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  printf '%s\n' "SHA256 (other.qcow2) = ${WRONG_DIGEST}"
   printf 'SHA256 (%s) = %s\n' "$filename" "$hash"
 }
 
@@ -290,7 +293,7 @@ log_lacks ' -o ' "checksum outage should not replace a saved CentOS image"
 reset_env
 QUIET=true
 FLEET_DOWNLOAD_IMAGE=true
-MOCK_CHECKSUM_BODY=$(checksum_for "$x86_name" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+MOCK_CHECKSUM_BODY=$(checksum_for "$x86_name" "$WRONG_DIGEST")
 run_acquire ""
 expect_fail "checksum mismatch"
 if [ -e "${FLEET_IMAGE_CACHE_DIR}/${x86_name}" ] || [ -e "${FLEET_IMAGE_CACHE_DIR}/${x86_name}.partial" ]; then
@@ -411,8 +414,7 @@ fi
 
 reset_env
 QUIET=true
-bad_digest="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-FLEET_IMAGE_SHA256="$bad_digest"
+FLEET_IMAGE_SHA256="$WRONG_DIGEST"
 bad_url="https://images.example.com/pinned.qcow2"
 bad_dest=$(_fleet_image_cache_dest "$bad_url")
 run_acquire "$bad_url"
