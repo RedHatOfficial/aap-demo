@@ -332,42 +332,120 @@ log_has ' -o ' "stale cached image should be downloaded again"
 
 reset_env
 QUIET=true
-run_acquire "https://images.example.com/custom.qcow2"
+custom_url="https://images.example.com/custom.qcow2"
+printf 'wrong-host' >"${FLEET_IMAGE_CACHE_DIR}/custom.qcow2"
+run_acquire "$custom_url"
 expect_ok "custom URL"
-if [ "$ACQUIRE_PATH" != "${FLEET_IMAGE_CACHE_DIR}/custom.qcow2" ]; then
+custom_dest=$(_fleet_image_cache_dest "$custom_url")
+if [ "$ACQUIRE_PATH" != "$custom_dest" ]; then
   fail "custom URL cache path mismatch: ${ACQUIRE_PATH}"
 fi
+if [ "$(cat "${FLEET_IMAGE_CACHE_DIR}/custom.qcow2" 2>/dev/null || true)" != "wrong-host" ]; then
+  fail "custom URL reused or replaced a basename-only cache file"
+fi
+if ! grep -Fxq -- "url=${custom_url}" "${custom_dest}.source"; then
+  fail "custom URL source metadata was not recorded"
+fi
 log_lacks '/CHECKSUM' "custom URL should not fetch a CentOS checksum"
+log_has ' -o ' "custom URL should download when no digest is set"
+: >"$MOCK_CURL_LOG"
+run_acquire "$custom_url"
+expect_ok "custom URL downloads again"
+log_has ' -o ' "custom URL without a digest should not be reused"
+
+reset_env
+QUIET=true
+host_a="https://host-a.example/image.qcow2"
+host_b="https://host-b.example/image.qcow2"
+MOCK_IMAGE_BYTES="from-host-a"
+run_acquire "$host_a"
+expect_ok "first custom host"
+host_a_path="$ACQUIRE_PATH"
+if [ "$host_a_path" != "$(_fleet_image_cache_dest "$host_a")" ]; then
+  fail "first custom host cache path mismatch: ${host_a_path}"
+fi
+MOCK_IMAGE_BYTES="from-host-b"
+run_acquire "$host_b"
+expect_ok "second custom host"
+host_b_path="$ACQUIRE_PATH"
+if [ "$host_b_path" = "$host_a_path" ] || [ "$host_b_path" != "$(_fleet_image_cache_dest "$host_b")" ]; then
+  fail "second custom host reused the first URL cache: ${host_b_path}"
+fi
+if [ "$(cat "$host_a_path")" != "from-host-a" ] || [ "$(cat "$host_b_path")" != "from-host-b" ]; then
+  fail "custom URLs with the same filename shared cache bytes"
+fi
+log_has "$host_b" "second custom host should be downloaded"
 
 reset_env
 QUIET=true
 FLEET_IMAGE_SHA256="$IMAGE_HASH"
-run_acquire "https://images.example.com/pinned.qcow2"
+pinned_url="https://images.example.com/pinned.qcow2"
+run_acquire "$pinned_url"
 expect_ok "pinned checksum"
+pinned_dest=$(_fleet_image_cache_dest "$pinned_url")
+if [ "$ACQUIRE_PATH" != "$pinned_dest" ]; then
+  fail "pinned checksum cache path mismatch: ${ACQUIRE_PATH}"
+fi
+if ! grep -Fxq -- "url=${pinned_url}" "${pinned_dest}.source"; then
+  fail "pinned checksum source URL was not recorded"
+fi
+if ! grep -Fxq -- "sha256=${IMAGE_HASH}" "${pinned_dest}.source"; then
+  fail "pinned checksum source digest was not recorded"
+fi
 log_lacks '/CHECKSUM' "pinned checksum should not fetch CHECKSUM"
+: >"$MOCK_CURL_LOG"
+MOCK_IMAGE_BYTES="different-bytes-same-name"
+other_pinned_url="https://host-b.example/pinned.qcow2"
+run_acquire "$other_pinned_url"
+expect_ok "pinned checksum reused for the same digest"
+if [ "$ACQUIRE_PATH" != "$pinned_dest" ]; then
+  fail "same digest and filename should share one cache file: ${ACQUIRE_PATH}"
+fi
+if [ "$(cat "$pinned_dest")" != "$IMAGE_BYTES" ]; then
+  fail "pinned cache was replaced even though the digest still matched"
+fi
+log_lacks ' -o ' "matching digest should not download again"
+if ! grep -Fxq -- "url=${other_pinned_url}" "${pinned_dest}.source"; then
+  fail "reused pinned image should record the requested URL"
+fi
 
 reset_env
 QUIET=true
-FLEET_IMAGE_SHA256="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-run_acquire "https://images.example.com/pinned.qcow2"
+bad_digest="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+FLEET_IMAGE_SHA256="$bad_digest"
+bad_url="https://images.example.com/pinned.qcow2"
+bad_dest=$(_fleet_image_cache_dest "$bad_url")
+run_acquire "$bad_url"
 expect_fail "pinned checksum mismatch"
-if [ -e "${FLEET_IMAGE_CACHE_DIR}/pinned.qcow2" ]; then
+if [ -e "$bad_dest" ] || [ -e "${bad_dest}.partial" ] || [ -e "${bad_dest}.source" ]; then
   fail "pinned checksum mismatch should remove the image"
 fi
-
-reset_env
-QUIET=true
-run_acquire "https://images.example.com/disk.qcow2?token=abc"
-expect_ok "URL query string"
-if [ "$ACQUIRE_PATH" != "${FLEET_IMAGE_CACHE_DIR}/disk.qcow2" ]; then
-  fail "query string should not be part of the cache filename: ${ACQUIRE_PATH}"
+if [ -e "${FLEET_IMAGE_CACHE_DIR}/pinned.qcow2" ]; then
+  fail "pinned checksum mismatch should not leave a basename cache file"
 fi
 
 reset_env
 QUIET=true
-run_acquire "https://images.example.com/Disk.QCOW2"
+query_url="https://images.example.com/disk.qcow2?token=abc"
+run_acquire "$query_url"
+expect_ok "URL query string"
+query_dest=$(_fleet_image_cache_dest "$query_url")
+if [ "$ACQUIRE_PATH" != "$query_dest" ]; then
+  fail "query string cache path mismatch: ${ACQUIRE_PATH}"
+fi
+case "$ACQUIRE_PATH" in
+  *"?"* | *token*) fail "query string should not be part of the cache filename: ${ACQUIRE_PATH}" ;;
+esac
+if [ "$ACQUIRE_PATH" = "${FLEET_IMAGE_CACHE_DIR}/disk.qcow2" ]; then
+  fail "query string URL used a basename-only cache file"
+fi
+
+reset_env
+QUIET=true
+upper_url="https://images.example.com/Disk.QCOW2"
+run_acquire "$upper_url"
 expect_ok "uppercase qcow suffix"
-if [ "$ACQUIRE_PATH" != "${FLEET_IMAGE_CACHE_DIR}/Disk.QCOW2" ]; then
+if [ "$ACQUIRE_PATH" != "$(_fleet_image_cache_dest "$upper_url")" ]; then
   fail "uppercase suffix was rejected: ${ACQUIRE_PATH}"
 fi
 
@@ -456,11 +534,12 @@ expect_ok "empty choice downloads default image"
 log_has "$x86_url" "empty choice should download the default image"
 
 reset_env
-printf '3\nhttps://images.example.com/prompted.qcow2\n' >"${TEST_DIR}/prompt"
+prompt_url="https://images.example.com/prompted.qcow2"
+printf '3\n%s\n' "$prompt_url" >"${TEST_DIR}/prompt"
 FLEET_PROMPT_DEVICE="${TEST_DIR}/prompt"
 run_acquire ""
 expect_ok "prompt custom URL"
-if [ "$ACQUIRE_PATH" != "${FLEET_IMAGE_CACHE_DIR}/prompted.qcow2" ]; then
+if [ "$ACQUIRE_PATH" != "$(_fleet_image_cache_dest "$prompt_url")" ]; then
   fail "choice 3 did not download the entered URL: ${ACQUIRE_PATH}"
 fi
 

@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-10-22
+**Date**: 2026-10-22 (Updated: 2026-11-06, custom cache keys)
 
 **Authors**: aap-demo maintainers
 
@@ -41,9 +41,15 @@ The default images are:
 Downloads are stored in `~/.aap-demo/cache/fleet/`, outside the directory
 removed by `aap-demo fleet destroy`. A cached CentOS image is reused when its
 SHA256 still matches the `CHECKSUM` file published beside the image. If that
-checksum changes, the cached file is replaced. Custom URLs are not checked
-against a remote checksum unless `FLEET_IMAGE_SHA256` is set. The resolved
-local path is saved as `FLEET_IMAGE` for the next enable or `fleet add`.
+checksum changes, the cached file is replaced. A custom URL is stored under a
+cache name derived from the URL, and it is downloaded again on each request
+unless `FLEET_IMAGE_SHA256` is set. A pinned image is stored under that digest
+and reused only when the file matches it and the saved source metadata agrees.
+Two URLs that share a filename do not share a cache entry unless both are
+pinned to the same digest. The resolved local
+path is saved as `FLEET_IMAGE` for the next enable or `fleet add`. A later
+request that passes a URL goes through this cache check again; a saved local
+path is used as a local file.
 
 QEMU tools are still required before a download starts. Quiet and
 non-interactive runs still do not install those tools automatically.
