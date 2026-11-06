@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import ssl
 import unittest
 
 
@@ -85,6 +86,28 @@ class WorkflowExportTests(unittest.TestCase):
             self.assertNotIn("tool_selections", parameters)
             self.assertEqual(parameters["model_role"], "tool")
 
+    def test_mutation_executor_cannot_destroy_or_update_organizations(self):
+        tools = self.nodes["execute_aap_mutations"]["parameters"]["tool_selection_names"]
+        self.assertIn("organizations_create", tools)
+        self.assertNotIn("organizations_update", tools)
+        self.assertNotIn("organizations_destroy", tools)
+
+    def test_source_ranges_are_cumulative_from_zero_for_short_files(self):
+        ranges = [
+            self.nodes[f"fetch_chunk_{index}"]["parameters"]["headers"]["Range"]
+            for index in range(1, 6)
+        ]
+        self.assertEqual(
+            ranges,
+            [
+                "bytes=0-6999",
+                "bytes=0-13999",
+                "bytes=0-20999",
+                "bytes=0-27999",
+                "bytes=0-34999",
+            ],
+        )
+
     def test_selection_agent_requires_exactly_one_test_title(self):
         parameters = self.nodes["select_test_case"]["parameters"]
         self.assertIn("${trigger.test_title}", parameters["prompt"])
@@ -134,6 +157,18 @@ class RunnerPayloadTests(unittest.TestCase):
         self.assertEqual(payload["trigger_node_id"], "trigger_manual")
         self.assertFalse(payload["input_data"]["execute_mutations"])
         self.assertFalse(payload["use_published"])
+
+    def test_runner_uses_verified_tls_by_default(self):
+        module = load_runner()
+        context = module.build_ssl_context()
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+
+    def test_runner_allows_insecure_tls_only_when_requested(self):
+        module = load_runner()
+        context = module.build_ssl_context(insecure=True)
+        self.assertEqual(context.verify_mode, ssl.CERT_NONE)
+        self.assertFalse(context.check_hostname)
 
 
 class DocumentationTests(unittest.TestCase):

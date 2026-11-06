@@ -67,6 +67,24 @@ def test_control_job_extra_vars_include_agent_binding():
     assert extra_vars["ao_agent_model_id"] == "gpt-6-luna-model-id"
 
 
+def test_control_job_extra_vars_allow_callers_without_tool_model_id():
+    args = SimpleNamespace(
+        ao_api_url="https://ao.example.test/api/v1",
+        ao_api_host="ao.example.test",
+        ao_token="ao-token",
+        ao_demo_ref="demo-ref",
+        ao_credential_id="aap-credential",
+        ao_integration_id="aap-integration",
+        ao_agent_credential_id="llm-credential",
+        ao_agent_integration_id="llm-integration",
+        ao_agent_model_id="gpt-6-luna-model-id",
+    )
+
+    extra_vars = MODULE.control_job_extra_vars(args)
+
+    assert extra_vars["ao_tool_agent_model_id"] == ""
+
+
 if __name__ == "__main__":
     test_reuses_successfully_synced_project()
     test_missing_license_message_includes_aap_address()

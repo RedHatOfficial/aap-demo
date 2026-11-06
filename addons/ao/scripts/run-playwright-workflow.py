@@ -39,12 +39,20 @@ def build_execution_payload(
     }
 
 
+def build_ssl_context(ca_file: str | None = None, insecure: bool = False) -> ssl.SSLContext:
+    """Build a verified TLS context, with insecure TLS explicitly opt-in."""
+    if insecure:
+        return ssl._create_unverified_context()
+    return ssl.create_default_context(cafile=ca_file)
+
+
 def request_json(
     route: str,
     token: str,
     method: str,
     path: str,
     body: dict[str, object] | None = None,
+    context: ssl.SSLContext | None = None,
 ) -> dict[str, Any]:
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(
@@ -57,9 +65,12 @@ def request_json(
             "Accept": "application/json",
         },
     )
-    context = ssl._create_unverified_context()
     try:
-        with urllib.request.urlopen(request, context=context, timeout=60) as response:
+        with urllib.request.urlopen(
+            request,
+            context=context or build_ssl_context(),
+            timeout=60,
+        ) as response:
             raw = response.read()
             value = json.loads(raw) if raw else {}
             return value if isinstance(value, dict) else {}
@@ -91,7 +102,8 @@ def run(args: argparse.Namespace) -> int:
         args.target_name,
         args.execute_mutations,
     )
-    created = request_json(args.route, args.token, "POST", "/executions", payload)
+    context = build_ssl_context(args.ca_file, args.insecure)
+    created = request_json(args.route, args.token, "POST", "/executions", payload, context)
     execution_id = created.get("id") or created.get("execution_id")
     if not execution_id:
         raise RuntimeError("AO execution response did not include an execution id")
@@ -102,6 +114,7 @@ def run(args: argparse.Namespace) -> int:
             args.token,
             "GET",
             f"/executions/{execution_id}",
+            context=context,
         )
         if execution.get("status") in TERMINAL_STATUSES:
             print_status(execution)
@@ -119,6 +132,12 @@ def main() -> int:
     parser.add_argument("--test-title", required=True)
     parser.add_argument("--target-name", required=True)
     parser.add_argument("--execute-mutations", action="store_true")
+    parser.add_argument("--ca-file", help="CA bundle to trust for the AO route")
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Disable TLS certificate verification (use only for local development)",
+    )
     parser.add_argument("--poll-interval", type=float, default=5.0, help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:

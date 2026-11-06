@@ -64,7 +64,7 @@
       "parameters": {
         "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
         "method": "GET",
-        "headers": {"Range": "bytes=7000-13999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "headers": {"Range": "bytes=0-13999", "Accept": "text/plain", "Accept-Encoding": "identity"},
         "query_params": {"ao_chunk": "2"}
       }
     },
@@ -76,7 +76,7 @@
       "parameters": {
         "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
         "method": "GET",
-        "headers": {"Range": "bytes=14000-20999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "headers": {"Range": "bytes=0-20999", "Accept": "text/plain", "Accept-Encoding": "identity"},
         "query_params": {"ao_chunk": "3"}
       }
     },
@@ -88,7 +88,7 @@
       "parameters": {
         "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
         "method": "GET",
-        "headers": {"Range": "bytes=21000-27999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "headers": {"Range": "bytes=0-27999", "Accept": "text/plain", "Accept-Encoding": "identity"},
         "query_params": {"ao_chunk": "4"}
       }
     },
@@ -100,7 +100,7 @@
       "parameters": {
         "url": "https://raw.githubusercontent.com/ansible/ansible-ui/${trigger.ref}/${trigger.test_path}",
         "method": "GET",
-        "headers": {"Range": "bytes=28000-34999", "Accept": "text/plain", "Accept-Encoding": "identity"},
+        "headers": {"Range": "bytes=0-34999", "Accept": "text/plain", "Accept-Encoding": "identity"},
         "query_params": {"ao_chunk": "5"}
       }
     },
@@ -355,7 +355,7 @@
         },
         "tool_selection_strategy": "SELECTED",
         "tool_selection_names": [
-          "organizations_list", "organizations_retrieve", "organizations_create", "organizations_update", "organizations_destroy",
+          "organizations_list", "organizations_retrieve", "organizations_create",
           "inventories_list", "inventories_create",
           "projects_list", "projects_playbooks_retrieve", "projects_create",
           "job_templates_list", "job_templates_retrieve", "job_templates_create", "job_templates_launch_create",

@@ -55,7 +55,7 @@ def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
         "ao_agent_credential_id": args.ao_agent_credential_id,
         "ao_agent_integration_id": args.ao_agent_integration_id,
         "ao_agent_model_id": args.ao_agent_model_id,
-        "ao_tool_agent_model_id": args.ao_tool_agent_model_id,
+        "ao_tool_agent_model_id": getattr(args, "ao_tool_agent_model_id", ""),
     }
 
 

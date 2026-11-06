@@ -174,6 +174,10 @@ require `--execute-mutations`, a unique target name, and disposable AAP
 resources. If the title is missing or ambiguous, inspect the `select_test_case`
 result for candidate titles and rerun with exactly one of them.
 
+The runner verifies the AO route certificate by default. For a private CA, pass
+`--ca-file /path/to/ca-bundle.pem`; `--insecure` disables certificate
+verification and is intended only for local development.
+
 **Workflow builder note:** Configuration → Integrations may show **Available** while the workflow
 UI still reports “AAP credential not configured” until you select **aap-demo AAP** and
 **aap-demo AAP Token** on an AAP job-template node. AO proxy APIs require both `integration_id`
