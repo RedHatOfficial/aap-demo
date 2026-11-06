@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Decide whether the publish workflow should upload this version.
 
-Writes ``published=true`` or ``published=false`` to ``GITHUB_OUTPUT``. Any answer
+Writes ``version=<version>`` and ``published=true`` or ``published=false`` to
+``GITHUB_OUTPUT``. Any answer
 from PyPI other than 200 or 404 fails the job, so an outage is not read as
 "not published".
 """
@@ -56,6 +57,7 @@ def main() -> int:
     published = is_published(version)
     print(f"{version} on PyPI: {published}")
     with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        output.write(f"version={version}\n")
         output.write(f"published={str(published).lower()}\n")
     return 0
 
