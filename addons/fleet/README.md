@@ -30,8 +30,15 @@ when `FLEET_IMAGE` is not already set:
 The CentOS Stream image is larger than 1 GB. It is cached under
 `~/.aap-demo/cache/fleet/` and checked against the SHA256 in the upstream
 `CHECKSUM` file. `aap-demo fleet destroy` removes the VMs and does not delete
-that cache. A later enable reuses the cached image when the checksum still
-matches.
+that cache. A later enable reuses the cached CentOS image when the checksum
+still matches.
+
+A custom URL is cached under a name that includes that URL, not the filename
+alone. Downloading `https://host-b/image.qcow2` does not reuse a file saved
+from `https://host-a/image.qcow2`. Without `FLEET_IMAGE_SHA256`, a custom URL
+is downloaded again each time it is requested. With that digest set, the cache
+is reused only when the file matches the digest. The source URL and digest are
+stored beside the cached file.
 
 Non-interactive and `QUIET=true` runs do not download an image unless one is
 selected:

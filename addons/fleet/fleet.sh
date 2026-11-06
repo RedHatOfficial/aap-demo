@@ -258,7 +258,10 @@ _fleet_validate_image() {
 # the default because it is cloud-init ready and published for both x86_64 and
 # aarch64. The download is cached outside ~/.aap-demo/fleet so fleet destroy
 # does not throw the image away. Published CentOS images are checked against
-# the sibling CHECKSUM file; set FLEET_IMAGE_SHA256 to pin a different URL.
+# the sibling CHECKSUM file and reused by their published filename. A custom
+# URL is stored under a URL-specific name and downloaded again unless
+# FLEET_IMAGE_SHA256 pins it. A pinned image is reused only when the file
+# matches that digest.
 # -----------------------------------------------------------------------------
 
 _fleet_is_url() {
@@ -494,9 +497,140 @@ _fleet_verify_downloaded_image() {
   return 0
 }
 
+_fleet_is_centos_image_url() {
+  case "$1" in
+    https://cloud.centos.org/* | http://cloud.centos.org/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+_fleet_normalize_sha256() {
+  local value
+  value=$(printf '%s' "$1" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  if ! printf '%s\n' "$value" | grep -Eq '^[0-9a-f]{64}$'; then
+    return 1
+  fi
+  printf '%s\n' "$value"
+}
+
+_fleet_sha256_text() {
+  local text="$1"
+  local sum
+  if command -v sha256sum >/dev/null 2>&1; then
+    sum=$(printf '%s' "$text" | sha256sum) || return 1
+  elif command -v shasum >/dev/null 2>&1; then
+    sum=$(printf '%s' "$text" | shasum -a 256) || return 1
+  else
+    _err "sha256sum or shasum is required to cache a Fleet image"
+    return 1
+  fi
+  printf '%s\n' "$sum" | awk '{print $1}'
+}
+
+# CentOS images keep the published filename. A pinned download is keyed by the
+# digest so two URLs that share a basename cannot reuse each other's bytes.
+# Every other custom URL is keyed by the URL and is not reused.
+_fleet_image_cache_dest() {
+  local url="$1"
+  local name cache_dir digest url_id
+  name=$(_fleet_url_filename "$url") || return 1
+  cache_dir=$(_fleet_image_cache_dir)
+  if [ -n "${FLEET_IMAGE_SHA256:-}" ]; then
+    digest=$(_fleet_normalize_sha256 "$FLEET_IMAGE_SHA256") || return 1
+    printf '%s/%s-%s\n' "$cache_dir" "$digest" "$name"
+    return 0
+  fi
+  if _fleet_is_centos_image_url "$url"; then
+    printf '%s/%s\n' "$cache_dir" "$name"
+    return 0
+  fi
+  url_id=$(_fleet_sha256_text "$url") || return 1
+  printf '%s/%s-%s\n' "$cache_dir" "$url_id" "$name"
+}
+
+_fleet_cache_reuses_existing() {
+  local url="$1"
+  if [ -n "${FLEET_IMAGE_SHA256:-}" ]; then
+    return 0
+  fi
+  if _fleet_is_centos_image_url "$url"; then
+    return 0
+  fi
+  return 1
+}
+
+_fleet_source_field() {
+  local file="$1"
+  local key="$2"
+  local line
+  [ -f "$file" ] || return 1
+  line=$(grep -m 1 -- "^${key}=" "$file" || true)
+  if [ -z "$line" ]; then
+    return 1
+  fi
+  printf '%s\n' "${line#"${key}"=}"
+}
+
+# A missing sidecar is allowed. The checksum or pinned digest still has to
+# match. A sidecar that names a different digest or, for an unpinned image, a
+# different URL is not reused.
+_fleet_cache_source_matches() {
+  local dest="$1"
+  local url="$2"
+  local digest="$3"
+  local meta url_field digest_field
+  meta="${dest}.source"
+  if [ ! -f "$meta" ]; then
+    return 0
+  fi
+  url_field=$(_fleet_source_field "$meta" url || true)
+  digest_field=$(_fleet_source_field "$meta" sha256 || true)
+  if [ -n "$digest" ]; then
+    if [ -n "$digest_field" ] && [ "$digest_field" != "$digest" ]; then
+      return 1
+    fi
+    # A sidecar for a different URL is reusable only when it records this digest.
+    if [ -n "$url_field" ] && [ "$url_field" != "$url" ] && [ "$digest_field" != "$digest" ]; then
+      return 1
+    fi
+    return 0
+  fi
+  if [ -n "$url_field" ] && [ "$url_field" != "$url" ]; then
+    return 1
+  fi
+  return 0
+}
+
+_fleet_write_image_source() {
+  local dest="$1"
+  local url="$2"
+  local digest="${3:-}"
+  local meta tmp
+  meta="${dest}.source"
+  tmp=$(mktemp "${dest}.source.XXXXXX") || return 1
+  {
+    printf 'url=%s\n' "$url"
+    if [ -n "$digest" ]; then
+      printf 'sha256=%s\n' "$digest"
+    fi
+  } >"$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  mv -f "$tmp" "$meta" || {
+    rm -f "$tmp"
+    return 1
+  }
+}
+
+_fleet_remove_cached_image() {
+  local dest="$1"
+  rm -f "$dest" "${dest}.partial" "${dest}.source"
+}
+
 fleet_download_image() {
   local url="$1"
-  local cache_dir name dest partial cache_status
+  local cache_dir name dest partial cache_status pinned_digest
   local curl_args=()
 
   if ! _fleet_is_url "$url"; then
@@ -513,30 +647,41 @@ fleet_download_image() {
     echo "  Install curl and retry." >&2
     return 1
   fi
+  pinned_digest=""
+  if [ -n "${FLEET_IMAGE_SHA256:-}" ]; then
+    pinned_digest=$(_fleet_normalize_sha256 "$FLEET_IMAGE_SHA256") || {
+      _err "FLEET_IMAGE_SHA256 must be a SHA256 digest"
+      return 1
+    }
+  fi
 
   cache_dir=$(_fleet_image_cache_dir)
   mkdir -p "$cache_dir" || return 1
-  dest="${cache_dir}/${name}"
+  dest=$(_fleet_image_cache_dest "$url") || return 1
   partial="${dest}.partial"
 
-  if [ -f "$dest" ]; then
+  # Custom URLs without a digest are downloaded on every request. A basename
+  # already in the cache must not satisfy a later URL.
+  if [ -f "$dest" ] && _fleet_cache_reuses_existing "$url"; then
     cache_status=1
-    if _fleet_validate_image "$dest"; then
+    if _fleet_validate_image "$dest" && _fleet_cache_source_matches "$dest" "$url" "$pinned_digest"; then
       cache_status=0
       _fleet_verify_downloaded_image "$dest" "$url" quiet || cache_status=$?
     fi
     if [ "$cache_status" -eq 0 ]; then
+      _fleet_write_image_source "$dest" "$url" "$pinned_digest" || return 1
       echo "  Using cached QCOW2: ${dest}"
       FLEET_ACQUIRED_IMAGE="$dest"
       return 0
     fi
     if [ "$cache_status" -eq 2 ]; then
+      _fleet_write_image_source "$dest" "$url" "$pinned_digest" || return 1
       echo "  Checksum could not be downloaded; using cached QCOW2: ${dest}"
       FLEET_ACQUIRED_IMAGE="$dest"
       return 0
     fi
     echo "  Replacing cached QCOW2 that failed verification..."
-    rm -f "$dest"
+    _fleet_remove_cached_image "$dest"
   fi
 
   echo "  Downloading QCOW2 cloud image..."
@@ -559,20 +704,22 @@ fleet_download_image() {
   mv -f "$partial" "$dest" || return 1
 
   if ! _fleet_verify_downloaded_image "$dest" "$url"; then
-    rm -f "$dest"
+    _fleet_remove_cached_image "$dest"
     return 1
   fi
   if ! _fleet_validate_image "$dest"; then
     if ! command -v qemu-img >/dev/null 2>&1; then
+      _fleet_write_image_source "$dest" "$url" "$pinned_digest" || return 1
       _err "qemu-img is required to verify the downloaded cloud image"
       echo "  The downloaded file was kept at ${dest}" >&2
     else
-      rm -f "$dest"
+      _fleet_remove_cached_image "$dest"
       _err "Downloaded file is not a valid QCOW2 image"
     fi
     return 1
   fi
 
+  _fleet_write_image_source "$dest" "$url" "$pinned_digest" || return 1
   echo "  ✓ Cloud image ready: ${dest}"
   FLEET_ACQUIRED_IMAGE="$dest"
   return 0

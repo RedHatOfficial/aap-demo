@@ -85,7 +85,7 @@ GA install via checked-in GitOps manifests (`aap-demo enable ao`):
 `aap-demo enable fleet` creates local QEMU VMs and registers them as AAP managed nodes. `--backend kube-native` uses the Python Fleet addon and does not download a QCOW2.
 
 - If `FLEET_IMAGE` is unset, an interactive QEMU enable can download the CentOS Stream 9 GenericCloud qcow2 for the host architecture (`x86_64` or `aarch64`). The image is cached at `~/.aap-demo/cache/fleet/` and checked against the upstream `CHECKSUM` file.
-- A local path or `http://` / `https://` URL in `FLEET_IMAGE` is used as-is. `FLEET_IMAGE_URL` downloads that URL when `FLEET_IMAGE` is empty.
+- A local path or `http://` / `https://` URL in `FLEET_IMAGE` is used as-is. `FLEET_IMAGE_URL` downloads that URL when `FLEET_IMAGE` is empty. Custom URLs are cached by URL, or by `FLEET_IMAGE_SHA256` when that pin is set. A custom URL without a pin is downloaded again instead of reused from a file that only shares its name.
 - Non-interactive runs need `FLEET_IMAGE`, `FLEET_IMAGE_URL`, or `FLEET_DOWNLOAD_IMAGE=true`. `QUIET=true` does not download an image or install packages unless one of those is set.
 - `aap-demo fleet add` reuses the saved image. `aap-demo fleet destroy` removes the VMs and leaves the cached qcow2 in place.
 
