@@ -157,6 +157,43 @@ aap_demo_note_existing_crc_disk() {
   return 1
 }
 
+# Prints the live CRC disk size, or "unset" when CRC is still on its default.
+# A fresh aap-demo config has no CRC_DISK, which is not the value CRC is using.
+aap_demo_crc_disk_setting() {
+  local output=""
+  local line=""
+  if ! output="$(crc config get disk-size 2>&1)"; then
+    printf 'Unable to read the current OpenShift Local disk size.\n' >&2
+    return 1
+  fi
+  if [[ "$output" == *"Configuration property 'disk-size' is not set"* ]]; then
+    printf 'unset\n'
+    return 0
+  fi
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^disk-size[[:space:]]*:[[:space:]]*([0-9]+)$ ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      return 0
+    fi
+  done <<<"$output"
+  printf 'Unable to read the current OpenShift Local disk size.\n' >&2
+  return 1
+}
+
+aap_demo_restore_crc_disk_setting() {
+  local previous="$1"
+  local requested="$2"
+  if [ "$previous" = "unset" ]; then
+    crc config unset disk-size >/dev/null 2>&1
+    return $?
+  fi
+  if [ "$previous" = "$requested" ]; then
+    return 0
+  fi
+  crc config set disk-size "$previous" >/dev/null 2>&1
+  return $?
+}
+
 aap_demo_apply_crc_storage_config() {
   local disk="$1"
   local pv="$2"
@@ -165,14 +202,17 @@ aap_demo_apply_crc_storage_config() {
     printf 'crc is not installed. The size is saved for the next aap-demo create.\n'
     return 0
   fi
-  previous_disk="$(aap_demo_config_value CRC_DISK)"
+  if ! previous_disk="$(aap_demo_crc_disk_setting)"; then
+    return 1
+  fi
   if ! crc config set disk-size "$disk"; then
     printf 'OpenShift Local rejected disk size %sGB. The saved size was not changed.\n' "$disk" >&2
     return 1
   fi
   if ! crc config set persistent-volume-size "$pv"; then
-    if [ -n "$previous_disk" ] && [ "$previous_disk" != "$disk" ]; then
-      crc config set disk-size "$previous_disk" >/dev/null 2>&1 || true
+    if ! aap_demo_restore_crc_disk_setting "$previous_disk" "$disk"; then
+      printf 'OpenShift Local rejected persistent volume size %sGB, and the disk size could not be restored.\n' "$pv" >&2
+      return 1
     fi
     printf 'OpenShift Local rejected persistent volume size %sGB. The saved size was not changed.\n' "$pv" >&2
     return 1

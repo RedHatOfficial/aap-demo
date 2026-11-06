@@ -43,6 +43,25 @@ function Write-AapCrcStorageNotes {
   }
 }
 
+function Get-AapCrcDiskSetting {
+  if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $PSNativeCommandUseErrorActionPreference = $false
+  }
+  $ErrorActionPreference = 'Continue'
+  $output = @(& crc config get disk-size 2>&1)
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Unable to read the current OpenShift Local disk size.'
+  }
+  $text = @($output | ForEach-Object { "$_" }) -join "`n"
+  if ($text -match "Configuration property 'disk-size' is not set") {
+    return $null
+  }
+  if ($text -match '(?m)^disk-size\s*:\s*(\d+)\s*$') {
+    return $Matches[1]
+  }
+  throw 'Unable to read the current OpenShift Local disk size.'
+}
+
 function Set-AapCrcStorageConfig {
   param(
     [Parameter(Mandatory)][string]$Disk,
@@ -50,19 +69,28 @@ function Set-AapCrcStorageConfig {
   )
   Assert-AapCrcStoragePair -Disk $Disk -PvSize $PvSize
   if (Test-AapCommand 'crc') {
-    $previousDisk = Get-AapConfigValue 'CRC_DISK'
     if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
       $PSNativeCommandUseErrorActionPreference = $false
     }
     $ErrorActionPreference = 'Continue'
+    # Read CRC itself. A fresh aap-demo config has no CRC_DISK even when CRC does.
+    $previousDisk = Get-AapCrcDiskSetting
     & crc config set disk-size $Disk
     if ($LASTEXITCODE -ne 0) {
       throw "OpenShift Local rejected disk size ${Disk}GB. The saved size was not changed."
     }
     & crc config set persistent-volume-size $PvSize
     if ($LASTEXITCODE -ne 0) {
-      if ($previousDisk -and $previousDisk -ne $Disk) {
+      $restored = $true
+      if ($null -eq $previousDisk) {
+        & crc config unset disk-size | Out-Null
+        if ($LASTEXITCODE -ne 0) { $restored = $false }
+      } elseif ($previousDisk -ne $Disk) {
         & crc config set disk-size $previousDisk | Out-Null
+        if ($LASTEXITCODE -ne 0) { $restored = $false }
+      }
+      if (-not $restored) {
+        throw "OpenShift Local rejected persistent volume size ${PvSize}GB, and the disk size could not be restored."
       }
       throw "OpenShift Local rejected persistent volume size ${PvSize}GB. The saved size was not changed."
     }
