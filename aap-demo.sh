@@ -3978,7 +3978,7 @@ case "$COMMAND" in
     ;;
   fleet)
     reject_windows_deferred_addon fleet || exit 1
-    cmd_fleet "${EXTRA_ARGS[@]}" || exit 1
+    cmd_fleet "${EXTRA_ARGS[@]}" || exit
     ;;
   enable)
     reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
@@ -3988,7 +3988,7 @@ case "$COMMAND" in
         check_python_windows || exit 1
         ;;
     esac
-    cmd_enable "${EXTRA_ARGS[@]}" || exit 1
+    cmd_enable "${EXTRA_ARGS[@]}" || exit
     ;;
   wire)
     cmd_wire
