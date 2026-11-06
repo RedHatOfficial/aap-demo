@@ -40,6 +40,8 @@ Export-ModuleMember -Function @(
 
   'Invoke-AapDemoCreate'
 
+  'Invoke-AapDemoStorage'
+
   'Invoke-AapDemoDeploy'
 
   'Invoke-AapDemoStatus'
