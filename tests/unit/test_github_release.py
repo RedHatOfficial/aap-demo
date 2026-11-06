@@ -178,6 +178,18 @@ def test_a_draft_someone_else_made_is_never_deleted() -> None:
     assert all(call[:3] != ["gh", "release", "delete"] for call in gh.calls)
 
 
+def test_a_stalled_gh_call_fails_instead_of_hanging(monkeypatch) -> None:
+    state = _state()
+
+    def stalled(*args, **kwargs):
+        assert kwargs["timeout"] == state.GH_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(state.subprocess, "run", stalled)
+    with pytest.raises(SystemExit, match="did not finish within"):
+        state.release_exists("2.0.0rc1")
+
+
 def test_check_reports_the_version_for_the_release_job() -> None:
     workflow = (ROOT / ".github/workflows/pypi-publish.yaml").read_text(encoding="utf-8")
     assert "version: ${{ steps.state.outputs.version }}" in workflow

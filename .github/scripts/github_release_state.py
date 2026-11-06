@@ -27,8 +27,17 @@ WORKFLOW_AUTHOR = "github-actions[bot]"
 Runner = Callable[[List[str]], "subprocess.CompletedProcess[str]"]
 
 
+#: Bound on each gh call, so a stalled API request fails the job instead of hanging it.
+GH_TIMEOUT_SECONDS = 120
+
+
 def _run(argv: List[str]) -> "subprocess.CompletedProcess[str]":
-    return subprocess.run(argv, capture_output=True, text=True, check=False)
+    try:
+        return subprocess.run(
+            argv, capture_output=True, text=True, check=False, timeout=GH_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"{' '.join(argv)} did not finish within {GH_TIMEOUT_SECONDS}s") from None
 
 
 def release_exists(version: str, *, run: Runner = _run) -> bool:
