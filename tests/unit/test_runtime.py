@@ -50,6 +50,18 @@ def test_idle_fails_when_no_aap_exists(app_ctx) -> None:
     assert "No AAP instance" in app_ctx.console.stderr
 
 
+def test_repair_stops_when_an_scc_grant_fails(app_ctx) -> None:
+    app_ctx.runner = FakeRunner().fail("oc adm policy", stderr="forbidden")
+    with pytest.raises(AapDemoError, match="Failed to grant anyuid and privileged SCC"):
+        runtime.repair(
+            app_ctx,
+            sleep=lambda _s: None,
+            which=lambda name: "/bin/oc" if name == "oc" else None,
+        )
+    assert "In-cluster repair complete" not in app_ctx.console.stdout
+    assert not app_ctx.runner.called("kubectl get pods")
+
+
 def test_repair_deletes_crashloop_pods(app_ctx) -> None:
     runner = FakeRunner()
     runner.ok("oc adm policy")
