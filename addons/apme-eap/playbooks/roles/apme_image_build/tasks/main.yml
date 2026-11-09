@@ -20,11 +20,19 @@
 
 - name: Resolve local build references
   ansible.builtin.set_fact:
-    apme_image_build_target: "{{ oci_registry | regex_replace('/$', '') }}/{{ apme_image_build_name }}:{{ plugin_sha }}"
+    apme_image_build_pack_tag: >-
+      {{ (apme_image_build_pack_sha256 | regex_replace('^sha256:', ''))[:12] }}
+    apme_image_build_repository: >-
+      {{ oci_registry | regex_replace('/$', '') }}/{{ apme_image_build_name }}
+
+- name: Resolve local build references with pack tag
+  ansible.builtin.set_fact:
+    apme_image_build_tag: "{{ plugin_sha }}-{{ apme_image_build_pack_tag }}"
+    apme_image_build_target: "{{ apme_image_build_repository }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}"
     apme_image_build_push_target: >-
       {{ (apme_image_build_push_registry | default(oci_registry, true) | regex_replace('/$', ''))
-         }}/{{ apme_image_build_name }}:{{ plugin_sha }}
-    apme_image_build_local: "localhost/{{ apme_image_build_name }}:{{ plugin_sha }}"
+         }}/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}
+    apme_image_build_local: "localhost/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}"
     apme_image_build_digest: ""
     apme_image_build_base: >-
       {{ apme_image_build_base_arm if ansible_architecture in ['aarch64', 'arm64'] else apme_image_build_base_x86 }}
@@ -161,7 +169,7 @@
   ansible.builtin.set_fact:
     apme_preloaded_registry: "{{ oci_registry.split('/')[0] }}"
     apme_preloaded_repository: "{{ apme_image_build_target.rsplit(':', 1)[0].split('/', 1)[1] }}"
-    apme_preloaded_tag: "{{ plugin_sha }}"
+    apme_preloaded_tag: "{{ apme_image_build_tag }}"
     apme_preloaded_digest: "{{ apme_image_build_digest }}"
 
 - name: Remove the transient external plugin artifact

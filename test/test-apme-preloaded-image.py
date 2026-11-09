@@ -252,14 +252,14 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["registry"], "registry.example.test")
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
         self.assertEqual(image["digest"], PUSH_DIGEST)
-        self.assertEqual(image["tag"], "8593383")
+        self.assertEqual(image["tag"], "8593383-" + DIGEST[7:19])
         build = next(c for c in commands if c[0] == "build")
         self.assertIn("--build-arg=PLUGIN_PACK_FORMAT=oci", build)
         self.assertIn("--build-arg=PLUGIN_PACK_SHA256=" + DIGEST, build)
         push = next(c for c in commands if c[0] == "push")
         self.assertIn("--digestfile", push)
-        self.assertEqual(push[-2:], ["localhost/rhdh-apme-preloaded:8593383",
-                                    "docker://registry.example.test/apme/rhdh-apme-preloaded:8593383"])
+        self.assertEqual(push[-2:], ["localhost/rhdh-apme-preloaded:8593383-" + DIGEST[7:19],
+                                    "docker://registry.example.test/apme/rhdh-apme-preloaded:8593383-" + DIGEST[7:19]])
         self.assertFalse(any(c[0] == "run" for c in commands))
 
     def local_image_variables(self):
@@ -280,7 +280,7 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["registry"], "registry.example.test")
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
         self.assertEqual(image["digest"], DIGEST)
-        self.assertEqual(image["tag"], "8593383")
+        self.assertEqual(image["tag"], "8593383-" + DIGEST[7:19])
         self.assertEqual([c[0] for c in commands], ["inspect", "run"])
         validation = commands[1]
         self.assertIn("registry.example.test/apme/rhdh-apme-preloaded@" + DIGEST, validation)

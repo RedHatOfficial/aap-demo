@@ -184,7 +184,7 @@ sys.exit(1)
         build = calls[0]
         self.assertIn("quay.io/aapdemo/apme-eap:apme-" + SHA + "-" + self.pack_hash[7:19], build)
         for arg in ("PLUGIN_PACK_SHA256=" + self.pack_hash, "PLUGIN_PACK_FORMAT=npm",
-                    "BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9",
+                    "BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10",
                     "org.opencontainers.image.revision=" + SHA,
                     "org.opencontainers.image.source=https://github.com/ansible/ansible-rhdh-plugins",
                     "io.apme.artifact.id=2", "io.apme.pack.sha256=" + self.pack_hash):

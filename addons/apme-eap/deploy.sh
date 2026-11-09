@@ -485,6 +485,7 @@ resolve_github_catalog_org() {
   fi
 
   if [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] && [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ]; then
+    APME_GITHUB_CATALOG_ORG="$(_normalize_github_catalog_org "$APME_GITHUB_CATALOG_ORG")"
     return 0
   fi
 

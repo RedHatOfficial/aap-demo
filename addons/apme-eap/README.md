@@ -84,7 +84,7 @@ This will:
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
 5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Push the bundled APME OCI plugin archive to the local registry and run the portal Helm chart
+6. Build the portal image with the verified APME plugins and run the portal Helm chart
 7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
 
 **Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with
