@@ -140,6 +140,27 @@ def test_enable_passes_domain_selection_and_a_galaxy_token(app_ctx, monkeypatch)
     assert not (app_ctx.paths.state_dir / "galaxy-token").exists()
 
 
+def test_locked_keyring_does_not_fail_a_finished_install(app_ctx, monkeypatch) -> None:
+    import keyring.errors
+
+    _present_tools(monkeypatch)
+
+    def locked(_name: str) -> str:
+        raise keyring.errors.KeyringLocked("login keychain is locked")
+
+    monkeypatch.setattr(app_ctx.secrets, "get", locked)
+    app_ctx.runner.ok(["bash", _deploy("product-demos")])
+    app_ctx.runner.ok(["bash", str(wire_script())])
+
+    assert get("product-demos").enable(app_ctx, argparse.Namespace()) == 0
+
+    assert "product-demos" in (app_ctx.config.get("addons.enabled") or [])
+    assert "GALAXY_TOKEN_FILE" not in (app_ctx.runner.calls[1].env or {})
+    assert "KeyringLocked" in app_ctx.console.stderr
+    assert "Product demos installed" in app_ctx.console.stdout
+    assert app_ctx.runner.calls[1].argv[0:2] == ("bash", str(wire_script()))
+
+
 def test_failed_enable_does_not_record_or_wire(app_ctx, monkeypatch) -> None:
     _present_tools(monkeypatch)
     app_ctx.runner.fail(["bash", _deploy("product-demos")], stderr="job failed")

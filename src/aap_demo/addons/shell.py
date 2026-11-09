@@ -166,7 +166,16 @@ def _write_galaxy_token(ctx: AppContext) -> Optional[Path]:
         return None
     if not ctx.secrets.available():
         return None
-    token = ctx.secrets.get("galaxy-token")
+    try:
+        token = ctx.secrets.get("galaxy-token")
+    except Exception as exc:  # noqa: BLE001 - a locked keyring raises its own error type
+        # The token is optional. The install has already succeeded.
+        ctx.console.warn(
+            "Could not read galaxy-token from the credential store "
+            f"({type(exc).__name__}). Product demos are installed. "
+            "Galaxy credentials were not updated."
+        )
+        return None
     if not token:
         return None
     path = ctx.paths.state_dir / "galaxy-token"
