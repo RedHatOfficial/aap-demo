@@ -62,6 +62,11 @@ run_case() {
   mkdir -p "$TMP/$case_name"
   export MOCK_CASE="$case_name" MOCK_LOG="$TMP/$case_name/log" MOCK_MANIFEST="$TMP/$case_name/manifest" MOCK_PATCH="$TMP/$case_name/patch"
   export EDA_PLAYGROUND_STATE_DIR="$TMP/$case_name/state" MOCK_MICRO=no
+  if [ "$case_name" = custom_namespace ]; then
+    export NAMESPACE=custom-demo
+  else
+    unset NAMESPACE || true
+  fi
   export MOCK_PASSWORD_B64
   MOCK_PASSWORD_B64="$(printf '%s' fixture-admin-password | "$REAL_BASE64" | tr -d '\n')"
   : >"$MOCK_LOG"
@@ -123,6 +128,13 @@ grep -Fq 'eda-playground.apps.override.test' "$MOCK_MANIFEST" || fail 'override 
 first_line() { grep -nF -- "$1" "$MOCK_LOG" | head -1 | cut -d: -f1; }
 [ "$(first_line 'oc adm policy add-scc-to-user anyuid')" -lt "$(first_line 'apply deployment')" ] || fail 'SCC grant must precede manifest apply'
 assert_log 'rollout status deployment/eda-playground -n eda-playground --timeout=' 'rollout timeout absent'
+run_case custom_namespace
+grep -Fq 'name: custom-demo' "$MOCK_MANIFEST" || fail 'custom namespace not rendered'
+service_account_block="$(grep -A4 -F 'kind: ServiceAccount' "$MOCK_MANIFEST" || true)"
+grep -Fq 'name: eda-playground' <<<"$service_account_block" || fail 'fixed service account name missing'
+grep -Fq 'serviceAccountName: eda-playground' "$MOCK_MANIFEST" || fail 'Deployment service account name changed'
+assert_log 'oc adm policy add-scc-to-user anyuid -z eda-playground -n custom-demo' 'SCC target changed'
+assert_log 'rollout status deployment/eda-playground -n custom-demo --timeout=' 'rollout namespace changed'
 for failure in route_fail secret_fail rollout_fail; do
   export MOCK_CASE="$failure" MOCK_LOG="$TMP/$failure.log" MOCK_MANIFEST="$TMP/$failure.manifest" MOCK_PATCH="$TMP/$failure.patch" MOCK_MICRO=no
   export EDA_PLAYGROUND_STATE_DIR="$TMP/$failure/state"
