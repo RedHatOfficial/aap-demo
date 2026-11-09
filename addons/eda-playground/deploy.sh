@@ -23,6 +23,18 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     echo "ERROR: kubectl is not connected to a cluster; refusing cleanup" >&2
     exit 1
   }
+
+  if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    echo "Namespace $NAMESPACE does not exist; nothing to delete"
+    exit 0
+  fi
+
+  MANAGED_BY="$(kubectl get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
+  if [ "$MANAGED_BY" != "aap-demo-eda-playground" ]; then
+    echo "Namespace $NAMESPACE is not owned by the EDA Playground addon; skipping deletion"
+    exit 0
+  fi
+
   kubectl delete namespace "$NAMESPACE" --ignore-not-found
   exit 0
 fi
