@@ -40,6 +40,20 @@ spec:
               value: "8080"
             - name: ALLOW_SELF_SIGNED_CERTS
               value: "true"
+            - name: AAP_BASE_URL
+              value: __EDA_PLAYGROUND_AAP_BASE_URL__
+            - name: AAP_REDIRECT_URI
+              value: __EDA_PLAYGROUND_REDIRECT_URI__
+            - name: AAP_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: eda-playground-oauth
+                  key: client-id
+            - name: AAP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: eda-playground-oauth
+                  key: client-secret
             - name: OAUTH_CLIENT_ID
               valueFrom:
                 secretKeyRef:
