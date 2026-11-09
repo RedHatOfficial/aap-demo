@@ -182,8 +182,14 @@ fi
 REDIRECT="https://$ROUTE_HOST/auth/callback"
 
 # Build Secret JSON on stdin; command output and shell tracing never expose values.
-sed -e "s|name: eda-playground$|name: $NAMESPACE|g" -e "s|namespace: eda-playground$|namespace: $NAMESPACE|g" \
-  "$SCRIPT_DIR/namespace.yaml" | kubectl apply -f - >/dev/null
+awk -v namespace="$NAMESPACE" '
+  /^  name: eda-playground$/ && !namespace_name_seen {
+    sub(/eda-playground$/, namespace)
+    namespace_name_seen = 1
+  }
+  /^  namespace: eda-playground$/ { sub(/eda-playground$/, namespace) }
+  { print }
+' "$SCRIPT_DIR/namespace.yaml" | kubectl apply -f - >/dev/null
 jq -n --arg name eda-playground-oauth --arg namespace "$NAMESPACE" \
   --rawfile client_id "$SECRET_DIR/client-id" --rawfile client_secret "$SECRET_DIR/client-secret" \
   --rawfile session_secret "$SECRET_DIR/session-secret" \
