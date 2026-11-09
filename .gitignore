@@ -36,3 +36,6 @@ build/
 
 # Must Gathers
 must-gather*/
+
+# APME
+addons/apme-eap/apme-portal-deployment*
