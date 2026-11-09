@@ -84,11 +84,13 @@ jobs:
 
       - name: Run ansible-lint
         run: |
-          # Only lint if we have Ansible files
-          if [ -f "requirements.yml" ] || find . -name "playbook*.yml" -o -name "site.yml" | grep -q .; then
-            ansible-lint --force-color --offline
+          set -euo pipefail
+          files=$(git ls-files '*.yml' '*.yaml' ':!config/**' ':!.serena/**')
+          if [ -n "$files" ]; then
+            git ls-files '*.yml' '*.yaml' ':!config/**' ':!.serena/**' -z \
+              | xargs -0 -r ansible-lint --force-color --offline
           else
-            echo "No Ansible playbooks found, skipping ansible-lint"
+            echo "No Ansible YAML files found, skipping ansible-lint"
           fi
 
   secretlint:
@@ -126,13 +128,8 @@ jobs:
 
       - name: Run shfmt check
         run: |
-          # Find and check all shell scripts
-          FILES=$(find . -name '*.sh' ! -path './.venv-lint/*' ! -path './.git/*')
-          if [ -n "$FILES" ]; then
-            echo "$FILES" | xargs shfmt -d -i 2 -ci -bn
-          else
-            echo "No shell scripts found"
-          fi
+          set -euo pipefail
+          git ls-files '*.sh' -z | xargs -0 -r -n 50 shfmt -d -i 2 -ci -bn
 
   validate-manifests:
     name: Validate Kubernetes Manifests
@@ -149,12 +146,7 @@ jobs:
           sudo mv kubeconform /usr/local/bin/
 
       - name: Validate Kubernetes YAMLs
-        run: |
-          set -euo pipefail
-          find config/manifests config/crs \( -name "*.yaml" -o -name "*.yml" \) -print0 | while IFS= read -r -d '' file; do
-            echo "Validating $file"
-            kubeconform -ignore-missing-schemas -summary "$file"
-          done
+        run: make validate-manifests
 
   hadolint:
     name: Dockerfile Lint

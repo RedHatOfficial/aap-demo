@@ -56,7 +56,7 @@ make update-hooks
 ```
 
 The GitHub Actions lint jobs use the same repository configuration files and
-tracked-file scopes as the local Make targets. ShellCheck, yamllint,
+tracked-file scopes as the local Make targets. ShellCheck, shfmt, yamllint,
 markdownlint, ansible-lint, and Kubernetes manifest validation are blocking
 checks; a validation error fails the workflow. Kubernetes schema downloads
 are required for manifest validation, so run that check with network access.

@@ -26,7 +26,7 @@ repos:
         entry: scripts/require-tool.sh shellcheck "brew install shellcheck"
         language: system
         types: [shell]
-        args: ['--severity=warning', '--shell=bash']
+        args: ['--severity=warning']
         exclude: ^(\.git/|\.github/|docs/|scripts/.*\.zsh)
 
   # YAML linting (uses venv yamllint, no docker)
