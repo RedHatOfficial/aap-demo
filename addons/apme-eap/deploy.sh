@@ -129,6 +129,39 @@ _stop_pod_watcher() {
 # Prerequisites
 # ---------------------------------------------------------------------------
 
+_find_compatible_python() {
+  # Ansible doesn't support Python 3.15+ yet (as of Ansible 14.6.0 / 2026-11)
+  # Try to find Python 3.11-3.14 in order of preference
+  local python_cmd=""
+
+  # Try specific versions first (newest compatible to oldest)
+  for py_version in python3.14 python3.13 python3.12 python3.11; do
+    if command -v "$py_version" &>/dev/null; then
+      python_cmd="$py_version"
+      echo "$python_cmd"
+      return 0
+    fi
+  done
+
+  # Fall back to python3, but check if it's compatible
+  if command -v python3 &>/dev/null; then
+    local py_ver
+    py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
+    case "$py_ver" in
+      3.11 | 3.12 | 3.13 | 3.14)
+        echo "python3"
+        return 0
+        ;;
+      *)
+        # Incompatible version
+        return 1
+        ;;
+    esac
+  fi
+
+  return 1
+}
+
 setup_venv() {
   # Create venv with full Ansible suite + collections for local playbook execution
   local req_checksum_file="${VENV_DIR}/.requirements_checksum"
@@ -139,9 +172,19 @@ setup_venv() {
     rm -rf "$VENV_DIR"
   fi
 
+  # Find a compatible Python version for Ansible
+  local python_cmd
+  if ! python_cmd=$(_find_compatible_python); then
+    local current_py_ver
+    current_py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "unknown")
+    die "Python 3.11-3.14 required for Ansible (found: python3 = $current_py_ver)
+Ansible does not yet support Python 3.15+. Install a compatible version.
+Then re-run: aap-demo enable apme-eap"
+  fi
+
   if [ ! -d "$VENV_DIR" ]; then
-    info "Creating Python venv with Ansible and collections..."
-    python3 -m venv "$VENV_DIR"
+    info "Creating Python venv with Ansible and collections (using $python_cmd)..."
+    "$python_cmd" -m venv "$VENV_DIR"
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
 
@@ -276,10 +319,16 @@ check_prerequisites() {
     die "kubectl not connected to a cluster. Run 'aap-demo create' first."
   fi
 
-  # Check python3
-  if ! command -v python3 &>/dev/null; then
-    die "python3 not found. Please install Python 3.8 or later."
+  # Check for compatible Python version (Ansible requires 3.11-3.14)
+  local python_cmd
+  if ! python_cmd=$(_find_compatible_python); then
+    local current_py_ver
+    current_py_ver=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "not found")
+    die "Python 3.11-3.14 required for Ansible (found: python3 = $current_py_ver)
+Ansible does not yet support Python 3.15+. Install a compatible version:
+  brew install python@3.12"
   fi
+  info "Using Python: $python_cmd ($(command -v "$python_cmd"))"
 
   _ensure_skopeo
 
