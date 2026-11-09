@@ -27,8 +27,11 @@ grep -q '^      serviceAccountName: eda-playground$' "$ADDON_DIR/deployment.yaml
 for oauth_pair in 'OAUTH_CLIENT_ID:client-id' 'OAUTH_CLIENT_SECRET:client-secret' 'SESSION_SECRET:session-secret'; do
   oauth_variable="${oauth_pair%%:*}"
   secret_key="${oauth_pair#*:}"
-  grep -A5 -F "name: $oauth_variable" "$ADDON_DIR/deployment.yaml" \
-    | grep -Fq "key: $secret_key" || fail "$oauth_variable must reference OAuth Secret key $secret_key"
+  oauth_block="$(grep -A5 -F "name: $oauth_variable" "$ADDON_DIR/deployment.yaml" || true)"
+  printf '%s\n' "$oauth_block" | grep -Fq 'name: eda-playground-oauth' \
+    || fail "$oauth_variable must reference Secret eda-playground-oauth"
+  printf '%s\n' "$oauth_block" | grep -Fq "key: $secret_key" \
+    || fail "$oauth_variable must reference OAuth Secret key $secret_key"
 done
 grep -q 'name: eda-playground-oauth' "$ADDON_DIR/deployment.yaml" || fail "OAuth Secret name missing"
 grep -q 'readinessProbe:' "$ADDON_DIR/deployment.yaml" || fail "readiness probe missing"
