@@ -27,9 +27,11 @@ stores the client secret locally for reuse, and configures the application’s
 redirect URI after the route exists.
 
 The addon is experimental. Its current container image is hosted in Brian’s
-personal GHCR namespace and is not an official Red Hat image. The image must be
-configurable and should not silently drift through an unbounded `latest` tag in
-the maintained default configuration.
+personal GHCR namespace and is not an official Red Hat image. The image remains
+configurable; the maintained default is `:latest` at the user's explicit request
+so live testing picks up the newest published image. The deployment therefore
+uses `imagePullPolicy: Always`. Operators needing reproducibility should set
+`EDA_PLAYGROUND_IMAGE` to a reviewed immutable tag or digest.
 
 ## Design
 

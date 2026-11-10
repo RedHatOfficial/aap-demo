@@ -22,9 +22,8 @@ set `EDA_PLAYGROUND_IMAGE` to a reviewed tag or digest before deploying.
 - An `aap-demo` cluster running, with `kubectl` connected to it.
 - OpenShift Route support. `oc` is optional; when available, the deployer uses
   it to grant the dedicated service account the required `anyuid` SCC.
-- AAP OAuth application credentials supplied in the
-  `eda-playground-oauth` Kubernetes Secret in the `eda-playground` namespace.
-  OAuth provisioning is managed by the addon workflow.
+- The addon provisions its AAP OAuth application and Kubernetes Secret during
+  enablement.
 
 ## Usage
 
