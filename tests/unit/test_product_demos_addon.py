@@ -13,7 +13,7 @@ from aap_demo.addons import OLDER_COMMAND_GUIDE, get, names, needs_cluster
 from aap_demo.addons.shell import (
     BUNDLED_ADDON_DIRS,
     GALAXY_TOKEN_PREFIX,
-    PARTIAL_INSTALL_EXIT,
+    PARTIAL_MARKER,
     scripts_root,
     wire_script,
 )
@@ -316,44 +316,70 @@ def test_token_is_removed_when_the_write_fails_partway(app_ctx, monkeypatch) -> 
     assert _token_files(app_ctx) == []
 
 
+def _partial_installer(app_ctx, failed: str):
+    """The installer marks a partial install in its result file and exits 1."""
+
+    def _run(args):
+        marker = Path(app_ctx.runner.calls[-1].env["AAP_DEMO_RESULT_FILE"])
+        marker.write_text(f"{PARTIAL_MARKER} {failed}\n", encoding="utf-8")
+        return CompletedCommand(argv=tuple(args), returncode=1, stderr="domains failed")
+
+    return _run
+
+
+def _result_files(app_ctx) -> list:
+    state = app_ctx.paths.state_dir
+    return sorted(state.glob(".addon-result.*")) if state.exists() else []
+
+
 def test_partial_install_is_recorded_and_wired_then_reported(app_ctx, monkeypatch) -> None:
     _present_tools(monkeypatch)
-    app_ctx.runner.fail(
-        ["bash", _deploy("product-demos")],
-        returncode=PARTIAL_INSTALL_EXIT,
-        stderr="Some domains failed to install: windows",
+    app_ctx.runner.register(
+        ["bash", _deploy("product-demos")], _partial_installer(app_ctx, "windows network")
     )
     app_ctx.runner.ok(["bash", str(wire_script())])
 
-    with pytest.raises(AddonError, match="some demo domains failed"):
+    with pytest.raises(AddonError, match="these demo domains failed: windows, network"):
         get("product-demos").enable(app_ctx, argparse.Namespace())
 
     # The base and the domains that worked are in AAP, so disable must see them.
     assert app_ctx.config.get("addons.enabled") == ["product-demos", "product-demos-base"]
     assert app_ctx.runner.calls[1].argv[0:2] == ("bash", str(wire_script()))
     assert "Product demos installed" not in app_ctx.console.stdout
+    assert _result_files(app_ctx) == []
 
 
-def test_partial_exit_on_disable_is_still_a_failure(app_ctx, monkeypatch) -> None:
+@pytest.mark.parametrize("returncode", [1, 3])
+def test_a_failure_without_the_marker_is_not_recorded(app_ctx, monkeypatch, returncode) -> None:
+    """The exit code alone never means partial: under set -e anything can exit 3."""
+    _present_tools(monkeypatch)
+    app_ctx.runner.fail(["bash", _deploy("product-demos")], returncode=returncode)
+
+    with pytest.raises(AddonError, match="enable product-demos failed"):
+        get("product-demos").enable(app_ctx, argparse.Namespace())
+
+    assert app_ctx.config.get("addons.enabled") == []
+    assert len(app_ctx.runner.calls) == 1
+    assert _result_files(app_ctx) == []
+
+
+def test_disable_gets_no_result_file(app_ctx, monkeypatch) -> None:
     _present_tools(monkeypatch)
     app_ctx.config.set("addons.enabled", ["product-demos", "product-demos-base"])
-    app_ctx.runner.fail(
-        ["bash", _deploy("product-demos"), "--delete"], returncode=PARTIAL_INSTALL_EXIT
-    )
+    app_ctx.runner.fail(["bash", _deploy("product-demos"), "--delete"])
 
     with pytest.raises(AddonError, match="disable product-demos failed"):
         get("product-demos").disable(app_ctx, argparse.Namespace())
 
+    assert "AAP_DEMO_RESULT_FILE" not in (app_ctx.runner.calls[0].env or {})
     assert app_ctx.config.get("addons.enabled") == ["product-demos", "product-demos-base"]
-    assert len(app_ctx.runner.calls) == 1
 
 
-def test_installer_exits_3_only_for_a_partial_install() -> None:
+def test_installer_marks_only_the_partial_branch() -> None:
     script = (scripts_root() / "product-demos" / "deploy.sh").read_text(encoding="utf-8")
-    statements = [line.strip() for line in script.splitlines()]
-    assert statements.count(f"exit {PARTIAL_INSTALL_EXIT}") == 1
-    # A failed base install must not pass its own exit code (jq uses 3) through.
-    assert 'product-demos-base/deploy.sh" || exit 1' in script
+    assert script.count('"$AAP_DEMO_RESULT_FILE"') == 1
+    assert f"printf '{PARTIAL_MARKER} %s" in script
+    assert "exit 3" not in script
 
 
 def test_installers_keep_the_collection_async_waits() -> None:

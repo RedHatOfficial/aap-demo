@@ -18,9 +18,10 @@ from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
 
-#: ``addons/product-demos/deploy.sh`` exits with this when the base installed
-#: and at least one domain failed. Any other non-zero exit means nothing to record.
-PARTIAL_INSTALL_EXIT = 3
+#: ``addons/product-demos/deploy.sh`` writes ``partial <domains>`` to the file
+#: named by ``AAP_DEMO_RESULT_FILE`` when the base installed and some domains
+#: failed. Its exit code is 1 either way, so only this line marks a partial install.
+PARTIAL_MARKER = "partial"
 
 #: Name prefix of the short-lived Galaxy token file in the state directory.
 GALAXY_TOKEN_PREFIX = ".galaxy-token."
@@ -115,15 +116,24 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
         argv.append("--delete")
     argv.extend(extra)
 
-    result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink())
-    if not delete and result.returncode == PARTIAL_INSTALL_EXIT:
+    result_file = None if delete else _result_file(ctx)
+    if result_file is not None:
+        env["AAP_DEMO_RESULT_FILE"] = str(result_file)
+    try:
+        result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink())
+        failed_domains = _partial_domains(result_file) if not result.ok else None
+    finally:
+        if result_file is not None:
+            result_file.unlink(missing_ok=True)
+    if failed_domains is not None:
         # The base and some domains are in AAP. Record them so disable and a
         # retry see them, wire the credentials, then report the failure.
         _remember(ctx, name)
         _wire(ctx, env)
+        failed = ", ".join(failed_domains) or "some domains"
         raise AddonError(
-            f"{name} installed, and some demo domains failed",
-            hint=f"The installer log above names them. Run aap-demo enable {name} again to retry.",
+            f"{name} installed, and these demo domains failed: {failed}",
+            hint=f"Run aap-demo enable {name} again to retry them.",
         )
     if not result.ok:
         action = "disable" if delete else "enable"
@@ -141,6 +151,30 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
     _wire(ctx, env)
     _say(ctx, _enabled_message(name), addon=name, enabled=True)
     return 0
+
+
+def _result_file(ctx: AppContext) -> Optional[Path]:
+    """An empty file the installer can mark. None when the state dir is unusable."""
+    try:
+        ctx.paths.state_dir.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(dir=str(ctx.paths.state_dir), prefix=".addon-result.")
+    except OSError:
+        return None
+    os.close(fd)
+    return Path(name)
+
+
+def _partial_domains(path: Optional[Path]) -> Optional[List[str]]:
+    """Failed domain names when the installer marked a partial install, else None."""
+    if path is None:
+        return None
+    try:
+        words = path.read_text(encoding="utf-8").split()
+    except OSError:
+        return None
+    if not words or words[0] != PARTIAL_MARKER:
+        return None
+    return words[1:]
 
 
 def _remember(ctx: AppContext, name: str) -> None:
