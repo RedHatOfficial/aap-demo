@@ -45,6 +45,8 @@ PUBLIC_SHELL_ADDONS: tuple = ("product-demos", "product-demo-satellite")
 
 
 _INSTALLER_TOOLS = ("bash", "curl", "jq")
+#: The delete handlers only print cleanup steps, so disable needs bash alone.
+_DELETE_TOOLS = ("bash",)
 
 
 def scripts_root() -> Path:
@@ -73,8 +75,9 @@ def wire_script() -> Path:
     return Path(__file__).resolve().with_name("product_demos_wire.sh")
 
 
-def require_tools() -> None:
-    missing = [name for name in _INSTALLER_TOOLS if shutil.which(name) is None]
+def require_tools(*, delete: bool = False) -> None:
+    tools = _DELETE_TOOLS if delete else _INSTALLER_TOOLS
+    missing = [name for name in tools if shutil.which(name) is None]
     if not missing:
         return
     hint = "Install " + ", ".join(missing) + " and run the command again."
@@ -106,7 +109,7 @@ class ShellAddon:
 
 
 def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> int:
-    require_tools()
+    require_tools(delete=delete)
     deploy = scripts_root() / name / "deploy.sh"
     if not deploy.is_file():
         raise AddonError(f"addon {name!r} has no deploy.sh")

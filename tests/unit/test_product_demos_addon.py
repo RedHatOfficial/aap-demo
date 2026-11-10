@@ -215,6 +215,26 @@ def test_domain_enable_is_accepted(app_ctx, monkeypatch) -> None:
     assert "product-demo-linux" not in names()
 
 
+@pytest.mark.parametrize("name", ["product-demos", "product-demo-linux", "product-demos-base"])
+def test_disable_needs_only_bash(app_ctx, monkeypatch, name) -> None:
+    monkeypatch.setattr(
+        "aap_demo.addons.shell.shutil.which",
+        lambda tool: "/bin/bash" if tool == "bash" else None,
+    )
+    app_ctx.runner.ok(["bash", _deploy(name), "--delete"])
+
+    assert get(name).disable(app_ctx, argparse.Namespace()) == 0
+    assert app_ctx.runner.calls[0].argv == ("bash", _deploy(name), "--delete")
+
+
+def test_disable_without_bash_names_only_bash(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda tool: None)
+
+    with pytest.raises(PrerequisiteError, match="need bash$"):
+        get("product-demos").disable(app_ctx, argparse.Namespace())
+    assert app_ctx.runner.calls == []
+
+
 def test_disable_removes_only_the_named_addon(app_ctx, monkeypatch) -> None:
     _present_tools(monkeypatch)
     app_ctx.config.set("addons.enabled", ["product-demos", "product-demos-base", "fleet"])
