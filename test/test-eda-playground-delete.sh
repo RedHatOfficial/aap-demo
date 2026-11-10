@@ -73,7 +73,7 @@ fail() {
 assert_log() { grep -Fq -- "$1" "$MOCK_LOG" || fail "$2"; }
 reject_log() { ! grep -Fq -- "$1" "$MOCK_LOG" || fail "$2"; }
 run_case() {
-  local name="$1" action="${2:---delete}" expect_failure=no
+  local name="$1" action="${2:---delete}" expect_failure=no preserve_state=no
   export MOCK_LOG="$TMP/$name.log" EDA_PLAYGROUND_STATE_DIR="$TMP/$name/state"
   export MOCK_NS=present MOCK_OWNER=aap-demo-eda-playground MOCK_AAP=present
   export MOCK_APPS=exact MOCK_APP_DELETE=present MOCK_NS_DELETE=present MOCK_SCC=present
@@ -90,6 +90,18 @@ run_case() {
     wrong_id)
       printf '%s\n' '{"oauth_app_id":"41","client_secret":"fixture-client-secret"}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
       MOCK_APPS=mismatch
+      ;;
+    marker_write_fail)
+      printf '%s\n' '{"oauth_app_id":"41","client_secret":"fixture-client-secret"}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
+      mkdir "$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
+      MOCK_APPS=mismatch
+      expect_failure=yes
+      preserve_state=yes
+      ;;
+    malformed_metadata)
+      printf '%s\n' '{"oauth_app_id":' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
+      expect_failure=yes
+      preserve_state=yes
       ;;
     duplicate)
       rm "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
@@ -153,7 +165,11 @@ run_case() {
     ! grep -Fq "$secret" "$TMP/$name.out" || fail "$name exposed $secret"
   done
   ! grep -Fq '"client_secret":"fixture-client-secret"' "$TMP/$name.out" || fail "$name exposed raw API response"
-  [ ! -e "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ] || fail "$name retained OAuth state"
+  if [ "$preserve_state" = yes ]; then
+    [ -f "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ] || fail "$name lost OAuth metadata"
+  else
+    [ ! -e "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ] || fail "$name retained OAuth state"
+  fi
   unset NAMESPACE || true
 }
 
@@ -177,6 +193,19 @@ grep -Fq 'OAuth application ownership mismatch' "$TMP/wrong_id.out" || fail 'wro
 : >"$MOCK_LOG"
 PATH="$TMP/bin:$PATH" "$ROOT/addons/eda-playground/deploy.sh" --delete >"$TMP/wrong_id/repeat.out" 2>&1 || fail 'wrong ID retry failed'
 reject_log '-X DELETE' 'wrong ID retry fell back to name-only deletion'
+run_case marker_write_fail
+grep -Fq 'could not save OAuth ownership marker' "$TMP/marker_write_fail.out" || fail 'marker write failure not reported'
+reject_log '-X DELETE' 'marker write failure deleted application'
+reject_log 'kubectl delete namespace' 'marker write failure deleted namespace'
+rmdir "$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
+: >"$MOCK_LOG"
+PATH="$TMP/bin:$PATH" "$ROOT/addons/eda-playground/deploy.sh" --delete >"$TMP/marker_write_fail/retry.out" 2>&1 || fail 'marker write retry failed'
+reject_log '-X DELETE' 'marker write retry deleted wrong application'
+[ "$(cat "$EDA_PLAYGROUND_STATE_DIR/oauth_app_id")" = 41 ] || fail 'marker write retry lost ownership ID'
+run_case malformed_metadata
+grep -Fq 'saved OAuth metadata' "$TMP/malformed_metadata.out" || fail 'malformed metadata failure not reported'
+reject_log '-X DELETE' 'malformed metadata deleted application'
+reject_log 'kubectl delete namespace' 'malformed metadata deleted namespace'
 run_case duplicate
 reject_log '-X DELETE' 'ambiguous name deleted'
 run_case paginated_duplicate
@@ -187,10 +216,12 @@ reject_log '-X DELETE' 'absent app deleted'
 run_case resources_absent
 run_case missing_app_delete
 run_case missing_scc
+assert_log 'kubectl delete namespace eda-playground' 'confirmed missing SCC blocked namespace deletion'
 run_case partial
-for step in 'OAuth application' 'SCC' 'namespace'; do
+for step in 'OAuth application' 'SCC'; do
   grep -Fq "$step" "$TMP/partial.out" || fail "partial cleanup did not report $step"
 done
+reject_log 'kubectl delete namespace' 'partial cleanup attempted namespace deletion after SCC failure'
 run_case route_fail
 grep -Fq 'AAP Route lookup failed' "$TMP/route_fail.out" || fail 'route failure step not reported'
 run_case lookup_fail
@@ -199,6 +230,7 @@ run_case delete_fail
 grep -Fq 'OAuth application 42 deletion failed' "$TMP/delete_fail.out" || fail 'OAuth delete failure step not reported'
 run_case scc_fail
 grep -Fq 'SCC binding removal failed' "$TMP/scc_fail.out" || fail 'SCC failure step not reported'
+reject_log 'kubectl delete namespace' 'SCC failure attempted namespace deletion'
 run_case ns_fail
 grep -Fq 'namespace eda-playground deletion failed' "$TMP/ns_fail.out" || fail 'namespace deletion failure step not reported'
 run_case namespace_lookup_fail

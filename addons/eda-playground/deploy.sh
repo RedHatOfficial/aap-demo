@@ -58,17 +58,23 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   if [ -f "$CREDENTIALS" ]; then
     if ! command -v jq >/dev/null 2>&1; then
       cleanup_error 'jq is required to read saved OAuth ownership'
+      exit 1
     elif ! SAVED_ID="$(jq -r '.oauth_app_id // empty' "$CREDENTIALS" 2>/dev/null)"; then
-      SAVED_ID=blocked
+      cleanup_error 'saved OAuth metadata could not be read'
+      exit 1
     fi
   elif [ -f "$TOMBSTONE" ]; then
-    SAVED_ID="$(cat "$TOMBSTONE")"
+    if ! SAVED_ID="$(cat "$TOMBSTONE" 2>/dev/null)"; then
+      cleanup_error 'saved OAuth ownership marker could not be read'
+      exit 1
+    fi
   fi
   if [ -f "$CREDENTIALS" ] && [[ ! "$SAVED_ID" =~ ^[0-9]+$ ]]; then SAVED_ID=blocked; fi
   if [ -n "$SAVED_ID" ]; then
     umask 077
-    if ! printf '%s\n' "$SAVED_ID" >"$TOMBSTONE"; then
+    if ! { printf '%s\n' "$SAVED_ID" >"$TOMBSTONE"; } 2>/dev/null; then
       cleanup_error 'could not save OAuth ownership marker'
+      exit 1
     fi
   fi
 
@@ -128,8 +134,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
           elif [ "$(grep -c . <<<"$MATCH_IDS" || true)" = 1 ]; then
             APP_ID="$MATCH_IDS"
             umask 077
-            if ! mkdir -p "$STATE_DIR" || ! chmod 700 "$STATE_DIR" || ! printf '%s\n' "$APP_ID" >"$TOMBSTONE"; then
+            if ! { mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR" && printf '%s\n' "$APP_ID" >"$TOMBSTONE"; } 2>/dev/null; then
               cleanup_error 'could not save OAuth ownership marker'
+              exit 1
             fi
           elif [ -n "$MATCH_IDS" ]; then
             cleanup_error 'multiple exact-name OAuth applications found'
@@ -150,15 +157,19 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
       cleanup_error "namespace $NAMESPACE ownership lookup failed"
     fi
     if [ "$MANAGED_BY" = "aap-demo-eda-playground" ]; then
+      SCC_READY=true
       if command -v oc >/dev/null 2>&1; then
         if ! SCC_ERROR="$(oc adm policy remove-scc-from-user anyuid -z eda-playground -n "$NAMESPACE" 2>&1)"; then
           if [[ "$SCC_ERROR" != *NotFound* && "$SCC_ERROR" != *'not found'* ]]; then
             cleanup_error "SCC binding removal failed in namespace $NAMESPACE"
+            SCC_READY=false
           fi
         fi
       fi
-      if ! kubectl delete namespace "$NAMESPACE" --ignore-not-found >/dev/null 2>&1; then
-        cleanup_error "namespace $NAMESPACE deletion failed"
+      if [ "$SCC_READY" = true ]; then
+        if ! kubectl delete namespace "$NAMESPACE" --ignore-not-found >/dev/null 2>&1; then
+          cleanup_error "namespace $NAMESPACE deletion failed"
+        fi
       fi
     else
       echo "Namespace $NAMESPACE is not owned by the EDA Playground addon; skipping deletion"
