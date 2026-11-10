@@ -19,7 +19,9 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from aap_demo.core.errors import AapDemoError, PrerequisiteError
+from aap_demo.core.errors import PrerequisiteError
+from aap_demo.exec.download import curl_argv
+from aap_demo.exec.download import failed as download_failed
 
 #: Pinned in ``addons/olm/deploy.sh:47``.
 SDK_VERSION = "v1.38.0"
@@ -74,11 +76,8 @@ def ensure_available(
     bin_dir.mkdir(parents=True, exist_ok=True)
     dest = bin_dir / "operator-sdk"
 
-    if not ctx.runner.run(["curl", "-fsSL", "-o", str(dest), url]).ok:
-        raise AapDemoError(
-            "Failed to download operator-sdk",
-            hint=f"Download it manually from {url} and put it on PATH.",
-        )
+    if not ctx.runner.run(curl_argv(url, str(dest))).ok:
+        raise download_failed("operator-sdk", url)
     dest.chmod(0o755)
 
     if ctx.runner.run(["sudo", "-n", "true"]).ok:
