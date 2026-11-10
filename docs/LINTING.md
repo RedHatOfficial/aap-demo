@@ -167,6 +167,14 @@ ansible-lint
 ansible-lint playbook.yml
 ```
 
+The offline lint target requires the public Kubernetes collection to be
+installed before running it:
+
+```bash
+ansible-galaxy collection install kubernetes.core:2.4.0
+make lint-ansible
+```
+
 **Skip specific rules**:
 
 ```yaml

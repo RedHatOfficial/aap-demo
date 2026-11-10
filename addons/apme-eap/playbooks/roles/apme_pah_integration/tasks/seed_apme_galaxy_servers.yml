@@ -223,7 +223,7 @@
   loop_control:
     label: "{{ item.name }}"
   register: apme_pah_create_galaxy_servers
-  changed_when: false
+  changed_when: apme_pah_create_galaxy_servers.stdout | trim == '201'
   failed_when: apme_pah_create_galaxy_servers.stdout | trim not in ['201', '409']
   when:
     - apme_pah_seed_apme_galaxy_servers | bool
