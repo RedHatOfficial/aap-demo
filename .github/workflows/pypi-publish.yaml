@@ -7,6 +7,12 @@ name: Publish to PyPI
 # keeps each version forever. Publish from main. A version already on PyPI is skipped, and any
 # version that is not a pre-release of the next major release fails the check
 # job (see .github/scripts/pypi_version_state.py).
+#
+# After a publish, the release job tags the commit that set the version as
+# v<version> and creates a GitHub prerelease with the files PyPI serves. It
+# also runs when the version is already on PyPI, so running this workflow by
+# hand on main creates a missing release without uploading again. An existing
+# release is left alone.
 on:
   workflow_dispatch:
   push:
@@ -23,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       published: ${{ steps.state.outputs.published }}
+      version: ${{ steps.state.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -80,3 +87,63 @@ jobs:
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  release:
+    name: GitHub release
+    needs: [check, publish]
+    # Runs after a successful publish, or when the version was already on
+    # PyPI (publish skipped). Never after a failed publish, and never off main.
+    if: >-
+      always()
+      && github.ref == 'refs/heads/main'
+      && needs.check.result == 'success'
+      && (needs.publish.result == 'success'
+          || (needs.publish.result == 'skipped' && needs.check.outputs.published == 'true'))
+    runs-on: ubuntu-latest
+    # One group per version: runs for the same version take turns, and a
+    # queued release for one version never replaces another version's.
+    concurrency:
+      group: github-release-${{ needs.check.outputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      - name: Find the release
+        id: existing
+        # Published: nothing to do. Missing, or a draft an interrupted run of
+        # this job left: create it. Any other draft or gh error fails.
+        run: python .github/scripts/github_release_state.py "$VERSION"
+
+      - name: Download the published files from PyPI
+        if: steps.existing.outputs.exists == 'false'
+        run: python .github/scripts/pypi_release_files.py "$VERSION" release-dist
+
+      - name: Create the tag and prerelease
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          # The commit on main that set this version, not the commit this run
+          # started from, so a later manual run tags the right commit.
+          target=$(git log -1 --first-parent --format=%H -S "__version__ = \"$VERSION\"" -- src/aap_demo/__init__.py)
+          if [ -z "$target" ]; then
+            echo "No commit on main sets __version__ = \"$VERSION\"" >&2
+            exit 1
+          fi
+          gh release create "v$VERSION" release-dist/* \
+            --target "$target" \
+            --prerelease \
+            --title "aap-demo $VERSION" \
+            --notes "Pre-release. Install with: pipx install 'aap-demo==$VERSION'. PyPI: https://pypi.org/project/aap-demo/$VERSION/" \
+            --generate-notes
