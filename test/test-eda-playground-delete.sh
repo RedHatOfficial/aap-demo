@@ -62,7 +62,11 @@ STUB
 cat >"$TMP/bin/oc" <<'STUB'
 #!/usr/bin/env bash
 printf 'oc %s\n' "$*" >>"$MOCK_LOG"
-[ "$MOCK_SCC" = absent ] && { echo 'Error from server (NotFound): SCC binding not found' >&2; exit 1; }
+[ "$MOCK_SCC" = absent ] && { echo 'Error from server (NotFound): rolebindings.rbac.authorization.k8s.io "system:openshift:scc:anyuid" not found' >&2; exit 1; }
+[ "$MOCK_SCC" = resource_absent ] && { echo 'Error from server (NotFound): securitycontextconstraints.security.openshift.io "anyuid" not found' >&2; exit 1; }
+[ "$MOCK_SCC" = config_not_found ] && { echo 'error: context "fixture-client-secret" not found' >&2; exit 1; }
+[ "$MOCK_SCC" = transport_not_found ] && { echo 'Unable to connect to the server: proxy host not found' >&2; exit 1; }
+[ "$MOCK_SCC" = unrelated_not_found ] && { echo 'Error from server (NotFound): namespaces "other" not found' >&2; exit 1; }
 [ "$MOCK_SCC" = fail ] && { echo 'Forbidden' >&2; exit 1; }
 exit 0
 STUB
@@ -146,6 +150,11 @@ run_case() {
     app_absent) MOCK_APPS=absent ;;
     missing_app_delete) MOCK_APP_DELETE=absent ;;
     missing_scc) MOCK_SCC=absent ;;
+    missing_scc_resource) MOCK_SCC=resource_absent ;;
+    config_not_found | transport_not_found | unrelated_not_found)
+      MOCK_SCC="$name"
+      expect_failure=yes
+      ;;
     resources_absent)
       MOCK_AAP=absent
       MOCK_NS=absent
@@ -256,6 +265,8 @@ run_case resources_absent
 run_case missing_app_delete
 run_case missing_scc
 assert_log 'kubectl delete namespace eda-playground' 'confirmed missing SCC blocked namespace deletion'
+run_case missing_scc_resource
+assert_log 'kubectl delete namespace eda-playground' 'confirmed missing SCC resource blocked namespace deletion'
 run_case partial
 for step in 'OAuth application' 'SCC'; do
   grep -Fq "$step" "$TMP/partial.out" || fail "partial cleanup did not report $step"
@@ -301,4 +312,13 @@ for bad_case in missing_gateway_id invalid_gateway_id missing_gateway_id_with_me
   ) || gateway_id_failures=$((gateway_id_failures + 1))
 done
 [ "$gateway_id_failures" -eq 0 ] || fail "$gateway_id_failures invalid Gateway ID regressions failed"
+scc_failures=0
+for bad_case in config_not_found transport_not_found unrelated_not_found; do
+  (
+    run_case "$bad_case"
+    grep -Fq 'SCC binding removal failed' "$TMP/$bad_case.out" || fail "$bad_case failure not reported"
+    reject_log 'kubectl delete namespace' "$bad_case deleted namespace"
+  ) || scc_failures=$((scc_failures + 1))
+done
+[ "$scc_failures" -eq 0 ] || fail "$scc_failures SCC error regressions failed"
 echo 'PASS: EDA Playground guarded cleanup fixtures'

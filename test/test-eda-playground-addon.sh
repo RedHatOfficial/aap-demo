@@ -46,8 +46,30 @@ grep -Fq 'app\.kubernetes\.io/managed-by' "$ADDON_DIR/deploy.sh" || fail "cleanu
 
 MOCK_BIN="$(mktemp -d)"
 trap 'rm -rf "$MOCK_BIN"' EXIT
+export EDA_PLAYGROUND_STATE_DIR="$MOCK_BIN/state"
+mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
+home_state_fingerprint() {
+  local file
+  if [ -d "$HOME/.aap-demo/eda-playground" ]; then
+    printf 'directory present\n'
+  else
+    printf 'directory absent\n'
+  fi
+  for file in oauth_credentials.json oauth_app_id; do
+    if [ -f "$HOME/.aap-demo/eda-playground/$file" ]; then
+      cksum <"$HOME/.aap-demo/eda-playground/$file"
+    else
+      printf '%s absent\n' "$file"
+    fi
+  done
+}
+HOME_STATE_BEFORE="$(home_state_fingerprint)"
 cat >"$MOCK_BIN/kubectl" <<'MOCK_KUBECTL'
 #!/usr/bin/env bash
+if [[ "${EDA_PLAYGROUND_STATE_DIR:-}" != "${MOCK_DELETE_LOG%/*}/state" ]]; then
+  echo 'FAIL: static cleanup state is not isolated' >&2
+  exit 1
+fi
 case "$1 $2" in
   "cluster-info") exit 0 ;;
   "get namespace")
@@ -75,5 +97,6 @@ MOCK_DELETE_LOG="$MOCK_BIN/deletes" MOCK_NAMESPACE_EXISTS=yes MOCK_NAMESPACE_OWN
 MOCK_DELETE_LOG="$MOCK_BIN/deletes" MOCK_NAMESPACE_EXISTS=yes MOCK_NAMESPACE_OWNER=aap-demo-eda-playground \
   PATH="$MOCK_BIN:$PATH" "$ADDON_DIR/deploy.sh" --delete >/dev/null
 [ "$(cat "$MOCK_BIN/deletes")" = deleted ] || fail "cleanup should delete its owned namespace"
+[ "$HOME_STATE_BEFORE" = "$(home_state_fingerprint)" ] || fail "static checks changed real home OAuth state"
 
 echo "PASS: EDA Playground addon static checks"

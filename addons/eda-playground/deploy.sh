@@ -169,10 +169,14 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
       SCC_READY=true
       if command -v oc >/dev/null 2>&1; then
         if ! SCC_ERROR="$(oc adm policy remove-scc-from-user anyuid -z eda-playground -n "$NAMESPACE" 2>&1)"; then
-          if [[ "$SCC_ERROR" != *NotFound* && "$SCC_ERROR" != *'not found'* ]]; then
-            cleanup_error "SCC binding removal failed in namespace $NAMESPACE"
-            SCC_READY=false
-          fi
+          case "$SCC_ERROR" in
+            'Error from server (NotFound): rolebindings.rbac.authorization.k8s.io "system:openshift:scc:anyuid" not found' | \
+              'Error from server (NotFound): securitycontextconstraints.security.openshift.io "anyuid" not found') ;;
+            *)
+              cleanup_error "SCC binding removal failed in namespace $NAMESPACE"
+              SCC_READY=false
+              ;;
+          esac
         fi
       fi
       if [ "$SCC_READY" = true ]; then
