@@ -209,6 +209,11 @@ sed -e "s|__EDA_PLAYGROUND_IMAGE__|$IMAGE|g" \
 sed -e "s|__EDA_PLAYGROUND_ROUTE_HOST__|$ROUTE_HOST|g" -e "s|namespace: eda-playground|namespace: $NAMESPACE|g" \
   "$SCRIPT_DIR/route.yaml" | kubectl apply -f - >/dev/null
 
+REVISION="$(date -u +%s)"
+REVISION_PATCH="$(jq -n --arg revision "$REVISION" \
+  '{spec:{template:{metadata:{annotations:{"aap-demo/revision":$revision}}}}}')"
+kubectl patch deployment eda-playground -n "$NAMESPACE" --type=merge -p "$REVISION_PATCH" >/dev/null
+
 if [ "$IS_MICROSHIFT" = true ]; then
   AAP_IP="$(kubectl get svc aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)"
   [ -n "$AAP_IP" ] || {

@@ -31,6 +31,28 @@ Implemented on `feature/eda-playground-addon` and committed as `b7408da235b460a3
 - `ANSIBLE_HOME=/private/tmp/aap-demo-ansible-home ANSIBLE_LOCAL_TEMP=/private/tmp/aap-demo-ansible-local .venv-lint/bin/pre-commit run --files addons/eda-playground/deploy.sh addons/eda-playground/deployment.yaml test/test-eda-playground-deploy.sh` — PASS. The commit's pre-commit and commit-msg hooks also passed.
 - `git diff --check` — PASS.
 
+## OAuth and Secret revision follow-up
+
+Added an explicit `aap-demo/revision` timestamp annotation to the EDA
+Playground Deployment pod template after OAuth and Kubernetes Secret
+reconciliation. The patch occurs before MicroShift alias handling and rollout
+wait, so a changed OAuth or session Secret causes a fresh pod revision. The
+mock also reruns deployment against the preserved state to cover repeated
+deploys.
+
+Red–green evidence: the new fixture first failed with `FAIL: pod template
+revision bump missing` against the previous deployer. After adding the
+revision patch, it passed and verified the patch precedes rollout and that a
+second deployment succeeds.
+
+Verification for this follow-up:
+
+- `bash test/test-eda-playground-deploy.sh` — PASS.
+- `bash test/test-eda-playground-addon.sh` — PASS.
+- `shellcheck addons/eda-playground/deploy.sh test/test-eda-playground-deploy.sh` — PASS.
+- `shfmt -d -i 2 -ci -bn addons/eda-playground/deploy.sh test/test-eda-playground-deploy.sh` — PASS.
+- Applicable pre-commit hooks and `git diff --check` — PASS.
+
 The first pre-commit attempt could not write Ansible Lint's default cache under `~/.ansible`; relocating it to `/private/tmp` resolved that environment issue. Commit hooks initially caught a missing executable bit on the new test and an accidentally staged executable bit on the YAML file; both modes were corrected before the successful commit.
 
 ## Concerns

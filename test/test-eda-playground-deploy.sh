@@ -18,7 +18,10 @@ case "$1 $2" in
   'create -f')
     if [[ " $* " == *' --dry-run=client '* ]]; then cat; else exit 9; fi ;;
   'apply -f') payload="$(cat)"; printf '%s\n' "$payload" >>"$MOCK_MANIFEST"; [[ "$payload" == *'kind: Deployment'* ]] && echo 'apply deployment' >>"$MOCK_LOG"; exit 0 ;;
-  'patch deployment') printf '%s\n' "$*" >>"$MOCK_PATCH" ;;
+  'patch deployment')
+    printf '%s\n' "$*" >>"$MOCK_PATCH"
+    printf '%s\n' "$*" >>"$MOCK_LOG"
+    ;;
 esac
 STUB
 cat >"$TMP/bin/curl" <<'STUB'
@@ -57,6 +60,7 @@ fail() {
   exit 1
 }
 assert_log() { grep -Fq -- "$1" "$MOCK_LOG" || fail "$2"; }
+first_line() { grep -nF -- "$1" "$MOCK_LOG" | head -1 | cut -d: -f1; }
 run_case() {
   local case_name="$1"
   mkdir -p "$TMP/$case_name"
@@ -103,6 +107,14 @@ grep -Fq 'https://eda-playground.apps.custom.test/auth/callback' "$MOCK_MANIFEST
 grep -Fq 'name: AAP_CLIENT_ID' "$MOCK_MANIFEST" || fail 'AAP client ID env absent'
 grep -Fq 'name: AAP_CLIENT_SECRET' "$MOCK_MANIFEST" || fail 'AAP client secret env absent'
 assert_log 'https://eda-playground.apps.custom.test/auth/callback' 'redirect not updated'
+assert_log 'aap-demo/revision' 'pod template revision bump missing'
+[ "$(first_line 'aap-demo/revision')" -lt "$(first_line 'rollout status deployment/eda-playground')" ] || fail 'revision bump must precede rollout'
+MOCK_CASE=repeat PATH="$TMP/bin:$PATH" REAL_JQ="$REAL_JQ" REAL_BASE64="$REAL_BASE64" \
+  "$ROOT/addons/eda-playground/deploy.sh" >"$TMP/first/repeat.out" 2>&1 || {
+  cat "$TMP/first/repeat.out"
+  fail 'repeat deploy'
+}
+assert_log 'aap-demo/revision' 'repeat deploy missing revision bump'
 run_case reuse
 ! grep -Fq -- '-X DELETE' "$MOCK_LOG" || fail 'reuse deleted application'
 ! grep -Fq -- '-X POST https://aap-aap-operator.apps.example.test/api/gateway/v1/applications/' "$MOCK_LOG" || fail 'reuse created application'
