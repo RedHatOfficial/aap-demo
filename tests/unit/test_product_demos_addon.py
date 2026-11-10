@@ -359,3 +359,18 @@ def test_installers_keep_the_collection_async_waits() -> None:
     """Zero async retries let workflow nodes be created before their workflow (Windows)."""
     for path in sorted(scripts_root().glob("product-demo*/**/*.sh")):
         assert "async_retries" not in path.read_text(encoding="utf-8"), path
+
+
+def test_an_unexpected_credential_store_error_is_not_hidden(app_ctx, monkeypatch) -> None:
+    """Only keyring errors are optional. A bug in the lookup still surfaces."""
+    _present_tools(monkeypatch)
+
+    def broken(_name: str) -> str:
+        raise RuntimeError("bug in the lookup")
+
+    monkeypatch.setattr(app_ctx.secrets, "get", broken)
+    app_ctx.runner.ok(["bash", _deploy("product-demos")])
+    app_ctx.runner.ok(["bash", str(wire_script())])
+
+    with pytest.raises(RuntimeError, match="bug in the lookup"):
+        get("product-demos").enable(app_ctx, argparse.Namespace())

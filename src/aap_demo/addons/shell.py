@@ -183,9 +183,12 @@ def _write_galaxy_token(ctx: AppContext) -> Optional[Path]:
         return None
     if not ctx.secrets.available():
         return None
+    # Imported here, like aap_demo.core.secrets, so startup never loads keyring.
+    import keyring.errors
+
     try:
         token = ctx.secrets.get("galaxy-token")
-    except Exception as exc:  # noqa: BLE001 - a locked keyring raises its own error type
+    except (keyring.errors.KeyringError, PrerequisiteError) as exc:
         # The token is optional. The install has already succeeded.
         ctx.console.warn(
             "Could not read galaxy-token from the credential store "
