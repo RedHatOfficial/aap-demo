@@ -640,6 +640,7 @@ Addons
   disable           Disable an addon
   fleet             Manage fleet node VMs
   keycloak          Configure Keycloak OIDC for AAP and AO
+  eda-playground    EDA Playground for testing event-driven integrations
 
 Other
   config            Configure aap-demo settings
