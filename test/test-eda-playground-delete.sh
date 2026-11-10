@@ -45,6 +45,8 @@ case " $* " in
         duplicate) echo '{"count":2,"results":[{"id":42,"name":"EDA Playground"},{"id":44,"name":"EDA Playground"}]}' ;;
         paginated) echo '{"count":2,"next":"https://aap.example.test/api/gateway/v1/applications/?page=2","results":[{"id":42,"name":"EDA Playground"}]}' ;;
         absent) echo '{"count":0,"results":[]}' ;;
+        missing_gateway_id) echo '{"count":1,"results":[{"name":"EDA Playground"}]}' ;;
+        invalid_gateway_id) echo '{"count":1,"results":[{"id":"fixture-client-secret","name":"EDA Playground"}]}' ;;
       esac
     fi
     ;;
@@ -115,6 +117,22 @@ run_case() {
       expect_failure=yes
       preserve_state=yes
       ;;
+    empty_marker | invalid_marker | empty_marker_with_metadata | invalid_marker_with_metadata)
+      if [[ "$name" != *_with_metadata ]]; then rm "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"; fi
+      if [[ "$name" == empty_* ]]; then
+        : >"$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
+      else
+        printf '%s\n' 'fixture-client-secret' >"$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
+      fi
+      expect_failure=yes
+      preserve_state=yes
+      ;;
+    missing_gateway_id | invalid_gateway_id | missing_gateway_id_with_metadata | invalid_gateway_id_with_metadata)
+      if [[ "$name" != *_with_metadata ]]; then rm "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"; fi
+      MOCK_APPS="${name%_with_metadata}"
+      expect_failure=yes
+      preserve_state=yes
+      ;;
     duplicate)
       rm "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
       MOCK_APPS=duplicate
@@ -166,6 +184,7 @@ run_case() {
     unowned) MOCK_OWNER=someone-else ;;
     custom) NAMESPACE=custom-demo ;;
   esac
+  if [ "$preserve_state" = yes ]; then cp -R "$EDA_PLAYGROUND_STATE_DIR" "$TMP/$name/before"; fi
   export MOCK_APPS MOCK_AAP MOCK_NS MOCK_OWNER MOCK_APP_DELETE MOCK_NS_DELETE MOCK_SCC
   if PATH="$TMP/bin:$PATH" NAMESPACE="${NAMESPACE:-eda-playground}" "$ROOT/addons/eda-playground/deploy.sh" "$action" >"$TMP/$name.out" 2>&1; then
     [ "$expect_failure" = no ] || fail "$name unexpectedly succeeded"
@@ -178,7 +197,7 @@ run_case() {
   done
   ! grep -Fq '"client_secret":"fixture-client-secret"' "$TMP/$name.out" || fail "$name exposed raw API response"
   if [ "$preserve_state" = yes ]; then
-    [ -f "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ] || fail "$name lost OAuth metadata"
+    diff -qr "$TMP/$name/before" "$EDA_PLAYGROUND_STATE_DIR" >/dev/null || fail "$name changed OAuth state"
   else
     [ ! -e "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ] || fail "$name retained OAuth state"
   fi
@@ -260,4 +279,26 @@ reject_log 'kubectl delete namespace' 'unowned namespace deleted'
 run_case custom
 assert_log 'kubectl delete namespace custom-demo' 'configured namespace not deleted'
 reject_log 'kubectl delete namespace eda-playground' 'default namespace deleted with custom setting'
+marker_failures=0
+for bad_case in empty_marker invalid_marker empty_marker_with_metadata invalid_marker_with_metadata; do
+  (
+    run_case "$bad_case"
+    grep -Fq 'saved OAuth ownership marker' "$TMP/$bad_case.out" || fail "$bad_case failure not reported"
+    reject_log 'curl ' "$bad_case attempted OAuth lookup or cleanup"
+    reject_log 'oc adm policy remove-scc-from-user' "$bad_case removed SCC"
+    reject_log 'kubectl delete namespace' "$bad_case deleted namespace"
+  ) || marker_failures=$((marker_failures + 1))
+done
+[ "$marker_failures" -eq 0 ] || fail "$marker_failures invalid marker regressions failed"
+gateway_id_failures=0
+for bad_case in missing_gateway_id invalid_gateway_id missing_gateway_id_with_metadata invalid_gateway_id_with_metadata; do
+  (
+    run_case "$bad_case"
+    grep -Fq 'Gateway application has a missing or invalid ID' "$TMP/$bad_case.out" || fail "$bad_case failure not reported"
+    reject_log '-X DELETE' "$bad_case deleted application"
+    reject_log 'oc adm policy remove-scc-from-user' "$bad_case removed SCC"
+    reject_log 'kubectl delete namespace' "$bad_case deleted namespace"
+  ) || gateway_id_failures=$((gateway_id_failures + 1))
+done
+[ "$gateway_id_failures" -eq 0 ] || fail "$gateway_id_failures invalid Gateway ID regressions failed"
 echo 'PASS: EDA Playground guarded cleanup fixtures'
