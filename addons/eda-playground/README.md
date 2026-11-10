@@ -59,6 +59,12 @@ When finished with the manual check, remove the addon:
 aap-demo disable eda-playground
 ```
 
+For the disposable-cluster smoke test, set `AAP_DEMO_RUN_LIVE_TESTS=true` and
+run `bash test/test-eda-playground-live.sh`. The live harness waits by default
+after enable so you can open the printed Route and complete OAuth before
+cleanup. Set `AAP_DEMO_LIVE_NONINTERACTIVE=true` only for unattended checks;
+that mode skips the wait and reports OAuth as unverified.
+
 ## Configuration
 
 - Namespace: `EDA_PLAYGROUND_NAMESPACE` (default: `eda-playground`). Existing

@@ -3,6 +3,23 @@
 set +x
 set -euo pipefail
 
+usage() {
+  cat <<'USAGE'
+Usage: test/test-eda-playground-live.sh
+
+Runs the EDA Playground smoke test on a disposable cluster. After enable and
+Route discovery, the default behavior waits for manual browser OAuth verification.
+Set AAP_DEMO_LIVE_NONINTERACTIVE=true to skip the wait; OAuth remains unverified.
+USAGE
+}
+
+case "${1:-}" in
+  --help | -h)
+    usage
+    exit 0
+    ;;
+esac
+
 if [ "${AAP_DEMO_RUN_LIVE_TESTS:-}" != true ]; then
   echo 'SKIP: set AAP_DEMO_RUN_LIVE_TESTS=true to run EDA Playground live checks on a disposable cluster'
   exit 0
@@ -100,11 +117,11 @@ fi
 printf 'Route host: %s\n' "$HOST"
 
 ROUTE_URL="https://$HOST"
-if [ "${AAP_DEMO_LIVE_INTERACTIVE:-false}" = true ]; then
+if [ "${AAP_DEMO_LIVE_NONINTERACTIVE:-false}" != true ]; then
   printf 'Open %s and complete AAP Gateway OAuth login in your browser. Press Enter when finished.\n' "$ROUTE_URL"
   IFS= read -r _
 else
-  printf 'Browser OAuth verification remains manual; open %s after enable and before cleanup.\n' "$ROUTE_URL"
+  printf 'Browser OAuth verification remains manual and is unverified; open %s after enable and before cleanup.\n' "$ROUTE_URL"
 fi
 
 run_quiet 'first disable eda-playground failed' \
