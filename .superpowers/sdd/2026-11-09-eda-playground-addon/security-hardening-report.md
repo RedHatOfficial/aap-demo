@@ -85,3 +85,70 @@ SDD workspace. These logs are local evidence; this report is committed.
 No live cluster or browser OAuth verification was performed in this hardening
 pass. The approved spec's disposable-cluster/browser release gate remains
 outstanding. The addon remains experimental with an externally hosted image.
+
+## Scoped review follow-up: state recovery and ingress diagnostics
+
+The follow-up addresses two findings against signed commit `2cf7d0d`.
+
+### Recoverable OAuth state replacement
+
+Replacement credentials, the new non-secret marker, and exact prior snapshots
+are staged in a private directory. An atomic rename publishes this recovery
+record before either live state file changes. A marker-write failure restores
+the previous credentials (or their absence for marker-only state), preserving
+the prior pair while retaining the replacement credentials for recovery.
+
+Both deploy and delete finish a pending transition before reading ownership.
+Recovery validates both live records against the recorded before/after
+snapshots before writing either. Unrelated changes and genuine ownership
+conflicts are rejected. The record also permits recovery if an interruption
+or rollback failure leaves one of the recorded intermediate states. Completed
+transitions remove the recovery record; state files remain mode 0600.
+
+Tests inject failure specifically when publishing the new application's
+marker, after its credentials write succeeds. They verify rollback and then
+exercise subsequent deploy, delete, and marker-only recovery against the new
+application alongside an unrelated same-name application. Another regression
+changes the ownership marker after the failed write and verifies that both
+deploy and delete reject it without mutation.
+
+### Ingress stdout and stderr
+
+Ingress lookup captures stdout and stderr separately. A successful lookup
+uses only stdout as the domain, tolerating warnings without including them in
+Route or Deployment manifests. Nonzero status still uses the narrow confirmed
+absence checks; valid-looking stdout cannot conceal a lookup failure.
+
+Discovered and overridden domains are validated before OAuth or Kubernetes
+mutation. Validation checks DNS label syntax and length and reserves space for
+the addon prefix in the complete Route hostname.
+
+### Follow-up red-green evidence
+
+Before changing production code, the focused run failed seven new cases:
+three split-state failures, a valid domain plus warning, an invalid discovered
+domain, an oversized DNS label, and an invalid override. A valid-looking domain
+returned with an actual lookup error already failed safely as expected. The
+additional pending-conflict case also failed at its split-state assertion.
+These results are retained locally in `followup-red.log`.
+
+After implementation, all targeted cases passed. The pending-conflict test
+initially exposed a Bash 3.2 empty-array limitation in the test harness; its
+optional argument handling was corrected before the successful rerun.
+
+### Follow-up verification
+
+All final checks passed:
+
+- Full security suite: 36/36 cases, including all nine follow-up cases.
+- Deploy, delete, static addon, CLI, and Bash completion shell suites: passed.
+- `./.venv/bin/pytest`: 1,030 passed, 2 skipped, 18 deselected.
+- Catalog and cluster-status tests: 16 passed.
+- ShellCheck and `shfmt -d -i 2 -ci -bn` on the deployer and security,
+  deploy, and delete tests: passed.
+- Applicable pre-commit hooks and `git diff --check`: passed.
+
+Final local evidence is in `followup-security.log`, `followup-deploy.log`,
+`followup-delete.log`, `followup-pytest.log`, and `followup-hooks.log` in this
+SDD workspace. No live cluster or browser verification was performed, and the
+four pre-existing unrelated untracked files remain untouched.

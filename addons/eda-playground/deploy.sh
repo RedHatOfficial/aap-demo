@@ -37,9 +37,92 @@ gateway_curl() {
 
 CREDENTIALS="$STATE_DIR/oauth_credentials.json"
 TOMBSTONE="$STATE_DIR/oauth_app_id"
+STATE_TRANSACTION="$STATE_DIR/.oauth-state-pending"
+
+# Publish individual files atomically; keep the recovery record until both agree.
+replace_state_file() {
+  local staged
+  staged="$(mktemp "$STATE_DIR/.state-replace.XXXXXX")" || return 1
+  if cp "$1" "$staged" && chmod 600 "$staged" && mv "$staged" "$2"; then
+    return 0
+  fi
+  rm -f "$staged"
+  return 1
+}
+
+recover_oauth_state() {
+  [ -e "$STATE_TRANSACTION" ] || return 0
+  local entry target new_id
+  new_id="$(cat "$STATE_TRANSACTION/marker.new")" || return 1
+  [[ "$new_id" =~ ^[1-9][0-9]*$ ]] || return 1
+  jq -e --arg id "$new_id" '
+    (.oauth_app_id | tostring) == $id and
+    (.client_id | type == "string" and length > 0) and
+    (.client_secret | type == "string" and length > 0)
+  ' "$STATE_TRANSACTION/credentials.new" >/dev/null || return 1
+  # A pending transition authorizes only its exact before/after snapshots.
+  # Validate both before writing either, preserving genuine ownership conflicts.
+  for entry in credentials marker; do
+    if [ "$entry" = credentials ]; then target="$CREDENTIALS"; else target="$TOMBSTONE"; fi
+    if [ -f "$STATE_TRANSACTION/$entry.old" ]; then
+      [ ! -e "$STATE_TRANSACTION/$entry.absent" ] || return 1
+      cmp -s "$target" "$STATE_TRANSACTION/$entry.old" \
+        || cmp -s "$target" "$STATE_TRANSACTION/$entry.new" || return 1
+    elif [ -f "$STATE_TRANSACTION/$entry.absent" ]; then
+      [ ! -e "$target" ] || cmp -s "$target" "$STATE_TRANSACTION/$entry.new" || return 1
+    else
+      return 1
+    fi
+  done
+  replace_state_file "$STATE_TRANSACTION/credentials.new" "$CREDENTIALS" || return 1
+  if ! replace_state_file "$STATE_TRANSACTION/marker.new" "$TOMBSTONE"; then
+    # Restore the prior pair, but retain the new credentials for the next retry.
+    # If rollback itself fails, the journal still identifies both allowed states.
+    if [ -f "$STATE_TRANSACTION/credentials.old" ]; then
+      replace_state_file "$STATE_TRANSACTION/credentials.old" "$CREDENTIALS" || return 1
+    else
+      rm -f "$CREDENTIALS" || return 1
+    fi
+    return 1
+  fi
+  rm -rf "$STATE_TRANSACTION"
+}
+
+save_oauth_state() {
+  local prepared entry target
+  prepared="$(mktemp -d "$STATE_DIR/.oauth-state.XXXXXX")" || return 1
+  if ! {
+    cp "$TEMP_CREDENTIALS" "$prepared/credentials.new" \
+      && printf '%s\n' "$OAUTH_APP_ID" >"$prepared/marker.new"
+  }; then
+    rm -rf "$prepared"
+    return 1
+  fi
+  for entry in credentials marker; do
+    if [ "$entry" = credentials ]; then target="$CREDENTIALS"; else target="$TOMBSTONE"; fi
+    if [ -f "$target" ]; then
+      if ! cp "$target" "$prepared/$entry.old"; then
+        rm -rf "$prepared"
+        return 1
+      fi
+    elif [ -e "$target" ] || ! touch "$prepared/$entry.absent"; then
+      rm -rf "$prepared"
+      return 1
+    fi
+  done
+  if [ -e "$STATE_TRANSACTION" ] || ! mv "$prepared" "$STATE_TRANSACTION"; then
+    rm -rf "$prepared"
+    return 1
+  fi
+  recover_oauth_state
+}
 
 # Both records constrain ownership; neither may silently override the other.
 load_oauth_ownership() {
+  if ! recover_oauth_state 2>/dev/null; then
+    echo 'ERROR: OAuth state recovery incomplete or conflicting; check local state permissions and retry' >&2
+    return 1
+  fi
   local credential_id
   SAVED_ID=""
   if [ -f "$TOMBSTONE" ]; then
@@ -286,14 +369,18 @@ if ! gateway_curl --max-time 10 "$GATEWAY/ping/" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Keep successful stdout independent of kubectl warnings and diagnostics.
+INGRESS_ERROR_FILE="$(mktemp)"
+trap 'rm -f "$INGRESS_ERROR_FILE"' EXIT
 IS_MICROSHIFT=false
-if INGRESS_DOMAIN="$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>&1)"; then
+if INGRESS_DOMAIN="$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>"$INGRESS_ERROR_FILE")"; then
   if [ -z "$INGRESS_DOMAIN" ]; then
     echo 'ERROR: ingress discovery returned no domain; check cluster configuration and retry deployment' >&2
     exit 1
   fi
 else
-  case "$INGRESS_DOMAIN" in
+  INGRESS_ERROR="$(cat "$INGRESS_ERROR_FILE")"
+  case "$INGRESS_ERROR" in
     'Error from server (NotFound): ingresses.config.openshift.io "cluster" not found' | \
       "error: the server doesn't have a resource type \"ingresses\"" | \
       "error: the server doesn't have a resource type \"ingresses.config\"")
@@ -306,11 +393,24 @@ else
       ;;
   esac
 fi
-CLUSTER_DOMAIN="${EDA_PLAYGROUND_DOMAIN:-$INGRESS_DOMAIN}"
-[ -n "$CLUSTER_DOMAIN" ] && [ "$CLUSTER_DOMAIN" != "$AAP_ROUTE" ] || {
-  echo "ERROR: unable to discover cluster application domain" >&2
-  exit 1
+rm -f "$INGRESS_ERROR_FILE"
+trap - EXIT
+valid_domain() {
+  local domain="$1" label
+  # Reserve space for the addon label in the complete Route hostname.
+  [ "${#domain}" -le 238 ] && [[ "$domain" =~ ^[a-z0-9.-]+$ ]] || return 1
+  while :; do
+    label="${domain%%.*}"
+    [ "${#label}" -le 63 ] && [[ "$label" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || return 1
+    [[ "$domain" == *.* ]] || break
+    domain="${domain#*.}"
+  done
 }
+CLUSTER_DOMAIN="${EDA_PLAYGROUND_DOMAIN:-$INGRESS_DOMAIN}"
+if ! valid_domain "$INGRESS_DOMAIN" || ! valid_domain "$CLUSTER_DOMAIN" || [ "$CLUSTER_DOMAIN" = "$AAP_ROUTE" ]; then
+  echo 'ERROR: ingress domain is invalid; check cluster configuration and domain override, then retry deployment' >&2
+  exit 1
+fi
 ROUTE_HOST="eda-playground.$CLUSTER_DOMAIN"
 
 # Gateway returns a client secret only at creation. Keep the saved value private.
@@ -415,11 +515,12 @@ jq -n --arg oauth_app_id "$OAUTH_APP_ID" --rawfile client_id "$SECRET_DIR/client
   --rawfile client_secret "$SECRET_DIR/client-secret" \
   '{oauth_app_id:$oauth_app_id,client_id:$client_id,client_secret:$client_secret}' >"$TEMP_CREDENTIALS"
 chmod 600 "$TEMP_CREDENTIALS"
-mv "$TEMP_CREDENTIALS" "$CREDENTIALS"
-save_oauth_marker 2>/dev/null || {
-  echo 'ERROR: could not save OAuth ownership marker; check local state permissions and retry deployment' >&2
+if ! save_oauth_state 2>/dev/null; then
+  rm -f "$TEMP_CREDENTIALS"
+  echo 'ERROR: could not save OAuth state; check local state permissions and retry deployment or delete' >&2
   exit 1
-}
+fi
+rm -f "$TEMP_CREDENTIALS"
 SESSION_SECRET="$(openssl rand -hex 16)"
 printf '%s' "$SESSION_SECRET" >"$SECRET_DIR/session-secret"
 AAP_BASE_URL="https://$AAP_ROUTE"
