@@ -3637,8 +3637,8 @@ cmd_disable() {
     echo "Disabling addon: $addon"
     setup_kubeconfig
     if ! bash "$addon_dir/deploy.sh" --delete "$@"; then
-      if [ "$addon" = "keycloak" ]; then
-        echo "ERROR: Keycloak removal failed; leaving addon enabled in config" >&2
+      if [ "$addon" = "keycloak" ] || [ "$addon" = "eda-playground" ]; then
+        echo "ERROR: $addon removal failed; leaving addon enabled in config" >&2
         return 1
       fi
     fi

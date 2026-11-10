@@ -93,7 +93,7 @@ fail() {
 assert_log() { grep -Fq -- "$1" "$MOCK_LOG" || fail "$2"; }
 reject_log() { ! grep -Fq -- "$1" "$MOCK_LOG" || fail "$2"; }
 run_case() {
-  local name="$1" action="${2:---delete}" expect_failure=no preserve_state=no
+  local name="$1" action="${2:---delete}" expect_failure=no preserve_state=no addon_namespace
   export MOCK_LOG="$TMP/$name.log" EDA_PLAYGROUND_STATE_DIR="$TMP/$name/state"
   export MOCK_NS=present MOCK_OWNER=aap-demo-eda-playground MOCK_AAP=present
   export MOCK_APPS=exact MOCK_APP_DELETE=present MOCK_NS_DELETE=present MOCK_SCC=present
@@ -234,7 +234,10 @@ run_case() {
   fi
   if [ "$preserve_state" = yes ]; then cp -R "$EDA_PLAYGROUND_STATE_DIR" "$TMP/$name/before"; fi
   export MOCK_APPS MOCK_AAP MOCK_NS MOCK_OWNER MOCK_APP_DELETE MOCK_NS_DELETE MOCK_SCC
-  if PATH="$TMP/bin:$PATH" NAMESPACE="${NAMESPACE:-eda-playground}" "$ROOT/addons/eda-playground/deploy.sh" "$action" >"$TMP/$name.out" 2>&1; then
+  addon_namespace="${NAMESPACE:-eda-playground}"
+  if PATH="$TMP/bin:$PATH" NAMESPACE="$addon_namespace" AAP_NAMESPACE=aap-operator \
+    EDA_PLAYGROUND_NAMESPACE="$addon_namespace" \
+    "$ROOT/addons/eda-playground/deploy.sh" "$action" >"$TMP/$name.out" 2>&1; then
     [ "$expect_failure" = no ] || fail "$name unexpectedly succeeded"
   else
     [ "$expect_failure" = yes ] || fail "$name cleanup failed"
@@ -370,7 +373,8 @@ for retry_namespace in eda-playground custom-demo; do
   jq -e '.subjects | length == 3' "$MOCK_BINDING_FILE" >/dev/null || fail 'first cleanup did not remove only the addon subject'
   cp "$MOCK_BINDING_FILE" "$TMP/shared-before-retry.json"
   : >"$MOCK_LOG"
-  MOCK_APPS=absent MOCK_NS_DELETE=present NAMESPACE="$retry_namespace" PATH="$TMP/bin:$PATH" \
+  MOCK_APPS=absent MOCK_NS_DELETE=present NAMESPACE="$retry_namespace" AAP_NAMESPACE=aap-operator \
+    EDA_PLAYGROUND_NAMESPACE="$retry_namespace" PATH="$TMP/bin:$PATH" \
     "$ROOT/addons/eda-playground/deploy.sh" --delete >"$TMP/shared-retry.out" 2>&1 || fail 'shared SCC binding retry failed'
   assert_log "oc get rolebinding system:openshift:scc:anyuid -n $retry_namespace -o json" 'retry did not verify the shared binding'
   assert_log "kubectl delete namespace $retry_namespace" 'confirmed absent subject blocked namespace deletion'

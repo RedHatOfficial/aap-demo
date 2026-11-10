@@ -5,8 +5,8 @@ set +x
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NAMESPACE="${NAMESPACE:-eda-playground}"
-AAP_NAMESPACE="${AAP_NAMESPACE:-aap-operator}"
+AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
+NAMESPACE="${EDA_PLAYGROUND_NAMESPACE:-eda-playground}"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-EDA Playground}"
 STATE_DIR="${EDA_PLAYGROUND_STATE_DIR:-${HOME}/.aap-demo/eda-playground}"
 IMAGE="${EDA_PLAYGROUND_IMAGE:-ghcr.io/bbgrimmett2/eda-playground:0.1.0}"
@@ -15,6 +15,13 @@ ACTION="${1:-deploy}"
 if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [[ "$ACTION" != "--delete" && "$ACTION" != "delete" ]]; }; then
   echo "Usage: $0 [--delete|delete]" >&2
   exit 2
+fi
+
+if [[ ! "$NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] || [ "${#NAMESPACE}" -gt 63 ] \
+  || [ "$NAMESPACE" = "$AAP_NAMESPACE" ] || [ "$NAMESPACE" = aap-operator ] \
+  || [ "$NAMESPACE" = default ] || [[ "$NAMESPACE" == kube-* ]] || [[ "$NAMESPACE" == openshift-* ]]; then
+  echo "ERROR: unsafe EDA Playground namespace: $NAMESPACE" >&2
+  exit 1
 fi
 
 command -v kubectl >/dev/null 2>&1 || {
@@ -220,6 +227,17 @@ kubectl cluster-info >/dev/null 2>&1 || {
   echo "ERROR: kubectl is not connected to a cluster" >&2
   exit 1
 }
+if ! EXISTING_NAMESPACE="$(kubectl get namespace "$NAMESPACE" --ignore-not-found -o name 2>/dev/null)"; then
+  echo "ERROR: EDA Playground namespace $NAMESPACE lookup failed" >&2
+  exit 1
+fi
+if [ -n "$EXISTING_NAMESPACE" ]; then
+  if ! MANAGED_BY="$(kubectl get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null)" \
+    || [ "$MANAGED_BY" != aap-demo-eda-playground ]; then
+    echo "ERROR: namespace $NAMESPACE is not owned by EDA Playground" >&2
+    exit 1
+  fi
+fi
 for required in jq curl openssl base64; do
   command -v "$required" >/dev/null 2>&1 || {
     echo "ERROR: $required is required" >&2
