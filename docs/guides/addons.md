@@ -112,3 +112,41 @@ aap-demo-v1 enable portal
 
 Each of those extras will move to the new command on its own. Until a page says otherwise, the older command
 is the way to install them. Nothing you already run with the older command is being removed in this release candidate.
+
+### EDA Playground (experimental)
+
+Use the legacy Bash command on macOS or Linux. You need a running AAP demo
+cluster, a working `kubectl` connection, AAP Gateway, and OpenShift Routes.
+The Python command and native Windows support are deferred.
+
+```bash
+aap-demo-v1 enable eda-playground
+kubectl get route eda-playground -n eda-playground
+```
+
+If the Bash command still has the `aap-demo` name, use that name instead of
+`aap-demo-v1`. Open the Route in a browser and finish AAP OAuth login manually.
+When the manual check is complete, remove the addon:
+
+```bash
+aap-demo-v1 disable eda-playground
+```
+
+The disposable-cluster smoke test waits for this browser check by default:
+
+```bash
+AAP_DEMO_RUN_LIVE_TESTS=true bash test/test-eda-playground-live.sh
+```
+
+For unattended validation, add `AAP_DEMO_LIVE_NONINTERACTIVE=true`. The harness
+then skips the wait and clearly reports OAuth as unverified.
+
+The addon creates the Gateway OAuth application and removes its owned
+application and namespace during cleanup. Retry disable if cleanup reports an
+error.
+
+The default image is an experimental image in a maintainer's personal GHCR
+namespace. Review it or set `EDA_PLAYGROUND_IMAGE` to a reviewed tag or digest.
+This addon is not supported for production use. See the
+[addon README](../../addons/eda-playground/README.md) for configuration and
+limitations.
