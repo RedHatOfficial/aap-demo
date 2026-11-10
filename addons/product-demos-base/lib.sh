@@ -31,10 +31,7 @@ apd_common_extra_vars_yaml() {
     '{
       _aap_version: $version,
       apd_ee_image: $ee_image,
-      aap_validate_certs: false,
-      aap_configuration_async_retries: 0,
-      gateway_configuration_async_retries: 0,
-      controller_configuration_async_retries: 0
+      aap_validate_certs: false
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
@@ -183,10 +180,7 @@ apd_domain_extra_vars_yaml() {
       demo: $demo,
       _aap_version: $version,
       apd_ee_image: $ee_image,
-      aap_validate_certs: false,
-      aap_configuration_async_retries: 0,
-      gateway_configuration_async_retries: 0,
-      controller_configuration_async_retries: 0
+      aap_validate_certs: false
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
@@ -648,20 +642,14 @@ apd_launch_extra_vars_json() {
       '{
         demo: $demo,
         _aap_version: $version,
-        aap_validate_certs: false,
-        aap_configuration_async_retries: 0,
-        gateway_configuration_async_retries: 0,
-        controller_configuration_async_retries: 0
+        aap_validate_certs: false
       }'
   else
     jq -n \
       --arg version "$APD_AAP_VERSION" \
       '{
         _aap_version: $version,
-        aap_validate_certs: false,
-        aap_configuration_async_retries: 0,
-        gateway_configuration_async_retries: 0,
-        controller_configuration_async_retries: 0
+        aap_validate_certs: false
       }'
   fi
 }
