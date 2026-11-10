@@ -38,11 +38,30 @@ for required in \
   'not supported for production'; do
   grep -Fq "$required" "$README" || fail "README missing: $required"
 done
+README_ENABLE_LINE="$(grep -n -m1 'aap-demo enable eda-playground' "$README" | cut -d: -f1)"
+README_OAUTH_LINE="$(grep -n -m1 'complete AAP Gateway OAuth login manually' "$README" | cut -d: -f1)"
+README_DISABLE_LINE="$(grep -n -m1 'aap-demo disable eda-playground' "$README" | cut -d: -f1)"
+[ "$README_ENABLE_LINE" -lt "$README_OAUTH_LINE" ] && [ "$README_OAUTH_LINE" -lt "$README_DISABLE_LINE" ] \
+  || fail "README must place manual OAuth access between enable and disable"
+
+GUIDE="$ROOT_DIR/docs/guides/addons.md"
+GUIDE_ENABLE_LINE="$(grep -n -m1 'aap-demo-v1 enable eda-playground' "$GUIDE" | cut -d: -f1)"
+GUIDE_OAUTH_LINE="$(grep -n -m1 'finish AAP OAuth login manually' "$GUIDE" | cut -d: -f1)"
+GUIDE_DISABLE_LINE="$(grep -n -m1 'aap-demo-v1 disable eda-playground' "$GUIDE" | cut -d: -f1)"
+[ "$GUIDE_ENABLE_LINE" -lt "$GUIDE_OAUTH_LINE" ] && [ "$GUIDE_OAUTH_LINE" -lt "$GUIDE_DISABLE_LINE" ] \
+  || fail "addon guide must place manual OAuth access between enable and disable"
 
 LIVE="$ROOT_DIR/test/test-eda-playground-live.sh"
 [ -f "$LIVE" ] || fail "live smoke-test harness missing"
 LIVE_SKIP="$(AAP_DEMO_RUN_LIVE_TESTS=false bash "$LIVE" 2>&1)" || fail "opt-in live test must skip successfully"
 [[ "$LIVE_SKIP" == *'SKIP:'* ]] || fail "opt-in live test must explain the skip"
+grep -Fq 'aap_demo_resolve_kubeconfig' "$LIVE" || fail "live test must resolve the CLI kubeconfig"
+grep -Fq 'export KUBECONFIG=' "$LIVE" || fail "live test must pin KUBECONFIG"
+grep -Fq 'config current-context' "$LIVE" || fail "live test must establish cluster context"
+grep -Fq 'config view --minify' "$LIVE" || fail "live test must establish API identity"
+grep -Fq 'trap cleanup_on_exit EXIT' "$LIVE" || fail "live test must register failure cleanup"
+grep -Fq 'exit "$status"' "$LIVE" || fail "live test must preserve original status"
+grep -Fq 'disable eda-playground' "$LIVE" || fail "live test cleanup must disable the addon"
 
 for file in namespace.yaml configmap.yaml service.yaml deployment.yaml route.yaml; do
   grep -q '^apiVersion:' "$ADDON_DIR/$file" || fail "$file missing apiVersion"
@@ -75,6 +94,35 @@ grep -Fq 'app\.kubernetes\.io/managed-by' "$ADDON_DIR/deploy.sh" || fail "cleanu
 MOCK_BIN="$(mktemp -d)"
 trap 'rm -rf "$MOCK_BIN"' EXIT
 mkdir -p "$MOCK_BIN/live"
+LIVE_LOG="$MOCK_BIN/live/commands"
+LIVE_FAIL_LOG="$MOCK_BIN/live/failure-commands"
+cat >"$MOCK_BIN/live/kubectl" <<'MOCK_LIVE_FAIL_KUBECTL'
+#!/usr/bin/env bash
+printf 'kubectl %s\n' "$*" >>"$LIVE_LOG"
+case "$1 $2" in
+  "config current-context") printf 'aap-demo' ;;
+  "config view") printf 'https://127.0.0.1:6443' ;;
+  "wait "*) exit 23 ;;
+esac
+MOCK_LIVE_FAIL_KUBECTL
+cat >"$MOCK_BIN/live/aap-demo" <<'MOCK_LIVE_FAIL_CLI'
+#!/usr/bin/env bash
+printf 'cli %s\n' "$*" >>"$LIVE_FAIL_LOG"
+exit 0
+MOCK_LIVE_FAIL_CLI
+chmod +x "$MOCK_BIN/live/aap-demo" "$MOCK_BIN/live/kubectl"
+printf '%s\n' 'fixture-kubeconfig' >"$MOCK_BIN/live/kubeconfig"
+set +e
+LIVE_LOG="$MOCK_BIN/live/failure-kubectl" LIVE_FAIL_LOG="$MOCK_BIN/live/failure-cli" \
+  AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  KUBECONFIG="$MOCK_BIN/live/kubeconfig" PATH="$MOCK_BIN/live:$PATH" \
+  bash "$LIVE" >"$MOCK_BIN/live/failure-output" 2>&1
+LIVE_FAILURE_STATUS=$?
+set -e
+[ "$LIVE_FAILURE_STATUS" -ne 0 ] || fail "live harness must preserve a failed readiness status"
+grep -Fxq 'cli disable eda-playground' "$MOCK_BIN/live/failure-cli" \
+  || fail "live harness must attempt cleanup after readiness failure"
+! grep -Fq 'fixture-secret' "$MOCK_BIN/live/failure-output" || fail "failure cleanup printed credentials"
 cat >"$MOCK_BIN/live/aap-demo" <<'MOCK_LIVE_CLI'
 #!/usr/bin/env bash
 printf 'cli %s\n' "$*" >>"$LIVE_LOG"
@@ -83,8 +131,10 @@ MOCK_LIVE_CLI
 cat >"$MOCK_BIN/live/kubectl" <<'MOCK_LIVE_KUBECTL'
 #!/usr/bin/env bash
 printf 'kubectl %s\n' "$*" >>"$LIVE_LOG"
-case "$*" in
-  "get route eda-playground -n eda-playground -o jsonpath={.spec.host}") printf 'eda.example.test' ;;
+case "$1 $2" in
+  "config current-context") printf 'aap-demo' ;;
+  "config view") printf 'https://127.0.0.1:6443' ;;
+  "get route") printf 'eda.example.test' ;;
 esac
 MOCK_LIVE_KUBECTL
 chmod +x "$MOCK_BIN/live/aap-demo" "$MOCK_BIN/live/kubectl"
@@ -95,6 +145,8 @@ LIVE_LOG="$MOCK_BIN/live/commands" \
 ! grep -Fq 'fixture-secret' "$MOCK_BIN/live/output" || fail "live harness printed credentials"
 grep -Fxq 'Route host: eda.example.test' "$MOCK_BIN/live/output" || fail "live harness did not print route host"
 cat >"$MOCK_BIN/live/expected" <<'EXPECTED_LIVE'
+kubectl config current-context
+kubectl config view --minify -o jsonpath={.clusters[0].cluster.server}
 cli enable eda-playground
 kubectl wait --for=condition=available deployment/eda-playground -n eda-playground --timeout=180s
 kubectl get route eda-playground -n eda-playground -o jsonpath={.spec.host}

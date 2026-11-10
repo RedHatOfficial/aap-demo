@@ -32,7 +32,7 @@ Use the legacy Bash `aap-demo` command after deploying AAP:
 
 ```bash
 aap-demo enable eda-playground
-aap-demo disable eda-playground
+kubectl get route eda-playground -n eda-playground
 ```
 
 From this directory, `./deploy.sh` and `./deploy.sh --delete` (or
@@ -52,6 +52,12 @@ Open the Route in a browser and complete AAP Gateway OAuth login manually. The
 addon provisions an OAuth application in AAP Gateway and stores its credentials
 locally for guarded cleanup. Do not paste the OAuth client secret into a browser
 or test output.
+
+When finished with the manual check, remove the addon:
+
+```bash
+aap-demo disable eda-playground
+```
 
 ## Configuration
 

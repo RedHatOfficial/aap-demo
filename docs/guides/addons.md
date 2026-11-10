@@ -72,11 +72,16 @@ The Python command and native Windows support are deferred.
 ```bash
 aap-demo-v1 enable eda-playground
 kubectl get route eda-playground -n eda-playground
-aap-demo-v1 disable eda-playground
 ```
 
 If the Bash command still has the `aap-demo` name, use that name instead of
 `aap-demo-v1`. Open the Route in a browser and finish AAP OAuth login manually.
+When the manual check is complete, remove the addon:
+
+```bash
+aap-demo-v1 disable eda-playground
+```
+
 The addon creates the Gateway OAuth application and removes its owned
 application and namespace during cleanup. Retry disable if cleanup reports an
 error.
