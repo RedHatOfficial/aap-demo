@@ -69,7 +69,10 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
       exit 1
     fi
   fi
-  if [ -f "$CREDENTIALS" ] && [[ ! "$SAVED_ID" =~ ^[0-9]+$ ]]; then SAVED_ID=blocked; fi
+  if [ -f "$CREDENTIALS" ] && [[ ! "$SAVED_ID" =~ ^[1-9][0-9]*$ ]]; then
+    cleanup_error 'saved OAuth metadata has a missing or invalid application ID'
+    exit 1
+  fi
   if [ -n "$SAVED_ID" ]; then
     umask 077
     if ! { printf '%s\n' "$SAVED_ID" >"$TOMBSTONE"; } 2>/dev/null; then

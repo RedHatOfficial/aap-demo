@@ -103,6 +103,18 @@ run_case() {
       expect_failure=yes
       preserve_state=yes
       ;;
+    missing_id_metadata)
+      printf '%s\n' '{}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
+      printf '%s\n' 41 >"$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
+      expect_failure=yes
+      preserve_state=yes
+      ;;
+    invalid_id_metadata)
+      printf '%s\n' '{"oauth_app_id":"not-an-id"}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
+      printf '%s\n' 41 >"$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
+      expect_failure=yes
+      preserve_state=yes
+      ;;
     duplicate)
       rm "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
       MOCK_APPS=duplicate
@@ -206,6 +218,14 @@ run_case malformed_metadata
 grep -Fq 'saved OAuth metadata' "$TMP/malformed_metadata.out" || fail 'malformed metadata failure not reported'
 reject_log '-X DELETE' 'malformed metadata deleted application'
 reject_log 'kubectl delete namespace' 'malformed metadata deleted namespace'
+for bad_case in missing_id_metadata invalid_id_metadata; do
+  run_case "$bad_case"
+  grep -Fq 'saved OAuth metadata' "$TMP/$bad_case.out" || fail "$bad_case failure not reported"
+  [ "$(cat "$EDA_PLAYGROUND_STATE_DIR/oauth_app_id")" = 41 ] || fail "$bad_case overwrote ownership marker"
+  reject_log '-X DELETE' "$bad_case deleted application"
+  reject_log 'kubectl delete namespace' "$bad_case deleted namespace"
+  reject_log 'oc adm policy remove-scc-from-user' "$bad_case removed SCC"
+done
 run_case duplicate
 reject_log '-X DELETE' 'ambiguous name deleted'
 run_case paginated_duplicate
