@@ -26,6 +26,24 @@ for file in README.md deploy.sh namespace.yaml configmap.yaml service.yaml deplo
   [ -f "$ADDON_DIR/$file" ] || fail "missing addon file: $file"
 done
 
+README="$ADDON_DIR/README.md"
+for required in \
+  'aap-demo enable eda-playground' \
+  'aap-demo disable eda-playground' \
+  'legacy Bash' \
+  'macOS and Linux' \
+  'ghcr.io/bbgrimmett2/eda-playground' \
+  'EDA_PLAYGROUND_IMAGE' \
+  'OAuth' \
+  'not supported for production'; do
+  grep -Fq "$required" "$README" || fail "README missing: $required"
+done
+
+LIVE="$ROOT_DIR/test/test-eda-playground-live.sh"
+[ -f "$LIVE" ] || fail "live smoke-test harness missing"
+LIVE_SKIP="$(AAP_DEMO_RUN_LIVE_TESTS=false bash "$LIVE" 2>&1)" || fail "opt-in live test must skip successfully"
+[[ "$LIVE_SKIP" == *'SKIP:'* ]] || fail "opt-in live test must explain the skip"
+
 for file in namespace.yaml configmap.yaml service.yaml deployment.yaml route.yaml; do
   grep -q '^apiVersion:' "$ADDON_DIR/$file" || fail "$file missing apiVersion"
   grep -q '^kind:' "$ADDON_DIR/$file" || fail "$file missing kind"
@@ -56,6 +74,36 @@ grep -Fq 'app\.kubernetes\.io/managed-by' "$ADDON_DIR/deploy.sh" || fail "cleanu
 
 MOCK_BIN="$(mktemp -d)"
 trap 'rm -rf "$MOCK_BIN"' EXIT
+mkdir -p "$MOCK_BIN/live"
+cat >"$MOCK_BIN/live/aap-demo" <<'MOCK_LIVE_CLI'
+#!/usr/bin/env bash
+printf 'cli %s\n' "$*" >>"$LIVE_LOG"
+echo 'fixture-secret' >&2
+MOCK_LIVE_CLI
+cat >"$MOCK_BIN/live/kubectl" <<'MOCK_LIVE_KUBECTL'
+#!/usr/bin/env bash
+printf 'kubectl %s\n' "$*" >>"$LIVE_LOG"
+case "$*" in
+  "get route eda-playground -n eda-playground -o jsonpath={.spec.host}") printf 'eda.example.test' ;;
+esac
+MOCK_LIVE_KUBECTL
+chmod +x "$MOCK_BIN/live/aap-demo" "$MOCK_BIN/live/kubectl"
+LIVE_LOG="$MOCK_BIN/live/commands" \
+  AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/output" 2>&1 \
+  || fail "enabled live harness failed with controlled commands"
+! grep -Fq 'fixture-secret' "$MOCK_BIN/live/output" || fail "live harness printed credentials"
+grep -Fxq 'Route host: eda.example.test' "$MOCK_BIN/live/output" || fail "live harness did not print route host"
+cat >"$MOCK_BIN/live/expected" <<'EXPECTED_LIVE'
+cli enable eda-playground
+kubectl wait --for=condition=available deployment/eda-playground -n eda-playground --timeout=180s
+kubectl get route eda-playground -n eda-playground -o jsonpath={.spec.host}
+cli disable eda-playground
+cli disable eda-playground
+kubectl get namespace eda-playground --ignore-not-found -o name
+EXPECTED_LIVE
+cmp -s "$MOCK_BIN/live/expected" "$MOCK_BIN/live/commands" \
+  || fail "live harness checks are missing or out of order"
 export EDA_PLAYGROUND_STATE_DIR="$MOCK_BIN/state"
 mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
 home_state_fingerprint() {
