@@ -96,4 +96,21 @@ lifecycle test for a machine you can throw away.
 
 The hooks refuse a commit made directly on `main` or `master`. Use a branch.
 
+## Release
+
+A release is one pull request that changes `__version__` in
+`src/aap_demo/__init__.py`. Only 2.0.0 pre-releases are allowed: `2.0.0.devN`,
+`2.0.0aN`, `2.0.0bN`, or `2.0.0rcN`. When it merges, the Publish to PyPI
+workflow (`.github/workflows/pypi-publish.yaml`) does the rest:
+
+1. It checks the version and skips the upload if PyPI already has it.
+2. It builds the wheel and sdist and uploads them to PyPI.
+3. It tags the commit that set the version as `v<version>` and creates a GitHub
+   prerelease with the files PyPI serves, checked against PyPI's sha256.
+
+PyPI keeps each version forever, so a merged version bump cannot be taken back.
+If a version is on PyPI but has no GitHub release, run the workflow by hand on
+`main` (Actions, Publish to PyPI, Run workflow). It skips the upload and only
+creates the release. A version that already has a release is left alone.
+
 Questions are welcome as a GitHub issue.
