@@ -12,6 +12,13 @@ case "$1 $2" in
   'cluster-info ') exit 0 ;;
   'get route') if [ "$3" = aap ]; then [ "$MOCK_CASE" = route_fail ] && exit 1; echo 'aap-aap-operator.apps.example.test'; elif [ "$MOCK_MICRO" = yes ]; then echo 'eda-playground.apps.example.test'; else echo 'eda-playground.apps.custom.test'; fi ;;
   'get secret') [ "$MOCK_CASE" = secret_fail ] && exit 1; printf '%s' "$MOCK_PASSWORD_B64" ;;
+  'get deployment')
+    if [ -s "$MOCK_CURRENT_REVISION_FILE" ]; then
+      cat "$MOCK_CURRENT_REVISION_FILE"
+    else
+      exit 0
+    fi
+    ;;
   'rollout status') [ "$MOCK_CASE" = rollout_fail ] && exit 1; exit 0 ;;
   'get ingresses.config/cluster') [ "$MOCK_MICRO" = yes ] && exit 1; echo 'apps.custom.test' ;;
   'get svc') echo '10.43.0.20' ;;
@@ -40,6 +47,10 @@ cat >"$TMP/bin/openssl" <<'STUB'
 [ "$*" = 'rand -hex 16' ] || exit 2
 echo fixture-session-secret
 STUB
+cat >"$TMP/bin/date" <<'STUB'
+#!/usr/bin/env bash
+printf '1700000000\n'
+STUB
 cat >"$TMP/bin/jq" <<'STUB'
 #!/usr/bin/env bash
 printf 'jq %s\n' "$*" >>"$MOCK_LOG"
@@ -64,7 +75,7 @@ first_line() { grep -nF -- "$1" "$MOCK_LOG" | head -1 | cut -d: -f1; }
 run_case() {
   local case_name="$1"
   mkdir -p "$TMP/$case_name"
-  export MOCK_CASE="$case_name" MOCK_LOG="$TMP/$case_name/log" MOCK_MANIFEST="$TMP/$case_name/manifest" MOCK_PATCH="$TMP/$case_name/patch"
+  export MOCK_CASE="$case_name" MOCK_LOG="$TMP/$case_name/log" MOCK_MANIFEST="$TMP/$case_name/manifest" MOCK_PATCH="$TMP/$case_name/patch" MOCK_CURRENT_REVISION_FILE="$TMP/$case_name/current-revision"
   export EDA_PLAYGROUND_STATE_DIR="$TMP/$case_name/state" MOCK_MICRO=no
   if [ "$case_name" = custom_namespace ]; then
     export NAMESPACE=custom-demo
@@ -76,6 +87,7 @@ run_case() {
   : >"$MOCK_LOG"
   : >"$MOCK_MANIFEST"
   : >"$MOCK_PATCH"
+  : >"$MOCK_CURRENT_REVISION_FILE"
   if [[ "$case_name" = reuse || "$case_name" = later_saved ]]; then
     mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
     printf '%s\n' '{"oauth_app_id":"42","client_id":"client-existing","client_secret":"fixture-saved-secret"}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
@@ -147,6 +159,22 @@ grep -Fq 'name: eda-playground' <<<"$service_account_block" || fail 'fixed servi
 grep -Fq 'serviceAccountName: eda-playground' "$MOCK_MANIFEST" || fail 'Deployment service account name changed'
 assert_log 'oc adm policy add-scc-to-user anyuid -z eda-playground -n custom-demo' 'SCC target changed'
 assert_log 'rollout status deployment/eda-playground -n custom-demo --timeout=' 'rollout namespace changed'
+run_case revision_collision
+revision_patch_lines="$(grep 'patch deployment' "$MOCK_LOG" || true)"
+revision_patch_blob="$(tr '\n' ' ' <"$MOCK_PATCH")"
+first_revision="$(grep -o 'aap-demo/revision[^0-9]*[0-9][0-9]*' <<<"$revision_patch_blob" | grep -o '[0-9][0-9]*' | head -1 || true)"
+[ -n "$first_revision" ] || fail 'first revision annotation missing'
+printf '%s' "$first_revision" >"$MOCK_CURRENT_REVISION_FILE"
+MOCK_CASE=revision_collision PATH="$TMP/bin:$PATH" REAL_JQ="$REAL_JQ" REAL_BASE64="$REAL_BASE64" \
+  "$ROOT/addons/eda-playground/deploy.sh" >"$TMP/revision_collision/repeat.out" 2>&1 || {
+  cat "$TMP/revision_collision/repeat.out"
+  fail 'same-clock repeat deploy'
+}
+revision_patch_lines="$(grep 'patch deployment' "$MOCK_LOG" || true)"
+revision_patch_blob="$(tr '\n' ' ' <"$MOCK_PATCH")"
+second_revision="$(grep -o 'aap-demo/revision[^0-9]*[0-9][0-9]*' <<<"$revision_patch_blob" | grep -o '[0-9][0-9]*' | tail -1 || true)"
+[ -n "$second_revision" ] || fail 'second revision annotation missing'
+[ "$first_revision" != "$second_revision" ] || fail 'same-clock revision collided'
 for failure in route_fail secret_fail rollout_fail; do
   export MOCK_CASE="$failure" MOCK_LOG="$TMP/$failure.log" MOCK_MANIFEST="$TMP/$failure.manifest" MOCK_PATCH="$TMP/$failure.patch" MOCK_MICRO=no
   export EDA_PLAYGROUND_STATE_DIR="$TMP/$failure/state"

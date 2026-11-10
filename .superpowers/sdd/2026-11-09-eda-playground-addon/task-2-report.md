@@ -53,6 +53,26 @@ Verification for this follow-up:
 - `shfmt -d -i 2 -ci -bn addons/eda-playground/deploy.sh test/test-eda-playground-deploy.sh` — PASS.
 - Applicable pre-commit hooks and `git diff --check` — PASS.
 
+## Revision collision follow-up
+
+The pod-template revision now reads the current `aap-demo/revision` annotation
+and increments numeric values. If the annotation is absent or nonnumeric, it
+uses the UTC seconds clock and checks that the result differs from the current
+value. This avoids relying on platform-specific timestamp precision.
+
+Red–green evidence: a mocked two-deploy fixture with the same clock first
+failed with `FAIL: same-clock revision collided`. After the read-and-increment
+change, it passed and proved the two annotation values differ while the second
+deployment still completes.
+
+Verification for this follow-up:
+
+- `bash test/test-eda-playground-deploy.sh` — PASS.
+- `bash test/test-eda-playground-addon.sh` — PASS.
+- `shellcheck addons/eda-playground/deploy.sh test/test-eda-playground-deploy.sh` — PASS.
+- `shfmt -d -i 2 -ci -bn addons/eda-playground/deploy.sh test/test-eda-playground-deploy.sh` — PASS.
+- Applicable pre-commit hooks and `git diff --check` — PASS.
+
 The first pre-commit attempt could not write Ansible Lint's default cache under `~/.ansible`; relocating it to `/private/tmp` resolved that environment issue. Commit hooks initially caught a missing executable bit on the new test and an accidentally staged executable bit on the YAML file; both modes were corrected before the successful commit.
 
 ## Concerns
