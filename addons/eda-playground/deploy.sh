@@ -172,6 +172,25 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
           case "$SCC_ERROR" in
             'Error from server (NotFound): rolebindings.rbac.authorization.k8s.io "system:openshift:scc:anyuid" not found' | \
               'Error from server (NotFound): securitycontextconstraints.security.openshift.io "anyuid" not found') ;;
+            'error: unable to find target [eda-playground]' | 'unable to find target [eda-playground]')
+              if ! SCC_BINDING="$(oc get rolebinding system:openshift:scc:anyuid -n "$NAMESPACE" -o json 2>/dev/null)" \
+                || ! jq -e --arg ns "$NAMESPACE" '
+                  .kind == "RoleBinding" and
+                  .metadata.name == "system:openshift:scc:anyuid" and .metadata.namespace == $ns and
+                  .roleRef == {apiGroup:"rbac.authorization.k8s.io",kind:"ClusterRole",name:"system:openshift:scc:anyuid"} and
+                  (.subjects == null or (.subjects | type == "array")) and
+                  all(.subjects[]?;
+                    (.kind == "ServiceAccount" or .kind == "User" or .kind == "Group") and
+                    (.name | type == "string") and
+                    (.kind != "ServiceAccount" or (.namespace | type == "string"))) and
+                  all(.subjects[]?;
+                    (.kind != "ServiceAccount" or .name != "eda-playground" or .namespace != $ns) and
+                    (.kind != "User" or .name != ("system:serviceaccount:" + $ns + ":eda-playground")))
+                ' <<<"$SCC_BINDING" >/dev/null 2>&1; then
+                cleanup_error "SCC subject absence could not be confirmed in namespace $NAMESPACE"
+                SCC_READY=false
+              fi
+              ;;
             *)
               cleanup_error "SCC binding removal failed in namespace $NAMESPACE"
               SCC_READY=false
