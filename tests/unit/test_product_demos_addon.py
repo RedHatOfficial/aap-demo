@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from aap_demo.addons import get, names, needs_cluster
+from aap_demo.addons import OLDER_COMMAND_GUIDE, get, names, needs_cluster
 from aap_demo.addons.shell import (
     BUNDLED_ADDON_DIRS,
     GALAXY_TOKEN_PREFIX,
@@ -87,6 +87,7 @@ def test_portal_stays_an_addon_error(app_ctx) -> None:
     with pytest.raises(AddonError, match="implemented addons") as excinfo:
         get("portal")
     assert "aap-demo-v1 enable portal" in (excinfo.value.hint or "")
+    assert OLDER_COMMAND_GUIDE in (excinfo.value.hint or "")
     assert app_ctx.runner.calls == []
 
 
@@ -374,3 +375,8 @@ def test_an_unexpected_credential_store_error_is_not_hidden(app_ctx, monkeypatch
 
     with pytest.raises(RuntimeError, match="bug in the lookup"):
         get("product-demos").enable(app_ctx, argparse.Namespace())
+
+
+def test_older_command_guide_link_points_at_a_real_page() -> None:
+    relative = OLDER_COMMAND_GUIDE.split("/blob/main/", 1)[1]
+    assert (REPO_ROOT / relative).is_file()

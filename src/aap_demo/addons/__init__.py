@@ -14,6 +14,11 @@ from aap_demo.core.errors import AddonError
 
 _REGISTRY = {"fleet": FleetAddon()}
 
+#: How to run the bash command next to this one, for addons not ported yet.
+OLDER_COMMAND_GUIDE = (
+    "https://github.com/RedHatOfficial/aap-demo/blob/main/docs/guides/older-command.md"
+)
+
 
 def names() -> list:
     """Addons ``enable`` prints when no name is given."""
@@ -41,7 +46,10 @@ def get(name: str) -> Union[FleetAddon, ShellAddon]:
     available = ", ".join(names())
     raise AddonError(
         f"unknown addon {name!r}; implemented addons: {available}",
-        hint=f"Use aap-demo-v1 enable {name} for an addon the new command does not install yet.",
+        hint=(
+            f"The older bash command still installs it: aap-demo-v1 enable {name}. "
+            f"To set that command up, see {OLDER_COMMAND_GUIDE}"
+        ),
     )
 
 
