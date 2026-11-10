@@ -13,9 +13,12 @@ apme_helm_binary: "{{ apme_helm_install_dir }}/helm"  # noqa var-naming[no-role-
 # AAP execution environments are always linux-amd64, but local macOS needs darwin-{amd64,arm64}
 apme_helm_os: >-  # noqa var-naming[no-role-prefix]
   {{ 'darwin' if ansible_system == 'Darwin' else 'linux' }}
-apme_helm_arch: >-  # noqa var-naming[no-role-prefix]
-  {{ 'arm64' if ansible_machine in ['arm64', 'aarch64'] else 'amd64' }}
+apme_helm_arch: >-  # noqa: var-naming[no-role-prefix]
+  {%- if ansible_machine in ['arm64', 'aarch64'] -%} arm64{%-
+  elif ansible_machine in ['x86_64', 'amd64'] -%} amd64{%-
+  else -%} {{ ansible_machine }}{%- endif -%}
 apme_helm_platform: "{{ apme_helm_os }}-{{ apme_helm_arch }}"  # noqa var-naming[no-role-prefix]
+apme_helm_platform_marker: "{{ apme_helm_install_dir }}/.platform"  # noqa var-naming[no-role-prefix]
 
 apme_helm_archive: >-  # noqa var-naming[no-role-prefix]
   /tmp/helm-v{{ apme_helm_version }}-{{ apme_helm_platform }}.tar.gz
