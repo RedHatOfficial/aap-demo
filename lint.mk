@@ -15,7 +15,7 @@ install-hooks: ## Install pre-commit hooks
 	@pre-commit install --hook-type pre-commit --hook-type commit-msg
 	@echo "✓ Pre-commit hooks installed"
 
-lint: lint-shell lint-shell-format lint-yaml lint-markdown ## Run all linters
+lint: lint-shell lint-shell-format lint-yaml lint-markdown lint-ansible ## Run all linters
 
 lint-shell: ## Lint shell scripts with shellcheck
 	@echo "Running shellcheck..."
@@ -39,11 +39,7 @@ lint-markdown: ## Lint Markdown files with markdownlint
 
 lint-ansible: ## Lint Ansible content with ansible-lint
 	@echo "Running ansible-lint..."
-	@files="$$(git ls-files '*.yml' '*.yaml' ':!config/**' ':!.serena/**')"; if [ -n "$$files" ]; then \
-		git ls-files '*.yml' '*.yaml' ':!config/**' ':!.serena/**' -z | xargs -0 -r ansible-lint --force-color --offline; \
-	else \
-		echo "No Ansible YAML files found, skipping"; \
-	fi
+	@ansible-lint --force-color --offline
 	@echo "✓ ansible-lint passed"
 
 format: ## Auto-format shell scripts and markdown
@@ -64,7 +60,7 @@ test: ## Run syntax checks and dry-run tests
 validate-manifests: ## Validate Kubernetes manifests with kubeconform
 	@echo "Validating Kubernetes manifests..."
 	@git ls-files 'config/manifests/**.yaml' 'config/manifests/**.yml' 'config/crs/**.yaml' 'config/crs/**.yml' -z \
-		| xargs -0 -r kubeconform --ignore-missing-schemas
+		| xargs -0 -r kubeconform --ignore-missing-schemas -summary
 	@echo "✓ Manifest validation complete"
 
 check-secrets: ## Scan for secrets with detect-secrets 1.5.0 (read-only)

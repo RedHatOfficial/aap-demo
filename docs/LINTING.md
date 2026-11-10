@@ -135,7 +135,8 @@ Ensures consistent Markdown formatting.
 
 ```bash
 markdownlint .
-markdownlint --fix .  # Auto-fix issues
+# Pre-commit runs markdownlint in check-only mode. Apply fixes explicitly when needed:
+markdownlint --fix .
 ```
 
 **Inline disable**:
@@ -266,6 +267,14 @@ shfmt -d .
 # Fix formatting
 shfmt -w -i 2 -ci -bn .
 ```
+
+### Kubernetes manifest validation
+
+Kubeconform validates the tracked manifests and custom resources under
+`config/manifests/` and `config/crs/`. It skips the five Ansible Automation
+Platform custom resources, the `SecurityContextConstraints`, and the
+`Kustomization`, because those resource schemas are not available to the
+validator.
 
 ## GitHub Actions
 

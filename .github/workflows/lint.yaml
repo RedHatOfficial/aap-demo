@@ -17,7 +17,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y shellcheck
+        run: |
+          set -euo pipefail
+          wget -qO- https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz \
+            | tar -xJ --strip-components=1 -C /tmp
+          sudo install /tmp/shellcheck /usr/local/bin/shellcheck
 
       - name: Run ShellCheck
         run: |
@@ -84,14 +88,7 @@ jobs:
 
       - name: Run ansible-lint
         run: |
-          set -euo pipefail
-          files=$(git ls-files '*.yml' '*.yaml' ':!config/**' ':!.serena/**')
-          if [ -n "$files" ]; then
-            git ls-files '*.yml' '*.yaml' ':!config/**' ':!.serena/**' -z \
-              | xargs -0 -r ansible-lint --force-color --offline
-          else
-            echo "No Ansible YAML files found, skipping ansible-lint"
-          fi
+          ansible-lint --force-color --offline
 
   secretlint:
     name: Secret Detection
