@@ -69,7 +69,7 @@ def test_pyproject_ships_every_product_demo_installer() -> None:
 
 
 def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
-    assert names() == ["fleet", "product-demo-satellite", "product-demos"]
+    assert names() == ["eda-playground", "fleet", "product-demo-satellite", "product-demos"]
 
 
 def test_product_demos_preflight_uses_the_cluster_and_portal_does_not() -> None:
