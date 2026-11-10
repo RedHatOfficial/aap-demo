@@ -28,7 +28,7 @@ spec:
       containers:
         - name: eda-playground
           image: __EDA_PLAYGROUND_IMAGE__
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - name: http
               containerPort: 8080
