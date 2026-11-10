@@ -216,7 +216,10 @@ run_case() {
       MOCK_NS=fail
       expect_failure=yes
       ;;
-    unowned) MOCK_OWNER=someone-else ;;
+    unowned)
+      MOCK_OWNER=someone-else
+      expect_failure=yes
+      ;;
     custom) NAMESPACE=custom-demo ;;
   esac
   jq -n --arg ns "${NAMESPACE:-eda-playground}" '{
@@ -329,6 +332,7 @@ run_case namespace_lookup_fail
 grep -Fq 'namespace eda-playground lookup failed' "$TMP/namespace_lookup_fail.out" || fail 'namespace lookup failure step not reported'
 run_case unowned
 reject_log 'kubectl delete namespace' 'unowned namespace deleted'
+grep -Fq 'namespace eda-playground is not owned' "$TMP/unowned.out" || fail 'unowned namespace failure not reported'
 run_case custom
 assert_log 'kubectl delete namespace custom-demo' 'configured namespace not deleted'
 reject_log 'kubectl delete namespace eda-playground' 'default namespace deleted with custom setting'

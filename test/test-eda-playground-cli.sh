@@ -38,9 +38,9 @@ fail() {
 }
 
 run_disable() {
-  local name="$1" addon_namespace="$2" delete_fail="$3" expected_status="$4"
+  local name="$1" addon_namespace="$2" delete_fail="$3" expected_status="$4" owner="${5:-aap-demo-eda-playground}"
   printf 'ADDONS=eda-playground\n' >"$TMP/home/.aap-demo/config"
-  export MOCK_LOG="$TMP/$name.log" MOCK_DELETE_FAIL="$delete_fail"
+  export MOCK_LOG="$TMP/$name.log" MOCK_DELETE_FAIL="$delete_fail" MOCK_OWNER="$owner"
   : >"$MOCK_LOG"
   if HOME="$TMP/home" AAP_DEMO_DIR="$TMP/home/.aap-demo" AAP_DEMO_CONFIG="$TMP/home/.aap-demo/config" \
     QUIET=true NAMESPACE=aap-operator EDA_PLAYGROUND_NAMESPACE="$addon_namespace" \
@@ -72,9 +72,13 @@ run_disable failed eda-playground yes failure
 grep -Fq 'delete namespace eda-playground' "$MOCK_LOG" || fail 'failed cleanup did not attempt namespace deletion'
 grep -Fxq 'ADDONS=eda-playground' "$TMP/home/.aap-demo/config" || fail 'failed cleanup cleared addon state'
 
+run_disable unowned custom-demo no failure another-owner
+! grep -Fq 'delete namespace custom-demo' "$MOCK_LOG" || fail 'unowned custom namespace deletion attempted'
+grep -Fxq 'ADDONS=eda-playground' "$TMP/home/.aap-demo/config" || fail 'unowned namespace cleared addon state'
+
 for addon_namespace in eda-playground custom-demo; do
   printf 'ADDONS=\n' >"$TMP/home/.aap-demo/config"
-  MOCK_LOG="$TMP/enable-$addon_namespace.log" MOCK_DELETE_FAIL=no \
+  MOCK_LOG="$TMP/enable-$addon_namespace.log" MOCK_DELETE_FAIL=no MOCK_OWNER=aap-demo-eda-playground \
     HOME="$TMP/home" AAP_DEMO_DIR="$TMP/home/.aap-demo" \
     AAP_DEMO_CONFIG="$TMP/home/.aap-demo/config" QUIET=true NAMESPACE=aap-operator \
     EDA_PLAYGROUND_NAMESPACE="$addon_namespace" \
@@ -84,6 +88,8 @@ for addon_namespace in eda-playground custom-demo; do
     && fail "enable $addon_namespace unexpectedly succeeded with no AAP route"
   grep -Fq "get namespace $addon_namespace --ignore-not-found -o name" \
     "$TMP/enable-$addon_namespace.log" || fail "enable did not target $addon_namespace"
+  grep -Fq 'AAP route unavailable' "$TMP/enable-$addon_namespace.out" \
+    || fail "enable did not pass namespace ownership for $addon_namespace"
   ! grep -Fq 'get namespace aap-operator' "$TMP/enable-$addon_namespace.log" \
     || fail 'enable attempted addon ownership in the AAP namespace'
 done
