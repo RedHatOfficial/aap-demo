@@ -9,7 +9,7 @@ AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
 NAMESPACE="${EDA_PLAYGROUND_NAMESPACE:-eda-playground}"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-EDA Playground}"
 STATE_DIR="${EDA_PLAYGROUND_STATE_DIR:-${HOME}/.aap-demo/eda-playground}"
-IMAGE="${EDA_PLAYGROUND_IMAGE:-ghcr.io/bbgrimmett2/eda-playground:0.1.0}"
+IMAGE="${EDA_PLAYGROUND_IMAGE:-ghcr.io/bbgrimmett2/eda-playground:latest}"
 ACTION="${1:-deploy}"
 
 if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [[ "$ACTION" != "--delete" && "$ACTION" != "delete" ]]; }; then
