@@ -1,4 +1,7 @@
-"""Run one fleet playbook as a Job in the cluster execution environment."""
+"""Fleet's side of running a playbook: the namespaces it owns, node RBAC, and its SCC.
+
+The Job itself runs through :mod:`aap_demo.addons.common.playbook_job`.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +10,20 @@ import json
 import secrets
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, cast
-from urllib.parse import urlparse
+from typing import Any, Dict, List
 
 import yaml
 
-from aap_demo.addons.fleet.ee import discover_image
-from aap_demo.addons.fleet.gateway import aap_namespace
+from aap_demo.addons.common import playbook_job
+from aap_demo.addons.common.ee import discover_image
+from aap_demo.addons.common.gateway import aap_namespace
+from aap_demo.addons.common.kube import (
+    apply_or_raise,
+    as_dict,
+    is_missing,
+    read_object,
+    run_or_raise,
+)
 from aap_demo.addons.fleet.resources import read_text
 from aap_demo.addons.fleet.state import (
     forget_namespace_uid,
@@ -22,17 +32,8 @@ from aap_demo.addons.fleet.state import (
     remember_namespace_token,
     remember_namespace_uid,
 )
-from aap_demo.core import waiting
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
-from aap_demo.exec import kubectl
-
-
-def _as_dict(value: Any) -> Dict[str, Any]:
-    if isinstance(value, dict):
-        return cast(Dict[str, Any], value)
-    return {}
-
 
 RUNNER_ACCOUNT = "aap-demo-fleet-runner"
 FLEET_LABEL = "aap-demo/fleet"
@@ -40,10 +41,10 @@ TOKEN_ANNOTATION = "aap-demo/fleet-token"
 FLEET_SCC = "aap-demo-fleet"
 FLEET_SCC_ROLE = "system:openshift:scc:aap-demo-fleet"
 FLEET_SCC_BINDING = "fleet-ssh-scc"
-_PLAYBOOK_ROOT = "/opt/fleet/playbooks"
-_JOB_TIMEOUT_SECONDS = 600
-_JOB_POLL_SECONDS = 5
-_EXTRA_ROOT = "/opt/fleet/extra"
+_MOUNT_ROOT = "/opt/fleet"
+_PLAYBOOK_ROOT = f"{_MOUNT_ROOT}/playbooks"
+_EXTRA_ROOT = f"{_MOUNT_ROOT}/extra"
+_APPLY_ERROR = "could not apply the fleet playbook job"
 _PLAYBOOK_PURPOSES = {
     "provision.yml": "creating/updating Fleet node pods and persistent storage",
     "import.yml": "registering Fleet nodes in AAP inventory and creating the ping job template",
@@ -59,35 +60,9 @@ def runner_namespace(fleet_ns: str) -> str:
     return f"fleet-runner-{digest}"
 
 
-def _job_succeeded(ctx: AppContext, name: str, namespace: str) -> bool:
-    """Stop at the Job's result. ``kubectl wait`` sits out its timeout on a failed Job."""
-    outcome = {"status": ""}
-
-    def finished(_n: int) -> bool:
-        read = ctx.runner.run(["kubectl", "get", "job", name, "-n", namespace, "-o", "json"])
-        try:
-            status = _as_dict(json.loads(read.stdout or "{}").get("status"))
-        except json.JSONDecodeError:
-            return False
-        for condition in status.get("conditions") or []:
-            if isinstance(condition, dict) and condition.get("status") == "True":
-                if condition.get("type") in ("Complete", "Failed"):
-                    outcome["status"] = str(condition["type"])
-                    return True
-        return False
-
-    waiting.wait_for(
-        finished,
-        timeout=_JOB_TIMEOUT_SECONDS,
-        interval=_JOB_POLL_SECONDS,
-        description=f"Fleet job {name}",
-    )
-    return outcome["status"] == "Complete"
-
-
 def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None:
     """Apply the playbook with the cluster's ee-supported image, then delete the Job."""
-    image = discover_image(ctx)
+    image = discover_image(ctx, addon="fleet")
     fleet_ns = str(extra.get("namespace") or "fleet")
     job_ns = runner_namespace(fleet_ns)
     present = str(extra.get("state") or "present") != "absent"
@@ -95,76 +70,34 @@ def run_playbook(ctx: AppContext, playbook: Path, extra: Dict[str, Any]) -> None
     _retire_cluster_rights(ctx, aap_namespace(ctx))
     # Create when missing so Controller cleanup still runs after the namespace is gone.
     _prepare_namespace(ctx, fleet_ns, create=True, bind_scc=present or scope == "node")
-    name = f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}"
-    pull_name = f"{name}-pull"
     purpose = _playbook_purpose(playbook)
-    ctx.console.progress(f"Submitting Fleet job: {purpose}")
-    playbook_error: AddonError | None = None
-    try:
-        _grant_runner_mounts(ctx, fleet_ns, job_ns, name, pull_name)
-        rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
-        used_pull = _stage_pull_secret(ctx, aap_namespace(ctx), job_ns, pull_name)
-        aliases = _aliases_for(ctx, rewritten)
-        _apply_checked(ctx, _configmap(name, job_ns, playbook, rewritten))
-        _apply_checked(ctx, _extra_secret(name, job_ns, rewritten, pull_secret, ca_bundle))
-        _apply_checked(
-            ctx,
-            _job(name, job_ns, image, playbook.name, aliases, used_pull, bool(ca_bundle)),
-        )
-        ctx.console.progress(
-            f"Fleet job submitted to {job_ns}: {purpose}; waiting up to "
-            f"{_JOB_TIMEOUT_SECONDS // 60} minutes for completion"
-        )
-        if not _job_succeeded(ctx, name, job_ns):
-            logs = ctx.runner.run(["kubectl", "logs", f"job/{name}", "-n", job_ns])
-            detail = (logs.stdout or logs.stderr or "").strip()
-            playbook_error = AddonError(
-                f"playbook failed: {playbook.name}",
-                hint=detail[-2000:] or None,
-            )
-    finally:
-        deleted = ctx.runner.run(
-            [
-                "kubectl",
-                "delete",
-                "-n",
-                job_ns,
-                "--ignore-not-found",
-                f"job/{name}",
-                f"configmap/{name}",
-                f"secret/{name}",
-                f"secret/{pull_name}",
-                f"serviceaccount/{name}",
-                f"role/{name}",
-                f"rolebinding/{name}",
-            ]
-        )
-        binding = ctx.runner.run(
-            [
-                "kubectl",
-                "delete",
-                "rolebinding",
-                name,
-                "-n",
-                fleet_ns,
-                "--ignore-not-found",
-            ]
-        )
-    cleanup_hint = "\n".join(
-        part
-        for part in (
-            (deleted.stderr or deleted.stdout or "").strip() if not deleted.ok else "",
-            (binding.stderr or binding.stdout or "").strip() if not binding.ok else "",
-        )
-        if part
+    rewritten, pull_secret, ca_bundle = _rewrite_extra(extra)
+    files = {playbook.name: read_text(f"playbooks/{playbook.name}")}
+    if rewritten.get("entrypoint_path"):
+        files["entrypoint.sh"] = read_text("entrypoint.sh")
+    secret_files = {}
+    if pull_secret:
+        secret_files["pull-secret.json"] = pull_secret
+    if ca_bundle:
+        secret_files["ca.crt"] = ca_bundle
+    playbook_job.run(
+        ctx,
+        playbook_job.PlaybookJob(
+            label="Fleet",
+            name=f"aap-demo-fleet-{playbook.stem}-{uuid.uuid4().hex[:8]}",
+            namespace=job_ns,
+            image=image,
+            playbook=playbook.name,
+            purpose=purpose,
+            files=files,
+            extra_vars=rewritten,
+            mount_root=_MOUNT_ROOT,
+            secret_files=secret_files,
+            use_ca=bool(ca_bundle),
+            grants=((fleet_ns, RUNNER_ACCOUNT),),
+            pull_secret_source=aap_namespace(ctx),
+        ),
     )
-    if playbook_error is not None:
-        if cleanup_hint:
-            hint = "\n".join(part for part in (playbook_error.hint, cleanup_hint) if part)
-            playbook_error = AddonError(playbook_error.message, hint=hint or None)
-        raise playbook_error
-    if cleanup_hint:
-        raise AddonError("could not delete the fleet playbook secret", hint=cleanup_hint)
 
 
 def _playbook_purpose(playbook: Path) -> str:
@@ -175,12 +108,7 @@ def _playbook_purpose(playbook: Path) -> str:
 
 
 def _apply_checked(ctx: AppContext, manifest: str) -> None:
-    applied = kubectl.apply_stdin(ctx.runner, manifest)
-    if not applied.ok:
-        raise AddonError(
-            "could not apply the fleet playbook job",
-            hint=(applied.stderr or applied.stdout or "").strip() or None,
-        )
+    apply_or_raise(ctx, manifest, message=_APPLY_ERROR)
 
 
 def _retire_cluster_rights(ctx: AppContext, aap_ns: str) -> None:
@@ -190,7 +118,7 @@ def _retire_cluster_rights(ctx: AppContext, aap_ns: str) -> None:
         _delete_our_clusterrole(ctx)
         _delete_our_account(ctx, aap_ns)
         return
-    role_ref = _as_dict(binding.get("roleRef"))
+    role_ref = as_dict(binding.get("roleRef"))
     if role_ref.get("name") not in {"cluster-admin", RUNNER_ACCOUNT}:
         return
     _delete_ok(
@@ -225,35 +153,13 @@ def _delete_our_account(ctx: AppContext, namespace: str) -> None:
 
 
 def _read(kind: str, name: str, ctx: AppContext, *, namespace: str = "") -> dict | None:
-    argv = ["kubectl", "get", kind, name]
-    if namespace:
-        argv.extend(["-n", namespace])
-    argv.extend(["-o", "json"])
-    result = ctx.runner.run(argv)
-    if not result.ok:
-        detail = result.stderr or result.stdout or ""
-        if _missing(detail):
-            return None
-        raise AddonError(
-            f"could not read {kind} {name}",
-            hint=detail.strip() or None,
-        )
-    try:
-        document = json.loads(result.stdout or "{}")
-    except json.JSONDecodeError as exc:
-        raise AddonError(f"could not read {kind} {name}", hint=str(exc)) from exc
-    return document if isinstance(document, dict) else None
+    return read_object(ctx, kind, name, namespace=namespace)
 
 
 def _delete_ok(
     ctx: AppContext, argv: list, *, message: str = "could not remove the old fleet runner role"
 ) -> None:
-    deleted = ctx.runner.run(argv)
-    if not deleted.ok:
-        raise AddonError(
-            message,
-            hint=(deleted.stderr or deleted.stdout or "").strip() or None,
-        )
+    run_or_raise(ctx, argv, message=message)
 
 
 def _prepare_namespace(ctx: AppContext, namespace: str, *, create: bool, bind_scc: bool) -> bool:
@@ -275,7 +181,7 @@ def _token_for(ctx: AppContext, namespace: str, *, create: bool, uid_key: str) -
     stored = namespace_token_for(ctx)
     existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
     if not existing.ok:
-        if not _missing(existing.stderr or existing.stdout or ""):
+        if not is_missing(existing.stderr or existing.stdout or ""):
             raise AddonError(
                 f"could not read namespace {namespace}",
                 hint=(existing.stderr or existing.stdout or "").strip() or None,
@@ -288,11 +194,6 @@ def _token_for(ctx: AppContext, namespace: str, *, create: bool, uid_key: str) -
         remember_namespace_token(ctx, token)
         return token
     return _require_owned(namespace, existing.stdout or "", stored, namespace_uid_for(ctx, uid_key))
-
-
-def _missing(detail: str) -> bool:
-    text = detail.lower()
-    return "notfound" in text or "not found" in text
 
 
 def _apply_node_access(
@@ -373,42 +274,6 @@ def _apply_runner_access(ctx: AppContext, job_ns: str, token: str) -> None:
     _apply_checked(ctx, yaml.safe_dump(_namespace_body(job_ns, token), sort_keys=False))
 
 
-def _grant_runner_mounts(
-    ctx: AppContext, fleet_ns: str, job_ns: str, name: str, pull_name: str
-) -> None:
-    """A ServiceAccount that exists only for this Job and can read only its mounts."""
-    documents = [
-        {
-            "apiVersion": "v1",
-            "kind": "ServiceAccount",
-            "metadata": {"name": name, "namespace": job_ns},
-            "automountServiceAccountToken": False,
-        },
-        {
-            "apiVersion": "rbac.authorization.k8s.io/v1",
-            "kind": "Role",
-            "metadata": {"name": name, "namespace": job_ns},
-            "rules": [
-                {
-                    "apiGroups": [""],
-                    "resources": ["secrets", "configmaps"],
-                    "resourceNames": [name, pull_name],
-                    "verbs": ["get"],
-                }
-            ],
-        },
-        _role_binding(job_ns, job_ns, name=name, subject_name=name, role_name=name),
-        _role_binding(
-            fleet_ns,
-            job_ns,
-            name=name,
-            subject_name=name,
-            role_name=RUNNER_ACCOUNT,
-        ),
-    ]
-    _apply_checked(ctx, yaml.safe_dump_all(documents, sort_keys=False))
-
-
 def _namespace_body(namespace: str, token: str) -> Dict[str, Any]:
     return {
         "apiVersion": "v1",
@@ -453,29 +318,6 @@ def _node_role(namespace: str) -> Dict[str, Any]:
                 "resources": ["deployments", "deployments/scale"],
                 "verbs": ["get", "list", "watch", "create", "update", "patch", "delete"],
             },
-        ],
-    }
-
-
-def _role_binding(
-    namespace: str,
-    subject_namespace: str,
-    *,
-    name: str,
-    subject_name: str,
-    role_name: str,
-) -> Dict[str, Any]:
-    return {
-        "apiVersion": "rbac.authorization.k8s.io/v1",
-        "kind": "RoleBinding",
-        "metadata": {"name": name, "namespace": namespace},
-        "roleRef": {
-            "apiGroup": "rbac.authorization.k8s.io",
-            "kind": "Role",
-            "name": role_name,
-        },
-        "subjects": [
-            {"kind": "ServiceAccount", "name": subject_name, "namespace": subject_namespace}
         ],
     }
 
@@ -575,7 +417,7 @@ def delete_owned_namespace(ctx: AppContext, namespace: str, *, uid_key: str) -> 
     existing = ctx.runner.run(["kubectl", "get", "namespace", namespace, "-o", "json"])
     if not existing.ok:
         detail = existing.stderr or existing.stdout or ""
-        if _missing(detail):
+        if is_missing(detail):
             return
         raise AddonError(
             f"could not read namespace {namespace}",
@@ -603,7 +445,7 @@ def _require_owned(namespace: str, payload: str, token: str, uid: str = "") -> s
             f"could not read namespace {namespace}",
             hint=str(exc),
         ) from exc
-    meta = _as_dict(document.get("metadata"))
+    meta = as_dict(document.get("metadata"))
     live_uid = str((meta or {}).get("uid") or "")
     if uid:
         if live_uid != uid:
@@ -669,178 +511,3 @@ def _rewrite_extra(extra: Dict[str, Any]) -> tuple:
     if rewritten.get("entrypoint_path"):
         rewritten["entrypoint_path"] = f"{_PLAYBOOK_ROOT}/entrypoint.sh"
     return rewritten, pull_secret, ca_bundle
-
-
-def _stage_pull_secret(ctx: AppContext, source_ns: str, dest_ns: str, secret_name: str) -> str:
-    """Copy the EE pull secret into the runner namespace so this Job can use it."""
-    name = _ee_pull_secret(ctx, source_ns)
-    if not name:
-        return ""
-    result = ctx.runner.run(["kubectl", "get", "secret", name, "-n", source_ns, "-o", "json"])
-    if not result.ok or not (result.stdout or "").strip():
-        return ""
-    try:
-        document = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return ""
-    data = document.get("data") if isinstance(document, dict) else None
-    docker = (data or {}).get(".dockerconfigjson") if isinstance(data, dict) else None
-    if not docker:
-        return ""
-    body = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "type": "kubernetes.io/dockerconfigjson",
-        "metadata": {"name": secret_name, "namespace": dest_ns},
-        "data": {".dockerconfigjson": docker},
-    }
-    _apply_checked(ctx, yaml.safe_dump(body, sort_keys=False))
-    return secret_name
-
-
-def _ee_pull_secret(ctx: AppContext, namespace: str) -> str:
-    """Use a docker config already in the AAP namespace, when one exists."""
-    result = ctx.runner.run(["kubectl", "get", "secrets", "-n", namespace, "-o", "json"])
-    if not result.ok or not (result.stdout or "").strip():
-        return ""
-    try:
-        document = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return ""
-    names = []
-    for item in document.get("items") or []:
-        if not isinstance(item, dict) or item.get("type") != "kubernetes.io/dockerconfigjson":
-            continue
-        meta = _as_dict(item.get("metadata"))
-        if meta.get("name"):
-            names.append(str(meta["name"]))
-    if "redhat-operators-pull-secret" in names:
-        return "redhat-operators-pull-secret"
-    return names[0] if names else ""
-
-
-def _configmap(name: str, namespace: str, playbook: Path, extra: Dict[str, Any]) -> str:
-    data = {playbook.name: read_text(f"playbooks/{playbook.name}")}
-    if extra.get("entrypoint_path"):
-        data["entrypoint.sh"] = read_text("entrypoint.sh")
-    body = {
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {"name": name, "namespace": namespace},
-        "data": data,
-    }
-    return yaml.safe_dump(body, sort_keys=False)
-
-
-def _extra_secret(
-    name: str,
-    namespace: str,
-    extra: Dict[str, Any],
-    pull_secret: str,
-    ca_bundle: str,
-) -> str:
-    string_data = {"extra-vars.yml": yaml.safe_dump(extra, sort_keys=False)}
-    if pull_secret:
-        string_data["pull-secret.json"] = pull_secret
-    if ca_bundle:
-        string_data["ca.crt"] = ca_bundle
-    body = {
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {"name": name, "namespace": namespace},
-        "stringData": string_data,
-    }
-    return yaml.safe_dump(body, sort_keys=False)
-
-
-def _job(
-    name: str,
-    namespace: str,
-    image: str,
-    playbook_name: str,
-    aliases: List[Dict[str, Any]],
-    pull_secret_name: str,
-    use_ca: bool,
-) -> str:
-    container: Dict[str, Any] = {
-        "name": "ansible",
-        "image": image,
-        "imagePullPolicy": "IfNotPresent",
-        "command": [
-            "/usr/local/bin/ansible-playbook",
-            f"{_PLAYBOOK_ROOT}/{playbook_name}",
-            "-e",
-            f"@{_EXTRA_ROOT}/extra-vars.yml",
-        ],
-        "volumeMounts": [
-            {"name": "playbooks", "mountPath": _PLAYBOOK_ROOT},
-            {"name": "extra", "mountPath": _EXTRA_ROOT, "readOnly": True},
-        ],
-    }
-    if use_ca:
-        container["env"] = [
-            {"name": "REQUESTS_CA_BUNDLE", "value": f"{_EXTRA_ROOT}/ca.crt"},
-            {"name": "SSL_CERT_FILE", "value": f"{_EXTRA_ROOT}/ca.crt"},
-        ]
-    pod: Dict[str, Any] = {
-        "restartPolicy": "Never",
-        "serviceAccountName": name,
-        "automountServiceAccountToken": True,
-        "containers": [container],
-        "volumes": [
-            {"name": "playbooks", "configMap": {"name": name}},
-            {"name": "extra", "secret": {"secretName": name}},
-        ],
-    }
-    if pull_secret_name:
-        pod["imagePullSecrets"] = [{"name": pull_secret_name}]
-    if aliases:
-        pod["hostAliases"] = aliases
-    body = {
-        "apiVersion": "batch/v1",
-        "kind": "Job",
-        "metadata": {"name": name, "namespace": namespace},
-        "spec": {
-            "backoffLimit": 0,
-            "ttlSecondsAfterFinished": 600,
-            "template": {"spec": pod},
-        },
-    }
-    return yaml.safe_dump(body, sort_keys=False)
-
-
-def _aliases_for(ctx: AppContext, extra: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Point the public route name at the in-cluster router.
-
-    aap-demo routes use ``127.0.0.1.nip.io``. Inside a pod that address is
-    the pod itself, so the Job would miss the gateway without this alias.
-    """
-    host = _route_host(str(extra.get("aap_hostname") or ""))
-    if not host:
-        return []
-    result = ctx.runner.run(
-        [
-            "kubectl",
-            "get",
-            "svc",
-            "router-default",
-            "-n",
-            "openshift-ingress",
-            "-o",
-            "jsonpath={.spec.clusterIP}",
-        ]
-    )
-    ip = result.stdout.strip() if result.ok else ""
-    if not ip:
-        raise AddonError(
-            "could not find the ingress router",
-            hint="kubectl get svc router-default -n openshift-ingress",
-        )
-    return [{"ip": ip, "hostnames": [host]}]
-
-
-def _route_host(url: str) -> str:
-    if not url:
-        return ""
-    parsed = urlparse(url if "://" in url else f"https://{url}")
-    return parsed.hostname or ""

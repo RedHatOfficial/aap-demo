@@ -46,7 +46,7 @@ def import_vars(
     private_key: str,
     manage_inventory: bool,
 ) -> Dict[str, Any]:
-    from aap_demo.addons.fleet import gateway
+    from aap_demo.addons.common import gateway
     from aap_demo.addons.fleet.state import (
         ca_path_for,
         fleet_options,

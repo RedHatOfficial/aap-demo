@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import aap_demo
+from aap_demo.addons.base import AddonKind
+from aap_demo.addons.common.state import enabled_names, set_enabled_names
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
@@ -41,7 +43,6 @@ BUNDLED_ADDON_DIRS: tuple = (
 #: Names ``aap-demo enable`` prints when no addon is given.
 PUBLIC_SHELL_ADDONS: tuple = ("product-demos", "product-demo-satellite")
 
-SHELL_ADDONS = frozenset(BUNDLED_ADDON_DIRS)
 
 _INSTALLER_TOOLS = ("bash", "curl", "jq")
 
@@ -86,8 +87,14 @@ def require_tools() -> None:
 
 
 class ShellAddon:
+    """A bash installer under ``addons/<name>/deploy.sh``, run by the new command."""
+
+    kind: AddonKind = "legacy"
+    needs_cluster = True
+
     def __init__(self, name: str) -> None:
         self.name = name
+        self.public = name in PUBLIC_SHELL_ADDONS
 
     def enable(self, ctx: AppContext, args: object) -> int:
         extra = getattr(args, "addon_args", None) or []
@@ -261,15 +268,11 @@ def _token_not_written(ctx: AppContext, exc: OSError) -> None:
 
 
 def _enabled(ctx: AppContext) -> List[str]:
-    raw = ctx.config.get("addons.enabled") or []
-    if not isinstance(raw, list):
-        return []
-    return [str(name) for name in raw]
+    return enabled_names(ctx)
 
 
 def _save_enabled(ctx: AppContext, names: List[str]) -> None:
-    ctx.config.set("addons.enabled", names)
-    ctx.config.save()
+    set_enabled_names(ctx, names, save=True)
 
 
 def _enabled_message(name: str) -> str:

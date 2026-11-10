@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from aap_demo.addons import get, names
+from aap_demo.addons.common import playbook_job
 from aap_demo.addons.fleet import job as fleet_job
 from aap_demo.addons.fleet import resources
 from aap_demo.addons.fleet.resources import read_text
@@ -406,7 +407,7 @@ def test_enable_writes_extra_vars_then_deletes_them(app_ctx, monkeypatch) -> Non
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()
     monkeypatch.setattr(
-        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+        "aap_demo.addons.common.gateway.gateway_url", lambda _ctx: "https://gw.example"
     )
     monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
 
@@ -600,7 +601,7 @@ def test_add_named_node_runs_both_playbooks(app_ctx, monkeypatch) -> None:
     _pull_secret(app_ctx)
     _install_bins(monkeypatch)
     monkeypatch.setattr(
-        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+        "aap_demo.addons.common.gateway.gateway_url", lambda _ctx: "https://gw.example"
     )
     monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
     app_ctx.runner = _cluster_runner()
@@ -638,7 +639,7 @@ def test_destroy_removes_controller_objects_before_the_namespace(app_ctx, monkey
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()
     monkeypatch.setattr(
-        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+        "aap_demo.addons.common.gateway.gateway_url", lambda _ctx: "https://gw.example"
     )
     monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=False))
@@ -675,7 +676,7 @@ def test_no_import_after_import_still_destroys_controller_objects(app_ctx, monke
     _install_bins(monkeypatch)
     app_ctx.runner = _cluster_runner()
     monkeypatch.setattr(
-        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+        "aap_demo.addons.common.gateway.gateway_url", lambda _ctx: "https://gw.example"
     )
     monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
     get("fleet").enable(app_ctx, argparse.Namespace(addon="fleet", no_import=False))
@@ -692,7 +693,7 @@ def test_no_import_after_import_still_destroys_controller_objects(app_ctx, monke
 def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
     app_ctx.runner = _gateway_chain()
 
-    from aap_demo.addons.fleet.gateway import gateway_url
+    from aap_demo.addons.common.gateway import gateway_url
 
     assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
 
@@ -700,7 +701,7 @@ def test_gateway_route_can_front_the_gateway_service(app_ctx) -> None:
 def test_gateway_accepts_operator_owner_without_controller_flag(app_ctx) -> None:
     app_ctx.runner = _gateway_chain(deployment_controller=False)
 
-    from aap_demo.addons.fleet.gateway import gateway_url
+    from aap_demo.addons.common.gateway import gateway_url
 
     assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
 
@@ -708,7 +709,7 @@ def test_gateway_accepts_operator_owner_without_controller_flag(app_ctx) -> None
 def test_gateway_ignores_a_route_that_is_only_named_gateway(app_ctx) -> None:
     app_ctx.runner = _gateway_chain(spoof_route=True)
 
-    from aap_demo.addons.fleet.gateway import gateway_url
+    from aap_demo.addons.common.gateway import gateway_url
 
     assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
 
@@ -718,7 +719,7 @@ def test_gateway_refuses_a_name_suffix_without_the_service(app_ctx) -> None:
     app_ctx.runner.ok(["kubectl", "get", "aap"], stdout='{"items":[]}')
     app_ctx.runner.ok(["kubectl", "get", "deploy"], stdout='{"items":[]}')
 
-    from aap_demo.addons.fleet.gateway import gateway_url
+    from aap_demo.addons.common.gateway import gateway_url
 
     with pytest.raises(AddonError, match="gateway deployment not found"):
         gateway_url(app_ctx)
@@ -727,7 +728,7 @@ def test_gateway_refuses_a_name_suffix_without_the_service(app_ctx) -> None:
 def test_gateway_refuses_a_replicaset_the_operator_does_not_own(app_ctx) -> None:
     app_ctx.runner = _gateway_chain(owned=False)
 
-    from aap_demo.addons.fleet.gateway import gateway_url
+    from aap_demo.addons.common.gateway import gateway_url
 
     with pytest.raises(AddonError, match="gateway deployment not found"):
         gateway_url(app_ctx)
@@ -743,7 +744,7 @@ def test_runner_namespace_stays_within_the_dns_limit() -> None:
 
 
 def test_ee_image_rejects_a_lookalike() -> None:
-    from aap_demo.addons.fleet.ee import _ee_image
+    from aap_demo.addons.common.ee import _ee_image
 
     lookalike = {
         "items": [
@@ -826,7 +827,7 @@ def test_ssh_key_read_failure_does_not_create_a_new_key(app_ctx) -> None:
 def test_import_rejects_a_custom_scm_url(app_ctx, monkeypatch) -> None:
     _install_bins(monkeypatch)
     monkeypatch.setattr(
-        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+        "aap_demo.addons.common.gateway.gateway_url", lambda _ctx: "https://gw.example"
     )
     monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
     app_ctx.config.set(
@@ -1012,7 +1013,7 @@ def test_destroy_keeps_state_when_the_namespace_cannot_be_read(app_ctx, monkeypa
 def test_destroy_removes_controller_objects_after_the_last_node(app_ctx, monkeypatch) -> None:
     _install_bins(monkeypatch)
     monkeypatch.setattr(
-        "aap_demo.addons.fleet.gateway.gateway_url", lambda _ctx: "https://gw.example"
+        "aap_demo.addons.common.gateway.gateway_url", lambda _ctx: "https://gw.example"
     )
     monkeypatch.setattr("aap_demo.cluster.aap.admin_password", lambda _ctx, _ns: "secret")
     app_ctx.config.set(
@@ -1154,7 +1155,7 @@ def test_gateway_accepts_the_operators_second_service(app_ctx) -> None:
     """The operator also creates aap-api, which selects the same gateway pods."""
     app_ctx.runner = _gateway_chain(api_service=True)
 
-    from aap_demo.addons.fleet.gateway import gateway_url
+    from aap_demo.addons.common.gateway import gateway_url
 
     assert gateway_url(app_ctx) == "https://aap.apps.127.0.0.1.nip.io"
 
@@ -1168,7 +1169,7 @@ def test_a_failed_job_ends_the_wait_right_away(app_ctx, monkeypatch) -> None:
     app_ctx.runner = FakeRunner().ok(
         ["kubectl", "get", "job"], stdout=json.dumps({"status": {"conditions": conditions}})
     )
-    assert fleet_job._job_succeeded(app_ctx, "x", "fleet-runner") is False
+    assert playbook_job.job_succeeded(app_ctx, "x", "fleet-runner") is False
 
 
 def test_import_names_a_missing_subscription() -> None:

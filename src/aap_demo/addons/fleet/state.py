@@ -4,27 +4,19 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from aap_demo.addons.common import state as addon_state
+from aap_demo.addons.common.state import enabled_names
 from aap_demo.addons.fleet import images
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import UsageError
 
 
 def fleet_options(ctx: AppContext) -> Dict[str, Any]:
-    options = ctx.config.get("addons.options") or {}
-    if not isinstance(options, dict):
-        return {}
-    fleet = options.get("fleet")
-    return dict(fleet) if isinstance(fleet, dict) else {}
+    return addon_state.options_for(ctx, "fleet")
 
 
 def save_options(ctx: AppContext, fleet: Dict[str, Any]) -> None:
-    options = ctx.config.get("addons.options") or {}
-    if not isinstance(options, dict):
-        options = {}
-    merged = dict(options)
-    merged["fleet"] = fleet
-    ctx.config.set("addons.options", merged)
-    ctx.config.save()
+    addon_state.save_options_for(ctx, "fleet", fleet)
 
 
 def namespace_token_for(ctx: AppContext) -> str:
@@ -113,20 +105,14 @@ def nodes_of(ctx: AppContext) -> List[Dict[str, str]]:
     return nodes
 
 
-def enabled_names(ctx: AppContext) -> List[str]:
-    raw = ctx.config.get("addons.enabled") or []
-    if not isinstance(raw, list):
-        return []
-    return [str(name) for name in raw]
-
-
 def set_enabled(ctx: AppContext, present: bool) -> None:
+    """Add or remove fleet in ``addons.enabled``. The caller saves config."""
     names = enabled_names(ctx)
     if present and "fleet" not in names:
         names.append("fleet")
     if not present:
         names = [name for name in names if name != "fleet"]
-    ctx.config.set("addons.enabled", names)
+    addon_state.set_enabled_names(ctx, names, save=False)
 
 
 def validate_certs_for(ctx: AppContext) -> bool:
