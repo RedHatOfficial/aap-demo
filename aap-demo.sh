@@ -235,7 +235,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak | eda-playground)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -626,8 +626,9 @@ COMMANDS (all infrastructure types):
     fleet destroy          Remove all VMs and AAP resources
     (legacy Bash v1; local QEMU VMs only)
     Kubernetes-native fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
-    enable [addon]  Enable an addon (ao, ao-pr-testing, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet)
+    enable [addon]  Enable an addon (ao, ao-pr-testing, mcp-server, opa, portal, portal-operator, setup-pah, product-demos, local-cache, ollama, keycloak, fleet, eda-playground)
                     portal-operator is Technology Preview and AMD64 only
+                    eda-playground: EDA Playground for testing event-driven integrations
     keycloak configure [--target aap|ao|all] [--map-groups] [--apply]
                     Configure Keycloak OIDC consumers; dry-run unless --apply
                     --map-groups aligns Keycloak groups with AAP roles and AO groups
@@ -3294,7 +3295,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak eda-playground"
 
 _normalize_addon_name() {
   case "$1" in

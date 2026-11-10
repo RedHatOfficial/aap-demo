@@ -12,6 +12,16 @@ fail() {
 [ -d "$ADDON_DIR" ] || fail "addon directory missing"
 [ -x "$ADDON_DIR/deploy.sh" ] || fail "deploy.sh must be executable"
 
+CLI="$ROOT_DIR/aap-demo.sh"
+HELP="$(QUIET=true "$CLI" help)"
+printf '%s\n' "$HELP" | grep -Fq 'eda-playground' || fail "help must list EDA Playground"
+printf '%s\n' "$HELP" | grep -Fq 'EDA Playground for testing event-driven integrations' || fail "help must describe EDA Playground"
+AVAILABLE_LINE="$(grep '^AVAILABLE_ADDONS=' "$CLI")"
+[[ " $AVAILABLE_LINE " == *" eda-playground"* ]] || fail "AVAILABLE_ADDONS must list EDA Playground"
+grep -Eq '^[[:space:]]*fleet \| mcp-server.*\| eda-playground\)' "$CLI" || fail "enable/disable parser must accept EDA Playground"
+grep -Fq 'for a in $AVAILABLE_ADDONS; do' "$CLI" || fail "legacy status must read AVAILABLE_ADDONS"
+grep -Fq 'addons/${addon}' "$CLI" || fail "CLI must resolve addon deploy path"
+
 for file in README.md deploy.sh namespace.yaml configmap.yaml service.yaml deployment.yaml route.yaml; do
   [ -f "$ADDON_DIR/$file" ] || fail "missing addon file: $file"
 done
