@@ -1,6 +1,6 @@
 """The execution environment already running in the cluster.
 
-Fleet playbooks run there, so the laptop does not need ansible-core
+Addon playbooks run there, so the laptop does not need ansible-core
 or the Galaxy collections.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, cast
 
-from aap_demo.addons.fleet.gateway import aap_namespace
+from aap_demo.addons.common.gateway import aap_namespace
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 
@@ -20,8 +20,11 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     return {}
 
 
-def discover_image(ctx: AppContext) -> str:
-    """Return the ee-supported image ref from the controller task pod."""
+def discover_image(ctx: AppContext, *, addon: str) -> str:
+    """Return the ee-supported image ref from the controller task pod.
+
+    ``addon`` names the command to retry in the error hint.
+    """
     namespace = aap_namespace(ctx)
     pods = ctx.runner.run(["kubectl", "get", "pods", "-n", namespace, "-o", "json"])
     if not pods.ok:
@@ -32,7 +35,7 @@ def discover_image(ctx: AppContext) -> str:
     if not _has_trusted_container(pods.stdout or ""):
         raise AddonError(
             "no ee-supported image is running in the cluster",
-            hint="Deploy AAP, then run aap-demo enable fleet again.",
+            hint=f"Deploy AAP, then run aap-demo enable {addon} again.",
         )
     replica_sets = ctx.runner.run(["kubectl", "get", "rs", "-n", namespace, "-o", "json"])
     deployments = ctx.runner.run(["kubectl", "get", "deploy", "-n", namespace, "-o", "json"])
@@ -50,7 +53,7 @@ def discover_image(ctx: AppContext) -> str:
     if not image:
         raise AddonError(
             "no ee-supported image is running in the cluster",
-            hint="Deploy AAP, then run aap-demo enable fleet again.",
+            hint=f"Deploy AAP, then run aap-demo enable {addon} again.",
         )
     return image
 

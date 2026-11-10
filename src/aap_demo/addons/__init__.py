@@ -1,18 +1,25 @@
-"""Addon registry.
+"""Addon registry: one table of every addon the new command can enable.
 
-``fleet`` is implemented in Python. Product demos run the bash installers
-under ``addons/``. Every other name is still an error.
+``fleet`` is native Python. Product demos run their bundled bash installers
+(``kind == "legacy"``). Any other name is an error that points at the older
+command. See ADR-040.
 """
 
 from __future__ import annotations
 
-from typing import Dict, Literal, Optional, Union, overload
+from typing import Dict, Literal, Optional, overload
 
+from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
-from aap_demo.addons.shell import PUBLIC_SHELL_ADDONS, SHELL_ADDONS, ShellAddon
+from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
 
-_REGISTRY = {"fleet": FleetAddon()}
+_FLEET = FleetAddon()
+
+_REGISTRY: Dict[str, Addon] = {
+    _FLEET.name: _FLEET,
+    **{name: ShellAddon(name) for name in BUNDLED_ADDON_DIRS},
+}
 
 #: How to run the bash command next to this one, for addons not ported yet.
 OLDER_COMMAND_GUIDE = (
@@ -22,12 +29,13 @@ OLDER_COMMAND_GUIDE = (
 
 def names() -> list:
     """Addons ``enable`` prints when no name is given."""
-    return sorted({*_REGISTRY, *PUBLIC_SHELL_ADDONS})
+    return sorted(name for name, addon in _REGISTRY.items() if addon.public)
 
 
 def needs_cluster(name: Optional[str]) -> bool:
     """True when enable/disable has to talk to the cluster before it starts."""
-    return bool(name) and (name in _REGISTRY or name in SHELL_ADDONS)
+    addon = _REGISTRY.get(name) if name else None
+    return bool(addon and addon.needs_cluster)
 
 
 @overload
@@ -35,14 +43,13 @@ def get(name: Literal["fleet"]) -> FleetAddon: ...
 
 
 @overload
-def get(name: str) -> Union[FleetAddon, ShellAddon]: ...
+def get(name: str) -> Addon: ...
 
 
-def get(name: str) -> Union[FleetAddon, ShellAddon]:
-    if name in _REGISTRY:
-        return _REGISTRY[name]
-    if name in SHELL_ADDONS:
-        return ShellAddon(name)
+def get(name: str) -> Addon:
+    addon = _REGISTRY.get(name)
+    if addon is not None:
+        return addon
     available = ", ".join(names())
     raise AddonError(
         f"unknown addon {name!r}; implemented addons: {available}",
@@ -53,5 +60,6 @@ def get(name: str) -> Union[FleetAddon, ShellAddon]:
     )
 
 
-def registry() -> Dict[str, FleetAddon]:
+def registry() -> Dict[str, Addon]:
+    """Every addon by name, public or not."""
     return dict(_REGISTRY)

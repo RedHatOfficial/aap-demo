@@ -6,8 +6,9 @@ import argparse
 import json
 from typing import Any, Dict, cast
 
+from aap_demo.addons.base import AddonKind
+from aap_demo.addons.common.ee import discover_image
 from aap_demo.addons.fleet import images, runner, sshkey
-from aap_demo.addons.fleet.ee import discover_image
 from aap_demo.addons.fleet.job import delete_fleet_scc, delete_owned_namespace, runner_namespace
 from aap_demo.addons.fleet.state import (
     enabled_names,
@@ -31,9 +32,12 @@ def _as_dict(value: Any) -> Dict[str, Any]:
 
 class FleetAddon:
     name = "fleet"
+    kind: AddonKind = "native"
+    public = True
+    needs_cluster = True
 
     def enable(self, ctx: AppContext, args: argparse.Namespace) -> int:
-        discover_image(ctx)
+        discover_image(ctx, addon="fleet")
         no_import = bool(getattr(args, "no_import", False))
         private, public = sshkey.load_or_create(ctx)
         fleet = fleet_options(ctx)
@@ -59,7 +63,7 @@ class FleetAddon:
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         """Stop the pods. The namespace and the AAP inventory stay."""
         del args
-        discover_image(ctx)
+        discover_image(ctx, addon="fleet")
         _private, public = sshkey.load_or_create(ctx)
         nodes = nodes_of(ctx)
         if not nodes:
@@ -147,7 +151,7 @@ class FleetAddon:
                 f"node {name} already exists",
                 hint="Pass --name to add another node with that OS.",
             )
-        discover_image(ctx)
+        discover_image(ctx, addon="fleet")
         nodes.append({"name": name, "os": os_id})
         private, public = sshkey.load_or_create(ctx)
         fleet = fleet_options(ctx)
@@ -166,7 +170,7 @@ class FleetAddon:
         match = [node for node in nodes if node["name"] == name]
         if not match:
             raise UsageError(f"no fleet node named {name}")
-        discover_image(ctx)
+        discover_image(ctx, addon="fleet")
         private, public = sshkey.load_or_create(ctx)
         if fleet_options(ctx).get("import", True) is not False:
             runner.import_nodes(
@@ -210,7 +214,7 @@ def _say(ctx: AppContext, message: str, **fields: object) -> None:
 def _controller_cleanup_keys(ctx: AppContext) -> tuple:
     """Return the SSH key when AAP can run the cleanup playbooks."""
     try:
-        discover_image(ctx)
+        discover_image(ctx, addon="fleet")
     except AddonError as exc:
         ctx.console.err(exc.message)
         return "", "", True

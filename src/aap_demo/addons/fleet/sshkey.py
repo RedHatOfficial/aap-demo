@@ -16,7 +16,7 @@ from pathlib import Path
 
 import yaml
 
-from aap_demo.addons.fleet.gateway import aap_namespace
+from aap_demo.addons.common.gateway import aap_namespace
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, AddonError, PrerequisiteError
 from aap_demo.exec import kubectl

@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import aap_demo
+from aap_demo.addons.base import AddonKind
+from aap_demo.addons.common.state import enabled_names, set_enabled_names
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
@@ -41,9 +43,10 @@ BUNDLED_ADDON_DIRS: tuple = (
 #: Names ``aap-demo enable`` prints when no addon is given.
 PUBLIC_SHELL_ADDONS: tuple = ("product-demos", "product-demo-satellite")
 
-SHELL_ADDONS = frozenset(BUNDLED_ADDON_DIRS)
 
 _INSTALLER_TOOLS = ("bash", "curl", "jq")
+#: The delete handlers only print cleanup steps, so disable needs bash alone.
+_DELETE_TOOLS = ("bash",)
 
 
 def scripts_root() -> Path:
@@ -72,8 +75,9 @@ def wire_script() -> Path:
     return Path(__file__).resolve().with_name("product_demos_wire.sh")
 
 
-def require_tools() -> None:
-    missing = [name for name in _INSTALLER_TOOLS if shutil.which(name) is None]
+def require_tools(*, delete: bool = False) -> None:
+    tools = _DELETE_TOOLS if delete else _INSTALLER_TOOLS
+    missing = [name for name in tools if shutil.which(name) is None]
     if not missing:
         return
     hint = "Install " + ", ".join(missing) + " and run the command again."
@@ -86,8 +90,14 @@ def require_tools() -> None:
 
 
 class ShellAddon:
+    """A bash installer under ``addons/<name>/deploy.sh``, run by the new command."""
+
+    kind: AddonKind = "legacy"
+    needs_cluster = True
+
     def __init__(self, name: str) -> None:
         self.name = name
+        self.public = name in PUBLIC_SHELL_ADDONS
 
     def enable(self, ctx: AppContext, args: object) -> int:
         extra = getattr(args, "addon_args", None) or []
@@ -99,7 +109,7 @@ class ShellAddon:
 
 
 def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> int:
-    require_tools()
+    require_tools(delete=delete)
     deploy = scripts_root() / name / "deploy.sh"
     if not deploy.is_file():
         raise AddonError(f"addon {name!r} has no deploy.sh")
@@ -261,15 +271,11 @@ def _token_not_written(ctx: AppContext, exc: OSError) -> None:
 
 
 def _enabled(ctx: AppContext) -> List[str]:
-    raw = ctx.config.get("addons.enabled") or []
-    if not isinstance(raw, list):
-        return []
-    return [str(name) for name in raw]
+    return enabled_names(ctx)
 
 
 def _save_enabled(ctx: AppContext, names: List[str]) -> None:
-    ctx.config.set("addons.enabled", names)
-    ctx.config.save()
+    set_enabled_names(ctx, names, save=True)
 
 
 def _enabled_message(name: str) -> str:
