@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Add-ons
-description: Fleet demo machines in the new command, and where the other extras still live.
+description: Fleet machines and product demos in the new command, and where the other extras still live.
 tags: [addons, fleet]
 status: draft
 stale_after: 2027-01-28
@@ -48,10 +48,36 @@ checks by default never changes, and the module waits until it times out:
 
 Packages that set file capabilities, such as `httpd`, do not install on these machines.
 
+## Product demos
+
+`aap-demo enable product-demos` installs the Ansible product demos into the AAP you already deployed.
+The command needs `bash`, `curl`, and `jq`. On a Mac, `brew install jq` supplies jq when it is missing.
+
+The install clones the demo repository, syncs a project in AAP, and launches one job per domain:
+Linux, Windows, network, cloud, and OpenShift. That can take a while. Satellite stays out of this set
+until you ask for it:
+
+```bash
+aap-demo enable product-demo-satellite
+```
+
+A smaller set:
+
+```bash
+PRODUCT_DEMOS_DOMAINS="linux cloud" aap-demo enable product-demos
+```
+
+One domain uses the same installer under its own name, for example `aap-demo enable product-demo-linux`.
+
+`aap-demo disable product-demos` drops the addon from this computer's settings. The job templates stay
+in AAP until you delete them in the UI.
+
+The cluster still wants about 8 processors and 24 GB of memory. Demo jobs add work on top of AAP.
+
 ## Everything else
 
-Portal, Automation Orchestrator, product demos, a local cache of container images, and the MCP server are not
-in the new command yet. Asking the new command for one of them stops with a short error, and your cluster is
+Portal, Automation Orchestrator, a local cache of container images, and the MCP server are not in the
+new command yet. Asking the new command for one of them stops with a short error, and your cluster is
 left as it was.
 
 Use [the older command](older-command.md) for those. For example, after you have renamed it:

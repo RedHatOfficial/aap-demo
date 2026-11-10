@@ -87,6 +87,11 @@ done
 
 echo ""
 if [ ${#FAILED_DOMAINS[@]} -gt 0 ]; then
+  # The base and the other domains are installed. The new command reads this
+  # file to record them; the exit code stays 1 like every other failure.
+  if [ -n "${AAP_DEMO_RESULT_FILE:-}" ]; then
+    printf 'partial %s\n' "${FAILED_DOMAINS[*]}" >"$AAP_DEMO_RESULT_FILE"
+  fi
   echo "❌ ERROR: Some domains failed to install: ${FAILED_DOMAINS[*]}"
   echo ""
   echo "Re-run a failed domain from Templates in the Default organization:"

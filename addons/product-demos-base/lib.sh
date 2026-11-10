@@ -4,6 +4,25 @@
 APD_AAP_VERSION="${APD_AAP_VERSION:-2.7}"
 PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-27:latest}"
 
+# The new command records enabled addons in config.yaml and passes the names
+# here. The bash command still records them in ~/.aap-demo/config.
+apd_addon_enabled() {
+  local name="$1"
+  local recorded=" ${AAP_DEMO_ENABLED_ADDONS:-} "
+
+  case "$recorded" in
+    *" ${name} "*) return 0 ;;
+  esac
+  if [ -f "${HOME}/.aap-demo/config" ] && grep -q "$name" "${HOME}/.aap-demo/config" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+apd_base_is_recorded() {
+  apd_addon_enabled product-demos-base
+}
+
 apd_common_extra_vars_yaml() {
   local ee_image="${1:-${PRODUCT_DEMOS_EE}}"
   jq -r -n \
@@ -12,10 +31,7 @@ apd_common_extra_vars_yaml() {
     '{
       _aap_version: $version,
       apd_ee_image: $ee_image,
-      aap_validate_certs: false,
-      aap_configuration_async_retries: 0,
-      gateway_configuration_async_retries: 0,
-      controller_configuration_async_retries: 0
+      aap_validate_certs: false
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
@@ -164,10 +180,7 @@ apd_domain_extra_vars_yaml() {
       demo: $demo,
       _aap_version: $version,
       apd_ee_image: $ee_image,
-      aap_validate_certs: false,
-      aap_configuration_async_retries: 0,
-      gateway_configuration_async_retries: 0,
-      controller_configuration_async_retries: 0
+      aap_validate_certs: false
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
@@ -629,20 +642,14 @@ apd_launch_extra_vars_json() {
       '{
         demo: $demo,
         _aap_version: $version,
-        aap_validate_certs: false,
-        aap_configuration_async_retries: 0,
-        gateway_configuration_async_retries: 0,
-        controller_configuration_async_retries: 0
+        aap_validate_certs: false
       }'
   else
     jq -n \
       --arg version "$APD_AAP_VERSION" \
       '{
         _aap_version: $version,
-        aap_validate_certs: false,
-        aap_configuration_async_retries: 0,
-        gateway_configuration_async_retries: 0,
-        controller_configuration_async_retries: 0
+        aap_validate_certs: false
       }'
   fi
 }

@@ -173,6 +173,46 @@ else
   fail "init_connection_waits_and_requires_subscription"
 fi
 
+saved_home="${HOME:-}"
+record_home=$(mktemp -d)
+export HOME="$record_home"
+unset AAP_DEMO_ENABLED_ADDONS
+if apd_base_is_recorded; then
+  fail "base_is_not_recorded_on_an_empty_home"
+else
+  pass "base_is_not_recorded_on_an_empty_home"
+fi
+
+export AAP_DEMO_ENABLED_ADDONS="product-demo-linux product-demos-base"
+if apd_base_is_recorded && apd_addon_enabled product-demo-linux; then
+  pass "enabled_addons_env_records_base_and_domain"
+else
+  fail "enabled_addons_env_records_base_and_domain"
+fi
+if apd_addon_enabled product-demos; then
+  fail "enabled_addons_env_does_not_treat_base_as_the_umbrella"
+else
+  pass "enabled_addons_env_does_not_treat_base_as_the_umbrella"
+fi
+
+unset AAP_DEMO_ENABLED_ADDONS
+mkdir -p "$HOME/.aap-demo"
+printf 'ADDONS=product-demo-openshift\n' >"$HOME/.aap-demo/config"
+if apd_addon_enabled product-demo-openshift; then
+  pass "legacy_config_still_records_a_domain"
+else
+  fail "legacy_config_still_records_a_domain"
+fi
+if apd_base_is_recorded; then
+  fail "legacy_domain_does_not_count_as_base"
+else
+  pass "legacy_domain_does_not_count_as_base"
+fi
+rm -rf "$record_home"
+if [ -n "$saved_home" ]; then
+  export HOME="$saved_home"
+fi
+
 echo ""
 echo "Passed: $PASSED  Failed: $FAILED"
 [ "$FAILED" -eq 0 ]
