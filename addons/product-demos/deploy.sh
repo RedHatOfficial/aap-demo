@@ -65,7 +65,8 @@ if ! kubectl get aap -n "$NAMESPACE" &>/dev/null; then
 fi
 
 echo "Installing product-demos-base..."
-bash "${SCRIPT_DIR}/../product-demos-base/deploy.sh"
+# Any base failure exits 1, so exit 3 below always means a partial install.
+bash "${SCRIPT_DIR}/../product-demos-base/deploy.sh" || exit 1
 echo ""
 
 if ! command -v jq &>/dev/null; then
@@ -93,7 +94,8 @@ if [ ${#FAILED_DOMAINS[@]} -gt 0 ]; then
   for demo in "${FAILED_DOMAINS[@]}"; do
     echo "  $(apd_domain_template_name "$demo")"
   done
-  exit 1
+  # 3: the base and the other domains are installed. aap-demo records them.
+  exit 3
 fi
 
 echo "✓ All Ansible Product Demos domains installed!"

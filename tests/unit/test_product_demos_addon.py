@@ -13,6 +13,7 @@ from aap_demo.addons import get, names, needs_cluster
 from aap_demo.addons.shell import (
     BUNDLED_ADDON_DIRS,
     GALAXY_TOKEN_PREFIX,
+    PARTIAL_INSTALL_EXIT,
     scripts_root,
     wire_script,
 )
@@ -312,3 +313,49 @@ def test_token_is_removed_when_the_write_fails_partway(app_ctx, monkeypatch) -> 
     assert "GALAXY_TOKEN_FILE" not in (app_ctx.runner.calls[1].env or {})
     assert "Input/output error" in app_ctx.console.stderr
     assert _token_files(app_ctx) == []
+
+
+def test_partial_install_is_recorded_and_wired_then_reported(app_ctx, monkeypatch) -> None:
+    _present_tools(monkeypatch)
+    app_ctx.runner.fail(
+        ["bash", _deploy("product-demos")],
+        returncode=PARTIAL_INSTALL_EXIT,
+        stderr="Some domains failed to install: windows",
+    )
+    app_ctx.runner.ok(["bash", str(wire_script())])
+
+    with pytest.raises(AddonError, match="some demo domains failed"):
+        get("product-demos").enable(app_ctx, argparse.Namespace())
+
+    # The base and the domains that worked are in AAP, so disable must see them.
+    assert app_ctx.config.get("addons.enabled") == ["product-demos", "product-demos-base"]
+    assert app_ctx.runner.calls[1].argv[0:2] == ("bash", str(wire_script()))
+    assert "Product demos installed" not in app_ctx.console.stdout
+
+
+def test_partial_exit_on_disable_is_still_a_failure(app_ctx, monkeypatch) -> None:
+    _present_tools(monkeypatch)
+    app_ctx.config.set("addons.enabled", ["product-demos", "product-demos-base"])
+    app_ctx.runner.fail(
+        ["bash", _deploy("product-demos"), "--delete"], returncode=PARTIAL_INSTALL_EXIT
+    )
+
+    with pytest.raises(AddonError, match="disable product-demos failed"):
+        get("product-demos").disable(app_ctx, argparse.Namespace())
+
+    assert app_ctx.config.get("addons.enabled") == ["product-demos", "product-demos-base"]
+    assert len(app_ctx.runner.calls) == 1
+
+
+def test_installer_exits_3_only_for_a_partial_install() -> None:
+    script = (scripts_root() / "product-demos" / "deploy.sh").read_text(encoding="utf-8")
+    statements = [line.strip() for line in script.splitlines()]
+    assert statements.count(f"exit {PARTIAL_INSTALL_EXIT}") == 1
+    # A failed base install must not pass its own exit code (jq uses 3) through.
+    assert 'product-demos-base/deploy.sh" || exit 1' in script
+
+
+def test_installers_keep_the_collection_async_waits() -> None:
+    """Zero async retries let workflow nodes be created before their workflow (Windows)."""
+    for path in sorted(scripts_root().glob("product-demo*/**/*.sh")):
+        assert "async_retries" not in path.read_text(encoding="utf-8"), path

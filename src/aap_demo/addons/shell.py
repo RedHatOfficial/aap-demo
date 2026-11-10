@@ -18,6 +18,10 @@ from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
 
+#: ``addons/product-demos/deploy.sh`` exits with this when the base installed
+#: and at least one domain failed. Any other non-zero exit means nothing to record.
+PARTIAL_INSTALL_EXIT = 3
+
 #: Name prefix of the short-lived Galaxy token file in the state directory.
 GALAXY_TOKEN_PREFIX = ".galaxy-token."
 
@@ -112,6 +116,15 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
     argv.extend(extra)
 
     result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink())
+    if not delete and result.returncode == PARTIAL_INSTALL_EXIT:
+        # The base and some domains are in AAP. Record them so disable and a
+        # retry see them, wire the credentials, then report the failure.
+        _remember(ctx, name)
+        _wire(ctx, env)
+        raise AddonError(
+            f"{name} installed, and some demo domains failed",
+            hint=f"The installer log above names them. Run aap-demo enable {name} again to retry.",
+        )
     if not result.ok:
         action = "disable" if delete else "enable"
         raise AddonError(
