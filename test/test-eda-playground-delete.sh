@@ -99,7 +99,7 @@ run_case() {
   export MOCK_APPS=exact MOCK_APP_DELETE=present MOCK_NS_DELETE=present MOCK_SCC=present
   export MOCK_BINDING_CASE=present MOCK_BINDING_FILE="$TMP/$name/binding.json"
   export MOCK_PASSWORD_B64
-  MOCK_PASSWORD_B64="$(printf '%s' fixture-admin-password | "$REAL_BASE64" | tr -d '\n')"
+  MOCK_PASSWORD_B64="$(printf '%s' fixture-admin-password | "$REAL_BASE64" | tr -d '\n')" # pragma: allowlist secret
   mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
   printf '%s\n' '{"oauth_app_id":"42","client_id":"client-existing","client_secret":"fixture-client-secret"}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
   : >"$MOCK_LOG"
