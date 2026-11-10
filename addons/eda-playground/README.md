@@ -29,7 +29,9 @@ the default is `ghcr.io/bbgrimmett2/eda-playground:0.1.0`.
 From this directory, run `./deploy.sh` to deploy or `./deploy.sh --delete` (or
 `./deploy.sh delete`) to remove the addon namespace. The default action is
 deploy. The deployer also accepts `EDA_PLAYGROUND_IMAGE` to select a tag or
-digest.
+digest. Set `EDA_PLAYGROUND_NAMESPACE` to use a dedicated custom namespace
+for both enable and disable. The CLI's `NAMESPACE` selects the AAP namespace
+and does not select the addon namespace.
 
 The generated Route host is based on the cluster's application domain. After
 deployment, inspect it with:
@@ -40,7 +42,9 @@ kubectl get route eda-playground -n eda-playground
 
 ## Configuration
 
-- Namespace: `eda-playground`.
+- Namespace: `EDA_PLAYGROUND_NAMESPACE` (default: `eda-playground`). Existing
+  namespaces must carry the addon ownership label before deployment can reuse
+  them. The AAP namespace and system namespaces are refused.
 - Image: `EDA_PLAYGROUND_IMAGE`.
 - Application resources: 100m CPU and 128Mi memory requested; 500m CPU and
   512Mi memory limit.

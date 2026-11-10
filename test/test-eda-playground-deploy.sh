@@ -78,9 +78,9 @@ run_case() {
   export MOCK_CASE="$case_name" MOCK_LOG="$TMP/$case_name/log" MOCK_MANIFEST="$TMP/$case_name/manifest" MOCK_PATCH="$TMP/$case_name/patch" MOCK_CURRENT_REVISION_FILE="$TMP/$case_name/current-revision"
   export EDA_PLAYGROUND_STATE_DIR="$TMP/$case_name/state" MOCK_MICRO=no
   if [ "$case_name" = custom_namespace ]; then
-    export NAMESPACE=custom-demo
+    export EDA_PLAYGROUND_NAMESPACE=custom-demo
   else
-    unset NAMESPACE || true
+    unset EDA_PLAYGROUND_NAMESPACE || true
   fi
   export MOCK_PASSWORD_B64
   MOCK_PASSWORD_B64="$(printf '%s' fixture-admin-password | "$REAL_BASE64" | tr -d '\n')"
