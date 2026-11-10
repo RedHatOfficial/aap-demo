@@ -1,15 +1,51 @@
 ---
+- name: Validate platform architecture is supported  # noqa var-naming[no-role-prefix]
+  ansible.builtin.fail:
+    msg: >-
+      Unsupported architecture: {{ apme_helm_arch }} ({{ ansible_machine }}).
+      Helm binaries are only available for amd64 and arm64.
+  when: apme_helm_arch not in ['amd64', 'arm64']
+
 - name: Check for the pinned Helm client  # noqa var-naming[no-role-prefix]
   ansible.builtin.stat:
     path: "{{ apme_helm_binary }}"
   register: apme_helm_binary_stat
+
+- name: Check for platform marker  # noqa var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: "{{ apme_helm_platform_marker }}"
+  register: apme_helm_platform_marker_stat
+  when: apme_helm_binary_stat.stat.exists
+
+- name: Read cached platform  # noqa var-naming[no-role-prefix]
+  ansible.builtin.slurp:
+    src: "{{ apme_helm_platform_marker }}"
+  register: apme_helm_cached_platform_b64
+  when:
+    - apme_helm_binary_stat.stat.exists
+    - apme_helm_platform_marker_stat.stat.exists
+
+- name: Detect platform change  # noqa var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    apme_helm_platform_changed: >-
+      {{
+        apme_helm_binary_stat.stat.exists and
+        (not apme_helm_platform_marker_stat.stat.exists or
+         (apme_helm_cached_platform_b64.content | b64decode | trim) != apme_helm_platform)
+      }}
+
+- name: Remove incompatible Helm binary  # noqa var-naming[no-role-prefix]
+  ansible.builtin.file:
+    path: "{{ apme_helm_install_dir }}"
+    state: absent
+  when: apme_helm_platform_changed | default(false) | bool
 
 - name: Create Helm install directory  # noqa var-naming[no-role-prefix]
   ansible.builtin.file:
     path: "{{ apme_helm_install_dir }}"
     state: directory
     mode: "0755"
-  when: not apme_helm_binary_stat.stat.exists
+  when: not apme_helm_binary_stat.stat.exists or (apme_helm_platform_changed | default(false) | bool)
 
 - name: Download pinned Helm client  # noqa var-naming[no-role-prefix]
   ansible.builtin.command:
@@ -23,7 +59,7 @@
       - "{{ apme_helm_download_url }}"
   args:
     creates: "{{ apme_helm_archive }}"
-  when: not apme_helm_binary_stat.stat.exists
+  when: not apme_helm_binary_stat.stat.exists or (apme_helm_platform_changed | default(false) | bool)
 
 - name: Extract pinned Helm client  # noqa var-naming[no-role-prefix]
   ansible.builtin.command:
@@ -36,13 +72,19 @@
       - --strip-components=1
   args:
     creates: "{{ apme_helm_binary }}"
-  when: not apme_helm_binary_stat.stat.exists
+  when: not apme_helm_binary_stat.stat.exists or (apme_helm_platform_changed | default(false) | bool)
 
 - name: Make Helm executable  # noqa var-naming[no-role-prefix]
   ansible.builtin.file:
     path: "{{ apme_helm_binary }}"
     mode: "0755"
     state: file
+
+- name: Record installed platform  # noqa var-naming[no-role-prefix]
+  ansible.builtin.copy:
+    content: "{{ apme_helm_platform }}"
+    dest: "{{ apme_helm_platform_marker }}"
+    mode: "0644"
 
 - name: Verify pinned Helm client  # noqa var-naming[no-role-prefix]
   ansible.builtin.command: "{{ apme_helm_binary }} version --short"
