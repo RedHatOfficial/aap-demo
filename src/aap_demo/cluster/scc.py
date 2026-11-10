@@ -22,6 +22,7 @@ import shutil
 from typing import Callable, List, Optional
 
 from aap_demo.core.context import AppContext
+from aap_demo.core.errors import AapDemoError
 
 #: The two SCCs, in the order bash grants them.
 #: Per ADR-012, in single-node MicroShift local development environments,
@@ -39,15 +40,15 @@ def binding_name(scc: str, namespace: str) -> str:
     return f"system:openshift:scc:{scc}:{namespace}"
 
 
-def _grant_with_oc(ctx: AppContext, namespace: str) -> bool:
-    ok = True
+def _grant_with_oc(ctx: AppContext, namespace: str) -> List[str]:
+    failed: List[str] = []
     for scc in SCCS:
         result = ctx.runner.run(
             ["oc", "adm", "policy", "add-scc-to-group", scc, group_for(namespace)]
         )
         if result.ok:
             continue
-        ok = False
+        failed.append(scc)
         ctx.console.failure(f"Failed to grant {scc} SCC to namespace {namespace}")
         # Bash captures stderr into stdout (``2>&1``) and echoes it verbatim.
         detail = (result.stderr or result.stdout or "").strip()
@@ -55,12 +56,12 @@ def _grant_with_oc(ctx: AppContext, namespace: str) -> bool:
         ctx.console.out(
             f"  Fix manually: oc adm policy add-scc-to-group {scc} {group_for(namespace)}"
         )
-    return ok
+    return failed
 
 
-def _grant_with_kubectl(ctx: AppContext, namespace: str) -> bool:
+def _grant_with_kubectl(ctx: AppContext, namespace: str) -> List[str]:
     ctx.console.out("  'oc' not found — granting SCCs via kubectl...")
-    ok = True
+    failed: List[str] = []
     for scc in SCCS:
         name = binding_name(scc, namespace)
         if ctx.runner.run(["kubectl", "get", "clusterrolebinding", name]).ok:
@@ -76,9 +77,20 @@ def _grant_with_kubectl(ctx: AppContext, namespace: str) -> bool:
             ]
         )
         if not created.ok:
-            ok = False
+            failed.append(scc)
             ctx.console.failure(f"Failed to create ClusterRoleBinding for {scc} SCC")
-    return ok
+    return failed
+
+
+def _failed_grants(
+    ctx: AppContext,
+    namespace: Optional[str],
+    which: Callable[[str], Optional[str]],
+) -> List[str]:
+    ns = namespace or ctx.namespace
+    if which("oc") is not None:
+        return _grant_with_oc(ctx, ns)
+    return _grant_with_kubectl(ctx, ns)
 
 
 def grant_namespace_sccs(
@@ -88,10 +100,28 @@ def grant_namespace_sccs(
     which: Callable[[str], Optional[str]] = shutil.which,
 ) -> bool:
     """Ports ``_grant_sccs`` — returns False where bash returned ``_rc=1``."""
+    return not _failed_grants(ctx, namespace, which)
+
+
+def require_namespace_sccs(
+    ctx: AppContext,
+    namespace: Optional[str] = None,
+    *,
+    which: Callable[[str], Optional[str]] = shutil.which,
+) -> None:
+    """Grant both SCCs, then stop when one was refused.
+
+    Both grants are still attempted. The error names every SCC that failed.
+    """
+    failed = _failed_grants(ctx, namespace, which)
+    if not failed:
+        return
     ns = namespace or ctx.namespace
-    if which("oc") is not None:
-        return _grant_with_oc(ctx, ns)
-    return _grant_with_kubectl(ctx, ns)
+    names = " and ".join(failed)
+    raise AapDemoError(
+        f"Failed to grant {names} SCC to namespace {ns}",
+        hint="Run the command printed above, then retry.",
+    )
 
 
 def oc_env_path(
@@ -170,6 +200,7 @@ __all__: List[str] = [
     "SCCS",
     "binding_name",
     "grant_namespace_sccs",
+    "require_namespace_sccs",
     "grant_present",
     "group_for",
     "oc_env_path",

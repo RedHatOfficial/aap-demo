@@ -14,6 +14,7 @@ import pytest
 
 from aap_demo.cluster import namespace as ns_mod
 from aap_demo.cluster import pull_secret, scc
+from aap_demo.core.errors import AapDemoError
 from aap_demo.exec.runner import CompletedCommand, FakeRunner
 
 NS = "aap-operator"
@@ -112,6 +113,21 @@ def test_binding_name_is_the_shape_diagnose_looks_for() -> None:
 # ---------------------------------------------------------------------------
 # setup_namespace ordering
 # ---------------------------------------------------------------------------
+
+
+def test_setup_namespace_stops_when_an_scc_grant_fails(app_ctx) -> None:
+    runner = _base_runner()
+    runner.fail("oc adm policy add-scc-to-group", stderr="forbidden")
+    app_ctx.runner = runner
+
+    with pytest.raises(AapDemoError, match="Failed to grant anyuid and privileged SCC") as caught:
+        ns_mod.ensure(app_ctx, NS, which=_which("oc", "kubectl"), sleep=lambda _s: None)
+
+    assert NS in caught.value.message
+    assert "Failed to grant anyuid SCC" in app_ctx.console.stderr
+    assert "Failed to grant privileged SCC" in app_ctx.console.stderr
+    assert not runner.called("kubectl label namespace")
+    assert not runner.called("kubectl create secret")
 
 
 def test_setup_namespace_order_is_bashs(app_ctx, tmp_path) -> None:
