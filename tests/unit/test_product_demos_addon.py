@@ -10,7 +10,12 @@ from pathlib import Path
 import pytest
 
 from aap_demo.addons import get, names, needs_cluster
-from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, scripts_root, wire_script
+from aap_demo.addons.shell import (
+    BUNDLED_ADDON_DIRS,
+    GALAXY_TOKEN_PREFIX,
+    scripts_root,
+    wire_script,
+)
 from aap_demo.cli.main import _addon_needs_cluster
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.exec.runner import CompletedCommand
@@ -27,6 +32,11 @@ def _present_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _deploy(name: str) -> str:
     return str(scripts_root() / name / "deploy.sh")
+
+
+def _token_files(app_ctx) -> list:
+    state = app_ctx.paths.state_dir
+    return sorted(state.glob(GALAXY_TOKEN_PREFIX + "*")) if state.exists() else []
 
 
 def test_packaged_scripts_are_used_outside_a_checkout(monkeypatch, tmp_path: Path) -> None:
@@ -105,7 +115,7 @@ def test_enable_runs_the_installer_and_records_it(app_ctx, monkeypatch) -> None:
     assert Path(wire_call.argv[2]) == scripts_root() / "product-demos-base" / "lib.sh"
     assert app_ctx.config.get("addons.enabled") == ["product-demos", "product-demos-base"]
     assert "Product demos installed" in app_ctx.console.stdout
-    assert not (app_ctx.paths.state_dir / "galaxy-token").exists()
+    assert _token_files(app_ctx) == []
 
 
 def test_enable_passes_domain_selection_and_a_galaxy_token(app_ctx, monkeypatch) -> None:
@@ -118,6 +128,7 @@ def test_enable_passes_domain_selection_and_a_galaxy_token(app_ctx, monkeypatch)
         call = app_ctx.runner.calls[-1]
         token_path = Path(call.env["GALAXY_TOKEN_FILE"])
         seen["token"] = token_path.read_text(encoding="utf-8")
+        seen["name"] = token_path.name
         seen["mode"] = stat.S_IMODE(token_path.stat().st_mode)
         assert "offline-token" not in " ".join(args)
         return CompletedCommand(argv=tuple(args), returncode=0)
@@ -134,10 +145,11 @@ def test_enable_passes_domain_selection_and_a_galaxy_token(app_ctx, monkeypatch)
     assert deploy_call.argv[-1] == "--ignored"
     assert deploy_call.env["PRODUCT_DEMOS_DOMAINS"] == "linux cloud"
     assert seen["token"] == "offline-token\n"
+    assert seen["name"].startswith(GALAXY_TOKEN_PREFIX)
     # Windows reports DOS attributes, not Unix mode 0600.
     if os.name != "nt":
         assert seen["mode"] == 0o600
-    assert not (app_ctx.paths.state_dir / "galaxy-token").exists()
+    assert _token_files(app_ctx) == []
 
 
 def test_locked_keyring_does_not_fail_a_finished_install(app_ctx, monkeypatch) -> None:
@@ -223,3 +235,80 @@ def test_wiring_failure_still_leaves_the_addon_enabled(app_ctx, monkeypatch) -> 
 
     assert "product-demos" in app_ctx.config.get("addons.enabled")
     assert "credential wiring did not finish" in app_ctx.console.stderr
+
+
+def test_token_file_is_created_0600_not_chmodded_later(app_ctx, monkeypatch) -> None:
+    """The token file never exists with a wider mode, even under a permissive umask."""
+    if os.name == "nt":
+        pytest.skip("Windows reports DOS attributes, not Unix mode bits")
+    _present_tools(monkeypatch)
+    app_ctx.secrets.set("galaxy-token", "offline-token")
+    monkeypatch.setattr(
+        "pathlib.Path.chmod",
+        lambda *_a, **_k: pytest.fail("the token file must not need a chmod"),
+    )
+    seen = {}
+
+    def _see_token(args):
+        token_path = Path(app_ctx.runner.calls[-1].env["GALAXY_TOKEN_FILE"])
+        seen["mode"] = stat.S_IMODE(token_path.stat().st_mode)
+        return CompletedCommand(argv=tuple(args), returncode=0)
+
+    app_ctx.runner.ok(["bash", _deploy("product-demos")])
+    app_ctx.runner.register(["bash", str(wire_script())], _see_token)
+    old_umask = os.umask(0o022)
+    try:
+        assert get("product-demos").enable(app_ctx, argparse.Namespace()) == 0
+    finally:
+        os.umask(old_umask)
+
+    assert seen["mode"] == 0o600
+    assert _token_files(app_ctx) == []
+
+
+def test_token_write_failure_does_not_fail_a_finished_install(app_ctx, monkeypatch) -> None:
+    _present_tools(monkeypatch)
+    app_ctx.secrets.set("galaxy-token", "offline-token")
+
+    def no_space(*_args, **_kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("aap_demo.addons.shell.tempfile.mkstemp", no_space)
+    app_ctx.runner.ok(["bash", _deploy("product-demos")])
+    app_ctx.runner.ok(["bash", str(wire_script())])
+
+    assert get("product-demos").enable(app_ctx, argparse.Namespace()) == 0
+
+    assert "product-demos" in (app_ctx.config.get("addons.enabled") or [])
+    assert "GALAXY_TOKEN_FILE" not in (app_ctx.runner.calls[1].env or {})
+    assert "No space left on device" in app_ctx.console.stderr
+    assert "Galaxy credentials were not updated" in app_ctx.console.stderr
+    assert "Product demos installed" in app_ctx.console.stdout
+
+
+def test_token_is_removed_when_the_write_fails_partway(app_ctx, monkeypatch) -> None:
+    _present_tools(monkeypatch)
+    app_ctx.secrets.set("galaxy-token", "offline-token")
+
+    class _Broken:
+        def __init__(self, fd, _mode):
+            os.close(fd)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+        def write(self, _data):
+            raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("aap_demo.addons.shell.os.fdopen", _Broken)
+    app_ctx.runner.ok(["bash", _deploy("product-demos")])
+    app_ctx.runner.ok(["bash", str(wire_script())])
+
+    assert get("product-demos").enable(app_ctx, argparse.Namespace()) == 0
+
+    assert "GALAXY_TOKEN_FILE" not in (app_ctx.runner.calls[1].env or {})
+    assert "Input/output error" in app_ctx.console.stderr
+    assert _token_files(app_ctx) == []

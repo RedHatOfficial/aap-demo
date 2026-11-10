@@ -7,8 +7,9 @@ the result in ``addons.enabled``.
 
 from __future__ import annotations
 
+import os
 import shutil
-import stat
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -16,6 +17,9 @@ import aap_demo
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
+
+#: Name prefix of the short-lived Galaxy token file in the state directory.
+GALAXY_TOKEN_PREFIX = ".galaxy-token."
 
 #: Installers shipped beside this package, and present in a git checkout.
 BUNDLED_ADDON_DIRS: tuple = (
@@ -178,11 +182,32 @@ def _write_galaxy_token(ctx: AppContext) -> Optional[Path]:
         return None
     if not token:
         return None
-    path = ctx.paths.state_dir / "galaxy-token"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token if token.endswith("\n") else token + "\n", encoding="utf-8")
-    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    data = (token if token.endswith("\n") else token + "\n").encode("utf-8")
+    try:
+        ctx.paths.state_dir.mkdir(parents=True, exist_ok=True)
+        # mkstemp creates the file 0600 with O_EXCL and a random name, so the
+        # token is never readable by anyone else, not even for a moment.
+        fd, name = tempfile.mkstemp(dir=str(ctx.paths.state_dir), prefix=GALAXY_TOKEN_PREFIX)
+    except OSError as exc:
+        _token_not_written(ctx, exc)
+        return None
+    path = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    except OSError as exc:
+        path.unlink(missing_ok=True)
+        _token_not_written(ctx, exc)
+        return None
     return path
+
+
+def _token_not_written(ctx: AppContext, exc: OSError) -> None:
+    # The token is optional. The install has already succeeded.
+    ctx.console.warn(
+        f"Could not write the Galaxy token file ({exc.strerror or type(exc).__name__}). "
+        "Product demos are installed. Galaxy credentials were not updated."
+    )
 
 
 def _enabled(ctx: AppContext) -> List[str]:
