@@ -2,7 +2,7 @@
 
 People installing the product should start at the [guides](guides/index.md), not here.
 This note is the install and state-path record for proposing the Python release candidate on `v2` as `main`.
-It does not change either install. The package version is `2.0.0rc1`.
+It does not change either install. The package version is `2.0.0rc2`.
 
 As of 29 October 2026 the draft pull request into `main` is
 [#264](https://github.com/RedHatOfficial/aap-demo/pull/264).
@@ -59,7 +59,7 @@ the Python package with pipx:
 ```
 ⚠️  File exists at /Users/user/.local/bin/aap-demo and points to /path/to/aap-demo.sh, not /Users/user/Library/Application
     Support/pipx/venvs/aap-demo/bin/aap-demo. Not modifying.
-  installed package aap-demo 2.0.0rc1, installed using Python 3.15.2
+  installed package aap-demo 2.0.0rc2, installed using Python 3.15.2
   These apps are now available
     - aap-demo (symlink missing or pointing to unexpected location)
 done! ✨ 🌟 ✨
@@ -86,7 +86,7 @@ to the Python package entry point.
 
    ```bash
    aap-demo version
-   # Should show: 2.0.0rc1
+   # Should show: 2.0.0rc2
    ```
 
 Your bash checkout remains untouched. You can still run `./aap-demo.sh` directly from the repository if needed,
@@ -111,7 +111,7 @@ config, cache, and state under one directory. That is the escape hatch for CI an
 It is not the path for a normal install. Python also finds a pull secret or manifest in `~/.aap-demo`, after the
 config and state directories, so one file can serve both commands.
 
-`src/aap_demo/__init__.py` sets `__version__ = "2.0.0rc1"`.
+`src/aap_demo/__init__.py` sets `__version__ = "2.0.0rc2"`.
 
 Python `enable fleet` is Kubernetes-native: pods in namespace `fleet`. `--no-import` skips AAP registration.
 Bash `enable fleet` on `v2` stays on the QEMU addon unless the command passes `--backend kube-native`.
@@ -120,7 +120,7 @@ Bash `enable fleet` on `v2` stays on the QEMU addon unless the command passes `-
 
 - The release candidate wording stays until Adam says otherwise. Do not rewrite the README so that this tree
   claims to be the supported release.
-- The version is `2.0.0rc1`. Do not publish `2.0.0`. A push to `main` runs the PyPI workflow only when
+- The version is `2.0.0rc2`. Do not publish `2.0.0`. A push to `main` runs the PyPI workflow only when
   `src/aap_demo/__init__.py` changes, and PyPI keeps each version forever. That trigger lands when this
   cutover merges.
   This merge does not upload again, because the workflow skips a version already on PyPI. It fails on
