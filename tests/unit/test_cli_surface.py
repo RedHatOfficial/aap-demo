@@ -1,8 +1,7 @@
 """CLI surface parity with the bash tool.
 
-``BASH_COMMANDS`` is transcribed from ``show_help`` in ``aap-demo.sh`` (the
-COMMANDS blocks at lines 424-504). The exit criterion is that ``--help``
-matches that content: the same commands, the same grouping, the same trailer.
+``BASH_COMMANDS`` is the bash command set this CLI owns. ``--help`` must name
+those commands and keep the ENVIRONMENT / EXAMPLES / REQUIREMENTS trailer.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from aap_demo.core.console import RecordingConsole
 #: ``test`` was removed upstream (#184). ``fleet`` and ``wire`` stay bash-only
 #: until the Python addon platform replaces them.
 BASH_COMMANDS = [
-    # "COMMANDS (all infrastructure types)"
     "deploy",
     "status",
     "clean",
@@ -35,7 +33,6 @@ BASH_COMMANDS = [
     "update",
     "version",
     "help",
-    # "COMMANDS"
     "create",
     "destroy",
     "stop",
