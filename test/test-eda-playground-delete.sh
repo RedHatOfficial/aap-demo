@@ -62,6 +62,20 @@ STUB
 cat >"$TMP/bin/oc" <<'STUB'
 #!/usr/bin/env bash
 printf 'oc %s\n' "$*" >>"$MOCK_LOG"
+if [ "$1 $2" = 'get rolebinding' ]; then
+  [ "$MOCK_BINDING_CASE" = lookup_fail ] && { echo 'fixture-client-secret: transport failure' >&2; exit 1; }
+  [ "$MOCK_BINDING_CASE" = malformed ] && { echo '{invalid fixture-client-secret'; exit 0; }
+  cat "$MOCK_BINDING_FILE"
+  exit 0
+fi
+if [ "$MOCK_SCC" = shared ]; then
+  if jq -e --arg ns "${NAMESPACE:-eda-playground}" '.subjects[] | select(.kind == "ServiceAccount" and .name == "eda-playground" and .namespace == $ns)' "$MOCK_BINDING_FILE" >/dev/null; then
+    jq --arg ns "${NAMESPACE:-eda-playground}" '.subjects |= map(select(.kind != "ServiceAccount" or .name != "eda-playground" or .namespace != $ns))' "$MOCK_BINDING_FILE" >"$MOCK_BINDING_FILE.new"
+    mv "$MOCK_BINDING_FILE.new" "$MOCK_BINDING_FILE"
+    exit 0
+  fi
+fi
+[[ "$MOCK_SCC" = shared || "$MOCK_SCC" = target_absent ]] && { echo 'error: unable to find target [eda-playground]' >&2; exit 1; }
 [ "$MOCK_SCC" = absent ] && { echo 'Error from server (NotFound): rolebindings.rbac.authorization.k8s.io "system:openshift:scc:anyuid" not found' >&2; exit 1; }
 [ "$MOCK_SCC" = resource_absent ] && { echo 'Error from server (NotFound): securitycontextconstraints.security.openshift.io "anyuid" not found' >&2; exit 1; }
 [ "$MOCK_SCC" = config_not_found ] && { echo 'error: context "fixture-client-secret" not found' >&2; exit 1; }
@@ -83,6 +97,7 @@ run_case() {
   export MOCK_LOG="$TMP/$name.log" EDA_PLAYGROUND_STATE_DIR="$TMP/$name/state"
   export MOCK_NS=present MOCK_OWNER=aap-demo-eda-playground MOCK_AAP=present
   export MOCK_APPS=exact MOCK_APP_DELETE=present MOCK_NS_DELETE=present MOCK_SCC=present
+  export MOCK_BINDING_CASE=present MOCK_BINDING_FILE="$TMP/$name/binding.json"
   export MOCK_PASSWORD_B64
   MOCK_PASSWORD_B64="$(printf '%s' fixture-admin-password | "$REAL_BASE64" | tr -d '\n')"
   mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
@@ -182,6 +197,17 @@ run_case() {
       MOCK_SCC=fail
       expect_failure=yes
       ;;
+    shared_retry | shared_retry_custom)
+      if [ "$name" = shared_retry_custom ]; then NAMESPACE=custom-demo; fi
+      MOCK_SCC=shared
+      MOCK_NS_DELETE=fail
+      expect_failure=yes
+      ;;
+    subject_present | subject_lookup_fail | subject_malformed | subject_wrong_namespace)
+      MOCK_SCC=target_absent
+      MOCK_BINDING_CASE="${name#subject_}"
+      expect_failure=yes
+      ;;
     ns_fail)
       MOCK_NS_DELETE=fail
       expect_failure=yes
@@ -193,6 +219,19 @@ run_case() {
     unowned) MOCK_OWNER=someone-else ;;
     custom) NAMESPACE=custom-demo ;;
   esac
+  jq -n --arg ns "${NAMESPACE:-eda-playground}" '{
+    apiVersion:"rbac.authorization.k8s.io/v1", kind:"RoleBinding",
+    metadata:{name:"system:openshift:scc:anyuid",namespace:$ns},
+    roleRef:{apiGroup:"rbac.authorization.k8s.io",kind:"ClusterRole",name:"system:openshift:scc:anyuid"},
+    subjects:[{kind:"ServiceAccount",name:"eda-playground",namespace:$ns},
+      {kind:"ServiceAccount",name:"shared",namespace:$ns},
+      {kind:"ServiceAccount",name:"eda-playground",namespace:"other"},
+      {kind:"User",name:"eda-playground",apiGroup:"rbac.authorization.k8s.io"}]
+  }' >"$MOCK_BINDING_FILE"
+  if [ "$MOCK_BINDING_CASE" = wrong_namespace ]; then
+    jq '.metadata.namespace = "other" | .subjects = []' "$MOCK_BINDING_FILE" >"$MOCK_BINDING_FILE.new"
+    mv "$MOCK_BINDING_FILE.new" "$MOCK_BINDING_FILE"
+  fi
   if [ "$preserve_state" = yes ]; then cp -R "$EDA_PLAYGROUND_STATE_DIR" "$TMP/$name/before"; fi
   export MOCK_APPS MOCK_AAP MOCK_NS MOCK_OWNER MOCK_APP_DELETE MOCK_NS_DELETE MOCK_SCC
   if PATH="$TMP/bin:$PATH" NAMESPACE="${NAMESPACE:-eda-playground}" "$ROOT/addons/eda-playground/deploy.sh" "$action" >"$TMP/$name.out" 2>&1; then
@@ -321,4 +360,23 @@ for bad_case in config_not_found transport_not_found unrelated_not_found; do
   ) || scc_failures=$((scc_failures + 1))
 done
 [ "$scc_failures" -eq 0 ] || fail "$scc_failures SCC error regressions failed"
+for bad_case in subject_present subject_lookup_fail subject_malformed subject_wrong_namespace; do
+  run_case "$bad_case"
+  reject_log 'kubectl delete namespace' "$bad_case deleted namespace without confirming subject absence"
+done
+for retry_namespace in eda-playground custom-demo; do
+  if [ "$retry_namespace" = eda-playground ]; then run_case shared_retry; else run_case shared_retry_custom; fi
+  assert_log "kubectl delete namespace $retry_namespace" 'first cleanup did not attempt namespace deletion'
+  jq -e '.subjects | length == 3' "$MOCK_BINDING_FILE" >/dev/null || fail 'first cleanup did not remove only the addon subject'
+  cp "$MOCK_BINDING_FILE" "$TMP/shared-before-retry.json"
+  : >"$MOCK_LOG"
+  MOCK_APPS=absent MOCK_NS_DELETE=present NAMESPACE="$retry_namespace" PATH="$TMP/bin:$PATH" \
+    "$ROOT/addons/eda-playground/deploy.sh" --delete >"$TMP/shared-retry.out" 2>&1 || fail 'shared SCC binding retry failed'
+  assert_log "oc get rolebinding system:openshift:scc:anyuid -n $retry_namespace -o json" 'retry did not verify the shared binding'
+  assert_log "kubectl delete namespace $retry_namespace" 'confirmed absent subject blocked namespace deletion'
+  cmp -s "$TMP/shared-before-retry.json" "$MOCK_BINDING_FILE" || fail 'retry changed shared binding subjects'
+  for secret in fixture-admin-password fixture-client-secret fixture-session-secret; do
+    ! grep -Fq "$secret" "$TMP/shared-retry.out" || fail "shared retry exposed $secret"
+  done
+done
 echo 'PASS: EDA Playground guarded cleanup fixtures'
