@@ -55,6 +55,16 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   AAP_ROUTE=""
   ADMIN_PASS=""
   MANAGED_BY=""
+  if [ -f "$TOMBSTONE" ]; then
+    if ! SAVED_ID="$(cat "$TOMBSTONE" 2>/dev/null)"; then
+      cleanup_error 'saved OAuth ownership marker could not be read'
+      exit 1
+    fi
+    if [[ ! "$SAVED_ID" =~ ^[1-9][0-9]*$ ]]; then
+      cleanup_error 'saved OAuth ownership marker has a missing or invalid application ID'
+      exit 1
+    fi
+  fi
   if [ -f "$CREDENTIALS" ]; then
     if ! command -v jq >/dev/null 2>&1; then
       cleanup_error 'jq is required to read saved OAuth ownership'
@@ -63,24 +73,11 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
       cleanup_error 'saved OAuth metadata could not be read'
       exit 1
     fi
-  elif [ -f "$TOMBSTONE" ]; then
-    if ! SAVED_ID="$(cat "$TOMBSTONE" 2>/dev/null)"; then
-      cleanup_error 'saved OAuth ownership marker could not be read'
-      exit 1
-    fi
   fi
   if [ -f "$CREDENTIALS" ] && [[ ! "$SAVED_ID" =~ ^[1-9][0-9]*$ ]]; then
     cleanup_error 'saved OAuth metadata has a missing or invalid application ID'
     exit 1
   fi
-  if [ -n "$SAVED_ID" ]; then
-    umask 077
-    if ! { printf '%s\n' "$SAVED_ID" >"$TOMBSTONE"; } 2>/dev/null; then
-      cleanup_error 'could not save OAuth ownership marker'
-      exit 1
-    fi
-  fi
-
   for required in jq curl base64; do
     command -v "$required" >/dev/null 2>&1 || cleanup_error "$required is required for OAuth cleanup"
   done
@@ -122,6 +119,10 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
             cleanup_error 'Gateway application response is invalid'
             break
           fi
+          if ! jq -e --arg name "$OAUTH_APP_NAME" 'all(.results[] | select(.name == $name); .id | tostring | test("^[1-9][0-9]*$"))' <<<"$GATEWAY_BODY" >/dev/null 2>&1; then
+            cleanup_error 'Gateway application has a missing or invalid ID'
+            exit 1
+          fi
           PAGE_IDS="$(jq -r --arg name "$OAUTH_APP_NAME" '.results[] | select(.name == $name) | .id | tostring' <<<"$GATEWAY_BODY")"
           if [ -n "$PAGE_IDS" ]; then MATCH_IDS="${MATCH_IDS}${MATCH_IDS:+$'\n'}${PAGE_IDS}"; fi
           NEXT_URL="$(jq -r '.next // empty' <<<"$GATEWAY_BODY")"
@@ -136,22 +137,27 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
             fi
           elif [ "$(grep -c . <<<"$MATCH_IDS" || true)" = 1 ]; then
             APP_ID="$MATCH_IDS"
-            umask 077
-            if ! { mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR" && printf '%s\n' "$APP_ID" >"$TOMBSTONE"; } 2>/dev/null; then
-              cleanup_error 'could not save OAuth ownership marker'
-              exit 1
-            fi
           elif [ -n "$MATCH_IDS" ]; then
             cleanup_error 'multiple exact-name OAuth applications found'
           fi
-          if [[ "$APP_ID" =~ ^[0-9]+$ ]] && [ "$CLEANUP_FAILED" -eq 0 ]; then
-            gateway_request -X DELETE "$GATEWAY/applications/$APP_ID/"
-            if [ "$GATEWAY_STATUS" != 404 ] && { [ "$GATEWAY_EXIT" -ne 0 ] || [[ ! "$GATEWAY_STATUS" =~ ^2[0-9][0-9]$ ]]; }; then
-              cleanup_error "OAuth application $APP_ID deletion failed"
-            fi
-          fi
         fi
       fi
+    fi
+  fi
+
+  # Persist validated ownership before any destructive cleanup, even if AAP is absent.
+  OWNED_ID="${SAVED_ID:-$APP_ID}"
+  if [ -n "$OWNED_ID" ]; then
+    umask 077
+    if ! { mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR" && printf '%s\n' "$OWNED_ID" >"$TOMBSTONE"; } 2>/dev/null; then
+      cleanup_error 'could not save OAuth ownership marker'
+      exit 1
+    fi
+  fi
+  if [[ "$APP_ID" =~ ^[1-9][0-9]*$ ]] && [ "$CLEANUP_FAILED" -eq 0 ]; then
+    gateway_request -X DELETE "$GATEWAY/applications/$APP_ID/"
+    if [ "$GATEWAY_STATUS" != 404 ] && { [ "$GATEWAY_EXIT" -ne 0 ] || [[ ! "$GATEWAY_STATUS" =~ ^2[0-9][0-9]$ ]]; }; then
+      cleanup_error "OAuth application $APP_ID deletion failed"
     fi
   fi
 
