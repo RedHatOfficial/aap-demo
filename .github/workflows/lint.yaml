@@ -85,6 +85,9 @@ jobs:
       - name: Install ansible-lint
         run: |
           pip install ansible-lint
+          mkdir -p "${HOME}/.ansible/collections"
+          ansible-galaxy collection install kubernetes.core:2.4.0 \
+            -p "${HOME}/.ansible/collections"
 
       - name: Run ansible-lint
         run: |

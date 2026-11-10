@@ -5,7 +5,7 @@
 - name: Skip APME galaxy-server seeding when disabled  # noqa: var-naming[no-role-prefix]
   ansible.builtin.debug:
     msg: "APME galaxy-server seeding disabled (apme_pah_seed_apme_galaxy_servers: false)"
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == false
+  when: not (apme_pah_seed_apme_galaxy_servers | bool)
 
 - name: Normalize AAP host URL for galaxy-server seeding  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
@@ -13,7 +13,7 @@
       {{ aap_api_host_normalized | default(aap_api_host | default(aap_host)
       | regex_replace('/$', '')) }}
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
       - aap_api_host_normalized is not defined or aap_api_host_normalized | length == 0
 
 - name: Load AAP API token from portal secret when not in vars  # noqa: var-naming[no-role-prefix]
@@ -28,14 +28,14 @@
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_portal_secret
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - aap_api_token is not defined or aap_api_token | length == 0
 
 - name: Set AAP API token from portal secret  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     aap_api_token: "{{ apme_pah_portal_secret.resources[0].data['aap-token'] | b64decode }}"
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - apme_pah_portal_secret is defined
     - apme_pah_portal_secret is not skipped
     - apme_pah_portal_secret.resources | default([]) | length > 0
@@ -49,7 +49,7 @@
       - aap_api_token is defined
       - aap_api_token | length > 0
     fail_msg: "aap_api_host_normalized and aap_api_token are required to seed APME galaxy servers"
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
 
 - name: Resolve APME gateway pod for in-cluster API calls  # noqa: var-naming[no-role-prefix]
   kubernetes.core.k8s_info:
@@ -63,20 +63,20 @@
     host: "{{ openshift_api_url }}"
     validate_certs: "{{ openshift_validate_certs | default(false) }}"
   register: apme_pah_gateway_pods
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
 
 - name: Set APME gateway pod name  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     apme_pah_gateway_pod_name: "{{ apme_pah_gateway_pods.resources[0].metadata.name }}"
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - apme_pah_gateway_pods.resources | default([]) | length > 0
 
 - name: Fail when APME gateway pod is unavailable  # noqa: var-naming[no-role-prefix]
   ansible.builtin.fail:
     msg: "APME gateway pod not found in namespace {{ openshift_project_name }}"
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - apme_pah_gateway_pod_name is not defined
 
 - name: Verify kubectl is available for gateway seeding  # noqa: var-naming[no-role-prefix]
@@ -90,7 +90,7 @@
   register: apme_pah_kubectl_check
   changed_when: false
   failed_when: false
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
 
 - name: Fail when kubectl is unavailable  # noqa: var-naming[no-role-prefix]
   ansible.builtin.fail:
@@ -99,7 +99,7 @@
       The addon uses kubectl exec to seed galaxy servers in the APME gateway.
       Please ensure kubectl is installed and available before enabling apme-eap.
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - apme_pah_kubectl_check.rc != 0
 
 - name: Wait for APME gateway to accept HTTP requests  # noqa: var-naming[no-role-prefix]
@@ -122,7 +122,7 @@
   until: apme_pah_gateway_wait is succeeded
   retries: "{{ apme_pah_seed_retries }}"
   delay: "{{ apme_pah_seed_delay }}"
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
   changed_when: false
 
 - name: Build desired APME galaxy server definitions  # noqa: var-naming[no-role-prefix]
@@ -136,7 +136,7 @@
         url: https://galaxy.ansible.com/api/
         token: ""
         auth_url: ""
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
   no_log: true
 
 - name: Add external PAH galaxy server from pah-config.yml  # noqa: var-naming[no-role-prefix]
@@ -155,7 +155,7 @@
         }]
       }}
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - apme_pah_external_url is defined
     - apme_pah_external_url | length > 0
     - apme_pah_external_token | default('') | length > 0
@@ -178,14 +178,14 @@
   environment:
     KUBECONFIG: "{{ apme_oci_kubeconfig | default(ansible_env.KUBECONFIG | default(''), true) }}"
   register: apme_pah_existing_galaxy_servers_raw
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
   changed_when: false
 
 - name: Parse existing APME galaxy servers  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     apme_pah_existing_galaxy_servers:
       json: "{{ apme_pah_existing_galaxy_servers_raw.stdout | from_json }}"
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
 
 - name: Create missing APME galaxy server entries  # noqa: var-naming[no-role-prefix]
   ansible.builtin.command:
@@ -223,9 +223,10 @@
   loop_control:
     label: "{{ item.name }}"
   register: apme_pah_create_galaxy_servers
+  changed_when: false
   failed_when: apme_pah_create_galaxy_servers.stdout | trim not in ['201', '409']
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - item.name not in (apme_pah_existing_galaxy_servers.json | default([]) | map(attribute='name') | list)
   no_log: true
 
@@ -247,5 +248,5 @@
             annotations:
               apme.eap.welcome.pack/galaxyServersSeededAt: "{{ ansible_date_time.iso8601 }}"
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - apme_pah_desired_galaxy_servers is defined

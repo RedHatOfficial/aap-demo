@@ -47,7 +47,7 @@
             namespace: "{{ namespace }}"
           automountServiceAccountToken: false
 
-    - name: Pull secret
+    - name: Pull secret  # noqa: jinja[invalid]
       when: state == 'present' and (pull_secret_path | default('') | length) > 0
       kubernetes.core.k8s:
         state: present
@@ -61,7 +61,7 @@
           data:
             .dockerconfigjson: "{{ lookup('file', pull_secret_path) | b64encode }}"
 
-    - name: SSH public key
+    - name: SSH public key  # noqa: jinja[invalid]
       when: state == 'present'
       kubernetes.core.k8s:
         state: present
@@ -74,7 +74,7 @@
           stringData:
             ssh-publickey: "{{ ssh_public_key }}"
 
-    - name: Entrypoint
+    - name: Entrypoint  # noqa: jinja[invalid]
       when: state == 'present'
       kubernetes.core.k8s:
         state: present
@@ -89,7 +89,7 @@
             fleet-setup.service: "{{ fleet_units['fleet-setup.service'] }}"
             fleet.target: "{{ fleet_units['fleet.target'] }}"
 
-    - name: Node disk
+    - name: Node disk  # noqa: jinja[invalid]
       when: state == 'present' or scope == 'node'
       vars:
         disk_body:
@@ -118,7 +118,7 @@
         definition: "{{ disk_body | combine(disk_class, recursive=True) }}"
       loop: "{{ nodes }}"
 
-    - name: Node deployment
+    - name: Node deployment  # noqa: jinja[invalid]
       when:
         - state == 'absent' or (replicas | default(1) | int) != 0
         - state == 'present' or scope == 'node'
@@ -245,7 +245,7 @@
                       claimName: "{{ item.name }}"
       loop: "{{ nodes }}"
 
-    - name: Stop node deployments
+    - name: Stop node deployments  # noqa: jinja[invalid]
       when: state == 'present' and (replicas | default(1) | int) == 0
       kubernetes.core.k8s_scale:
         api_version: apps/v1
@@ -256,7 +256,7 @@
         wait: true
       loop: "{{ nodes }}"
 
-    - name: Node service
+    - name: Node service  # noqa: jinja[invalid]
       when: state == 'present' or scope == 'node'
       kubernetes.core.k8s:
         state: "{{ state }}"

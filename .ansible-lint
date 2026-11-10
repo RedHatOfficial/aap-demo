@@ -11,6 +11,11 @@ exclude_paths:
   - test/
   - config/
   - includes/
+  # These YAML files are data/examples, not Ansible playbooks.
+  - addons/apme-eap/playbooks/apme-vars.example.yml
+  - src/aap_demo/data/schema/playbooks.yaml
+  # This playbook requires ansible.controller from private Automation Hub.
+  - src/aap_demo/addons/fleet/playbooks/import.yml
 
 # Skip specific rules
 skip_list:
