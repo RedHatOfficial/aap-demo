@@ -82,6 +82,15 @@ When the manual check is complete, remove the addon:
 aap-demo-v1 disable eda-playground
 ```
 
+The disposable-cluster smoke test waits for this browser check by default:
+
+```bash
+AAP_DEMO_RUN_LIVE_TESTS=true bash test/test-eda-playground-live.sh
+```
+
+For unattended validation, add `AAP_DEMO_LIVE_NONINTERACTIVE=true`. The harness
+then skips the wait and clearly reports OAuth as unverified.
+
 The addon creates the Gateway OAuth application and removes its owned
 application and namespace during cleanup. Retry disable if cleanup reports an
 error.

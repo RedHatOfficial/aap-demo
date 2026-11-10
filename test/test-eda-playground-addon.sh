@@ -35,7 +35,9 @@ for required in \
   'ghcr.io/bbgrimmett2/eda-playground' \
   'EDA_PLAYGROUND_IMAGE' \
   'OAuth' \
-  'not supported for production'; do
+  'not supported for production' \
+  'AAP_DEMO_RUN_LIVE_TESTS=true' \
+  'AAP_DEMO_LIVE_NONINTERACTIVE=true'; do
   grep -Fq "$required" "$README" || fail "README missing: $required"
 done
 README_ENABLE_LINE="$(grep -n -m1 'aap-demo enable eda-playground' "$README" | cut -d: -f1)"
@@ -50,9 +52,16 @@ GUIDE_OAUTH_LINE="$(grep -n -m1 'finish AAP OAuth login manually' "$GUIDE" | cut
 GUIDE_DISABLE_LINE="$(grep -n -m1 'aap-demo-v1 disable eda-playground' "$GUIDE" | cut -d: -f1)"
 [ "$GUIDE_ENABLE_LINE" -lt "$GUIDE_OAUTH_LINE" ] && [ "$GUIDE_OAUTH_LINE" -lt "$GUIDE_DISABLE_LINE" ] \
   || fail "addon guide must place manual OAuth access between enable and disable"
+grep -Fq 'AAP_DEMO_LIVE_NONINTERACTIVE=true' "$GUIDE" \
+  || fail "addon guide must document the noninteractive live override"
 
 LIVE="$ROOT_DIR/test/test-eda-playground-live.sh"
 [ -f "$LIVE" ] || fail "live smoke-test harness missing"
+LIVE_HELP="$(bash "$LIVE" --help 2>&1)" || fail "live harness help failed"
+grep -Fq 'AAP_DEMO_LIVE_NONINTERACTIVE=true' <<<"$LIVE_HELP" \
+  || fail "live harness help must document the noninteractive override"
+grep -Fq 'default behavior waits' <<<"$LIVE_HELP" \
+  || fail "live harness help must document the interactive default"
 LIVE_SKIP="$(AAP_DEMO_RUN_LIVE_TESTS=false bash "$LIVE" 2>&1)" || fail "opt-in live test must skip successfully"
 [[ "$LIVE_SKIP" == *'SKIP:'* ]] || fail "opt-in live test must explain the skip"
 grep -Fq 'aap_demo_resolve_kubeconfig' "$LIVE" || fail "live test must resolve the CLI kubeconfig"
@@ -64,7 +73,7 @@ grep -Fq 'exit "$status"' "$LIVE" || fail "live test must preserve original stat
 grep -Fq 'disable eda-playground' "$LIVE" || fail "live test cleanup must disable the addon"
 grep -Fq -- '--kubeconfig "$LIVE_KUBECONFIG"' "$LIVE" \
   || fail "legacy CLI calls must pass the pinned kubeconfig explicitly"
-grep -Fq 'AAP_DEMO_LIVE_INTERACTIVE' "$LIVE" || fail "live test must expose the interactive checkpoint"
+grep -Fq 'AAP_DEMO_LIVE_NONINTERACTIVE' "$LIVE" || fail "live test must expose the noninteractive override"
 grep -Fq 'read -r' "$LIVE" || fail "interactive checkpoint must wait for Enter"
 grep -Fq 'Browser OAuth verification remains manual' "$LIVE" \
   || fail "noninteractive live run must state manual browser verification"
@@ -144,18 +153,25 @@ case "$1 $2" in
 esac
 MOCK_LIVE_KUBECTL
 chmod +x "$MOCK_BIN/live/aap-demo" "$MOCK_BIN/live/kubectl"
-LIVE_LOG="$MOCK_BIN/live/commands" \
+printf '\n' | LIVE_LOG="$MOCK_BIN/live/commands" \
   AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
   KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
   PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/output" 2>&1 \
   || fail "enabled live harness failed with controlled commands"
 ! grep -Fq 'fixture-secret' "$MOCK_BIN/live/output" || fail "live harness printed credentials"
 grep -Fxq 'Route host: eda.example.test' "$MOCK_BIN/live/output" || fail "live harness did not print route host"
-grep -Fq 'Browser OAuth verification remains manual' "$MOCK_BIN/live/output" \
-  || fail "noninteractive live run must state manual browser verification"
+grep -Fq 'Open https://eda.example.test and complete AAP Gateway OAuth login' "$MOCK_BIN/live/output" \
+  || fail "default live run must wait for browser verification"
+LIVE_LOG="$MOCK_BIN/live/noninteractive-commands" \
+  AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  AAP_DEMO_LIVE_NONINTERACTIVE=true KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
+  PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/noninteractive-output" 2>&1 \
+  || fail "noninteractive live override failed with controlled commands"
+grep -Fq 'Browser OAuth verification remains manual and is unverified' \
+  "$MOCK_BIN/live/noninteractive-output" || fail "noninteractive live run did not report unverified OAuth"
 printf '\n' | LIVE_LOG="$MOCK_BIN/live/interactive-commands" \
   AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
-  AAP_DEMO_LIVE_INTERACTIVE=true KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
+  KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
   PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/interactive-output" 2>&1 \
   || fail "interactive live checkpoint failed with controlled commands"
 grep -Fq 'Open https://eda.example.test and complete AAP Gateway OAuth login' \
