@@ -236,7 +236,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak | eda-playground)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -688,6 +688,7 @@ Addons
   disable           Disable an addon
   fleet             Manage fleet node VMs
   keycloak          Configure Keycloak OIDC for AAP and AO
+  eda-playground    EDA Playground for testing event-driven integrations
 
 Other
   config            Configure aap-demo settings
@@ -3416,7 +3417,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak eda-playground"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3757,8 +3758,8 @@ cmd_disable() {
     echo "Disabling addon: $addon"
     setup_kubeconfig
     if ! bash "$addon_dir/deploy.sh" --delete "$@"; then
-      if [ "$addon" = "keycloak" ]; then
-        echo "ERROR: Keycloak removal failed; leaving addon enabled in config" >&2
+      if [ "$addon" = "keycloak" ] || [ "$addon" = "eda-playground" ]; then
+        echo "ERROR: $addon removal failed; leaving addon enabled in config" >&2
         return 1
       fi
     fi

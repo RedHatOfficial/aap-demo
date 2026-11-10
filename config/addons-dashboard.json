@@ -1,0 +1,25 @@
+{
+  "addons": [
+    {"id": "fleet"},
+    {"id": "mcp-server"},
+    {"id": "portal"},
+    {"id": "portal-operator"},
+    {"id": "setup-pah"},
+    {"id": "ao"},
+    {"id": "ao-pr-testing"},
+    {"id": "apme-eap"},
+    {"id": "local-cache"},
+    {"id": "product-demos"},
+    {"id": "product-demo-satellite"},
+    {"id": "opa"},
+    {"id": "ollama"},
+    {"id": "keycloak"},
+    {
+      "id": "eda-playground",
+      "health": {
+        "namespace": "eda-playground",
+        "deployment": "eda-playground"
+      }
+    }
+  ]
+}

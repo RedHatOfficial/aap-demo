@@ -2,14 +2,20 @@
 # Source this file or add to ~/.bash_completion.d/
 
 _aap_demo() {
-  local cur prev commands options infra_types
+  local cur prev commands options infra_types addons
   COMPREPLY=()
   cur="${COMP_WORDS[COMP_CWORD]}"
   prev="${COMP_WORDS[COMP_CWORD - 1]}"
 
-  commands="deploy deploy-all status clean destroy stop repair setup create watch update config redeploy redeploy-all redhat-status rh-status kubeconfig keycloak help"
+  commands="deploy deploy-all status clean destroy stop repair setup create watch update config redeploy redeploy-all redhat-status rh-status kubeconfig keycloak enable disable help"
   options="--infra --kubeconfig --context --ansible"
   infra_types="minc vm lab"
+  addons="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak eda-playground"
+
+  if [[ "$prev" == enable || "$prev" == disable ]]; then
+    COMPREPLY=($(compgen -W "$addons" -- "$cur"))
+    return 0
+  fi
 
   # Handle option value completion
   case "$prev" in

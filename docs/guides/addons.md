@@ -2,7 +2,7 @@
 type: Guide
 title: Add-ons
 description: Fleet machines and product demos in the new command, and where the other extras still live.
-tags: [addons, fleet]
+tags: [addons, fleet, eda]
 status: draft
 stale_after: 2027-01-28
 resource: https://github.com/RedHatOfficial/aap-demo
@@ -73,6 +73,30 @@ One domain uses the same installer under its own name, for example `aap-demo ena
 in AAP until you delete them in the UI.
 
 The cluster still wants about 8 processors and 24 GB of memory. Demo jobs add work on top of AAP.
+
+## EDA Playground (experimental)
+
+`aap-demo enable eda-playground` runs the existing Bash deployment backend
+through the Python addon framework. It needs `bash`, `curl`, `jq`, `kubectl`,
+and a running AAP demo cluster with Gateway and OpenShift Routes.
+
+```bash
+aap-demo enable eda-playground
+kubectl get route eda-playground -n eda-playground
+```
+
+Open the Route and finish AAP OAuth login manually. The default image is an
+experimental maintainer-hosted image; set `EDA_PLAYGROUND_IMAGE` to a reviewed
+tag or digest when appropriate. This addon is not supported for production use.
+The live smoke test waits for the browser check by default; use
+`AAP_DEMO_LIVE_NONINTERACTIVE=true` for unattended validation, which reports
+OAuth as unverified.
+
+When the manual check is complete, remove the addon:
+
+```bash
+aap-demo disable eda-playground
+```
 
 ## Everything else
 
