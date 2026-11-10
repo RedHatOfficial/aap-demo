@@ -173,6 +173,7 @@ def test_cluster_state_warning(
 ) -> None:
     # No CRC machine directory, whatever the developer's own ~/.crc holds.
     monkeypatch.setenv("HOME", str(tmp_path))
+    app_ctx.env["HOME"] = str(tmp_path)
     fake_runner.ok("crc status -o json", stdout=status_json)
     preflight.warn_cluster_state(app_ctx)
     assert expected in app_ctx.console.stdout
@@ -262,7 +263,7 @@ def test_run_warns_when_no_cluster_exists_for_redhat_status(
 
     rc = main_mod.run(
         ["redhat-status"],
-        env={"AAP_DEMO_DIR": str(tmp_path / "home")},
+        env={"AAP_DEMO_DIR": str(tmp_path / "home"), "HOME": str(tmp_path)},
         runner=runner,
     )
 

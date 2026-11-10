@@ -1,9 +1,8 @@
 # aap-demo on Windows (PowerShell)
 
-Install and run [aap-demo](../README.md) on Windows using PowerShell. Core lifecycle
-commands enter through PowerShell, which delegates execution to the repository's
-Git Bash CLI. Bash remains the single implementation for cluster lifecycle,
-addons, wiring, and cleanup so Windows follows the current cross-platform behavior.
+Install and run [aap-demo](../README.md) on Windows using the Python package from
+PyPI. The legacy repository Bash implementation remains available as
+`aap-demo-v1` for commands that have not moved to Python yet.
 
 ## Requirements
 
@@ -13,7 +12,8 @@ addons, wiring, and cleanup so Windows follows the current cross-platform behavi
 | **OpenShift Local (`crc`)** | [Download](https://console.redhat.com/openshift/create/local). Hyper-V enabled. |
 | **OpenShift CLI (`oc`)**    | Installed by `install.ps1` via winget when missing.                             |
 | **Red Hat pull secret**     | [Download](https://console.redhat.com/openshift/install/pull-secret)            |
-| **Git for Windows**         | Required; the wrapper runs `aap-demo.sh` through Git Bash.                    |
+| **Python 3.9+ and pipx**    | Installs the Python CLI in an isolated environment.                            |
+| **Git for Windows**         | Required only for the explicit `aap-demo-v1` compatibility command.            |
 | **OpenSSH client**          | Used during `create` to configure the cluster VM (`ssh` on PATH).               |
 
 `jq` and Python are required for Windows deploys because the Git Bash deployment
@@ -50,13 +50,13 @@ Adjust the source path if your browser saved the file elsewhere or under a diffe
 Open a **new** PowerShell window when install finishes, then:
 
 ```powershell
-aap-demo help
+aap-demo --help
+aap-demo-v1 --help
 ```
 
-The installer registers `aap-demo.cmd` in `%USERPROFILE%\.local\bin`. The
-command shim invokes the repository wrapper with `ExecutionPolicy Bypass`, so
-the command remains usable when the machine policy blocks `.ps1` scripts. If a
-previous install left a stale `aap-demo.ps1`, rerun the installer with:
+The installer installs the Python package from PyPI with pipx and registers the
+legacy Bash checkout as `aap-demo-v1` in `%USERPROFILE%\.local\bin`. If a
+previous install left a stale PowerShell wrapper, rerun the installer with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\powershell\install.ps1
@@ -78,9 +78,10 @@ demo content is not silently skipped.
 ## Quick start
 
 ```powershell
-aap-demo create        # Create OpenShift Local cluster (~10–20 min first time)
-aap-demo deploy        # Deploy AAP 2.7 (~5–15 min)
-aap-demo status        # Routes, credentials, pod counts
+aap-demo create        # Python CLI: create OpenShift Local cluster
+aap-demo deploy        # Python CLI: deploy AAP 2.7
+aap-demo status        # Python CLI: routes, credentials, pod counts
+aap-demo-v1 status     # Legacy Bash compatibility path
 ```
 
 `aap-demo create` asks for CPUs, memory, disk size, and persistent-volume size.
