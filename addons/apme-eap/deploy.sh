@@ -182,6 +182,21 @@ Ansible does not yet support Python 3.15+. Install a compatible version.
 Then re-run: aap-demo enable apme-eap"
   fi
 
+  # Validate existing venv Python version before reuse
+  if [ -d "$VENV_DIR" ] && [ -x "$VENV_DIR/bin/python3" ]; then
+    local venv_py_ver
+    venv_py_ver=$("$VENV_DIR/bin/python3" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "0.0")
+    case "$venv_py_ver" in
+      3.11 | 3.12 | 3.13 | 3.14)
+        # Compatible version — venv can be reused
+        ;;
+      *)
+        warn "APME venv uses incompatible Python $venv_py_ver — recreating with $python_cmd..."
+        rm -rf "$VENV_DIR"
+        ;;
+    esac
+  fi
+
   if [ ! -d "$VENV_DIR" ]; then
     info "Creating Python venv with Ansible and collections (using $python_cmd)..."
     "$python_cmd" -m venv "$VENV_DIR"
