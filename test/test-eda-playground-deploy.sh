@@ -39,7 +39,7 @@ case " $* " in
   *'/organizations/'*)
     if [[ " $* " == *' -X POST '* ]]; then echo '{"id":7,"name":"Default"}'; elif [ "$MOCK_CASE" = first ]; then echo '{"count":0,"results":[]}'; else echo '{"count":1,"results":[{"id":7,"name":"Default"}]}'; fi ;;
   *'/applications/?'*) if [ "$MOCK_CASE" = first ]; then echo '{"count":0,"results":[]}'; elif [[ "$MOCK_CASE" = later_saved || "$MOCK_CASE" = ambiguous ]]; then echo '{"count":2,"results":[{"id":41,"name":"EDA Playground","client_id":"client-wrong"},{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; else echo '{"count":1,"results":[{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; fi ;;
-  *'/applications/'*) if [[ " $* " == *' -X POST '* ]]; then echo '{"id":43,"client_id":"client-new","client_secret":"fixture-client-secret"}'; else echo '{}'; fi ;;
+  *'/applications/'*) if [[ " $* " == *' -X POST '* ]]; then echo '{"id":43,"client_id":"client-new","client_secret":"fixture-client-secret"}'; elif [ "$MOCK_CASE" = patch_secret_fail ] && [[ " $* " == *' -X PATCH '* ]]; then echo '{"client_secret":"fixture-client-secret","password":"fixture-admin-password","session":"fixture-session-secret"}' >&2; exit 22; else echo '{}'; fi ;;
 esac
 STUB
 cat >"$TMP/bin/openssl" <<'STUB'
@@ -175,7 +175,7 @@ revision_patch_blob="$(tr '\n' ' ' <"$MOCK_PATCH")"
 second_revision="$(grep -o 'aap-demo/revision[^0-9]*[0-9][0-9]*' <<<"$revision_patch_blob" | grep -o '[0-9][0-9]*' | tail -1 || true)"
 [ -n "$second_revision" ] || fail 'second revision annotation missing'
 [ "$first_revision" != "$second_revision" ] || fail 'same-clock revision collided'
-for failure in route_fail secret_fail rollout_fail; do
+for failure in route_fail secret_fail rollout_fail patch_secret_fail; do
   export MOCK_CASE="$failure" MOCK_LOG="$TMP/$failure.log" MOCK_MANIFEST="$TMP/$failure.manifest" MOCK_PATCH="$TMP/$failure.patch" MOCK_MICRO=no
   export EDA_PLAYGROUND_STATE_DIR="$TMP/$failure/state"
   : >"$MOCK_LOG"
@@ -186,6 +186,13 @@ for failure in route_fail secret_fail rollout_fail; do
     route_fail) grep -Fq 'AAP route unavailable' "$TMP/$failure.out" || fail 'route failure diagnostic' ;;
     secret_fail) grep -Fq 'AAP admin Secret unavailable' "$TMP/$failure.out" || fail 'Secret failure diagnostic' ;;
     rollout_fail) grep -Fq 'rollout' "$TMP/$failure.out" || fail 'rollout recovery guidance' ;;
+    patch_secret_fail)
+      grep -Fq 'OAuth redirect update failed' "$TMP/$failure.out" || fail 'PATCH failure diagnostic'
+      for secret in fixture-admin-password fixture-client-secret fixture-session-secret; do
+        ! grep -Fq "$secret" "$TMP/$failure.out" || fail "PATCH failure exposed $secret"
+      done
+      ! grep -Fq '"client_secret"' "$TMP/$failure.out" || fail 'PATCH failure exposed raw API response'
+      ;;
   esac
 done
 export MOCK_CASE=ambiguous MOCK_LOG="$TMP/ambiguous.log" MOCK_MANIFEST="$TMP/ambiguous.manifest" MOCK_PATCH="$TMP/ambiguous.patch" EDA_PLAYGROUND_STATE_DIR="$TMP/ambiguous/state"

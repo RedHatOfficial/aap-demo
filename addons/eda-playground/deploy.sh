@@ -22,24 +22,66 @@ command -v kubectl >/dev/null 2>&1 || {
   exit 1
 }
 
+# curl reads credentials from its configuration on stdin, never from argv.
+# Escape values interpreted by curl's quoted configuration syntax.
+gateway_curl() {
+  printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | curl --config - -fsSk "$@" 2>/dev/null
+}
+
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   kubectl cluster-info >/dev/null 2>&1 || {
     echo "ERROR: kubectl is not connected to a cluster; refusing cleanup" >&2
     exit 1
   }
 
-  if ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
-    echo "Namespace $NAMESPACE does not exist; nothing to delete"
-    exit 0
+  CREDENTIALS="$STATE_DIR/oauth_credentials.json"
+  SAVED_ID=""
+  APP_ID=""
+  AAP_ROUTE=""
+  ADMIN_PASS=""
+  APPS=""
+  MANAGED_BY=""
+  if [ -f "$CREDENTIALS" ] && command -v jq >/dev/null 2>&1; then
+    SAVED_ID="$(jq -r '.oauth_app_id // empty' "$CREDENTIALS" 2>/dev/null || true)"
   fi
 
-  MANAGED_BY="$(kubectl get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
-  if [ "$MANAGED_BY" != "aap-demo-eda-playground" ]; then
-    echo "Namespace $NAMESPACE is not owned by the EDA Playground addon; skipping deletion"
-    exit 0
+  if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1; then
+    AAP_ROUTE="$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    if [ -n "$AAP_ROUTE" ]; then
+      ADMIN_PASS="$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    fi
+    if [ -n "$AAP_ROUTE" ] && [ -n "$ADMIN_PASS" ]; then
+      CURL_PASSWORD="${ADMIN_PASS//\\/\\\\}"
+      CURL_PASSWORD="${CURL_PASSWORD//\"/\\\"}"
+      GATEWAY="https://$AAP_ROUTE/api/gateway/v1"
+      if gateway_curl --max-time 10 "$GATEWAY/ping/" >/dev/null 2>&1; then
+        ENCODED_NAME="$(jq -rn --arg name "$OAUTH_APP_NAME" '$name|@uri')"
+        APPS="$(gateway_curl "$GATEWAY/applications/?name=$ENCODED_NAME" 2>/dev/null || true)"
+        if [ -n "$SAVED_ID" ]; then
+          APP_ID="$(jq -r --arg name "$OAUTH_APP_NAME" --arg id "$SAVED_ID" '[.results[]? | select(.name == $name and (.id|tostring) == $id)] | if length == 1 then .[0].id else empty end' <<<"$APPS" 2>/dev/null || true)"
+        else
+          APP_ID="$(jq -r --arg name "$OAUTH_APP_NAME" '[.results[]? | select(.name == $name)] | if length == 1 then .[0].id else empty end' <<<"$APPS" 2>/dev/null || true)"
+        fi
+        if [[ "$APP_ID" =~ ^[0-9]+$ ]]; then
+          gateway_curl -X DELETE "$GATEWAY/applications/$APP_ID/" >/dev/null 2>&1 || true
+        fi
+      fi
+    fi
   fi
 
-  kubectl delete namespace "$NAMESPACE" --ignore-not-found
+  if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    MANAGED_BY="$(kubectl get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
+    if [ "$MANAGED_BY" = "aap-demo-eda-playground" ]; then
+      if command -v oc >/dev/null 2>&1; then
+        oc adm policy remove-scc-from-user anyuid -z eda-playground -n "$NAMESPACE" >/dev/null 2>&1 || true
+      fi
+      kubectl delete namespace "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+    else
+      echo "Namespace $NAMESPACE is not owned by the EDA Playground addon; skipping deletion"
+    fi
+  fi
+  rm -f "$CREDENTIALS"
+  rmdir "$STATE_DIR" 2>/dev/null || true
   exit 0
 fi
 
@@ -76,13 +118,8 @@ fi
   exit 1
 }
 GATEWAY="https://$AAP_ROUTE/api/gateway/v1"
-# curl reads credentials from its configuration on stdin, never from argv.
-# Escape values interpreted by curl's quoted configuration syntax.
 CURL_PASSWORD="${ADMIN_PASS//\\/\\\\}"
 CURL_PASSWORD="${CURL_PASSWORD//\"/\\\"}"
-gateway_curl() {
-  printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | curl --config - -fsSk "$@"
-}
 if ! gateway_curl --max-time 10 "$GATEWAY/ping/" >/dev/null 2>&1; then
   echo "ERROR: AAP Gateway ping failed" >&2
   exit 1
@@ -143,7 +180,7 @@ if [ -n "$OAUTH_APP_ID" ]; then
     CLIENT_SECRET="$(jq -r '.client_secret // empty' "$CREDENTIALS")"
   fi
   if [ -z "$CLIENT_SECRET" ]; then
-    gateway_curl -X DELETE "$GATEWAY/applications/$OAUTH_APP_ID/" >/dev/null || {
+    gateway_curl -X DELETE "$GATEWAY/applications/$OAUTH_APP_ID/" >/dev/null 2>&1 || {
       echo "ERROR: could not recreate owned OAuth application" >&2
       exit 1
     }
@@ -245,7 +282,7 @@ ROUTE_HOST="$(kubectl get route eda-playground -n "$NAMESPACE" -o jsonpath='{.sp
 REDIRECT="https://$ROUTE_HOST/auth/callback"
 PATCH_REQUEST="$(jq -n --arg uri "$REDIRECT" '{redirect_uris:$uri}')"
 if ! gateway_curl -X PATCH "$GATEWAY/applications/$OAUTH_APP_ID/" \
-  -H 'Content-Type: application/json' -d "$PATCH_REQUEST" >/dev/null; then
+  -H 'Content-Type: application/json' -d "$PATCH_REQUEST" >/dev/null 2>&1; then
   echo "ERROR: OAuth redirect update failed; retry deployment after checking the Gateway application" >&2
   exit 1
 fi
