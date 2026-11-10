@@ -383,6 +383,7 @@ else
   case "$INGRESS_ERROR" in
     'Error from server (NotFound): ingresses.config.openshift.io "cluster" not found' | \
       "error: the server doesn't have a resource type \"ingresses\"" | \
+      "error: the server doesn't have a resource type \"ingresses\" in group \"config\"" | \
       "error: the server doesn't have a resource type \"ingresses.config\"")
       IS_MICROSHIFT=true
       INGRESS_DOMAIN="${AAP_ROUTE#*.}"
