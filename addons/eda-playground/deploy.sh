@@ -35,14 +35,48 @@ gateway_curl() {
   printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | curl --config - -fsSk "$@" 2>/dev/null
 }
 
+CREDENTIALS="$STATE_DIR/oauth_credentials.json"
+TOMBSTONE="$STATE_DIR/oauth_app_id"
+
+# Both records constrain ownership; neither may silently override the other.
+load_oauth_ownership() {
+  local credential_id
+  SAVED_ID=""
+  if [ -f "$TOMBSTONE" ]; then
+    if ! SAVED_ID="$(cat "$TOMBSTONE" 2>/dev/null)" || [[ ! "$SAVED_ID" =~ ^[1-9][0-9]*$ ]]; then
+      echo 'ERROR: saved OAuth ownership marker has a missing or invalid application ID' >&2
+      return 1
+    fi
+  fi
+  if [ -f "$CREDENTIALS" ]; then
+    if ! credential_id="$(jq -r '.oauth_app_id // empty' "$CREDENTIALS" 2>/dev/null)" \
+      || [[ ! "$credential_id" =~ ^[1-9][0-9]*$ ]]; then
+      echo 'ERROR: saved OAuth metadata has a missing or invalid application ID' >&2
+      return 1
+    fi
+    if [ -n "$SAVED_ID" ] && [ "$SAVED_ID" != "$credential_id" ]; then
+      echo 'ERROR: saved OAuth ownership records conflict; restore matching state before retrying' >&2
+      return 1
+    fi
+    SAVED_ID="$credential_id"
+  fi
+}
+
+save_oauth_marker() {
+  local marker_file
+  if ! marker_file="$(mktemp "$STATE_DIR/.oauth-app-id.XXXXXX")" \
+    || ! { printf '%s\n' "$OAUTH_APP_ID" >"$marker_file" && mv "$marker_file" "$TOMBSTONE"; }; then
+    echo 'ERROR: could not save OAuth ownership marker; check local state permissions and retry deployment' >&2
+    return 1
+  fi
+}
+
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   kubectl cluster-info >/dev/null 2>&1 || {
     echo "ERROR: kubectl is not connected to a cluster; refusing cleanup" >&2
     exit 1
   }
 
-  CREDENTIALS="$STATE_DIR/oauth_credentials.json"
-  TOMBSTONE="$STATE_DIR/oauth_app_id"
   CLEANUP_FAILED=0
   cleanup_error() {
     echo "ERROR: EDA Playground cleanup incomplete: $1" >&2
@@ -62,29 +96,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   AAP_ROUTE=""
   ADMIN_PASS=""
   MANAGED_BY=""
-  if [ -f "$TOMBSTONE" ]; then
-    if ! SAVED_ID="$(cat "$TOMBSTONE" 2>/dev/null)"; then
-      cleanup_error 'saved OAuth ownership marker could not be read'
-      exit 1
-    fi
-    if [[ ! "$SAVED_ID" =~ ^[1-9][0-9]*$ ]]; then
-      cleanup_error 'saved OAuth ownership marker has a missing or invalid application ID'
-      exit 1
-    fi
-  fi
-  if [ -f "$CREDENTIALS" ]; then
-    if ! command -v jq >/dev/null 2>&1; then
-      cleanup_error 'jq is required to read saved OAuth ownership'
-      exit 1
-    elif ! SAVED_ID="$(jq -r '.oauth_app_id // empty' "$CREDENTIALS" 2>/dev/null)"; then
-      cleanup_error 'saved OAuth metadata could not be read'
-      exit 1
-    fi
-  fi
-  if [ -f "$CREDENTIALS" ] && [[ ! "$SAVED_ID" =~ ^[1-9][0-9]*$ ]]; then
-    cleanup_error 'saved OAuth metadata has a missing or invalid application ID'
-    exit 1
-  fi
+  load_oauth_ownership || exit 1
   for required in jq curl base64; do
     command -v "$required" >/dev/null 2>&1 || cleanup_error "$required is required for OAuth cleanup"
   done
@@ -274,11 +286,25 @@ if ! gateway_curl --max-time 10 "$GATEWAY/ping/" >/dev/null 2>&1; then
   exit 1
 fi
 
-INGRESS_DOMAIN="$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>/dev/null || true)"
 IS_MICROSHIFT=false
-if [ -z "$INGRESS_DOMAIN" ]; then
-  IS_MICROSHIFT=true
-  INGRESS_DOMAIN="${AAP_ROUTE#*.}"
+if INGRESS_DOMAIN="$(kubectl get ingresses.config/cluster -o jsonpath='{.spec.domain}' --request-timeout=5s 2>&1)"; then
+  if [ -z "$INGRESS_DOMAIN" ]; then
+    echo 'ERROR: ingress discovery returned no domain; check cluster configuration and retry deployment' >&2
+    exit 1
+  fi
+else
+  case "$INGRESS_DOMAIN" in
+    'Error from server (NotFound): ingresses.config.openshift.io "cluster" not found' | \
+      "error: the server doesn't have a resource type \"ingresses\"" | \
+      "error: the server doesn't have a resource type \"ingresses.config\"")
+      IS_MICROSHIFT=true
+      INGRESS_DOMAIN="${AAP_ROUTE#*.}"
+      ;;
+    *)
+      echo 'ERROR: ingress discovery failed; check cluster access and retry deployment' >&2
+      exit 1
+      ;;
+  esac
 fi
 CLUSTER_DOMAIN="${EDA_PLAYGROUND_DOMAIN:-$INGRESS_DOMAIN}"
 [ -n "$CLUSTER_DOMAIN" ] && [ "$CLUSTER_DOMAIN" != "$AAP_ROUTE" ] || {
@@ -291,7 +317,7 @@ ROUTE_HOST="eda-playground.$CLUSTER_DOMAIN"
 umask 077
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
-CREDENTIALS="$STATE_DIR/oauth_credentials.json"
+load_oauth_ownership || exit 1
 ORGS="$(gateway_curl "$GATEWAY/organizations/")"
 ORG_ID="$(jq -r '.results[0].id // empty' <<<"$ORGS")"
 if [ -z "$ORG_ID" ]; then
@@ -304,15 +330,41 @@ fi
   exit 1
 }
 ENCODED_NAME="$(jq -rn --arg name "$OAUTH_APP_NAME" '$name|@uri')"
-APPS="$(gateway_curl "$GATEWAY/applications/?name=$ENCODED_NAME")"
-SAVED_ID=""
-if [ -f "$CREDENTIALS" ]; then
-  SAVED_ID="$(jq -r '.oauth_app_id // empty' "$CREDENTIALS")"
-fi
+# Exhaust only validated same-endpoint pages before choosing any application.
+APPS='{"results":[]}'
+NEXT_URL="$GATEWAY/applications/?name=$ENCODED_NAME"
+SEEN_URLS=""
+PAGE_COUNT=0
+while [ -n "$NEXT_URL" ]; do
+  PAGE_COUNT=$((PAGE_COUNT + 1))
+  if [[ "$NEXT_URL" == /api/gateway/v1/applications/\?* ]]; then NEXT_URL="https://$AAP_ROUTE$NEXT_URL"; fi
+  if [ "$PAGE_COUNT" -gt 100 ] || [[ "$NEXT_URL" != "$GATEWAY/applications/?"* ]] \
+    || grep -Fxq -- "$NEXT_URL" <<<"$SEEN_URLS"; then
+    echo 'ERROR: Gateway application pagination is invalid; check Gateway and retry deployment' >&2
+    exit 1
+  fi
+  SEEN_URLS="${SEEN_URLS}${NEXT_URL}"$'\n'
+  if ! PAGE="$(gateway_curl "$NEXT_URL")"; then
+    echo 'ERROR: Gateway application lookup failed; check Gateway and retry deployment' >&2
+    exit 1
+  fi
+  if ! jq -e --arg name "$OAUTH_APP_NAME" '
+    (.results | type == "array") and (.next == null or (.next | type == "string")) and
+    all(.results[] | select(.name == $name); .id | tostring | test("^[1-9][0-9]*$"))
+  ' <<<"$PAGE" >/dev/null 2>&1; then
+    echo 'ERROR: Gateway application response is invalid; check Gateway and retry deployment' >&2
+    exit 1
+  fi
+  APPS="$(jq -s '{results:(.[0].results + .[1].results)}' <<<"$APPS"$'\n'"$PAGE")"
+  NEXT_URL="$(jq -r '.next // empty' <<<"$PAGE")"
+done
 MATCH_COUNT="$(jq --arg name "$OAUTH_APP_NAME" '[.results[] | select(.name == $name)] | length' <<<"$APPS")"
 SAVED_MATCH_COUNT="$(jq --arg name "$OAUTH_APP_NAME" --arg id "$SAVED_ID" '[.results[] | select(.name == $name and (.id|tostring) == $id)] | length' <<<"$APPS")"
 if [ "$SAVED_MATCH_COUNT" -eq 1 ]; then
   OAUTH_APP_ID="$SAVED_ID"
+elif [ -n "$SAVED_ID" ] && [ "$MATCH_COUNT" -gt 0 ]; then
+  echo 'ERROR: OAuth application ownership mismatch or duplicate ID; restore matching state or resolve duplicates before retrying' >&2
+  exit 1
 elif [ "$MATCH_COUNT" -eq 1 ]; then
   OAUTH_APP_ID="$(jq -r --arg name "$OAUTH_APP_NAME" '.results[] | select(.name == $name) | .id' <<<"$APPS")"
 elif [ "$MATCH_COUNT" -gt 1 ]; then
@@ -329,6 +381,11 @@ if [ -n "$OAUTH_APP_ID" ]; then
     CLIENT_SECRET="$(jq -r '.client_secret // empty' "$CREDENTIALS")"
   fi
   if [ -z "$CLIENT_SECRET" ]; then
+    # Retain the identified owner even if deletion or subsequent creation fails.
+    save_oauth_marker 2>/dev/null || {
+      echo 'ERROR: could not save OAuth ownership marker; check local state permissions and retry deployment' >&2
+      exit 1
+    }
     gateway_curl -X DELETE "$GATEWAY/applications/$OAUTH_APP_ID/" >/dev/null 2>&1 || {
       echo "ERROR: could not recreate owned OAuth application" >&2
       exit 1
@@ -345,7 +402,7 @@ if [ -z "$OAUTH_APP_ID" ]; then
   CLIENT_ID="$(jq -r '.client_id // empty' <<<"$APP_RESPONSE")"
   CLIENT_SECRET="$(jq -r '.client_secret // empty' <<<"$APP_RESPONSE")"
 fi
-[ -n "$OAUTH_APP_ID" ] && [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ] || {
+[[ "$OAUTH_APP_ID" =~ ^[1-9][0-9]*$ ]] && [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ] || {
   echo "ERROR: Gateway OAuth credentials incomplete" >&2
   exit 1
 }
@@ -359,6 +416,10 @@ jq -n --arg oauth_app_id "$OAUTH_APP_ID" --rawfile client_id "$SECRET_DIR/client
   '{oauth_app_id:$oauth_app_id,client_id:$client_id,client_secret:$client_secret}' >"$TEMP_CREDENTIALS"
 chmod 600 "$TEMP_CREDENTIALS"
 mv "$TEMP_CREDENTIALS" "$CREDENTIALS"
+save_oauth_marker 2>/dev/null || {
+  echo 'ERROR: could not save OAuth ownership marker; check local state permissions and retry deployment' >&2
+  exit 1
+}
 SESSION_SECRET="$(openssl rand -hex 16)"
 printf '%s' "$SESSION_SECRET" >"$SECRET_DIR/session-secret"
 AAP_BASE_URL="https://$AAP_ROUTE"
@@ -376,11 +437,16 @@ awk -v namespace="$NAMESPACE" '
   /^  namespace: eda-playground$/ { sub(/eda-playground$/, namespace) }
   { print }
 ' "$SCRIPT_DIR/namespace.yaml" | kubectl apply -f - >/dev/null
-jq -n --arg name eda-playground-oauth --arg namespace "$NAMESPACE" \
-  --rawfile client_id "$SECRET_DIR/client-id" --rawfile client_secret "$SECRET_DIR/client-secret" \
-  --rawfile session_secret "$SECRET_DIR/session-secret" \
-  '{apiVersion:"v1",kind:"Secret",metadata:{name:$name,namespace:$namespace},type:"Opaque",stringData:{"client-id":$client_id,"client-secret":$client_secret,"session-secret":$session_secret}}' \
-  | kubectl create -f - --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+if ! {
+  jq -n --arg name eda-playground-oauth --arg namespace "$NAMESPACE" \
+    --rawfile client_id "$SECRET_DIR/client-id" --rawfile client_secret "$SECRET_DIR/client-secret" \
+    --rawfile session_secret "$SECRET_DIR/session-secret" \
+    '{apiVersion:"v1",kind:"Secret",metadata:{name:$name,namespace:$namespace},type:"Opaque",stringData:{"client-id":$client_id,"client-secret":$client_secret,"session-secret":$session_secret}}' \
+    | kubectl create -f - --dry-run=client -o yaml | kubectl apply -f -
+} >/dev/null 2>&1; then
+  echo 'ERROR: EDA Playground OAuth Secret reconciliation failed; check cluster access and retry deployment' >&2
+  exit 1
+fi
 if command -v oc >/dev/null 2>&1; then
   oc adm policy add-scc-to-user anyuid -z eda-playground -n "$NAMESPACE" >/dev/null
 fi
