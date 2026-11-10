@@ -152,6 +152,9 @@ USAGE:
     aap-demo <command> [options]
 
 CLUSTER:
+    create          Create OpenShift Local cluster
+    storage [DISK] [PV]
+                    Show or change the VM disk and persistent-volume size
     stop            Stop cluster
     start           Start stopped cluster
     destroy         Deletes cluster (--reset clears saved preset)
