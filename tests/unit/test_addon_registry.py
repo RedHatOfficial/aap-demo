@@ -88,7 +88,7 @@ def _job(**overrides) -> playbook_job.PlaybookJob:
         extra_vars={"state": "present"},
         mount_root="/opt/demo",
         grants=(("demo-a", "demo-role"), ("demo-b", "demo-role")),
-        pull_secret_source="aap-operator",
+        pull_secret_source="aap-operator",  # pragma: allowlist secret
     )
     values.update(overrides)
     return playbook_job.PlaybookJob(**values)
