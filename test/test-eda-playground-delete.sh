@@ -119,6 +119,11 @@ run_case() {
       expect_failure=yes
       preserve_state=yes
       ;;
+    conflicting_state)
+      printf '%s\n' 41 >"$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
+      expect_failure=yes
+      preserve_state=yes
+      ;;
     malformed_metadata)
       printf '%s\n' '{"oauth_app_id":' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
       expect_failure=yes
@@ -258,6 +263,10 @@ run_case() {
   unset NAMESPACE || true
 }
 
+run_case conflicting_state
+reject_log '-X DELETE' 'conflicting state deleted application'
+reject_log 'kubectl delete namespace' 'conflicting state deleted namespace'
+reject_log 'oc adm' 'conflicting state removed SCC'
 run_case saved
 assert_log '--max-time 10 https://aap.example.test/api/gateway/v1/ping/' 'Gateway ping missing'
 assert_log '-X DELETE https://aap.example.test/api/gateway/v1/applications/42/' 'saved ID not deleted'

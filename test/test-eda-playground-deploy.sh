@@ -20,7 +20,7 @@ case "$1 $2" in
     fi
     ;;
   'rollout status') [ "$MOCK_CASE" = rollout_fail ] && exit 1; exit 0 ;;
-  'get ingresses.config/cluster') [ "$MOCK_MICRO" = yes ] && exit 1; echo 'apps.custom.test' ;;
+  'get ingresses.config/cluster') [ "$MOCK_MICRO" = yes ] && { echo 'Error from server (NotFound): ingresses.config.openshift.io "cluster" not found' >&2; exit 1; }; echo 'apps.custom.test' ;;
   'get svc') echo '10.43.0.20' ;;
   'create -f')
     if [[ " $* " == *' --dry-run=client '* ]]; then cat; else exit 9; fi ;;
@@ -38,7 +38,11 @@ case " $* " in
   *'/ping/'*) echo '{"ping":"pong"}' ;;
   *'/organizations/'*)
     if [[ " $* " == *' -X POST '* ]]; then echo '{"id":7,"name":"Default"}'; elif [ "$MOCK_CASE" = first ]; then echo '{"count":0,"results":[]}'; else echo '{"count":1,"results":[{"id":7,"name":"Default"}]}'; fi ;;
-  *'/applications/?'*) if [ "$MOCK_CASE" = first ]; then echo '{"count":0,"results":[]}'; elif [[ "$MOCK_CASE" = later_saved || "$MOCK_CASE" = ambiguous ]]; then echo '{"count":2,"results":[{"id":41,"name":"EDA Playground","client_id":"client-wrong"},{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; else echo '{"count":1,"results":[{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; fi ;;
+  *'/applications/?'*)
+    # Repeated deploys see the ID created on the first deploy.
+    if [[ "$MOCK_CASE" = repeat || "$MOCK_CASE" = revision_collision ]] && [ -f "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ]; then
+      echo '{"count":1,"results":[{"id":43,"name":"EDA Playground","client_id":"client-new"}]}'
+    elif [ "$MOCK_CASE" = first ]; then echo '{"count":0,"results":[]}'; elif [[ "$MOCK_CASE" = later_saved || "$MOCK_CASE" = ambiguous ]]; then echo '{"count":2,"results":[{"id":41,"name":"EDA Playground","client_id":"client-wrong"},{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; else echo '{"count":1,"results":[{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; fi ;;
   *'/applications/'*) if [[ " $* " == *' -X POST '* ]]; then echo '{"id":43,"client_id":"client-new","client_secret":"fixture-client-secret"}'; elif [ "$MOCK_CASE" = patch_secret_fail ] && [[ " $* " == *' -X PATCH '* ]]; then echo '{"client_secret":"fixture-client-secret","password":"fixture-admin-password","session":"fixture-session-secret"}' >&2; exit 22; else echo '{}'; fi ;;
 esac
 STUB
