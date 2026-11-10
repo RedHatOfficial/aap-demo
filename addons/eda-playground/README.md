@@ -7,9 +7,9 @@ webhook payloads.
 
 ## Support and image
 
-This addon is available through the Python `aap-demo` command on macOS and
-Linux. The Python addon framework runs the existing legacy Bash deployment
-backend; native Windows support is not included.
+This addon is available through the Python `aap-demo` command on macOS and Linux.
+The Python addon framework runs the existing legacy Bash deployment backend;
+native Windows support is not included.
 It is experimental and not supported for production use.
 
 The current image is experimental and hosted in the maintainer's personal
