@@ -35,7 +35,7 @@
         After=fleet-setup.service
         AllowIsolate=yes
   tasks:
-    - name: Fleet node service account
+    - name: Fleet node service account  # noqa: jinja[invalid]
       when: scope == 'all' and state == 'present'
       kubernetes.core.k8s:
         state: present
