@@ -21,17 +21,18 @@ pipx install aap-demo
 aap-demo version
 ```
 
-You should see version `2.0.0rc1`.
+It prints the version you installed. The [PyPI page](https://pypi.org/project/aap-demo/) lists the newest one.
 
-These install the same release candidate:
+These install the same release:
 
 ```bash
-pip install 'aap-demo==2.0.0rc1'
+pip install aap-demo
 uv tool install aap-demo
 ```
 
-If a plain `pip install aap-demo` says it cannot find a version, use the `2.0.0rc1` line above.
-pip often skips pre-release versions, such as release candidates, unless you name them.
+Until 2.0.0 is out, every published version is a release candidate, and these commands install the
+newest one. Once 2.0.0 is out, they install the newest finished release and skip later release candidates.
+To try a release candidate after that, name it, as in `pipx install 'aap-demo==2.1.0rc1'`.
 
 ## Update
 
