@@ -34,7 +34,7 @@ still run with [the older command](../guides/older-command.md).
 | `redeploy-all` | Delete the cluster, create it again, and install AAP. |
 | `destroy` | Delete the cluster. `--reset` also clears saved settings. |
 | `update` | Upgrade the pipx install of the command. |
-| `version` | Print the installed version, such as `2.0.0rc1`, and how this copy was installed. A git install adds the commit, as in `2.0.0rc1+g27b505d`, and the `git+...@ref` it came from. |
+| `version` | Print the installed version, such as `2.0.0rc2`, and how this copy was installed. A git install adds the commit, as in `2.0.0rc2+g27b505d`, and the `git+...@ref` it came from. |
 | `enable fleet` | Add the practice machines. `--no-import` skips registering them in AAP. |
 | `disable fleet` | Turn those machines off. Leaves their AAP registration. |
 | `enable product-demos` | Install the Ansible product demos into AAP. Needs `bash`, `curl`, and `jq`. |
