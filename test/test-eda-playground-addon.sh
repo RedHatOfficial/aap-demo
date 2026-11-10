@@ -100,8 +100,10 @@ MOCK_OC
 chmod +x "$MOCK_BIN/kubectl"
 chmod +x "$MOCK_BIN/oc"
 
-MOCK_DELETE_LOG="$MOCK_BIN/deletes" MOCK_NAMESPACE_EXISTS=yes MOCK_NAMESPACE_OWNER='' \
-  PATH="$MOCK_BIN:$PATH" "$ADDON_DIR/deploy.sh" --delete >/dev/null
+if MOCK_DELETE_LOG="$MOCK_BIN/deletes" MOCK_NAMESPACE_EXISTS=yes MOCK_NAMESPACE_OWNER='' \
+  PATH="$MOCK_BIN:$PATH" "$ADDON_DIR/deploy.sh" --delete >/dev/null 2>&1; then
+  fail "cleanup accepted an unowned namespace"
+fi
 [ ! -s "$MOCK_BIN/deletes" ] || fail "cleanup deleted an unowned namespace"
 
 MOCK_DELETE_LOG="$MOCK_BIN/deletes" MOCK_NAMESPACE_EXISTS=yes MOCK_NAMESPACE_OWNER=aap-demo-eda-playground \

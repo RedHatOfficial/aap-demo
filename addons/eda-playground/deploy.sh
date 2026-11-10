@@ -211,7 +211,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
         fi
       fi
     else
-      echo "Namespace $NAMESPACE is not owned by the EDA Playground addon; skipping deletion"
+      cleanup_error "namespace $NAMESPACE is not owned by the EDA Playground addon; refusing deletion"
     fi
   elif ! NS_CHECK="$(kubectl get namespace "$NAMESPACE" --ignore-not-found -o name 2>/dev/null)"; then
     cleanup_error "namespace $NAMESPACE lookup failed"
