@@ -58,7 +58,15 @@ case "$1 $2" in
   "delete namespace") printf 'deleted\n' >>"$MOCK_DELETE_LOG" ;;
 esac
 MOCK_KUBECTL
+cat >"$MOCK_BIN/oc" <<'MOCK_OC'
+#!/usr/bin/env bash
+case "$*" in
+  'adm policy remove-scc-from-user anyuid -z eda-playground -n eda-playground') exit 0 ;;
+  *) exit 2 ;;
+esac
+MOCK_OC
 chmod +x "$MOCK_BIN/kubectl"
+chmod +x "$MOCK_BIN/oc"
 
 MOCK_DELETE_LOG="$MOCK_BIN/deletes" MOCK_NAMESPACE_EXISTS=yes MOCK_NAMESPACE_OWNER='' \
   PATH="$MOCK_BIN:$PATH" "$ADDON_DIR/deploy.sh" --delete >/dev/null
