@@ -62,6 +62,12 @@ grep -Fq 'config view --minify' "$LIVE" || fail "live test must establish API id
 grep -Fq 'trap cleanup_on_exit EXIT' "$LIVE" || fail "live test must register failure cleanup"
 grep -Fq 'exit "$status"' "$LIVE" || fail "live test must preserve original status"
 grep -Fq 'disable eda-playground' "$LIVE" || fail "live test cleanup must disable the addon"
+grep -Fq -- '--kubeconfig "$LIVE_KUBECONFIG"' "$LIVE" \
+  || fail "legacy CLI calls must pass the pinned kubeconfig explicitly"
+grep -Fq 'AAP_DEMO_LIVE_INTERACTIVE' "$LIVE" || fail "live test must expose the interactive checkpoint"
+grep -Fq 'read -r' "$LIVE" || fail "interactive checkpoint must wait for Enter"
+grep -Fq 'Browser OAuth verification remains manual' "$LIVE" \
+  || fail "noninteractive live run must state manual browser verification"
 
 for file in namespace.yaml configmap.yaml service.yaml deployment.yaml route.yaml; do
   grep -q '^apiVersion:' "$ADDON_DIR/$file" || fail "$file missing apiVersion"
@@ -120,7 +126,7 @@ LIVE_LOG="$MOCK_BIN/live/failure-kubectl" LIVE_FAIL_LOG="$MOCK_BIN/live/failure-
 LIVE_FAILURE_STATUS=$?
 set -e
 [ "$LIVE_FAILURE_STATUS" -ne 0 ] || fail "live harness must preserve a failed readiness status"
-grep -Fxq 'cli disable eda-playground' "$MOCK_BIN/live/failure-cli" \
+grep -Fxq "cli --kubeconfig $MOCK_BIN/live/kubeconfig disable eda-playground" "$MOCK_BIN/live/failure-cli" \
   || fail "live harness must attempt cleanup after readiness failure"
 ! grep -Fq 'fixture-secret' "$MOCK_BIN/live/failure-output" || fail "failure cleanup printed credentials"
 cat >"$MOCK_BIN/live/aap-demo" <<'MOCK_LIVE_CLI'
@@ -140,21 +146,34 @@ MOCK_LIVE_KUBECTL
 chmod +x "$MOCK_BIN/live/aap-demo" "$MOCK_BIN/live/kubectl"
 LIVE_LOG="$MOCK_BIN/live/commands" \
   AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
   PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/output" 2>&1 \
   || fail "enabled live harness failed with controlled commands"
 ! grep -Fq 'fixture-secret' "$MOCK_BIN/live/output" || fail "live harness printed credentials"
 grep -Fxq 'Route host: eda.example.test' "$MOCK_BIN/live/output" || fail "live harness did not print route host"
+grep -Fq 'Browser OAuth verification remains manual' "$MOCK_BIN/live/output" \
+  || fail "noninteractive live run must state manual browser verification"
+printf '\n' | LIVE_LOG="$MOCK_BIN/live/interactive-commands" \
+  AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  AAP_DEMO_LIVE_INTERACTIVE=true KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
+  PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/interactive-output" 2>&1 \
+  || fail "interactive live checkpoint failed with controlled commands"
+grep -Fq 'Open https://eda.example.test and complete AAP Gateway OAuth login' \
+  "$MOCK_BIN/live/interactive-output" || fail "interactive checkpoint did not print the URL"
+grep -Fq 'Press Enter when finished' "$MOCK_BIN/live/interactive-output" \
+  || fail "interactive checkpoint did not wait for Enter"
+sed "s|$MOCK_BIN/live/kubeconfig|LIVE_KUBECONFIG|g" "$MOCK_BIN/live/commands" >"$MOCK_BIN/live/normalized-commands"
 cat >"$MOCK_BIN/live/expected" <<'EXPECTED_LIVE'
 kubectl config current-context
 kubectl config view --minify -o jsonpath={.clusters[0].cluster.server}
-cli enable eda-playground
+cli --kubeconfig LIVE_KUBECONFIG enable eda-playground
 kubectl wait --for=condition=available deployment/eda-playground -n eda-playground --timeout=180s
 kubectl get route eda-playground -n eda-playground -o jsonpath={.spec.host}
-cli disable eda-playground
-cli disable eda-playground
+cli --kubeconfig LIVE_KUBECONFIG disable eda-playground
+cli --kubeconfig LIVE_KUBECONFIG disable eda-playground
 kubectl get namespace eda-playground --ignore-not-found -o name
 EXPECTED_LIVE
-cmp -s "$MOCK_BIN/live/expected" "$MOCK_BIN/live/commands" \
+cmp -s "$MOCK_BIN/live/expected" "$MOCK_BIN/live/normalized-commands" \
   || fail "live harness checks are missing or out of order"
 export EDA_PLAYGROUND_STATE_DIR="$MOCK_BIN/state"
 mkdir -p "$EDA_PLAYGROUND_STATE_DIR"

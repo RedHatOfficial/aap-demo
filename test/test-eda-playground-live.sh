@@ -79,14 +79,14 @@ cleanup_on_exit() {
   local status=$?
   trap - EXIT
   if [ "$status" -ne 0 ] && [ "${CLEANUP_REQUIRED:-false}" = true ]; then
-    "$CLI" disable eda-playground >/dev/null 2>&1 || true
+    "$CLI" --kubeconfig "$LIVE_KUBECONFIG" disable eda-playground >/dev/null 2>&1 || true
   fi
   exit "$status"
 }
 
 trap cleanup_on_exit EXIT
 CLEANUP_REQUIRED=true
-run_quiet 'enable eda-playground failed' "$CLI" enable eda-playground
+run_quiet 'enable eda-playground failed' "$CLI" --kubeconfig "$LIVE_KUBECONFIG" enable eda-playground
 run_quiet 'EDA Playground Deployment did not become available' \
   kubectl wait --for=condition=available deployment/eda-playground -n "$NAMESPACE" --timeout=180s
 if HOST="$(kubectl get route eda-playground -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)"; then
@@ -99,9 +99,18 @@ fi
   || fail 'EDA Playground Route has no valid host' 1
 printf 'Route host: %s\n' "$HOST"
 
-# Open the Route and complete AAP Gateway OAuth login manually before cleanup.
-run_quiet 'first disable eda-playground failed' "$CLI" disable eda-playground
-run_quiet 'second disable eda-playground failed' "$CLI" disable eda-playground
+ROUTE_URL="https://$HOST"
+if [ "${AAP_DEMO_LIVE_INTERACTIVE:-false}" = true ]; then
+  printf 'Open %s and complete AAP Gateway OAuth login in your browser. Press Enter when finished.\n' "$ROUTE_URL"
+  IFS= read -r _
+else
+  printf 'Browser OAuth verification remains manual; open %s after enable and before cleanup.\n' "$ROUTE_URL"
+fi
+
+run_quiet 'first disable eda-playground failed' \
+  "$CLI" --kubeconfig "$LIVE_KUBECONFIG" disable eda-playground
+run_quiet 'second disable eda-playground failed' \
+  "$CLI" --kubeconfig "$LIVE_KUBECONFIG" disable eda-playground
 if REMAINING="$(kubectl get namespace "$NAMESPACE" --ignore-not-found -o name 2>/dev/null)"; then
   :
 else
