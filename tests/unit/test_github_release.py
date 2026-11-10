@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import subprocess
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -45,8 +46,55 @@ def _opener(files: list, blobs: dict):
 
 def test_release_files_need_a_wheel_and_an_sdist() -> None:
     files = [_entry("aap_demo-2.0.0rc1-py3-none-any.whl", "bdist_wheel", WHEEL)]
+    waits: list = []
     with pytest.raises(SystemExit, match="needs a wheel and an sdist"):
-        _script().release_files("2.0.0rc1", opener=_opener(files, {}))
+        _script().release_files("2.0.0rc1", opener=_opener(files, {}), sleep=waits.append)
+    script = _script()
+    assert len(waits) == script.ATTEMPTS - 1
+
+
+def _not_found(url: str) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
+
+
+def test_a_new_version_is_waited_for_until_pypi_lists_both_files() -> None:
+    """Right after an upload PyPI can 404, then list one file, then both."""
+    wheel = _entry("aap_demo-2.0.0rc2-py3-none-any.whl", "bdist_wheel", WHEEL)
+    sdist = _entry("aap_demo-2.0.0rc2.tar.gz", "sdist", SDIST)
+    answers = [None, [wheel], [wheel, sdist]]
+    waits: list = []
+
+    def opener(url: str, timeout: int):
+        files = answers.pop(0)
+        if files is None:
+            raise _not_found(url)
+        return io.BytesIO(json.dumps({"urls": files}).encode())
+
+    files = _script().release_files("2.0.0rc2", opener=opener, sleep=waits.append)
+    assert [entry["packagetype"] for entry in files] == ["bdist_wheel", "sdist"]
+    assert len(waits) == 2
+
+
+def test_a_version_pypi_never_lists_fails_after_the_waits() -> None:
+    waits: list = []
+
+    def opener(url: str, timeout: int):
+        raise _not_found(url)
+
+    with pytest.raises(SystemExit, match=r"not found \(404\)"):
+        _script().release_files("2.0.0rc9", opener=opener, sleep=waits.append)
+    assert len(waits) == _script().ATTEMPTS - 1
+
+
+def test_other_pypi_errors_fail_at_once() -> None:
+    waits: list = []
+
+    def opener(url: str, timeout: int):
+        raise urllib.error.HTTPError(url, 500, "Server Error", {}, None)  # type: ignore[arg-type]
+
+    with pytest.raises(urllib.error.HTTPError):
+        _script().release_files("2.0.0rc2", opener=opener, sleep=waits.append)
+    assert waits == []
 
 
 def test_downloads_match_pypi_sha256(tmp_path: Path) -> None:
