@@ -9,10 +9,12 @@ webhook payloads.
 
 This addon is available through the legacy Bash workflow on macOS and Linux.
 Python CLI and native Windows support are not included.
+It is experimental and not supported for production use.
 
 The current image is experimental and hosted in the maintainer's personal
 GitHub Container Registry namespace. It is not an official Red Hat image.
-Set `EDA_PLAYGROUND_IMAGE` to a reviewed image tag or digest before deploying;
+Review the image before use. Set `EDA_PLAYGROUND_IMAGE` to a reviewed image
+tag or digest before deploying;
 the default is `ghcr.io/bbgrimmett2/eda-playground:0.1.0`.
 
 ## Prerequisites
@@ -26,12 +28,18 @@ the default is `ghcr.io/bbgrimmett2/eda-playground:0.1.0`.
 
 ## Usage
 
-From this directory, run `./deploy.sh` to deploy or `./deploy.sh --delete` (or
-`./deploy.sh delete`) to remove the addon namespace. The default action is
-deploy. The deployer also accepts `EDA_PLAYGROUND_IMAGE` to select a tag or
-digest. Set `EDA_PLAYGROUND_NAMESPACE` to use a dedicated custom namespace
-for both enable and disable. The CLI's `NAMESPACE` selects the AAP namespace
-and does not select the addon namespace.
+Use the legacy Bash `aap-demo` command after deploying AAP:
+
+```bash
+aap-demo enable eda-playground
+aap-demo disable eda-playground
+```
+
+From this directory, `./deploy.sh` and `./deploy.sh --delete` (or
+`./deploy.sh delete`) provide the same addon lifecycle. Set
+`EDA_PLAYGROUND_NAMESPACE` to use a dedicated custom namespace for both enable
+and disable. The CLI's `NAMESPACE` selects the AAP namespace and does not select
+the addon namespace.
 
 The generated Route host is based on the cluster's application domain. After
 deployment, inspect it with:
@@ -39,6 +47,11 @@ deployment, inspect it with:
 ```bash
 kubectl get route eda-playground -n eda-playground
 ```
+
+Open the Route in a browser and complete AAP Gateway OAuth login manually. The
+addon provisions an OAuth application in AAP Gateway and stores its credentials
+locally for guarded cleanup. Do not paste the OAuth client secret into a browser
+or test output.
 
 ## Configuration
 
@@ -58,6 +71,8 @@ integration definitions. It can be edited with `kubectl` after deployment.
 
 Check pod status and logs with `kubectl get pods -n eda-playground` and
 `kubectl logs -n eda-playground -l app=eda-playground`. To remove the addon,
-run `./deploy.sh --delete`; this deletes only the configured addon namespace.
+run `aap-demo disable eda-playground`. Cleanup removes the owned OAuth
+application, its local credential state, and only the configured addon
+namespace. If cleanup fails, inspect the error and retry the disable command.
 
 Source: [EDA Playground](https://github.com/BBGrimmett2/EDA-Playground).
