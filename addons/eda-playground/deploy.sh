@@ -35,54 +35,142 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   }
 
   CREDENTIALS="$STATE_DIR/oauth_credentials.json"
+  TOMBSTONE="$STATE_DIR/oauth_app_id"
+  CLEANUP_FAILED=0
+  cleanup_error() {
+    echo "ERROR: EDA Playground cleanup incomplete: $1" >&2
+    CLEANUP_FAILED=1
+  }
+  gateway_request() {
+    if GATEWAY_RESPONSE="$(gateway_curl -w $'\n%{http_code}' "$@")"; then
+      GATEWAY_EXIT=0
+    else
+      GATEWAY_EXIT=$?
+    fi
+    GATEWAY_STATUS="${GATEWAY_RESPONSE##*$'\n'}"
+    GATEWAY_BODY="${GATEWAY_RESPONSE%$'\n'*}"
+  }
   SAVED_ID=""
   APP_ID=""
   AAP_ROUTE=""
   ADMIN_PASS=""
-  APPS=""
   MANAGED_BY=""
-  if [ -f "$CREDENTIALS" ] && command -v jq >/dev/null 2>&1; then
-    SAVED_ID="$(jq -r '.oauth_app_id // empty' "$CREDENTIALS" 2>/dev/null || true)"
+  if [ -f "$CREDENTIALS" ]; then
+    if ! command -v jq >/dev/null 2>&1; then
+      cleanup_error 'jq is required to read saved OAuth ownership'
+    elif ! SAVED_ID="$(jq -r '.oauth_app_id // empty' "$CREDENTIALS" 2>/dev/null)"; then
+      SAVED_ID=blocked
+    fi
+  elif [ -f "$TOMBSTONE" ]; then
+    SAVED_ID="$(cat "$TOMBSTONE")"
+  fi
+  if [ -f "$CREDENTIALS" ] && [[ ! "$SAVED_ID" =~ ^[0-9]+$ ]]; then SAVED_ID=blocked; fi
+  if [ -n "$SAVED_ID" ]; then
+    umask 077
+    if ! printf '%s\n' "$SAVED_ID" >"$TOMBSTONE"; then
+      cleanup_error 'could not save OAuth ownership marker'
+    fi
   fi
 
-  if command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1; then
-    AAP_ROUTE="$(kubectl get route aap -n "$AAP_NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-    if [ -n "$AAP_ROUTE" ]; then
-      ADMIN_PASS="$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+  for required in jq curl base64; do
+    command -v "$required" >/dev/null 2>&1 || cleanup_error "$required is required for OAuth cleanup"
+  done
+  if [ "$CLEANUP_FAILED" -eq 0 ]; then
+    if ! AAP_ROUTE="$(kubectl get route aap -n "$AAP_NAMESPACE" --ignore-not-found -o jsonpath='{.spec.host}' 2>/dev/null)"; then
+      cleanup_error 'AAP Route lookup failed'
     fi
-    if [ -n "$AAP_ROUTE" ] && [ -n "$ADMIN_PASS" ]; then
+    if [ -n "$AAP_ROUTE" ] && [ "$CLEANUP_FAILED" -eq 0 ]; then
+      if ! ADMIN_B64="$(kubectl get secret aap-admin-password -n "$AAP_NAMESPACE" --ignore-not-found -o jsonpath='{.data.password}' 2>/dev/null)"; then
+        cleanup_error 'AAP admin Secret lookup failed'
+      elif [ -n "$ADMIN_B64" ] && ! ADMIN_PASS="$(printf '%s' "$ADMIN_B64" | base64 -d 2>/dev/null)"; then
+        cleanup_error 'AAP admin Secret could not be decoded'
+      fi
+    fi
+    if [ -n "$AAP_ROUTE" ] && [ -n "$ADMIN_PASS" ] && [ "$CLEANUP_FAILED" -eq 0 ]; then
       CURL_PASSWORD="${ADMIN_PASS//\\/\\\\}"
       CURL_PASSWORD="${CURL_PASSWORD//\"/\\\"}"
       GATEWAY="https://$AAP_ROUTE/api/gateway/v1"
-      if gateway_curl --max-time 10 "$GATEWAY/ping/" >/dev/null 2>&1; then
+      gateway_request --max-time 10 "$GATEWAY/ping/"
+      if [ "$GATEWAY_EXIT" -ne 0 ] || [[ ! "$GATEWAY_STATUS" =~ ^2[0-9][0-9]$ ]]; then
+        cleanup_error 'AAP Gateway ping failed'
+      else
         ENCODED_NAME="$(jq -rn --arg name "$OAUTH_APP_NAME" '$name|@uri')"
-        APPS="$(gateway_curl "$GATEWAY/applications/?name=$ENCODED_NAME" 2>/dev/null || true)"
-        if [ -n "$SAVED_ID" ]; then
-          APP_ID="$(jq -r --arg name "$OAUTH_APP_NAME" --arg id "$SAVED_ID" '[.results[]? | select(.name == $name and (.id|tostring) == $id)] | if length == 1 then .[0].id else empty end' <<<"$APPS" 2>/dev/null || true)"
-        else
-          APP_ID="$(jq -r --arg name "$OAUTH_APP_NAME" '[.results[]? | select(.name == $name)] | if length == 1 then .[0].id else empty end' <<<"$APPS" 2>/dev/null || true)"
-        fi
-        if [[ "$APP_ID" =~ ^[0-9]+$ ]]; then
-          gateway_curl -X DELETE "$GATEWAY/applications/$APP_ID/" >/dev/null 2>&1 || true
+        NEXT_URL="$GATEWAY/applications/?name=$ENCODED_NAME"
+        MATCH_IDS=""
+        PAGE_COUNT=0
+        while [ -n "$NEXT_URL" ]; do
+          PAGE_COUNT=$((PAGE_COUNT + 1))
+          if [ "$PAGE_COUNT" -gt 100 ] || [[ "$NEXT_URL" != "$GATEWAY/applications/"* ]]; then
+            cleanup_error 'Gateway application pagination is invalid'
+            break
+          fi
+          gateway_request "$NEXT_URL"
+          if [ "$GATEWAY_EXIT" -ne 0 ] || [[ ! "$GATEWAY_STATUS" =~ ^2[0-9][0-9]$ ]]; then
+            cleanup_error 'Gateway application lookup failed'
+            break
+          fi
+          if ! jq -e '(.results | type == "array") and (.next == null or (.next | type == "string"))' <<<"$GATEWAY_BODY" >/dev/null 2>&1; then
+            cleanup_error 'Gateway application response is invalid'
+            break
+          fi
+          PAGE_IDS="$(jq -r --arg name "$OAUTH_APP_NAME" '.results[] | select(.name == $name) | .id | tostring' <<<"$GATEWAY_BODY")"
+          if [ -n "$PAGE_IDS" ]; then MATCH_IDS="${MATCH_IDS}${MATCH_IDS:+$'\n'}${PAGE_IDS}"; fi
+          NEXT_URL="$(jq -r '.next // empty' <<<"$GATEWAY_BODY")"
+          if [[ "$NEXT_URL" == /api/gateway/v1/applications/* ]]; then NEXT_URL="https://$AAP_ROUTE$NEXT_URL"; fi
+        done
+        if [ "$CLEANUP_FAILED" -eq 0 ]; then
+          if [ -n "$SAVED_ID" ]; then
+            if [ "$(grep -Fxc -- "$SAVED_ID" <<<"$MATCH_IDS" || true)" = 1 ]; then
+              APP_ID="$SAVED_ID"
+            elif [ -n "$MATCH_IDS" ]; then
+              echo 'OAuth application ownership mismatch; skipping application deletion'
+            fi
+          elif [ "$(grep -c . <<<"$MATCH_IDS" || true)" = 1 ]; then
+            APP_ID="$MATCH_IDS"
+            umask 077
+            if ! mkdir -p "$STATE_DIR" || ! chmod 700 "$STATE_DIR" || ! printf '%s\n' "$APP_ID" >"$TOMBSTONE"; then
+              cleanup_error 'could not save OAuth ownership marker'
+            fi
+          elif [ -n "$MATCH_IDS" ]; then
+            cleanup_error 'multiple exact-name OAuth applications found'
+          fi
+          if [[ "$APP_ID" =~ ^[0-9]+$ ]] && [ "$CLEANUP_FAILED" -eq 0 ]; then
+            gateway_request -X DELETE "$GATEWAY/applications/$APP_ID/"
+            if [ "$GATEWAY_STATUS" != 404 ] && { [ "$GATEWAY_EXIT" -ne 0 ] || [[ ! "$GATEWAY_STATUS" =~ ^2[0-9][0-9]$ ]]; }; then
+              cleanup_error "OAuth application $APP_ID deletion failed"
+            fi
+          fi
         fi
       fi
     fi
   fi
 
   if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
-    MANAGED_BY="$(kubectl get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null || true)"
+    if ! MANAGED_BY="$(kubectl get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null)"; then
+      cleanup_error "namespace $NAMESPACE ownership lookup failed"
+    fi
     if [ "$MANAGED_BY" = "aap-demo-eda-playground" ]; then
       if command -v oc >/dev/null 2>&1; then
-        oc adm policy remove-scc-from-user anyuid -z eda-playground -n "$NAMESPACE" >/dev/null 2>&1 || true
+        if ! SCC_ERROR="$(oc adm policy remove-scc-from-user anyuid -z eda-playground -n "$NAMESPACE" 2>&1)"; then
+          if [[ "$SCC_ERROR" != *NotFound* && "$SCC_ERROR" != *'not found'* ]]; then
+            cleanup_error "SCC binding removal failed in namespace $NAMESPACE"
+          fi
+        fi
       fi
-      kubectl delete namespace "$NAMESPACE" --ignore-not-found >/dev/null 2>&1 || true
+      if ! kubectl delete namespace "$NAMESPACE" --ignore-not-found >/dev/null 2>&1; then
+        cleanup_error "namespace $NAMESPACE deletion failed"
+      fi
     else
       echo "Namespace $NAMESPACE is not owned by the EDA Playground addon; skipping deletion"
     fi
+  elif ! NS_CHECK="$(kubectl get namespace "$NAMESPACE" --ignore-not-found -o name 2>/dev/null)"; then
+    cleanup_error "namespace $NAMESPACE lookup failed"
+  elif [ -n "$NS_CHECK" ]; then
+    cleanup_error "namespace $NAMESPACE lookup failed"
   fi
-  rm -f "$CREDENTIALS"
+  rm -f "$CREDENTIALS" || cleanup_error 'local OAuth credential removal failed'
   rmdir "$STATE_DIR" 2>/dev/null || true
-  exit 0
+  exit "$CLEANUP_FAILED"
 fi
 
 kubectl cluster-info >/dev/null 2>&1 || {
