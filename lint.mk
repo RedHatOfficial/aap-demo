@@ -1,6 +1,6 @@
 # Makefile for aap-demo linting and quality checks
 
-.PHONY: lint-help install-hooks lint lint-shell lint-yaml lint-markdown lint-ansible format test validate-manifests check-secrets clean-lint pre-commit ci update-hooks
+.PHONY: lint-help install-hooks lint lint-shell lint-shell-format lint-yaml lint-markdown lint-ansible format test validate-manifests check-secrets clean-lint pre-commit ci update-hooks
 
 lint-help: ## Show linting help
 	@echo ""
@@ -15,30 +15,31 @@ install-hooks: ## Install pre-commit hooks
 	@pre-commit install --hook-type pre-commit --hook-type commit-msg
 	@echo "✓ Pre-commit hooks installed"
 
-lint: lint-shell lint-yaml lint-markdown ## Run all linters
+lint: lint-shell lint-shell-format lint-yaml lint-markdown lint-ansible ## Run all linters
 
 lint-shell: ## Lint shell scripts with shellcheck
 	@echo "Running shellcheck..."
-	@set -e; git ls-files '*.sh' | while IFS= read -r file; do shellcheck --severity=warning "$$file"; done
+	@set -e; git ls-files '*.sh' ':!.github/**' ':!docs/**' ':!*.zsh' | while IFS= read -r file; do shellcheck --severity=warning "$$file"; done
 	@echo "✓ ShellCheck passed"
+
+lint-shell-format: ## Check shell formatting with shfmt
+	@echo "Running shfmt..."
+	@git ls-files '*.sh' -z | xargs -0 -r -n 50 shfmt -d -i 2 -ci -bn
+	@echo "✓ shfmt passed"
 
 lint-yaml: ## Lint YAML files with yamllint
 	@echo "Running yamllint..."
-	@set -e; git ls-files '*.yml' '*.yaml' | while IFS= read -r file; do yamllint "$$file"; done
+	@set -e; git ls-files '*.yml' '*.yaml' | while IFS= read -r file; do yamllint -c .yamllint "$$file"; done
 	@echo "✓ yamllint passed"
 
 lint-markdown: ## Lint Markdown files with markdownlint
 	@echo "Running markdownlint..."
-	@files="$$(git ls-files '*.md' ':!.claude/**' ':!.github/**')"; [ -z "$$files" ] || markdownlint $$files
+	@git ls-files '*.md' ':!.claude/**' ':!.github/**' -z | xargs -0 -r -n 50 markdownlint --config .markdownlint.json
 	@echo "✓ markdownlint passed"
 
 lint-ansible: ## Lint Ansible content with ansible-lint
 	@echo "Running ansible-lint..."
-	@if [ -f "requirements.yml" ] || find . -name "playbook*.yml" -o -name "site.yml" | grep -q .; then \
-		ansible-lint --force-color; \
-	else \
-		echo "No Ansible content found, skipping"; \
-	fi
+	@ansible-lint --force-color --offline
 	@echo "✓ ansible-lint passed"
 
 format: ## Auto-format shell scripts and markdown
@@ -58,10 +59,8 @@ test: ## Run syntax checks and dry-run tests
 
 validate-manifests: ## Validate Kubernetes manifests with kubeconform
 	@echo "Validating Kubernetes manifests..."
-	@find config/manifests config/crs -name "*.yaml" -o -name "*.yml" 2>/dev/null | while read -r file; do \
-		echo "Validating $$file"; \
-		kubeconform --ignore-missing-schemas "$$file" || true; \
-	done
+	@git ls-files 'config/manifests/**.yaml' 'config/manifests/**.yml' 'config/crs/**.yaml' 'config/crs/**.yml' -z \
+		| xargs -0 -r kubeconform --ignore-missing-schemas -summary
 	@echo "✓ Manifest validation complete"
 
 check-secrets: ## Scan for secrets with detect-secrets 1.5.0 (read-only)
