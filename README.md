@@ -1,9 +1,12 @@
 # AAP Demo
 
+[![PyPI](https://img.shields.io/pypi/v/aap-demo)](https://pypi.org/project/aap-demo/)
+
 Ansible Automation Platform, on your own computer, for demos and trying things out.
 
 This is a local tool. Do not use it for a real production system. The published command is a release
-candidate, version **2.0.0rc1**. A finished 2.0.0 release is not out yet.
+candidate, a prerelease of 2.0.0. A finished 2.0.0 release is not out yet. The
+[PyPI page](https://pypi.org/project/aap-demo/) and the badge above show the current version.
 
 ## Start
 
@@ -64,7 +67,7 @@ AAP runs without a subscription, but it needs one before it can add hosts. Nothi
 is applied unless you choose to. [Subscription](docs/guides/subscription.md) shows
 how to apply one, by signing in to AAP or by giving `aap-demo` a manifest file.
 
- `aap-demo version` should print `2.0.0rc1`.
+`aap-demo version` prints the version you installed.
 
 Tomorrow, `aap-demo start` turns the cluster on and `aap-demo stop` turns it
 off. [Daily use](docs/guides/daily-use.md) covers later days, including a page

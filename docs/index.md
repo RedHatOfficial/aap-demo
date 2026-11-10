@@ -24,7 +24,7 @@ The [project home page](../README.md) is the short start. These pages are the re
 
 ## Concepts
 
-- [What aap-demo is](concepts/what-aap-demo-is.md) - A local demo tool, and what the 2.0.0rc1 release candidate is.
+- [What aap-demo is](concepts/what-aap-demo-is.md) - A local demo tool, and what the 2.0.0 release candidate is.
 - [Two ways to run it](concepts/two-ways-to-run.md) - The new command and the older one, and why both still matter.
 
 ## Reference
