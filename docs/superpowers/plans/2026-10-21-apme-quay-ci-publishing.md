@@ -4,7 +4,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the APME preloaded RHDH image from the newest valid upstream APME plugin artifact and publish it as `quay.io/aapdemo/apme-eap`, with immutable provenance tags and an opt-in deployment path.
+**Goal:** Build the APME preloaded RHDH image from the newest valid upstream APME plugin artifact and publish it as `quay.io/ansible-automation-platform-dev-preview/automation-portal`, with immutable provenance tags and an opt-in deployment path.
 
 **Architecture:** A reusable artifact resolver will select an exact successful upstream GitHub Actions run, download its artifact ZIP, extract the actual plugin pack, verify its SHA256, and emit metadata. A GitHub Actions workflow will build architecture-specific images, publish them to Quay, and assemble a multi-architecture manifest; local builds will use the same resolver. The addon will accept a prebuilt image reference, while the existing workstation build/push flow remains the fallback.
 
@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- Publish only to `quay.io/aapdemo/apme-eap`; do not commit Quay, GitHub, or registry credentials.
+- Publish only to `quay.io/ansible-automation-platform-dev-preview/automation-portal`; do not commit Quay, GitHub, or registry credentials.
 - Resolve a concrete upstream run, artifact ID, commit SHA, and artifact digest; never build from an unverified moving download.
 - The image build must fail closed unless all six plugins referenced by the APME Helm values are present.
 - Keep the current checked-in OCI-pack/local-build deployment path working when no prebuilt image is configured.
@@ -137,11 +137,11 @@
 **Interfaces:**
 
 - Consumes: `--source-ref latest|<commit-sha>`, `--source-repo owner/repo`, `--tag <tag>`, `--push`, `QUAY_USERNAME`, `QUAY_TOKEN`, and optional `REGISTRY_REDHAT_USERNAME`/`REGISTRY_REDHAT_PASSWORD`.
-- Produces: a local image and, with `--push`, `quay.io/aapdemo/apme-eap:<tag>` plus its digest.
+- Produces: a local image and, with `--push`, `quay.io/ansible-automation-platform-dev-preview/automation-portal:<tag>` plus its digest.
 
 - [ ] **Step 1: Define image naming and metadata.**
 
-  Use `quay.io/aapdemo/apme-eap` as the fixed repository. Default the immutable tag to `apme-<upstream-source-sha>-<pack-sha256-prefix>`; accept an explicit tag only after validating it against `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`. Add OCI labels for the upstream repository, source SHA, artifact ID, pack SHA256, and build timestamp.
+  Use `quay.io/ansible-automation-platform-dev-preview/automation-portal` as the fixed repository. Default the immutable tag to `apme-<upstream-source-sha>-<pack-sha256-prefix>`; accept an explicit tag only after validating it against `[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}`. Add OCI labels for the upstream repository, source SHA, artifact ID, pack SHA256, and build timestamp.
 
 - [ ] **Step 2: Implement build/push flow.**
 
@@ -197,11 +197,11 @@
 
 - [ ] **Step 3: Add architecture build jobs.**
 
-  Use a matrix for `amd64` and `arm64`, with the existing base-image choices: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` for amd64 and `quay.io/rhdh-community/rhdh:1.9` for arm64. Build and push `quay.io/aapdemo/apme-eap:<immutable-tag>-amd64` and `...-arm64`, logging into Quay only through the configured token. Keep the upstream metadata in OCI labels.
+  Use a matrix for `amd64` and `arm64`, with the existing base-image choices: `registry.redhat.io/rhdh/rhdh-hub-rhel9:1.9` for amd64 and `quay.io/rhdh-community/rhdh:1.9` for arm64. Build and push `quay.io/ansible-automation-platform-dev-preview/automation-portal:<immutable-tag>-amd64` and `...-arm64`, logging into Quay only through the configured token. Keep the upstream metadata in OCI labels.
 
 - [ ] **Step 4: Assemble and publish the manifest.**
 
-  After both matrix jobs pass, create `quay.io/aapdemo/apme-eap:<immutable-tag>` from the two architecture tags, verify it with `skopeo inspect --raw`, and publish `latest` only when the event is a main push or `publish_latest=true` on a manual run. Add the image digest and upstream artifact metadata to `$GITHUB_STEP_SUMMARY`.
+  After both matrix jobs pass, create `quay.io/ansible-automation-platform-dev-preview/automation-portal:<immutable-tag>` from the two architecture tags, verify it with `skopeo inspect --raw`, and publish `latest` only when the event is a main push or `publish_latest=true` on a manual run. Add the image digest and upstream artifact metadata to `$GITHUB_STEP_SUMMARY`.
 
 - [ ] **Step 5: Add CI checks for the new files.**
 
@@ -266,7 +266,7 @@
   Add an example to `README.md` and `deploy.sh` generated variables:
 
   ```yaml
-  apme_preloaded_image_ref: quay.io/aapdemo/apme-eap:latest
+  apme_preloaded_image_ref: quay.io/ansible-automation-platform-dev-preview/automation-portal:latest
   # Use an immutable tag or digest for repeatable deployments.
   apme_preloaded_image_pull_secret: ""
   ```

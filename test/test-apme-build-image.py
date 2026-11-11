@@ -182,7 +182,7 @@ sys.exit(1)
         calls = self.calls()
         self.assertEqual([call[0] for call in calls], ["build", "image"])
         build = calls[0]
-        self.assertIn("quay.io/aapdemo/apme-eap:apme-" + SHA + "-" + self.pack_hash[7:19], build)
+        self.assertIn("quay.io/ansible-automation-platform-dev-preview/automation-portal:apme-" + SHA + "-" + self.pack_hash[7:19], build)
         for arg in ("PLUGIN_PACK_SHA256=" + self.pack_hash, "PLUGIN_PACK_FORMAT=npm",
                     "BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10",
                     "org.opencontainers.image.revision=" + SHA,
@@ -202,10 +202,10 @@ sys.exit(1)
         immutable = "apme-" + SHA + "-" + self.pack_hash[7:19] + "-amd64"
         push_refs = [call[-1] for call in calls if call[0] == "push"]
         self.assertEqual(push_refs, [
-            "docker://quay.io/aapdemo/apme-eap:" + immutable,
-            "docker://quay.io/aapdemo/apme-eap:release_1",
+            "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:" + immutable,
+            "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:release_1",
         ])
-        self.assertIn("quay.io/aapdemo/apme-eap@" + DIGEST, result.stdout)
+        self.assertIn("quay.io/ansible-automation-platform-dev-preview/automation-portal@" + DIGEST, result.stdout)
 
     def test_push_derives_host_architecture_and_never_publishes_manifest_tag(self):
         for host, arch in (("x86_64", "amd64"), ("aarch64", "arm64"), ("arm64", "arm64")):
@@ -214,7 +214,7 @@ sys.exit(1)
                 self.env["HOST_ARCH"] = host
                 self.run_build("--push")
                 push = next(c for c in self.calls() if c[0] == "push")
-                self.assertEqual(push[-1], "docker://quay.io/aapdemo/apme-eap:apme-"
+                self.assertEqual(push[-1], "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:apme-"
                                  + SHA + "-" + self.pack_hash[7:19] + "-" + arch)
 
     def test_push_rejects_unknown_host_architecture(self):
@@ -260,7 +260,7 @@ sys.exit(1)
                 result = self.run_build("--pack-dir", str(resolved), "--architecture", arch,
                                         "--push", "--reuse-existing")
                 self.assertIn("Reused immutable image:", result.stdout)
-                self.assertIn("Image reference: quay.io/aapdemo/apme-eap@sha256:", result.stdout)
+                self.assertIn("Image reference: quay.io/ansible-automation-platform-dev-preview/automation-portal@sha256:", result.stdout)
                 self.assertEqual(self.calls(), [])
                 self.assertFalse((self.work / "api.log").exists())
 
@@ -335,7 +335,7 @@ sys.exit(1)
                 self.assertEqual([c[0] for c in calls], ["build", "image", "login", "push"])
                 self.assertIn("--arch", calls[0])
                 self.assertEqual(calls[0][calls[0].index("--arch") + 1], arch)
-                self.assertEqual(calls[-1][-1], "docker://quay.io/aapdemo/apme-eap:apme-"
+                self.assertEqual(calls[-1][-1], "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:apme-"
                                  + SHA + "-" + self.pack_hash[7:19] + "-" + arch)
 
     def test_resolved_pack_rejects_tampering_before_build_or_login(self):

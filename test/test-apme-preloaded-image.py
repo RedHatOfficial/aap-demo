@@ -147,7 +147,7 @@ class DeploymentImageTests(unittest.TestCase):
 
     def test_tag_image_renders_all_six_local_plugins_and_never_builds(self):
         rc, output, values, commands = self.run_roles(
-            {"apme_preloaded_image_ref": "quay.io/aapdemo/apme-eap:release-1"},
+            {"apme_preloaded_image_ref": "quay.io/ansible-automation-platform-dev-preview/automation-portal:release-1"},
             ["apme_preloaded_image", "apme_helm_values"],
         )
         self.assertEqual(rc, 0, output)
@@ -158,7 +158,7 @@ class DeploymentImageTests(unittest.TestCase):
         plugins = values["redhat-developer-hub"]["global"]["dynamic"]["plugins"]
         self.assertEqual(sum(p["package"].startswith("./dynamic-plugins/dist/ansible-") for p in plugins), 6)
         self.assertFalse(any(p["package"].startswith("oci://") for p in plugins))
-        self.assertTrue(any(c[0] == "run" and "quay.io/aapdemo/apme-eap@" + DIGEST in c for c in commands))
+        self.assertTrue(any(c[0] == "run" and "quay.io/ansible-automation-platform-dev-preview/automation-portal@" + DIGEST in c for c in commands))
         self.assertFalse(any(c[0] == "build" for c in commands))
 
     def test_digest_preserved_without_remote_inspection_in_check_mode(self):
@@ -222,7 +222,7 @@ class DeploymentImageTests(unittest.TestCase):
 
     def test_failed_plugin_check_stops_before_helm_rendering(self):
         rc, output, values, _ = self.run_roles(
-            {"apme_preloaded_image_ref": "quay.io/aapdemo/apme-eap:v1", "apme_preloaded_image_verify": False},
+            {"apme_preloaded_image_ref": "quay.io/ansible-automation-platform-dev-preview/automation-portal:v1", "apme_preloaded_image_verify": False},
             ["apme_preloaded_image", "apme_helm_values"], run_exit=1,
         )
         self.assertNotEqual(rc, 0, output)
@@ -235,7 +235,7 @@ class DeploymentImageTests(unittest.TestCase):
             "apme_preloaded_image", "apme_image_build"
         )]
         rc, output, _, commands = self.run_roles(
-            {"apme_preloaded_image_ref": "quay.io/aapdemo/apme-eap:v1"}, roles, check=True,
+            {"apme_preloaded_image_ref": "quay.io/ansible-automation-platform-dev-preview/automation-portal:v1"}, roles, check=True,
         )
         self.assertEqual(rc, 0, output)
         self.assertEqual(commands, [])
@@ -347,7 +347,7 @@ class DeploymentImageTests(unittest.TestCase):
 
     def test_named_pull_secret_requires_explicit_credentials(self):
         rc, output, _, _ = self.run_roles(
-            {"apme_preloaded_image_ref": "quay.io/aapdemo/apme-eap:v1",
+            {"apme_preloaded_image_ref": "quay.io/ansible-automation-platform-dev-preview/automation-portal:v1",
              "apme_preloaded_image_pull_secret": "quay-pull", "apme_preloaded_image_auth_file": ""},
             ["apme_preloaded_image"], check=True,
         )
@@ -383,7 +383,7 @@ class DeploymentImageTests(unittest.TestCase):
             )
 
         rc, output, values, commands = self.run_roles(
-            {"apme_preloaded_image_ref": "quay.io/aapdemo/apme-eap:v1",
+            {"apme_preloaded_image_ref": "quay.io/ansible-automation-platform-dev-preview/automation-portal:v1",
              "apme_preloaded_image_pull_secret": "quay-pull",
              "apme_preloaded_image_auth_file": "{{ apme_portal_helm_values_path | dirname }}/auth.json"},
             ["apme_preloaded_image", "apme_helm_values"], prepare=prepare,

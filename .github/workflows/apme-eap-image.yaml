@@ -44,7 +44,7 @@ defaults:
     shell: bash
 
 env:
-  IMAGE: quay.io/aapdemo/apme-eap
+  IMAGE: quay.io/ansible-automation-platform-dev-preview/automation-portal
 
 jobs:
   resolve:

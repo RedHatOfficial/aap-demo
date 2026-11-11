@@ -100,7 +100,7 @@ class ManifestPublicationTests(unittest.TestCase):
                    "RUNNER_TEMP": str(work), "REMOTE_STATE": state, "RAW_MANIFEST": manifest,
                    "ARCH_MANIFESTS": json.dumps(image_manifests),
                    "ARCH_STATES": json.dumps(arch_states or {}),
-                   "DIGEST": digest, "IMAGE": "quay.io/aapdemo/apme-eap",
+                   "DIGEST": digest, "IMAGE": "quay.io/ansible-automation-platform-dev-preview/automation-portal",
                    "IMMUTABLE_TAG": immutable_tag or "apme-" + "a" * 40 + "-" + "b" * 12,
                    "FAIL_COPY": "true" if fail_copy else "false",
                    "QUAY_USERNAME": "robot", "QUAY_TOKEN": "workflow-test-token",
@@ -141,7 +141,7 @@ class ManifestPublicationTests(unittest.TestCase):
         copies = [c for c in calls if c[:2] == ["skopeo", "copy"]]
         self.assertEqual(len(copies), 1)
         digest = copies[0][-2].split("@", 1)[1]
-        self.assertIn("Digest: `quay.io/aapdemo/apme-eap@" + digest + "`", self.summary)
+        self.assertIn("Digest: `quay.io/ansible-automation-platform-dev-preview/automation-portal@" + digest + "`", self.summary)
 
     def test_unknown_registry_status_never_publishes_or_promotes(self):
         for state in ("network", "denied", "notfound"):
@@ -163,7 +163,7 @@ class ManifestPublicationTests(unittest.TestCase):
         self.assertEqual(sum(c[:3] == ["podman", "manifest", "push"] for c in calls), 1)
         copies = [c for c in calls if c[:2] == ["skopeo", "copy"]]
         self.assertEqual(len(copies), 1)
-        self.assertEqual(copies[0][-1], "docker://quay.io/aapdemo/apme-eap:latest")
+        self.assertEqual(copies[0][-1], "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:latest")
 
     def test_incomplete_or_extra_existing_platforms_never_publish_or_promote(self):
         for arches in (("amd64",), ("amd64", "amd64"), ("amd64", "arm64", "ppc64le")):

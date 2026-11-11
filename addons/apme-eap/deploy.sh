@@ -931,7 +931,7 @@ apme_source_artifact_name: "${apme_source_artifact_name_value}"
 apme_pack_format: "${apme_pack_format_value}"
 
 # Optional published portal image. Empty retains the local plugin/build fallback.
-# Example: apme_preloaded_image_ref: quay.io/aapdemo/apme-eap:latest
+# Example: apme_preloaded_image_ref: quay.io/ansible-automation-platform-dev-preview/automation-portal:latest
 # Use an immutable tag or digest for repeatable deployments.
 apme_preloaded_image_ref: ${preloaded_ref}
 apme_preloaded_image_pull_secret: ${preloaded_secret}

@@ -482,7 +482,7 @@ See [TEST_PLAN.md](../../addons/apme-eap/TEST_PLAN.md) for comprehensive test ca
 ### Scope and Execution Boundary
 
 The [APME image workflow](../../.github/workflows/apme-eap-image.yaml) builds a portal
-image containing all six APME plugins and publishes only to `quay.io/aapdemo/apme-eap`.
+image containing all six APME plugins and publishes only to `quay.io/ansible-automation-platform-dev-preview/automation-portal`.
 Image production runs in GitHub Actions; deployment remains the local wrapper/playbook
 flow. Choosing a prebuilt image removes the local plugin push/image build from that
 deployment, without requiring AAP-native execution or changing this ADR's rejected status.
@@ -547,7 +547,7 @@ gate governs CI, not explicit aliases from the single-architecture local build w
 ### Deployment, Private Pulls, and Fallback
 
 An empty `apme_preloaded_image_ref` remains the default. A fully qualified immutable tag
-or `quay.io/aapdemo/apme-eap@sha256:...` opts into prebuilt delivery. Skopeo inspects and
+or `quay.io/ansible-automation-platform-dev-preview/automation-portal@sha256:...` opts into prebuilt delivery. Skopeo inspects and
 pins the digest, and Podman verifies all six plugin identities in an isolated read-only
 container before Helm renders local `./dynamic-plugins/dist/...` paths. The cluster selects
 the architecture child from the manifest; the deployment host must support that image
