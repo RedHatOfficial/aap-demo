@@ -1,6 +1,6 @@
 # ADR-041: OpenShift 5 on CRC
 
-**Status**: Proposed
+**Status**: Accepted
 
 **Date**: 2026-11-11
 
@@ -47,10 +47,11 @@ Constraints:
 
 ### 1. One setting: `--ocp-version`
 
-Add `crc.ocp_version`, with `--ocp-version` on `create` and `deploy` and `CRC_OCP_VERSION` in the
-environment. It comes from the schema like the other `crc.*` settings. The name keeps `ocp` because
-aap-demo already has several versions (CRC, AAP). The preset stays `microshift`: this picks which
-OpenShift release the MicroShift bundle comes from, not full OpenShift.
+Add `crc.ocp_version`, with `--ocp-version` on `create` and `CRC_OCP_VERSION` in the environment.
+`deploy` reads the same setting when it checks or creates the cluster. It comes from the schema
+like the other `crc.*` settings. The name keeps `ocp` because aap-demo already has several versions
+(CRC, AAP). The preset stays `microshift`: this picks which OpenShift release the MicroShift bundle
+comes from, not full OpenShift.
 
 Unset, it resolves to the newest supported stable version: the highest `stable` among profiles
 marked `supported`. Today that is 4.22.13. When the 5 profile is marked `supported` after live runs,
