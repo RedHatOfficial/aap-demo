@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import io
 import re
+import urllib.error
 from types import SimpleNamespace
 
 import pytest
 
+from aap_demo.cli.main import build_parser
 from aap_demo.core import schema
 from aap_demo.core.errors import AapDemoError
+from aap_demo.infra import bundle_mirror, ocp_list
 from aap_demo.infra import crc as infra_crc
 from aap_demo.infra import ocp_version as ocp
 
@@ -127,3 +131,105 @@ def test_schema_declares_the_flag_and_env() -> None:
     prop = schema.section("crc")["properties"]["ocp_version"]
     assert prop["x-cli"] == {"flag": "--ocp-version"}
     assert prop["x-env"] == "CRC_OCP_VERSION"
+
+
+# --- the mirror listing and ocp-version-list -------------------------------
+
+
+GATEWAY = "https://developers.redhat.com/content-gateway/file/pub/cgw/crc/bundles/microshift"
+
+
+def _listing(*hrefs: str) -> bytes:
+    links = "".join(f'<a href="{h}">x</a><a href="#file">y</a>' for h in hrefs)
+    return f"<html><body>{links}</body></html>".encode()
+
+
+def _mirror(pages: dict):
+    def opener(url: str, timeout: int):
+        return io.BytesIO(pages[url])
+
+    return opener
+
+
+def _pages() -> dict:
+    top = f"{bundle_mirror.BASE_URL}/"
+    pages = {
+        top: _listing(
+            *(
+                f"https://mirror.openshift.com/pub/cgw/crc/bundles/microshift/{v}/"
+                for v in ["4.12.9", "4.21.7", "4.22.13", "5.0.0"]
+            )
+        )
+    }
+    for version, arches in {"4.21.7": ["arm64"], "4.22.13": ["arm64"], "5.0.0": ["amd64"]}.items():
+        pages[bundle_mirror.version_url(version)] = _listing(
+            f"{GATEWAY}/{version}/sha256sum.txt.sig",
+            *(f"{GATEWAY}/{version}/crc_microshift_vfkit_{version}_{a}.crcbundle" for a in arches),
+        )
+    return pages
+
+
+def test_bundle_names_per_host() -> None:
+    assert bundle_mirror.bundle_name("5.0.0", system="Darwin", machine="arm64") == (
+        "crc_microshift_vfkit_5.0.0_arm64.crcbundle"
+    )
+    assert bundle_mirror.bundle_name("5.0.0", system="Linux", machine="x86_64") == (
+        "crc_microshift_libvirt_5.0.0_amd64.crcbundle"
+    )
+    with pytest.raises(Exception, match="No MicroShift bundle"):
+        bundle_mirror.bundle_name("5.0.0", system="Windows", machine="arm64")
+
+
+def test_host_versions_reads_only_versions_at_or_above_the_minimum() -> None:
+    opener = _mirror(_pages())
+    found = bundle_mirror.host_versions(
+        minimum="4.21", system="Darwin", machine="arm64", opener=opener
+    )
+    # 4.12.9 is never fetched (it has no page in the fake), 5.0.0 has no arm64 bundle.
+    assert found == ["4.21.7", "4.22.13"]
+
+
+def test_rows_mark_stable_default_and_source() -> None:
+    table = ocp_list.rows(
+        crc_release="2.64.0", host_versions=lambda m: ["4.21.7", "4.22.13", "5.0.0"]
+    )
+    by_version = {row["version"]: row for row in table}
+    assert [row["version"] for row in table] == ["5.0.0", "4.22.13", "4.21.7"]
+    assert by_version["4.22.13"]["status"] == "stable, default"
+    assert by_version["4.22.13"]["source"] == "CRC 2.64.0 (built in)"
+    assert by_version["4.22.13"]["default"] is True
+    assert by_version["5.0.0"]["status"] == "stable, not default yet"
+    assert by_version["5.0.0"]["source"] == "download"
+    assert by_version["4.21.7"]["status"] == "untested"
+
+
+def test_rows_say_when_this_host_has_no_bundle() -> None:
+    table = ocp_list.rows(crc_release="2.64.0", host_versions=lambda m: ["4.22.13"])
+    five = next(row for row in table if row["version"] == "5.0.0")
+    assert five["source"] == "no bundle for this host"
+
+
+def test_rows_work_offline_with_the_pinned_versions() -> None:
+    def offline(minimum: str):
+        raise urllib.error.URLError("no network")
+
+    table = ocp_list.rows(crc_release="2.64.0", host_versions=offline)
+    assert [row["version"] for row in table] == ["5.0.0", "4.22.13"]
+    assert all(row["checked"] is False for row in table)
+    assert "(not checked)" in ocp_list.render_text(table)
+
+
+def test_all_lists_versions_below_the_minimum() -> None:
+    seen: list = []
+
+    def listing(minimum: str):
+        seen.append(minimum)
+        return ["4.12.9", "4.22.13"]
+
+    table = ocp_list.rows(crc_release="2.64.0", show_all=True, host_versions=listing)
+    assert seen == ["0.0.0"]
+    assert next(r for r in table if r["version"] == "4.12.9")["status"] == "not supported"
+
+
+def test_ocp_version_list_is_in_help() -> None:
+    assert "ocp-version-list" in build_parser().format_help()
