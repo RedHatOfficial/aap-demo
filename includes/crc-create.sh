@@ -13,6 +13,8 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
+# shellcheck source=includes/credential-vault.sh
+source "${SCRIPT_DIR}/includes/credential-vault.sh"
 # shellcheck source=includes/kubeconfig-guard.sh
 source "${SCRIPT_DIR}/includes/kubeconfig-guard.sh"
 
@@ -27,10 +29,16 @@ source "${SCRIPT_DIR}/includes/infra-api.sh"
 source "${SCRIPT_DIR}/includes/ingress-ca-trust.sh"
 # shellcheck source=includes/persistent-crio-store.sh
 source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
+# shellcheck source=includes/storage-capacity.sh
+source "${SCRIPT_DIR}/includes/storage-capacity.sh"
 # shellcheck source=includes/json-utils.sh
 source "${SCRIPT_DIR}/includes/json-utils.sh"
 # shellcheck source=includes/crc-storage.sh
 source "${SCRIPT_DIR}/includes/crc-storage.sh"
+# preset.sh provides aap_demo_microshift_kubeconfig_vm_path and route-domain
+# helpers used throughout cluster creation.
+# shellcheck source=includes/preset.sh
+source "${SCRIPT_DIR}/includes/preset.sh"
 
 # Colors
 _RED='\033[0;31m'
@@ -39,9 +47,27 @@ _YELLOW='\033[0;33m'
 _BOLD='\033[1m'
 _NC='\033[0m'
 
+_crc_start_with_pull_secret() (
+  local runtime_dir pull_secret_file
+  runtime_dir="${XDG_RUNTIME_DIR:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/run}"
+  mkdir -p "$runtime_dir"
+  if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+    chmod 700 "$runtime_dir"
+  fi
+
+  umask 077
+  pull_secret_file=$(mktemp "$runtime_dir/aap-demo-pull-secret.XXXXXX")
+  trap 'rm -f -- "$pull_secret_file"' EXIT HUP INT TERM
+  printf '%s' "$PULL_SECRET_VALUE" >"$pull_secret_file"
+  chmod 600 "$pull_secret_file"
+
+  crc start --pull-secret-file "$pull_secret_file" 2>&1 |
+    tee "${1:-/tmp/crc-start.log}"
+)
+
 _save_config_key() {
   local key="$1" value="$2"
-  local config="${AAP_DEMO_CONFIG:-${HOME}/.aap-demo/config}"
+  local config="${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}"
   mkdir -p "$(dirname "$config")"
   if [ -f "$config" ] && grep -q "^${key}=" "$config"; then
     sed -i.bak "s/^${key}=.*/${key}=${value}/" "$config" && rm -f "${config}.bak"
@@ -111,8 +137,8 @@ _ensure_crc_stable_after_create() {
   fi
 
   echo "WARNING: CRC did not remain healthy after setup; restarting CRC once..." >&2
-  if [ -n "${PULL_SECRET_PATH:-}" ] && [ -f "$PULL_SECRET_PATH" ]; then
-    crc start -p "$PULL_SECRET_PATH" >/tmp/crc-recovery.log 2>&1 || return 1
+  if [ -n "${PULL_SECRET_VALUE:-}" ]; then
+    _crc_start_with_pull_secret /tmp/crc-recovery.log >/dev/null || return 1
   else
     crc start >/tmp/crc-recovery.log 2>&1 || return 1
   fi
@@ -159,9 +185,28 @@ NIPIO_EOF
     )
   fi
 
+  # When the Satellite lab VM exists, map its FQDN to its real IP so in-cluster
+  # clients (AAP controller pods running the Satellite demo) can reach it. The
+  # VM is on the same libvirt 'default' network as the CRC VM.
+  satellite_hosts=""
+  satellite_fqdn="${SATELLITE_LAB_HOST:-satellite.demo.lab}"
+  satellite_ip="${SATELLITE_LAB_IP:-192.168.122.20}"
+  if command -v virsh >/dev/null 2>&1 \
+    && virsh -c qemu:///system domstate satellite 2>/dev/null | grep -q running; then
+    satellite_hosts=$(
+      cat <<HOSTS_EOF
+    hosts {
+        ${satellite_ip} ${satellite_fqdn}
+        fallthrough
+    }
+HOSTS_EOF
+    )
+  fi
+
   current_corefile=$(kubectl get configmap dns-default -n openshift-dns -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
   if echo "$current_corefile" | grep -q "router-internal-default" \
-    && { [ "$route_domain" = "$nipio_domain" ] || echo "$current_corefile" | grep -q "nip.io"; }; then
+    && { [ "$route_domain" = "$nipio_domain" ] || echo "$current_corefile" | grep -q "nip.io"; } \
+    && { [ -z "$satellite_hosts" ] || echo "$current_corefile" | grep -q "$satellite_fqdn"; }; then
     echo "  ✓ CoreDNS already configured for ${route_domain}"
     return 0
   fi
@@ -184,6 +229,7 @@ NIPIO_EOF
         answer auto
     }
 ${nipio_rewrite}
+${satellite_hosts}
     kubernetes cluster.local in-addr.arpa ip6.arpa {
         pods insecure
         fallthrough in-addr.arpa ip6.arpa
@@ -226,6 +272,72 @@ COREFILE_EOF
 
 _is_mingw() {
   case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) return 0 ;; *) return 1 ;; esac
+}
+
+_crc_daemon_api_ready() {
+  local socket
+  for socket in "$HOME/.crc/sockets/crc-http.sock" "$HOME/.crc/crc-http.sock"; do
+    [ -S "$socket" ] || continue
+    curl --silent --fail --max-time 2 --unix-socket "$socket" \
+      http://localhost/api/version >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
+
+_crc_stop_unmanaged_daemons() {
+  local main_pid pid proc proc_root arg0 arg1 attempt
+  proc_root="${AAP_DEMO_PROC_ROOT:-/proc}"
+  main_pid=$(systemctl --user show crc-daemon.service \
+    --property MainPID --value 2>/dev/null || printf '0')
+
+  for proc in "$proc_root"/[0-9]*/cmdline; do
+    [ -f "$proc" ] || continue
+    pid="${proc#"$proc_root"/}"
+    pid="${pid%/cmdline}"
+    [ "$pid" != "$main_pid" ] || continue
+    IFS= read -r -d '' arg0 <"$proc" 2>/dev/null || continue
+    IFS= read -r -d '' arg1 < <(tail -c "+$((${#arg0} + 2))" "$proc" 2>/dev/null) || true
+    [ "${arg0##*/}" = crc ] && [ "$arg1" = daemon ] || continue
+
+    echo "  Stopping stale unmanaged CRC daemon (PID ${pid})..."
+    kill "$pid" 2>/dev/null || continue
+    for attempt in 1 2 3 4 5; do
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      kill -KILL "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+_crc_daemon_ensure() {
+  local attempt
+
+  if _is_mingw || [ "$(uname)" = "Darwin" ]; then
+    return 0
+  fi
+  if _crc_daemon_api_ready; then
+    return 0
+  fi
+
+  if systemctl --user cat crc-http.socket crc-vsock.socket \
+    >/dev/null 2>&1; then
+    _crc_stop_unmanaged_daemons
+    systemctl --user daemon-reload || return 1
+    systemctl --user reset-failed \
+      crc-daemon.service crc-http.socket crc-vsock.socket 2>/dev/null || true
+    systemctl --user restart crc-http.socket crc-vsock.socket || return 1
+  else
+    echo "Starting CRC daemon..."
+    crc daemon >>"${AAP_DEMO_CRC_DAEMON_LOG:-/tmp/crc-daemon.log}" 2>&1 &
+  fi
+
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    _crc_daemon_api_ready && return 0
+    sleep 1
+  done
+  return 1
 }
 
 _crc_windows_daemon_task_exists() {
@@ -288,11 +400,12 @@ if ! command -v crc &>/dev/null; then
 fi
 
 # Ensure CRC daemon is running (Linux only — macOS/Windows manage the daemon)
-if ! _is_mingw && [ "$(uname)" != "Darwin" ] && ! [ -S ~/.crc/crc-http.sock ]; then
-  echo "Starting CRC daemon..."
-  crc daemon &>/dev/null &
-  disown
-  sleep 3
+if ! _is_mingw && [ "$(uname)" != "Darwin" ] \
+  && systemctl --user cat crc-http.socket crc-vsock.socket >/dev/null 2>&1; then
+  _crc_daemon_ensure || {
+    echo "ERROR: CRC daemon failed to become ready" >&2
+    exit 1
+  }
 fi
 
 # Check if already running
@@ -307,27 +420,122 @@ if [ "$CRC_STATUS" = "Running" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Preset: always MicroShift
-# ---------------------------------------------------------------------------
-crc config set preset "microshift" 2>/dev/null || true
-CURRENT_PRESET="microshift"
-_save_config_key "CRC_PRESET" "microshift"
-
-printf "${_GREEN}▸${_NC} CRC preset: ${CURRENT_PRESET}\n"
-
-# ---------------------------------------------------------------------------
-# Detect host resources
+# Detect host resources (needed before the tier prompt)
 # ---------------------------------------------------------------------------
 _detect_host_resources
 HOST_CPUS="${HOST_CPUS:-0}"
 HOST_MEMORY_MB="${HOST_MEMORY_MB:-0}"
+HOST_DISK_GB=0
+if [ "$(uname -s)" = "Linux" ] || [ "$(uname -s)" = "Darwin" ]; then
+  HOST_DISK_GB=$(df -k / 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}' || echo "0")
+fi
+
+# ---------------------------------------------------------------------------
+# Hardware-aware tier selection: SNO vs MicroShift
+# ---------------------------------------------------------------------------
+# Minimums mirror scripts/aap-demo-tier-select.sh.
+_SNO_MIN_CPUS=8
+_SNO_MIN_RAM_GB=16
+_SNO_REC_RAM_GB=32
+_SNO_MIN_DISK_GB=100
+
+_host_meets_sno() {
+  [ "$HOST_CPUS" -ge "$_SNO_MIN_CPUS" ] \
+    && [ "$((HOST_MEMORY_MB / 1024))" -ge "$_SNO_MIN_RAM_GB" ] \
+    && [ "$HOST_DISK_GB" -ge "$_SNO_MIN_DISK_GB" ]
+}
+
+# Prompt the user to choose a deployment tier based on what the hardware
+# supports, with a y/n confirmation. Only prompts on an interactive TTY when
+# the preset was not explicitly pinned (CRC_PRESET env or saved config).
+_prompt_tier_choice() {
+  # Respect an explicit caller choice and non-interactive runs.
+  [ -n "${CRC_PRESET:-}" ] && return 0
+  [ "${QUIET:-false}" = "true" ] && return 0
+  [ "${AAP_DEMO_TIER_PROMPT:-true}" = "false" ] && return 0
+  aap_demo_resource_prompt_enabled || return 0
+
+  local ram_gb=$((HOST_MEMORY_MB / 1024)) choice confirm
+  echo ""
+  printf "${_BOLD}Deployment tier selection:${_NC}\n"
+  printf "  Detected hardware: ${HOST_CPUS} vCPUs, ${ram_gb}GB RAM, ${HOST_DISK_GB}GB disk available\n"
+  echo ""
+  if _host_meets_sno; then
+    printf "  ${_GREEN}This hardware will support SNO${_NC} (Single Node OpenShift).\n"
+    echo ""
+    echo "    1) Single Node OpenShift — full control plane + worker, web console"
+    printf "       (requires >= %s vCPUs, >= %sGB RAM [%sGB recommended], >= %sGB disk)\n" \
+      "$_SNO_MIN_CPUS" "$_SNO_MIN_RAM_GB" "$_SNO_REC_RAM_GB" "$_SNO_MIN_DISK_GB"
+    echo "    2) MicroShift — minimal OpenShift-compatible edge runtime, CLI-only"
+    echo ""
+    printf "  Use Single Node OpenShift? [y/n] (default: y): "
+    read -r confirm </dev/tty
+    case "${confirm,,}" in
+      n | no) choice="microshift" ;;
+      *) choice="openshift" ;;
+    esac
+  else
+    printf "  ${_YELLOW}The hardware will support MicroShift${_NC} (SNO requirements not met).\n"
+    echo ""
+    echo "    SNO requires >= ${_SNO_MIN_CPUS} vCPUs, >= ${_SNO_MIN_RAM_GB}GB RAM, >= ${_SNO_MIN_DISK_GB}GB disk."
+    echo "    MicroShift is the lightweight, CLI-only OpenShift-compatible runtime."
+    echo ""
+    printf "  Continue with MicroShift? [y/n] (default: y): "
+    read -r confirm </dev/tty
+    case "${confirm,,}" in
+      n | no)
+        printf "${_RED}▸${_NC} Aborted. Free up resources or set CRC_PRESET and re-run.\n"
+        exit 1
+        ;;
+      *) choice="microshift" ;;
+    esac
+  fi
+
+  CRC_PRESET="$choice"
+  export CRC_PRESET
+  printf "${_GREEN}▸${_NC} Selected tier: ${choice}\n"
+}
+
+# ---------------------------------------------------------------------------
+# Preset: MicroShift (default) or full single-node OpenShift (CRC_PRESET=openshift,
+# includes the OpenShift web console).
+# ---------------------------------------------------------------------------
+_prompt_tier_choice
+CURRENT_PRESET="$(_detect_crc_preset 2>/dev/null || echo microshift)"
+case "$CURRENT_PRESET" in
+  microshift | openshift) ;;
+  *)
+    printf "${_RED}▸${_NC} Unsupported CRC_PRESET '${CURRENT_PRESET}' (use microshift or openshift)\n"
+    exit 1
+    ;;
+esac
+
+# Fail fast when SNO was requested (via --sno or CRC_PRESET=openshift) but the
+# hardware does not meet the minimums — a full control plane OOM-starved at
+# lower resources is a worse experience than a clear up-front error.
+if [ "$CURRENT_PRESET" = "openshift" ] && ! _host_meets_sno; then
+  printf "${_RED}▸${_NC} Single Node OpenShift was requested but this host does not meet the minimums:\n"
+  [ "$HOST_CPUS" -lt "$_SNO_MIN_CPUS" ] \
+    && printf "    - vCPUs: %s detected, %s required\n" "$HOST_CPUS" "$_SNO_MIN_CPUS"
+  [ "$((HOST_MEMORY_MB / 1024))" -lt "$_SNO_MIN_RAM_GB" ] \
+    && printf "    - RAM: %sGB detected, %sGB required (%sGB recommended)\n" \
+      "$((HOST_MEMORY_MB / 1024))" "$_SNO_MIN_RAM_GB" "$_SNO_REC_RAM_GB"
+  [ "$HOST_DISK_GB" -lt "$_SNO_MIN_DISK_GB" ] \
+    && printf "    - Disk: %sGB available, %sGB required\n" "$HOST_DISK_GB" "$_SNO_MIN_DISK_GB"
+  printf "  Use MicroShift instead: aap-demo create --microshift\n"
+  exit 1
+fi
+crc config set preset "$CURRENT_PRESET" 2>/dev/null || true
+_save_config_key "CRC_PRESET" "$CURRENT_PRESET"
+
+printf "${_GREEN}▸${_NC} CRC preset: ${CURRENT_PRESET}\n"
 
 if [ "$HOST_CPUS" -gt 0 ] && [ "$HOST_MEMORY_MB" -gt 0 ]; then
   printf "${_GREEN}▸${_NC} Host resources: ${HOST_CPUS} CPUs, $((HOST_MEMORY_MB / 1024))GB RAM\n"
 
   if [ "$HOST_CPUS" -lt 4 ] || [ "$HOST_MEMORY_MB" -lt 10240 ]; then
     echo ""
-    printf "  ${_RED}Warning:${_NC} MicroShift requires at least 4 CPUs and 10GB RAM.\n"
+    printf "  ${_RED}Warning:${_NC} ${CURRENT_PRESET} requires at least 4 CPUs and 10GB RAM.\n"
     printf "  Your host has ${HOST_CPUS} CPUs and $((HOST_MEMORY_MB / 1024))GB RAM.\n"
     echo ""
   fi
@@ -341,7 +549,7 @@ _DEFAULT_CPUS=8
 _DEFAULT_MEMORY_GB=16
 
 # Use saved values as defaults when available
-_crc_config_file="${AAP_DEMO_CONFIG:-${HOME}/.aap-demo/config}"
+_crc_config_file="${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}"
 if [ -f "$_crc_config_file" ]; then
   _saved_cpus=$(grep '^CRC_CPUS=' "$_crc_config_file" 2>/dev/null | cut -d= -f2 || true)
   _saved_memory=$(grep '^CRC_MEMORY=' "$_crc_config_file" 2>/dev/null | cut -d= -f2 || true)
@@ -398,10 +606,17 @@ if _crc_should_prompt_resources; then
     exit 1
   fi
   aap_demo_note_crc_storage_limits "$CRC_DISK"
+  _recommended_disk=$(aap_demo_capacity_recommended_disk "${ADDONS:-}" 2>/dev/null || printf '%s' "$CRC_DISK")
+  if [[ "$_recommended_disk" =~ ^[0-9]+$ ]] && [ "$CRC_DISK" -lt "$_recommended_disk" ]; then
+    printf "  ${_YELLOW}Warning:${_NC} ${CRC_DISK}GB is below the ${_recommended_disk}GB planning recommendation"
+    printf " for the selected addons.\n"
+  fi
   _crc_persist_storage=true
 
   _save_config_key "CRC_CPUS" "$CRC_CPUS"
   _save_config_key "CRC_MEMORY" "$CRC_MEMORY"
+  _save_config_key "CRC_DISK" "$CRC_DISK"
+  _save_config_key "CRC_PV_SIZE" "$CRC_PV_SIZE"
 else
   CRC_CPUS="${CRC_CPUS:-${VM_CPUS:-${_DEFAULT_CPUS}}}"
   CRC_MEMORY="${CRC_MEMORY:-${VM_MEMORY:-$((_DEFAULT_MEMORY_GB * 1024))}}"
@@ -441,41 +656,53 @@ printf "${_GREEN}▸${_NC} Resources: ${CRC_CPUS} CPUs, $((CRC_MEMORY / 1024))GB
 # Setup CRC (if needed)
 # ---------------------------------------------------------------------------
 if _crc_needs_setup; then
+  crc_setup_rc=0
   printf "${_GREEN}▸${_NC} Running CRC setup...\n"
-  crc setup --show-progressbars 2>&1 | { grep -E "^level=info|^  " | sed 's/level=info msg="/  /' | sed 's/"$//'; } || true
+  if crc setup --show-progressbars 2>&1 |
+    { grep -E "^level=info|^  " | sed 's/level=info msg="/  /' | sed 's/"$//' || true; }; then
+    crc_setup_rc=${PIPESTATUS[0]}
+  else
+    crc_setup_rc=${PIPESTATUS[0]}
+  fi
+  if [ "$crc_setup_rc" -ne 0 ]; then
+    echo "ERROR: CRC setup failed" >&2
+    exit 1
+  fi
+fi
+
+if ! _crc_daemon_ensure; then
+  echo "ERROR: CRC daemon failed to become ready after setup" >&2
+  echo "  Check: systemctl --user status crc-daemon.service crc-http.socket crc-vsock.socket" >&2
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
 # Find pull secret
 # ---------------------------------------------------------------------------
-PULL_SECRET_PATH="${PULL_SECRET_PATH:-}"
-if [ -z "$PULL_SECRET_PATH" ]; then
-  for ps in "$HOME/.aap-demo/pull-secret.json" "$HOME/.aap-demo/pull-secret.txt"; do
-    if [ -f "$ps" ]; then
-      PULL_SECRET_PATH="$ps"
-      break
-    fi
-  done
+PULL_SECRET_VALUE=$(aap_demo_pull_secret_get 2>/dev/null || true)
+if [ -z "$PULL_SECRET_VALUE" ] \
+  && aap_demo_vault_get "aap_demo.redhat.offline_token" >/dev/null 2>&1; then
+  printf "${_BLUE}▸${_NC} Retrieving OpenShift pull secret from Red Hat...\n"
+  PULL_SECRET_VALUE=$(aap_demo_pull_secret_fetch_redhat) || exit 1
+  printf "  ${_GREEN}✓${_NC} Pull secret saved to encrypted Vault\n"
 fi
-
-if [ -z "$PULL_SECRET_PATH" ] || [ ! -f "$PULL_SECRET_PATH" ]; then
+if [ -z "$PULL_SECRET_VALUE" ]; then
   printf "${_RED}▸${_NC} Pull secret not found\n"
   echo ""
   echo "  Download from: https://console.redhat.com/openshift/install/pull-secret"
-  echo "  Save to: ~/.aap-demo/pull-secret.txt"
+  echo "  Import with: PULL_SECRET_PATH=/path/to/pull-secret.txt aap-demo create"
   exit 1
 fi
 
-printf "${_GREEN}▸${_NC} Pull secret: ${PULL_SECRET_PATH}\n"
+printf "${_GREEN}▸${_NC} Pull secret: encrypted Vault\n"
 
 # ---------------------------------------------------------------------------
 # Start CRC
 # ---------------------------------------------------------------------------
 printf "${_GREEN}▸${_NC} Starting CRC (this takes 3-5 minutes)...\n"
-if ! crc start -p "$PULL_SECRET_PATH" 2>&1 | tee /tmp/crc-start.log; then
-  # Retry: pipe pull secret via --pull-secret-file - (non-TTY workaround)
-  echo "  Retrying with stdin pull secret..."
-  if ! cat "$PULL_SECRET_PATH" | crc start --pull-secret-file - 2>&1 | tee /tmp/crc-start.log; then
+if ! _crc_start_with_pull_secret /tmp/crc-start.log; then
+  echo "  Retrying CRC start..."
+  if ! _crc_start_with_pull_secret /tmp/crc-start.log; then
     echo "ERROR: crc start failed — see /tmp/crc-start.log"
     exit 1
   fi
@@ -505,6 +732,7 @@ else
   exit 1
 fi
 
+if [ "$CURRENT_PRESET" = "microshift" ]; then
 # ---------------------------------------------------------------------------
 # Configure nip.io baseDomain
 # ---------------------------------------------------------------------------
@@ -545,13 +773,20 @@ fi
 # CRC starts MicroShift with crc.testing before we can write the dropin,
 # so we must wipe the data generated with the wrong domain.
 printf "${_GREEN}▸${_NC} Restarting MicroShift with nip.io domain (clean start, ~2 min)...\n"
+# Fall back to the literal path when preset.sh is stale and does not define the
+# helper (mixed-version checkout); the path is stable across MicroShift versions.
+if command -v aap_demo_microshift_kubeconfig_vm_path >/dev/null 2>&1; then
+  _ms_kubeconfig="$(aap_demo_microshift_kubeconfig_vm_path)"
+else
+  _ms_kubeconfig="/var/lib/microshift/resources/kubeadmin/kubeconfig"
+fi
 ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo systemctl stop microshift 2>/dev/null; sudo rm -rf /var/lib/microshift; sudo systemctl start microshift' 2>/dev/null || true
 
 # Wait for API
 printf "${_GREEN}▸${_NC} Waiting for MicroShift API..."
 _api_ready=false
 for i in $(seq 1 60); do
-  if ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo kubectl --kubeconfig /var/lib/microshift/resources/kubeadmin/kubeconfig cluster-info' &>/dev/null; then
+  if ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "sudo kubectl --kubeconfig ${_ms_kubeconfig} cluster-info" &>/dev/null; then
     echo " ready"
     _api_ready=true
     break
@@ -567,9 +802,32 @@ fi
 
 # Refresh kubeconfig
 mkdir -p "$AAP_DEMO_DIR"
-ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >"$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
+ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 "sudo cat ${_ms_kubeconfig}" >"$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
 chmod 600 "$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
 echo "  ✓ nip.io baseDomain configured (data wiped)"
+else
+  # Full OpenShift keeps the CRC apps-crc.testing domain and the kubeconfig CRC generates.
+  mkdir -p "$AAP_DEMO_DIR"
+  _crc_oc_kubeconfig="$HOME/.crc/machines/crc/kubeconfig"
+  _api_ready=false
+  printf "${_GREEN}▸${_NC} Waiting for OpenShift API..."
+  for i in $(seq 1 60); do
+    if [ -s "$_crc_oc_kubeconfig" ] && KUBECONFIG="$_crc_oc_kubeconfig" kubectl cluster-info --request-timeout=5s &>/dev/null; then
+      echo " ready"
+      _api_ready=true
+      break
+    fi
+    printf "."
+    sleep 5
+  done
+  if [ "$_api_ready" = false ]; then
+    echo " timeout"
+    printf "${_RED}▸${_NC} OpenShift API not ready after 5 minutes\n"
+    exit 1
+  fi
+  cp "$_crc_oc_kubeconfig" "$AAP_DEMO_KUBECONFIG"
+  chmod 600 "$AAP_DEMO_KUBECONFIG"
+fi
 
 # ---------------------------------------------------------------------------
 # CoreDNS configuration is deferred to the end of the create flow.
@@ -588,7 +846,7 @@ mkdir -p "$AAP_DEMO_DIR"
 # Save cluster credentials under ~/.aap-demo (never touch ~/.kube/config)
 if [ ! -s "$AAP_DEMO_KUBECONFIG" ]; then
   ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 \
-    'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' >"$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
+    "sudo cat ${_ms_kubeconfig}" >"$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
   chmod 600 "$AAP_DEMO_KUBECONFIG" 2>/dev/null || true
 fi
 
@@ -631,7 +889,9 @@ export KUBECONFIG
 if ! aap_demo_reject_remote_kubeconfig; then
   exit 1
 fi
-if kubectl get deployment metrics-server -n kube-system &>/dev/null; then
+if [ "$CURRENT_PRESET" = "openshift" ]; then
+  echo "  Built into OpenShift monitoring (skipped)"
+elif kubectl get deployment metrics-server -n kube-system &>/dev/null; then
   echo "  Already installed"
 else
   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
@@ -643,9 +903,10 @@ fi
 
 # ---------------------------------------------------------------------------
 # Create nfs-local-rwx StorageClass (in-cluster NFS server for RWX volumes)
-# Backing PVC uses topolvm-provisioner. NFS eliminates UID ownership issues
-# that the CSI hostpath provisioner causes for non-root pods (postgres, hub,
-# redis).
+# Backing PVC uses the cluster default StorageClass (topolvm-provisioner on
+# MicroShift, crc-csi-hostpath-provisioner on the OpenShift preset). NFS
+# eliminates UID ownership issues that the CSI hostpath provisioner causes
+# for non-root pods (postgres, hub, redis).
 # ---------------------------------------------------------------------------
 if kubectl get sc nfs-local-rwx &>/dev/null; then
   echo "  nfs-local-rwx StorageClass already exists"
@@ -658,7 +919,11 @@ else
   # Resolve default StorageClass for NFS backing PVC
   DEFAULT_SC=$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null | awk '{print $1}')
   if [ -z "$DEFAULT_SC" ]; then
-    DEFAULT_SC="topolvm-provisioner"
+    if [ "$CURRENT_PRESET" = "openshift" ]; then
+      DEFAULT_SC="crc-csi-hostpath-provisioner"
+    else
+      DEFAULT_SC="topolvm-provisioner"
+    fi
   fi
   NFS_BACKING_STORAGE_SIZE="${NFS_BACKING_STORAGE_SIZE:-5Gi}"
   sed -e "s/__DEFAULT_SC__/${DEFAULT_SC}/g" \
@@ -704,8 +969,8 @@ fi
 
 # Deploy saved addons from config (skip addons that require AAP to be deployed first)
 SAVED_ADDONS=""
-if [ -f "${HOME}/.aap-demo/config" ]; then
-  SAVED_ADDONS=$(grep '^ADDONS=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 | tr ',' ' ' || true)
+if [ -f "${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}" ]; then
+  SAVED_ADDONS=$(grep '^ADDONS=' "${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}" 2>/dev/null | cut -d= -f2 | tr ',' ' ' || true)
 fi
 
 if [ -n "$SAVED_ADDONS" ]; then
@@ -732,7 +997,9 @@ fi
 # (Deferred to end of create flow — MicroShift's DNS controller overwrites
 # the configmap during startup, so we must wait for it to finish first)
 # ---------------------------------------------------------------------------
-configure_coredns
+if [ "$CURRENT_PRESET" = "microshift" ]; then
+  configure_coredns
+fi
 
 # ---------------------------------------------------------------------------
 # Set sysctl for performance (inotify limits for operator watchers)
@@ -740,7 +1007,7 @@ configure_coredns
 # (128 instances) cause "too many open files" errors under heavy load.
 # Matches infra-ci deployment settings.
 # ---------------------------------------------------------------------------
-if [ ${#CRC_SSH_OPTS[@]} -gt 0 ]; then
+if [ "$CURRENT_PRESET" = "microshift" ] && [ ${#CRC_SSH_OPTS[@]} -gt 0 ]; then
   printf "${_GREEN}▸${_NC} Setting sysctl for performance...\n"
   ssh -p 2222 "${CRC_SSH_OPTS[@]}" core@127.0.0.1 'sudo sysctl -w fs.inotify.max_user_watches=2099999999 fs.inotify.max_user_instances=2099999999 fs.inotify.max_queued_events=2099999999' 2>/dev/null
   echo "  ✓ inotify limits configured"
@@ -785,11 +1052,15 @@ echo -e "${RED}         MMMMMMMMMMMMMMMMMMMMMMMMMMMMMM${NC}"
 echo -e "${RED}            \`MMMMMMMMMMMMMMMMMMMMMMMM:${NC}"
 echo -e "${RED}                \`\`MMMMMMMMMMMMMMMMM'${NC}"
 echo ""
-echo -e "${RED}✓ CRC MicroShift cluster ready for AAP development!${NC}"
+echo -e "${RED}✓ CRC ${CURRENT_PRESET} cluster ready for AAP development!${NC}"
 echo ""
 echo "Features:"
-echo "  - baseDomain: apps.127.0.0.1.nip.io (nip.io routes auto-configured)"
-echo "  - CoreDNS template for in-cluster route resolution"
+if [ "$CURRENT_PRESET" = "microshift" ]; then
+  echo "  - baseDomain: apps.127.0.0.1.nip.io (nip.io routes auto-configured)"
+  echo "  - CoreDNS template for in-cluster route resolution"
+else
+  echo "  - OpenShift web console: run 'aap-demo console'"
+fi
 echo "  - LVMS storage (topolvm-provisioner, ${CRC_PV_SIZE}GB for PVCs)"
 echo "  - nfs-local-rwx StorageClass (RWX support for hub file storage)"
 echo "  - Pull secret configured for registry.redhat.io"
@@ -800,7 +1071,12 @@ if [ -n "$SAVED_ADDONS" ]; then
   echo "  - Addons deployed: $SAVED_ADDONS"
 fi
 echo ""
-echo "  Routes:     *.apps.127.0.0.1.nip.io"
+if [ "$CURRENT_PRESET" = "microshift" ]; then
+  echo "  Routes:     *.apps.127.0.0.1.nip.io"
+else
+  echo "  Routes:     *.apps-crc.testing"
+  echo "  Console:    aap-demo console"
+fi
 
 echo "  Kubeconfig: export KUBECONFIG=$AAP_DEMO_KUBECONFIG"
 echo "  SSH:        aap-demo ssh"

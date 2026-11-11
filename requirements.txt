@@ -1,0 +1,5 @@
+# Core Python dependencies; Python 3.11 venv setup is documented in README.md.
+# Collections are installed separately from requirements.yml.
+ansible-core>=2.16,<3
+PyYAML>=6.0.1,<7
+kubernetes>=28.0.0

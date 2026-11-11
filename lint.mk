@@ -49,13 +49,13 @@ format: ## Auto-format shell scripts and markdown
 	@markdownlint --fix .
 	@echo "✓ Formatting complete"
 
-test: ## Run syntax checks and dry-run tests
+test: ## Run syntax checks and non-live unit tests
 	@echo "Running shell syntax checks..."
 	@set -e; git ls-files '*.sh' | while IFS= read -r file; do bash -n "$$file"; done
 	@echo "✓ Syntax checks passed"
-	@echo "Running dry-run tests..."
-	@./aap-demo.sh help >/dev/null
-	@echo "✓ Dry-run tests passed"
+	@echo "Running non-live unit tests..."
+	@./test/run-unit-tests.sh
+	@echo "✓ Unit tests passed"
 
 validate-manifests: ## Validate Kubernetes manifests with kubeconform
 	@echo "Validating Kubernetes manifests..."

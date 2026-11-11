@@ -1,0 +1,197 @@
+---
+# 03-content-ansible.yml — Ansible equivalent of 03-content-hammer.sh.
+# Run from any host with:  ansible-galaxy collection install redhat.satellite
+#   ansible-playbook 03-content-ansible.yml -e satellite_password='...'
+- name: Build Satellite content architecture (RHEL 9 + RHEL 10, on_demand)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    satellite_url: https://satellite.demo.lab
+    satellite_username: admin
+    # Password resolution order: -e satellite_password=... (CLI), then the
+    # aap_demo.satellite.admin_password key in the encrypted env.yml Vault, then
+    # the vault_satellite_password var. No hardcoded default.
+    satellite_password: "{{ satellite_password | default(vault_satellite_password) }}"
+    satellite_validate_certs: false
+    org: Demo Org
+    manifest_path: /root/manifest.zip
+    rhel_product: Red Hat Enterprise Linux for x86_64
+    client_product: Red Hat Satellite Client 6
+    repo_sets:
+      - { name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS (RPMs)",            releasever: "9" }
+      - { name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream (RPMs)",         releasever: "9" }
+      - { name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS (Kickstart)",       releasever: "9.5" }
+      - { name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream (Kickstart)",    releasever: "9.5" }
+      - { name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS (RPMs)",           releasever: "10" }
+      - { name: "Red Hat Enterprise Linux 10 for x86_64 - AppStream (RPMs)",        releasever: "10" }
+      - { name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS (Kickstart)",      releasever: "10.0" }
+      - { name: "Red Hat Enterprise Linux 10 for x86_64 - AppStream (Kickstart)",   releasever: "10.0" }
+    rpm_repos:
+      - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS RPMs 9" }
+      - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream RPMs 9" }
+      - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS RPMs 10" }
+      - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 10 for x86_64 - AppStream RPMs 10" }
+      - { product: "{{ client_product }}", name: "Red Hat Satellite Client 6 for RHEL 9 x86_64 RPMs" }
+      - { product: "{{ client_product }}", name: "Red Hat Satellite Client 6 for RHEL 10 x86_64 RPMs" }
+    kickstart_repos:
+      - "Red Hat Enterprise Linux 9 for x86_64 - BaseOS Kickstart 9.5"
+      - "Red Hat Enterprise Linux 9 for x86_64 - AppStream Kickstart 9.5"
+      - "Red Hat Enterprise Linux 10 for x86_64 - BaseOS Kickstart 10.0"
+      - "Red Hat Enterprise Linux 10 for x86_64 - AppStream Kickstart 10.0"
+    content_views:
+      - name: RHEL9
+        repositories:
+          - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS RPMs 9" }
+          - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 9 for x86_64 - AppStream RPMs 9" }
+          - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 9 for x86_64 - BaseOS Kickstart 9.5" }
+          - { product: "{{ client_product }}", name: "Red Hat Satellite Client 6 for RHEL 9 x86_64 RPMs" }
+      - name: RHEL10
+        repositories:
+          - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS RPMs 10" }
+          - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 10 for x86_64 - AppStream RPMs 10" }
+          - { product: "{{ rhel_product }}", name: "Red Hat Enterprise Linux 10 for x86_64 - BaseOS Kickstart 10.0" }
+          - { product: "{{ client_product }}", name: "Red Hat Satellite Client 6 for RHEL 10 x86_64 RPMs" }
+    lifecycle_path: [DEV, TEST, PROD]
+
+  tasks:
+    - name: Upload subscription manifest
+      redhat.satellite.subscription_manifest:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        manifest_path: "{{ manifest_path }}"
+        state: present
+
+    - name: Force on_demand download policy globally (before enabling repos)
+      redhat.satellite.setting:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        name: "{{ item }}"
+        value: on_demand
+      loop:
+        - default_redhat_download_policy
+        - default_download_policy
+
+    - name: Enable Red Hat repository sets
+      redhat.satellite.repository_set:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        product: "{{ rhel_product }}"
+        name: "{{ item.name }}"
+        basearch: x86_64
+        releasever: "{{ item.releasever }}"
+        state: enabled
+      loop: "{{ repo_sets }}"
+
+    - name: Enable Satellite Client repository sets
+      redhat.satellite.repository_set:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        product: "{{ client_product }}"
+        name: "{{ item }}"
+        basearch: x86_64
+        state: enabled
+      loop:
+        - "Red Hat Satellite Client 6 for RHEL 9 x86_64 (RPMs)"
+        - "Red Hat Satellite Client 6 for RHEL 10 x86_64 (RPMs)"
+      ignore_errors: true   # verify exact names with repository_set list if these fail
+
+    - name: Enforce on_demand on all RPM repos (kickstart trees always sync in full)
+      redhat.satellite.repository:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        product: "{{ item.product }}"
+        name: "{{ item.name }}"
+        download_policy: on_demand
+      loop: "{{ rpm_repos }}"
+      ignore_errors: true
+
+    - name: Sync RPM repos (metadata only, thanks to on_demand)
+      redhat.satellite.repository_sync:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        product: "{{ item.product }}"
+        repository: "{{ item.name }}"
+      loop: "{{ rpm_repos }}"
+      ignore_errors: true
+
+    - name: Sync kickstart trees (full content — required for PXE provisioning)
+      redhat.satellite.repository_sync:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        product: "{{ rhel_product }}"
+        repository: "{{ item }}"
+      loop: "{{ kickstart_repos }}"
+
+    - name: Create lifecycle environment path Library -> DEV -> TEST -> PROD
+      redhat.satellite.lifecycle_environment:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        name: "{{ item.name }}"
+        prior: "{{ item.prior }}"
+        state: present
+      loop:
+        - { name: DEV,  prior: Library }
+        - { name: TEST, prior: DEV }
+        - { name: PROD, prior: TEST }
+
+    - name: Create content views
+      redhat.satellite.content_view:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        name: "{{ item.name }}"
+        repositories: "{{ item.repositories }}"
+        state: present
+      loop: "{{ content_views }}"
+
+    - name: Publish and promote each CV through DEV/TEST/PROD
+      redhat.satellite.content_view_version:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        content_view: "{{ item.name }}"
+        lifecycle_environments: "{{ lifecycle_path }}"
+        force_publish: true
+      loop: "{{ content_views }}"
+
+    - name: Activation keys per OS and lifecycle stage (auto-attach)
+      redhat.satellite.activation_key:
+        username: "{{ satellite_username }}"
+        password: "{{ satellite_password }}"
+        server_url: "{{ satellite_url }}"
+        validate_certs: "{{ satellite_validate_certs }}"
+        organization: "{{ org }}"
+        name: "ak-{{ item.0.name | lower }}-{{ item.1 | lower }}"
+        content_view: "{{ item.0.name }}"
+        lifecycle_environment: "{{ item.1 }}"
+        auto_attach: true
+        unlimited_hosts: true
+        state: present
+      loop: "{{ content_views | product(lifecycle_path) | list }}"

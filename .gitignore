@@ -11,7 +11,21 @@ test/testing-framework/
 .tokensave/
 .serena/
 
+# Generated local environment reports
+/docs/aap-demo-system-info.md
+/docs/aap-demo-system-info.json
+/addons/apme-eap/apme-portal-deployment-*.md
+
+# Local credential stores and exports
+/.ansible/
+/.aap-demo/
+**/.vaultpass*.txt
+**/env-aap-demo.yml
+**/env_microshift.yml
+*.secrets.local.yml
+
 # Linting and pre-commit
+.venv/
 .venv-lint/
 .pre-commit-cache/
 *.log

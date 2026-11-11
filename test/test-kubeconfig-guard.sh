@@ -15,7 +15,8 @@ fi
 
 grep -Fq 'aap_demo_reject_remote_kubeconfig' "$guard" "$cli" "${repo_root}/includes/crc-create.sh"
 grep -Fq 'AAP_DEMO_ALLOW_REMOTE_KUBECONFIG' "$cli"
-grep -Fq './test/test-kubeconfig-guard.sh' "${repo_root}/.github/workflows/test.yaml"
+# CI runs every test/test-*.sh through the dynamic unit-test runner.
+grep -Eq 'run-unit-tests\.sh|\./test/test-kubeconfig-guard\.sh' "${repo_root}/.github/workflows/test.yaml"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

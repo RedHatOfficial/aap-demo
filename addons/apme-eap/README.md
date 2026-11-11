@@ -56,7 +56,7 @@ For certified collection access and the repositories **catalog** view, configure
 **before** or **alongside** apme-eap deploy:
 
 ```bash
-# console.redhat.com offline token → ~/.aap-demo/galaxy-token
+# console.redhat.com offline token → ~/.ansible/conf/env.yml (Ansible Vault)
 aap-demo enable setup-pah
 
 # optional external PAH → ~/.aap-demo/pah-config.yml
@@ -83,7 +83,7 @@ This will:
 1. Check system prerequisites (kubectl, python3, helm — installs helm if missing)
 2. Create venv with full Ansible + collections (if not exists)
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
-4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
+4. Run **setup-pah** when encrypted Automation Hub credentials or `pah-config.yml` exists (configures AAP hub remotes)
 5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
 6. Push the bundled APME OCI plugin archive to the local registry and run the portal Helm chart
 7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
@@ -222,7 +222,7 @@ Edit `~/.aap-demo/apme-eap-vars.yml` to customize:
 
 - **skip_plugin_push** - Skip the runtime OCI plugin push (default: `false`)
 - **apme_oci_push_force** - Re-push the bundled plugin archive (default: `false`)
-- **apme_pah_run_setup_pah** - Run `setup-pah` when `~/.aap-demo/galaxy-token` exists (default: `true`)
+- **apme_pah_run_setup_pah** - Run `setup-pah` when encrypted Automation Hub credentials exist (default: `true`)
 - **apme_pah_seed_apme_galaxy_servers** - POST AAP/community galaxy servers to APME gateway (default: `true`)
 - **apme_pah_collections_enabled** - `auto` | `true` | `false` for portal PAH catalog sync (default: `auto`)
 - **portal_helm_chart_version** - Override RHDH chart version

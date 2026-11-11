@@ -6,6 +6,12 @@
 
 **Authors**: aap-demo maintainers
 
+**Credential storage update**: Retained tokens, usernames, and passwords are now
+stored under the `aap_demo` namespace in Ansible Vault-encrypted
+`~/.ansible/conf/env.yml`, using `~/.ansible/conf/.vaultpass.txt`. References
+below to plaintext `galaxy-token` or credential fields in `pah-config.yml`
+describe the original implementation; those files are migrated automatically.
+
 ## Context
 
 aap-demo deploys Ansible Automation Platform 2.7 to OpenShift Local for development

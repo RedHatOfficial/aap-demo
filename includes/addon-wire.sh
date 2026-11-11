@@ -23,6 +23,8 @@ _WIRE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-${_WIRE_SCRIPT_DIR}/..}"
 # shellcheck source=aap-demo-paths.sh
 source "${_WIRE_SCRIPT_DIR}/aap-demo-paths.sh"
+# shellcheck source=preset.sh
+source "${_WIRE_SCRIPT_DIR}/preset.sh"
 # shellcheck source=ao-llm.sh
 source "${_WIRE_SCRIPT_DIR}/ao-llm.sh"
 
@@ -153,7 +155,7 @@ wire_mcp_url_for_ao() {
     printf 'https://%s/mcp' "$route"
     return 0
   fi
-  host="aap-mcp-${NAMESPACE}.apps.127.0.0.1.nip.io"
+  host="aap-mcp-${NAMESPACE}.$(aap_demo_route_domain)"
   if kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[*].spec.host}' 2>/dev/null | grep -qF "$host"; then
     printf 'https://%s/mcp' "$host"
     return 0
@@ -840,15 +842,15 @@ wire_apd_aap_credential() {
 }
 
 wire_apd_galaxy_if_present() {
-  local token_file="${GALAXY_TOKEN_FILE:-${AAP_DEMO_DIR}/galaxy-token}"
   if ! wire_apd_installed; then
     return 0
   fi
-  if [ ! -f "$token_file" ]; then
+  if ! aap_demo_vault_get "aap_demo.galaxy.offline_token" >/dev/null 2>&1 \
+    && [ ! -s "${GALAXY_TOKEN_FILE:-${AAP_DEMO_DIR}/galaxy-token}" ]; then
     return 0
   fi
-  wire_log "Wiring APD Automation Hub credentials from ${token_file}..."
-  apd_configure_galaxy_credentials "$token_file" || wire_warn "APD Galaxy credential wiring skipped"
+  wire_log "Wiring APD Automation Hub credentials from encrypted credential storage..."
+  apd_configure_galaxy_credentials || wire_warn "APD Galaxy credential wiring skipped"
 }
 
 wire_ao_aap() {
@@ -1283,6 +1285,12 @@ aap_demo_wire() {
   wire_apd_aap_credential
   wire_apd_galaxy_if_present
   wire_apd_openshift
+  if compgen -G "${AAP_DEMO_DIR:-$HOME/.aap-demo}/fleet/node-*/meta" >/dev/null; then
+    wire_log "Reconciling Fleet SSH access and AAP inventory..."
+    # shellcheck source=fleet-access.sh
+    source "${_WIRE_SCRIPT_DIR}/fleet-access.sh"
+    fleet_reconcile_existing_inventory || return 1
+  fi
   wire_restore_coredns_route_rewrite || wire_warn "CoreDNS route rewrite skipped"
   wire_ao_network_access || wire_warn "AO integration allow-list configuration skipped"
   if wire_ao_deployed; then

@@ -1,0 +1,204 @@
+{
+ "schema_version": 1,
+ "addons": [
+  {
+   "id": "mcp-server",
+   "name": "AAP MCP Server",
+   "category": "AI and orchestration",
+   "description": "Expose AAP tools and resources to MCP-compatible AI clients.",
+   "dependencies": [],
+   "health": {
+    "type": "pod-prefix",
+    "namespace": "aap-operator",
+    "prefix": "aap-mcp-server"
+   }
+  },
+  {
+   "id": "ao",
+   "name": "Automation Orchestrator",
+   "category": "AI and orchestration",
+   "description": "Install Automation Orchestrator and connect it to AAP and MCP.",
+   "dependencies": [
+    {
+     "id": "mcp-server"
+    },
+    {
+     "id": "ollama",
+     "when": {
+      "path": [
+       "api_keys",
+       "ao_llm",
+       "provider"
+      ],
+      "equals": "ollama"
+     }
+    }
+   ],
+   "health": {
+    "type": "namespace",
+    "namespace": "automation-orchestrator"
+   }
+  },
+  {
+   "id": "ao-pr-testing",
+   "name": "AO PR Testing",
+   "category": "AI and orchestration",
+   "description": "Add the local OpenShift MCP server and a PR-driven AO validation workflow.",
+   "dependencies": [
+    {
+     "id": "ao"
+    }
+   ],
+   "health": {
+    "type": "namespace",
+    "namespace": "openshift-mcp-server"
+   }
+  },
+  {
+   "id": "ollama",
+   "name": "Ollama",
+   "category": "AI and orchestration",
+   "description": "Run the local qwen2.5:3b LLM provider used by AO.",
+   "dependencies": [],
+   "health": {
+    "type": "namespace",
+    "namespace": "aap-demo-ollama"
+   }
+  },
+  {
+   "id": "lightspeed",
+   "name": "Ansible Lightspeed",
+   "category": "AI and orchestration",
+   "description": "Deploy the Lightspeed intelligent assistant in AAP, backed by the local Ollama LLM.",
+   "dependencies": [
+    {
+     "id": "ollama"
+    }
+   ],
+   "health": {
+    "type": "pod-prefix",
+    "namespace": "aap-operator",
+    "prefix": "aap-lightspeed"
+   }
+  },
+  {
+   "id": "portal",
+   "name": "Self-Service Portal",
+   "category": "Portals",
+   "description": "Deploy the Helm-based AAP self-service portal.",
+   "dependencies": [],
+   "health": {
+    "type": "namespace",
+    "namespace": "redhat-rhaap-portal"
+   }
+  },
+  {
+   "id": "portal-operator",
+   "name": "Portal Operator",
+   "category": "Portals",
+   "description": "Deploy the AMD64-only Automation Portal Operator technology preview.",
+   "dependencies": [],
+   "availability": "AMD64 only",
+   "health": {
+    "type": "namespace",
+    "namespace": "automation-portal"
+   }
+  },
+  {
+   "id": "apme-eap",
+   "name": "APME Early Access",
+   "category": "Portals",
+   "description": "Deploy the early-access APME portal integration.",
+   "dependencies": [],
+   "health": {
+    "type": "namespace",
+    "namespace": "apme"
+   }
+  },
+  {
+   "id": "product-demos",
+   "name": "Ansible Product Demos",
+   "category": "Demo content",
+   "description": "Install the non-Satellite demo domains, templates, and content; reconcile existing Fleet nodes into the AAP Fleet inventory.",
+   "dependencies": [],
+   "health": {
+    "type": "configured"
+   }
+  },
+  {
+   "id": "product-demo-satellite",
+   "name": "Satellite Demo",
+   "category": "Demo content",
+   "description": "Install Satellite demo content using an external Satellite server.",
+   "dependencies": [],
+   "availability": "Requires external Satellite",
+   "health": {
+    "type": "configured"
+   }
+  },
+  {
+   "id": "setup-pah",
+   "name": "Private Automation Hub Setup",
+   "category": "AAP configuration",
+   "description": "Configure Private Automation Hub credentials and remotes.",
+   "dependencies": [],
+   "health": {
+    "type": "configured"
+   }
+  },
+  {
+   "id": "opa",
+   "name": "Open Policy Agent",
+   "category": "AAP configuration",
+   "description": "Deploy OPA and configure policy integration with AAP.",
+   "dependencies": [],
+   "health": {
+    "type": "pod-prefix",
+    "namespace": "aap-operator",
+    "prefix": "opa"
+   }
+  },
+  {
+   "id": "fleet",
+   "name": "AAP Fleet",
+   "category": "Infrastructure",
+   "description": "Manage local RHEL QEMU nodes for AAP demonstrations.",
+   "dependencies": [],
+   "health": {
+    "type": "configured"
+   }
+  },
+  {
+   "id": "keycloak",
+   "name": "Keycloak OIDC",
+   "category": "Infrastructure",
+   "description": "Deploy a Keycloak OIDC provider for local AAP/AO authentication tests.",
+   "dependencies": [],
+   "health": {
+    "type": "namespace",
+    "namespace": "aap-demo-keycloak"
+   }
+  },
+  {
+   "id": "local-cache",
+   "name": "Local Image Cache",
+   "category": "Infrastructure",
+   "description": "Cache deployment container images for faster rebuilds.",
+   "dependencies": [],
+   "health": {
+    "type": "configured"
+   }
+  },
+  {
+   "id": "satellite-manifest",
+   "name": "Satellite Build and Configure",
+   "short_name": "satellite-lab",
+   "category": "Infrastructure",
+   "description": "Build a Red Hat Satellite 6 demo lab on this host: generate the subscription manifest, provision the Satellite VM, and configure content, provisioning, and AAP integration via the satellite-lab workflow.",
+   "dependencies": [],
+   "health": {
+    "type": "configured"
+   }
+  }
+ ]
+}

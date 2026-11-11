@@ -4,6 +4,8 @@ Install and run [aap-demo](../README.md) on Windows using PowerShell. Core lifec
 commands enter through PowerShell, which delegates execution to the repository's
 Git Bash CLI. Bash remains the single implementation for cluster lifecycle,
 addons, wiring, and cleanup so Windows follows the current cross-platform behavior.
+`create --full-demo` (including Fleet and the Satellite lab) is not available
+through the Windows wrapper; use the Bash/Linux CLI for it.
 
 ## Requirements
 
@@ -18,14 +20,15 @@ addons, wiring, and cleanup so Windows follows the current cross-platform behavi
 
 `jq` and Python are required for Windows deploys because the Git Bash deployment
 and demo provisioning paths use them. Python provisions AAP demo content and
-imports AO demo workflows.
+imports AO demo workflows. The dashboard requires **Python 3.10+** on PATH
+(`python`, `python3` or `py -3`).
 
 ## Install
 
 ### 1. Clone the repository
 
 ```powershell
-git clone https://github.com/RedHatOfficial/aap-demo.git
+git clone https://github.com/ShaddGallegos/aap-demo.git
 cd aap-demo
 ```
 
@@ -80,13 +83,20 @@ demo content is not silently skipped.
 ```powershell
 aap-demo create        # Create OpenShift Local cluster (~10–20 min first time)
 aap-demo deploy        # Deploy AAP 2.7 (~5–15 min)
-aap-demo status        # Routes, credentials, pod counts
+aap-demo status        # Routes and pod counts without secrets
+aap-demo status --show-secrets # Reveal credentials interactively
 ```
 
 `aap-demo create` asks for CPUs, memory, disk size, and persistent-volume size.
 Those values are saved to `%USERPROFILE%\.aap-demo\config`. Change the disk
 later with `aap-demo storage`. An existing VM keeps its current disk until
 `aap-demo destroy` and `aap-demo create`.
+
+Native `create` also registers the current-user recovery task. Hyper-V access
+and Task Scheduler are required; installation failures make `create` fail
+explicitly. To create without recovery, set
+`$env:AAP_DEMO_SKIP_BOOT_RECOVERY = 'true'` before running it.
+This does not enable native `create --full-demo` or Fleet support.
 
 After deploy, open the AAP route from `aap-demo status`. If your browser shows a
 certificate warning, trust the ingress CA from an elevated PowerShell — see
@@ -107,10 +117,15 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo redeploy-all`        | Destroy cluster and full redeploy                                  |
 | `aap-demo clean`               | Remove AAP deployment                                              |
 | `aap-demo destroy`             | Delete CRC cluster (`--reset` clears saved preset)                 |
-| `aap-demo stop`                | Stop CRC cluster                                                   |
-| `aap-demo start`               | Start CRC and refresh MicroShift DNS                               |
-| `aap-demo trust-ca`            | Repair ingress certificate trust without repairing cluster           |
-| `aap-demo status`              | Cluster health, namespaces, routes, admin password                 |
+| `aap-demo start`               | Start CRC, resume idle AAP, wait for core and addon readiness      |
+| `aap-demo stop`                | Stop CRC cluster (saves a cold checkpoint when the service is on)  |
+| `aap-demo restart`             | Stop and start (managed: checkpoint, restore, start)               |
+| `aap-demo service ...`         | Cold checkpoint and logon restore service (see below)              |
+| `aap-demo dashboard [--no-open]` | Start/reuse the localhost dashboard; optionally skip the browser |
+| `aap-demo trust-ca`            | Repair ingress certificate trust without repairing cluster         |
+| `aap-demo status --json`       | Machine-readable dashboard inventory without secret values         |
+| `aap-demo status`              | Cluster health, namespaces, routes, and addons; secrets hidden     |
+| `aap-demo status --show-secrets` | Reveal login credentials in an interactive terminal              |
 | `aap-demo diagnose`            | Environment health checks                                          |
 | `aap-demo watch`               | Monitor AAP deployment until Successful                            |
 | `aap-demo idle true` / `false` | Scale AAP down/up                                                  |
@@ -128,9 +143,98 @@ Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
 `setup-pah`, `ao` (alias `ao-eap`), `product-demos`, `opa`, and `ollama`.
 Product Demos is exposed as one aggregate deployment on Windows. Fleet and
 `local-cache` are deferred from the Windows build. These commands are delegated
-to the same Bash addon
-scripts used on Linux and macOS. APME, Fleet, and the legacy Product Demo
-domain aliases remain unavailable through the Windows wrapper.
+to the same Bash addon scripts used on Linux and macOS. APME, Fleet, the
+Satellite demo/lab addons, and the legacy Product Demo domain aliases remain
+unavailable through the Windows wrapper.
+
+### Startup storage growth
+
+`aap-demo start` (and the start phase of `restart` and logon restore) checks the CRC
+guest `/var` filesystem over SSH (`df -Pk /var`). When usage is **at least 90%** it:
+
+1. Reads the actual disk size from `%USERPROFILE%\.crc\machines\crc\config.json`
+   (`Driver.DiskCapacity`, bytes) and targets `ceil(actual * 1.2)` GiB. If that
+   value is missing or invalid, start fails explicitly and nothing is resized.
+2. Checks that the host drive holding `.crc\machines\crc` has room for the growth.
+3. Records one pending target in `~/.aap-demo/storage-growth.pending`, runs
+   `crc config set disk-size <N>` and persists `CRC_DISK=<N>` in `~/.aap-demo/config`.
+4. Stops CRC gracefully (never forced off) and starts it again.
+5. Verifies that `DiskCapacity` reached the target, the filesystem grew and usage is
+   below 90%. Only then is the pending target removed.
+
+Any failure is reported as an error and the pending target is kept, so the next
+`aap-demo start` retries the same size instead of computing a new one. No elevated
+API is used for this; growth relies on CRC applying `disk-size` on start (not
+validated on native Windows/Hyper-V by these tests).
+
+## State service (cold checkpoints)
+
+`aap-demo create` installs this task automatically, but does not take a checkpoint.
+After `aap-demo deploy`, save the first checkpoint with `aap-demo service backup`,
+then resume with `aap-demo start`. Save another checkpoint before every reboot
+to avoid restoring older state.
+
+The native state service saves the full **cold** OpenShift Local state and restores it
+when you sign in to Windows. It does not run at shutdown: a checkpoint is taken only by
+`aap-demo stop`, `aap-demo restart` or `aap-demo service backup`.
+
+| Command                                | Description                                                     |
+| -------------------------------------- | --------------------------------------------------------------- |
+| `aap-demo service install [--keep N]`  | Register the current-user logon task (default keeps 1 backup)   |
+| `aap-demo service backup`              | Gracefully stop CRC and save a verified checkpoint              |
+| `aap-demo service restore [NAME]`      | Restore a checkpoint into the stopped VM (does not start it)    |
+| `aap-demo service status` / `backups`  | Show task, checkpoints and the last logon result                |
+| `aap-demo service verify [NAME]`       | Re-hash a checkpoint                                            |
+| `aap-demo service retention N`         | Change retention (any positive integer) and prune               |
+| `aap-demo service disable`             | Remove the logon task; keep checkpoints                         |
+
+What it saves (under `%LOCALAPPDATA%\aap-demo\state\backups`): the VM disk and CRC files in
+`%USERPROFILE%\.crc\machines`, `.crc\crc.json`, `%USERPROFILE%\.aap-demo` (except locks and
+logs), and `.ansible\conf\env.yml` / `.vaultpass.txt`. Every file is SHA256-verified and
+a checkpoint is only published after `COMPLETE` and a full re-hash.
+
+Constraints:
+
+- Hyper-V access without elevation: the logon task runs as you (Interactive, Limited, no
+  stored password). Your account must be in **Hyper-V Administrators** (`crc setup` adds
+  it; sign out and back in). Otherwise install refuses and the logon run fails visibly.
+- Only cold state: CRC stopped and VM `Off`. Saved, Paused or running VMs are refused; the
+  VM is never forced off. Checkpoints, differencing disks, disks outside
+  `.crc\machines\crc`, junctions and symlinks are refused as unsupported layouts.
+- **Same-VM checkpoints, not VM reconstruction backups.** Hyper-V owned files
+  (`Virtual Machines\*.vmcx`, `.vmgs`, `.vmrs`) and the CRC bundle cache are not copied.
+  A restore only puts disk/config/credential state back into the *existing* VM, and
+  requires that VM to be unchanged: the same Hyper-V VMId and VM configuration, and the
+  same CRC bundle still preserved in `.crc\cache`. A changed VMId is refused. A checkpoint
+  cannot rebuild a deleted, re-created or reconfigured VM, or a cleared bundle cache; after
+  `crc delete`/`crc cleanup` you must disable the service and run `aap-demo create`.
+- Free space: about 1.1x the VM disk for a checkpoint, and the same again while restoring.
+- An interrupted restore is rolled back from `restore-journal.json` on the next state
+  operation. If a checkpoint fails, start and logon restore are refused until
+  `aap-demo service backup` succeeds, so an older backup is never restored over newer data.
+- `create`, `destroy`, `redeploy-all` and `maintenance uninstall --apply` are refused while
+  the service is enabled. Run `aap-demo service disable` first.
+- Logon logs: `%LOCALAPPDATA%\aap-demo\state\logs`; the result is shown by `service status`.
+
+## Dashboard startup
+
+The dashboard starts in the background and opens your default browser after a
+successful `create`, `start` or `restart`. The recovery task also starts it
+after a successful restore and AAP readiness at sign-in. It listens only on
+`http://127.0.0.1:8765/`; set `AAP_DEMO_DASHBOARD_PORT` to change the port.
+`aap-demo dashboard --no-open` starts it without opening a browser.
+An existing dashboard for the same checkout is reused.
+
+Set `$env:AAP_DEMO_DASHBOARD_AUTOSTART = 'false'` to skip automatic dashboard
+launch for the current session. Set this as a Windows user environment variable
+to apply it to future sign-ins too. Explicit `aap-demo dashboard` still works.
+Dashboard failures show a warning and do not undo a successful cluster recovery.
+Logs are in `%USERPROFILE%\.aap-demo\dashboard.log`.
+
+The dashboard uses the native PowerShell backend on Windows, not WSL or Bash
+for cluster status. Unsupported add-ons are marked unavailable; Fleet/browser SSH
+and Linux capacity planning are not available. Supported shell-based add-ons
+still require Git for Windows Bash.
 
 ## Environment variables
 
@@ -150,13 +254,16 @@ one-shot process environment variable.
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |
 | `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |
 | `AAP_DEMO_TRUST_CA` | `true` (implicit)                            | Set to `false` to skip automatic ingress CA import |
-| `AO_LLM_PROVIDER`    | `ollama` when unset                           | AO provider: `ollama`, `external`, or `none`      |
-| `AO_LLM_BASE_URL`    | `https://api.openai.com/v1` for `external`     | External LLM API base URL                         |
-| `AO_LLM_MODEL`       | `gpt-5.6-luna` for `external`                 | External LLM model; `luna` is an alias            |
-| `AO_LLM_API_KEY_FILE` | `%USERPROFILE%\.aap-demo\ao\llm-api-key`  | File used to save/reuse the external API key      |
-| `OPENAI_API_KEY`     | unset                                         | One-shot external provider key; never in config or a CLI arg |
-| `GALAXY_TOKEN_FILE`  | `%USERPROFILE%\.aap-demo\galaxy-token`      | Red Hat Galaxy/Automation Hub offline token file  |
-| `PAH_CONFIG_FILE`    | `%USERPROFILE%\.aap-demo\pah-config.yml`    | Private Automation Hub URL and credentials        |
+| `AAP_START_TIMEOUT` | `600`                                        | Seconds `start` waits for AAP and addon readiness  |
+| `AAP_DEMO_DISABLE_LOCK` | `false`                                  | `true` disables the cross-command operation lock   |
+| `AAP_DEMO_BASH`     | auto (Git for Windows)                       | Explicit Git for Windows `bin\bash.exe` for addons |
+| `AO_LLM_PROVIDER`    | `ollama` when unset                          | AO provider: `ollama`, `external`, or `none`       |
+| `AO_LLM_BASE_URL`    | `https://api.openai.com/v1` for `external`   | External LLM API base URL                          |
+| `AO_LLM_MODEL`       | `gpt-5.6-luna` for `external`                | External LLM model; `luna` is an alias             |
+| `AO_LLM_API_KEY_FILE` | `%USERPROFILE%\.aap-demo\ao\llm-api-key`   | File used to save/reuse the external API key       |
+| `OPENAI_API_KEY`     | unset                                        | One-shot external provider key; never in config or a CLI arg |
+| `GALAXY_TOKEN_FILE`  | `%USERPROFILE%\.aap-demo\galaxy-token`       | Red Hat Galaxy/Automation Hub offline token file   |
+| `PAH_CONFIG_FILE`    | `%USERPROFILE%\.aap-demo\pah-config.yml`     | Private Automation Hub URL and credentials         |
 
 Example:
 
@@ -203,9 +310,11 @@ that portal deployment.
 | Path                                         | Purpose                                     |
 | -------------------------------------------- | ------------------------------------------- |
 | `%USERPROFILE%\.aap-demo\config`             | Saved preset, addons, preferences           |
-| `%USERPROFILE%\.aap-demo\pull-secret.txt`    | Red Hat pull secret                         |
+| `%USERPROFILE%\.ansible\conf\env.yml`       | Encrypted retained credentials and pull secret |
+| `%USERPROFILE%\.ansible\conf\.vaultpass.txt` | Ansible Vault password                     |
 | `%USERPROFILE%\.aap-demo\crc-ingress-ca.crt` | MicroShift ingress CA (saved for TLS trust) |
 | `%USERPROFILE%\.crc\`                        | OpenShift Local VM data                     |
+| `%LOCALAPPDATA%\aap-demo\state\`              | State service config, checkpoints, logs     |
 
 ## Uninstall
 
@@ -241,9 +350,19 @@ Do not move or delete the cloned repo after install — the launcher points at i
 ### Git Bash addon delegation
 
 The PowerShell launcher discovers Git for Windows and forwards the original
-command, arguments, environment, exit code, and output to `aap-demo.sh`. Install
-Git for Windows or run the Bash CLI directly if the wrapper reports that Git Bash
-is unavailable.
+command, arguments, environment, exit code, and output to `aap-demo.sh`. The
+CLI looks for `bash.exe` in `AAP_DEMO_BASH`, next to `git.exe` on `PATH`, then
+in `%ProgramFiles%\Git`, `%ProgramFiles(x86)%\Git` and
+`%LOCALAPPDATA%\Programs\Git`. WSL's `bash.exe` (`%WINDIR%\System32`,
+`WindowsApps`) is never used. If the wrapper reports that Git Bash is
+unavailable, install Git for Windows and open a new window, or run the Bash
+CLI directly:
+
+```powershell
+winget install --id Git.Git -e
+# or point at a specific install:
+$env:AAP_DEMO_BASH = 'C:\Program Files\Git\bin\bash.exe'
+```
 
 ### `oc` or `crc` not found
 
@@ -357,7 +476,8 @@ aap-demo (launcher in ~/.local/bin)
   └── aap-demo.cmd (policy-safe command shim)
         └── powershell/aap-demo.ps1
               └── powershell/native/AapDemo.psm1  (all commands)
-              └── native process runner → oc/kubectl/helm/python/ansible
+                    ├── addon and lifecycle commands  →  Git for Windows Bash (aap-demo.sh)
+                    └── native process runner         →  oc/kubectl/helm/python/ansible
 ```
 
 ## Updating

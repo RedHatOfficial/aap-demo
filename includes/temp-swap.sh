@@ -12,7 +12,7 @@ aap_demo_temp_swap_is_linux() {
 }
 
 aap_demo_temp_swap_marker_path() {
-  echo "${HOME}/.aap-demo/.temp-swap-active"
+  echo "${AAP_DEMO_DIR:-$HOME/.aap-demo}/.temp-swap-active"
 }
 
 aap_demo_temp_swap_host_swap_gb() {
@@ -183,9 +183,9 @@ aap_demo_prompt_temp_swap() {
 
   host_swap_gb="$(aap_demo_temp_swap_host_swap_gb)"
   default_swap_gb=16
-  if [[ -f "${HOME}/.aap-demo/config" ]]; then
+  if [[ -f "${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}" ]]; then
     local saved_swap
-    saved_swap="$(grep '^AAP_SWAP_SIZE_GB=' "${HOME}/.aap-demo/config" 2>/dev/null | cut -d= -f2 || true)"
+    saved_swap="$(grep '^AAP_SWAP_SIZE_GB=' "${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}" 2>/dev/null | cut -d= -f2 || true)"
     [[ "${saved_swap:-}" =~ ^[0-9]+$ ]] && default_swap_gb="${saved_swap}"
   fi
 

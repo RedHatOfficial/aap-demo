@@ -213,6 +213,17 @@ if [ -n "$saved_home" ]; then
   export HOME="$saved_home"
 fi
 
+domain_vars=$(apd_launch_extra_vars_json windows)
+if [ "$(echo "$domain_vars" | jq -r '.aap_configuration_async_retries')" = "50" ] \
+  && [ "$(echo "$domain_vars" | jq -r '.gateway_configuration_async_retries')" = "50" ] \
+  && [ "$(echo "$domain_vars" | jq -r '.controller_configuration_async_retries')" = "50" ] \
+  && ! grep -q 'configuration_async_retries: 0' "$LIB_SH" \
+  && ! grep -q 'configuration_async_retries: 0' "$DEPLOY_SH"; then
+  pass "configuration_jobs_retry_async_resource_creation"
+else
+  fail "configuration_jobs_retry_async_resource_creation"
+fi
+
 echo ""
 echo "Passed: $PASSED  Failed: $FAILED"
 [ "$FAILED" -eq 0 ]

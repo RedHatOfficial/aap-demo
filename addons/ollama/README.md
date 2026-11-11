@@ -1,8 +1,9 @@
 # Ollama Addon
 
-Deploys [Ollama](https://ollama.com/) (CPU-only) to a dedicated `aap-demo-ollama` namespace,
-pre-pulls the `qwen2.5:3b` model, and wires it into Automation Orchestrator as an
-`llm_provider` integration with `qwen2.5:3b` set as the default model.
+Deploys [Ollama](https://ollama.com/) to a dedicated `aap-demo-ollama` namespace,
+automatically uses an NVIDIA GPU exposed to Kubernetes when available, pre-pulls the
+`qwen2.5:3b` model, and wires it into Automation Orchestrator as an `llm_provider`
+integration with `qwen2.5:3b` set as the default model.
 
 ## Usage
 
@@ -59,9 +60,26 @@ OLLAMA_MODEL=mistral:7b aap-demo enable ollama
 Re-running `aap-demo enable ollama` with a different `OLLAMA_MODEL` is safe — it is idempotent.
 The new model will be set as the AO default on re-wire.
 
+## GPU selection
+
+The addon checks node allocatable resources for `nvidia.com/gpu`. When at least one GPU
+is advertised, the Ollama pod requests one GPU and uses NVIDIA acceleration. Otherwise,
+it falls back to CPU without making the pod unschedulable.
+
+```bash
+OLLAMA_GPU=auto aap-demo enable ollama    # Default: GPU when advertised, else CPU
+OLLAMA_GPU=cpu aap-demo enable ollama     # Force CPU
+OLLAMA_GPU=nvidia aap-demo enable ollama  # Require a GPU; fail if unavailable
+```
+
+Host hardware alone is insufficient: the Kubernetes node must advertise
+`nvidia.com/gpu`, normally through the NVIDIA GPU Operator or device plugin. Standard CRC
+MicroShift VMs do not pass the host GPU through, so they use the CPU fallback.
+
 ## Resource usage
 
-- **CPU**: requests 200m, limit 4 cores (CPU-only inference — no GPU in MicroShift VMs).
+- **GPU**: requests one `nvidia.com/gpu` device when the cluster advertises one.
+- **CPU**: requests 200m, limit 4 cores (used for inference when no GPU is available).
   The small request keeps an idle Ollama pod schedulable next to AAP on a single-node
   CRC VM. The limit still lets inference burst.
 - **Memory**: requests 2Gi, limit 8Gi

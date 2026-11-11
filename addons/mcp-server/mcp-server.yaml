@@ -44,3 +44,10 @@ spec:
 
   # Disable verbose logging in production
   no_log: true
+
+  # The image falls back to its bundled analytics key when this value is empty.
+  # Whitespace remains truthy during config selection and is then trimmed to
+  # empty, preventing failed outbound telemetry from this isolated local cluster.
+  extra_settings:
+    - setting: ANALYTICS_KEY
+      value: ' '

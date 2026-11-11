@@ -51,7 +51,7 @@ This environment includes characteristics specific to local development:
 | Destroy and rebuild from scratch | `aap-demo redeploy-all` |
 | Show help | `aap-demo help` |
 
-Available addons: olm, console, registry, mcp-server, prometheus, portal, **ao** (Automation Orchestrator)
+Available addons: olm, console, registry, mcp-server, prometheus, portal, **ao** (Automation Orchestrator), fleet, ollama, product-demos, setup-pah, local-cache, opa, **satellite-manifest** (build a Satellite subscription manifest via the RHSM API), **lightspeed** (Ansible Lightspeed backed by local Ollama)
 
 ## Portal Addon
 
@@ -86,7 +86,8 @@ Before any command, run `aap-demo status` to understand current state. The stand
 lifecycle is: `create` -> `deploy` -> use -> `idle`/`clean` -> `destroy`.
 
 - Deploy auto-creates the cluster if needed — no need to run create first
-- After deploy completes, run `aap-demo status` to show routes and credentials
+- After deploy completes, run `aap-demo status` for routes; use
+  `aap-demo status --show-secrets` interactively for credentials
 - **Destructive operations** (clean, destroy, redeploy-all): always confirm with the user first
 - Use `QUIET=true` prefix to skip interactive prompts when running non-interactively
 
@@ -106,11 +107,13 @@ When the user has multiple AAP deployments (e.g., operator in `aap-operator` + a
 
 ## Pull Secret Management
 
-Pull secrets are required for image pulls and live in `~/.aap-demo/`:
-- `pull-secret.txt` or `pull-secret.json` (from console.redhat.com)
+Pull secrets are required for image pulls and are retained as
+`aap_demo.redhat.pull_secret` in encrypted `~/.ansible/conf/env.yml`.
+An imported `pull-secret.txt` or `pull-secret.json` is transitional and removed
+after successful Vault import.
 
 If image pulls fail with 403/unauthorized, check:  # pragma: allowlist secret
-1. Correct pull secret exists in `~/.aap-demo/`  # pragma: allowlist secret
+1. The encrypted Vault contains `aap_demo.redhat.pull_secret`  # pragma: allowlist secret
 2. Pull secret is injected into the namespace: `kubectl get secret -n $NAMESPACE | grep pull`  # pragma: allowlist secret
 3. ServiceAccount has imagePullSecrets: `kubectl get sa default -n $NAMESPACE -o yaml`
 
@@ -138,7 +141,7 @@ When troubleshooting:
 | Disk space / pod eviction | `aap-demo ssh` then `sudo crictl rmi --prune` |
 | Pods stuck Pending (resources) | `kubectl describe node | grep -A 5 Allocated` — consider `aap-demo idle true` on other deployments |
 | Stale pod mounts after crash | Restart kube-proxy and CoreDNS: `kubectl rollout restart daemonset/kube-proxy -n kube-proxy && kubectl rollout restart daemonset/dns-default -n openshift-dns`. Symptom: "transport endpoint is not connected" or "executable file not found" |
-| ImagePullBackOff | Pull secret missing or incorrect. Needs `pull-secret.txt` for registry.redhat.io. Check `~/.aap-demo/` for correct file. |
+| ImagePullBackOff | Pull secret missing or incorrect. Verify `aap_demo.redhat.pull_secret` in the encrypted Vault and the namespace image-pull Secret. |
 | OLM not installed | `aap-demo enable olm` — MicroShift does not include OLM by default, it's installed during `aap-demo create` but may be missing on older setups |
 
 ## Test Orchestration

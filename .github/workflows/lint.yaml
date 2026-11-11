@@ -9,6 +9,55 @@ on:
   workflow_dispatch:
 
 jobs:
+  python-cli-smoke:
+    name: Python dependency and CLI smoke tests
+    runs-on: ubuntu-latest
+    env:
+      ANSIBLE_COLLECTIONS_PATH: ${{ runner.temp }}/ansible-collections
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up tested Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install core Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install declared Ansible collections
+        run: ansible-galaxy collection install -r requirements.yml --collections-path "$RUNNER_TEMP/ansible-collections"
+
+      - name: Verify dependency integrity and CLI startup
+        run: |
+          python -m pip check
+          python -c 'import ansible, kubernetes, yaml'
+          ansible --version
+          ansible-playbook --version
+          ansible-vault --version
+          ansible-galaxy --version
+          ansible-galaxy collection list --collections-path "$RUNNER_TEMP/ansible-collections" > "$RUNNER_TEMP/collections.txt"
+          grep -q 'community.general' "$RUNNER_TEMP/collections.txt"
+          grep -q 'kubernetes.core' "$RUNNER_TEMP/collections.txt"
+
+      - name: Run isolated credential, Fleet, CLI, and dashboard tests
+        run: |
+          set -euo pipefail
+          bash test/test-credential-vault-migration.sh
+          bash test/test-fleet-access.sh
+          bash test/test-fleet-stack.sh
+          bash test/test-fleet-reconcile.sh
+          bash test/test-fleet-aap.sh
+          bash test/test-fleet-rhc.sh
+          bash test/test-cli-parsing.sh
+          bash test/test-bash-completion.sh
+          bash test/test-secret-handling.sh
+          python test/test-fleet-rhc.py
+          python test/test-dashboard.py
+
   shellcheck:
     name: ShellCheck
     runs-on: ubuntu-latest

@@ -141,8 +141,10 @@ fi
 
 # Test 2b: persistent storage is shown under the VM section
 echo "Test 2b: status places persistent storage under VM"
-vm_section_line=$(grep -n '^  echo "VM:"' "$AAP_DEMO_SH" | cut -d: -f1)
-persistent_status_line=$(grep -n '^  persistent_crio_store_status$' "$AAP_DEMO_SH" | cut -d: -f1)
+# cmd_status lives in includes/cmd-status.sh after the includes/ refactor.
+STATUS_SH="${SCRIPT_DIR}/../includes/cmd-status.sh"
+vm_section_line=$(grep -n '^  echo "VM:"' "$STATUS_SH" | cut -d: -f1)
+persistent_status_line=$(grep -n '^  persistent_crio_store_status$' "$STATUS_SH" | cut -d: -f1)
 if [ -n "$vm_section_line" ] && [ -n "$persistent_status_line" ] \
   && [ "$persistent_status_line" -gt "$vm_section_line" ] \
   && grep -q '_persistent_crio_store_disk_size' "${SCRIPT_DIR}/../includes/persistent-crio-store.sh"; then
@@ -159,11 +161,22 @@ mkdir -p "$SCRIPT_DIR/mocks"
 cat >"$SCRIPT_DIR/mocks/crc" <<'EOF'
 #!/bin/bash
 echo "MOCK: crc $*" >&2
-exit 0
+case "${1:-}" in
+  start) exit "${CRC_START_RC:-0}" ;;
+  stop) exit "${CRC_STOP_RC:-0}" ;;
+  *) exit 0 ;;
+esac
 EOF
 chmod +x "$SCRIPT_DIR/mocks/crc"
 
-if output=$(QUIET=true "$AAP_DEMO_SH" stop 2>&1); then
+_test_stop() (
+  eval "$(sed -n '/^cmd_stop()/,/^}$/p' "$AAP_DEMO_SH")"
+  HOME="${SCRIPT_DIR}/mocks/home"
+  _err() { echo "ERROR: $*" >&2; }
+  cmd_stop
+)
+
+if output=$(_test_stop 2>&1); then
   if echo "$output" | grep -q "MOCK: crc stop"; then
     _pass "stop_calls_crc"
   else
@@ -174,15 +187,95 @@ else
 fi
 
 # Test 4: start command - verify it calls crc start
+# Isolate the start orchestration so lifecycle tests cannot resume the real demo.
+_test_start() (
+  eval "$(sed -n '/^cmd_start()/,/^}$/p' "$AAP_DEMO_SH")"
+  SCRIPT_DIR="${SCRIPT_DIR}/.."
+  KUBECONFIG="${SCRIPT_DIR}/test/mocks/kubeconfig"
+  AAP_DEMO_CRC_CREATE_SCRIPT="${AAP_DEMO_CRC_CREATE_SCRIPT:-${SCRIPT_DIR}/test/mocks/start-coredns.sh}"
+  _addons_list() { :; }
+  _start_crc_cluster() {
+    crc start || { _err "Failed to start the CRC cluster"; return 1; }
+  }
+  _err() { echo "ERROR: $*" >&2; }
+  setup_kubeconfig() { :; }
+  aap_demo_start_storage() { :; }
+  aap_demo_start_wait() { :; }
+  kubectl() { :; }
+  _recover_aap_catalog_after_start() { :; }
+  aap_demo_resume_demo() { :; }
+  cmd_status() { :; }
+  cmd_start
+)
+printf 'configure_coredns() { :; }\n' >"$SCRIPT_DIR/mocks/start-coredns.sh"
+
 echo "Test 4: start command logic"
-if output=$(QUIET=true "$AAP_DEMO_SH" start 2>&1); then
-  if echo "$output" | grep -q "MOCK: crc start"; then
+if output=$(_test_start 2>&1); then
+  if echo "$output" | grep -q "MOCK: crc start" \
+    && ! echo "$output" | grep -q "WARNING: No cluster exists"; then
     _pass "start_calls_crc"
   else
-    _fail "start_calls_crc - did not call crc start"
+    _fail "start_calls_crc - did not call crc start or emitted false missing-cluster warning"
   fi
 else
   _fail "start_calls_crc - command failed"
+fi
+
+echo "Test 4c: CRC start failure returns nonzero"
+if output=$(CRC_START_RC=42 _test_start 2>&1); then
+  _fail "crc_start_failure_returns_nonzero"
+elif echo "$output" | grep -q 'Failed to start the CRC cluster'; then
+  _pass "crc_start_failure_returns_nonzero"
+else
+  _fail "crc_start_failure_returns_nonzero - missing actionable error"
+fi
+
+echo "Test 4d: CRC stop failure returns nonzero"
+if output=$(CRC_STOP_RC=42 _test_stop 2>&1); then
+  _fail "crc_stop_failure_returns_nonzero"
+elif echo "$output" | grep -q 'Failed to stop the CRC cluster'; then
+  _pass "crc_stop_failure_returns_nonzero"
+else
+  _fail "crc_stop_failure_returns_nonzero - missing actionable error"
+fi
+
+cat >"$SCRIPT_DIR/mocks/failing-crc-create.sh" <<'EOF'
+#!/usr/bin/env bash
+configure_coredns() {
+  return 1
+}
+EOF
+chmod +x "$SCRIPT_DIR/mocks/failing-crc-create.sh"
+
+echo "Test 4e: CoreDNS recovery failure returns nonzero"
+if output=$(AAP_DEMO_CRC_CREATE_SCRIPT="$SCRIPT_DIR/mocks/failing-crc-create.sh" \
+  _test_start 2>&1); then
+  _fail "coredns_recovery_failure_returns_nonzero"
+elif echo "$output" | grep -q 'Failed to restore CoreDNS after cluster start'; then
+  _pass "coredns_recovery_failure_returns_nonzero"
+else
+  _fail "coredns_recovery_failure_returns_nonzero - missing actionable error"
+fi
+
+echo "Test 4b: required CRC lifecycle failures propagate"
+start_cluster_function=$(sed -n '/^_start_crc_cluster()/,/^}$/p' "$AAP_DEMO_SH")
+stop_function=$(sed -n '/^cmd_stop()/,/^}$/p' "$AAP_DEMO_SH")
+if echo "$start_cluster_function" | grep -q 'if ! crc start' \
+  && echo "$stop_function" | grep -q 'if ! crc stop'; then
+  _pass "crc_lifecycle_failures_propagate"
+else
+  _fail "crc_lifecycle_failures_propagate - start or stop still suppresses CRC failure"
+fi
+
+echo "Test 4a: start waits for the AAP catalog"
+start_function=$(sed -n '/^cmd_start()/,/^}$/p' "$AAP_DEMO_SH")
+catalog_recovery_function=$(sed -n '/^_recover_aap_catalog_after_start()/,/^}$/p' "$AAP_DEMO_SH")
+if echo "$start_function" | grep -q '_recover_aap_catalog_after_start' \
+  && echo "$catalog_recovery_function" | grep -q 'wait_for_catalog_ready' \
+  && echo "$catalog_recovery_function" | grep -q 'deployment/catalog-operator -n olm'; then
+  _pass "start_waits_for_aap_catalog"
+else
+  _fail "start_waits_for_aap_catalog - catalog recovery is not wired into start"
 fi
 
 # Test 5: destroy command - verify confirmation prompt in interactive mode
@@ -257,10 +350,11 @@ fi
 # Test 10: addon purge options are accepted and forwarded
 echo "Test 10: disable forwards addon purge options"
 if grep -q -- '--purge-data' "$AAP_DEMO_SH" \
-  && grep -q 'bash "\$addon_dir/deploy.sh" --delete "\$@"' "$AAP_DEMO_SH"; then
+  && grep -q 'if ! bash "\$addon_dir/deploy.sh" --delete "\$@"' "$AAP_DEMO_SH" \
+  && grep -q '_err "Failed to disable addon: \$addon"' "$AAP_DEMO_SH"; then
   _pass "disable_forwards_purge_data"
 else
-  _fail "disable_forwards_purge_data - purge option parsing or forwarding is missing"
+  _fail "disable_forwards_purge_data - purge forwarding or failure propagation is missing"
 fi
 
 # Test 9: create command - verify OLM addon is enabled after cluster creation
@@ -270,6 +364,29 @@ if grep -q 'addons/olm/deploy.sh' "$AAP_DEMO_SH"; then
   _pass "create_enables_olm"
 else
   _fail "create_enables_olm - OLM deploy not referenced in create function"
+fi
+
+# Test 10a: standard deploy enables Automation Orchestrator
+echo "Test 10a: deploy enables Automation Orchestrator"
+deploy_function=$(sed -n '/^cmd_deploy()/,/^# -----------------------------------------------------------------------------$/p' "$AAP_DEMO_SH")
+standard_ao_function=$(sed -n '/^_enable_standard_ao()/,/^}$/p' "$AAP_DEMO_SH")
+if [ "$(echo "$deploy_function" | grep -c '_enable_standard_ao')" -eq 2 ] \
+  && echo "$standard_ao_function" | grep -q 'cmd_enable ao'; then
+  _pass "deploy_enables_standard_ao"
+else
+  _fail "deploy_enables_standard_ao - fresh and existing AAP paths must enable AO"
+fi
+
+# Test 10b: gateway security reconciliation includes supplemental group 0
+echo "Test 10b: deploy reconciles gateway security context"
+gateway_patch_function=$(sed -n '/^_patch_gateway_capability()/,/^}$/p' "$AAP_DEMO_SH")
+if echo "$gateway_patch_function" | grep -q '"supplementalGroups":\[0\]' \
+  && echo "$gateway_patch_function" | grep -q '"NET_BIND_SERVICE"' \
+  && echo "$gateway_patch_function" | grep -q '"type":"Recreate"' \
+  && [ "$(echo "$deploy_function" | grep -c '_patch_gateway_capability')" -eq 1 ]; then
+  _pass "deploy_reconciles_gateway_security_context"
+else
+  _fail "deploy_reconciles_gateway_security_context - existing and fresh deployments must receive both settings"
 fi
 
 # Test 11: persistent CRI-O storage is opt-in and has a safe OCI fallback

@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
 PORTAL_OPERATOR_NAMESPACE="${PORTAL_OPERATOR_NAMESPACE:-automation-portal}"
-PORTAL_OPERATOR_DIR="${HOME}/.aap-demo/portal-operator"
+PORTAL_OPERATOR_DIR="${AAP_DEMO_DIR:-$HOME/.aap-demo}/portal-operator"
 PORTAL_NAME="${PORTAL_NAME:-portal}"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-automation-portal}"
 ACTION="${1:-deploy}"
@@ -205,7 +205,7 @@ check_aap() {
 }
 
 setup_namespace() {
-  kubectl create namespace "$PORTAL_OPERATOR_NAMESPACE" 2>/dev/null || true
+  kubectl create namespace "$PORTAL_OPERATOR_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   # OLM catalog pods run with a fixed UID (e.g. 1001) that falls outside the
   # restricted PSA range on MicroShift.  Set privileged to allow them; SCCs
   # still govern what the pods can actually do at runtime.
@@ -238,7 +238,7 @@ grant_operator_sccs_for_namespace() {
 copy_catalog_source() {
   local target_namespace="$1"
   local catalog_image catalog_secret
-  kubectl create namespace "$target_namespace" 2>/dev/null || true
+  kubectl create namespace "$target_namespace" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   if kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" >/dev/null 2>&1; then
     kubectl get secret redhat-operators-pull-secret -n "$AAP_NAMESPACE" -o json \
       | jq --arg namespace "$target_namespace" \
@@ -294,7 +294,7 @@ prepare_catalog_source() {
 
 prepare_rhdh_namespace() {
   local rhdh_catalog_namespace="openshift-marketplace"
-  kubectl create namespace openshift-operators 2>/dev/null || true
+  kubectl create namespace openshift-operators --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   # RHDH operator pods also require privileged PSA + anyuid/privileged SCCs on
   # MicroShift for the same reason as the portal operator catalog pods.
   kubectl label namespace openshift-operators \
@@ -427,7 +427,7 @@ load_github_credentials() {
   GITHUB_APP_CLIENT_SECRET="${GITHUB_APP_CLIENT_SECRET:-}"
   GITHUB_APP_PRIVATE_KEY_PATH="${GITHUB_APP_PRIVATE_KEY_PATH:-}"
 
-  local file="${GITHUB_CREDS_FILE:-${HOME}/.aap-demo/apme-eap-github-creds.yml}"
+  local file="${GITHUB_CREDS_FILE:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/apme-eap-github-creds.yml}"
   [ -f "$file" ] || return 0
   GITHUB_TOKEN="${GITHUB_TOKEN:-$(sed -n 's/^github_token:[[:space:]]*//p' "$file" | tr -d '"' | head -1)}"
   GITHUB_APP_ID="${GITHUB_APP_ID:-$(sed -n 's/^github_app_id:[[:space:]]*//p' "$file" | tr -d '"' | head -1)}"
@@ -501,7 +501,7 @@ create_credentials() {
     --from-literal=aap-token="$api_token" --dry-run=client -o yaml | kubectl apply -f -
 
   if [ "${PORTAL_CHECK_SSL:-true}" = true ]; then
-    ca_path="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"
+    ca_path="${AAP_DEMO_CONFIG_DIR:-${AAP_DEMO_DIR:-$HOME/.aap-demo}}/crc-ingress-ca.crt"
     [ -s "$ca_path" ] || {
       echo "❌ Ingress CA not found at $ca_path; export it or set PORTAL_CHECK_SSL=false" >&2
       exit 1

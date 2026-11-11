@@ -20,7 +20,7 @@
 
 - name: Detect system architecture  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
-    system_arch: "{{ ansible_architecture }}"
+    system_arch: "{{ ansible_facts['architecture'] }}"
 
 - name: Use community RHDH images for ARM64  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:

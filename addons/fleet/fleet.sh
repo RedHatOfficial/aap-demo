@@ -13,19 +13,54 @@ if [ -n "${_FLEET_LOADED:-}" ]; then return 0; fi
 _FLEET_LOADED=1
 
 FLEET_ADDON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FLEET_DIR="${HOME}/.aap-demo/fleet"
+FLEET_DIR="${AAP_DEMO_DIR:-$HOME/.aap-demo}/fleet"
 FLEET_NODE_MEM="${FLEET_NODE_MEM:-1024}"
 FLEET_NODE_CPUS="${FLEET_NODE_CPUS:-2}"
 FLEET_NODE_PORT_BASE=2200
+# shellcheck source=../../includes/fleet-access.sh
+source "${FLEET_ADDON_DIR}/../../includes/fleet-access.sh"
+
 # Indices created by the current fleet_create_all invocation.
 FLEET_CREATED_INDICES=()
+
+# -----------------------------------------------------------------------------
+# SSH host-forward bind address
+# -----------------------------------------------------------------------------
+# The forward must be reachable both from this host (aap-demo fleet ssh) and
+# from the CRC VM running AAP (which reaches the node at <host LAN IP>:<port>).
+# Binding to 0.0.0.0 exposes the privileged node SSH on every host interface;
+# binding to 127.0.0.1 makes it unreachable from the CRC VM. Bind to the host's
+# LAN IP (the address on the default route) so AAP can reach it, and always add
+# a 127.0.0.1 forward so local SSH keeps working.
+_fleet_host_lan_ip() {
+  if [[ "$OSTYPE" == darwin* ]]; then
+    local def_iface
+    def_iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
+    [ -n "$def_iface" ] && ifconfig "$def_iface" 2>/dev/null | awk '/inet /{print $2; exit}'
+  else
+    ip route get 1.1.1.1 2>/dev/null | awk '/src/{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}'
+  fi
+}
+
+# Echo the -netdev hostfwd argument for a node SSH port.
+_fleet_ssh_hostfwd() {
+  local port="$1" lan_ip
+  lan_ip=$(_fleet_host_lan_ip)
+  if [ -n "$lan_ip" ]; then
+    printf 'user,id=net0,hostfwd=tcp:127.0.0.1:%s-:22,hostfwd=tcp:%s:%s-:22' \
+      "$port" "$lan_ip" "$port"
+  else
+    # No LAN IP (offline/unusual host): fall back to localhost-only.
+    printf 'user,id=net0,hostfwd=tcp:127.0.0.1:%s-:22' "$port"
+  fi
+}
 
 # -----------------------------------------------------------------------------
 # Migration from seed-nodes → fleet (one-time)
 # -----------------------------------------------------------------------------
 
 _fleet_migrate_from_seed_nodes() {
-  local old_dir="${HOME}/.aap-demo/nodes"
+  local old_dir="${AAP_DEMO_DIR:-$HOME/.aap-demo}/nodes"
   [ -d "$old_dir" ] || return 0
   # Already migrated if fleet dir has node subdirs
   if compgen -G "${FLEET_DIR}/node-*" >/dev/null 2>&1; then
@@ -54,7 +89,7 @@ _fleet_migrate_from_seed_nodes() {
   done
 
   # Migrate SEED_IMAGE → FLEET_IMAGE in config
-  local config="${HOME}/.aap-demo/config"
+  local config="${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}"
   if [ -f "$config" ] && grep -q '^SEED_IMAGE=' "$config"; then
     if ! grep -q '^FLEET_IMAGE=' "$config"; then
       sed -i.bak 's/^SEED_IMAGE=/FLEET_IMAGE=/' "$config" && rm -f "${config}.bak"
@@ -257,11 +292,14 @@ _fleet_validate_image() {
 
 _fleet_generate_ssh_key() {
   local key_path="${FLEET_DIR}/ssh_key"
-  if [ -f "$key_path" ]; then
-    return 0
+  mkdir -p "$FLEET_DIR" || return 1
+  chmod 700 "$FLEET_DIR" || return 1
+  if [ ! -f "$key_path" ]; then
+    ssh-keygen -t ed25519 -f "$key_path" -N "" -C "aap-demo-fleet" -q || return 1
   fi
-  mkdir -p "$FLEET_DIR"
-  ssh-keygen -t ed25519 -f "$key_path" -N "" -C "aap-demo-fleet" -q
+  if [ ! -f "${key_path}.pub" ]; then
+    ssh-keygen -y -P '' -f "$key_path" >"${key_path}.pub" || return 1
+  fi
   chmod 600 "$key_path"
   chmod 644 "${key_path}.pub"
 }
@@ -404,9 +442,9 @@ fleet_node_create() {
     -cpu host
     -drive "file=${node_dir}/disk.qcow2,format=qcow2"
     -drive "file=${node_dir}/cloud-init.iso,format=raw,if=virtio"
-    -netdev "user,id=net0,hostfwd=tcp:0.0.0.0:${port}-:22"
+    -netdev "$(_fleet_ssh_hostfwd "$port")"
     -device "virtio-net,netdev=net0"
-    -display none
+    -display "vnc=127.0.0.1:$((port - 2200 + 10))"
     -pidfile "${node_dir}/qemu.pid"
     -daemonize
     -serial "file:${node_dir}/console.log"
@@ -417,7 +455,7 @@ fleet_node_create() {
     qemu_cmd+=($bios_args)
   fi
 
-  echo "  Starting VM ${hostname} (port ${port})..."
+  echo "  Starting VM ${hostname} (port ${port}, VNC 127.0.0.1:$((port - 2200 + 10)))..."
   if ! "${qemu_cmd[@]}" 2>"${node_dir}/qemu-error.log"; then
     _err "Failed to start QEMU VM"
     cat "${node_dir}/qemu-error.log" >&2
@@ -449,7 +487,8 @@ EOF
       -o LogLevel=ERROR -o ConnectTimeout=2 -o BatchMode=yes \
       ansible@127.0.0.1 'true' 2>/dev/null; then
       echo "  ✓ ${hostname} ready (SSH on port ${port})"
-      return 0
+      fleet_reconcile_access "$index"
+      return $?
     fi
     attempts=$((attempts + 1))
     sleep 3
@@ -469,9 +508,10 @@ fleet_node_delete() {
     return 1
   fi
 
-  local pid hostname
+  local pid hostname port
   pid=$(grep '^PID=' "${node_dir}/meta" 2>/dev/null | cut -d= -f2)
   hostname=$(grep '^HOSTNAME=' "${node_dir}/meta" 2>/dev/null | cut -d= -f2)
+  port=$(grep '^PORT=' "${node_dir}/meta" 2>/dev/null | cut -d= -f2)
 
   # Kill QEMU process
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
@@ -487,6 +527,10 @@ fleet_node_delete() {
     fi
   fi
 
+  if [ -f "$FLEET_DIR/known_hosts" ] && [[ "$port" =~ ^[0-9]+$ ]]; then
+    ssh-keygen -R "[127.0.0.1]:$port" -f "$FLEET_DIR/known_hosts" >/dev/null || return 1
+    rm -f "$FLEET_DIR/known_hosts.old"
+  fi
   rm -rf "$node_dir"
   echo "  ✓ Removed ${hostname:-node-${index}}"
 }
@@ -506,6 +550,106 @@ _fleet_stop_vm() {
       wait=$((wait + 1))
     done
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  fi
+}
+
+fleet_node_start() {
+  local index="$1"
+  local node_dir="${FLEET_DIR}/node-${index}"
+  local meta="${node_dir}/meta"
+  if [ ! -f "$meta" ] || [ ! -f "${node_dir}/disk.qcow2" ] \
+    || [ ! -f "${node_dir}/cloud-init.iso" ]; then
+    _err "Fleet node ${index} is incomplete and cannot be restarted"
+    return 1
+  fi
+
+  local port pid hostname
+  port=$(grep '^PORT=' "$meta" | cut -d= -f2)
+  pid=$(grep '^PID=' "$meta" | cut -d= -f2)
+  hostname=$(grep '^HOSTNAME=' "$meta" | cut -d= -f2)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    echo "  ✓ ${hostname} already running"
+    return 0
+  fi
+  if ! _fleet_check_port_available "$port"; then
+    _err "Port ${port} is already in use; cannot start ${hostname}"
+    return 1
+  fi
+
+  local qemu_bin accel machine bios_args
+  qemu_bin=$(_fleet_qemu_binary) || return 1
+  accel=$(_fleet_qemu_accel) || return 1
+  machine=$(_fleet_qemu_machine) || return 1
+  bios_args=$(_fleet_qemu_bios_args 2>/dev/null) || bios_args=""
+  local qemu_cmd=(
+    "$qemu_bin"
+    -accel "$accel"
+    -M "$machine"
+    -m "$FLEET_NODE_MEM"
+    -smp "$FLEET_NODE_CPUS"
+    -cpu host
+    -drive "file=${node_dir}/disk.qcow2,format=qcow2"
+    -drive "file=${node_dir}/cloud-init.iso,format=raw,if=virtio"
+    -netdev "$(_fleet_ssh_hostfwd "$port")"
+    -device "virtio-net,netdev=net0"
+    -display "vnc=127.0.0.1:$((port - 2200 + 10))"
+    -pidfile "${node_dir}/qemu.pid"
+    -daemonize
+    -serial "file:${node_dir}/console.log"
+  )
+  if [ -n "$bios_args" ]; then
+    # shellcheck disable=SC2206
+    qemu_cmd+=($bios_args)
+  fi
+
+  echo "  Starting VM ${hostname} (port ${port}, VNC 127.0.0.1:$((port - 2200 + 10)))..."
+  if ! "${qemu_cmd[@]}" 2>"${node_dir}/qemu-error.log"; then
+    _err "Failed to restart ${hostname}"
+    cat "${node_dir}/qemu-error.log" >&2
+    return 1
+  fi
+  pid=$(cat "${node_dir}/qemu.pid")
+  sed -i.bak -e "s/^PID=.*/PID=${pid}/" -e 's/^STATUS=.*/STATUS=running/' "$meta"
+  rm -f "${meta}.bak"
+
+  echo "  Waiting for SSH on port ${port}..."
+  local ssh_key attempts=0
+  ssh_key=$(_fleet_ssh_private_key_path)
+  while [ "$attempts" -lt 60 ]; do
+    if ssh -p "$port" -i "$ssh_key" \
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR -o ConnectTimeout=2 -o BatchMode=yes \
+      ansible@127.0.0.1 'true' 2>/dev/null; then
+      echo "  ✓ ${hostname} ready (SSH on port ${port})"
+      fleet_reconcile_access "$index"
+      return $?
+    fi
+    attempts=$((attempts + 1))
+    sleep 3
+  done
+  _err "${hostname} did not become reachable over SSH"
+  return 1
+}
+
+fleet_start_all() {
+  [ -d "$FLEET_DIR" ] || return 0
+  local failed=false found=false
+  for meta in "${FLEET_DIR}"/node-*/meta; do
+    [ -f "$meta" ] || continue
+    found=true
+    local idx
+    idx=$(grep '^INDEX=' "$meta" | cut -d= -f2)
+    fleet_node_start "$idx" || failed=true
+  done
+  if [ "$found" = false ]; then
+    echo "  No Fleet nodes to start"
+  elif [ "$failed" = true ]; then
+    _err "One or more Fleet nodes failed to start"
+    return 1
+  else
+    echo "  ✓ Fleet nodes started"
+    fleet_reconcile_running_access || return 1
+    fleet_reconcile_stack || return 1
   fi
 }
 
@@ -537,7 +681,7 @@ fleet_list() {
   if [ "$found" = false ]; then
     echo "  No fleet nodes found"
     echo ""
-    echo "  Create nodes: aap-demo fleet add <count> --image <path>"
+    echo "  Create nodes: aap-demo fleet add <count> --image <rhel9|rhel10|local-qcow2-path>"
   fi
 }
 
@@ -605,14 +749,14 @@ fleet_create_all() {
 
   if [ -z "$image_path" ]; then
     _err "No image path specified"
-    echo "  Use: --image <path-to-qcow2>"
+    echo "  Use: --image <rhel9|rhel10|local-qcow2-path>"
     return 1
   fi
 
   # Check available RAM before creating nodes
   _fleet_check_ram "$count" || return 1
 
-  _fleet_generate_ssh_key
+  _fleet_generate_ssh_key || return 1
 
   echo ""
   echo "Creating ${count} fleet node(s)..."
@@ -633,6 +777,8 @@ fleet_create_all() {
   else
     echo "⚠ Created ${created}/${count} fleet node(s)"
   fi
+  fleet_reconcile_running_access || return 1
+  fleet_reconcile_stack
 }
 
 fleet_stop_all() {
@@ -644,11 +790,45 @@ fleet_stop_all() {
     local idx
     idx=$(grep '^INDEX=' "$meta" | cut -d= -f2)
     _fleet_stop_vm "$idx"
+    # Keep the node meta in sync so the dashboard/CLI reflect the real state.
+    sed -i.bak -e 's/^STATUS=.*/STATUS=stopped/' -e 's/^PID=.*/PID=/' "$meta" 2>/dev/null
+    rm -f "${meta}.bak"
     stopped=$((stopped + 1))
   done
   if [ "$stopped" -gt 0 ]; then
     echo "  ✓ Stopped ${stopped} fleet node(s)"
   fi
+}
+
+# Per-node power control for the dashboard and CLI.
+# fleet_node_power <index> <start|stop|restart>
+fleet_node_power() {
+  local index="$1" action="$2"
+  [[ "$index" =~ ^[1-9][0-9]*$ ]] || { _err "Invalid fleet node index: $index"; return 1; }
+  local node_dir="${FLEET_DIR}/node-${index}"
+  [ -d "$node_dir" ] || { _err "Fleet node ${index} does not exist"; return 1; }
+
+  case "$action" in
+    start)
+      fleet_node_start "$index"
+      ;;
+    stop)
+      _fleet_stop_vm "$index"
+      if [ -f "${node_dir}/meta" ]; then
+        sed -i.bak -e 's/^STATUS=.*/STATUS=stopped/' -e 's/^PID=.*/PID=/' "${node_dir}/meta"
+        rm -f "${node_dir}/meta.bak"
+      fi
+      echo "  ✓ Stopped fleet node ${index}"
+      ;;
+    restart)
+      _fleet_stop_vm "$index"
+      fleet_node_start "$index"
+      ;;
+    *)
+      _err "Unknown fleet power action: $action (use start, stop, or restart)"
+      return 1
+      ;;
+  esac
 }
 
 fleet_destroy_all() {
@@ -685,6 +865,7 @@ fleet_remove_last() {
   done
 
   echo "✓ Removed ${removed} fleet node(s)"
+  fleet_reconcile_stack
 }
 
 fleet_remove_by_name() {
@@ -698,7 +879,8 @@ fleet_remove_by_name() {
     return 1
   fi
 
-  fleet_node_delete "$index"
+  fleet_node_delete "$index" || return 1
+  fleet_reconcile_stack
 }
 
 # Count of running nodes
@@ -718,7 +900,7 @@ fleet_count() {
 # Save image path to config for reuse
 _fleet_save_image_config() {
   local image_path="$1"
-  local config="${AAP_DEMO_CONFIG_FILE:-$HOME/.aap-demo/config}"
+  local config="${AAP_DEMO_CONFIG_FILE:-${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}}"
   mkdir -p "$(dirname "$config")"
   if [ -f "$config" ] && grep -q '^FLEET_IMAGE=' "$config"; then
     sed -i.bak "s|^FLEET_IMAGE=.*|FLEET_IMAGE=${image_path}|" "$config" && rm -f "${config}.bak"

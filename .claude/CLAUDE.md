@@ -9,7 +9,8 @@ aap-demo is a tool for deploying Ansible Automation Platform (AAP) 2.7 to OpenSh
 ```
 aap-demo create          # Create local MicroShift cluster
 aap-demo deploy          # Deploy AAP 2.7
-aap-demo status          # Show cluster status, routes, credentials
+aap-demo status          # Show cluster status and routes; credentials hidden
+aap-demo status --show-secrets # Reveal credentials interactively
 aap-demo diagnose        # Quick health check (cluster, storage, SCCs, pods)
 aap-demo must-gather     # Collect full diagnostics for troubleshooting
 aap-demo idle true       # Scale down AAP to save resources (operator deploys only)
@@ -101,9 +102,10 @@ ansible/                       # Ansible playbook alternative
 
 1. Run `aap-demo diagnose` first to identify obvious issues
 2. If diagnose shows failures, suggest the specific fix listed
-3. If still unclear, run `aap-demo must-gather` to collect full diagnostics
-4. Check `aap-demo status` for routes and credentials
-5. For deployment issues, check operator logs: `kubectl logs -l app.kubernetes.io/managed-by=aap-gateway-operator -n aap-operator --tail=50`
+3. For complex issues with the bash CLI, suggest `aap-demo diagnose --ai` for AI-powered root cause analysis (removed from the Python CLI — see ADR-035)
+4. If still unclear, run `aap-demo must-gather` to collect full diagnostics
+5. Check `aap-demo status` for routes; use `status --show-secrets` interactively for credentials
+6. For deployment issues, check operator logs: `kubectl logs -l app.kubernetes.io/managed-by=aap-gateway-operator -n aap-operator --tail=50`
 
 ## Contributing to aap-demo
 

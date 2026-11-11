@@ -58,8 +58,8 @@ Network access is required to:
 
 After installation, you'll need to configure some credentials in the AAP UI:
 
-1. **Galaxy/Automation Hub Tokens** (optional when `~/.aap-demo/galaxy-token` exists):
-   - Place your offline token at `~/.aap-demo/galaxy-token`, then enable product-demos
+1. **Galaxy/Automation Hub Tokens** (optional):
+   - Run `aap-demo enable setup-pah` to store the offline token in the encrypted `~/.ansible/conf/env.yml`, then enable product-demos
      (Galaxy credentials are wired automatically after the APD install job completes)
    - Or update "Automation Hub Certified Content" and "Automation Hub Validated Content" manually in the AAP UI
 
@@ -72,7 +72,7 @@ After installation, you'll need to configure some credentials in the AAP UI:
    - **OpenShift Credential** is auto-configured for local MicroShift when product demos are
      installed (`aap-demo enable product-demo-openshift` or after `aap-demo deploy`)
    - **AAP Credential** is auto-configured to the in-cluster gateway when wiring runs
-   - **Automation Hub** credentials are updated when `~/.aap-demo/galaxy-token` exists
+   - **Automation Hub** credentials are updated when present in the encrypted `~/.ansible/conf/env.yml`
 
 ### Custom Repository
 
@@ -167,14 +167,17 @@ APD_PROJECT_SYNC_ATTEMPTS=120 APD_PROJECT_SYNC_DELAY=5 \
 ### License is missing / cannot launch installer jobs
 
 AAP will not launch jobs until a subscription is attached. A destroy/redeploy clears the previous
-license. Log into the AAP UI (`aap-demo status` prints the URL and admin password), open
-**Settings → Subscription**, and register a developer/trial subscription or upload a manifest.
-Then re-run:
+license. Configure Red Hat Customer Portal credentials and let Fleet attach the
+saved subscription ID or first entitled subscription automatically:
 
 ```bash
+aap-demo fleet auth
+aap-demo fleet register
 aap-demo enable product-demos
 ```
 
+The selected subscription name appears in the dashboard Environment Overview.
+You can change it later in AAP under **Settings → Subscription**.
 Bootstrap resources created before the license check can be reused; the retry launches the install
 job once the subscription is valid.
 

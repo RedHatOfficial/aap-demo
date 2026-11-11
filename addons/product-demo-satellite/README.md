@@ -47,6 +47,12 @@ aap-demo enable product-demo-satellite
 - A reachable **Red Hat Satellite** (or Foreman) server with API access
 - Subscription manifest imported on Satellite (required for `SETUP | Satellite`)
 
+Don't have a Satellite server? The [satellite-lab](../../satellite-lab/README.md)
+folder builds one on this KVM host, and the
+[satellite-manifest](../satellite-manifest/README.md) addon
+(`aap-demo enable satellite-manifest`) generates the required subscription
+manifest programmatically.
+
 ## Updating Satellite credentials
 
 After install, update **both** credentials in the **Ansible Product Demos (APD)** organization.

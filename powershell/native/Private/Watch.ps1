@@ -93,15 +93,6 @@ function Invoke-AapDemoWatch {
       '(route not found)'
     }
 
-    $adminPassword = Get-AapAdminPassword -Namespace $Namespace
-    if ($adminPassword) {
-      Write-Host 'Credentials:'
-      Write-Host "  URL:      https://$aapUrl"
-      Write-Host '  Username: admin'
-      Write-Host "  Password: $adminPassword"
-      Write-Host ''
-    }
-
     if (Get-AapAapSuccessful -Namespace $Namespace) {
       $csvResult = Invoke-AapOcCapture @(
         'get', 'csv', '-n', $Namespace,
@@ -117,11 +108,7 @@ function Invoke-AapDemoWatch {
       Write-Host "AAP UI: https://$aapUrl"
       Write-Host ''
       Write-Host 'Username: admin'
-      if ($adminPassword) {
-        Write-Host "Password: $adminPassword"
-      } else {
-        Write-Host "Password: (run: oc get secret -n $Namespace aap-admin-password -o jsonpath='{.data.password}')"
-      }
+      Write-Host "Password: hidden (run 'aap-demo status --show-secrets' in a terminal)"
       Write-Host ''
       Write-AapSetupPahReminder
       try {

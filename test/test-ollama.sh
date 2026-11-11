@@ -20,6 +20,7 @@ mkdir -p "$MOCK_BIN"
 #   SC_CRC_RC       exit code for 'get sc crc-csi-hostpath-provisioner' (default 1 = absent)
 #   SC_STANDARD_RC  exit code for 'get sc standard'            (default 0 = present)
 #   ROLLOUT_RC      exit code for rollout status               (default 0 = success)
+#   GPU_NODE_JSON   node response used for GPU detection        (default no GPUs)
 # Unrecognised calls print DIAGNOSTIC_OUTPUT (allows failure-path diagnostics through).
 cat >"${MOCK_BIN}/kubectl" <<'EOF'
 #!/usr/bin/env bash
@@ -29,6 +30,13 @@ case "$*" in
   "get sc topolvm-provisioner") exit "${SC_TOPOLVM_RC:-0}" ;;
   "get sc crc-csi-hostpath-provisioner") exit "${SC_CRC_RC:-1}" ;;
   "get sc standard") exit "${SC_STANDARD_RC:-0}" ;;
+  "get nodes -o json")
+    if [ -n "${GPU_NODE_JSON:-}" ]; then
+      printf '%s\n' "$GPU_NODE_JSON"
+    else
+      printf '%s\n' '{"items":[]}'
+    fi
+    ;;
   "get route aap -n aap-operator -o jsonpath={.spec.host}")
     printf '%s' 'aap.apps.example.test' ;;
   "apply -f -") cat >"${MOCK_APPLY_FILE}" ;;
@@ -62,7 +70,8 @@ fail() {
 # CLI registration
 # ---------------------------------------------------------------------------
 
-if grep -q 'ollama' "$AAP_DEMO"; then
+# Match ollama as a parser case token regardless of its position in the list.
+if grep -qE '(^|\| )ollama( |\))' "$AAP_DEMO"; then
   pass "cli_accepts_ollama_addon"
 else
   fail "cli_accepts_ollama_addon"
@@ -98,6 +107,41 @@ if grep -q 'Model qwen2.5:3b ready' <<<"$output"; then
   pass "deployment_pulls_configured_model"
 else
   fail "deployment_pulls_configured_model"
+fi
+
+if grep -q 'Acceleration:  cpu' <<<"$output" \
+  && ! grep -q 'nvidia.com/gpu' "$MOCK_APPLY_FILE" \
+  && ! grep -q '__GPU_RESOURCE_LIMIT__' "$MOCK_APPLY_FILE"; then
+  pass "deployment_falls_back_to_cpu_without_cluster_gpu"
+else
+  fail "deployment_falls_back_to_cpu_without_cluster_gpu"
+fi
+
+if GPU_NODE_JSON='{"items":[{"status":{"allocatable":{"nvidia.com/gpu":"1"}}}]}' \
+  OLLAMA_MODEL=qwen2.5:3b "$OLLAMA_DEPLOY" >"${TEST_DIR}/gpu-output.log" 2>&1 \
+  && grep -q 'nvidia.com/gpu: "1"' "$MOCK_APPLY_FILE" \
+  && grep -q 'Acceleration:  nvidia' "${TEST_DIR}/gpu-output.log" \
+  && grep -q 'type: Recreate' "$MOCK_APPLY_FILE"; then
+  pass "deployment_uses_advertised_nvidia_gpu"
+else
+  fail "deployment_uses_advertised_nvidia_gpu"
+  cat "${TEST_DIR}/gpu-output.log" >&2
+fi
+
+GPU_NODE_JSON='{"items":[{"status":{"allocatable":{"nvidia.com/gpu":"1"}}}]}' \
+  OLLAMA_GPU=cpu OLLAMA_MODEL=qwen2.5:3b "$OLLAMA_DEPLOY" >/dev/null 2>&1
+if ! grep -q 'nvidia.com/gpu' "$MOCK_APPLY_FILE"; then
+  pass "deployment_honors_cpu_override"
+else
+  fail "deployment_honors_cpu_override"
+fi
+
+if ! OLLAMA_GPU=nvidia OLLAMA_MODEL=qwen2.5:3b "$OLLAMA_DEPLOY" \
+  >"${TEST_DIR}/missing-gpu-output.log" 2>&1 \
+  && grep -q 'no node advertises nvidia.com/gpu' "${TEST_DIR}/missing-gpu-output.log"; then
+  pass "deployment_rejects_unavailable_nvidia_override"
+else
+  fail "deployment_rejects_unavailable_nvidia_override"
 fi
 
 if grep -q 'OLLAMA_ROLLOUT_TIMEOUT:-15m' "$OLLAMA_DEPLOY" \

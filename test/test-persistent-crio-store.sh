@@ -46,6 +46,17 @@ status_output="$(persistent_crio_store_status)"
 printf '%s\n' "$status_output" | grep -F 'unavailable on macOS/vfkit'
 echo "✓ macOS status reports persistent CRI-O storage as unavailable"
 
+unset AAP_IMAGE_STORE_SIZE_GB
+[ "$(_persistent_crio_store_size_gb)" = 100 ]
+export AAP_PERSISTENT_IMAGE_STORE_OS=Linux
+export AAP_IMAGE_STORE_SIZE_GB=99
+export AAP_IMAGE_STORE_DISK="${TEST_DIR}/undersized-crio-images.qcow2"
+if _persistent_crio_store_create_disk >/dev/null 2>&1; then
+  echo "✗ Persistent CRI-O storage accepted less than 100 GiB" >&2
+  exit 1
+fi
+echo "✓ Persistent CRI-O storage defaults to and enforces 100 GiB"
+
 if grep -q 'persistent_crio_store_prepare_before_crc_start' "${REPO_ROOT}/includes/crc-create.sh"; then
   echo "✗ CRC create must not alter vfkit configuration for macOS" >&2
   exit 1

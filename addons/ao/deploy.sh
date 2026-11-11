@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../../includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/../../includes/aap-demo-paths.sh"
+# shellcheck source=../../includes/credential-vault.sh
+source "${SCRIPT_DIR}/../../includes/credential-vault.sh"
 # shellcheck source=lib/admin-password.sh
 source "${SCRIPT_DIR}/lib/admin-password.sh"
 # shellcheck source=lib/replica-profile.sh
@@ -42,9 +44,9 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 
 NAMESPACE="automation-orchestrator"
 AAP_NAMESPACE="${AAP_DEMO_NAMESPACE:-aap-operator}"
-AO_STATE_FILE="${AO_STATE_FILE:-$HOME/.aap-demo/ao-state}"
-if [ ! -f "$AO_STATE_FILE" ] && [ -f "$HOME/.aap-demo/ao-eap-state" ]; then
-  AO_STATE_FILE="$HOME/.aap-demo/ao-eap-state"
+AO_STATE_FILE="${AO_STATE_FILE:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/ao-state}"
+if [ ! -f "$AO_STATE_FILE" ] && [ -f "${AAP_DEMO_DIR:-$HOME/.aap-demo}/ao-eap-state" ]; then
+  AO_STATE_FILE="${AAP_DEMO_DIR:-$HOME/.aap-demo}/ao-eap-state"
 fi
 MANIFESTS_DIR="${SCRIPT_DIR}/manifests"
 REPO_ROOT="${SCRIPT_DIR}/../.."
@@ -817,11 +819,9 @@ EOF
 }
 
 show_access_info() {
-  local AO_ROUTE PASS_SECRET AO_PASSWORD
+  local AO_ROUTE
   AO_ROUTE=$(kubectl get routes -n "$NAMESPACE" \
     -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
-  PASS_SECRET=$(kubectl get secret -n "$NAMESPACE" \
-    -o name 2>/dev/null | grep -i "admin-password" | head -1 || echo "")
 
   if [ -n "$AO_ROUTE" ]; then
     echo "  URL:      https://${AO_ROUTE}"
@@ -829,21 +829,7 @@ show_access_info() {
     echo "  URL:      kubectl get routes -n ${NAMESPACE} -o jsonpath='{.items[0].spec.host}'"
   fi
   echo "  Username: admin"
-  if [ -n "$PASS_SECRET" ]; then
-    if [ "${CI:-}" != "true" ]; then
-      AO_PASSWORD=$(kubectl get "$PASS_SECRET" -n "$NAMESPACE" \
-        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-      if [ -n "$AO_PASSWORD" ]; then
-        echo "  Password: ${AO_PASSWORD}"
-      else
-        echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
-      fi
-    else
-      echo "  Password: kubectl get $PASS_SECRET -n $NAMESPACE -o jsonpath='{.data.password}' | base64 -d"
-    fi
-  else
-    echo "  Password: kubectl get secret -n $NAMESPACE | grep admin-password"
-  fi
+  echo "  Password: hidden (run 'aap-demo status --show-secrets' in a terminal)"
   echo "  Status:   kubectl get pods -n $NAMESPACE"
 }
 
@@ -872,7 +858,7 @@ sync_ao_demos() {
 
   _import_args=(
     --route "$_route"
-    --token "$_token"
+    --token-fd 3
     --aap-credential-id "$_aap_credential"
     --aap-integration-id "$_aap_integration"
   )
@@ -915,13 +901,15 @@ sync_ao_demos() {
     echo "  ⚠ Python runtime unavailable; skipping optional AO demo import"
     return 0
   fi
-  "$_python_cmd" "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" || true
+  "$_python_cmd" "${SCRIPT_DIR}/scripts/import-demos.py" "${_import_args[@]}" \
+    3< <(printf '%s' "$_token") || true
 }
 
 AO_AAP_SYNC_RAN=0
 
 provision_aap_demos() {
   local _aap_route _ao_route _aap_token _ao_namespace _ao_token _ao_credential _ao_integration
+  local _mcp_credential _mcp_integration
   local -a _provision_args
   _aap_route=$(aap_gateway_route_host)
   _ao_route=$(wire_ao_route_host 2>/dev/null || true)
@@ -938,19 +926,29 @@ provision_aap_demos() {
   fi
   _provision_args=(
     --route "$_aap_route"
-    --token "$_aap_token"
+    --token-fd 3
   )
   if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
     _provision_args+=(
       --ao-api-url "${AO_SYNC_API_URL:-https://router-internal-default.openshift-ingress.svc.cluster.local/api/v1}"
       --ao-api-host "$_ao_route"
-      --ao-token "$_ao_token"
+      --ao-token-fd 4
       --ao-credential-id "$_ao_credential"
       --ao-integration-id "$_ao_integration"
       --control-repository "${AO_SYNC_REPOSITORY:-https://github.com/RedHatOfficial/aap-demo.git}"
       --control-branch "${AO_SYNC_BRANCH:-main}"
       --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
     )
+    _mcp_credential=$(wire_ao_find_credential_by_name "$WIRE_MCP_CREDENTIAL_NAME" 2>/dev/null || true)
+    _mcp_integration=$(wire_ao_find_integration_by_name "$WIRE_MCP_INTEGRATION_NAME" 2>/dev/null || true)
+    if [ -n "$_mcp_credential" ] && [ -n "$_mcp_integration" ]; then
+      _provision_args+=(
+        --ao-mcp-credential-id "$_mcp_credential"
+        --ao-mcp-integration-id "$_mcp_integration"
+      )
+    else
+      wire_warn "AO MCP credential or integration is incomplete; skipping MCP binding for AAP sync"
+    fi
     if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
       local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
       local _agent_integration_id="${AO_AGENT_INTEGRATION_ID:-}"
@@ -980,7 +978,8 @@ provision_aap_demos() {
     echo "  ⚠ Python runtime unavailable; skipping optional AAP demo provisioning"
     return 0
   fi
-  if "$_python_cmd" "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
+  if "$_python_cmd" "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}" \
+    3< <(printf '%s' "$_aap_token") 4< <(printf '%s' "$_ao_token"); then
     if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
       AO_AAP_SYNC_RAN=1
     fi
@@ -1162,18 +1161,6 @@ wait_for_ao_postgres_databases() {
   echo "✓ PostgreSQL databases ready (orchestrator, temporal, temporal_visibility)"
 }
 
-resolve_local_pull_secret_file() {
-  local path
-  for path in "${PULL_SECRET_PATH:-}" "$HOME/.aap-demo/pull-secret" \
-    "$HOME/.aap-demo/pull-secret.txt" "$HOME/.aap-demo/pull-secret.json"; do
-    if [ -n "$path" ] && [ -f "$path" ]; then
-      printf '%s\n' "$path"
-      return 0
-    fi
-  done
-  return 1
-}
-
 ao_pull_secret_is_dockerconfig() {
   local _type
   _type=$(kubectl get secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" \
@@ -1187,21 +1174,21 @@ ao_pull_secret_is_dockerconfig() {
 # Do not copy redhat-operators-pull-secret: OLM may replace that name with an
 # Opaque placeholder ({operator: aap}) that fails ConfigurationValid.
 ensure_ao_pull_secret() {
-  local _pull_file
+  local _pull_secret
   if ao_pull_secret_is_dockerconfig; then
     return 0
   fi
-  if ! _pull_file=$(resolve_local_pull_secret_file); then
-    echo "WARNING: No local pull secret found (~/.aap-demo/pull-secret.txt)"
+  if ! _pull_secret=$(aap_demo_pull_secret_get); then
+    echo "WARNING: No pull secret found in encrypted credential storage"
     echo "  AO operator will reject Opaque catalog secrets as imagePullSecrets."
     return 1
   fi
   echo "Creating image pull secret ${AO_PULL_SECRET_NAME} (kubernetes.io/dockerconfigjson)..."
   kubectl delete secret "$AO_PULL_SECRET_NAME" -n "$NAMESPACE" 2>/dev/null || true
   kubectl create secret generic "$AO_PULL_SECRET_NAME" \
-    --from-file=.dockerconfigjson="$_pull_file" \
+    --from-file=.dockerconfigjson=/dev/fd/3 \
     --type=kubernetes.io/dockerconfigjson \
-    -n "$NAMESPACE"
+    -n "$NAMESPACE" 3< <(printf '%s' "$_pull_secret")
 }
 
 link_ao_pull_secrets_to_operator() {
@@ -1328,7 +1315,7 @@ ao_ensure_mcp_server() {
   fi
   echo "Installing required mcp-server addon..."
   bash "${REPO_ROOT}/addons/mcp-server/deploy.sh"
-  local config="${HOME}/.aap-demo/config"
+  local config="${AAP_DEMO_CONFIG:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/config}"
   local current
   if [ -f "$config" ]; then
     current=$(grep '^ADDONS=' "$config" 2>/dev/null | cut -d= -f2 | tr ',' ' ')
@@ -1449,7 +1436,7 @@ fi
 
 # --- Namespace + SCCs ---
 echo "Creating namespace and SCC grants..."
-kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 if ! grant_scc_to_serviceaccount anyuid default "$NAMESPACE"; then
   exit 1
 fi

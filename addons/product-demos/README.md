@@ -38,6 +38,10 @@ Include Satellite in bulk install (only if you have a configured Satellite serve
 PRODUCT_DEMOS_DOMAINS="linux windows network cloud openshift satellite" aap-demo enable product-demos
 ```
 
+Domain configuration jobs use bounded asynchronous retries so dependent resources, such
+as workflow nodes, wait for newly created AAP workflows to become visible. Re-running a
+failed domain installer is safe because the configuration is idempotent.
+
 Use a custom fork or branch (inherited by base):
 
 ```bash

@@ -14,7 +14,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ACTION="${1:-save}"
-CACHE_BASE="${HOME}/.aap-demo/local-cache"
+CACHE_BASE="${AAP_DEMO_DIR:-$HOME/.aap-demo}/local-cache"
 CACHE_FORMAT_VERSION=4
 CACHE_REMOTE_ARCHIVE="/tmp/aap-demo-local-cache.oci"
 CACHE_CATALOG_METADATA="catalog-digests"

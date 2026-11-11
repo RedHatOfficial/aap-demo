@@ -13,13 +13,14 @@ integrations automatically via `addon-wire.sh` (ADR-023). AO supports an `llm_pr
 integration type that connects it to a chat-completions-compatible LLM endpoint, enabling AI-assisted
 workflow generation and agent capabilities.
 
-MicroShift VMs in CRC have no GPU and limited public egress. Pointing AO at a cloud LLM
+MicroShift VMs in CRC normally expose no GPU and have limited public egress. Other supported
+clusters may advertise NVIDIA GPUs to Kubernetes. Pointing AO at a cloud LLM
 service requires external API keys and introduces a dependency on internet connectivity that
 does not match the offline-demo goal of aap-demo. A locally deployed LLM removes both
 constraints: no API key, no egress requirement.
 
-[Ollama](https://ollama.com/) runs CPU-only inference and exposes an OpenAI-compatible `/v1`
-endpoint. `phi4-mini` (~2.5 GB) fits within the MicroShift VM memory budget and is compact
+[Ollama](https://ollama.com/) supports NVIDIA acceleration with a CPU fallback and exposes an
+OpenAI-compatible `/v1` endpoint. `phi4-mini` (~2.5 GB) fits within the MicroShift VM memory budget and is compact
 enough to pull at install time without making the first demo session impractical.
 
 ## Decision
@@ -57,12 +58,20 @@ requests:
 limits:
   cpu: "4"
   memory: 8Gi
+  nvidia.com/gpu: "1" # only when advertised by a node
 ```
 
 The CPU request stays small so an idle Ollama pod can still schedule beside AAP and
 other addons on a single-node CRC VM. The 4-core limit is unchanged, so inference can
 burst. `phi4-mini` comfortably fits within 8 Gi for CPU inference while leaving headroom
 for AAP.
+
+`deploy.sh` detects the total `nvidia.com/gpu` allocatable resource across nodes. In
+automatic mode it requests one GPU when present and otherwise renders no GPU limit. Users
+can force CPU or require NVIDIA with `OLLAMA_GPU=cpu` or `OLLAMA_GPU=nvidia`. Requiring
+NVIDIA fails before applying the manifest when the resource is unavailable. The Deployment
+uses the `Recreate` strategy so an update does not deadlock while the old pod holds the
+cluster's only GPU.
 
 ### Cluster domain detection
 
@@ -122,14 +131,15 @@ skipped silently. Re-running `aap-demo enable ollama` is idempotent — `kubectl
 ### Negative
 
 - phi4-mini pull is ~2.5 GB and takes several minutes on first enable.
-- CPU-only inference is slow for large prompts — acceptable for demo but not production use.
+- CPU fallback inference is slow for large prompts — acceptable for demo but not production use.
 - 20 Gi PVC on `topolvm-provisioner` consumes significant VM disk space.
 - AO credentials/integration persist after `aap-demo disable ollama`; they become invalid
   automatically but must be removed manually from the AO UI if unwanted.
 
 ### Neutral
 
-- No GPU support is exposed — MicroShift VMs have none.
+- CRC MicroShift VMs still use CPU unless GPU passthrough and a device plugin expose
+  `nvidia.com/gpu` to the node.
 - Additional models can be pulled but require extra disk space.
 - Ollama has no native authentication; the `api_key: "ollama"` placeholder is purely  # pragma: allowlist secret
   structural.

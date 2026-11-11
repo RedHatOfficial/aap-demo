@@ -12,7 +12,8 @@ grep -Fq 'quiet' "$paths_file"
 grep -Fq 'zsh' "$paths_file"
 grep -Fq 'fish' "$paths_file"
 grep -Fq 'powershell' "$paths_file"
-grep -Fq './test/test-kubeconfig-shell-setup.sh' "${repo_root}/.github/workflows/test.yaml"
+# CI runs every test/test-*.sh through the dynamic unit-test runner.
+grep -Eq 'run-unit-tests\.sh|\./test/test-kubeconfig-shell-setup\.sh' "${repo_root}/.github/workflows/test.yaml"
 
 test_home="$(mktemp -d)"
 trap 'rm -rf "$test_home"' EXIT

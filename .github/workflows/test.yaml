@@ -9,6 +9,51 @@ on:
   workflow_dispatch:
 
 jobs:
+  macos-portability:
+    name: macOS Bash and checkpoint tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test prerequisites
+        run: brew install jq rsync shellcheck
+      - name: Validate macOS scripts without a live CRC VM
+        shell: bash
+        run: |
+          /bin/bash test/test-install.sh
+          /bin/bash test/test-crc-storage.sh
+          /bin/bash test/test-start.sh
+          /bin/bash test/test-macos-state.sh
+          shellcheck --severity=warning install.sh includes/state-service.sh scripts/aap-demo-macos-state.sh
+
+  windows-portability:
+    name: Windows PowerShell syntax and isolated tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell sources with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem powershell,test -Recurse -Include *.ps1,*.psm1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) { $errors | Write-Output; $failed = $true }
+          }
+          if ($failed) { exit 1 }
+      - name: Run isolated Windows platform tests
+        shell: powershell
+        run: .\test\test-windows-platform.ps1
+      - name: Run isolated Windows dashboard tests
+        shell: powershell
+        run: .\test\test-windows-dashboard.ps1
+      - name: Run isolated PowerShell 7 platform tests
+        shell: pwsh
+        run: .\test\test-windows-platform.ps1
+      - name: Run isolated PowerShell 7 dashboard tests
+        shell: pwsh
+        run: .\test\test-windows-dashboard.ps1
+
   syntax-check:
     name: Shell Syntax Check
     runs-on: ubuntu-latest
@@ -17,15 +62,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Verify shell script syntax
+        shell: bash
         run: |
           EXIT_CODE=0
-          find . -name "*.sh" -type f | while read -r script; do
+          while IFS= read -r -d '' script; do
             echo "Checking syntax: $script"
             if ! bash -n "$script"; then
               echo "::error file=$script::Syntax error in $script"
               EXIT_CODE=1
             fi
-          done
+          done < <(find . -name "*.sh" -type f -print0)
           exit $EXIT_CODE
 
   unit-tests:
@@ -35,11 +81,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run ingress CA export tests
-        run: ./test/test-ingress-ca-export.sh
-
-      - name: Run kubeconfig shell setup tests
-        run: ./test/test-kubeconfig-shell-setup.sh
+      - name: Install cold-state test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq qemu-utils rsync libxml2-utils
 
       - name: Install kubectl
         run: |
@@ -48,80 +93,8 @@ jobs:
             sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
           fi
 
-      - name: Run kubeconfig guard tests
-        run: ./test/test-kubeconfig-guard.sh
-
-      - name: Run installer tests
-        run: ./test/test-install.sh
-
-      - name: Run core command tests
-        run: ./test/test-core-commands.sh
-
-      - name: Run AAP readiness condition tests
-        run: ./test/test-aap-readiness.sh
-
-      - name: Run CRC version check tests
-        run: ./test/test-crc-version-check.sh
-
-      - name: Run CRC resource prompt bridge test
-        run: ./test/test-crc-resource-prompt.sh
-
-      - name: Run CRC storage prompt tests
-        run: ./test/test-crc-storage.sh
-
-      - name: Run AO CatalogSource tests
-        run: ./test/test-ao-catalog-source.sh
-
-      - name: Run AO operator subscription tests
-        run: ./test/test-ao-operator-subscription.sh
-
-      - name: Run AO InstallPlan approval tests
-        run: bash test/test-ao-install-plan-approval.sh
-
-      - name: Run Ollama addon tests
-        run: ./test/test-ollama.sh
-
-      - name: Run Keycloak addon tests
-        run: ./test/test-keycloak-addon.sh
-
-      - name: Run Keycloak configure tests
-        run: ./test/test-keycloak-configure.sh
-
-      - name: Run CRC version and local environment tests
-        run: ./test/test-crc-version-check.sh
-
-      - name: Run product-demos API readiness tests
-        run: ./test/test-product-demos-api.sh
-
-      - name: Run APME CRC OAuth URL tests
-        run: ./test/test-apme-eap-oauth.sh
-
-      - name: Run local-cache tests
-        run: ./test/test-local-cache.sh
-
-      - name: Run deploy cache-order tests
-        run: ./test/test-deploy-cache-order.sh
-
-      - name: Run deploy storage preflight tests
-        run: ./test/test-deploy-storage-preflight.sh
-
-      - name: Run AO LLM provider tests
-        run: ./test/test-ao-llm-provider.sh
-
-      - name: Run AO provider preparation tests
-        run: ./test/test-ao-enable-provider.sh
-
-      - name: Run AO LLM wiring tests
-        run: ./test/test-ao-llm-wiring.sh
-
-      - name: Run AO workflow binding tests
-        run: ./test/test-ao-llm-workflow-binding.sh
-
-      - name: Run AO importer tests
-        run: python3 ./test/test-ao-import-demos.py
-
-      - name: Run AO provisioning tests
-        run: python3 ./test/test-provision-aap-demos.py
+      - name: Run all non-live unit tests
+        run: ./test/run-unit-tests.sh
 
       - name: Run plaibook EE CI configuration test
         run: bash ./test/test-plaibook-ee-ci.sh
@@ -160,13 +133,14 @@ jobs:
         run: |
           EXIT_CODE=0
           # Find shell scripts with shebangs
-          find . -name "*.sh" -type f | while read -r script; do
+          while read -r script; do
             if head -n 1 "$script" | grep -q '^#!'; then
               if [ ! -x "$script" ]; then
-                echo "::warning file=$script::Script has shebang but is not executable"
+                echo "::error file=$script::Script has shebang but is not executable"
+                EXIT_CODE=1
               fi
             fi
-          done
+          done < <(find . -name "*.sh" -type f)
           exit $EXIT_CODE
 
   powershell-tests:

@@ -235,7 +235,8 @@ if kubectl get namespace "$KEYCLOAK_NAMESPACE" >/dev/null 2>&1; then
     exit 1
   fi
 else
-  kubectl create namespace "$KEYCLOAK_NAMESPACE" >/dev/null
+  kubectl create namespace "$KEYCLOAK_NAMESPACE" --dry-run=client -o yaml \
+    | kubectl apply -f - >/dev/null
   kubectl label namespace "$KEYCLOAK_NAMESPACE" \
     app.kubernetes.io/managed-by=aap-demo-keycloak \
     app.kubernetes.io/part-of=aap-demo --overwrite >/dev/null

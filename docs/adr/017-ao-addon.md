@@ -18,7 +18,7 @@ demos, without requiring users to obtain private Quay credentials or run multi-s
 ## Decision
 
 Add `ao` to the aap-demo addon system as [`addons/ao/deploy.sh`](../../addons/ao/deploy.sh),
-invoked via `aap-demo enable ao`.
+invoked automatically by `aap-demo deploy` and explicitly via `aap-demo enable ao`.
 
 ### Current install model (GA + GitOps manifests, 2026-08-21)
 
@@ -38,7 +38,7 @@ The addon applies **checked-in Kubernetes manifests** shaped like
 | PostgreSQL | CloudNativePG from upstream manifest (dev-only; not Red Hat supported) |
 | Instance | `AutomationOrchestrator` CR from [`manifests/automationorchestrator-cr.yaml`](../../addons/ao/manifests/automationorchestrator-cr.yaml) |
 | Database secrets | `orchestrator-postgres-secret`, `temporal-postgres-secret`, `temporal-visibility-postgres-secret` (created at install, not committed) |
-| Registry auth | `automation-orchestrator-pull-secret` from `~/.aap-demo/pull-secret.txt` (`kubernetes.io/dockerconfigjson`; do not copy the OLM catalog secret) |
+| Registry auth | `automation-orchestrator-pull-secret` from `aap_demo.redhat.pull_secret` in encrypted `~/.ansible/conf/env.yml` (`kubernetes.io/dockerconfigjson`; do not copy the OLM catalog secret) |
 | InstallPlan approval | `Automatic` by default; set `AO_INSTALL_PLAN_APPROVAL=Manual` when operator upgrades require an explicit approval gate |
 
 Manifest templates and apply order: [`addons/ao/manifests/README.md`](../../addons/ao/manifests/README.md).
@@ -97,6 +97,7 @@ changes.
 ### aap-demo.sh integration
 
 - `ao` in `AVAILABLE_ADDONS`; `ao-eap` normalized via `_normalize_addon_name()`
+- Standard `aap-demo deploy` enables `ao` after AAP becomes ready
 - Pass-through: `--force`, `--refresh-catalog`
 - `show_status`: AO route URL when enabled
 - Post-install wiring via [`includes/addon-wire.sh`](../../includes/addon-wire.sh): registers global

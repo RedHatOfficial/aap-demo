@@ -75,13 +75,29 @@ if [ -z "$_fleet_image" ] && [ -f "${AAP_DEMO_CONFIG_FILE:-$HOME/.aap-demo/confi
   _fleet_image=$(sed -n 's/^FLEET_IMAGE=//p' "${AAP_DEMO_CONFIG_FILE:-$HOME/.aap-demo/config}" | tail -n 1)
 fi
 
+# A managed alias (rhel9/rhel10) downloads through the Red Hat RHSM API and
+# resolves to a cached QCOW2 path. Resolve it before the local-path check.
+case "$_fleet_image" in
+  rhel9 | rhel10)
+    source "${SCRIPT_DIR}/fleet.sh"
+    source "${SCRIPT_DIR}/fleet-auth.sh"
+    source "${SCRIPT_DIR}/fleet-cli.sh"
+    source "${SCRIPT_DIR}/fleet-images.sh"
+    fleet_resolve_image "$_fleet_image" || {
+      echo "ERROR: Could not resolve the managed Fleet image: $_fleet_image" >&2
+      exit 1
+    }
+    _fleet_image="$FLEET_RESOLVED_IMAGE"
+    ;;
+esac
+
 if [ -z "$_fleet_image" ]; then
   if [ "${QUIET:-false}" = true ] || [ ! -t 0 ]; then
     echo "ERROR: FLEET_IMAGE is required in quiet or non-interactive mode" >&2
-    echo "  Set FLEET_IMAGE=/path/to/rhel.qcow2 and retry" >&2
+    echo "  Set FLEET_IMAGE=rhel9 (downloads via RHSM) or FLEET_IMAGE=/path/to/rhel.qcow2 and retry" >&2
     exit 1
   fi
-  read -r -p "  Path to RHEL/CentOS QCOW2 cloud image: " _fleet_image
+  read -r -p "  Path to RHEL/CentOS QCOW2 cloud image (or rhel9/rhel10): " _fleet_image
 fi
 
 if [ -z "$_fleet_image" ]; then
@@ -135,11 +151,15 @@ fleet_list
 
 echo ""
 echo "  Next steps:"
-echo "    aap-demo fleet add <count> --image <path-to-qcow2>"
+echo "    aap-demo fleet auth"
+echo "    aap-demo fleet add 3 --image rhel9"
+echo "    aap-demo fleet add 3 --image rhel10"
+echo "    aap-demo fleet add <count> --image <rhel9|rhel10|local-qcow2-path>"
 echo ""
 echo "  Examples:"
 echo "    aap-demo fleet add 3 --image ~/rhel9.qcow2"
 echo "    aap-demo fleet list"
+echo "    aap-demo fleet start"
 echo "    aap-demo fleet remove 1"
 echo "    aap-demo fleet destroy"
 echo ""

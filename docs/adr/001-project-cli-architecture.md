@@ -32,6 +32,8 @@ cluster provisioning, OLM installation, AAP operator deployment, and optional ad
 | Entry point (Unix) | `aap-demo.sh` | Bash dispatcher; symlinked to `~/.local/bin/aap-demo` by `install.sh` |
 | Entry point (Windows) | `powershell/aap-demo.ps1` | PowerShell launcher importing `powershell/native/AapDemo.psm1` |
 | Infrastructure | `includes/infra-api.sh`, `includes/infra-crc.sh` | Backend abstraction for SSH and kubeconfig |
+| Preset/domain | `includes/preset.sh` | Canonical CRC preset detection, route domain, MicroShift VM kubeconfig path |
+| Dashboard/console | `includes/cmd-dashboard.sh` | `dashboard` and `console` command handlers and auto-open helpers |
 | Cluster create | `includes/crc-create.sh` | CRC VM setup, NFS, CoreDNS, OLM bootstrap |
 | Manifests | `config/manifests/`, `config/olm/`, `config/crs/` | Kubernetes/OpenShift resources applied at deploy time |
 | Addons | `addons/<name>/deploy.sh` | Pluggable optional components |

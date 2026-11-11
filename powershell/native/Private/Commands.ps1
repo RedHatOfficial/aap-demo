@@ -271,6 +271,117 @@ function Invoke-AapDemoRepair {
   Write-Host ''
 }
 
+function Invoke-AapDemoMaintenance {
+  [CmdletBinding()]
+  param(
+    [switch]$Apply,
+    [switch]$Uninstall
+  )
+
+  if ($Uninstall) {
+    if ($Apply) {
+      Assert-AapStateNotManaged -Operation 'maintenance uninstall --apply'
+    }
+    Write-Host ''
+    Write-Host 'aap-demo maintenance uninstall - Full environment removal preview' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host 'Removes the CRC cluster, generated state, caches, trust, CLI, and completions.'
+    Write-Host 'Preserves the Red Hat pull secret and source repository.'
+    if (-not $Apply) {
+      Write-Host ''
+      Write-Host "Preview only. Run 'aap-demo maintenance uninstall --apply' to continue."
+      return
+    }
+
+    $confirmation = Read-Host 'Type UNINSTALL to permanently remove the environment'
+    if ($confirmation -ne 'UNINSTALL') {
+      throw 'Uninstall cancelled'
+    }
+
+    if (-not (Invoke-AapCrcDelete -Force)) {
+      throw 'CRC delete failed'
+    }
+    $crcCleanup = Invoke-AapExternal crc @('cleanup')
+    if ($crcCleanup.ExitCode -ne 0) {
+      throw "crc cleanup failed: $($crcCleanup.Output)"
+    }
+
+    $configDir = $Script:AapDemoConfigDir
+    $backupDir = Join-Path ([IO.Path]::GetTempPath()) "aap-demo-uninstall-$([guid]::NewGuid())"
+    New-Item -ItemType Directory -Path $backupDir | Out-Null
+    foreach ($name in @('pull-secret.txt', 'pull-secret.json')) {
+      $secret = Join-Path $configDir $name
+      if (Test-Path -LiteralPath $secret) {
+        Copy-Item -LiteralPath $secret -Destination $backupDir
+      }
+    }
+    Remove-Item -LiteralPath $configDir -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path $configDir | Out-Null
+    Get-ChildItem -LiteralPath $backupDir -File | Move-Item -Destination $configDir
+    Remove-Item -LiteralPath $backupDir -Recurse -Force
+
+    Remove-Item -LiteralPath (Join-Path $env:USERPROFILE '.crc') -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $env:USERPROFILE '.local\bin\aap-demo') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath (Join-Path $env:USERPROFILE '.local\share\bash-completion\completions\aap-demo') -Force -ErrorAction SilentlyContinue
+    Write-AapStep 'aap-demo environment uninstalled'
+    return
+  }
+
+  $mode = if ($Apply) { 'true' } else { 'false' }
+  $script = @'
+set -euo pipefail
+apply="$1"
+snapshot() { df -Pk /var | awk 'NR == 2 { print $3, $4, $5 }'; }
+read -r before_used before_available before_percent < <(snapshot)
+exited=$(sudo crictl ps -a --state Exited -q | sed '/^$/d' | wc -l)
+image_refs=$(sudo crictl images -q | sed '/^$/d' | wc -l)
+unique_images=$(sudo crictl images -q | sed '/^$/d' | sort -u | wc -l)
+echo "Cluster VM disk:"
+df -hP /var | awk 'NR == 1 || NR == 2 { print "  " $0 }'
+echo ""
+echo "Reclaimable runtime objects:"
+echo "  Exited containers:   ${exited}"
+echo "  Image references:    ${image_refs}"
+echo "  Unique image IDs:    ${unique_images}"
+echo ""
+echo "Cleanup targets:"
+sudo du -sh /var/lib/containers/storage /var/log/journal /var/cache/dnf 2>/dev/null | sed 's/^/  /' || true
+if [ "$apply" != true ]; then
+  echo ""
+  echo "Preview only. Run 'aap-demo maintenance --apply' to clean these safe targets."
+  exit 0
+fi
+echo ""
+echo "Cleaning safe targets..."
+mapfile -t exited_ids < <(sudo crictl ps -a --state Exited -q | sed '/^$/d')
+if [ "${#exited_ids[@]}" -gt 0 ]; then
+  sudo crictl rm "${exited_ids[@]}"
+  echo "  Removed ${#exited_ids[@]} exited container(s)"
+else
+  echo "  No exited containers to remove"
+fi
+sudo crictl rmi --prune
+echo "  Pruned unused container images"
+if command -v dnf >/dev/null 2>&1; then sudo dnf clean all; echo "  Cleared DNF package metadata"; fi
+sudo journalctl --vacuum-time=7d
+echo "  Vacuumed system journals older than 7 days"
+if command -v fstrim >/dev/null 2>&1; then sudo fstrim -av; echo "  Trimmed freed filesystem blocks"; fi
+read -r after_used after_available after_percent < <(snapshot)
+reclaimed_kib=$((before_used - after_used))
+if [ "$reclaimed_kib" -lt 0 ]; then reclaimed_kib=0; fi
+echo ""
+echo "Maintenance complete:"
+echo "  Disk usage: ${before_percent} -> ${after_percent}"
+echo "  Reclaimed:  $((reclaimed_kib / 1024)) MiB"
+'@
+
+  Write-Host ''
+  Write-Host 'aap-demo maintenance - Reclaiming safe-to-remove cluster VM data...' -ForegroundColor Cyan
+  Write-Host ''
+  $encodedScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script))
+  Invoke-AapCrcSsh "printf '%s' '$encodedScript' | base64 -d | bash -s -- $mode"
+}
+
 function Invoke-AapDemoSetup {
   Write-Host "CRC setup is handled during 'aap-demo create'"
 }
@@ -539,7 +650,7 @@ function Invoke-AapDemoMustGather {
   Write-Host "To share: tar czf must-gather.tar.gz $DestDir"
 }
 
-function Write-AapClusterSummary {
+function Invoke-AapDemoRedeploy {
   [CmdletBinding()]
   param(
     [string]$Namespace = $Script:AapDemoDefaultNamespace,

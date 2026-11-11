@@ -78,6 +78,9 @@ export AAP_PERSISTENT_IMAGE_STORE=false
 export AAP_DEMO_TEST_LOG="$TEST_DIR/calls.log"
 export AAP_DEMO_TEST_DELETE_COUNT="$TEST_DIR/delete-count"
 export AAP_DEMO_TEST_STATUS_COUNT="$TEST_DIR/status-count"
+# Exercise the destroy logic itself: the managed-demo guard reads the host's
+# system-level service state, which must not block this hermetic test.
+export AAP_DEMO_SERVICE_INTERNAL=1
 
 output="$(QUIET=true "$REPO_ROOT/aap-demo.sh" destroy --skip-cache 2>&1)"
 if ! grep -q 'CRC cluster deleted' <<<"$output"; then

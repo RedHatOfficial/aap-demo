@@ -30,6 +30,10 @@ case "$*" in
   "status --output json")
     printf '%s\n' '{"crcStatus":"Stopped","openshiftStatus":"Stopped"}'
     ;;
+  "config get preset")
+    # aap-demo's preset detection probes this before any config set.
+    printf '%s\n' 'preset is not set'
+    ;;
   "config get disk-size")
     printf 'disk-size : 120\n'
     ;;

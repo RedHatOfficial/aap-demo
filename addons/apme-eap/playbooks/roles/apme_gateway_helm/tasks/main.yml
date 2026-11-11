@@ -58,7 +58,7 @@
             else {}
           }}
         wait: true
-        wait_timeout: "{{ apme_gateway_helm_timeout }}s"
+        timeout: "{{ apme_gateway_helm_timeout }}s"
         api_key: "{{ openshift_token | default(omit) }}"
         kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
         host: "{{ openshift_api_url }}"
@@ -100,7 +100,7 @@
             else {}
           }}
         wait: true
-        wait_timeout: "{{ apme_gateway_helm_timeout }}s"
+        timeout: "{{ apme_gateway_helm_timeout }}s"
         api_key: "{{ openshift_token | default(omit) }}"
         kubeconfig: "{{ apme_oci_kubeconfig | default(omit) }}"
         host: "{{ openshift_api_url }}"

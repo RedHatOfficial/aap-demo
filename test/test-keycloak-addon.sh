@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# cmd_status lives in includes/cmd-status.sh (extracted from aap-demo.sh).
+STATUS_IMPL="$ROOT_DIR/includes/cmd-status.sh"
+
 grep -q 'keycloak' "$ROOT_DIR/aap-demo.sh" || {
   echo "FAIL: keycloak missing from CLI"
   exit 1
@@ -35,19 +38,19 @@ grep -q 'REALM_REVISION' "$ROOT_DIR/addons/keycloak/keycloak.yaml" || {
   echo "FAIL: realm revision missing"
   exit 1
 }
-grep -q '_keycloak_state_dir' "$ROOT_DIR/aap-demo.sh" || {
+grep -q '_keycloak_state_dir' "$STATUS_IMPL" || {
   echo "FAIL: status credential state missing"
   exit 1
 }
-grep -q 'aap-oidc-admin' "$ROOT_DIR/aap-demo.sh" || {
+grep -q 'aap-oidc-admin' "$STATUS_IMPL" || {
   echo "FAIL: status OIDC user missing"
   exit 1
 }
-grep -q 'aap-oidc-auditor' "$ROOT_DIR/aap-demo.sh" || {
+grep -q 'aap-oidc-auditor' "$STATUS_IMPL" || {
   echo "FAIL: status auditor missing"
   exit 1
 }
-grep -q 'aap-oidc-developer' "$ROOT_DIR/aap-demo.sh" || {
+grep -q 'aap-oidc-developer' "$STATUS_IMPL" || {
   echo "FAIL: status developer missing"
   exit 1
 }
@@ -55,7 +58,7 @@ grep -q "tr -d '\\\\r\\\\n'" "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: generated credentials must not include newline"
   exit 1
 }
-if grep -Eq 'printf.*_keycloak_.*pw' "$ROOT_DIR/aap-demo.sh"; then
+if grep -Eq 'printf.*_keycloak_.*pw' "$ROOT_DIR/aap-demo.sh" "$STATUS_IMPL"; then
   echo "FAIL: status must not print Keycloak passwords"
   exit 1
 fi

@@ -1,7 +1,8 @@
 function Invoke-AapDemoStatus {
   [CmdletBinding()]
   param(
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
+    [string]$Namespace = $Script:AapDemoDefaultNamespace,
+    [switch]$ShowSecrets
   )
 
   Write-AapHeader 'AAP Demo Status'
@@ -100,26 +101,30 @@ function Invoke-AapDemoStatus {
   else { Write-Host '  (no routes found)' }
 
   Write-Host ''
-  Write-Host 'Credentials:'
-  Write-Host '------------'
-  $aapNsResult = Invoke-AapOcCapture @('get', 'aap', '-A', '--no-headers')
-  $aapNs = if ($aapNsResult.ExitCode -eq 0 -and $aapNsResult.Output -notmatch '^No resources found') {
-    $aapNsResult.Lines | ForEach-Object { ($_ -split '\s+')[0] } | Sort-Object -Unique
-  } else { @() }
-  $foundCred = $false
-  foreach ($ns in $aapNs) {
-    foreach ($secretName in @('aap-admin-password', 'myaap-admin-password', 'aap-controller-admin-password')) {
-      $pwResult = Invoke-AapOcCapture @('get', 'secret', $secretName, '-n', $ns, '-o', 'jsonpath={.data.password}')
-      $pw = if ($pwResult.ExitCode -eq 0) { $pwResult.Output.Trim() } else { '' }
-      if ($pw) {
-        $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pw))
-        Write-Host ("  {0,-20} admin / {1}" -f "${ns}:", $decoded)
-        $foundCred = $true
-        break
+  if ($ShowSecrets) {
+    Write-Host 'Credentials:'
+    Write-Host '------------'
+    $aapNsResult = Invoke-AapOcCapture @('get', 'aap', '-A', '--no-headers')
+    $aapNs = if ($aapNsResult.ExitCode -eq 0 -and $aapNsResult.Output -notmatch '^No resources found') {
+      $aapNsResult.Lines | ForEach-Object { ($_ -split '\s+')[0] } | Sort-Object -Unique
+    } else { @() }
+    $foundCred = $false
+    foreach ($ns in $aapNs) {
+      foreach ($secretName in @('aap-admin-password', 'myaap-admin-password', 'aap-controller-admin-password')) {
+        $pwResult = Invoke-AapOcCapture @('get', 'secret', $secretName, '-n', $ns, '-o', 'jsonpath={.data.password}')
+        $pw = if ($pwResult.ExitCode -eq 0) { $pwResult.Output.Trim() } else { '' }
+        if ($pw) {
+          $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($pw))
+          Write-Host ("  {0,-20} admin / {1}" -f "${ns}:", $decoded)
+          $foundCred = $true
+          break
+        }
       }
     }
+    if (-not $foundCred) { Write-Host '  (no admin password secret found yet)' }
+  } else {
+    Write-Host "Credentials: hidden (run 'aap-demo status --show-secrets' in a terminal to reveal)"
   }
-  if (-not $foundCred) { Write-Host '  (no admin password secret found yet)' }
 
   Write-AapCollectionSourcesStatus
 
@@ -155,8 +160,10 @@ CLUSTER:
     create          Create OpenShift Local cluster
     storage [DISK] [PV]
                     Show or change the VM disk and persistent-volume size
-    stop            Stop cluster
-    start           Start stopped cluster
+    start           Start cluster, resume idle AAP, wait for core + addon readiness
+                    (grows the CRC disk by 20% when guest /var is >= 90% used)
+    stop            Stop cluster (managed: also saves a cold checkpoint)
+    restart         Stop then start (managed: checkpoint, restore, start)
     destroy         Deletes cluster (--reset clears saved preset)
     repair          Show repair instructions
     trust-ca        Repair ingress certificate trust only
@@ -164,19 +171,38 @@ CLUSTER:
 
 DEPLOY:
     deploy          Deploy AAP 2.7 via OLM (creates cluster if missing; alias: deploy-all)
+    create --full-demo
+                    Complete demo bootstrap (Bash/Linux CLI only; includes Fleet)
     redeploy        Clean namespace and redeploy AAP
     redeploy-all    Destroy cluster and full redeploy
     clean           Remove AAP namespace and resources
+    maintenance     Preview safe VM cleanup (--apply performs cleanup)
+    maintenance uninstall [--apply]
+                    Fully remove aap-demo; preserves pull secret and source
     watch           Monitor AAP deployment progress
     setup-pah       Configure integrated PAH remotes (console.redhat.com token)
 
 STATUS:
-    status          Show cluster and AAP status
+    status          Show cluster and AAP status without secret values
+    status --json   Dashboard inventory as JSON (no secret values)
+    dashboard [--no-open]
+                    Start/reuse the localhost dashboard (Python 3.10+ required)
+    status --show-secrets
+                    Reveal credentials in an interactive terminal
     version         Show aap-demo version and build timestamp
     diagnose        Check environment health
     idle            Scale AAP down/up (true|false)
     redhat-status   Check Red Hat registry status (alias: rh-status)
     must-gather     Collect diagnostic bundle
+
+STATE SERVICE (Hyper-V cold checkpoints, restored at Windows logon):
+    service install [--keep N]
+                    Register current-user logon task; keep N checkpoints (default 1)
+    service backup  Stop CRC gracefully and save a verified cold checkpoint
+    service restore [NAME]
+                    Restore a checkpoint into the stopped VM (no start)
+    service status  Show task, checkpoints, last logon result
+    service backups / verify [NAME] / retention N / disable
 
 ADDONS:
     enable <name>   Enable a supported addon (pass addon-specific arguments through)
@@ -190,6 +216,7 @@ ADDONS:
 NOTES:
     Requires oc and crc on PATH. OpenShift Local needs Hyper-V.
     Pull secret: %USERPROFILE%\.aap-demo\pull-secret.txt
-    Galaxy token: %USERPROFILE%\.aap-demo\galaxy-token (for setup-pah)
+    Encrypted credentials: %USERPROFILE%\.ansible\conf\env.yml
+    Vault password: %USERPROFILE%\.ansible\conf\.vaultpass.txt
 '@
 }

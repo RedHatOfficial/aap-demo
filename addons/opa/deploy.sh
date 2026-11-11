@@ -25,6 +25,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../../includes/secure-curl.sh
+source "${REPO_ROOT}/includes/secure-curl.sh"
 NAMESPACE="${NAMESPACE:-aap-operator}"
 ACTION="${1:-deploy}"
 
