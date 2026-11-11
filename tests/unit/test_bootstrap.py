@@ -522,6 +522,7 @@ def test_node_probe_needs_a_registry_redhat_io_credential(tmp_path, auths, confi
     assert bootstrap._has_required_registry(auths) is configured
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the probe runs on the Linux CRC node")
 def test_node_probe_runs_through_the_remote_shell(app_ctx, tmp_path) -> None:
     """The probe survives bash -c quoting, as CRI-O's file is checked over ssh."""
     node_file = tmp_path / "openshift-pull-secret"
