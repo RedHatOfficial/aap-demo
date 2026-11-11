@@ -130,13 +130,13 @@ aap-demo pins that release, the 5 profile's `crc_bundle` names its version, and 
 `crc_bundle` is cleared, so `--ocp-version 4` downloads and verifies 4.22.13 the same way 5.0.0 is
 handled today.
 
-### 5. `aap-demo ocp-versions`
+### 5. `aap-demo ocp-version-list`
 
 A read-only command that lists what `--ocp-version` can build on this host, listed in
 `aap-demo help` next to `version`. It needs no cluster.
 
 ```text
-$ aap-demo ocp-versions
+$ aap-demo ocp-version-list
 VERSION   STATUS                 SOURCE
 5.0.0     stable, not default    download (1.4 GB)
 4.22.13   stable, default        CRC 2.64.0 (built in)
@@ -163,7 +163,7 @@ the newest 4.22 aap-demo can build.
 
 - `create --ocp-version 5` works now, without waiting for a CRC release.
 - One flag covers both the simple case (`4`, `5`) and a pinned version (`4.22.0`), and
-  `ocp-versions` shows what is available.
+  `ocp-version-list` shows what is available.
 - 4 and 5 differ in data, not in code paths. Moving to 5.1 is a change to `stable` in a profile.
 - The bundle is verified more strictly than `crc start -b` does on its own, with no host tools.
 - Addons and channels that don't exist on 5 refuse up front instead of failing halfway.
@@ -173,11 +173,13 @@ the newest 4.22 aap-demo can build.
 - aap-demo carries a small OpenPGP verifier. It has to handle only the signature format Red Hat
   uses (v4, RSA, SHA-256, clearsigned); anything else fails closed.
 - The pinned key has to be updated if Red Hat rotates its release key.
-- CRC 2.64 warns on every start of a 5.0 bundle ("expected 4.22.13").
+- CRC 2.64 warns on every start of a 5.0 bundle ("expected 4.22.13"). aap-demo prints one note
+  that it verified the bundle itself, so the warning isn't mistaken for a failure.
 - A 5.0 bundle is about 1.4 GB (vfkit arm64), cached next to CRC's own bundle.
 
 ### Neutral
 
+- A user who never sets `--ocp-version` sees no change: CRC's own 4.22.13 bundle, no download.
 - The bash command and its CRC path are unchanged.
 - The operator index tag already follows the cluster version (`redhat-operator-index:v5.0`).
 
