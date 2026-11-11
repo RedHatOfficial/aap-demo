@@ -119,6 +119,11 @@ legacy_org = "acme-scm"
 for yaml_key, env_key in mapping.items():
     value = data.get(yaml_key)
     if value is not None and str(value).strip():
+        # Accept credentials files written with an extra layer of quoting.
+        # Backstage expects the GitHub App ID to be a number, not a string
+        # such as "'4408213'".
+        if env_key == "GITHUB_APP_ID":
+            value = str(value).strip().strip("\\\"'")
         if yaml_key == "github_catalog_org" and str(value).strip() == legacy_org:
             continue
         print(f"{env_key}={value}")
@@ -139,6 +144,9 @@ _load_github_creds_from_file_legacy() {
   fi
   for var in github_app_id github_app_client_id github_app_client_secret github_app_private_key_path github_oauth_client_id github_oauth_client_secret github_catalog_org; do
     val=$(grep -E "^${var}:" "$creds_file" 2>/dev/null | sed "s/^${var}:[[:space:]]*//" | tr -d '"' || echo "")
+    if [ "$var" = "github_app_id" ]; then
+      val="${val//\'/}"
+    fi
     if [ -n "$val" ]; then
       env_name=$(echo "$var" | tr '[:lower:]' '[:upper:]')
       if [ "$var" = "github_catalog_org" ]; then
