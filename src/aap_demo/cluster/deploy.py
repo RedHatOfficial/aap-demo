@@ -21,7 +21,6 @@ Two things bash does here are deliberately **not** ported:
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -168,12 +167,11 @@ def wait_for_ovn(
 
 def _check_ocp_version(ctx: AppContext) -> None:
     """``--ocp-version`` and ``--channel`` against the running cluster (ADR-041)."""
-    reported = str(infra_crc.status_json(ctx.runner).get("openshiftVersion", "") or "")
-    match = re.match(r"\d+\.\d+(?:\.\d+)?", reported.strip())
-    if match is None:
+    version = infra_crc.openshift_version(ctx.runner)
+    if not version:
         return
     channel = str(ctx.config.get("deploy.channel", "stable-2.7") or "stable-2.7")
-    ocp_version.check_cluster(ocp_version.requested(ctx), match.group(0), channel=channel)
+    ocp_version.check_cluster(ocp_version.requested(ctx), version, channel=channel)
 
 
 def _preset(ctx: AppContext) -> str:

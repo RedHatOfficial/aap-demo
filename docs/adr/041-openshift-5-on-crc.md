@@ -98,7 +98,10 @@ A value can be as broad or as exact as the user wants:
   (section 3).
 - `aap_channels`: channels `deploy --channel` accepts.
 - `operators`: which optional operators the index has (`automation-orchestrator`,
-  `automation-portal`). Addons that need a missing one refuse before touching the cluster.
+  `automation-portal`). The addons that use them (`ao`, `ao-eap`, `ao-pr-testing`,
+  `portal-operator`) only run through the bash command today (ADR-040). When they are ported, their
+  enable checks this list and refuses before touching the cluster. The Helm `portal` addon needs
+  no operator.
 - `root_disk_gb`: the smallest root filesystem create allows, so `disk_gb - pv_size_gb` is checked
   before the VM is built.
 
@@ -169,7 +172,7 @@ the newest 4.22 aap-demo can build.
   `ocp-version-list` shows what is available.
 - 4 and 5 differ in data, not in code paths. Moving to 5.1 is a change to `stable` in a profile.
 - The bundle is verified more strictly than `crc start -b` does on its own, with no host tools.
-- Addons and channels that don't exist on 5 refuse up front instead of failing halfway.
+- AAP channels that don't exist on 5 refuse up front instead of failing halfway.
 
 ### Negative
 

@@ -100,6 +100,13 @@ def status_json(runner: Any) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def openshift_version(runner: Any) -> str:
+    """``4.22.13`` from ``crc status``. Empty when CRC is absent or doesn't say."""
+    reported = str(status_json(runner).get("openshiftVersion", "") or "")
+    match = re.match(r"\d+\.\d+(?:\.\d+)?", reported.strip())
+    return match.group(0) if match else ""
+
+
 def state_from_status(data: Dict[str, Any]) -> str:
     """The state for a ``crc status -o json`` answer (``{}`` when CRC did not answer)."""
     crc_status = data.get("crcStatus", "Unknown")
