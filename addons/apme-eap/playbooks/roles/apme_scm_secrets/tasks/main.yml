@@ -56,7 +56,7 @@
         github-token: "{{ github_token }}"
   no_log: true
   when:
-    - (github_full_config | bool) == false
+    - not (github_full_config | bool)
     - github_token is defined
     - github_token | length > 0
 

@@ -13,7 +13,7 @@
       {{ aap_api_host_normalized | default(aap_api_host | default(aap_host)
       | regex_replace('/$', '')) }}
   when:
-    - (apme_pah_seed_apme_galaxy_servers | bool) == true
+    - apme_pah_seed_apme_galaxy_servers | bool
     - aap_api_host_normalized is not defined or aap_api_host_normalized | length == 0
 
 - name: Load AAP API token from portal secret when not in vars  # noqa: var-naming[no-role-prefix]
@@ -54,7 +54,7 @@
 - name: Set APME gateway exec target (deployment survives engine rollouts)  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     apme_pah_gateway_exec_target: "{{ apme_engine_deploy }}"
-  when: (apme_pah_seed_apme_galaxy_servers | bool) == true
+  when: apme_pah_seed_apme_galaxy_servers | bool
 
 - name: Verify kubectl is available for gateway seeding  # noqa: var-naming[no-role-prefix]
   ansible.builtin.command:

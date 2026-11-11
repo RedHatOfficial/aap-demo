@@ -9,7 +9,7 @@ apme_helm_binary: "{{ apme_helm_install_dir }}/helm"  # noqa: var-naming[no-role
 # The role resolves this for the control host before downloading. Keep a
 # Linux fallback so the defaults remain renderable when inspected standalone.
 apme_helm_platform: linux-amd64  # noqa: var-naming[no-role-prefix]
-apme_helm_archive: >-
+apme_helm_archive: >-  # noqa: var-naming[no-role-prefix]
   /tmp/helm-v{{ apme_helm_version }}-{{ apme_helm_platform }}.tar.gz
-apme_helm_download_url: >-
+apme_helm_download_url: >-  # noqa: var-naming[no-role-prefix]
   https://get.helm.sh/helm-v{{ apme_helm_version }}-{{ apme_helm_platform }}.tar.gz
