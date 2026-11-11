@@ -36,7 +36,8 @@ What we found on a test Mac (arm64), 2026-11-10 and 2026-11-11:
 
 Constraints:
 
-- OpenShift 4 stays the default until 5 has had live runs on every host type we support.
+- OpenShift 4 stays the default until 5 has had live runs on every host type we support. The
+  default is always the newest supported stable version.
 - One CRC binary for both. Installing a second CRC next to the pinned one would double the setup
   path and the `crc setup` sudo step.
 - Python command only. The bash command stays on 4.
@@ -51,7 +52,11 @@ environment. It comes from the schema like the other `crc.*` settings. The name 
 aap-demo already has several versions (CRC, AAP). The preset stays `microshift`: this picks which
 OpenShift release the MicroShift bundle comes from, not full OpenShift.
 
-It takes three forms. The default is `4`.
+Unset, it resolves to the newest supported stable version: the highest `stable` among profiles
+marked `supported`. Today that is 4.22.13. When the 5 profile is marked `supported` after live runs,
+the same unset setting gives 5.0.0 with no code change.
+
+A value can be as broad or as exact as the user wants:
 
 | Value | Resolves to | Today |
 |-------|-------------|-------|
@@ -81,6 +86,8 @@ It takes three forms. The default is `4`.
 `major == 5`. Each profile lists:
 
 - `stable`: the full version `4`/`5` and its newest minor resolve to (`4.22.13`, `5.0.0`).
+- `supported`: whether an unset `--ocp-version` may resolve to this profile (`4` true, `5` false
+  until live runs pass).
 - `minimum`: the oldest version accepted (`4.21`, `5.0`).
 - `crc_bundle`: the version the pinned CRC binary ships, if any. When the resolved version equals
   it, CRC's own bundle is used and nothing is downloaded. Otherwise the bundle comes from the mirror
@@ -119,7 +126,7 @@ the checksum matches, so a second create doesn't download it again.
 A CRC binary ships one MicroShift bundle (CRC 2.64.0 ships 4.22.13). When a CRC release ships 5.0,
 aap-demo pins that release, the 5 profile's `crc_bundle` names its version, and the 4 profile's
 `crc_bundle` is cleared, so `--ocp-version 4` downloads and verifies 4.22.13 the same way 5.0.0 is
-handled today. Whether the default stays `4` at that point is a separate decision.
+handled today.
 
 ## Consequences
 
