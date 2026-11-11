@@ -31,7 +31,7 @@
        if apme_preloaded_image_auth_file | length > 0 else {} }}
   register: apme_preloaded_image_inspect
   changed_when: false
-  when: apme_preloaded_image_verify | bool
+  when: not ansible_check_mode
 
 - name: Validate the inspected image digest
   ansible.builtin.assert:
@@ -39,14 +39,12 @@
       - (apme_preloaded_image_inspect.stdout | from_json).Digest is match('^sha256:[0-9a-f]{64}$')
     fail_msg: "Registry returned an invalid digest for {{ apme_preloaded_image_ref }}"
   when:
-    - apme_preloaded_image_verify | bool
     - not ansible_check_mode
 
 - name: Pin the inspected image for validation and deployment  # noqa: var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     apme_preloaded_digest: "{{ (apme_preloaded_image_inspect.stdout | from_json).Digest }}"
   when:
-    - apme_preloaded_image_verify | bool
     - not ansible_check_mode
 
 - name: Validate all six installed plugins in an isolated portal container
@@ -70,6 +68,8 @@
     {{ {'REGISTRY_AUTH_FILE': apme_preloaded_image_auth_file}
        if apme_preloaded_image_auth_file | length > 0 else {} }}
   changed_when: false
+  when:
+    - apme_preloaded_image_verify | bool
 
 - name: Record successful six-plugin validation
   ansible.builtin.set_fact:

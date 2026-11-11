@@ -61,14 +61,24 @@ _apme_eap_can_prompt() {
 
 _apme_eap_read_tty() {
   # Sets REPLY from stdin or /dev/tty when Cursor/aap-demo runs with a piped stdin.
-  local prompt_text="$1"
+  local prompt_text="$1" silent="${2:-false}"
   REPLY=""
   if [ -t 0 ]; then
-    read -r -p "$prompt_text" REPLY
+    if [ "$silent" = true ]; then
+      read -r -s -p "$prompt_text" REPLY
+      printf '\n'
+    else
+      read -r -p "$prompt_text" REPLY
+    fi
     return 0
   fi
   if [ -r /dev/tty ]; then
-    read -r -p "$prompt_text" REPLY </dev/tty
+    if [ "$silent" = true ]; then
+      read -r -s -p "$prompt_text" REPLY </dev/tty
+      printf '\n'
+    else
+      read -r -p "$prompt_text" REPLY </dev/tty
+    fi
     return 0
   fi
   return 1
@@ -777,7 +787,7 @@ prompt_apme_quay_token() {
       username="$REPLY"
     fi
     if [ -z "$token" ]; then
-      _apme_eap_read_tty "Quay read-only token (hidden): " || die "Could not read the Quay pull token."
+      _apme_eap_read_tty "Quay read-only token (hidden): " true || die "Could not read the Quay pull token."
       token="$REPLY"
     fi
   fi

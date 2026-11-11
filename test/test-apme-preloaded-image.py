@@ -81,6 +81,14 @@ class QuayAuthFileTests(unittest.TestCase):
                                         "auth": "cm9ib3QtdXNlcjpyZWFkLW9ubHktdG9rZW4="}}
             })
 
+    def test_quay_token_prompt_is_hidden(self):
+        script = (ADDON / "deploy.sh").read_text()
+        self.assertIn(
+            '_apme_eap_read_tty "Quay read-only token (hidden): " true',
+            script,
+        )
+        self.assertIn('read -r -s -p "$prompt_text" REPLY', script)
+
 @unittest.skipIf(shutil.which("ansible-playbook") is None, "ansible-playbook is not installed")
 class DeploymentImageTests(unittest.TestCase):
     def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0,

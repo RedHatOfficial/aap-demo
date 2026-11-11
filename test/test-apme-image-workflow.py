@@ -12,6 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = yaml.safe_load((ROOT / ".github/workflows/apme-eap-image.yaml").read_text())
+WORKFLOW_ON = WORKFLOW.get("on", WORKFLOW.get(True))
 VALIDATION_GATE = next(step["run"] for step in WORKFLOW["jobs"]["resolve"]["steps"]
                        if step.get("name") == "Require validation before latest")
 MANIFEST = next(step["run"] for step in WORKFLOW["jobs"]["manifest"]["steps"]
@@ -255,6 +256,36 @@ class ManifestPublicationTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Resolved source/pack does not match immutable tag", result.stderr)
         self.assertEqual(calls, [])
+
+
+class WorkflowSecurityTests(unittest.TestCase):
+    def test_dispatch_is_limited_to_main_and_uses_fixed_upstream_repository(self):
+        resolve = WORKFLOW["jobs"]["resolve"]
+        self.assertIn("github.event_name == 'workflow_dispatch'", resolve["if"])
+        self.assertIn("github.ref == 'refs/heads/main'", resolve["if"])
+        inputs = WORKFLOW_ON["workflow_dispatch"]["inputs"]
+        self.assertNotIn("source_repo", inputs)
+        resolve_step = next(step for step in resolve["steps"]
+                            if step.get("name") == "Resolve and verify all six plugins")
+        self.assertEqual(
+            resolve_step["env"]["APME_SOURCE_REPO"],
+            "ansible/ansible-rhdh-plugins",
+        )
+        self.assertIn("full 40-character source_ref", resolve_step["run"])
+
+    def test_credential_bearing_actions_are_pinned(self):
+        expected = {
+            "actions/checkout": "11d5960a326750d5838078e36cf38b85af677262",
+            "actions/upload-artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+            "actions/download-artifact": "d3f86a106a0bac45b974a628896c90dbdf5c8093",
+        }
+        for job in WORKFLOW["jobs"].values():
+            for step in job["steps"]:
+                if "uses" not in step:
+                    continue
+                action, _, ref = step["uses"].partition("@")
+                if action in expected:
+                    self.assertEqual(ref, expected[action])
 
 
 if __name__ == "__main__":
