@@ -72,6 +72,10 @@ packages = ["src/aap_demo"]
 "addons/product-demo-cloud" = "aap_demo/bundled_addons/product-demo-cloud"
 "addons/product-demo-openshift" = "aap_demo/bundled_addons/product-demo-openshift"
 "addons/product-demo-satellite" = "aap_demo/bundled_addons/product-demo-satellite"
+"addons/ao" = "aap_demo/bundled_runtime/addons/ao"
+"addons/mcp-server" = "aap_demo/bundled_runtime/addons/mcp-server"
+"includes" = "aap_demo/bundled_runtime/includes"
+"config/olm" = "aap_demo/bundled_runtime/config/olm"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

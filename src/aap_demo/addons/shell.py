@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Sequence
 import aap_demo
 from aap_demo.addons.base import AddonKind
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
+from aap_demo.addons.product_demos_fleet import discover_fleet_host
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
@@ -75,6 +76,41 @@ def wire_script() -> Path:
     return Path(__file__).resolve().with_name("product_demos_wire.sh")
 
 
+def ao_script() -> Path:
+    """Find AO's installer in a checkout or in the bundled shell runtime."""
+    checkout = scripts_root() / "ao" / "deploy.sh"
+    if checkout.is_file():
+        return checkout
+    return (
+        Path(aap_demo.__file__).resolve().parent / "bundled_runtime" / "addons" / "ao" / "deploy.sh"
+    )
+
+
+def _enable_ao(ctx: AppContext, env: Dict[str, str]) -> None:
+    from aap_demo.core.migration import parse_legacy_config
+
+    script = ao_script()
+    if not script.is_file():
+        raise AddonError("Automation Orchestrator installer is not included in this installation")
+    ao_env = dict(env)
+    legacy = ctx.paths.legacy_config_file
+    try:
+        saved = parse_legacy_config(legacy.read_text(encoding="utf-8")) if legacy.is_file() else {}
+    except OSError as exc:
+        raise AddonError("could not read existing AO configuration", hint=str(exc)) from exc
+    for key in ("AO_LLM_PROVIDER", "AO_LLM_BASE_URL", "AO_LLM_MODEL"):
+        if not ao_env.get(key) and saved.get(key):
+            ao_env[key] = saved[key]
+    ao_env.setdefault("AO_LLM_PROVIDER", "none")
+    ao_env["AAP_DEMO_NAMESPACE"] = ctx.namespace
+    ao_env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "1"
+    result = ctx.runner.run(["bash", str(script)], env=ao_env, sink=ctx.console.log_sink())
+    if not result.ok:
+        raise AddonError(
+            "Automation Orchestrator setup failed", hint="Review the installer log and retry."
+        )
+
+
 def require_tools(*, delete: bool = False) -> None:
     tools = _DELETE_TOOLS if delete else _INSTALLER_TOOLS
     missing = [name for name in tools if shutil.which(name) is None]
@@ -115,6 +151,8 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
         raise AddonError(f"addon {name!r} has no deploy.sh")
 
     env = ctx.kube_env()
+    if name == "product-demos" and not delete:
+        env["AAP_DEMO_FLEET_HOST"] = discover_fleet_host(ctx)
     env["NAMESPACE"] = ctx.namespace
     # Bash wires once after enable. Leave the installer's own wiring off so a
     # wheel, which has no includes/addon-wire.sh, still exits 0 after a good install.
@@ -157,8 +195,16 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
         _say(ctx, f"{name} disabled", addon=name, enabled=False)
         return 0
 
+    previously_enabled = _enabled(ctx)
     _remember(ctx, name)
     _wire(ctx, env)
+    if name == "product-demos":
+        try:
+            _enable_ao(ctx, env)
+        except AddonError:
+            if name not in previously_enabled:
+                _save_enabled(ctx, [item for item in _enabled(ctx) if item != name])
+            raise
     _say(ctx, _enabled_message(name), addon=name, enabled=True)
     return 0
 
