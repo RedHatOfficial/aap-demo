@@ -546,13 +546,19 @@ gate governs CI, not explicit aliases from the single-architecture local build w
 
 ### Deployment, Private Pulls, and Fallback
 
-An empty `apme_preloaded_image_ref` remains the default. A fully qualified immutable tag
-or `quay.io/ansible-automation-platform-dev-preview/automation-portal@sha256:...` opts into prebuilt delivery. Skopeo inspects and
+The prebuilt portal image is the default. A fully qualified immutable tag or
+`quay.io/ansible-automation-platform-dev-preview/automation-portal@sha256:...` opts into prebuilt delivery. Skopeo inspects and
 pins the digest, and Podman verifies all six plugin identities in an isolated read-only
 container before Helm renders local `./dynamic-plugins/dist/...` paths. The cluster selects
 the architecture child from the manifest; the deployment host must support that image
 architecture for local validation. Check mode cannot establish live validity. Turning off
 `apme_preloaded_image_verify` skips only the Skopeo lookup, not the six-plugin check.
+
+The first interactive deployment prompts for the Quay robot-account username and
+read-only token. The token is stored only in a local mode-0600 auth file and is used to
+create the namespaced pull Secret. Non-interactive deployments must provide
+`APME_QUAY_USERNAME` and `APME_QUAY_PULL_TOKEN`. An existing empty
+`apme_preloaded_image_ref` can still opt into the local fallback.
 
 Public repositories can use an empty `apme_preloaded_image_pull_secret`. Private pulls
 need separate cluster credentials: configure that optional Secret name and

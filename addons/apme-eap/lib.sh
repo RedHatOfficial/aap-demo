@@ -23,6 +23,33 @@ apme_preloaded_image_selected() {
   esac
 }
 
+apme_write_registry_auth_file() {
+  local auth_file="$1" username="$2" token="$3"
+  [ -n "$auth_file" ] && [ -n "$username" ] && [ -n "$token" ] || return 1
+
+  mkdir -p "$(dirname "$auth_file")"
+  umask 077
+  APME_AUTH_FILE="$auth_file" APME_QUAY_USERNAME="$username" APME_QUAY_TOKEN="$token" \
+    python3 - <<'PY'
+import base64
+import json
+import os
+from pathlib import Path
+
+username = os.environ["APME_QUAY_USERNAME"]
+token = os.environ["APME_QUAY_TOKEN"]
+credential = f"{username}:{token}"
+payload = {"auths": {"quay.io": {
+    "username": username,
+    "password": token,
+    "auth": base64.b64encode(credential.encode()).decode(),
+}}}
+path = Path(os.environ["APME_AUTH_FILE"])
+path.write_text(json.dumps(payload) + "\n")
+path.chmod(0o600)
+PY
+}
+
 # Return the URL that APME pods should use for AAP API and OAuth calls.
 # CRC exposes AAP on the in-cluster HTTP service port. MicroShift's nip.io
 # routes continue to use the external HTTPS router route.

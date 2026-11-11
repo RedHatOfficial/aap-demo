@@ -59,6 +59,22 @@ class SavedImageSettingsTests(unittest.TestCase):
             self.assertEqual(result.stdout.strip(), '"/path with spaces/auth.json"')
 
 
+class QuayAuthFileTests(unittest.TestCase):
+    def test_registry_auth_file_contains_only_quay_credentials_and_is_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth_file = Path(directory) / "auth.json"
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"; apme_write_registry_auth_file "$2" "$3" "$4"',
+                 "test", str(ADDON / "lib.sh"), str(auth_file), "robot-user", "read-only-token"],
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(auth_file.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(auth_file.read_text()), {
+                "auths": {"quay.io": {"username": "robot-user", "password": "read-only-token",
+                                        "auth": "cm9ib3QtdXNlcjpyZWFkLW9ubHktdG9rZW4="}}
+            })
+
 @unittest.skipIf(shutil.which("ansible-playbook") is None, "ansible-playbook is not installed")
 class DeploymentImageTests(unittest.TestCase):
     def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0,

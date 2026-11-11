@@ -15,6 +15,7 @@ ACTION="${1:-deploy}"
 NAMESPACE="apme"
 VARS_FILE="$HOME/.aap-demo/apme-eap-vars.yml"
 GITHUB_CREDS_FILE="$HOME/.aap-demo/apme-eap-github-creds.yml"
+QUAY_AUTH_FILE="${APME_QUAY_AUTH_FILE:-$HOME/.aap-demo/apme-eap-quay-auth.json}"
 VENV_DIR="$HOME/.aap-demo/apme-eap-venv"
 APME_PYTHON_BIN="${APME_PYTHON_BIN:-$(command -v python3 2>/dev/null || printf '%s' python3)}"
 _LEGACY_GITHUB_CATALOG_ORG="acme-scm"
@@ -359,7 +360,7 @@ check_prerequisites() {
   _ensure_helm
 
   # MicroShift lacks an integrated registry; only local fallback delivery needs it.
-  if apme_preloaded_image_selected "$VARS_FILE"; then
+  if apme_preloaded_image_selected_or_default; then
     info "Preloaded portal image configured"
   elif ! kubectl get deployment registry -n aap-demo-registry &>/dev/null; then
     info "Deploying in-cluster registry for APME plugins..."
@@ -741,6 +742,54 @@ prompt_github_token() {
   return 0
 }
 
+prompt_apme_quay_token() {
+  local preloaded_auth username token
+
+  apme_preloaded_image_selected_or_default || return 0
+
+  preloaded_auth=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_auth_file '""')
+  preloaded_auth="${preloaded_auth#\"}"
+  preloaded_auth="${preloaded_auth%\"}"
+  if [ -n "$preloaded_auth" ] && [ -f "$preloaded_auth" ]; then
+    info "Reusing Quay pull credentials from $preloaded_auth"
+    return 0
+  fi
+
+  username="${APME_QUAY_USERNAME:-${QUAY_USERNAME:-}}"
+  token="${APME_QUAY_PULL_TOKEN:-${QUAY_PULL_TOKEN:-}}"
+  if [ -z "$token" ] || [ -z "$username" ]; then
+    if ! _apme_eap_can_prompt; then
+      die "A Quay pull token and username are required for the preloaded portal image. Set APME_QUAY_PULL_TOKEN and APME_QUAY_USERNAME."
+    fi
+    echo ""
+    info "The preloaded portal image requires Quay read-only credentials."
+    info "The token will be stored locally at $QUAY_AUTH_FILE with mode 0600."
+    if [ -z "$username" ]; then
+      _apme_eap_read_tty "Quay robot-account username: " || die "Could not read the Quay username."
+      username="$REPLY"
+    fi
+    if [ -z "$token" ]; then
+      _apme_eap_read_tty "Quay read-only token (hidden): " || die "Could not read the Quay pull token."
+      token="$REPLY"
+    fi
+  fi
+
+  [ -n "$username" ] || die "A Quay username is required for the preloaded portal image."
+  [ -n "$token" ] || die "A Quay pull token is required for the preloaded portal image."
+  apme_write_registry_auth_file "$QUAY_AUTH_FILE" "$username" "$token" \
+    || die "Could not create the local Quay auth file."
+  APME_PRELOADED_IMAGE_AUTH_FILE="$QUAY_AUTH_FILE"
+  APME_PRELOADED_IMAGE_PULL_SECRET="${APME_PRELOADED_IMAGE_PULL_SECRET:-automation-portal-pull-secret}"
+  export APME_PRELOADED_IMAGE_AUTH_FILE APME_PRELOADED_IMAGE_PULL_SECRET
+  info "Quay pull credentials configured for the portal deployment."
+}
+
+apme_preloaded_image_selected_or_default() {
+  apme_preloaded_image_selected "$VARS_FILE" && return 0
+  [ -f "$VARS_FILE" ] && return 1
+  [ -n "$(sed -n 's/^apme_preloaded_image_ref:[[:space:]]*//p' "${SCRIPT_DIR}/defaults.yml" | head -1 | tr -d '"')" ]
+}
+
 # ---------------------------------------------------------------------------
 # Vars File Generation
 # ---------------------------------------------------------------------------
@@ -768,12 +817,22 @@ generate_vars_file() {
   if [ -n "$registry_service_ip" ]; then
     registry_push_registry="${registry_service_ip}:5000/apme"
   fi
-  preloaded_ref=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_ref '""')
+  if [ -f "$VARS_FILE" ]; then
+    preloaded_ref=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_ref '""')
+  else
+    preloaded_ref=$(sed -n 's/^apme_preloaded_image_ref:[[:space:]]*//p' "${SCRIPT_DIR}/defaults.yml" | head -1 | tr -d '"')
+  fi
   preloaded_secret=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_pull_secret '""')
   preloaded_auth=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_auth_file '""')
   preloaded_verify=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_verify true)
   if [ -n "${APME_PRELOADED_IMAGE_REF:-}" ]; then
     preloaded_ref=$(_apme_python -c 'import json, os; print(json.dumps(os.environ["APME_PRELOADED_IMAGE_REF"]))')
+  fi
+  if [ -n "${APME_PRELOADED_IMAGE_PULL_SECRET:-}" ]; then
+    preloaded_secret=$(_apme_python -c 'import json, os; print(json.dumps(os.environ["APME_PRELOADED_IMAGE_PULL_SECRET"]))')
+  fi
+  if [ -n "${APME_PRELOADED_IMAGE_AUTH_FILE:-}" ]; then
+    preloaded_auth=$(_apme_python -c 'import json, os; print(json.dumps(os.environ["APME_PRELOADED_IMAGE_AUTH_FILE"]))')
   fi
   if [ -f "$VARS_FILE" ]; then
     apme_source_repo_value=$(sed -n 's/^apme_source_repo:[[:space:]]*//p' "$VARS_FILE" | tail -1 | tr -d '"')
@@ -1026,6 +1085,10 @@ _purge_apme_local_credentials() {
     rm -f "$GITHUB_CREDS_FILE"
     info "Removed $GITHUB_CREDS_FILE"
   fi
+  if [ -f "$QUAY_AUTH_FILE" ]; then
+    rm -f "$QUAY_AUTH_FILE"
+    info "Removed $QUAY_AUTH_FILE"
+  fi
   if [ -n "${key_path:-}" ] && [ -f "$key_path" ]; then
     rm -f "$key_path"
     info "Removed $key_path"
@@ -1087,6 +1150,7 @@ case "$ACTION" in
     unset GITHUB_SAVED_CATALOG_ORG
     prompt_github_token
     resolve_github_catalog_org
+    prompt_apme_quay_token
     if [ "${_GITHUB_CATALOG_ORG_CONFIRMED:-false}" = true ] \
       && _github_integration_active \
       && [ -n "${APME_GITHUB_CATALOG_ORG:-}" ] \

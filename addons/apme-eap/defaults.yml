@@ -33,8 +33,8 @@ aap_apme_prerequisites_oauth_application_name: "APME Portal OAuth"
 configure_github_secrets: false
 
 # Portal image and plugin delivery
-# Empty image reference selects the local build from the external plugin artifact.
-apme_preloaded_image_ref: ""
+# Set the image reference to empty to select the local build from the external plugin artifact.
+apme_preloaded_image_ref: "quay.io/ansible-automation-platform-dev-preview/automation-portal:latest"
 apme_preloaded_image_pull_secret: ""
 apme_source_repo: "ansible/ansible-rhdh-plugins"
 apme_source_ref: ""
