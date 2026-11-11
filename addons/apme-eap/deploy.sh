@@ -755,7 +755,7 @@ prompt_apme_quay_token() {
     return 0
   fi
 
-  username="${APME_QUAY_USERNAME:-${QUAY_USERNAME:-}}"
+  username="${APME_QUAY_USERNAME:-${QUAY_USERNAME:-ansible-automation-platform-dev-preview+devtools-read}}"
   token="${APME_QUAY_PULL_TOKEN:-${QUAY_PULL_TOKEN:-}}"
   if [ -z "$token" ] || [ -z "$username" ]; then
     if ! _apme_eap_can_prompt; then

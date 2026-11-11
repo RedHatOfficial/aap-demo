@@ -60,6 +60,12 @@ class SavedImageSettingsTests(unittest.TestCase):
 
 
 class QuayAuthFileTests(unittest.TestCase):
+    def test_deployment_uses_the_shared_read_only_quay_username_by_default(self):
+        self.assertIn(
+            'QUAY_USERNAME:-ansible-automation-platform-dev-preview+devtools-read',
+            (ADDON / "deploy.sh").read_text(),
+        )
+
     def test_registry_auth_file_contains_only_quay_credentials_and_is_private(self):
         with tempfile.TemporaryDirectory() as directory:
             auth_file = Path(directory) / "auth.json"
