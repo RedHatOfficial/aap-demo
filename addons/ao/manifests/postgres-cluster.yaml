@@ -6,6 +6,7 @@
 # Placeholders substituted by deploy.sh:
 #   __NAMESPACE__         -> automation-orchestrator
 #   __STORAGE_CLASS__     -> nfs-local-rwx / topolvm-provisioner
+#   __STORAGE_SIZE__      -> 3Gi (or existing Cluster size; CNPG cannot shrink)
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
@@ -25,7 +26,7 @@ spec:
     parameters:
       max_connections: "200"
   storage:
-    size: 3Gi
+    size: __STORAGE_SIZE__
     storageClass: __STORAGE_CLASS__
 ---
 apiVersion: postgresql.cnpg.io/v1

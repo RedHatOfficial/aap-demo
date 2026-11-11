@@ -1587,13 +1587,28 @@ stringData:
   username: orchestrator
 EOF
 
+# CNPG rejects shrinking storage. Keep an existing Cluster size unless FORCE
+# already deleted the PVC (fresh init uses AO_STORAGE_SIZE / default 3Gi).
+PG_STORAGE_SIZE="${AO_STORAGE_SIZE:-3Gi}"
+_existing_pg_size=$(kubectl get cluster orchestrator-postgres -n "$NAMESPACE" \
+  -o jsonpath='{.spec.storage.size}' 2>/dev/null || true)
+if [ -n "$_existing_pg_size" ]; then
+  if [ "$_existing_pg_size" != "$PG_STORAGE_SIZE" ]; then
+    echo "  Preserving existing PostgreSQL storage size: ${_existing_pg_size} (manifest default: ${PG_STORAGE_SIZE})"
+  fi
+  PG_STORAGE_SIZE="$_existing_pg_size"
+fi
+
 sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
   -e "s|__STORAGE_CLASS__|${STORAGE_CLASS}|g" \
+  -e "s|__STORAGE_SIZE__|${PG_STORAGE_SIZE}|g" \
   "${MANIFESTS_DIR}/postgres-cluster.yaml" | kubectl apply -f - || {
   echo "ERROR: Failed to apply PostgreSQL manifests."
   if ! cnpg_database_crd_available; then
     echo "  CloudNativePG Database CRD is missing. Re-run after CNPG upgrade completes."
   fi
+  echo "  If the error is about shrinking storage, set AO_STORAGE_SIZE to the"
+  echo "  existing PVC size, or FORCE=1 aap-demo enable ao to recreate Postgres."
   exit 1
 }
 
