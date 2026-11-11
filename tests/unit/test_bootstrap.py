@@ -516,7 +516,7 @@ def test_node_probe_needs_a_registry_redhat_io_credential(tmp_path, auths, confi
     node_file = tmp_path / "openshift-pull-secret"
     node_file.write_text(json.dumps({"auths": auths}), encoding="utf-8")
     probe = subprocess.run(
-        [sys.executable, "-c", bootstrap._REGISTRY_PROBE, str(node_file)], check=False
+        [sys.executable, "-c", bootstrap._REGISTRY_PROBE, str(node_file)], check=False, timeout=30
     )
     assert (probe.returncode == 0) is configured
     assert bootstrap._has_required_registry(auths) is configured
@@ -533,7 +533,9 @@ def test_node_probe_runs_through_the_remote_shell(app_ctx, tmp_path) -> None:
         remote = argv[-1].removeprefix("sudo ")
         script = remote.replace(bootstrap.CRIO_PULL_SECRET, str(node_file))
         seen.append(script)
-        done = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+        done = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False, timeout=30
+        )
         return CompletedCommand(argv=tuple(argv), returncode=done.returncode, stdout=done.stdout)
 
     runner = FakeRunner()
