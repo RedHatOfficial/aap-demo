@@ -657,3 +657,18 @@ def test_grow_root_warns_when_the_volume_group_is_too_small(
         assert "stays at 19G" in console.lines[0][1]
     else:
         assert console.lines == expected
+
+
+def test_grow_root_warns_when_the_resize_fails(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        bootstrap.ssh_mod,
+        "exec_remote",
+        lambda *args, **kwargs: CompletedCommand(argv=("ssh",), returncode=5, stdout=""),
+    )
+    console = _GrowConsole()
+    ctx = type("Ctx", (), {"console": console, "runner": None})()
+
+    bootstrap._grow_root(ctx, tmp_path / "key")
+
+    assert [kind for kind, _text in console.lines] == ["warn"]
+    assert "Could not grow the CRC root filesystem" in console.lines[0][1]

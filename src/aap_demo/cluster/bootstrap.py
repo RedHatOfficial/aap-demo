@@ -315,6 +315,10 @@ def _grow_root(ctx: AppContext, key: Path) -> None:
     )
     result = ssh_mod.exec_remote(ctx.runner, key, "bash", "-c", script, sudo=False)
     if not result.ok:
+        ctx.console.warn(
+            "Could not grow the CRC root filesystem to 40G. A full AAP needs about 40G, so image "
+            "pulls can fill it. Check with: aap-demo ssh, then df -h /var"
+        )
         return
     if "grown" in result.stdout:
         ctx.console.checkpoint("CRC root filesystem extended to 40G")
