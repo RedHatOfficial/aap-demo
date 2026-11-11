@@ -44,19 +44,34 @@ Constraints:
 
 ## Decision
 
-### 1. A setting for the OpenShift major version
+### 1. One setting: `--ocp-version`
 
-Add `crc.ocp_version_major`, `4` or `5`, default `4`, with `--ocp-version-major` on `create` and
-`deploy` and `CRC_OCP_VERSION_MAJOR` in the environment. It comes from the schema like the other
-`crc.*` settings. The name keeps `ocp` because aap-demo already has several versions (CRC, AAP,
-the MicroShift floor in `crc.version`), and the preset stays `microshift`: this picks which
+Add `crc.ocp_version`, with `--ocp-version` on `create` and `deploy` and `CRC_OCP_VERSION` in the
+environment. It comes from the schema like the other `crc.*` settings. The name keeps `ocp` because
+aap-demo already has several versions (CRC, AAP). The preset stays `microshift`: this picks which
 OpenShift release the MicroShift bundle comes from, not full OpenShift.
 
-- `create` builds the chosen version and saves it.
-- `deploy` on an existing VM compares the setting with the running cluster. A mismatch stops before
-  any change, with "this cluster runs OpenShift N; run aap-demo destroy, then
-  create --ocp-version-major M".
-- `CRC_VERSION` still lowers the minimum minor version. Its default comes from the chosen profile.
+It takes three forms. The default is `4`.
+
+| Value | Resolves to | Today |
+|-------|-------------|-------|
+| `4`, `5` | The stable version aap-demo pins for that major version | `4` → 4.22.13, `5` → 5.0.0 |
+| `4.22`, `5.0` | The stable version for that minor, the same as the major when it is the newest minor | `4.22` → 4.22.13 |
+| `4.21` (an older minor) | The newest patch for that minor on the mirror | `4.21` → 4.21.7 |
+| `4.22.0`, `5.0.0` | Exactly that bundle | as given |
+
+- The stable versions are pinned in the profiles (below), so `4` and `4.22` give the same tested
+  cluster for everyone, and a new mirror upload doesn't change what `create` builds.
+- A version that isn't a profile's stable version prints a warning that it is untested. A version
+  below 4.21, or one with no bundle on the mirror for this host, is refused with the list of
+  supported values.
+- `create` saves the resolved full version. `deploy` on an existing VM compares the setting with
+  the running cluster: `4` matches any 4.x, `4.22` any 4.22.z, and an exact value only itself. A
+  mismatch stops before any change, with "this cluster runs 4.22.13; run aap-demo destroy, then
+  create --ocp-version 5".
+- `crc.version` / `CRC_VERSION` (today a MicroShift floor, for example `4.21`) is replaced.
+  A saved or exported value is read as `--ocp-version` with a deprecation warning, so
+  `CRC_VERSION=4.21 aap-demo create` keeps working.
 - `AAP_OCP_VERSION` keeps overriding the operator index tag (`v5.0`). A value whose major version
   differs from the cluster's is refused.
 
@@ -65,9 +80,11 @@ OpenShift release the MicroShift bundle comes from, not full OpenShift.
 `src/aap_demo/data/openshift/4.yaml` and `5.yaml`. Code reads the profile. It does not branch on
 `major == 5`. Each profile lists:
 
-- `minimum_version`: the lowest MicroShift minor version create and deploy accept (`4.22`, `5.0`).
-- `bundle`: `null` when the pinned CRC's own bundle is used (4), or the version, mirror directory and
-  file name for each host type (5).
+- `stable`: the full version `4`/`5` and its newest minor resolve to (`4.22.13`, `5.0.0`).
+- `minimum`: the oldest version accepted (`4.21`, `5.0`).
+- `crc_bundle`: the version the pinned CRC binary ships, if any. When the resolved version equals
+  it, CRC's own bundle is used and nothing is downloaded. Otherwise the bundle comes from the mirror
+  (section 3).
 - `aap_channels`: channels `deploy --channel` accepts.
 - `operators`: which optional operators the index has (`automation-orchestrator`,
   `automation-portal`). Addons that need a missing one refuse before touching the cluster.
@@ -77,10 +94,11 @@ OpenShift release the MicroShift bundle comes from, not full OpenShift.
 `DEFAULT_OCP_VERSION = "4.20"` in `catalog_signature.py` goes away. The fallback comes from the
 profile.
 
-### 3. Download and verify the 5.0 bundle in aap-demo
+### 3. Download and verify bundles CRC doesn't ship
 
-While CRC has no 5.0 release, `create --ocp-version-major 5` downloads the bundle for the host from the
-profile's mirror directory, verifies it, caches it under `~/.crc/cache`, and runs
+When the resolved version isn't the pinned CRC's own bundle (5.0.0 today, or an exact 4.x),
+`create` downloads the bundle for the host from
+`mirror.openshift.com/.../crc/bundles/microshift/<version>/`, verifies it, caches it under `~/.crc/cache`, and runs
 `crc start -b <file>`.
 
 Verification, in order, stopping on the first failure:
@@ -98,16 +116,18 @@ the checksum matches, so a second create doesn't download it again.
 
 ### 4. Moving to CRC's own 5.0 bundle
 
-When a CRC release ships 5.0, the 5 profile sets `bundle: null` and pins that CRC release. If that
-CRC drops 4.22, the 4 profile gets the download path instead. The verification code stays for
-whichever version isn't the CRC default.
+A CRC binary ships one MicroShift bundle (CRC 2.64.0 ships 4.22.13). When a CRC release ships 5.0,
+aap-demo pins that release, the 5 profile's `crc_bundle` names its version, and the 4 profile's
+`crc_bundle` is cleared, so `--ocp-version 4` downloads and verifies 4.22.13 the same way 5.0.0 is
+handled today. Whether the default stays `4` at that point is a separate decision.
 
 ## Consequences
 
 ### Positive
 
-- `create --ocp-version-major 5` works now, without waiting for a CRC release.
-- 4 and 5 differ in data, not in code paths. Adding 5.1 is a new profile.
+- `create --ocp-version 5` works now, without waiting for a CRC release.
+- One flag covers both the simple case (`4`, `5`) and a pinned version (`4.22.0`).
+- 4 and 5 differ in data, not in code paths. Moving to 5.1 is a change to `stable` in a profile.
 - The bundle is verified more strictly than `crc start -b` does on its own, with no host tools.
 - Addons and channels that don't exist on 5 refuse up front instead of failing halfway.
 
