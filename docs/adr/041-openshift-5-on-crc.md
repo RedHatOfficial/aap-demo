@@ -137,11 +137,12 @@ A read-only command that lists what `--ocp-version` can build on this host, list
 
 ```text
 $ aap-demo ocp-version-list
-VERSION   STATUS                 SOURCE
-5.0.0     stable, not default    download (1.4 GB)
-4.22.13   stable, default        CRC 2.64.0 (built in)
-4.22.0    untested               download
-4.21.7    untested               download
+VERSION   STATUS                      SOURCE
+5.0.0     stable, not default yet     download
+4.22.13   stable, default             CRC 2.64.0 (built in)
+4.22.0    untested                    download
+4.21.7    untested                    download
+4.21.0    untested                    download
 ```
 
 - It reads the mirror's `crc/bundles/microshift/` directory, then the directory of each version at
