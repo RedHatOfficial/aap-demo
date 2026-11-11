@@ -71,14 +71,16 @@ A value can be as broad or as exact as the user wants:
   below 4.21, or one with no bundle on the mirror for this host, is refused with the list of
   supported values.
 - `crc.ocp_version` keeps what the user gave (`4`, `5.0.0`, or nothing), so an unset setting keeps
-  following the newest supported version on the next create. The version the cluster was built
-  with goes in aap-demo state, and `status` shows it. `deploy` on an existing VM compares the
-  setting with the running cluster: `4` matches any 4.x, `4.22` any 4.22.z, and an exact value only itself. A
-  mismatch stops before any change, with "this cluster runs 4.22.13; run aap-demo destroy, then
-  create --ocp-version 5".
-- `crc.version` / `CRC_VERSION` (today a MicroShift floor, for example `4.21`) is replaced.
-  A saved or exported value is read as `--ocp-version` with a deprecation warning, so
-  `CRC_VERSION=4.21 aap-demo create` keeps working.
+  following the newest supported version on the next create. aap-demo doesn't store the version
+  it built: CRC already reports it (`crc status`, and the bundle name in the VM's config while it
+  is stopped). `create` on an existing VM of another version, and `deploy` on a running one, stop
+  before any change: `4` matches any 4.x, `4.22` any 4.22.z, an exact value only itself, and an
+  unset setting keeps whatever cluster is there. The message names the fix: "run aap-demo destroy,
+  then create --ocp-version 5".
+- `crc.version` / `CRC_VERSION` keeps its current meaning (a MicroShift floor that keeps an older
+  CRC already on PATH, which avoids the sudo step in `crc setup`) and prints a deprecation note
+  that points at `--ocp-version`. Reading it as `--ocp-version` would have quietly removed that
+  escape hatch.
 - `AAP_OCP_VERSION` keeps overriding the operator index tag (`v5.0`). A value whose major version
   differs from the cluster's is refused.
 

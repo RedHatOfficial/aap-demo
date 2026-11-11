@@ -171,23 +171,48 @@ def matches(requested: str, cluster_version: str) -> bool:
     return found[: len(wanted)] == wanted
 
 
-def requested(ctx: Any) -> Tuple[str, Optional[str]]:
-    """``(value, deprecated_source)`` for ``--ocp-version``.
+def check_cluster(
+    value: str,
+    cluster_version: str,
+    *,
+    channel: str,
+    profiles: Optional[Dict[int, Profile]] = None,
+) -> None:
+    """Stop deploy before any change when the cluster or channel doesn't fit.
 
-    ``crc.ocp_version`` wins. A value only in the old ``crc.version`` /
-    ``CRC_VERSION`` floor is used too, and its name is returned so the caller
-    can warn.
+    ``value`` is ``crc.ocp_version``. Unset keeps whatever cluster is running.
     """
-    value = str(ctx.config.get("crc.ocp_version", "") or "").strip()
-    if value:
-        return value, None
-    legacy_env = str(ctx.env.get("CRC_VERSION", "") or "").strip()
-    if legacy_env:
-        return legacy_env, "CRC_VERSION"
-    legacy = str(ctx.config.get("crc.version", "") or "").strip()
-    if legacy:
-        return legacy, "crc.version"
-    return "", None
+    known = profiles if profiles is not None else load_profiles()
+    found = parse(cluster_version)
+    if not matches(value, cluster_version):
+        raise AapDemoError(
+            f"This cluster runs OpenShift {cluster_version}, not {value}",
+            hint=f"Run aap-demo destroy, then aap-demo create --ocp-version {value}.",
+        )
+    profile = known.get(found[0])
+    if profile is not None and profile.aap_channels and channel not in profile.aap_channels:
+        raise AapDemoError(
+            f"The AAP channel {channel} is not available on OpenShift {found[0]}",
+            hint=f"Use one of: {', '.join(profile.aap_channels)}.",
+        )
+
+
+def requested(ctx: Any) -> str:
+    """``crc.ocp_version`` (flag, environment, or config). Empty when unset."""
+    return str(ctx.config.get("crc.ocp_version", "") or "").strip()
+
+
+def legacy_setting(ctx: Any) -> Optional[str]:
+    """``CRC_VERSION`` or ``crc.version`` when one is set, for a deprecation note.
+
+    They keep their old meaning (a MicroShift floor that keeps the CRC already
+    on PATH), so a user who relied on skipping the CRC upgrade still can.
+    """
+    if str(ctx.env.get("CRC_VERSION", "") or "").strip():
+        return "CRC_VERSION"
+    if str(ctx.config.get("crc.version", "") or "").strip():
+        return "crc.version"
+    return None
 
 
 def versions_in(names: Iterable[str]) -> List[str]:
@@ -198,12 +223,14 @@ def versions_in(names: Iterable[str]) -> List[str]:
 
 __all__ = [
     "Profile",
+    "check_cluster",
     "Resolved",
     "default_profile",
     "format_version",
     "load_profiles",
     "matches",
     "parse",
+    "legacy_setting",
     "requested",
     "resolve",
     "versions_in",

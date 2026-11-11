@@ -21,6 +21,7 @@ Two things bash does here are deliberately **not** ported:
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +37,7 @@ from aap_demo.core.errors import AapDemoError, ClusterUnreachableError, env_numb
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
+from aap_demo.infra import ocp_version
 
 #: ``_check_disk_space`` thresholds.
 DISK_ERROR_PERCENT = 95
@@ -164,6 +166,16 @@ def wait_for_ovn(
         sleep(OVN_POLL_SECONDS)
 
 
+def _check_ocp_version(ctx: AppContext) -> None:
+    """``--ocp-version`` and ``--channel`` against the running cluster (ADR-041)."""
+    reported = str(infra_crc.status_json(ctx.runner).get("openshiftVersion", "") or "")
+    match = re.match(r"\d+\.\d+(?:\.\d+)?", reported.strip())
+    if match is None:
+        return
+    channel = str(ctx.config.get("deploy.channel", "stable-2.7") or "stable-2.7")
+    ocp_version.check_cluster(ocp_version.requested(ctx), match.group(0), channel=channel)
+
+
 def _preset(ctx: AppContext) -> str:
     return str(ctx.config.get("crc.preset", "microshift") or "microshift")
 
@@ -237,6 +249,7 @@ def run(
 
     if not infra_crc.verify_version(ctx):
         raise AapDemoError("CRC version check failed")
+    _check_ocp_version(ctx)
 
     ctx.console.step("Waiting for cluster networking")
     wait_for_ovn(ctx, sleep=sleep, clock=clock)

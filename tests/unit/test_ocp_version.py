@@ -111,15 +111,37 @@ def _ctx(config: dict, env: dict):
     return SimpleNamespace(config=SimpleNamespace(get=lambda k, d=None: config.get(k, d)), env=env)
 
 
-def test_requested_prefers_the_new_setting() -> None:
-    ctx = _ctx({"crc.ocp_version": "5", "crc.version": "4.21"}, {"CRC_VERSION": "4.21"})
-    assert ocp.requested(ctx) == ("5", None)
+def test_requested_reads_only_the_new_setting() -> None:
+    ctx = _ctx({"crc.ocp_version": " 5 ", "crc.version": "4.21"}, {"CRC_VERSION": "4.21"})
+    assert ocp.requested(ctx) == "5"
+    assert ocp.requested(_ctx({"crc.version": "4.21"}, {"CRC_VERSION": "4.21"})) == ""
 
 
-def test_requested_reads_the_old_floor_and_names_it() -> None:
-    assert ocp.requested(_ctx({}, {"CRC_VERSION": "4.21"})) == ("4.21", "CRC_VERSION")
-    assert ocp.requested(_ctx({"crc.version": "4.21"}, {})) == ("4.21", "crc.version")
-    assert ocp.requested(_ctx({}, {})) == ("", None)
+def test_the_old_floor_is_named_for_a_deprecation_note() -> None:
+    assert ocp.legacy_setting(_ctx({}, {"CRC_VERSION": "4.21"})) == "CRC_VERSION"
+    assert ocp.legacy_setting(_ctx({"crc.version": "4.21"}, {})) == "crc.version"
+    assert ocp.legacy_setting(_ctx({}, {})) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "cluster", "channel", "message"),
+    [
+        ("5", "4.22.13", "stable-2.7", "runs OpenShift 4.22.13, not 5"),
+        ("", "5.0.0", "stable-2.6", "stable-2.6 is not available on OpenShift 5"),
+        ("4", "5.0.0", "stable-2.7", "runs OpenShift 5.0.0, not 4"),
+    ],
+)
+def test_check_cluster_refuses(value: str, cluster: str, channel: str, message: str) -> None:
+    with pytest.raises(AapDemoError, match=re.escape(message)):
+        ocp.check_cluster(value, cluster, channel=channel)
+
+
+@pytest.mark.parametrize(
+    ("value", "cluster", "channel"),
+    [("", "4.22.13", "stable-2.6"), ("5", "5.0.0", "stable-2.7"), ("4.21", "4.21.7", "stable-2.7")],
+)
+def test_check_cluster_allows(value: str, cluster: str, channel: str) -> None:
+    ocp.check_cluster(value, cluster, channel=channel)
 
 
 def test_versions_in_keeps_full_versions_only() -> None:

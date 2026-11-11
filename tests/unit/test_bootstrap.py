@@ -547,3 +547,74 @@ def test_node_probe_runs_through_the_remote_shell(app_ctx, tmp_path) -> None:
     node_file.write_text('{"auths":{"registry.redhat.io":{"auth":"dGVzdA=="}}}', encoding="utf-8")
     assert bootstrap._crio_pull_secret_configured(app_ctx, tmp_path / "key") is True
     assert seen
+
+
+# --- --ocp-version (ADR-041) -----------------------------------------------
+
+
+def test_create_ocp_5_starts_the_verified_bundle(app_ctx, tmp_path, monkeypatch) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.config.set("crc.ocp_version", "5")
+    bundle = tmp_path / "crc_microshift_vfkit_5.0.0_arm64.crcbundle"
+    fetched: list = []
+    monkeypatch.setattr(
+        bootstrap.bundle_fetch,
+        "ensure_bundle",
+        lambda ctx, version: fetched.append(version) or bundle,
+    )
+
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+
+    assert fetched == ["5.0.0"]
+    start = next(c for c in runner.commands if c.startswith("crc start -p"))
+    assert start.endswith(f"-b {bundle}")
+    assert "MicroShift: 5.0.0" in app_ctx.console.stdout
+    assert "checked this bundle against Red Hat's signed checksum" in app_ctx.console.stdout
+
+
+def test_create_default_downloads_nothing(app_ctx, tmp_path, monkeypatch) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+
+    def no_download(ctx, version):
+        raise AssertionError("the default version must not be downloaded")
+
+    monkeypatch.setattr(bootstrap.bundle_fetch, "ensure_bundle", no_download)
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    start = next(c for c in runner.commands if c.startswith("crc start -p"))
+    assert " -b " not in start
+
+
+def test_create_refuses_an_existing_vm_of_another_version(app_ctx, tmp_path) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Stopped"}')
+    config = tmp_path / "home" / ".crc" / "machines" / "crc" / "config.json"
+    config.write_text('{"Driver": {"BundleName": "crc_microshift_vfkit_4.22.13_arm64.crcbundle"}}')
+    app_ctx.config.set("crc.ocp_version", "5")
+
+    with pytest.raises(AapDemoError, match="runs MicroShift 4.22.13, not 5"):
+        bootstrap.create(
+            app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+        )
+    assert not any(
+        c.startswith(("crc start", "crc config set", "crc delete")) for c in runner.commands
+    )
+
+
+def test_create_with_the_old_crc_version_warns_and_keeps_the_old_path(
+    app_ctx, tmp_path, monkeypatch
+) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.env["CRC_VERSION"] = "4.22"
+    monkeypatch.setattr(
+        bootstrap.bundle_fetch,
+        "ensure_bundle",
+        lambda ctx, version: (_ for _ in ()).throw(AssertionError("no download")),
+    )
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    assert "CRC_VERSION is deprecated" in app_ctx.console.stdout + app_ctx.console.stderr
+    assert not any(" -b " in c for c in runner.commands)
