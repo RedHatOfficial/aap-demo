@@ -255,3 +255,10 @@ def test_all_lists_versions_below_the_minimum() -> None:
 
 def test_ocp_version_list_is_in_help() -> None:
     assert "ocp-version-list" in build_parser().format_help()
+
+
+def test_aap_ocp_version_with_another_major_is_refused() -> None:
+    with pytest.raises(AapDemoError, match="AAP_OCP_VERSION=4.22 does not match"):
+        ocp.check_cluster("", "5.0.0", channel="stable-2.7", index="4.22")
+    ocp.check_cluster("", "5.0.0", channel="stable-2.7", index="5.0")
+    ocp.check_cluster("", "4.22.13", channel="stable-2.7", index="")

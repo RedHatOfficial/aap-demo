@@ -171,7 +171,8 @@ def _check_ocp_version(ctx: AppContext) -> None:
     if not version:
         return
     channel = str(ctx.config.get("deploy.channel", "stable-2.7") or "stable-2.7")
-    ocp_version.check_cluster(ocp_version.requested(ctx), version, channel=channel)
+    index = str(ctx.env.get("AAP_OCP_VERSION", "") or "").strip()
+    ocp_version.check_cluster(ocp_version.requested(ctx), version, channel=channel, index=index)
 
 
 def _preset(ctx: AppContext) -> str:

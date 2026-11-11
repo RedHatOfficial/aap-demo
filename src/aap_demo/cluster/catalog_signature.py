@@ -26,6 +26,7 @@ from aap_demo.core.context import AppContext
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
+from aap_demo.infra import ocp_version
 
 CATALOG_NAME = "redhat-operators"
 CATALOG_SELECTOR = "olm.catalogSource=redhat-operators"
@@ -38,8 +39,6 @@ _SCC_ADMISSION_RE = re.compile(
     r"|unable to validate against any.*constraint",
     re.IGNORECASE,
 )
-DEFAULT_OCP_VERSION = "4.20"
-
 #: ``catalog_wait_timeout_seconds`` (includes/olm-catalog-signature.sh:213).
 DEFAULT_CATALOG_TIMEOUT = 600
 CATALOG_POLL_INTERVAL = 5
@@ -68,7 +67,10 @@ else:
 
 
 def resolve_ocp_version(ctx: AppContext) -> str:
-    """Ports ``resolve_aap_ocp_version`` — env, then ``crc status``, then the cluster."""
+    """Ports ``resolve_aap_ocp_version`` — env, then ``crc status``, then the cluster.
+
+    With neither, the default profile's stable minor (ADR-041).
+    """
     explicit = ctx.env.get("AAP_OCP_VERSION")
     if explicit:
         return explicit
@@ -82,7 +84,8 @@ def resolve_ocp_version(ctx: AppContext) -> str:
     match = _VERSION_RE.match(cluster_version)
     if match:
         return match.group(1)
-    return DEFAULT_OCP_VERSION
+    stable = ocp_version.parse(ocp_version.default_profile(ocp_version.load_profiles()).stable)
+    return ocp_version.format_version(stable[:2])
 
 
 def needs_relaxation(version: str) -> bool:

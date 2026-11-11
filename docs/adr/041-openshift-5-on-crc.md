@@ -102,8 +102,6 @@ A value can be as broad or as exact as the user wants:
   `portal-operator`) only run through the bash command today (ADR-040). When they are ported, their
   enable checks this list and refuses before touching the cluster. The Helm `portal` addon needs
   no operator.
-- `root_disk_gb`: the smallest root filesystem create allows, so `disk_gb - pv_size_gb` is checked
-  before the VM is built.
 
 `DEFAULT_OCP_VERSION = "4.20"` in `catalog_signature.py` goes away. The fallback comes from the
 profile.

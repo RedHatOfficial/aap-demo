@@ -176,14 +176,21 @@ def check_cluster(
     cluster_version: str,
     *,
     channel: str,
+    index: str = "",
     profiles: Optional[Dict[int, Profile]] = None,
 ) -> None:
-    """Stop deploy before any change when the cluster or channel doesn't fit.
+    """Stop deploy before any change when the cluster, channel or index doesn't fit.
 
     ``value`` is ``crc.ocp_version``. Unset keeps whatever cluster is running.
+    ``index`` is ``AAP_OCP_VERSION``, the operator index tag override.
     """
     known = profiles if profiles is not None else load_profiles()
     found = parse(cluster_version)
+    if index and index.split(".")[0] != str(found[0]):
+        raise AapDemoError(
+            f"AAP_OCP_VERSION={index} does not match this OpenShift {cluster_version} cluster",
+            hint="Unset AAP_OCP_VERSION, or give it the cluster's major version.",
+        )
     if not matches(value, cluster_version):
         raise AapDemoError(
             f"This cluster runs OpenShift {cluster_version}, not {value}",

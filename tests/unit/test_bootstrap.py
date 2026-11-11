@@ -618,3 +618,42 @@ def test_create_with_the_old_crc_version_warns_and_keeps_the_old_path(
     )
     assert "CRC_VERSION is deprecated" in app_ctx.console.stdout + app_ctx.console.stderr
     assert not any(" -b " in c for c in runner.commands)
+
+
+class _GrowConsole:
+    def __init__(self) -> None:
+        self.lines: list = []
+
+    def checkpoint(self, text: str) -> None:
+        self.lines.append(("ok", text))
+
+    def warn(self, text: str) -> None:
+        self.lines.append(("warn", text))
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        ("grown\n", [("ok", "CRC root filesystem extended to 40G")]),
+        ("unchanged\n", []),
+        ("small 19\n", ["warn"]),
+    ],
+)
+def test_grow_root_warns_when_the_volume_group_is_too_small(
+    monkeypatch, tmp_path, stdout, expected
+) -> None:
+    monkeypatch.setattr(
+        bootstrap.ssh_mod,
+        "exec_remote",
+        lambda *args, **kwargs: CompletedCommand(argv=("ssh",), returncode=0, stdout=stdout),
+    )
+    console = _GrowConsole()
+    ctx = type("Ctx", (), {"console": console, "runner": None})()
+
+    bootstrap._grow_root(ctx, tmp_path / "key")
+
+    if expected == ["warn"]:
+        assert len(console.lines) == 1 and console.lines[0][0] == "warn"
+        assert "stays at 19G" in console.lines[0][1]
+    else:
+        assert console.lines == expected

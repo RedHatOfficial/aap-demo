@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import time
 from pathlib import Path
@@ -173,14 +174,14 @@ def _persistent_store_ok(ctx: AppContext) -> bool:
 def _start_crc(ctx: AppContext, secret: Path, *, bundle: Optional[Path] = None) -> None:
     ctx.console.step("Starting CRC")
     extra = ["-b", str(bundle)] if bundle is not None else []
+    if bundle is not None:
+        ctx.console.note(
+            "CRC will warn that it expected its own bundle version. aap-demo checked this "
+            "bundle against Red Hat's signed checksum before starting it."
+        )
     started = ctx.runner.run(
         ["crc", "start", "-p", str(secret), *extra], sink=ctx.console.log_sink()
     )
-    if bundle is not None:
-        ctx.console.note(
-            "CRC warns that it expected its own bundle version. aap-demo checked this "
-            "bundle against Red Hat's signed checksum before starting it."
-        )
     if started.ok:
         ctx.console.checkpoint("CRC is running")
         return
@@ -309,12 +310,22 @@ def _grow_root(ctx: AppContext, key: Path) -> None:
         "free=$(sudo vgs --noheadings -o vg_free --units g --nosuffix rhel "
         "2>/dev/null | awk '{print int($1)}'); "
         'if [ -z "$size" ] || [ "$size" -ge 40 ]; then echo unchanged; exit 0; fi; '
-        'if [ -z "$free" ] || [ "$free" -lt 20 ]; then echo unchanged; exit 0; fi; '
+        'if [ -z "$free" ] || [ "$free" -lt 20 ]; then echo "small $size"; exit 0; fi; '
         "sudo lvextend -L 40G /dev/rhel/root && sudo xfs_growfs /sysroot && echo grown"
     )
     result = ssh_mod.exec_remote(ctx.runner, key, "bash", "-c", script, sudo=False)
-    if result.ok and "grown" in result.stdout:
+    if not result.ok:
+        return
+    if "grown" in result.stdout:
         ctx.console.checkpoint("CRC root filesystem extended to 40G")
+        return
+    small = re.search(r"small (\d+)", result.stdout)
+    if small:
+        ctx.console.warn(
+            f"The CRC root filesystem stays at {small.group(1)}G. A full AAP needs about 40G, "
+            "so image pulls can fill it. Raise --disk or lower --pv-size, then destroy and "
+            "create again."
+        )
 
 
 def _configure_nipio(ctx: AppContext, key: Path, *, sleep: Callable[[float], None]) -> None:
