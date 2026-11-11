@@ -70,6 +70,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [026](026-fleet-addon.md) | Fleet Addon — Local QEMU VMs as Managed Nodes | Accepted |
 | [027](027-low-resource-ao-replicas.md) | Low-Resource Automation Orchestrator Replicas | Proposed |
 | [028](028-ao-agentic-model-binding.md) | AO Agentic Task Model Binding | Accepted |
+| [029](029-reliability-foundation.md) | CLI Reliability Foundation | Accepted |
 | [029](029-windows-feature-parity.md) | Windows Feature Parity Strategy | Proposed |
 | [030](030-windows-native-addon-execution.md) | Native PowerShell Addon Execution | Superseded |
 | [031](031-windows-git-bash-wrapper.md) | Windows Git Bash Command Wrapper | Accepted |
@@ -80,6 +81,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [035](035-remove-diagnose-ai.md) | Remove `diagnose --ai` from the Python CLI | Accepted |
 | [036](036-subscription-manifest.md) | Apply a Subscription Manifest Only When Asked | Accepted |
 | [037](037-fleet-systemd-nodes.md) | Fleet Nodes Run systemd as PID 1 | Accepted |
+| [038](038-satellite-ca-tofu-trust.md) | Satellite CA Trust-on-First-Use and Vault-Backed Admin Password | Accepted |
 | [039](039-product-demos-on-v2-enable.md) | Product Demos Run from the New Enable Command | Accepted |
 | [040](040-addon-framework-and-bash-fallback.md) | Shared Addon Framework and Bash Fallback for the Python Command | Accepted |
 

@@ -1,0 +1,6 @@
+# Git Bash must not receive CRLF shell scripts from Windows checkouts.
+*.sh text eol=lf
+*.bash text eol=lf
+*.zsh text eol=lf
+*.ps1 text eol=lf
+*.psm1 text eol=lf

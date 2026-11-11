@@ -19,3 +19,23 @@ QCOW2 cloud image:
 ```bash
 aap-demo fleet add 1 --image ~/rhel9.qcow2
 ```
+
+## Registering nodes to the Satellite lab
+
+When the Satellite lab is built (`aap-demo create --full-demo --satellite`),
+register running Fleet nodes to it so they pull content from the local Pulp and
+appear in the Satellite inventory:
+
+```bash
+aap-demo fleet satellite-register
+```
+
+This creates a `fleet-rhel9` activation key on the Satellite (bound to the
+content view that has repositories), trusts the Satellite CA on each node, and
+registers with `subscription-manager --activationkey`. It is idempotent and
+handles two lab-specific cases: cloned nodes share a DMI UUID (each node writes
+a unique `dmi.system.uuid` rhsm fact first), and a stale Insights `.registered`
+file from a prior direct-to-Red-Hat attempt is cleared before re-registering.
+
+Use `aap-demo fleet rhc-connect` instead when there is no Satellite and nodes
+should enroll directly with Red Hat.

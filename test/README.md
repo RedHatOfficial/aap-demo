@@ -5,11 +5,16 @@ Validation tests for `aap-demo.sh` command-line interface.
 ## Usage
 
 ```bash
-# Run the shell and Python test scripts used by CI
+# Run every non-live shell and Python unit test used by CI
+./test/run-unit-tests.sh
+
+# Run an individual test
 ./test/test-core-commands.sh
 ./test/test-aap-readiness.sh
 ./test/test-aap-version-selection.sh
 ./test/test-ingress-ca-export.sh
+./test/test-satellite-ca-trust.sh
+./test/test-fleet-satellite.sh
 ./test/test-macos-ingress-ca-auth.sh
 ./test/test-macos-ingress-ca-trust-state.sh
 ./test/test-fix-ssl-command.sh
@@ -27,6 +32,13 @@ python3 ./test/test-provision-aap-demos.py
 # Run against a running local MicroShift cluster after enabling Keycloak.
 KUBECONFIG="$HOME/.aap-demo/kubeconfig.microshift" ./test/test-keycloak-live.sh
 ```
+
+`run-unit-tests.sh` applies a per-test timeout (default 120 seconds) so a single
+hanging test cannot stall the whole suite; override it with `AAP_DEMO_TEST_TIMEOUT`.
+
+The cold-state regression test uses `jq`, `qemu-img`, `rsync` and `xmllint` on
+small temporary disk images; it does not stop or restore a real VM. CI installs
+`jq qemu-utils rsync libxml2-utils` on Ubuntu for these tests.
 
 ### Coverage
 
@@ -58,6 +70,13 @@ KUBECONFIG="$HOME/.aap-demo/kubeconfig.microshift" ./test/test-keycloak-live.sh
 - ✓ `destroy`, `clean` show warnings (interactive skipped in quick mode)
 - ✓ `destroy --reset` flag parsing
 - ✓ AAP 2.7 terminal readiness across shell and PowerShell implementations
+- ✓ `start` resumes idle AAP, checks infrastructure and enabled addons, starts
+  preserved Fleet VMs, refreshes integrations, and propagates readiness failures
+- ✓ CRC startup storage policy: exact 90% threshold, 20% growth rounded up to
+  whole GiB, host capacity checks, preserved settings, and interrupted-resize retry
+- ✓ Systemd state service: cold CRC/Fleet backups with flattened backing chains,
+  configuration/credential restore, checksums, failed-backup preservation,
+  retention, boot/shutdown ordering, lifecycle routing and concurrent-operation locks
 - ✓ Keycloak OIDC addon wiring, namespace isolation, client separation, and secret handling
 - ✓ Keycloak live Route, readiness, discovery, realm, groups, users, and client validation
 
@@ -73,6 +92,40 @@ Tests validate:
 6. **AO replica profile rendering** — default one-replica and explicit
    two-replica CR values, validation errors, and operator source-of-truth
    behavior
+7. **Reliability foundation** — mutation lock contention and stale recovery,
+   scheduler-aware resource accounting, strict preflight behavior, and shared
+   Deployment readiness diagnostics
+8. **Fault injection** — CRC start/stop failures, CoreDNS restoration failure,
+   malformed Kubernetes JSON and quantities, and rollout failures return nonzero
+
+### Live Idempotency
+
+An opt-in live harness verifies that running the same command a second time does
+not change normalized Kubernetes desired state:
+
+```bash
+AAP_DEMO_LIVE_IDEMPOTENCY=1 \
+  ./test/test-live-idempotency.sh -- aap-demo wire
+```
+
+The explicit environment guard is required because the supplied command may mutate
+the live cluster. The harness compares resource identity and `spec`, excluding status
+and volatile metadata. It validates Kubernetes desired-state idempotency only; it
+does not prove idempotency of every external AAP API side effect.
+
+### Live Automation Orchestrator smoke test
+
+The guarded, read-only AO smoke test verifies every JavaScript asset packaged in
+the running UI pod is served with a JavaScript content type. It also authenticates
+to the local AO and AAP APIs to verify the required integrations, all 10 imported
+AO demo workflows, and all 17 AAP Orchestrator job templates:
+
+```bash
+AAP_DEMO_LIVE_AO_TEST=1 python3 test/test-ao-live-smoke.py
+```
+
+Credentials are read from the cluster's generated password secrets and are never
+printed. The test does not create, update, launch, or delete automation content.
 
 Tests **do not** validate:
 
@@ -184,3 +237,26 @@ kubectl get automationorchestrator automation-orchestrator \
 kubectl get secret automation-orchestrator-initial-admin-password \
   -n automation-orchestrator
 ```
+
+## Platform portability
+
+Focused non-live checks:
+
+```bash
+bash test/test-install.sh
+bash test/test-crc-storage.sh
+bash test/test-start.sh
+bash test/test-macos-state.sh
+```
+
+The macOS checkpoint tests use temporary raw disk fixtures and real file copying
+and checksums; CRC, launchd and guest lifecycle calls are mocked. CI also runs
+them using macOS `/bin/bash` and validates the LaunchAgent plist there.
+
+Windows CI parses sources with PowerShell 5.1 and runs
+`test/test-windows-platform.ps1` with both Windows PowerShell and PowerShell 7.
+These tests are not live Hyper-V tests.
+
+Actual host VM shutdown/checkpoint/login/restore tests are still required before
+claiming native recoverability. Never run destructive recovery experiments
+against a working demo without a separately verified copy and user approval.

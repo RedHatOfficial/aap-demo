@@ -1,0 +1,59 @@
+---
+# aap-controller-config.yml — wire the Satellite dynamic inventory into AAP
+# Controller (2.4/2.5) using the built-in "Red Hat Satellite 6" source.
+#   ansible-galaxy collection install ansible.controller
+#   ansible-playbook aap-controller-config.yml -e @vault.yml
+- name: Configure Satellite inventory in AAP Controller
+  hosts: localhost
+  gather_facts: false
+  vars:
+    controller_host: https://aap.demo.lab
+    controller_username: admin
+    controller_password: "{{ vault_aap_admin_password }}"
+    controller_validate_certs: false
+    sat_url: https://satellite.demo.lab
+    sat_user: admin
+    sat_password: "{{ vault_satellite_password }}"
+
+  tasks:
+    - name: Satellite credential (built-in credential type)
+      ansible.controller.credential:
+        name: Satellite
+        organization: Default
+        credential_type: Red Hat Satellite 6
+        inputs:
+          host: "{{ sat_url }}"
+          username: "{{ sat_user }}"
+          password: "{{ sat_password }}"
+        state: present
+
+    - name: Fleet inventory
+      ansible.controller.inventory:
+        name: Satellite Fleet
+        organization: Default
+        state: present
+
+    - name: Satellite inventory source (syncs hosts + groups from Satellite)
+      ansible.controller.inventory_source:
+        name: Satellite
+        inventory: Satellite Fleet
+        source: satellite6
+        credential: Satellite
+        overwrite: true
+        update_on_launch: true
+        source_vars:
+          want_facts: true
+        state: present
+
+    - name: Example job template targeting a Satellite host group
+      ansible.controller.job_template:
+        name: "Patch RHEL10 PROD nodes"
+        organization: Default
+        inventory: Satellite Fleet
+        project: Demo Playbooks          # pre-create a project with your playbooks
+        playbook: patch.yml
+        credentials:
+          - Demo Machine Credential
+        limit: "hg_hg_rhel10_prod"       # group produced by the Satellite source
+        state: present
+      ignore_errors: true                # project/credential may not exist yet

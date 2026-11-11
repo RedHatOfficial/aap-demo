@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 TEST_DIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR"' EXIT
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export AAP_DEMO_DIR="$TEST_DIR/state"
 export AO_STATE_DIR="$AAP_DEMO_DIR/ao"
+export AAP_DEMO_VAULT_FILE="$TEST_DIR/conf/env.yml"
+export AAP_DEMO_VAULT_PASSWORD_FILE="$TEST_DIR/conf/.vaultpass.txt"
 
 KUBE_SECRET_EXISTS=false
 KUBE_SECRET_B64=""
@@ -44,8 +47,10 @@ kubectl() {
   return 1
 }
 
+# shellcheck source=includes/credential-vault.sh
+source "$REPO_ROOT/includes/credential-vault.sh"
 # shellcheck source=addons/ao/lib/admin-password.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/addons/ao/lib/admin-password.sh"
+source "$REPO_ROOT/addons/ao/lib/admin-password.sh"
 
 # Clean-install scenario: there is no cached password, no Secret, and no
 # retained database. The bootstrap Secret must be created before the AO CR is
@@ -58,7 +63,8 @@ ao_admin_password_ensure automation-orchestrator >/dev/null
 [ "$KUBE_SECRET_EXISTS" = true ]
 [ -n "$CREATE_PASSWORD" ]
 [ "${#CREATE_PASSWORD}" -eq 32 ]
-[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
+[ "$(ao_admin_password_get)" = "$CREATE_PASSWORD" ]
+[ ! -e "$AO_ADMIN_PASSWORD_FILE" ]
 
 # A Secret left behind after a data purge must not be reused when PostgreSQL
 # is absent. Replace it and cache the newly generated bootstrap password.
@@ -72,19 +78,14 @@ ao_admin_password_ensure automation-orchestrator >/dev/null
 [ "$DELETE_CALLED" = true ]
 [ "$CREATE_PASSWORD" != "$OLD_VALUE" ]
 [ "${#CREATE_PASSWORD}" -eq 32 ]
-[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
+[ "$(ao_admin_password_get)" = "$CREATE_PASSWORD" ]
 
 KUBE_SECRET_EXISTS=true
 EXPECTED_VALUE="fixture-value"
 KUBE_SECRET_B64=$(printf '%s' "$EXPECTED_VALUE" | base64)
 ao_admin_password_save test >/dev/null
-[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$EXPECTED_VALUE" ]
-if password_mode=$(stat -c '%a' "$AO_ADMIN_PASSWORD_FILE" 2>/dev/null); then
-  :
-else
-  password_mode=$(stat -f '%Lp' "$AO_ADMIN_PASSWORD_FILE")
-fi
-[ "$password_mode" = "600" ]
+[ "$(ao_admin_password_get)" = "$EXPECTED_VALUE" ]
+[ ! -e "$AO_ADMIN_PASSWORD_FILE" ]
 
 KUBE_SECRET_EXISTS=false
 ao_admin_password_restore test >/dev/null
@@ -101,14 +102,16 @@ fi
 KUBE_DATABASE_EXISTS=false
 ao_admin_password_generate test >/dev/null
 [ "${#CREATE_PASSWORD}" -eq 32 ]
-[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
+[ "$(ao_admin_password_get)" = "$CREATE_PASSWORD" ]
+[ ! -e "$AO_ADMIN_PASSWORD_FILE" ]
 
 KUBE_SECRET_EXISTS=false
 CREATE_PASSWORD=""
 ao_admin_password_forget
 ao_admin_password_ensure test >/dev/null
 [ "${#CREATE_PASSWORD}" -eq 32 ]
-[ "$(<"$AO_ADMIN_PASSWORD_FILE")" = "$CREATE_PASSWORD" ]
+[ "$(ao_admin_password_get)" = "$CREATE_PASSWORD" ]
+[ ! -e "$AO_ADMIN_PASSWORD_FILE" ]
 
 MANIFEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/addons/ao/manifests/automationorchestrator-cr.yaml"
 grep -q 'initialAdminPasswordSecretRef:' "$MANIFEST"

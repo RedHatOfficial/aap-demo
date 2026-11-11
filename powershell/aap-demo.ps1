@@ -116,15 +116,14 @@ if (-not $Arguments -or $Arguments.Count -eq 0 -or
 
 try {
   Assert-AapWindowsAddonPolicy -CliArguments $Arguments
-  Invoke-AapWindowsBashCli -CliArguments $Arguments
 } catch {
   Write-Error $_.Exception.Message
   exit 1
 }
 
-# The legacy native dispatcher below remains available for module-level
-# development and future migration, but the Windows launcher exits through the
-# single Git Bash path above.
+# The native dispatcher below is the primary Windows path. Commands it does
+# not implement (for example trust-ca) fall through to Invoke-AapWindowsBashCli
+# and run through the repository Bash CLI via Git for Windows.
 
 
 
@@ -151,6 +150,11 @@ function Get-AapParsedCliArgs {
     Reset        = $false
 
     Ai           = $false
+    Apply        = $false
+    FullDemo     = $false
+    ShowSecrets  = $false
+    NoOpen       = $false
+    Json         = $false
     SkipCache    = $false
     RefreshCatalog = $false
     PurgeData    = $false
@@ -171,6 +175,11 @@ function Get-AapParsedCliArgs {
       '^--reset$' { $parsed.Reset = $true; continue }
 
       '^--ai$' { $parsed.Ai = $true; continue }
+      '^--apply$' { $parsed.Apply = $true; continue }
+      '^--full-demo$' { $parsed.FullDemo = $true; continue }
+      '^--show-secrets$' { $parsed.ShowSecrets = $true; continue }
+      '^--no-open$' { $parsed.NoOpen = $true; continue }
+      '^--json$' { $parsed.Json = $true; continue }
       '^--skip-cache$' { $parsed.SkipCache = $true; continue }
       '^--refresh-catalog$' { $parsed.RefreshCatalog = $true; continue }
       '^--purge-data$' { $parsed.PurgeData = $true; continue }
@@ -248,13 +257,58 @@ if ($Arguments.Count -gt 1) {
 
 $cli = Get-AapParsedCliArgs -Rest $rest
 
+$lockedCommands = @('repair', 'clean', 'maintenance', 'destroy', 'stop', 'start', 'restart', 'create', 'setup', 'update', 'config', 'redeploy', 'redeploy-all', 'kubeconfig', 'idle', 'enable', 'disable', 'deploy', 'deploy-all', 'setup-pah')
 
+# login-start takes the lock itself so lock failures are recorded in last-login.json.
+
+$unlockedServiceCommands = @('status', 'backups', 'verify', 'login-start')
+
+$lockToken = $null
 
 try {
 
+  if ($cli.Json -or $env:AAP_DEMO_DASHBOARD_COMMAND -eq '1') {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+  }
+  if ($cli.FullDemo -and $command -ne 'create') {
+    throw '--full-demo is supported only by create'
+  }
+  if ($cli.NoOpen -and $command -ne 'dashboard') {
+    throw '--no-open is supported only by dashboard'
+  }
+  if ($cli.Json -and ($command -ne 'status' -or $cli.ShowSecrets)) {
+    throw '--json is supported only by status without --show-secrets'
+  }
+  if ($cli.ShowSecrets -and $command -ne 'status') {
+    throw '--show-secrets is supported only by status'
+  }
+  if ($cli.ShowSecrets -and [Console]::IsOutputRedirected) {
+    throw '--show-secrets requires an interactive terminal'
+  }
+
+  if ($command -in @('create', 'destroy', 'redeploy-all')) {
+
+    Assert-AapStateNotManaged -Operation $command
+
+  }
+
+  $serviceSub = if ($cli.Positional.Count -gt 0) { $cli.Positional[0] } else { 'status' }
+
+  if ($command -in $lockedCommands -or ($command -eq 'service' -and $serviceSub -notin $unlockedServiceCommands)) {
+
+    $lockToken = Enter-AapOperationLock -Command $command
+
+  }
+
   switch ($command) {
 
-    'create' { Invoke-AapDemoCreate }
+    'create' {
+      if ($cli.FullDemo) {
+        throw 'create --full-demo requires the Bash/Linux CLI because Fleet VM management is not available in native PowerShell.'
+      }
+      Invoke-AapDemoCreate
+      Initialize-AapDemoRecovery
+    }
 
     'deploy' {
       $deployParams = Invoke-AapDeployParams $cli
@@ -266,7 +320,15 @@ try {
       Invoke-AapDemoDeploy @deployParams
     }
 
-    'status' { Invoke-AapDemoStatus }
+    'status' {
+      if ($cli.Json) {
+        Get-AapDemoDashboardInventory | ConvertTo-Json -Depth 20 -Compress
+      } else {
+        Invoke-AapDemoStatus -ShowSecrets:$cli.ShowSecrets
+      }
+    }
+
+    'dashboard' { Invoke-AapDemoDashboard -NoOpen:$cli.NoOpen }
 
     'version' { Invoke-AapDemoVersion }
 
@@ -296,9 +358,23 @@ try {
 
     }
 
-    'stop' { Invoke-AapDemoStop }
+    'start' { Invoke-AapDemoStartCommand }
 
-    'start' { Invoke-AapDemoStart }
+    'restart' { Invoke-AapDemoRestart }
+
+    'stop' { Invoke-AapDemoStopCommand }
+
+    'service' {
+
+      $serviceArgs = @($cli.Positional)
+
+      if ($cli.Apply) { $serviceArgs += '--apply' }
+
+      if ($cli.Force) { $serviceArgs += '--force' }
+
+      Invoke-AapDemoService -Arguments $serviceArgs
+
+    }
 
     'wire' { Invoke-AapDemoWire }
 
@@ -312,6 +388,11 @@ try {
 
       Invoke-AapDemoClean @params
 
+    }
+
+    'maintenance' {
+      $uninstall = $cli.Positional.Count -gt 0 -and $cli.Positional[0] -eq 'uninstall'
+      Invoke-AapDemoMaintenance -Apply:$cli.Apply -Uninstall:$uninstall
     }
 
     'repair' { Invoke-AapDemoRepair }
@@ -411,11 +492,7 @@ try {
 
     default {
 
-      Write-Host "Unknown command: $($Arguments[0])"
-
-      Write-Host "Run 'aap-demo help' for usage"
-
-      exit 1
+      Invoke-AapWindowsBashCli -CliArguments $Arguments
 
     }
 
@@ -425,6 +502,18 @@ try {
 
   Write-Host "  ERROR $($_.Exception.Message)" -ForegroundColor Red
 
+  Exit-AapOperationLock -Token $lockToken
+
+  $lockToken = $null
+
   exit 1
 
+} finally {
+
+  Exit-AapOperationLock -Token $lockToken
+
+}
+
+if ($command -in @('create', 'start', 'restart')) {
+  Invoke-AapDemoAutoDashboard
 }

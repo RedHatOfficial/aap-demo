@@ -1,0 +1,15 @@
+[Unit]
+Description=Register image-mode host to Red Hat Satellite (one-shot)
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/bootc-registered
+
+[Service]
+Type=oneshot
+# NOTE: --org takes the organization LABEL (spaces become underscores), e.g. Demo_Org
+ExecStart=/usr/sbin/subscription-manager register --org=Demo_Org --activationkey=ak-rhel10-prod
+ExecStartPost=/usr/bin/touch /var/lib/bootc-registered
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

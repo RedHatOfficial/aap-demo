@@ -317,7 +317,7 @@ function Invoke-AapDemoDiagnose {
     Write-Host "$($counts.Issues) issue(s), $($counts.Warnings) warning(s)" -ForegroundColor Red
     Write-Host ''
     Write-Host 'For detailed diagnostics: aap-demo must-gather'
-    Write-Host 'For AI-assisted analysis:  aap-demo diagnose --ai'
+    Write-Host 'For AI-assisted analysis:  aap-demo diagnose --ai (Bash/Linux CLI only)'
   }
   Write-Host ''
 }

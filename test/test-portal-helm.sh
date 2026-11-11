@@ -108,5 +108,25 @@ else
   fail "installs_missing_helm_with_homebrew_on_macos"
 fi
 
+uname() {
+  printf '%s\n' riscv64
+}
+if detect_arch >/dev/null 2>&1; then
+  fail "rejects_unknown_local_architecture"
+else
+  pass "rejects_unknown_local_architecture"
+fi
+unset -f uname
+
+kubectl() {
+  printf '%s' s390x
+}
+if resolve_portal_profile >/dev/null 2>&1; then
+  fail "rejects_unknown_cluster_architecture"
+else
+  pass "rejects_unknown_cluster_architecture"
+fi
+unset -f kubectl
+
 echo "Passed: ${PASSED}  Failed: ${FAILED}"
 [ "${FAILED}" -eq 0 ]

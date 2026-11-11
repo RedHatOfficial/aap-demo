@@ -35,7 +35,7 @@ powershell/aap-demo.ps1
 AapDemo.psm1
       ├── Create.ps1    — CRC create, CoreDNS, OLM
       ├── Deploy.ps1    — OLM, Subscription, AAP CR
-      ├── Status.ps1    — routes, credentials, addons
+      ├── Status.ps1    — routes, secret-safe status, addons
       ├── Diagnose.ps1  — health checks (parity with bash)
       ├── Commands.ps1  — idle, destroy, clean, must-gather
       └── Helpers.ps1   — oc wrappers, config, SCC grants

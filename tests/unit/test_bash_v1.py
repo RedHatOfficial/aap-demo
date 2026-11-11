@@ -165,22 +165,24 @@ def test_bash_help_labels_fleet_as_legacy_qemu_and_points_to_v2() -> None:
 
 
 def test_bash_status_has_a_python_v2_fleet_report() -> None:
-    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+    # cmd_status lives in includes/cmd-status.sh (extracted from aap-demo.sh).
+    source = (REPO_ROOT / "includes" / "cmd-status.sh").read_text(encoding="utf-8")
 
     assert "Kubernetes-native Fleet:" in source
     assert "Kubernetes-native Fleet: kubectl failed" in source
-    fleet = source.split('echo "Fleet:"', 1)[1].split("if [ -d", 1)[0]
-    assert "get pods -A" in fleet
-    assert "|| _fleet_v2_rc=$?" in fleet
-    assert "app.kubernetes.io/name=fleet-node" in fleet
-    assert '--kubeconfig "$KUBECTL_KUBECONFIG"' in fleet
-    assert '--context "$KUBECTL_CONTEXT"' in fleet
+    assert "get pods -A" in source
+    assert "|| _fleet_v2_rc=$?" in source
+    assert "app.kubernetes.io/name=fleet-node" in source
+    assert '--kubeconfig "$KUBECTL_KUBECONFIG"' in source
+    assert '--context "$KUBECTL_CONTEXT"' in source
 
 
 def test_bash_fleet_source_has_explicit_backend_delegation() -> None:
     source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
+    # show_help lives in includes/help.sh (extracted from aap-demo.sh).
+    help_source = (REPO_ROOT / "includes" / "help.sh").read_text(encoding="utf-8")
 
-    assert "--backend qemu|kube-native|all" in source
+    assert "--backend qemu|kube-native|all" in help_source
     assert "_fleet_delegate_v2" in source
     assert "_fleet_delegate_kube_native" in source
     assert ".venv/bin/python" in source

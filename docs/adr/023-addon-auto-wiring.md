@@ -49,7 +49,7 @@ Add cross-addon auto-wiring as a shared module invoked automatically by the CLI.
 aap_demo_wire (automatic)
   ├─ APD: AAP Credential (in-cluster URL for EE pods)
   ├─ APD: OpenShift Credential (SA token + API host)
-  ├─ APD: Galaxy credentials (if ~/.aap-demo/galaxy-token exists)
+  ├─ APD: Galaxy credentials (if present in ~/.ansible/conf/env.yml)
   ├─ AO:  restore CoreDNS route rewrite if missing (MicroShift DNS operator overwrites it)
   ├─ AO:  hostAliases for AAP/AO/MCP/Ollama route hostnames → ingress router (SSRF DNS independence)
   ├─ AO:  APP_INTEGRATION_URL_ALLOWED_HOSTS + APP_OIDC_ALLOW_PRIVATE_NETWORKS (backend patch)

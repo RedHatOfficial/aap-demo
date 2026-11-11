@@ -1,5 +1,5 @@
 # Ollama LLM server for aap-demo
-# CPU-only deployment with qwen2.5:3b model (~2GB)
+# GPU-accelerated when available, with CPU fallback
 #
 # Endpoint: https://ollama.apps.127.0.0.1.nip.io
 # OpenAI-compatible: https://ollama.apps.127.0.0.1.nip.io/v1
@@ -56,6 +56,8 @@ metadata:
 spec:
   replicas: 1
   progressDeadlineSeconds: __PROGRESS_DEADLINE_SECONDS__
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: ollama
@@ -87,6 +89,7 @@ spec:
             limits:
               cpu: "4"
               memory: 8Gi
+              __GPU_RESOURCE_LIMIT__
           readinessProbe:
             httpGet:
               path: /api/tags

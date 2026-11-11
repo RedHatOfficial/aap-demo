@@ -332,7 +332,9 @@ def import_workflows(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--route", required=True, help="AO route hostname")
-    parser.add_argument("--token", required=True)
+    token_group = parser.add_mutually_exclusive_group(required=True)
+    token_group.add_argument("--token")
+    token_group.add_argument("--token-fd", type=int)
     parser.add_argument("--source-dir", help="Local workflow directory (testing override)")
     parser.add_argument("--repository", default=UPSTREAM_REPOSITORY)
     parser.add_argument("--ref", default=UPSTREAM_REF)
@@ -345,6 +347,9 @@ def main() -> int:
     parser.add_argument("--mcp-credential-id", help="AO MCP credential ID for tool connection credentials")
     parser.add_argument("--project-id")
     args = parser.parse_args()
+    if args.token_fd is not None:
+        with open(args.token_fd, encoding="utf-8", closefd=False) as token_stream:
+            args.token = token_stream.read()
     try:
         return import_workflows(args)
     except (OSError, ValueError, RuntimeError) as exc:

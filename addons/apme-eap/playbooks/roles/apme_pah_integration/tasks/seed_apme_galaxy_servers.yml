@@ -246,7 +246,7 @@
         template:
           metadata:
             annotations:
-              apme.eap.welcome.pack/galaxyServersSeededAt: "{{ ansible_date_time.iso8601 }}"
+              apme.eap.welcome.pack/galaxyServersSeededAt: "{{ ansible_facts['date_time']['iso8601'] }}"
   when:
     - apme_pah_seed_apme_galaxy_servers | bool
     - apme_pah_desired_galaxy_servers is defined

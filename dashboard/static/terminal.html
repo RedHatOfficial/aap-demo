@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fleet SSH terminal</title>
+    <link rel="stylesheet" href="/app.css">
+    <link rel="stylesheet" href="/vendor/xterm.css">
+    <script src="/vendor/xterm.js" defer></script>
+    <script src="/vendor/addon-fit.js" defer></script>
+    <script src="/terminal.js" defer></script>
+  </head>
+  <body class="terminal-page">
+    <header>
+      <h1 id="terminal-title">Fleet SSH terminal</h1>
+      <p id="terminal-status" role="status">Connecting securely as admin...</p>
+      <button id="disconnect" class="button secondary" disabled>Disconnect</button>
+    </header>
+    <main id="ssh-terminal" aria-label="Interactive Fleet SSH terminal"></main>
+  </body>
+</html>

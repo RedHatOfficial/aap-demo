@@ -13,7 +13,7 @@ cluster_info_line=$(printf '%s\n' "$cmd_deploy" | grep -n 'kubectl cluster-info'
 ovn_ready_line=$(printf '%s\n' "$cmd_deploy" | grep -n '_wait_for_ovn_ready' | head -1 | cut -d: -f1)
 cache_load_line=$(printf '%s\n' "$cmd_deploy" | grep -n '^  _load_local_cache$' | head -1 | cut -d: -f1)
 olm_install_line=$(printf '%s\n' "$cmd_deploy" | grep -n 'addons/olm/deploy.sh' | head -1 | cut -d: -f1)
-deploy_latest_line=$(printf '%s\n' "$cmd_deploy" | grep -n '^  deploy_latest$' | head -1 | cut -d: -f1)
+deploy_latest_line=$(printf '%s\n' "$cmd_deploy" | grep -nE '^  deploy_latest( \|\| return 1)?$' | head -1 | cut -d: -f1)
 
 if [ -z "$cluster_info_line" ] || [ -z "$ovn_ready_line" ] || [ -z "$cache_load_line" ] \
   || [ -z "$olm_install_line" ] || [ -z "$deploy_latest_line" ]; then

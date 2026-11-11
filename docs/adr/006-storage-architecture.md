@@ -58,6 +58,9 @@ The Python deploy installs `nfs-local-rwx` when it is absent and stops if the cl
 ### LVMS PV reservation
 
 `CRC_PV_SIZE` (default 70 GiB) reserves disk for LVMS-provisioned PVCs inside the CRC VM, separate from NFS-backed RWX volumes.
+The CRC disk planner also reserves at least 100 GiB for the root filesystem and
+CRI-O image storage. With the default PV reservation, fresh CRC VMs therefore
+use at least a 180 GiB disk.
 
 ### local-path (MINC / fallback)
 

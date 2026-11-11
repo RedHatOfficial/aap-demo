@@ -9,6 +9,7 @@ _AAP_DEMO_PATHS_LOADED=1
 
 AAP_DEMO_DIR="${AAP_DEMO_DIR:-$HOME/.aap-demo}"
 AAP_DEMO_KUBECONFIG="${AAP_DEMO_KUBECONFIG:-$AAP_DEMO_DIR/kubeconfig.microshift}"
+export AAP_DEMO_DIR AAP_DEMO_KUBECONFIG
 
 # Resolve kubeconfig path (read-only discovery). Returns the write target even when
 # missing; callers that read the file must still test -f/-s before use.

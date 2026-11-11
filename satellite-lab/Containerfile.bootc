@@ -1,0 +1,18 @@
+# Containerfile.bootc — customized RHEL 10 image-mode (bootc) image.
+# Base image is the rhel-bootc container synced into Satellite's Pulp registry.
+# Build:  podman build -f Containerfile.bootc -t satellite.demo.lab/demo_org-bootc-rhel10-bootc-demo:v1 .
+# Push:   podman push satellite.demo.lab/demo_org-bootc-rhel10-bootc-demo:v1
+FROM satellite.demo.lab/demo_org-bootc-rhel10-bootc:latest
+
+# Demo tooling baked into the OS image
+RUN dnf install -y tmux vim-enhanced curl && dnf clean all
+
+# Trust the Satellite CA inside the image (no secrets — registration happens at first boot)
+RUN curl -skO https://satellite.demo.lab/pub/katello-ca-consumer-latest.noarch.rpm \
+ && dnf install -y ./katello-ca-consumer-latest.noarch.rpm \
+ && rm -f ./katello-ca-consumer-latest.noarch.rpm \
+ && dnf clean all
+
+# One-shot Satellite registration at first boot (activation key, nothing sensitive in the image)
+COPY bootc-register.service /etc/systemd/system/bootc-register.service
+RUN systemctl enable bootc-register.service

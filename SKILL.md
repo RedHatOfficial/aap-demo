@@ -221,9 +221,10 @@ insufficient for the operation.
 ### Playbook execution via API
 
 ```bash
-# 1. Get AAP credentials
-AAP_PASS=$(aap-demo status | grep "AAP Admin Password" | awk '{print $4}')
-AAP_HOST=$(aap-demo status | grep "AAP Gateway" | awk '{print $3}')
+# 1. Get AAP credentials for automation from Kubernetes
+AAP_PASS=$(kubectl get secret aap-admin-password -n aap-operator \
+  -o jsonpath='{.data.password}' | base64 -d)
+AAP_HOST=$(kubectl get route aap -n aap-operator -o jsonpath='{.spec.host}')
 
 # 2. Use gateway API
 curl -k -u admin:${AAP_PASS} \

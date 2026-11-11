@@ -26,7 +26,7 @@ _INGRESS_CA_RHEL_ANCHOR="/etc/pki/ca-trust/source/anchors/${_INGRESS_CA_ANCHOR_N
 _INGRESS_CA_DEBIAN_ANCHOR="/usr/local/share/ca-certificates/${_INGRESS_CA_ANCHOR_NAME}"
 
 get_ingress_ca_cert_path() {
-  local ca_dir="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}"
+  local ca_dir="${AAP_DEMO_CONFIG_DIR:-${AAP_DEMO_DIR:-$HOME/.aap-demo}}"
   echo "${ca_dir}/${_INGRESS_CA_ANCHOR_NAME}"
 }
 
@@ -203,7 +203,7 @@ _ingress_ca_system_bundle() {
 }
 
 get_ingress_ca_cli_bundle_path() {
-  local ca_dir="${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}"
+  local ca_dir="${AAP_DEMO_CONFIG_DIR:-${AAP_DEMO_DIR:-$HOME/.aap-demo}}"
   echo "${ca_dir}/ca-bundle.crt"
 }
 

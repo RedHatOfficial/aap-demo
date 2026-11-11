@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Shared helpers for product-demos addons.
 
+APD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../includes/secure-curl.sh
+source "${APD_LIB_DIR}/../../includes/secure-curl.sh"
+# shellcheck source=../../includes/credential-vault.sh
+source "${APD_LIB_DIR}/../../includes/credential-vault.sh"
+
 APD_AAP_VERSION="${APD_AAP_VERSION:-2.7}"
 PRODUCT_DEMOS_EE="${PRODUCT_DEMOS_EE:-quay.io/ansible-product-demos/apd-ee-27:latest}"
 
@@ -31,7 +37,10 @@ apd_common_extra_vars_yaml() {
     '{
       _aap_version: $version,
       apd_ee_image: $ee_image,
-      aap_validate_certs: false
+      aap_validate_certs: false,
+      aap_configuration_async_retries: 50,
+      gateway_configuration_async_retries: 50,
+      controller_configuration_async_retries: 50
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
@@ -180,7 +189,10 @@ apd_domain_extra_vars_yaml() {
       demo: $demo,
       _aap_version: $version,
       apd_ee_image: $ee_image,
-      aap_validate_certs: false
+      aap_validate_certs: false,
+      aap_configuration_async_retries: 50,
+      gateway_configuration_async_retries: 50,
+      controller_configuration_async_retries: 50
     } | to_entries | map("\(.key): \(.value)") | join("\n")'
 }
 
@@ -486,22 +498,22 @@ apd_ensure_aap_credential() {
 }
 
 apd_configure_galaxy_credentials() {
-  local token_file="${1:-${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}}"
+  local token_file="${1:-${GALAXY_TOKEN_FILE:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/galaxy-token}}"
   local apd_org_id token cred_name cred_id patch_result
   local -a cred_names=("Automation Hub Certified Content" "Automation Hub Validated Content")
 
-  if [ ! -f "$token_file" ]; then
+  token=$(aap_demo_vault_get "aap_demo.galaxy.offline_token" 2>/dev/null || true)
+  if [ -z "$token" ] && [ -s "$token_file" ]; then
+    token=$(tr -d '[:space:]' <"$token_file")
+    if [ -n "$token" ] && aap_demo_vault_set "aap_demo.galaxy.offline_token" "$token"; then
+      rm -f "$token_file"
+    fi
+  fi
+  if [ -z "$token" ]; then
     return 0
   fi
-
   if [ -z "${AAP_API:-}" ] || [ -z "${AAP_USERNAME:-}" ] || [ -z "${AAP_PASSWORD:-}" ]; then
     apd_init_aap_connection || return 1
-  fi
-
-  token=$(tr -d '[:space:]' <"$token_file")
-  if [ -z "$token" ]; then
-    echo "  ⚠ Galaxy token file is empty: ${token_file}" >&2
-    return 1
   fi
 
   apd_org_id=$(apd_apd_org_id)
@@ -642,14 +654,20 @@ apd_launch_extra_vars_json() {
       '{
         demo: $demo,
         _aap_version: $version,
-        aap_validate_certs: false
+        aap_validate_certs: false,
+        aap_configuration_async_retries: 50,
+        gateway_configuration_async_retries: 50,
+        controller_configuration_async_retries: 50
       }'
   else
     jq -n \
       --arg version "$APD_AAP_VERSION" \
       '{
         _aap_version: $version,
-        aap_validate_certs: false
+        aap_validate_certs: false,
+        aap_configuration_async_retries: 50,
+        gateway_configuration_async_retries: 50,
+        controller_configuration_async_retries: 50
       }'
   fi
 }

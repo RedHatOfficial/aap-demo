@@ -42,6 +42,20 @@ TEMPLATES = [
     ("Incidents | High CPU - Process Cleanup", "ticket-enrichment/playbooks/remediate_process_cleanup.yml"),
 ]
 
+FLEET_TARGET_TEMPLATES = {
+    "Renew Certificate",
+    "Renew Java Keystore Certificate",
+    "Validate Cert Renewal",
+    "Disk Utilization Check",
+    "Linux - Remediate - Disk Cleanup",
+    "Linux - Remediate - Continue",
+    "Linux - Remediate - Disk Expand",
+    "Disk Utilization - Fallback",
+    "SNOW - Auto Remediation",
+    "Incidents | Capacity - Disk Cleanup",
+    "Incidents | High CPU - Process Cleanup",
+}
+
 
 def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
     """Build the AO sync playbook inputs from provision command arguments."""
@@ -55,6 +69,8 @@ def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
         "ao_agent_credential_id": args.ao_agent_credential_id,
         "ao_agent_integration_id": args.ao_agent_integration_id,
         "ao_agent_model_id": args.ao_agent_model_id,
+        "ao_mcp_credential_id": args.ao_mcp_credential_id,
+        "ao_mcp_integration_id": args.ao_mcp_integration_id,
     }
 
 
@@ -62,6 +78,22 @@ def report_missing_license(route: str) -> None:
     """Tell the user how to register AAP before retrying the sync job."""
     print("WARNING: AAP does not have a registered subscription.")
     print(f"  Please log into AAP at https://{route} and register a subscription.")
+
+def ensure_template_machine_credential(api: "AAP", template_id: int, credential: dict[str, Any]) -> None:
+    """Associate exactly the requested Machine credential with a job template."""
+    endpoint = f"/job_templates/{template_id}/credentials/"
+    current = api.request(endpoint).get("results", [])
+    credential_id = credential["id"]
+    already_associated = False
+    for item in current:
+        if item["id"] == credential_id:
+            already_associated = True
+            continue
+        credential_type = item.get("summary_fields", {}).get("credential_type", {})
+        if credential_type.get("kind") == "ssh":
+            api.request(endpoint, "POST", {"id": item["id"], "disassociate": True})
+    if not already_associated:
+        api.request(endpoint, "POST", {"id": credential_id})
 
 
 class AAP:
@@ -130,19 +162,31 @@ class AAP:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--route", required=True)
-    parser.add_argument("--token", required=True)
+    token_group = parser.add_mutually_exclusive_group(required=True)
+    token_group.add_argument("--token")
+    token_group.add_argument("--token-fd", type=int)
     parser.add_argument("--ao-api-url")
     parser.add_argument("--ao-api-host", default="")
-    parser.add_argument("--ao-token")
+    ao_token_group = parser.add_mutually_exclusive_group()
+    ao_token_group.add_argument("--ao-token")
+    ao_token_group.add_argument("--ao-token-fd", type=int)
     parser.add_argument("--ao-credential-id", default="")
     parser.add_argument("--ao-integration-id", default="")
     parser.add_argument("--ao-agent-credential-id", default="")
     parser.add_argument("--ao-agent-integration-id", default="")
     parser.add_argument("--ao-agent-model-id", default="")
+    parser.add_argument("--ao-mcp-credential-id", default="")
+    parser.add_argument("--ao-mcp-integration-id", default="")
     parser.add_argument("--control-repository", default=CONTROL_PROJECT_URL)
     parser.add_argument("--control-branch", default="main")
     parser.add_argument("--ao-demo-ref", default="abcc1a1482a")
     args = parser.parse_args()
+    if args.token_fd is not None:
+        with open(args.token_fd, encoding="utf-8", closefd=False) as token_stream:
+            args.token = token_stream.read()
+    if args.ao_token_fd is not None:
+        with open(args.ao_token_fd, encoding="utf-8", closefd=False) as token_stream:
+            args.ao_token = token_stream.read()
     api = AAP(args.route, args.token)
 
     organizations = api.request("/organizations/?name=Default").get("results", [])
@@ -175,8 +219,15 @@ def main() -> int:
 
     existing = {item["name"]: item for item in api.request("/job_templates/?page_size=200").get("results", [])}
     inventories = api.request(f"/inventories/?organization={organization['id']}&page_size=1").get("results", [])
-    inventory_id = inventories[0]["id"] if inventories else None
+    default_inventory_id = inventories[0]["id"] if inventories else None
+    fleet_inventory = api.find("inventories", "Fleet")
+    fleet_credential = api.find("credentials", "Fleet SSH Key")
     for name, playbook in TEMPLATES:
+        inventory_id = (
+            fleet_inventory["id"]
+            if name in FLEET_TARGET_TEMPLATES and fleet_inventory
+            else default_inventory_id
+        )
         payload = {
             "name": name,
             "description": f"AAP Orchestrator demo playbook: {playbook}",
@@ -190,11 +241,14 @@ def main() -> int:
             payload["inventory"] = inventory_id
         current = existing.get(name)
         if current:
+            template_id = current["id"]
             api.request(f"/job_templates/{current['id']}/", "PATCH", payload)
             print(f"  ✓ AAP template updated: {name}")
         else:
-            api.request("/job_templates/", "POST", payload)
+            template_id = api.request("/job_templates/", "POST", payload)["id"]
             print(f"  ✓ AAP template created: {name}")
+        if name in FLEET_TARGET_TEMPLATES and fleet_credential:
+            ensure_template_machine_credential(api, template_id, fleet_credential)
     print(f"✓ AAP demo project synchronized ({len(TEMPLATES)} job templates)")
 
     if args.ao_api_url and args.ao_token:
@@ -230,8 +284,8 @@ def main() -> int:
             "forks": CONTROL_FORKS,
             "ask_variables_on_launch": True,
         }
-        if inventory_id:
-            control_template_payload["inventory"] = inventory_id
+        if default_inventory_id:
+            control_template_payload["inventory"] = default_inventory_id
         else:
             control_template_payload["ask_inventory_on_launch"] = True
         if control_template:

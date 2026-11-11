@@ -101,6 +101,13 @@ if [ ${#FAILED_DOMAINS[@]} -gt 0 ]; then
   exit 1
 fi
 
+if compgen -G "${AAP_DEMO_DIR:-$HOME/.aap-demo}/fleet/node-*/meta" >/dev/null; then
+  echo "Reconciling Fleet nodes into the AAP Fleet inventory..."
+  # shellcheck source=../../includes/fleet-access.sh
+  source "${SCRIPT_DIR}/../../includes/fleet-access.sh"
+  fleet_reconcile_existing_inventory
+fi
+
 echo "✓ All Ansible Product Demos domains installed!"
 echo ""
 echo "Domains installed: ${DEMO_DOMAINS[*]}"

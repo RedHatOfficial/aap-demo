@@ -139,7 +139,7 @@ AAP_PERSISTENT_IMAGE_STORE=true
 # Linux/libvirt only. macOS/vfkit uses the OCI image cache instead.
 # Omit AAP_IMAGE_STORE_DISK to use the Linux platform default:
 # ~/.aap-demo/storage/crio-images.qcow2
-AAP_IMAGE_STORE_SIZE_GB=60
+AAP_IMAGE_STORE_SIZE_GB=100
 # Required only for first-time initialization of a blank disk:
 AAP_IMAGE_STORE_FORMAT=true
 ```

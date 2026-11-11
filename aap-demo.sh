@@ -10,7 +10,7 @@
 #   ./aap-demo.sh clean               # Remove AAP deployment
 #   ./aap-demo.sh destroy             # Delete entire cluster
 #   ./aap-demo.sh stop                # Stop OpenShift Local cluster
-#   ./aap-demo.sh start               # Start stopped cluster
+#   ./aap-demo.sh start               # Resume the configured demo and wait for readiness
 #   ./aap-demo.sh repair              # Repair after crash
 #   ./aap-demo.sh setup               # Setup only (no deploy)
 #   ./aap-demo.sh create              # Create cluster only
@@ -43,10 +43,30 @@ source "${SCRIPT_DIR}/includes/aap-demo-version.sh"
 
 # shellcheck source=includes/aap-demo-paths.sh
 source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
-# shellcheck source=includes/kubeconfig-guard.sh
-source "${SCRIPT_DIR}/includes/kubeconfig-guard.sh"
+# shellcheck source=includes/preset.sh
+source "${SCRIPT_DIR}/includes/preset.sh"
+# shellcheck source=includes/cmd-dashboard.sh
+source "${SCRIPT_DIR}/includes/cmd-dashboard.sh"
+# shellcheck source=includes/cmd-status.sh
+source "${SCRIPT_DIR}/includes/cmd-status.sh"
+# shellcheck source=includes/help.sh
+source "${SCRIPT_DIR}/includes/help.sh"
+# shellcheck source=includes/cmd-fleet.sh
+source "${SCRIPT_DIR}/includes/cmd-fleet.sh"
+# shellcheck source=includes/operation-lock.sh
+source "${SCRIPT_DIR}/includes/operation-lock.sh"
+# shellcheck source=includes/kubernetes-readiness.sh
+source "${SCRIPT_DIR}/includes/kubernetes-readiness.sh"
+# shellcheck source=includes/resource-preflight.sh
+source "${SCRIPT_DIR}/includes/resource-preflight.sh"
 # shellcheck source=includes/ao-llm.sh
 source "${SCRIPT_DIR}/includes/ao-llm.sh"
+# shellcheck source=includes/credential-vault.sh
+source "${SCRIPT_DIR}/includes/credential-vault.sh"
+# shellcheck source=includes/addon-restore.sh
+source "${SCRIPT_DIR}/includes/addon-restore.sh"
+# shellcheck source=includes/kubeconfig-guard.sh
+source "${SCRIPT_DIR}/includes/kubeconfig-guard.sh"
 # shellcheck source=includes/json-utils.sh
 source "${SCRIPT_DIR}/includes/json-utils.sh"
 
@@ -55,6 +75,20 @@ source "${SCRIPT_DIR}/includes/persistent-crio-store.sh"
 
 # shellcheck source=includes/aap-readiness.sh
 source "${SCRIPT_DIR}/includes/aap-readiness.sh"
+# shellcheck source=includes/storage-capacity.sh
+source "${SCRIPT_DIR}/includes/storage-capacity.sh"
+# shellcheck source=includes/system-inventory.sh
+source "${SCRIPT_DIR}/includes/system-inventory.sh"
+# shellcheck source=includes/system-info-document.sh
+source "${SCRIPT_DIR}/includes/system-info-document.sh"
+# shellcheck source=includes/maintenance.sh
+source "${SCRIPT_DIR}/includes/maintenance.sh"
+# shellcheck source=includes/demo-start.sh
+source "${SCRIPT_DIR}/includes/demo-start.sh"
+# shellcheck source=includes/crc-storage.sh
+source "${SCRIPT_DIR}/includes/crc-storage.sh"
+# shellcheck source=includes/state-service.sh
+source "${SCRIPT_DIR}/includes/state-service.sh"
 
 # KUBECONFIG is set later by setup_kubeconfig() after argument parsing
 
@@ -78,7 +112,7 @@ _AAP_DEMO_KUBECONFIG_FROM_ENV="${KUBECONFIG+x}"
 # Config file for persistent settings
 AAP_DEMO_CONFIG="${AAP_DEMO_CONFIG:-$HOME/.aap-demo/config}"
 AAP_DEMO_CONFIG_FILE="$AAP_DEMO_CONFIG"
-export AAP_DEMO_CONFIG
+export AAP_DEMO_CONFIG AAP_DEMO_CONFIG_FILE
 
 # Values in the shared config are inherited by every addon. Keep credentials in
 # dedicated files or one-shot process environment variables instead of making
@@ -120,8 +154,8 @@ source "${SCRIPT_DIR}/includes/aap-version.sh"
 aap_demo_configure_aap_version "${AAP_VERSION:-2.7}" || exit 1
 
 # Collection authentication environment variables
-GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-$HOME/.aap-demo/galaxy-token}"
-PAH_CONFIG_FILE="${PAH_CONFIG_FILE:-$HOME/.aap-demo/pah-config.yml}"
+GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-$AAP_DEMO_DIR/galaxy-token}"
+PAH_CONFIG_FILE="${PAH_CONFIG_FILE:-$AAP_DEMO_DIR/pah-config.yml}"
 SKIP_COLLECTIONS="${SKIP_COLLECTIONS:-false}"
 
 # Infrastructure type (OpenShift Local only)
@@ -135,13 +169,25 @@ EXTRA_ARGS=()
 V2_ARGS=()
 V2_MODE=false
 PENDING_FLAG=""
+OUTPUT_JSON=false
+REDACT=false
+SYSTEM_INFO_OUTPUT=""
+DASHBOARD_NO_OPEN=false
+MAINTENANCE_APPLY=false
+MAINTENANCE_RECONFIGURE=false
+FULL_DEMO=false
+FULL_DEMO_SATELLITE=false
+SHOW_SECRETS=false
 
 for arg in "$@"; do
   if [ "$V2_MODE" = true ]; then
     V2_ARGS+=("$arg")
     continue
   fi
-
+  if [ "$COMMAND" = service ]; then
+    EXTRA_ARGS+=("$arg")
+    continue
+  fi
   # Handle pending flag value
   if [ -n "$PENDING_FLAG" ]; then
     case "$PENDING_FLAG" in
@@ -153,6 +199,9 @@ for arg in "$@"; do
         ;;
       kubeconfig)
         KUBECTL_KUBECONFIG="$arg"
+        ;;
+      output)
+        SYSTEM_INFO_OUTPUT="$arg"
         ;;
       backend)
         FLEET_BACKEND="$arg"
@@ -182,38 +231,103 @@ for arg in "$@"; do
     --kubeconfig)
       PENDING_FLAG="kubeconfig"
       ;;
+    --output=*)
+      SYSTEM_INFO_OUTPUT="${arg#*=}"
+      ;;
+    --output)
+      PENDING_FLAG="output"
+      ;;
+    --json)
+      OUTPUT_JSON=true
+      ;;
+    --redact)
+      REDACT=true
+      ;;
+    --no-open)
+      DASHBOARD_NO_OPEN=true
+      ;;
+    --full-demo)
+      FULL_DEMO=true
+      ;;
+    --satellite)
+      FULL_DEMO_SATELLITE=true
+      ;;
+    --sno)
+      # Hands-free tier selection: full single-node OpenShift (skips the
+      # interactive tier prompt). Validated against hardware minimums in create.
+      CRC_PRESET="openshift"
+      AAP_DEMO_TIER_PROMPT=false
+      export CRC_PRESET AAP_DEMO_TIER_PROMPT
+      ;;
+    --microshift)
+      # Hands-free tier selection: minimal edge runtime (skips the tier prompt).
+      CRC_PRESET="microshift"
+      AAP_DEMO_TIER_PROMPT=false
+      export CRC_PRESET AAP_DEMO_TIER_PROMPT
+      ;;
+    --show-secrets)
+      SHOW_SECRETS=true
+      ;;
+    status)
+      if [ "$COMMAND" = "fleet" ] && [ "${EXTRA_ARGS[0]:-}" = "auth" ]; then
+        EXTRA_ARGS+=("$arg")
+      elif [ "$COMMAND" = "credentials" ]; then
+        EXTRA_ARGS+=("$arg")
+      else
+        COMMAND="$arg"
+      fi
+      ;;
+    start | ssh)
+      if [ "$COMMAND" = "fleet" ]; then
+        EXTRA_ARGS+=("$arg")
+      else
+        COMMAND="$arg"
+      fi
+      ;;
+    fleet)
+      if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
+        EXTRA_ARGS+=("$arg")
+      elif [ -z "$COMMAND" ]; then
+        COMMAND="fleet"
+      else
+        echo "Unknown argument for '$COMMAND': $arg"
+        echo "Run '$0 help' for usage"
+        exit 1
+      fi
+      ;;
     --backend=*)
       FLEET_BACKEND="${arg#*=}"
       ;;
     --backend)
       PENDING_FLAG="backend"
       ;;
-    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | storage | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | keycloak | v2 | version | help | --help | -h | --version | -V)
-      case "$arg" in
-        --version | -V) COMMAND="version" ;;
-        fleet)
-          if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
-            EXTRA_ARGS+=("$arg")
-          else
-            COMMAND="fleet"
-          fi
-          ;;
-        keycloak)
-          if [ -z "$COMMAND" ]; then COMMAND="keycloak"; else EXTRA_ARGS+=("$arg"); fi
-          ;;
-        --help | -h)
-          if [ "$COMMAND" = "enable" ]; then
-            EXTRA_ARGS+=("$arg")
-          else
-            COMMAND="help"
-          fi
-          ;;
-        v2)
-          COMMAND="v2"
-          V2_MODE=true
-          ;;
-        *) COMMAND="$arg" ;;
-      esac
+    deploy | deploy-all | repair | trust-ca | clean | maintenance | credentials | stop | restart | service | setup | create | storage | watch | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | idle | preflight | diagnose | must-gather | enable | disable | wire | system-info | dashboard | console | keycloak | v2 | version | help | --help | -h | --version | -V)
+      if [ "$COMMAND" = "credentials" ]; then
+        EXTRA_ARGS+=("$arg")
+      elif [ "$COMMAND" = "fleet" ]; then
+        # start/stop/restart are also fleet node power actions; keep them as
+        # fleet args when the fleet command is already selected.
+        EXTRA_ARGS+=("$arg")
+      else
+        case "$arg" in
+          --version | -V) COMMAND="version" ;;
+          keycloak)
+            if [ -z "$COMMAND" ]; then COMMAND="keycloak"; else EXTRA_ARGS+=("$arg"); fi
+            ;;
+          --help | -h)
+            if [ "$COMMAND" = "enable" ]; then
+              EXTRA_ARGS+=("$arg")
+            else
+              COMMAND="help"
+            fi
+            ;;
+          v2)
+            COMMAND="v2"
+            V2_MODE=true
+            ;;
+          *) COMMAND="$arg" ;;
+        esac
+      fi
       ;;
     destroy)
       # Fleet owns destroy as a subcommand; otherwise destroy is top-level.
@@ -232,11 +346,17 @@ for arg in "$@"; do
       # --no-import is forwarded to Python for: enable fleet --backend kube-native
       EXTRA_ARGS+=("$arg")
       ;;
+    --apply)
+      MAINTENANCE_APPLY=true
+      ;;
+    --reconfigure)
+      MAINTENANCE_RECONFIGURE=true
+      ;;
     add | remove | list)
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak | satellite-manifest | lightspeed)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -264,7 +384,10 @@ for arg in "$@"; do
       ;;
     *)
       # Commands that accept arbitrary args
-      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] || [ "$COMMAND" = "fleet" ] || [ "$COMMAND" = "keycloak" ] || [ "$COMMAND" = "storage" ]; then
+      if [ "$COMMAND" = "must-gather" ] || [ "$COMMAND" = "clean" ] \
+        || [ "$COMMAND" = "fleet" ] || [ "$COMMAND" = "maintenance" ] \
+        || [ "$COMMAND" = "credentials" ] || [ "$COMMAND" = "keycloak" ] \
+        || [ "$COMMAND" = "storage" ]; then
         EXTRA_ARGS+=("$arg")
       elif [ -n "$COMMAND" ]; then
         echo "Unknown argument for '$COMMAND': $arg"
@@ -282,6 +405,50 @@ done
 # Check for unprocessed pending flag
 if [ -n "$PENDING_FLAG" ]; then
   echo "ERROR: --$PENDING_FLAG requires a value"
+  exit 1
+fi
+
+if [ "$OUTPUT_JSON" = true ] && [ "$COMMAND" != status ] && [ "$COMMAND" != system-info ]; then
+  echo "ERROR: --json is supported only by status and system-info" >&2
+  exit 1
+fi
+if [ "$SHOW_SECRETS" = true ]; then
+  if [ "$COMMAND" != status ]; then
+    echo "ERROR: --show-secrets is supported only by status" >&2
+    exit 1
+  fi
+  if [ ! -t 1 ] || [ ! -r /dev/tty ]; then
+    echo "ERROR: --show-secrets requires an interactive terminal" >&2
+    exit 1
+  fi
+fi
+if [ "$REDACT" = true ] && [ "$COMMAND" != system-info ]; then
+  echo "ERROR: --redact is supported only by system-info" >&2
+  exit 1
+fi
+if [ -n "$SYSTEM_INFO_OUTPUT" ] && [ "$COMMAND" != system-info ]; then
+  echo "ERROR: --output is supported only by system-info" >&2
+  exit 1
+fi
+if [ "$DASHBOARD_NO_OPEN" = true ] \
+  && ! { [ "$COMMAND" = dashboard ] || [ "$COMMAND" = console ] || { [ "$COMMAND" = create ] && [ "$FULL_DEMO" = true ]; }; }; then
+  echo "ERROR: --no-open is supported only by dashboard and console" >&2
+  exit 1
+fi
+if [ "$FULL_DEMO" = true ] && [ "$COMMAND" != create ]; then
+  echo "ERROR: --full-demo is supported only by create" >&2
+  exit 1
+fi
+if [ "$FULL_DEMO_SATELLITE" = true ] && ! { [ "$COMMAND" = create ] && [ "$FULL_DEMO" = true ]; }; then
+  echo "ERROR: --satellite is supported only by create --full-demo" >&2
+  exit 1
+fi
+if [ "$MAINTENANCE_APPLY" = true ] && [ "$COMMAND" != maintenance ]; then
+  echo "ERROR: --apply is supported only by maintenance" >&2
+  exit 1
+fi
+if [ "$MAINTENANCE_RECONFIGURE" = true ] && [ "$COMMAND" != maintenance ]; then
+  echo "ERROR: --reconfigure is supported only by maintenance uninstall" >&2
   exit 1
 fi
 
@@ -351,11 +518,17 @@ check_kubectl() {
       echo "  brew install kubectl"
       echo ""
       echo "  # macOS (manual)"
-      if [ "$(uname -m)" = "arm64" ]; then
-        echo "  curl -LO https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/arm64/kubectl"
-      else
-        echo "  curl -LO https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/amd64/kubectl"
-      fi
+      case "$(uname -m)" in
+        arm64 | aarch64)
+          echo "  curl -LO https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/arm64/kubectl"
+          ;;
+        x86_64 | amd64)
+          echo "  curl -LO https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/darwin/amd64/kubectl"
+          ;;
+        *)
+          echo "  Unsupported macOS architecture: $(uname -m)"
+          ;;
+      esac
       echo "  chmod +x kubectl && sudo mv kubectl /usr/local/bin/"
       ;;
     MINGW* | MSYS* | CYGWIN*)
@@ -465,6 +638,7 @@ setup_kubeconfig() {
     fi
   fi
 
+  # Refuse a remote current context unless AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true.
   if ! aap_demo_reject_remote_kubeconfig; then
     exit 1
   fi
@@ -475,11 +649,17 @@ setup_kubeconfig() {
     if ! kubectl cluster-info --request-timeout=3s &>/dev/null 2>&1; then
       # Ensure infra backend is loaded to set CRC_SSH_KEY
       _infra_ensure_backend 2>/dev/null || true
-      if [ -n "$CRC_SSH_KEY" ]; then
+      if [ "$(aap_demo_detect_crc_preset)" = "openshift" ]; then
+        if [ -s "$HOME/.crc/machines/crc/kubeconfig" ]; then
+          cp "$HOME/.crc/machines/crc/kubeconfig" "$AAP_DEMO_KUBECONFIG"
+          chmod 600 "$AAP_DEMO_KUBECONFIG"
+          export KUBECONFIG="$AAP_DEMO_KUBECONFIG"
+        fi
+      elif [ -n "$CRC_SSH_KEY" ]; then
         if ssh -p 2222 -i "$CRC_SSH_KEY" \
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
           -o ConnectTimeout=2 -o BatchMode=yes \
-          core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' \
+          core@127.0.0.1 "sudo cat $(aap_demo_microshift_kubeconfig_vm_path)" \
           >"${AAP_DEMO_KUBECONFIG}.tmp" 2>/dev/null; then
           mv "${AAP_DEMO_KUBECONFIG}.tmp" "$AAP_DEMO_KUBECONFIG"
           chmod 600 "$AAP_DEMO_KUBECONFIG"
@@ -543,6 +723,18 @@ _help_addon_summary() {
     ao-pr-testing)
       printf '%s\n' "PR validation workflow and read-only OpenShift MCP (requires ao)"
       ;;
+    apme-eap)
+      printf '%s\n' "APME early-access portal"
+      ;;
+    product-demos)
+      printf '%s\n' "Non-Satellite Ansible Product Demos"
+      ;;
+    product-demo-satellite)
+      printf '%s\n' "Satellite demo content (requires the Satellite lab or an external Satellite)"
+      ;;
+    opa)
+      printf '%s\n' "Open Policy Agent integration"
+      ;;
     local-cache)
       printf '%s\n' "Cache container images locally (~30GB). save, load, or clear"
       ;;
@@ -551,6 +743,12 @@ _help_addon_summary() {
       ;;
     keycloak)
       printf '%s\n' "Keycloak OIDC provider for local AAP and AO authentication tests"
+      ;;
+    satellite-manifest)
+      printf '%s\n' "Build a Satellite subscription manifest via the RHSM API"
+      ;;
+    lightspeed)
+      printf '%s\n' "Ansible Lightspeed assistant backed by the local Ollama LLM"
       ;;
     *) ;;
   esac
@@ -607,169 +805,13 @@ Run 'aap-demo help' for the full command reference.
 EOF
 }
 
-show_help() {
-  cat <<EOF
-aap-demo - Deploy AAP $AAP_VERSION to OpenShift Local
-
-Usage: aap-demo [options] <command>
-
-Cluster
-  create            Create the OpenShift Local cluster
-  start             Start a stopped cluster (re-applies CoreDNS config)
-  stop              Stop the cluster
-  ssh               SSH into the cluster node
-  destroy           Delete the local cluster
-  repair            Repair the cluster after a crash
-  trust-ca          Repair ingress certificate trust only
-  setup             Run setup only (storage, CoreDNS)
-  kubeconfig        Extract and merge kubeconfig
-  redeploy-all      Destroy the cluster and redeploy fresh
-
-AAP
-  deploy            Deploy AAP $AAP_VERSION (operator + CR)
-  status            Show cluster and AAP status
-  watch             Watch deployment status
-  idle              Scale AAP down or up
-  clean             Remove the AAP deployment
-  redeploy          Clean and redeploy AAP
-  wire              Re-run addon wiring
-
-COMMANDS:
-    create          Create OpenShift Local cluster
-                    Interactive runs also ask for disk and persistent-volume size
-    storage [DISK_GB] [PV_GB]
-                    Show or change the OpenShift Local disk and persistent-volume pool
-                    Disk must be at least 31GB and the PV pool at least 15GB
-                    Example: aap-demo storage 160 100
-    destroy [--reset] [--skip-cache] Delete local cluster (--reset also clears config)
-    stop            Stop local cluster gracefully
-    start           Start stopped cluster (re-applies CoreDNS config)
-    ssh             SSH into cluster node
-    repair          Repair cluster after crash
-    trust-ca        Repair ingress certificate trust only
-    setup           Run setup only (storage, coredns)
-    kubeconfig      Extract and merge kubeconfig
-    redeploy-all    Destroy cluster and redeploy fresh
-
-ENVIRONMENT:
-    AAP_VERSION=2.6|2.7  AAP version to deploy (default: 2.7)
-    CRC_DISK            VM disk size in GiB (default: 120, minimum 31)
-    CRC_PV_SIZE         Persistent-volume pool in GiB (default: 70, minimum 15, must be < CRC_DISK)
-    QUIET=true          Skip the CPU, memory, and storage prompts
-    AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
-    AAP_PERSISTENT_IMAGE_STORE=true
-                        Keep CRI-O image storage on a persistent qcow2 disk
-                        (Linux/libvirt only; macOS uses the OCI image cache)
-    AAP_IMAGE_STORE_DISK Path to the persistent image disk
-    AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
-    AAP_IMAGE_STORE_FORMAT=true
-                        Explicitly format a blank persistent disk once
-
-EXAMPLES:
-    aap-demo create                              # Create OpenShift Local cluster
-    aap-demo storage                             # Show disk and persistent-volume size
-    aap-demo storage 160 100                     # Set a 160GB disk and 100GB PV pool
-    aap-demo deploy                              # Deploy AAP $AAP_VERSION
-    aap-demo enable fleet                        # Enable fleet addon
-    aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
-    aap-demo fleet list                          # Show running fleet nodes
-    aap-demo status                              # Show cluster and AAP status
-    aap-demo stop                                # Stop cluster
-    aap-demo start                               # Start stopped cluster
-    aap-demo ssh                                 # SSH into cluster node
-    aap-demo enable setup-pah                    # Configure Private Automation Hub remotes
-Health
-  diagnose          Check environment health
-  must-gather       Collect AAP and cluster diagnostics
-  redhat-status     Check Red Hat registry status
-
-Addons
-  enable            Enable an addon
-  disable           Disable an addon
-  fleet             Manage fleet node VMs
-  keycloak          Configure Keycloak OIDC for AAP and AO
-
-Other
-  config            Configure aap-demo settings
-  update            Pull latest code and reinstall
-  v2 [args...]      Run the Python v2 CLI (for example: aap-demo v2 deploy)
-  version           Show version and build timestamp
-  help              Show this help
-
-Options
-  --kubeconfig=FILE   Path to kubeconfig file (default: ~/.aap-demo/kubeconfig.microshift)
-  --context=NAME      kubectl context to use (default: current context)
-  --backend=NAME      Fleet backend: qemu, kube-native, or all
-
-Environment
-  NAMESPACE=<name>    Kubernetes namespace (default: aap-operator)
-  QUIET=true          Suppress the disclaimer
-  FORCE=true          Force reinstall even if AAP exists
-  AAP_VERSION=2.6|2.7 AAP version to deploy (default: 2.7)
-  AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true
-                      Allow a remote kubeconfig context. Default is to
-                      refuse, so oc login cannot retarget deploy or enable.
-  AAP_DEMO_ANSIBLE    Use Ansible by default (true/false)
-  AAP_PERSISTENT_IMAGE_STORE=true
-                      Keep CRI-O image storage on a persistent qcow2 disk
-                      (Linux/libvirt only; macOS uses the OCI image cache)
-  AAP_IMAGE_STORE_DISK Path to the persistent image disk
-  AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
-  AAP_IMAGE_STORE_FORMAT=true
-                      Explicitly format a blank persistent disk once
-
-Notes
-  idle                No argument shows state; true scales down; false scales up
-  diagnose            Checks cluster, storage, SCCs, pods, PVCs, and DNS
-  diagnose --ai       Analyze issues with Claude (requires the claude CLI)
-  must-gather [dir]   Uses the AAP must-gather image. Output is
-                      must-gather.local.<timestamp>, or the directory given
-  destroy             --reset also clears config; --skip-cache skips the image cache
-  fleet               add, list, remove, destroy
-                      --backend qemu|kube-native|all
-                      add [N] --image <path> creates N RHEL VMs (requires: enable fleet)
-                      (legacy Bash v1; local QEMU VMs only)
-                      Kubernetes-native fleet: aap-demo fleet list (Kubernetes pod-backed nodes)
-                      --no-import with --backend kube-native skips AAP registration
-                      disable --backend kube-native delegates to the Python addon
-  local-cache         save, load, or clear. Saves images from a running cluster
-  keycloak configure  [--target aap|ao|all] [--map-groups] [--apply]
-                      Dry-run unless --apply
-                      --map-groups aligns Keycloak groups with AAP roles and AO groups
-  aliases             deploy-all = deploy, rh-status = redhat-status
-
-Available addons
-EOF
-  _help_print_addons
-  cat <<EOF
-
-Examples
-  aap-demo create
-  aap-demo deploy
-  aap-demo status
-  aap-demo enable portal
-  aap-demo idle true
-
-Requirements
-  - OpenShift Local — https://console.redhat.com/openshift/create/local
-  - On Linux: libvirt-daemon, libvirt-daemon-driver-storage, qemu-kvm
-
-  For all deployments:
-  - kubectl
-  - Pull secret at ~/.aap-demo/pull-secret.txt (from console.redhat.com)
-EOF
-}
+# show_help moved to includes/help.sh
 
 # -----------------------------------------------------------------------------
 # Pull Secret Selection
 # -----------------------------------------------------------------------------
 determine_pull_secret() {
-  for path in "${PULL_SECRET_PATH:-}" "$HOME/.aap-demo/pull-secret" "$HOME/.aap-demo/pull-secret.txt" "$HOME/.aap-demo/pull-secret.json"; do
-    if [ -n "$path" ] && [ -f "$path" ]; then
-      echo "$path"
-      return
-    fi
-  done
+  aap_demo_pull_secret_get
 }
 
 # -----------------------------------------------------------------------------
@@ -854,11 +896,10 @@ _prune_unused_images() {
 # Check disk space on the CRC VM
 # Warns at >80% usage, errors at >95%
 _check_disk_space() {
-
   _infra_ensure_backend 2>/dev/null || return 0
 
   local disk_usage=""
-  disk_usage=$(infra_exec_cmd bash -c "df /var --output=pcent 2>/dev/null | tail -1 | tr -d ' %'" 2>/dev/null) || true
+  disk_usage=$(aap_demo_vm_disk_usage_pct 2>/dev/null) || true
 
   if [ -z "$disk_usage" ]; then
     return 0
@@ -1009,6 +1050,7 @@ _wait_for_ovn_ready() {
   local interval=5
   local elapsed=0
   local node_desired node_ready master_desired master_ready
+  local master_required=true
 
   if ! kubectl get namespace "$ovn_namespace" &>/dev/null; then
     echo ""
@@ -1018,20 +1060,30 @@ _wait_for_ovn_ready() {
   fi
 
   echo "Waiting for OVN networking to become ready..."
+  if ! kubectl get daemonset ovnkube-master -n "$ovn_namespace" >/dev/null 2>&1; then
+    master_required=false
+  fi
+
   while [ "$elapsed" -lt "$timeout" ]; do
     node_desired=$(kubectl get daemonset ovnkube-node -n "$ovn_namespace" \
       -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "")
     node_ready=$(kubectl get daemonset ovnkube-node -n "$ovn_namespace" \
       -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "")
-    master_desired=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
-      -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "")
-    master_ready=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
-      -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "")
+    if [ "$master_required" = true ]; then
+      master_desired=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
+        -o jsonpath='{.status.desiredNumberScheduled}' 2>/dev/null || echo "")
+      master_ready=$(kubectl get daemonset ovnkube-master -n "$ovn_namespace" \
+        -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "")
+    else
+      master_desired="0"
+      master_ready="0"
+    fi
 
     if [ "$node_desired" -gt 0 ] 2>/dev/null \
       && [ "$node_ready" -eq "$node_desired" ] 2>/dev/null \
-      && [ "$master_desired" -gt 0 ] 2>/dev/null \
-      && [ "$master_ready" -eq "$master_desired" ] 2>/dev/null; then
+      && { [ "$master_required" = false ] \
+        || { [ "$master_desired" -gt 0 ] 2>/dev/null \
+          && [ "$master_ready" -eq "$master_desired" ] 2>/dev/null; }; }; then
       echo "  ✓ OVN networking is ready"
       return 0
     fi
@@ -1345,7 +1397,7 @@ cmd_must_gather() {
 
   # Collect aap-demo specific diagnostics
   echo "Collecting aap-demo diagnostics..."
-  cp "${HOME}/.aap-demo/config" "${dest_dir}/aap-demo/config" 2>/dev/null || true
+  cp "$AAP_DEMO_CONFIG" "${dest_dir}/aap-demo/config" 2>/dev/null || true
   crc status >"${dest_dir}/aap-demo/crc-status.txt" 2>&1 || true
   crc version >"${dest_dir}/aap-demo/crc-version.txt" 2>&1 || true
   kubectl get sc -o yaml >"${dest_dir}/aap-demo/storageclasses.yaml" 2>/dev/null || true
@@ -1394,354 +1446,139 @@ cmd_must_gather() {
   echo "To share: tar czf must-gather.tar.gz ${dest_dir}"
 }
 
-cmd_diagnose() {
+cmd_preflight() {
   echo ""
-  printf "\033[1maap-demo diagnose\033[0m - Checking environment health...\n"
+  printf "\033[1maap-demo preflight\033[0m - Validating prerequisites and capacity...\n"
   echo ""
 
-  local issues=0
-  local warnings=0
-
-  _check_pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
-  _check_fail() {
-    printf "  \033[31m✗\033[0m %s\n" "$1"
-    issues=$((issues + 1))
-  }
-  _check_warn() {
+  local issues=0 warnings=0 tool cluster_state disk_pct catalog_status architecture
+  local infra_name default_storage_class
+  _preflight_pass() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
+  _preflight_warn() {
     printf "  \033[33m⚠\033[0m %s\n" "$1"
     warnings=$((warnings + 1))
   }
-  _check_info() { printf "  \033[36m·\033[0m %s\n" "$1"; }
+  _preflight_fail() {
+    printf "  \033[31m✗\033[0m %s\n" "$1"
+    issues=$((issues + 1))
+  }
 
-  # =========================================================================
-  # Cluster connectivity
-  # =========================================================================
+  echo "Tools:"
+  for tool in kubectl jq python3; do
+    if command -v "$tool" >/dev/null 2>&1; then
+      _preflight_pass "$tool available"
+    else
+      _preflight_fail "$tool is required but not installed"
+    fi
+  done
+  case "$INFRA_TYPE" in
+    crc) tool=crc ;;
+    minc) tool=podman ;;
+    *) tool="" ;;
+  esac
+  if [ -n "$tool" ]; then
+    if command -v "$tool" >/dev/null 2>&1; then
+      _preflight_pass "$tool available for $INFRA_TYPE infrastructure"
+    else
+      _preflight_fail "$tool is required for $INFRA_TYPE infrastructure"
+    fi
+  fi
+  echo ""
+
   echo "Cluster:"
-  local crc_state status_json
-  status_json=$(crc status -o json 2>/dev/null || echo '{}')
-  crc_state=$(aap_demo_json_value crcStatus "$status_json" 2>/dev/null || echo "unknown")
-  if [ "$crc_state" = "Running" ]; then
-    local ms_version
-    ms_version=$(aap_demo_json_value openshiftVersion "$status_json" 2>/dev/null || echo "")
-    _check_pass "OpenShift Local running"
-  elif [ "$crc_state" = "Stopped" ]; then
-    _check_fail "OpenShift Local is stopped — run: crc start"
+  infra_name=$(infra_get_name 2>/dev/null || echo "$INFRA_TYPE")
+  cluster_state=$(infra_get_state 2>/dev/null || echo "unknown")
+  if [ "$cluster_state" = "running" ]; then
+    _preflight_pass "$infra_name running"
   else
-    _check_fail "OpenShift Local cluster not found — run: aap-demo create"
+    _preflight_fail "$infra_name is ${cluster_state}; run: aap-demo start"
+  fi
+  if kubectl cluster-info --request-timeout=10s >/dev/null 2>&1; then
+    _preflight_pass "Kubernetes API reachable"
+  else
+    _preflight_fail "Kubernetes API is not reachable"
   fi
 
-  if kubectl cluster-info &>/dev/null; then
-    _check_pass "kubectl connected"
+  architecture=$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' \
+    2>/dev/null || true)
+  if [ -n "$architecture" ]; then
+    _preflight_pass "Cluster architecture: $architecture"
   else
-    _check_fail "kubectl cannot connect to cluster"
+    _preflight_warn "Cluster architecture could not be detected"
+  fi
+  echo ""
+
+  if [ "$issues" -eq 0 ]; then
+    echo "Capacity:"
+    if ! aap_demo_resource_preflight "general installation" \
+      "${AAP_PREFLIGHT_MIN_CPU_M:-2000}" "${AAP_PREFLIGHT_MIN_MEMORY_MI:-4096}"; then
+      _preflight_fail "Recommended resource headroom is unavailable in strict mode"
+    elif [ "${AAP_RESOURCE_PREFLIGHT_SKIPPED:-false}" = true ]; then
+      _preflight_warn "Resource headroom check explicitly skipped"
+    elif [ "${AAP_RESOURCE_PREFLIGHT_UNAVAILABLE:-false}" = true ]; then
+      _preflight_warn "Resource headroom could not be calculated"
+    elif [ "${AAP_RESOURCE_PREFLIGHT_INSUFFICIENT:-false}" = true ]; then
+      _preflight_warn "Resource headroom is below the recommended threshold"
+    else
+      _preflight_pass "Recommended resource headroom is available"
+    fi
     echo ""
-    echo "Cannot proceed without cluster connectivity."
-    echo "  Check KUBECONFIG: ${KUBECONFIG:-$AAP_DEMO_KUBECONFIG}"
+
+    echo "Storage:"
+    default_storage_class=$(kubectl get sc \
+      -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}' \
+      2>/dev/null | head -1)
+    if [ -n "$default_storage_class" ]; then
+      _preflight_pass "Default StorageClass available: $default_storage_class"
+    else
+      _preflight_fail "No default writable StorageClass found"
+    fi
+    if kubectl get sc nfs-local-rwx >/dev/null 2>&1; then
+      _preflight_pass "RWX StorageClass available"
+    else
+      _preflight_warn "nfs-local-rwx is unavailable; Automation Hub file storage may remain pending"
+    fi
+
+    disk_pct=$(aap_demo_vm_disk_usage_pct 2>/dev/null || true)
+    if [ -z "$disk_pct" ]; then
+      _preflight_warn "VM disk usage could not be determined"
+    elif [ "$disk_pct" -ge 95 ]; then
+      _preflight_fail "VM disk is ${disk_pct}% full"
+    elif [ "$disk_pct" -ge 80 ]; then
+      _preflight_warn "VM disk is ${disk_pct}% full; prune images before a large deployment"
+    else
+      _preflight_pass "VM disk usage: ${disk_pct}%"
+    fi
+    echo ""
+
+    echo "Operator catalog:"
+    if kubectl get catalogsource redhat-operators -n "$NAMESPACE" >/dev/null 2>&1; then
+      catalog_status=$(kubectl get catalogsource redhat-operators -n "$NAMESPACE" \
+        -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || true)
+      if [ "$catalog_status" = "READY" ]; then
+        _preflight_pass "AAP CatalogSource ready"
+      else
+        _preflight_warn "AAP CatalogSource state: ${catalog_status:-unknown}"
+      fi
+    else
+      _preflight_warn "AAP CatalogSource not installed yet"
+    fi
+    echo ""
+  fi
+
+  if [ "$issues" -gt 0 ]; then
+    printf "\033[31mPreflight failed: %d issue(s), %d warning(s)\033[0m\n" \
+      "$issues" "$warnings"
     return 1
   fi
-  echo ""
-
-  # =========================================================================
-  # Storage
-  # =========================================================================
-  echo "Storage:"
-  if kubectl get sc topolvm-provisioner &>/dev/null; then
-    _check_pass "topolvm-provisioner StorageClass (default)"
+  if [ "$warnings" -gt 0 ]; then
+    printf "\033[33mPreflight passed with %d warning(s)\033[0m\n" "$warnings"
   else
-    _check_warn "topolvm-provisioner StorageClass not found"
-  fi
-
-  if kubectl get sc nfs-local-rwx &>/dev/null; then
-    _check_pass "nfs-local-rwx StorageClass (RWX)"
-    # Check NFS server health
-    local nfs_ready
-    nfs_ready=$(kubectl get deployment nfs-server -n nfs-storage -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-    if [ "${nfs_ready:-0}" -gt 0 ]; then
-      _check_pass "NFS server pod running"
-    else
-      _check_fail "NFS server pod not running — run: aap-demo create (or kubectl rollout restart deployment/nfs-server -n nfs-storage)"
-    fi
-  else
-    _check_warn "nfs-local-rwx StorageClass not found — hub RWX storage unavailable"
-    _check_info "Fix: re-run 'aap-demo create' to deploy NFS provisioner, or create the StorageClass manually"
-  fi
-
-  # Check disk usage
-  local disk_pct
-  disk_pct=$(aap_demo_json_disk_percent "$status_json" 2>/dev/null || echo "0")
-  if [ "$disk_pct" -gt 90 ]; then
-    _check_fail "Disk usage: ${disk_pct}% — critically low space"
-  elif [ "$disk_pct" -gt 80 ]; then
-    _check_warn "Disk usage: ${disk_pct}% — consider pruning: aap-demo ssh && sudo crictl rmi --prune"
-  else
-    _check_pass "Disk usage: ${disk_pct}%"
-  fi
-  echo ""
-
-  # =========================================================================
-  # Security
-  # =========================================================================
-  echo "Security:"
-  local ns_exists=false
-  kubectl get namespace "$NAMESPACE" &>/dev/null && ns_exists=true
-
-  local scc_anyuid=0 scc_privileged=0
-  if $ns_exists; then
-    # SCC grants create ClusterRoleBindings, not namespace RoleBindings
-    local _crb_list
-    _crb_list=$(kubectl get clusterrolebinding -o wide 2>/dev/null || true)
-    scc_anyuid=$(echo "$_crb_list" | grep -c "scc:anyuid.*system:serviceaccounts:${NAMESPACE}" || true)
-    scc_privileged=$(echo "$_crb_list" | grep -c "scc:privileged.*system:serviceaccounts:${NAMESPACE}" || true)
-    # Fallback: check namespace rolebindings (older oc versions)
-    if [ "${scc_anyuid:-0}" -eq 0 ]; then
-      scc_anyuid=$(kubectl get rolebinding -n "$NAMESPACE" -o wide 2>/dev/null | grep -c "scc:anyuid" || true)
-    fi
-    if [ "${scc_privileged:-0}" -eq 0 ]; then
-      scc_privileged=$(kubectl get rolebinding -n "$NAMESPACE" -o wide 2>/dev/null | grep -c "scc:privileged" || true)
-    fi
-  fi
-
-  if [ "${scc_anyuid:-0}" -gt 0 ] && [ "${scc_privileged:-0}" -gt 0 ]; then
-    _check_pass "SCCs granted (anyuid + privileged) in $NAMESPACE"
-  elif [ "$scc_anyuid" -gt 0 ]; then
-    _check_warn "Only anyuid SCC granted — privileged missing in $NAMESPACE"
-  elif [ "$scc_privileged" -gt 0 ]; then
-    _check_warn "Only privileged SCC granted — anyuid missing in $NAMESPACE"
-  else
-    if $ns_exists; then
-      _check_fail "No SCCs granted in $NAMESPACE — pods will fail to start"
-      _check_info "Fix: oc adm policy add-scc-to-group anyuid system:serviceaccounts:$NAMESPACE"
-      _check_info "Fix: oc adm policy add-scc-to-group privileged system:serviceaccounts:$NAMESPACE"
-    else
-      _check_info "Namespace $NAMESPACE does not exist yet (will be created on deploy)"
-    fi
-  fi
-
-  # Check supplementalGroups on gateway deployment (OpenShift Local needs group 0)
-  if $ns_exists; then
-    local _gw_deploy _gw_sg
-    _gw_deploy=$(kubectl get deployment -n "$NAMESPACE" -o name 2>/dev/null | grep gateway | grep -v operator | head -1)
-    if [ -n "$_gw_deploy" ]; then
-      _gw_sg=$(kubectl get "$_gw_deploy" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.securityContext.supplementalGroups}' 2>/dev/null || echo "")
-      if [ "$_gw_sg" = "[0]" ]; then
-        _check_pass "Gateway has supplementalGroups: [0]"
-      else
-        _check_fail "Gateway missing supplementalGroups: [0] — supervisord will crash with EACCES"
-        _check_info "Fix: kubectl patch $_gw_deploy -n $NAMESPACE --type=json -p '[{\"op\":\"add\",\"path\":\"/spec/template/spec/securityContext/supplementalGroups\",\"value\":[0]}]'"
-      fi
-    fi
-  fi
-
-  # Check namespace PSA labels
-  local psa_enforce
-  if $ns_exists; then
-    psa_enforce=$(kubectl get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}' 2>/dev/null || echo "")
-    if [ "$psa_enforce" = "privileged" ]; then
-      _check_pass "Namespace PSA labels: privileged"
-    elif [ -n "$psa_enforce" ]; then
-      _check_warn "Namespace PSA enforce: $psa_enforce (expected: privileged)"
-    else
-      _check_fail "Namespace $NAMESPACE missing PSA labels"
-    fi
-  fi
-  echo ""
-
-  # =========================================================================
-  # AAP deployment
-  # =========================================================================
-  echo "AAP Deployment:"
-  local aap_name
-  aap_name=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-
-  if [ -z "$aap_name" ]; then
-    _check_info "No AAP instance found in $NAMESPACE"
-  else
-    # Check idle state
-    local idle_state
-    idle_state=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.spec.idle_aap}' 2>/dev/null)
-    if [ "$idle_state" = "true" ]; then
-      _check_info "AAP '$aap_name' is idle (scaled down)"
-    else
-      # Check AAP status conditions
-      local aap_status
-      aap_status=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
-      local aap_running
-      aap_running=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
-      local aap_successful_reason
-      aap_successful_reason=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
-      local aap_failure
-      aap_failure=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
-
-      if aap_condition_is_complete "$aap_status" "$aap_running" "$aap_successful_reason" "$aap_failure"; then
-        _check_pass "AAP '$aap_name' deployed successfully"
-      elif [ "$aap_failure" = "True" ]; then
-        local fail_msg
-        fail_msg=$(kubectl get aap "$aap_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Failure")].message}' 2>/dev/null || echo "")
-        _check_fail "AAP '$aap_name' has failures: ${fail_msg:-unknown}"
-      else
-        _check_warn "AAP '$aap_name' is still reconciling"
-      fi
-    fi
-
-    # Check pods
-    local total_pods running_pods problem_pods
-    total_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -cv "Completed" || true)
-    running_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -c "Running" || true)
-    problem_pods=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -cE "CrashLoopBackOff|Error|ImagePullBackOff|Pending" || true)
-
-    if [ "${problem_pods:-0}" -gt 0 ]; then
-      _check_fail "$problem_pods pod(s) in error state ($running_pods/${total_pods:-0} running)"
-      local problem_list
-      problem_list=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" || true)
-      if [ -n "$problem_list" ]; then
-        while IFS= read -r line; do
-          _check_info "  $line"
-        done <<<"$problem_list"
-      fi
-
-    elif [ "${total_pods:-0}" -gt 0 ]; then
-      _check_pass "All pods healthy ($running_pods/$total_pods running)"
-    fi
-
-    # Check PVCs
-    local pending_pvcs
-    pending_pvcs=$(kubectl get pvc -n "$NAMESPACE" --no-headers 2>/dev/null | grep -c "Pending" || true)
-    if [ "${pending_pvcs:-0}" -gt 0 ]; then
-      _check_fail "$pending_pvcs PVC(s) pending"
-      local pending_list
-      pending_list=$(kubectl get pvc -n "$NAMESPACE" --no-headers 2>/dev/null | grep "Pending" || true)
-      if [ -n "$pending_list" ]; then
-        while IFS= read -r line; do
-          _check_info "  $line"
-        done <<<"$pending_list"
-      fi
-    else
-      local bound_pvcs
-      bound_pvcs=$(kubectl get pvc -n "$NAMESPACE" --no-headers 2>/dev/null | grep -c "Bound" || true)
-      if [ "$bound_pvcs" -gt 0 ]; then
-        _check_pass "All PVCs bound ($bound_pvcs)"
-      fi
-    fi
-  fi
-  echo ""
-
-  # =========================================================================
-  # DNS
-  # =========================================================================
-  echo ""
-  echo "DNS:"
-  local coredns_running corefile
-  coredns_running=$(kubectl get pods -n openshift-dns --no-headers 2>/dev/null | grep -c "Running" || echo "0")
-  if [ "$coredns_running" -gt 0 ]; then
-    _check_pass "CoreDNS running ($coredns_running pods)"
-  else
-    _check_warn "CoreDNS pods not found in openshift-dns"
-  fi
-  corefile=$(kubectl get configmap dns-default -n openshift-dns \
-    -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
-  if echo "$corefile" | grep -q "router-internal-default"; then
-    _check_pass "CoreDNS route rewrite present"
-  elif [ -n "$corefile" ]; then
-    _check_fail "CoreDNS missing rewrite for apps.<domain> route hostnames"
-    _check_info "AO/portal/MCP cannot resolve AAP routes from inside the cluster"
-    verify_coredns
-    corefile=$(kubectl get configmap dns-default -n openshift-dns \
-      -o jsonpath='{.data.Corefile}' 2>/dev/null || echo "")
-    if echo "$corefile" | grep -q "router-internal-default"; then
-      _check_pass "CoreDNS route rewrite restored"
-    else
-      _check_info "Fix: aap-demo start   (or aap-demo wire / aap-demo enable ao)"
-    fi
-  fi
-  echo ""
-
-  # =========================================================================
-  # Summary
-  # =========================================================================
-  echo "─────────────────────────────────────"
-  if [ "$issues" -eq 0 ] && [ "$warnings" -eq 0 ]; then
-    printf "\033[32m✓ All checks passed — environment is healthy\033[0m\n"
-  elif [ "$issues" -eq 0 ]; then
-    printf "\033[33m⚠ %d warning(s), no critical issues\033[0m\n" "$warnings"
-  else
-    printf "\033[31m✗ %d issue(s), %d warning(s)\033[0m\n" "$issues" "$warnings"
-    echo ""
-    echo "For detailed diagnostics: aap-demo must-gather"
-    echo "For AI-assisted analysis:  aap-demo diagnose --ai"
-  fi
-
-  # AI analysis mode
-  if [ "${_DIAGNOSE_AI:-false}" = "true" ]; then
-    echo ""
-
-    if ! command -v claude &>/dev/null; then
-      echo "✗ 'claude' CLI not found"
-      echo "  Install: https://docs.anthropic.com/en/docs/claude-code"
-      return 1
-    fi
-
-    echo "─────────────────────────────────────"
-    printf "\033[1mAI Analysis\033[0m (powered by Claude)\n"
-    echo ""
-
-    echo "(Diagnostic data is sent to the Claude API for analysis)"
-    echo ""
-
-    # Collect additional context for AI — cache pod list to avoid duplicate kubectl calls
-    local pod_output
-    pod_output=$(kubectl get pods -n "$NAMESPACE" -o wide --no-headers 2>/dev/null || echo "No pods")
-    local problem_pod_names
-    problem_pod_names=$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" | awk '{print $1}' || true)
-    local problem_pod_logs=""
-    if [ -n "$problem_pod_names" ]; then
-      while IFS= read -r pod; do
-        problem_pod_logs="${problem_pod_logs}--- ${pod} ---
-$(kubectl logs "$pod" -n "$NAMESPACE" --tail=20 2>/dev/null || true)
-"
-      done <<<"$problem_pod_names"
-    fi
-
-    local ai_context
-    ai_context="AAP Demo Diagnose Results:
-Issues: $issues, Warnings: $warnings
-Infra: OpenShift Local (CRC)
-Namespace: $NAMESPACE
-
-Cluster State:
-$pod_output
-
-PVC State:
-$(kubectl get pvc -n "$NAMESPACE" 2>/dev/null || echo "No PVCs")
-
-Storage Classes:
-$(kubectl get sc 2>/dev/null || echo "No storage classes")
-
-AAP CR Status:
-$(kubectl get aap -n "$NAMESPACE" -o yaml 2>/dev/null | grep -A20 "status:" || echo "No AAP CR")
-
-Recent Events:
-$(kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events")
-
-Problem Pods:
-$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" || echo "None")
-
-Problem Pod Logs:
-${problem_pod_logs:-None}"
-
-    echo "$ai_context" | claude -p \
-      "You are an AAP Demo troubleshooting assistant. Analyze the diagnostic output below and:
-1. Identify the root cause of any issues
-2. Provide specific fix commands the user can run
-3. If the issue appears to be a bug in aap-demo itself, suggest filing a GitHub issue at https://github.com/RedHatOfficial/aap-demo/issues
-
-Be concise and actionable. Focus on what the user needs to do next.
-
-Diagnostic data:" 2>&1 || {
-      echo ""
-      echo "⚠ AI analysis failed. The diagnostic data above should help with manual troubleshooting."
-    }
+    printf "\033[32mPreflight passed\033[0m\n"
   fi
 }
+
+# cmd_diagnose moved to includes/cmd-status.sh
 
 cmd_ssh() {
   # Ensure infra backend is loaded to set CRC_SSH_KEY
@@ -1778,7 +1615,7 @@ cmd_kubeconfig() {
 
   # Extract kubeconfig with validation
   echo "  Extracting kubeconfig from ${cluster_name}..."
-  mkdir -p "$HOME/.aap-demo"
+  mkdir -p "$AAP_DEMO_DIR"
   TEMP_KUBECONFIG=$(mktemp)
   TEMP_FILES+=("$TEMP_KUBECONFIG")
   chmod 600 "$TEMP_KUBECONFIG"
@@ -1850,360 +1687,43 @@ cmd_kubeconfig() {
   echo "  export KUBECONFIG=$AAP_DEMO_KUBECONFIG"
 }
 
-cmd_status() {
-  echo ""
-  printf "\033[1mAAP Demo Status\033[0m\n"
-  echo "==============="
-  printf "Tool:        %s\n" "$(aap_demo_version_short)"
-  printf "Built:       %s\n" "$AAP_DEMO_GIT_DATE"
-  echo ""
+# _show_fleet_status moved to includes/cmd-status.sh
 
-  # Check cluster status via infra abstraction
+# cmd_status moved to includes/cmd-status.sh
+
+cmd_status_json() {
   local cluster_state
   cluster_state=$(infra_get_state 2>/dev/null || echo "not_created")
-  local cluster_name
-  cluster_name=$(infra_get_name 2>/dev/null || echo "")
+  if [ "$cluster_state" = running ]; then
+    if ! setup_kubeconfig >/dev/null; then
+      echo "ERROR: Could not configure Kubernetes access for JSON status" >&2
+      return 1
+    fi
+  fi
+  aap_demo_collect_system_inventory omit | jq .
+}
 
-  printf "Infra:       OpenShift Local (CRC)\n"
+cmd_system_info() {
+  local cluster_state secret_mode="redact" format="markdown" output
+  cluster_state=$(infra_get_state 2>/dev/null || echo "not_created")
+  if [ "$cluster_state" = running ]; then
+    if ! setup_kubeconfig >/dev/null; then
+      echo "ERROR: Could not configure Kubernetes access for system information" >&2
+      return 1
+    fi
+  fi
 
-  if [ "$cluster_state" = "running" ]; then
-    printf "Cluster:     \033[1;32mrunning\033[0m"
-    [ -n "$cluster_name" ] && printf " (%s)" "$cluster_name"
-    echo ""
-  elif [ "$cluster_state" = "stopped" ]; then
-    printf "Cluster:     \033[1;33mstopped\033[0m\n"
-    echo ""
-    echo "Start with: crc start"
-    return 0
+  [ "$REDACT" = true ] && secret_mode="redact"
+  [ "$OUTPUT_JSON" = true ] && format="json"
+
+  if [ -n "$SYSTEM_INFO_OUTPUT" ]; then
+    output="$SYSTEM_INFO_OUTPUT"
+  elif [ "$OUTPUT_JSON" = true ] || [ "$REDACT" = true ]; then
+    output="-"
   else
-    printf "Cluster:     \033[1;31mnot running\033[0m\n"
-    echo ""
-    echo "Start with: aap-demo create"
-    return 0
+    output="${AAP_DEMO_SYSTEM_INFO_FILE:-${SCRIPT_DIR}/docs/aap-demo-system-info.md}"
   fi
-
-  # Status must inspect CRC state before touching Kubernetes. A stopped CRC
-  # VM, or a VM with an unhealthy API server, can leave a stale kubeconfig
-  # probe hanging indefinitely.
-  setup_kubeconfig
-
-  # Export CA env vars if installed, don't prompt for sudo
-  local ca_path
-  ca_path=$(get_ingress_ca_cert_path)
-  if [ -f "$ca_path" ]; then
-    _ingress_ca_export_env "$ca_path"
-  fi
-
-  echo ""
-  echo "TLS:"
-  echo "----"
-  ingress_ca_trust_status "$ca_path" || true
-  echo ""
-
-  # Show kubeconfig
-  echo "Kubeconfig:  $KUBECONFIG"
-  echo "Source:      $AAP_DEMO_REPO_ROOT (branch: $AAP_DEMO_GIT_BRANCH)"
-  [ -n "$AAP_DEMO_GIT_REMOTE" ] && echo "Repo:        $AAP_DEMO_GIT_REMOTE"
-
-  # VM stats
-  echo ""
-  echo "VM:"
-  echo "---"
-  local vm_info
-  vm_info=$(infra_exec_cmd bash -c '
-        # RHEL version
-        RHEL=$(cat /etc/redhat-release 2>/dev/null || echo "unknown")
-        # OpenShift version
-        USHIFT=$(microshift version 2>/dev/null | awk "/MicroShift Version:/{print \$3}" || rpm -q microshift --qf "%{VERSION}" 2>/dev/null || echo "unknown")
-        # CPU
-        CPUS=$(nproc)
-        # Memory
-        MEM_TOTAL=$(free -h | awk "/Mem:/{print \$2}")
-        MEM_USED=$(free -h | awk "/Mem:/{print \$3}")
-        MEM_AVAIL=$(free -h | awk "/Mem:/{print \$7}")
-        # Load
-        LOAD=$(cat /proc/loadavg | awk "{print \$1, \$2, \$3}")
-        # Disk
-        DISK=$(df -h /var 2>/dev/null | awk "NR==2{print \$3\"/\"\$2\" (\" \$5 \" used)\"}")
-        echo "  OS:           $RHEL"
-        echo "  OpenShift:    $USHIFT"
-        echo "  CPUs:         $CPUS"
-        echo "  Memory:       ${MEM_USED} / ${MEM_TOTAL} (${MEM_AVAIL} available)"
-        echo "  Load:         $LOAD"
-        echo "  Disk:         $DISK"
-  ' 2>/dev/null)
-  echo "$vm_info"
-  persistent_crio_store_status
-  echo ""
-
-  # List application namespaces with pod counts (skip openshift-* and kube-* system namespaces)
-  echo "Namespaces:"
-  echo "-----------"
-  NAMESPACES=$(kubectl get ns --no-headers -o custom-columns=':metadata.name' 2>/dev/null \
-    | grep -vE '^(openshift|kube-|default$)' | sort)
-
-  if [ -z "$NAMESPACES" ]; then
-    echo "  (no application namespaces found)"
-  else
-    for ns in $NAMESPACES; do
-      POD_TOTAL=$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -cv Completed 2>/dev/null | tr -d "
-" || echo 0)
-      POD_RUNNING=$(kubectl get pods -n "$ns" --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null || true)
-      [ -z "$POD_RUNNING" ] && POD_RUNNING=0
-      # Skip empty namespaces
-      if [ "$POD_TOTAL" -eq 0 ] 2>/dev/null; then continue; fi
-      AAP_CR=$(kubectl get aap -n "$ns" --no-headers 2>/dev/null | awk '{print $1}' | head -1 || true)
-
-      if [ -n "$AAP_CR" ]; then
-        AAP_STATUS=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
-        AAP_RUNNING=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Running")].status}' 2>/dev/null || echo "")
-        AAP_SUCCESSFUL_REASON=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
-        AAP_FAILURE=$(kubectl get aap "$AAP_CR" -n "$ns" -o jsonpath='{.status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
-        if aap_condition_is_complete "$AAP_STATUS" "$AAP_RUNNING" "$AAP_SUCCESSFUL_REASON" "$AAP_FAILURE"; then
-          printf "  %-30s %s/%s pods   \033[1;32m%s\033[0m\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
-        else
-          if [ "$AAP_RUNNING" = "True" ]; then
-            printf "  %-30s %s/%s pods   \033[1;33m%s (Deploying)\033[0m\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
-          else
-            printf "  %-30s %s/%s pods   %s\n" "$ns" "$POD_RUNNING" "$POD_TOTAL" "$AAP_CR"
-          fi
-        fi
-      else
-        printf "  %-30s %s/%s pods\n" "$ns" "$POD_RUNNING" "$POD_TOTAL"
-      fi
-    done
-  fi
-  echo ""
-
-  # Show deployment routes (exclude OpenShift/system namespaces)
-  echo "AAP Deployments:"
-  echo "----------------"
-  ROUTES=$(kubectl get route -A --no-headers 2>/dev/null \
-    | grep -v -E '^(openshift-|kube-|aap-demo-)' \
-    | awk '{printf "  https://%s\n", $3}' | sort -u)
-  if [ -n "$ROUTES" ]; then
-    echo "$ROUTES"
-  else
-    echo "  (no routes found)"
-  fi
-  echo ""
-
-  # Show credentials for AAP namespaces
-  local _cred_namespaces _cred_found
-  _cred_namespaces=$(kubectl get aap -A --no-headers 2>/dev/null | awk '{print $1}' | sort -u)
-  _cred_found=false
-  if [ -n "$_cred_namespaces" ]; then
-    for ns in $_cred_namespaces; do
-      local ADMIN_PASSWORD=""
-      local ADMIN_SECRET
-      ADMIN_SECRET=$(kubectl get aap -n "$ns" -o jsonpath='{.items[0].status.adminPasswordSecret}' 2>/dev/null || true)
-      if [ -n "$ADMIN_SECRET" ]; then
-        ADMIN_PASSWORD=$(kubectl get secret -n "$ns" "$ADMIN_SECRET" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-      fi
-      if [ -z "$ADMIN_PASSWORD" ]; then
-        for secret_name in myaap-admin-password aap-admin-password aap-controller-admin-password custom-admin-password; do
-          ADMIN_PASSWORD=$(kubectl get secret -n "$ns" "$secret_name" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-          [ -n "$ADMIN_PASSWORD" ] && break
-        done
-      fi
-
-      if [ -n "$ADMIN_PASSWORD" ]; then
-        if [ "$_cred_found" = "false" ]; then
-          echo "Credentials:"
-          echo "------------"
-          _cred_found=true
-        fi
-        printf "  %-20s admin / %s\n" "$ns:" "$ADMIN_PASSWORD"
-      fi
-    done
-    [ "$_cred_found" = "true" ] && echo ""
-  fi
-
-  # Show credentials for Automation Orchestrator (ao addon)
-  if echo "$(_addons_list)" | grep -qw "ao" || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
-    local _ao_ns="automation-orchestrator"
-    local _ao_pw="" _ao_secret=""
-    _ao_secret=$(kubectl get secret -n "$_ao_ns" -o name 2>/dev/null | grep -i "admin-password" | head -1 || true)
-    if [ -n "$_ao_secret" ]; then
-      _ao_pw=$(kubectl get "$_ao_secret" -n "$_ao_ns" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    fi
-    if [ -n "$_ao_pw" ]; then
-      if [ "$_cred_found" = "false" ]; then
-        echo "Credentials:"
-        echo "------------"
-      fi
-      printf "  %-20s admin / %s\n" "$_ao_ns:" "$_ao_pw"
-      _cred_found=true
-      echo ""
-    fi
-  fi
-
-  # Show the credential paths for the Keycloak OIDC lab addon without exposing
-  # secret values in terminal output or CI logs.
-  local _keycloak_state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
-  if [ -d "$_keycloak_state_dir" ]; then
-    if [ -f "$_keycloak_state_dir/admin-password" ]; then
-      if [ "$_cred_found" = "false" ]; then
-        echo "Credentials:"
-        echo "------------"
-        _cred_found=true
-      fi
-      echo "  Keycloak users: aap-oidc-admin, aap-oidc-operator, aap-oidc-auditor, aap-oidc-developer"
-      echo "  Keycloak credential files: ${_keycloak_state_dir}/"
-      echo ""
-    fi
-  fi
-
-  # Show addons with URLs or enable instructions
-  local saved_addons
-  saved_addons=$(_addons_list)
-  echo "Addons:"
-  echo "-------"
-  for a in $AVAILABLE_ADDONS; do
-    local url="" label="" enabled=false
-    if echo "$saved_addons" | grep -qw "$a"; then
-      enabled=true
-    fi
-    case "$a" in
-      fleet)
-        if [ "$enabled" = true ]; then
-          if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
-            source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
-            local _fc
-            _fc=$(fleet_count 2>/dev/null || echo "0")
-            if [ "$_fc" -gt 0 ] 2>/dev/null; then
-              label="${_fc} node(s) running"
-            else
-              label="enabled (no nodes)"
-            fi
-          else
-            label="enabled"
-          fi
-        else
-          label="disabled"
-        fi
-        ;;
-      mcp-server)
-        if [ "$enabled" = true ]; then
-          url="https://aap-mcp-${NAMESPACE:-aap-operator}.apps.127.0.0.1.nip.io/mcp"
-          if ! kubectl get ansiblemcpserver aap-mcp-server -n "${NAMESPACE:-aap-operator}" &>/dev/null; then
-            label="not-deployed"
-          fi
-        else
-          label="disabled"
-        fi
-        ;;
-      portal)
-        if [ "$enabled" = true ]; then
-          url="https://$(kubectl get route redhat-rhaap-portal -n redhat-rhaap-portal -o jsonpath='{.spec.host}' 2>/dev/null || kubectl get route redhat-rhaap-portal -n ${NAMESPACE:-aap-operator} -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-          if [ -z "$url" ] || [ "$url" = "https://" ]; then
-            url=""
-            label="not-deployed"
-          fi
-        else
-          label="disabled"
-        fi
-        ;;
-      portal-operator)
-        local _note=" (AMD64 only)"
-        if [ "$enabled" = true ]; then
-          label="enabled${_note}"
-        else
-          label="disabled${_note}"
-        fi
-        ;;
-      ao)
-        if [ "$enabled" = true ] || kubectl get namespace automation-orchestrator &>/dev/null 2>&1; then
-          label="enabled"
-        else
-          label="disabled"
-        fi
-        ;;
-      keycloak)
-        local _keycloak_namespace="${KEYCLOAK_NAMESPACE:-aap-demo-keycloak}"
-        if [ "$enabled" = true ] || kubectl get namespace "$_keycloak_namespace" &>/dev/null 2>&1; then
-          url="https://$(kubectl get route keycloak -n "$_keycloak_namespace" -o jsonpath='{.spec.host}' 2>/dev/null || true)"
-          if [ "$url" = "https://" ]; then
-            url=""
-            label="not-deployed"
-          fi
-        else
-          label="disabled"
-        fi
-        ;;
-      *)
-        if [ "$enabled" = true ]; then
-          label="enabled"
-        else
-          label="disabled"
-        fi
-        ;;
-    esac
-    if [ -n "$url" ] && [ -z "$label" ]; then
-      printf "  %-15s %s\n" "$a" "$url"
-    elif [ -n "$label" ]; then
-      printf "  %-15s %s\n" "$a" "$label"
-    else
-      printf "  %-15s disabled\n" "$a"
-    fi
-  done
-  echo ""
-
-  # Show both fleet backends. Bash v1 stores QEMU nodes on the host; Python v2
-  # stores pod-backed nodes in Kubernetes, so neither state can be inferred
-  # from the other's config or filesystem.
-  echo "Fleet:"
-  echo "------"
-
-  local _fleet_v2_rows _fleet_v2_total _fleet_v2_ready _fleet_v2_err _fleet_v2_rc
-  local _fleet_kubectl
-  # status does not run cluster setup, so pass the flags the user already gave.
-  _fleet_kubectl=(kubectl)
-  if [ -n "${KUBECTL_CONTEXT:-}" ]; then
-    _fleet_kubectl+=(--context "$KUBECTL_CONTEXT")
-  fi
-  if [ -n "${KUBECTL_KUBECONFIG:-}" ]; then
-    _fleet_kubectl+=(--kubeconfig "$KUBECTL_KUBECONFIG")
-  fi
-  _fleet_v2_err=$(mktemp)
-  # set -e would exit on a failing assignment before the rc could be read.
-  _fleet_v2_rc=0
-  # -A because the Fleet namespace is configurable. The label keeps the list
-  # small, and the timeout keeps a stopped cluster from slowing status down.
-  _fleet_v2_rows=$("${_fleet_kubectl[@]}" --request-timeout=5s get pods -A \
-    -l app.kubernetes.io/name=fleet-node \
-    --no-headers \
-    -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,READY:.status.containerStatuses[0].ready,PHASE:.status.phase' \
-    2>"$_fleet_v2_err") || _fleet_v2_rc=$?
-  if [ "$_fleet_v2_rc" -ne 0 ]; then
-    echo "Kubernetes-native Fleet: kubectl failed ($(head -1 "$_fleet_v2_err" | cut -c1-120))"
-    rm -f "$_fleet_v2_err"
-  elif [ -n "$_fleet_v2_rows" ]; then
-    rm -f "$_fleet_v2_err"
-    _fleet_v2_total=$(printf '%s\n' "$_fleet_v2_rows" | awk 'NF {count++} END {print count + 0}')
-    _fleet_v2_ready=$(printf '%s\n' "$_fleet_v2_rows" | awk '$3 == "true" {count++} END {print count + 0}')
-    echo "Kubernetes-native Fleet:"
-    printf "  %s/%s pod nodes ready\n" "$_fleet_v2_ready" "$_fleet_v2_total"
-    printf '%s\n' "$_fleet_v2_rows" | sed 's/^/  /'
-  else
-    rm -f "$_fleet_v2_err"
-    echo "Kubernetes-native Fleet: no pod nodes"
-  fi
-
-  if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
-    source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
-    local _node_count
-    _node_count=$(fleet_count 2>/dev/null || echo "0")
-    if [ "$_node_count" -gt 0 ] 2>/dev/null; then
-      echo "Legacy Bash v1 Fleet:"
-      fleet_list | sed 's/^/  /'
-    else
-      echo "Legacy Bash v1 Fleet: no QEMU nodes"
-    fi
-  else
-    echo "Legacy Bash v1 Fleet: no QEMU nodes"
-  fi
-  echo ""
+  aap_demo_generate_system_info "$secret_mode" "$format" "$output"
 }
 
 cmd_redeploy() {
@@ -2220,18 +1740,31 @@ cmd_redeploy() {
   echo "Redeploying AAP..."
   echo ""
 
-  deploy_latest
+  deploy_latest || return 1
+  aap_demo_generate_system_info
 }
 
 cmd_redeploy-all() {
+  local saved_addons
+  saved_addons=$(_addons_list)
+  aap_demo_validate_redeploy_addon_capacity "$saved_addons" || return 1
+
   # Destroy existing cluster (warning shown by cmd_destroy)
-  cmd_destroy
+  cmd_destroy || return 1
+  # cmd_destroy removes addon state as resources are deleted. Restore the
+  # original selection immediately so partial failures remain retryable.
+  aap_demo_preserve_addon_selection "$saved_addons"
 
   # Small pause
   sleep 2
 
   # Run full deploy flow (creates cluster, setup, deploy)
-  cmd_deploy
+  cmd_deploy || return 1
+
+  # Addon names survive cluster deletion in ~/.aap-demo/config, but their
+  # Kubernetes resources do not. Reinstall them and restore integrations.
+  aap_demo_restore_addons "$saved_addons" || return 1
+  aap_demo_generate_system_info
 }
 
 _remove_temp_swap() {
@@ -2383,7 +1916,7 @@ cmd_destroy() {
   fi
 
   # Clean up fleet nodes before destroying cluster (addon)
-  if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+  if [ -d "${AAP_DEMO_DIR:-$HOME/.aap-demo}/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
     fleet_destroy_all
   fi
@@ -2405,41 +1938,135 @@ cmd_stop() {
   echo ""
   printf "\033[1maap-demo stop\033[0m - Stopping CRC cluster...\n"
 
-  # Stop fleet node VMs (addon; ephemeral — must be recreated after start)
-  if [ -d "${HOME}/.aap-demo/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
+  # Stop Fleet VMs while preserving their overlay disks for restart.
+  if [ -d "${AAP_DEMO_DIR:-$HOME/.aap-demo}/fleet" ] && [ -f "${SCRIPT_DIR}/addons/fleet/fleet.sh" ]; then
     source "${SCRIPT_DIR}/addons/fleet/fleet.sh"
     fleet_stop_all
-    echo "  (Fleet nodes are ephemeral — recreate with: aap-demo fleet add)"
+    echo "  (Restart preserved Fleet nodes with: aap-demo fleet start)"
   fi
 
-  crc stop || true
+  if ! crc stop; then
+    _err "Failed to stop the CRC cluster"
+    return 1
+  fi
   echo "✓ CRC cluster stopped"
   echo "To restart: aap-demo start"
 }
 
 cmd_start() {
+  local crc_create_script="${AAP_DEMO_CRC_CREATE_SCRIPT:-${SCRIPT_DIR}/includes/crc-create.sh}"
+  local addons tool
+  local AAP_START_TIMEOUT="${AAP_START_TIMEOUT:-600}"
+  if ! [[ "$AAP_START_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
+    _err "AAP_START_TIMEOUT must be a positive number of seconds"
+    return 1
+  fi
+  for tool in kubectl jq curl; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      _err "Required tool not found: $tool"
+      return 1
+    fi
+  done
+  addons=$(_addons_list) || return 1
   echo ""
-  printf "\033[1maap-demo start\033[0m - Starting CRC cluster...\n"
-  _start_crc_cluster
+  printf "\033[1maap-demo start\033[0m - Resuming the configured demo...\n"
+  _start_crc_cluster || return 1
   setup_kubeconfig
+  aap_demo_start_storage || return 1
+  aap_demo_start_wait "Kubernetes API" aap_demo_start_api_ready || return 1
+  kubectl wait --for=condition=Ready nodes --all --timeout="${AAP_START_TIMEOUT}s" || return 1
 
   # Re-apply CoreDNS config (fixes DNS after restarts)
-  if [ -f "${SCRIPT_DIR}/includes/crc-create.sh" ]; then
-    bash -c "
-      AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
-      source '${SCRIPT_DIR}/includes/crc-create.sh'
+  if [ -f "$crc_create_script" ]; then
+    if ! AAP_DEMO_CONFIGURE_COREDNS_ONLY=1 bash -c '
+      source "$1"
       configure_coredns
-    " || true
+    ' bash "$crc_create_script"; then
+      _err "Failed to restore CoreDNS after cluster start"
+      return 1
+    fi
+  else
+    _err "CoreDNS recovery script not found: $crc_create_script"
+    return 1
   fi
 
-  echo "✓ CRC cluster started"
+  _recover_aap_catalog_after_start || return 1
+  aap_demo_resume_demo "$addons" || return 1
+
+  echo "✓ Demo ready"
   echo ""
-  echo "Run 'aap-demo status' to check cluster health"
+  cmd_status
+  echo ""
+  printf 'For kubectl in this terminal: export KUBECONFIG="%s"\n' "$KUBECONFIG"
+}
+
+_recover_aap_catalog_after_start() {
+  local catalog_namespace="${NAMESPACE:-aap-operator}"
+  local catalog_name="redhat-operators"
+  local catalog_status
+
+  if ! kubectl get catalogsource "$catalog_name" -n "$catalog_namespace" &>/dev/null; then
+    return 0
+  fi
+
+  catalog_status=$(kubectl get catalogsource "$catalog_name" -n "$catalog_namespace" \
+    -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || echo "")
+  if [ "$catalog_status" = "READY" ]; then
+    echo "✓ AAP operator catalog ready"
+    return 0
+  fi
+
+  echo "Waiting for AAP operator catalog to recover after restart..."
+  # shellcheck source=includes/olm-catalog-signature.sh
+  source "${SCRIPT_DIR}/includes/olm-catalog-signature.sh"
+
+  # A ready catalog pod with a non-ready CatalogSource indicates stale OLM
+  # connection state after a forced VM stop. Restart only the catalog operator.
+  if catalog_pod_is_ready "$catalog_namespace" "$catalog_name"; then
+    echo "  Restarting OLM catalog operator to refresh the catalog connection..."
+    kubectl rollout restart deployment/catalog-operator -n olm >/dev/null \
+      || {
+        echo "ERROR: Failed to restart the OLM catalog operator." >&2
+        return 1
+      }
+    aap_demo_wait_deployment olm catalog-operator 5m >/dev/null || return 1
+  fi
+
+  if ! AAP_CATALOG_TIMEOUT="${AAP_START_CATALOG_TIMEOUT:-600}" \
+    wait_for_catalog_ready "$catalog_namespace" "$catalog_name"; then
+    echo "ERROR: AAP operator catalog did not recover after cluster start." >&2
+    echo "  Check: kubectl get catalogsource $catalog_name -n $catalog_namespace" >&2
+    return 1
+  fi
+  echo "✓ AAP operator catalog ready"
+}
+
+# Wait for the CRC VM SSH forward (port 2222) to accept connections. crc start
+# returns once MicroShift is up, but the daemon's vsock forward can lag; boot
+# recovery must not treat the transient gap as a down cluster.
+_aap_demo_wait_crc_ssh() {
+  local attempt
+  for attempt in $(seq 1 20); do
+    if infra_exec_cmd true 2>/dev/null; then
+      return 0
+    fi
+    sleep 3
+  done
+  return 1
 }
 
 _start_crc_cluster() {
-  crc start || true
-  persistent_crio_store_prepare_or_fallback
+  # crc start on an already-running VM restarts the CRC daemon, which can drop
+  # the vsock SSH forward (port 2222) and leave the VM unreachable. When the VM
+  # is already running and SSH answers, reuse it instead of restarting.
+  if [ "$(crc status 2>/dev/null | awk -F': *' '/^CRC VM:/ {print $2}')" = "Running" ] \
+    && _aap_demo_wait_crc_ssh; then
+    echo "✓ CRC VM is already running and reachable; skipping crc start"
+  elif ! crc start; then
+    _err "Failed to start the CRC cluster"
+    return 1
+  fi
+  persistent_crio_store_prepare_or_fallback || return 1
   if [ -f /etc/resolver/testing ]; then
     sudo rm -f /etc/resolver/testing
   fi
@@ -2463,11 +2090,178 @@ cmd_create() {
   setup_kubeconfig
 }
 
+# Default Satellite-lab helpers for the full demo. Tests override these.
+_full_demo_satellite_vm_exists() {
+  sudo virsh -c qemu:///system dominfo satellite >/dev/null 2>&1
+}
+
+_full_demo_satellite_build() {
+  bash "${SCRIPT_DIR}/satellite-lab/build-and-configure.sh"
+}
+
+cmd_full_demo() {
+  local caller_quiet="${QUIET:-false}"
+  local ADDONS="mcp-server,setup-pah,product-demos,ollama,ao,fleet"
+  local cluster_state
+
+  # The full demo (AAP + AO + Ollama + Fleet + product demos) does not fit in
+  # the 16GB default: AO's UI pod was OOM-starved at 99% memory requests.
+  # Default to 32GB unless the caller pinned CRC_MEMORY/VM_MEMORY.
+  if [ -z "${CRC_MEMORY:-}" ] && [ -z "${VM_MEMORY:-}" ]; then
+    CRC_MEMORY=32768
+    export CRC_MEMORY
+  fi
+
+  echo ""
+  printf "\033[1maap-demo create --full-demo\033[0m - Building complete local demo...\n"
+  echo ""
+  echo "Workflow:"
+  echo "  1. Configure Red Hat Customer Portal and CDN credentials"
+  echo "  2. Create OpenShift Local cluster"
+  echo "  3. Deploy AAP 2.7"
+  echo "  4. Configure Automation Hub and enable offline-token keepalive"
+  echo "  5. Enable Ollama and Automation Orchestrator"
+  echo "  6. Enable Fleet, attach the AAP subscription, and register three RHEL 9 nodes"
+  echo "  7. Enable Product Demos"
+  if [ "$FULL_DEMO_SATELLITE" = true ]; then
+    echo "  7a. Build and configure the Satellite lab (if not present), then Satellite Demo"
+  fi
+  echo "  8. Reapply all integrations"
+  echo "  9. Install boot recovery (restores CRC settings/state on reboot) and launch dashboard"
+  echo ""
+
+  if ! cmd_fleet auth status; then
+    echo ""
+    echo "Red Hat Fleet credentials need to be configured before provisioning."
+    if [ "$caller_quiet" = true ]; then
+      echo "ERROR: Full demo cannot prompt for credentials with QUIET=true." >&2
+      echo "  Run interactively, or configure them first: aap-demo fleet auth" >&2
+      return 1
+    fi
+    if ! (: <"$AAP_DEMO_SECRET_PROMPT_DEVICE") 2>/dev/null; then
+      echo "ERROR: Full demo needs an interactive terminal to configure credentials." >&2
+      echo "  Run in a terminal, or configure them first: aap-demo fleet auth" >&2
+      return 1
+    fi
+    echo "Starting secure Red Hat credential setup..."
+    QUIET=false cmd_fleet auth configure || {
+      echo "ERROR: Red Hat Fleet credential setup did not complete." >&2
+      return 1
+    }
+    cmd_fleet auth status || {
+      echo "ERROR: Red Hat Fleet credentials are still invalid after setup." >&2
+      return 1
+    }
+  fi
+
+  local QUIET=true
+  export QUIET ADDONS
+
+  cluster_state=$(infra_get_state 2>/dev/null || echo "not_created")
+  if [ "$cluster_state" = running ]; then
+    echo "✓ OpenShift Local cluster is already running; reusing it"
+  elif aap_demo_service_managed; then
+    echo "Resuming the existing managed demo without recreating CRC..."
+    cmd_start || return 1
+  else
+    cmd_create || return 1
+  fi
+  AAP_DEMO_SKIP_STANDARD_AO=true cmd_deploy || return 1
+  cmd_enable setup-pah || return 1
+  cmd_credentials keepalive enable || return 1
+  cmd_enable ollama || return 1
+  AO_LLM_PROVIDER=ollama cmd_enable ao || return 1
+
+  # enable fleet creates the managed nodes itself (upstream). Point it at the
+  # downloadable rhel9 image and the target count so quiet mode does not
+  # prompt. When the fleet already has the nodes, it is already enabled too —
+  # re-enabling would create duplicate nodes, so skip straight to start.
+  local fleet_nodes missing_nodes
+  fleet_nodes=$(fleet_count 2>/dev/null || echo 0)
+  if [ "$fleet_nodes" -lt 3 ]; then
+    FLEET_IMAGE=rhel9 FLEET_NODE_COUNT=3 cmd_enable fleet || return 1
+    fleet_nodes=$(fleet_count 2>/dev/null || echo 0)
+    if [ "$fleet_nodes" -lt 3 ]; then
+      missing_nodes=$((3 - fleet_nodes))
+      cmd_fleet add "$missing_nodes" --image rhel9 || return 1
+    fi
+  else
+    echo "✓ Fleet already has ${fleet_nodes} node(s); reusing them"
+  fi
+  cmd_fleet start || return 1
+  cmd_fleet register || return 1
+
+  # The OpenShift demo domain provisions Windows/CNV VMs (BSOD Recovery,
+  # WinPE, CNV) that cannot run on the all-Linux Fleet nodes, and its
+  # upstream workflow content fails on this environment. Skip it by default;
+  # override with PRODUCT_DEMOS_DOMAINS to include it.
+  PRODUCT_DEMOS_DOMAINS="${PRODUCT_DEMOS_DOMAINS:-linux windows network cloud}" \
+    cmd_enable product-demos || return 1
+
+  # Optional Satellite lab: build/configure the Satellite VM when it does not
+  # yet exist, then install the Satellite Demo content against it.
+  if [ "$FULL_DEMO_SATELLITE" = true ]; then
+    if ! _full_demo_satellite_vm_exists; then
+      echo ""
+      echo "▸ Satellite not found — running Satellite Build and Configure..."
+      _full_demo_satellite_build || {
+        echo "ERROR: Satellite Build and Configure failed" >&2
+        return 1
+      }
+    else
+      echo "✓ Satellite VM already exists; skipping build"
+    fi
+    echo ""
+    echo "▸ Installing Satellite Demo content..."
+    cmd_enable product-demo-satellite || return 1
+  fi
+
+  cmd_wire || return 1
+  aap_demo_generate_system_info || return 1
+
+  echo ""
+  _aap_demo_release_operation_lock
+  echo "  Installing boot recovery (requires sudo)..."
+  cmd_service install || {
+    echo "ERROR: Full demo boot recovery could not be installed. Resolve the error and rerun: aap-demo create --full-demo" >&2
+    return 1
+  }
+  echo ""
+  echo "  Launching the aap-demo dashboard..."
+  cmd_dashboard || return 1
+  _aap_demo_auto_console
+  echo ""
+  echo "✓ Full demo environment and automatic recovery are ready"
+  echo "  AAP, Product Demos, Automation Orchestrator, Ollama, and three Fleet nodes are configured."
+}
+
+cmd_credentials() {
+  if [ "${1:-}" != keepalive ]; then
+    _err "Usage: aap-demo credentials keepalive [setup|enable|status|disable|run]"
+    return 2
+  fi
+  bash "${SCRIPT_DIR}/scripts/aap-demo-token-keepalive.sh" "${2:-status}"
+}
+
 # shellcheck source=includes/galaxy-auth.sh
 source "${SCRIPT_DIR}/includes/galaxy-auth.sh"
 
 cmd_setup() {
   echo "CRC setup is handled during 'aap-demo create'"
+}
+
+_enable_standard_ao() {
+  if [ "${AAP_DEMO_SKIP_STANDARD_AO:-false}" = "true" ]; then
+    return 0
+  fi
+  if echo "$(_addons_list)" | grep -qw ao; then
+    echo "✓ Automation Orchestrator is already enabled"
+    return 0
+  fi
+
+  echo ""
+  echo "Enabling Automation Orchestrator as part of the standard deployment..."
+  cmd_enable ao
 }
 
 _verify_aap_storage_prerequisites() {
@@ -2544,9 +2338,11 @@ cmd_deploy() {
       echo "  Skipping installation, validating existing deployment..."
       echo "  (Use FORCE=true to reinstall)"
       echo ""
-      watch_aap
-      _aap_demo_run_addon_wire || true
-      exit 0
+      _patch_gateway_capability
+      watch_aap || return 1
+      _enable_standard_ao || return 1
+      aap_demo_generate_system_info || return 1
+      return 0
     fi
   fi
 
@@ -2571,7 +2367,9 @@ cmd_deploy() {
   _verify_cluster || exit 1
 
   # Deploy selected AAP version.
-  deploy_latest
+  deploy_latest || return 1
+  _enable_standard_ao || return 1
+  aap_demo_generate_system_info
 }
 
 # -----------------------------------------------------------------------------
@@ -2596,6 +2394,8 @@ deploy_latest() {
 
   # Check disk space before deploying (latest catalog images are large)
   _check_disk_space || exit 1
+  aap_demo_resource_preflight "AAP deployment" \
+    "${AAP_DEPLOY_MIN_CPU_M:-2000}" "${AAP_DEPLOY_MIN_MEMORY_MI:-6144}" || exit 1
 
   echo ""
   echo "Deploying AAP from latest catalog..."
@@ -2631,7 +2431,7 @@ deploy_latest() {
   source "${SCRIPT_DIR}/includes/infra-crc.sh" 2>/dev/null || true
   # shellcheck source=includes/olm-catalog-signature.sh
   source "${SCRIPT_DIR}/includes/olm-catalog-signature.sh"
-  _deploy_preset="$(_detect_crc_preset 2>/dev/null || echo microshift)"
+  _deploy_preset="$(aap_demo_detect_crc_preset)"
   if [ "$_deploy_preset" = "microshift" ] && needs_signature_policy_relaxation; then
     echo ""
     echo "Relaxing container signature policy for registry.redhat.io (MicroShift 4.22+)..."
@@ -2842,7 +2642,7 @@ setup_namespace() {
       sleep 2
     fi
   fi
-  kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+  kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
   # Grant SCCs — required for pods to bind privileged ports
   if ! command -v oc &>/dev/null && command -v crc &>/dev/null; then
@@ -2857,22 +2657,16 @@ setup_namespace() {
     pod-security.kubernetes.io/warn=privileged --overwrite
 
   # Create pull secret
-  PULL_SECRET=""
-  # Latest only needs registry.redhat.io credentials
-  for path in "${PULL_SECRET_PATH:-}" "$HOME/.aap-demo/pull-secret" "$HOME/.aap-demo/pull-secret.txt" "$HOME/.aap-demo/pull-secret.json"; do
-    if [ -n "$path" ] && [ -f "$path" ]; then
-      PULL_SECRET="$path"
-      break
-    fi
-  done
+  PULL_SECRET=$(aap_demo_pull_secret_get 2>/dev/null || true)
 
   if [ -n "$PULL_SECRET" ]; then
-    echo "Using pull secret: $PULL_SECRET"
-    kubectl delete secret redhat-operators-pull-secret -n "$NAMESPACE" 2>/dev/null || true
+    echo "Using pull secret from encrypted Vault"
     kubectl create secret generic redhat-operators-pull-secret \
-      --from-file=.dockerconfigjson="$PULL_SECRET" \
+      --from-file=.dockerconfigjson=/dev/fd/3 \
       --type=kubernetes.io/dockerconfigjson \
-      -n "$NAMESPACE"
+      -n "$NAMESPACE" \
+      --dry-run=client -o yaml 3< <(printf '%s' "$PULL_SECRET") |
+      kubectl apply -f - >/dev/null
 
     # Add pull secret to default ServiceAccount (merge, don't replace)
     # This ensures pods using the default SA (e.g., postgres, redis) can pull images
@@ -3001,10 +2795,14 @@ create_aap_instance() {
     sed "s|__PUBLIC_BASE_URL__|${PUBLIC_URL}|g" "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
   else
     echo "Using CR: $cr_name"
-    # Inject route_host for nip.io domain resolution
-    awk -v host="aap-hub-${NAMESPACE}.apps.127.0.0.1.nip.io" \
-      '/storage_type: file/{print; print "    route_host: " host; next} {print}' \
-      "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
+    if [ "$(aap_demo_detect_crc_preset)" = "openshift" ]; then
+      kubectl apply -f "$cr_file" -n "$NAMESPACE"
+    else
+      # Inject route_host for nip.io domain resolution
+      awk -v host="aap-hub-${NAMESPACE}.$(aap_demo_route_domain)" \
+        '/storage_type: file/{print; print "    route_host: " host; next} {print}' \
+        "$cr_file" | kubectl apply -f - -n "$NAMESPACE"
+    fi
   fi
 
   # Patch gateway deployment for OpenShift Local compatibility
@@ -3048,8 +2846,10 @@ _patch_gateway_capability() {
     fi
   fi
 
-  # Check if already patched. OpenShift Local's restricted SCC also needs
-  # supplemental group 0 for the gateway's supervisord socket.
+  # Reconcile both OpenShift Local security-context requirements together so
+  # an existing capability does not prevent supplemental groups from being set.
+  # OpenShift Local's restricted SCC also needs supplemental group 0 for the
+  # gateway's supervisord socket.
   local existing_caps existing_supplemental_groups
   existing_caps=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[?(@.name=="api")].securityContext.capabilities.add}' 2>/dev/null || echo "")
   existing_supplemental_groups=$(kubectl get deployment "$deploy_name" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.securityContext.supplementalGroups}' 2>/dev/null || echo "")
@@ -3063,17 +2863,19 @@ _patch_gateway_capability() {
   fi
 
   if [ "$needs_capability" = false ] && [ "$needs_supplemental_group" = false ]; then
-    echo "  ✓ Gateway already has NET_BIND_SERVICE and supplementalGroups [0]"
+    echo "  ✓ Gateway security context already configured"
     return 0
   fi
 
   echo "  Patching gateway security context (NET_BIND_SERVICE + supplementalGroups [0])..."
   if kubectl patch deployment "$deploy_name" -n "$NAMESPACE" --type=strategic \
-    -p '{"spec":{"template":{"spec":{"securityContext":{"supplementalGroups":[0]},"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
-    echo "  ✓ Gateway patched — pod will restart with correct security context"
+    -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null},"template":{"spec":{"securityContext":{"supplementalGroups":[0]},"containers":[{"name":"api","securityContext":{"capabilities":{"add":["NET_BIND_SERVICE"]}}}]}}}}' &>/dev/null; then
+    echo "  ✓ Gateway patched — pod will restart with the required security context"
   else
-    echo "  ⚠ Gateway patch failed — may need manual fix if gateway crashes"
+    echo "  ⚠ Gateway security-context patch failed — gateway may crash with EACCES"
+    return 1
   fi
+  aap_demo_wait_deployment "$NAMESPACE" "$deploy_name" 10m
 }
 
 watch_aap() {
@@ -3124,20 +2926,6 @@ watch_aap() {
     kubectl get route -n "$NAMESPACE" 2>/dev/null || echo "  No routes found"
     echo ""
 
-    # Always show credentials if admin secret exists
-    ADMIN_SECRET=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.adminPasswordSecret}' 2>/dev/null || true)
-    if [ -n "$ADMIN_SECRET" ]; then
-      ADMIN_PASSWORD=$(kubectl get secret -n "$NAMESPACE" "$ADMIN_SECRET" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-      if [ -n "$ADMIN_PASSWORD" ]; then
-        AAP_URL=$(kubectl get route -n "$NAMESPACE" -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "(route not found)")
-        echo "Credentials:"
-        echo "  URL:      https://$AAP_URL"
-        echo "  Username: admin"
-        echo "  Password: $ADMIN_PASSWORD"
-        echo ""
-      fi
-    fi
-
     # Check if deployment is complete. AAP 2.7 reports a terminal
     # Successful=False/reason=Successful alongside Running=True.
     SUCCESSFUL=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Successful")].status}' 2>/dev/null || echo "")
@@ -3145,22 +2933,6 @@ watch_aap() {
     SUCCESSFUL_REASON=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Successful")].reason}' 2>/dev/null || echo "")
     FAILURE=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.conditions[?(@.type=="Failure")].status}' 2>/dev/null || echo "")
     if aap_condition_is_complete "$SUCCESSFUL" "$RUNNING" "$SUCCESSFUL_REASON" "$FAILURE"; then
-      # Get admin password from secret
-      ADMIN_PASSWORD=""
-      ADMIN_SECRET=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.adminPasswordSecret}' 2>/dev/null || true)
-      if [ -n "$ADMIN_SECRET" ]; then
-        ADMIN_PASSWORD=$(kubectl get secret -n "$NAMESPACE" "$ADMIN_SECRET" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-      fi
-      # Fallback to common secret names
-      if [ -z "$ADMIN_PASSWORD" ]; then
-        for secret_name in aap-admin-password aap-controller-admin-password custom-admin-password; do
-          ADMIN_PASSWORD=$(kubectl get secret -n "$NAMESPACE" "$secret_name" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-          if [ -n "$ADMIN_PASSWORD" ]; then
-            break
-          fi
-        done
-      fi
-
       echo "✓ AAP deployment successful!"
       echo ""
       # Show CSV and namespace
@@ -3174,11 +2946,7 @@ watch_aap() {
       echo "AAP UI: https://$AAP_URL"
       echo ""
       echo "Username: admin"
-      if [ -n "$ADMIN_PASSWORD" ]; then
-        echo "Password: $ADMIN_PASSWORD"
-      else
-        echo "Password: (run: kubectl get secret -n $NAMESPACE aap-admin-password -o jsonpath='{.data.password}' | base64 -d)"
-      fi
+      echo "Password: hidden (run 'aap-demo status --show-secrets' in a terminal)"
       echo ""
 
       _aap_demo_run_addon_wire || true
@@ -3199,6 +2967,8 @@ watch_aap() {
 # ---------------------------------------------------------------------------
 # Fleet nodes: managed RHEL VMs for AAP demos (addon)
 # ---------------------------------------------------------------------------
+
+# cmd_fleet and its QEMU backend moved to includes/cmd-fleet.sh
 
 # A pip/pipx entry point: an .exe launcher on Windows, a python shebang, or
 # pip's /bin/sh wrapper that execs python, written when the interpreter path
@@ -3279,112 +3049,6 @@ _fleet_delegate_kube_native() {
   _fleet_delegate_v2 fleet --backend kube-native "$@"
 }
 
-cmd_fleet_qemu() {
-  local fleet_dir="${SCRIPT_DIR}/addons/fleet"
-  if [ ! -f "${fleet_dir}/fleet.sh" ]; then
-    _err "Fleet addon not found"
-    echo "  Expected: ${fleet_dir}/fleet.sh"
-    return 1
-  fi
-
-  source "${fleet_dir}/fleet.sh"
-  source "${fleet_dir}/fleet-aap.sh"
-
-  local subcmd="${1:-}"
-  shift 2>/dev/null || true
-
-  case "$subcmd" in
-    add)
-      local count="" image=""
-      for narg in "$@"; do
-        if [[ "$narg" =~ ^[0-9]+$ ]]; then
-          count="$narg"
-        elif [[ "$narg" == --image=* ]]; then
-          image="${narg#*=}"
-        else
-          image="$narg"
-        fi
-      done
-
-      count="${count:-1}"
-      image="${image:-${FLEET_IMAGE:-}}"
-
-      if [ -z "$image" ]; then
-        _err "No QCOW2 image specified"
-        echo ""
-        echo "Usage: aap-demo fleet add [count] --image <path-to-qcow2>"
-        echo ""
-        echo "  count    Number of VMs to create (default: 1)"
-        echo "  --image  Path to a RHEL/CentOS QCOW2 cloud image"
-        return 1
-      fi
-
-      image=$(cd "$(dirname "$image")" 2>/dev/null && echo "$(pwd)/$(basename "$image")")
-
-      _verify_cluster || return 1
-      fleet_check_prereqs "$image" || return 1
-      fleet_create_all "$count" "$image"
-      _fleet_save_image_config "$image"
-      fleet_register_aap
-      ;;
-    remove)
-      local target="${1:-1}"
-      if [[ "$target" =~ ^[0-9]+$ ]]; then
-        for narg in "$@"; do
-          if [[ "$narg" =~ ^[0-9]+$ ]]; then
-            target="$narg"
-            break
-          fi
-        done
-        local indices
-        indices=$(_fleet_running_indices)
-        local to_remove
-        to_remove=$(echo "$indices" | tail -n "$target")
-        for idx in $to_remove; do
-          local hn="aap-fleet-node-${idx}"
-          fleet_node_deregister_host "$hn" 2>/dev/null || true
-        done
-        fleet_remove_last "$target"
-      else
-        local hn="$target"
-        [[ "$hn" != aap-fleet-node-* ]] && hn="aap-fleet-node-${hn}"
-        fleet_node_deregister_host "$hn" 2>/dev/null || true
-        fleet_remove_by_name "$target"
-      fi
-      ;;
-    list)
-      echo ""
-      printf "\033[1mLegacy QEMU Fleet Nodes (Bash v1)\033[0m\n"
-      echo ""
-      fleet_list
-      ;;
-    destroy)
-      _verify_cluster 2>/dev/null && fleet_deregister_aap 2>/dev/null || true
-      fleet_destroy_all
-      ;;
-    *)
-      echo "Usage: aap-demo fleet <subcommand>"
-      echo ""
-      echo "Subcommands:"
-      echo "  add [count] --image <path>   Create fleet node VMs"
-      echo "  remove [count|name]          Remove fleet node VMs"
-      echo "  list                         List fleet node VMs"
-      echo "  destroy                      Remove all VMs and AAP resources"
-      echo ""
-      echo "Options:"
-      echo "  --image <path>    Path to RHEL/CentOS QCOW2 cloud image"
-      echo "  FLEET_NODE_MEM=N   VM memory in MB (default: 1024)"
-      echo "  FLEET_NODE_CPUS=N  VM CPU count (default: 2)"
-      echo ""
-      echo "Examples:"
-      echo "  aap-demo fleet add 3 --image ~/rhel9.qcow2"
-      echo "  aap-demo fleet list"
-      echo "  aap-demo fleet remove 1"
-      echo "  aap-demo fleet destroy"
-      ;;
-  esac
-}
-
 cmd_fleet() {
   local backend="${FLEET_BACKEND:-qemu}"
   case "$backend" in
@@ -3416,7 +3080,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak satellite-manifest lightspeed"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3426,7 +3090,7 @@ _normalize_addon_name() {
 }
 
 _addons_config_file() {
-  echo "${HOME}/.aap-demo/config"
+  echo "$AAP_DEMO_CONFIG"
 }
 
 _addons_list() {
@@ -3556,6 +3220,17 @@ _aap_demo_run_addon_wire() {
   fi
 }
 
+_addon_resource_preflight() {
+  case "$1" in
+    ao) aap_demo_resource_preflight "Automation Orchestrator" 1500 3072 ;;
+    ollama) aap_demo_resource_preflight "Ollama" 200 2048 ;;
+    portal-operator) aap_demo_resource_preflight "Automation Portal Operator" 1600 2048 ;;
+    portal) aap_demo_resource_preflight "Automation Portal" 500 1024 ;;
+    apme-eap) aap_demo_resource_preflight "APME" 500 1024 ;;
+    *) return 0 ;;
+  esac
+}
+
 cmd_enable() {
   local addon="${1:-}"
   shift 2>/dev/null || true
@@ -3646,6 +3321,8 @@ cmd_enable() {
   printf '  Source: %s (%s)\n' "${addon_dir}/deploy.sh" "$(aap_demo_version_short)"
   if [ "$_skip_cluster_verify" != true ]; then
     _verify_cluster || return 1
+    aap_demo_capacity_warn_enable "$addon" "$(_addons_list)"
+    _addon_resource_preflight "$addon" || return 1
   fi
   if [ "$addon" = "ao" ] && [ "$_skip_addon_save" != true ]; then
     aap_demo_ao_llm_prepare || return 1
@@ -3761,6 +3438,8 @@ cmd_disable() {
         echo "ERROR: Keycloak removal failed; leaving addon enabled in config" >&2
         return 1
       fi
+      _err "Failed to disable addon: $addon"
+      return 1
     fi
     _addons_remove "$addon"
     echo "  Removed from config"
@@ -3775,7 +3454,7 @@ cmd_disable() {
 # ---------------------------------------------------------------------------
 _check_for_updates() {
   local repo_root="$SCRIPT_DIR"
-  local stamp_file="${HOME}/.aap-demo/.last_update_check"
+  local stamp_file="${AAP_DEMO_DIR}/.last_update_check"
 
   # Skip in CI and non-interactive sessions
   [ "${CI:-}" = "true" ] && return 0
@@ -3838,11 +3517,39 @@ _check_for_updates() {
 
 case "$COMMAND" in
   status)
-    _check_for_updates
+    [ "$OUTPUT_JSON" = true ] || _check_for_updates
     ;;
 esac
 
+# Delegate before taking the CLI lock: the recovery runner owns a lock across stop,
+# disk backup/restore and start, and its child CLI processes share that lock.
+case "$COMMAND" in
+  start | restart | stop)
+    if aap_demo_service_managed; then
+      aap_demo_service_lifecycle "$COMMAND"
+      exit $?
+    fi
+    ;;
+esac
+
+if aap_demo_service_managed; then
+  case "$COMMAND" in
+    create)
+      if [ "$FULL_DEMO" != true ] || [ "$(uname -s)" != Linux ]; then
+        _err "Disable automatic recovery before rebuilding the demo: aap-demo service disable"
+        exit 1
+      fi
+      ;;
+    destroy | redeploy-all)
+      _err "Disable automatic recovery before rebuilding or deleting the demo: aap-demo service disable"
+      exit 1
+      ;;
+  esac
+fi
+
 # Setup KUBECONFIG based on infrastructure type (skip for help/config commands)
+# Detect enable --help before the operation lock: printing usage is read-only
+# and must also work without a writable state directory.
 _ENABLE_HELP=false
 if [ "$COMMAND" = "enable" ]; then
   for _arg in "${EXTRA_ARGS[@]}"; do
@@ -3853,8 +3560,16 @@ if [ "$COMMAND" = "enable" ]; then
   done
 fi
 
+if aap_demo_command_requires_lock "$COMMAND" \
+  && [ "$_ENABLE_HELP" != true ] \
+  && ! { [ "$COMMAND" = maintenance ] \
+    && [ "${EXTRA_ARGS[0]:-}" = uninstall ] \
+    && [ "$MAINTENANCE_APPLY" = true ]; }; then
+  aap_demo_acquire_operation_lock "$COMMAND" || exit 1
+fi
+
 case "$COMMAND" in
-  help | --help | -h | config | update | version | v2 | "" | destroy | status | storage)
+  help | --help | -h | config | update | version | v2 | "" | destroy | status | storage | system-info | dashboard | console | service | credentials)
     # These commands don't need cluster access
     ;;
   enable)
@@ -3863,13 +3578,25 @@ case "$COMMAND" in
       verify_cluster_type || exit 1
     fi
     ;;
-  redeploy-all | deploy | deploy-all | redeploy | create)
+  redeploy-all | deploy | deploy-all | redeploy | create | start | restart | preflight)
     # These handle their own cluster state (auto-start if stopped)
     if [[ "$COMMAND" != "create" ]]; then
       check_jq_windows || exit 1
       check_python_windows || exit 1
     fi
     setup_kubeconfig
+    ;;
+  maintenance)
+    if [ "${EXTRA_ARGS[0]:-preview}" != "uninstall" ]; then
+      setup_kubeconfig
+      verify_cluster_type || exit 1
+    fi
+    ;;
+  fleet)
+    if [ "${EXTRA_ARGS[0]:-}" != "auth" ]; then
+      setup_kubeconfig
+      verify_cluster_type || exit 1
+    fi
     ;;
   *)
     setup_kubeconfig
@@ -3890,6 +3617,14 @@ case "$COMMAND" in
   clean)
     cmd_clean
     ;;
+  maintenance)
+    cmd_maintenance "${EXTRA_ARGS[0]:-preview}" "$MAINTENANCE_APPLY" "$MAINTENANCE_RECONFIGURE"
+    ;;
+  credentials)
+    _credentials_rc=0
+    cmd_credentials "${EXTRA_ARGS[@]}" || _credentials_rc=$?
+    [ "$_credentials_rc" -eq 0 ] || exit "$_credentials_rc"
+    ;;
   destroy)
     for _arg in "${EXTRA_ARGS[@]}"; do
       [ "$_arg" = "--reset" ] && _DESTROY_RESET=true
@@ -3902,9 +3637,25 @@ case "$COMMAND" in
     ;;
   start)
     cmd_start
+    _aap_demo_auto_dashboard
+    ;;
+  restart)
+    cmd_stop
+    cmd_start
+    _aap_demo_auto_dashboard
+    ;;
+  service)
+    cmd_service "${EXTRA_ARGS[@]}"
     ;;
   create)
-    cmd_create
+    if [ "$FULL_DEMO" = true ]; then
+      if ! cmd_full_demo; then
+        exit 1
+      fi
+    else
+      cmd_create
+      _aap_demo_auto_dashboard
+    fi
     ;;
   storage)
     cmd_storage "${EXTRA_ARGS[@]}"
@@ -3919,7 +3670,20 @@ case "$COMMAND" in
     watch_aap
     ;;
   status)
-    cmd_status
+    if [ "$OUTPUT_JSON" = true ]; then
+      cmd_status_json
+    else
+      cmd_status
+    fi
+    ;;
+  system-info)
+    cmd_system_info
+    ;;
+  dashboard)
+    cmd_dashboard
+    ;;
+  console)
+    cmd_console
     ;;
   update)
     cmd_update
@@ -3951,6 +3715,9 @@ case "$COMMAND" in
   idle)
     cmd_idle "${EXTRA_ARGS[0]:-}"
     ;;
+  preflight)
+    cmd_preflight
+    ;;
   diagnose)
     # Check for --ai flag
     for _arg in "${EXTRA_ARGS[@]}"; do
@@ -3963,7 +3730,7 @@ case "$COMMAND" in
     ;;
   fleet)
     reject_windows_deferred_addon fleet || exit 1
-    cmd_fleet "${EXTRA_ARGS[@]}"
+    cmd_fleet "${EXTRA_ARGS[@]}" || exit $?
     ;;
   enable)
     reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1

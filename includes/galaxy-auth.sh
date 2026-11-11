@@ -14,6 +14,125 @@ if ! declare -f _err >/dev/null 2>&1; then
 fi
 _YELLOW="${_YELLOW:-}"
 _NC="${_NC:-}"
+GALAXY_AUTH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=credential-vault.sh
+source "${GALAXY_AUTH_DIR}/credential-vault.sh"
+# shellcheck source=secure-curl.sh
+source "${GALAXY_AUTH_DIR}/secure-curl.sh"
+
+galaxy_offline_token_status() {
+  local token="$1" client_id="${2:-cloud-services}" response http_code
+  [ -n "$token" ] || return 1
+  _aap_demo_vault_require_tools || return 2
+
+  response=$(printf '%s' "$token" | curl --silent --show-error \
+    --connect-timeout 15 --max-time 45 \
+    --write-out '\n%{http_code}' \
+    --request POST \
+    --data-urlencode "grant_type=refresh_token" \
+    --data-urlencode "client_id=${client_id}" \
+    --data-urlencode "refresh_token@-" \
+    "https://sso.redhat.com/auth/realms/redhat-external/protocol/openid-connect/token" \
+    2>/dev/null) || {
+      unset token
+      return 2
+    }
+  unset token
+  http_code="${response##*$'\n'}"
+  case "$http_code" in
+    200)
+      "$AAP_DEMO_VAULT_PYTHON" -c '
+import json
+import sys
+
+try:
+    data = json.load(sys.stdin)
+except (ValueError, TypeError):
+    raise SystemExit(2)
+token = data.get("access_token") if isinstance(data, dict) else None
+raise SystemExit(0 if isinstance(token, str) and token.strip() else 2)
+' <<<"${response%$'\n'*}"
+      ;;
+    400 | 401 | 403) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+prepare_galaxy_credentials() {
+  local rc
+  detect_galaxy_credentials || return $?
+
+  if [ -z "${GALAXY_TOKEN:-}" ]; then
+    return 1
+  fi
+  if galaxy_offline_token_status "$GALAXY_TOKEN"; then
+    return 0
+  else
+    rc=$?
+  fi
+  if [ "$rc" -eq 2 ]; then
+    _err "Unable to validate the Automation Hub token: Red Hat SSO is unavailable or returned an invalid response; credentials were preserved"
+    return 2
+  fi
+  printf "  ⚠ Stored Automation Hub token is invalid; removing it from encrypted storage\n" >&2
+  aap_demo_vault_delete "ah_offline_token" || return 2
+  GALAXY_TOKEN=""
+  export GALAXY_TOKEN
+  return 1
+}
+
+ensure_galaxy_credentials() {
+  local rc
+  if prepare_galaxy_credentials; then
+    return 0
+  else
+    rc=$?
+  fi
+  [ "$rc" -ne 2 ] || return 2
+
+  printf 'Generate an Automation Hub offline token at:\n  https://console.redhat.com/ansible/automation-hub/token\n'
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "https://console.redhat.com/ansible/automation-hub/token" >/dev/null 2>&1 \
+      || printf 'WARNING: Could not open a browser; visit the URL above.\n' >&2
+  elif command -v open >/dev/null 2>&1; then
+    open "https://console.redhat.com/ansible/automation-hub/token" >/dev/null 2>&1 \
+      || printf 'WARNING: Could not open a browser; visit the URL above.\n' >&2
+  fi
+  if ! { exec 9<"$AAP_DEMO_SECRET_PROMPT_DEVICE"; } 2>/dev/null; then
+    _err "An interactive terminal is required to enter the Automation Hub token"
+    return 1
+  fi
+  while true; do
+    printf "Automation Hub offline token (hidden): " >>"$AAP_DEMO_SECRET_PROMPT_OUTPUT"
+    if ! IFS= read -r -s GALAXY_TOKEN <&9; then
+      exec 9<&-
+      unset GALAXY_TOKEN
+      _err "Token input was cancelled; no new token was saved"
+      return 1
+    fi
+    printf '\n' >>"$AAP_DEMO_SECRET_PROMPT_OUTPUT"
+    if [ -z "$GALAXY_TOKEN" ]; then
+      _err "Token must not be empty; please try again"
+      continue
+    fi
+    if galaxy_offline_token_status "$GALAXY_TOKEN"; then
+      exec 9<&-
+      aap_demo_vault_set "ah_offline_token" "$GALAXY_TOKEN" || return 2
+      export GALAXY_TOKEN
+      return 0
+    else
+      rc=$?
+    fi
+    unset GALAXY_TOKEN
+    # Retry rejected credentials, not network/server errors that could reject a good token.
+    if [ "$rc" -eq 2 ]; then
+      exec 9<&-
+      _err "Red Hat SSO is unavailable or returned an invalid response; no new token was saved"
+      return 2
+    fi
+    _err "Red Hat SSO rejected the Automation Hub offline token (expired or revoked); please try again"
+  done
+}
 
 protect_galaxy_credential_file() {
   local path="$1"
@@ -27,12 +146,31 @@ protect_galaxy_credential_file() {
 }
 
 detect_galaxy_credentials() {
+  local token_status=0
+  GALAXY_TOKEN_FILE="${GALAXY_TOKEN_FILE:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/galaxy-token}"
+  PAH_CONFIG_FILE="${PAH_CONFIG_FILE:-${AAP_DEMO_DIR:-$HOME/.aap-demo}/pah-config.yml}"
+
+  GALAXY_TOKEN=$(aap_demo_vault_get "ah_offline_token") || token_status=$?
+  [ "$token_status" -ne 2 ] || return 2
   # Detect console.redhat.com offline token
-  if [ -f "$GALAXY_TOKEN_FILE" ]; then
+  if [ -z "$GALAXY_TOKEN" ] && [ -s "$GALAXY_TOKEN_FILE" ]; then
     protect_galaxy_credential_file "$GALAXY_TOKEN_FILE" || return 1
     GALAXY_TOKEN=$(cat "$GALAXY_TOKEN_FILE")
-    export GALAXY_TOKEN
+    if galaxy_offline_token_status "$GALAXY_TOKEN"; then
+      if aap_demo_vault_set "ah_offline_token" "$GALAXY_TOKEN"; then
+        rm -f "$GALAXY_TOKEN_FILE"
+      else
+        _err "Unable to migrate $GALAXY_TOKEN_FILE into encrypted credential storage"
+        return 2
+      fi
+    else
+      token_status=$?
+      GALAXY_TOKEN=""
+      _err "Unable to validate the legacy Automation Hub token; it was not saved"
+      return "$token_status"
+    fi
   fi
+  export GALAXY_TOKEN
 
   # Detect PAH configuration
   if [ -f "$PAH_CONFIG_FILE" ]; then
@@ -51,8 +189,48 @@ detect_galaxy_credentials() {
       PAH_PASS=$(grep -E '^\s*password:' "$PAH_CONFIG_FILE" | sed 's/^[^:]*: *//' | tr -d '"' | tr -d "'")
     fi
 
-    export PAH_URL PAH_TOKEN PAH_USER PAH_PASS
+    local migrated=false
+    if [ -n "${PAH_TOKEN:-}" ] && [ "$PAH_TOKEN" != "null" ]; then
+      aap_demo_vault_set "aap_demo.pah.token" "$PAH_TOKEN" || return 1
+      migrated=true
+    fi
+    if [ -n "${PAH_USER:-}" ] && [ "$PAH_USER" != "null" ]; then
+      aap_demo_vault_set "aap_demo.pah.username" "$PAH_USER" || return 1
+      migrated=true
+    fi
+    if [ -n "${PAH_PASS:-}" ] && [ "$PAH_PASS" != "null" ]; then
+      aap_demo_vault_set "aap_demo.pah.password" "$PAH_PASS" || return 1
+      migrated=true
+    fi
+    if [ "$migrated" = true ]; then
+      python3 - "$PAH_CONFIG_FILE" <<'PY'
+import os
+import sys
+import tempfile
+import yaml
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as stream:
+    data = yaml.safe_load(stream) or {}
+for key in ("token", "username", "password"):
+    data.pop(key, None)
+directory = os.path.dirname(path) or "."
+fd, temporary = tempfile.mkstemp(prefix=".pah-config.", dir=directory, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        yaml.safe_dump(data, stream, default_flow_style=False, sort_keys=True)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
+PY
+    fi
   fi
+  PAH_TOKEN=$(aap_demo_vault_get "aap_demo.pah.token" 2>/dev/null || true)
+  PAH_USER=$(aap_demo_vault_get "aap_demo.pah.username" 2>/dev/null || true)
+  PAH_PASS=$(aap_demo_vault_get "aap_demo.pah.password" 2>/dev/null || true)
+  export PAH_URL PAH_TOKEN PAH_USER PAH_PASS
 }
 
 configure_pah_remotes() {

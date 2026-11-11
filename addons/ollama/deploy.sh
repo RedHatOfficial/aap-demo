@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deploy Ollama LLM server for aap-demo
 #
-# Deploys Ollama (CPU-only) with qwen2.5:3b model pre-pulled.
+# Deploys Ollama with qwen2.5:3b model pre-pulled. Uses an NVIDIA GPU when
+# Kubernetes advertises one, otherwise falls back to CPU.
 # Accessible via:
 #   - Route: https://ollama.apps.<cluster-domain>
 #   - OpenAI-compatible: https://ollama.apps.<cluster-domain>/v1
@@ -17,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
 OLLAMA_ROLLOUT_TIMEOUT="${OLLAMA_ROLLOUT_TIMEOUT:-15m}"
 OLLAMA_STORAGE_CLASS="${OLLAMA_STORAGE_CLASS:-}"
+OLLAMA_GPU="${OLLAMA_GPU:-auto}"
 _ollama_storage_size_explicit="${OLLAMA_STORAGE_SIZE+yes}"
 OLLAMA_STORAGE_SIZE="${OLLAMA_STORAGE_SIZE:-10Gi}"
 
@@ -62,7 +64,48 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Deploying Ollama (CPU-only)..."
+_ollama_nvidia_gpu_count() {
+  kubectl get nodes -o json \
+    | jq -er '[.items[].status.allocatable["nvidia.com/gpu"] // "0" | tonumber] | add // 0'
+}
+
+case "$OLLAMA_GPU" in
+  auto | cpu | nvidia) ;;
+  *)
+    echo "ERROR: OLLAMA_GPU must be auto, cpu, or nvidia (got '${OLLAMA_GPU}')." >&2
+    exit 1
+    ;;
+esac
+
+_ollama_gpu_mode="cpu"
+_ollama_gpu_limit=""
+if [ "$OLLAMA_GPU" != "cpu" ]; then
+  if ! _ollama_nvidia_count="$(_ollama_nvidia_gpu_count)"; then
+    echo "ERROR: Unable to inspect Kubernetes nodes for NVIDIA GPU resources." >&2
+    exit 1
+  fi
+  if [ "$_ollama_nvidia_count" -gt 0 ]; then
+    _ollama_gpu_mode="nvidia"
+    _ollama_gpu_limit='nvidia.com/gpu: "1"'
+  elif [ "$OLLAMA_GPU" = "nvidia" ]; then
+    echo "ERROR: OLLAMA_GPU=nvidia requested, but no node advertises nvidia.com/gpu." >&2
+    echo "  Install and configure the NVIDIA GPU Operator/device plugin, then retry." >&2
+    exit 1
+  fi
+fi
+
+if [ "$_ollama_gpu_mode" = "nvidia" ]; then
+  echo "Deploying Ollama with NVIDIA GPU acceleration..."
+  echo "  GPU resources: ${_ollama_nvidia_count} advertised; requesting 1"
+else
+  echo "Deploying Ollama with CPU inference..."
+  if [ "$OLLAMA_GPU" = "auto" ]; then
+    echo "  No nvidia.com/gpu resource is advertised by the cluster; using CPU."
+    if command -v lspci >/dev/null 2>&1 && lspci | grep -qi nvidia; then
+      echo "  NVIDIA hardware exists on the host but is not exposed to Kubernetes."
+    fi
+  fi
+fi
 
 # Convert the kubectl duration used for rollout status into seconds for the
 # Kubernetes Deployment progress deadline. Support the integer-unit durations
@@ -134,11 +177,12 @@ else
 fi
 OLLAMA_ROUTE="ollama.${CLUSTER_DOMAIN}"
 
-# Patch the route hostname and StorageClass from their manifest placeholders
+# Patch the route hostname, storage settings, and optional GPU resource limit.
 sed -e "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
   -e "s|storageClassName: __STORAGE_CLASS__|storageClassName: ${_ollama_sc}|" \
   -e "s|storage: __STORAGE_SIZE__|storage: ${OLLAMA_STORAGE_SIZE}|" \
   -e "s|progressDeadlineSeconds: __PROGRESS_DEADLINE_SECONDS__|progressDeadlineSeconds: ${_ollama_progress_deadline}|" \
+  -e "s|__GPU_RESOURCE_LIMIT__|${_ollama_gpu_limit}|" \
   "${SCRIPT_DIR}/ollama.yaml" | kubectl apply -f -
 
 echo "  Waiting for Ollama deployment to be ready..."
@@ -197,6 +241,7 @@ echo "  Route:         https://${OLLAMA_ROUTE}"
 echo "  OpenAI base:   https://${OLLAMA_ROUTE}/v1"
 echo "  In-cluster:    http://ollama.aap-demo-ollama.svc.cluster.local:11434"
 echo "  Model:         ${OLLAMA_MODEL}"
+echo "  Acceleration:  ${_ollama_gpu_mode}"
 echo ""
 echo "  Test inference:"
 echo "    curl https://${OLLAMA_ROUTE}/api/generate \\"

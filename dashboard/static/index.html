@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>aap-demo Dashboard</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LOCAL DEVELOPMENT CONTROL PLANE</p>
+          <h1>Ansible Automation Platform - MicroShift Demo</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="last-updated" class="muted">Loading...</span>
+          <button id="refresh-button" class="button secondary" type="button">Refresh</button>
+          <button id="restart-button" class="button secondary compact" type="button"
+            title="Restart only the dashboard server, not CRC or AAP">Restart dashboard</button>
+        </div>
+      </header>
+
+      <main>
+        <section id="alert" class="alert hidden" aria-live="polite"></section>
+
+        <section class="hero">
+          <div>
+            <div class="status-line">
+              <span id="cluster-indicator" class="status-dot unknown"></span>
+              <span id="cluster-state">Checking cluster</span>
+            </div>
+            <h2>Environment Overview</h2>
+            <p id="cluster-summary" class="muted">Collecting live inventory from aap-demo.</p>
+            <p id="environment-os" class="muted">Host OS: checking...</p>
+          </div>
+          <div class="hero-mark" aria-hidden="true">A</div>
+        </section>
+
+        <section id="summary-grid" class="summary-grid" aria-label="Environment summary"></section>
+
+        <section id="capacity-panel" class="capacity-panel panel" aria-labelledby="capacity-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">STORAGE PLANNING</p>
+              <h2 id="capacity-heading">CRC VM capacity</h2>
+            </div>
+            <span id="capacity-status" class="pill">Checking</span>
+          </div>
+          <div id="capacity-grid" class="capacity-grid"></div>
+          <p id="capacity-message" class="capacity-message muted" role="status"></p>
+        </section>
+
+        <section id="operation-panel" class="operation-panel hidden" aria-live="polite">
+          <div class="operation-heading">
+            <div>
+              <p class="eyebrow">CURRENT OPERATION</p>
+              <h3 id="operation-message">Working...</h3>
+            </div>
+            <div class="operation-actions">
+              <span id="operation-status" class="pill">Running</span>
+              <button id="operation-dismiss" class="button secondary hidden" type="button">Dismiss</button>
+            </div>
+          </div>
+          <div class="progress-track"><span id="operation-progress"></span></div>
+          <details id="operation-details" class="operation-details hidden">
+            <summary>Operation output</summary>
+            <pre id="operation-output"></pre>
+          </details>
+        </section>
+
+        <section class="section-heading">
+          <div>
+            <p class="eyebrow">FEATURE MANAGEMENT</p>
+            <h2>Add-ons</h2>
+            <p class="muted">Enable and disable supported features using the existing aap-demo workflows.</p>
+          </div>
+          <div class="legend">
+            <span><i class="legend-dot running"></i>Running</span>
+            <span><i class="legend-dot enabled"></i>Configured</span>
+            <span><i class="legend-dot degraded"></i>Needs attention</span>
+            <span><i class="legend-dot disabled"></i>Disabled</span>
+          </div>
+        </section>
+
+        <nav id="category-filter" class="category-filter" aria-label="Add-on categories"></nav>
+        <section id="addon-grid" class="addon-grid" aria-live="polite"></section>
+
+        <section class="details-grid">
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">APPLICATION ACCESS</p>
+                <h2>Routes</h2>
+              </div>
+            </div>
+            <div id="routes-list" class="routes-list"></div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">WORKLOAD HEALTH</p>
+                <h2>Namespaces</h2>
+              </div>
+            </div>
+            <div id="namespace-list" class="namespace-list"></div>
+          </article>
+        </section>
+      </main>
+
+      <footer>
+        <span>Bound to 127.0.0.1</span>
+        <span>Secrets are never returned by dashboard status</span>
+      </footer>
+    </div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

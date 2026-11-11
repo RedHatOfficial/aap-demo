@@ -134,23 +134,6 @@ while true; do
       AAP_ROUTE=$(kubectl get route -n "$NAMESPACE" --no-headers 2>/dev/null | awk '/aap/ {print $2}' | head -1 || true)
     fi
 
-    # Get admin password from secret (query AAP CR for secret name, fallback to common names)
-    ADMIN_PASSWORD=""
-    ADMIN_SECRET=$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].status.adminPasswordSecret}' 2>/dev/null || true)
-    if [ -n "$ADMIN_SECRET" ]; then
-      ADMIN_PASSWORD=$(kubectl get secret -n "$NAMESPACE" "$ADMIN_SECRET" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-    fi
-    # Fallback to common secret names if CR didn't specify or secret not found
-    # Priority: auto-generated secrets first, then custom-admin-password as last resort
-    if [ -z "$ADMIN_PASSWORD" ]; then
-      for secret_name in aap-admin-password aap-controller-admin-password custom-admin-password; do
-        ADMIN_PASSWORD=$(kubectl get secret -n "$NAMESPACE" "$secret_name" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-        if [ -n "$ADMIN_PASSWORD" ]; then
-          break
-        fi
-      done
-    fi
-
     # Get CSV name (operator version)
     CSV_NAME=$(kubectl get csv -n "$NAMESPACE" -o jsonpath='{.items[?(@.metadata.name)].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^aap-operator' | head -1 || true)
 
@@ -202,11 +185,7 @@ while true; do
     echo ""
     echo "  Login Credentials:"
     echo "    Username: admin"
-    if [ -n "$ADMIN_PASSWORD" ]; then
-      echo "    Password: ${ADMIN_PASSWORD}"
-    else
-      echo "    Password: (check secret: kubectl get secret -n $NAMESPACE aap-admin-password -o jsonpath='{.data.password}' | base64 -d)"
-    fi
+    echo "    Password: hidden (run 'aap-demo status --show-secrets' in a terminal)"
     echo ""
     echo "================================================================"
     echo ""

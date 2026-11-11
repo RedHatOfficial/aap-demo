@@ -3,6 +3,71 @@ $Script:AapAvailableAddons = @(
   'product-demos', 'opa', 'ollama'
 )
 
+function Test-AapWslBashPath {
+  param(
+    [Parameter(Mandatory)][string]$Path,
+    [string]$WindowsDir = $env:WINDIR
+  )
+
+  $full = $Path -replace '/', '\'
+  if ($full -match '(?i)\\WindowsApps\\') { return $true }
+  if ($WindowsDir) {
+    $win = ($WindowsDir -replace '/', '\').TrimEnd('\')
+    foreach ($sub in @('System32', 'SysNative', 'SysWOW64')) {
+      if ($full.StartsWith("$win\$sub\", [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+  }
+  return $false
+}
+
+function Resolve-AapGitBashPath {
+  param(
+    [string]$Override,
+    [string[]]$GitCommandPaths = @(),
+    [string[]]$InstallRoots = @(),
+    [string]$WindowsDir = $env:WINDIR
+  )
+
+  $candidates = New-Object System.Collections.ArrayList
+  if ($Override) { [void]$candidates.Add($Override) }
+  foreach ($git in $GitCommandPaths) {
+    if (-not $git) { continue }
+    # git.exe lives in <root>\cmd, <root>\bin or <root>\mingw64\bin of a Git for Windows install.
+    $dir = Split-Path -Parent $git
+    for ($i = 0; $i -lt 3 -and $dir; $i++) {
+      [void]$candidates.Add((Join-Path $dir 'bin\bash.exe'))
+      $dir = Split-Path -Parent $dir
+    }
+  }
+  foreach ($root in $InstallRoots) {
+    if ($root) { [void]$candidates.Add((Join-Path $root 'bin\bash.exe')) }
+  }
+
+  foreach ($candidate in $candidates) {
+    if (Test-AapWslBashPath -Path $candidate -WindowsDir $WindowsDir) {
+      if ($Override -and $candidate -eq $Override) {
+        throw "AAP_DEMO_BASH points at WSL bash ('$Override'); set it to Git for Windows bin\bash.exe."
+      }
+      continue
+    }
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    if ($Override -and $candidate -eq $Override) {
+      throw "AAP_DEMO_BASH '$Override' does not exist."
+    }
+  }
+  return $null
+}
+
+function Get-AapGitBashPath {
+  $gitPaths = @(Get-Command git -CommandType Application -All -ErrorAction SilentlyContinue | ForEach-Object { $_.Source })
+  $roots = @()
+  foreach ($base in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    if ($base) { $roots += (Join-Path $base 'Git') }
+  }
+  if ($env:LOCALAPPDATA) { $roots += (Join-Path $env:LOCALAPPDATA 'Programs\Git') }
+  return Resolve-AapGitBashPath -Override $env:AAP_DEMO_BASH -GitCommandPaths $gitPaths -InstallRoots $roots
+}
+
 function Invoke-AapAddonDeployScript {
   param(
     [Parameter(Mandatory)][string]$Addon,

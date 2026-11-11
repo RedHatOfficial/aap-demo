@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "units": "GiB",
+  "description": "Conservative local-development planning estimates, not storage guarantees or measured product requirements.",
+  "core": {
+    "vm_gib": 160,
+    "description": "CRC/MicroShift, 70 GiB LVMS reservation, and at least 100 GiB for root, images, logs, and core AAP services."
+  },
+  "headroom": {
+    "vm_gib": 20,
+    "description": "Reserved operating headroom for image churn, upgrades, temporary files, and filesystem overhead."
+  },
+  "round_to_gib": 10,
+  "addons": {
+    "fleet": {
+      "vm_gib": 0,
+      "host_gib": 25,
+      "description": "Fleet QCOW2 images and node overlays are stored on the host, outside the CRC VM."
+    },
+    "mcp-server": {
+      "vm_gib": 3,
+      "host_gib": 0,
+      "description": "MCP workload image, logs, and transient data."
+    },
+    "portal": {
+      "vm_gib": 8,
+      "host_gib": 0,
+      "description": "Portal workloads, images, and plugin content."
+    },
+    "portal-operator": {
+      "vm_gib": 12,
+      "host_gib": 0,
+      "description": "Operator, catalog, operand images, and portal data."
+    },
+    "setup-pah": {
+      "vm_gib": 1,
+      "host_gib": 0,
+      "description": "Configuration-only allowance for temporary synchronization data."
+    },
+    "ao": {
+      "vm_gib": 20,
+      "host_gib": 0,
+      "description": "Automation Orchestrator, catalog/operator images, PostgreSQL, and demo data."
+    },
+    "ao-pr-testing": {
+      "vm_gib": 4,
+      "host_gib": 0,
+      "description": "OpenShift MCP server and PR validation execution environment for AO."
+    },
+    "apme-eap": {
+      "vm_gib": 12,
+      "host_gib": 0,
+      "description": "Early-access portal workloads, plugins, and deployment artifacts."
+    },
+    "keycloak": {
+      "vm_gib": 2,
+      "host_gib": 0,
+      "description": "Keycloak OIDC provider and its PostgreSQL database."
+    },
+    "local-cache": {
+      "vm_gib": 0,
+      "host_gib": 40,
+      "description": "Exported container image archives are retained on the host, outside the CRC VM."
+    },
+    "product-demos": {
+      "vm_gib": 8,
+      "host_gib": 0,
+      "description": "Demo projects, execution content, and related container image growth."
+    },
+    "product-demo-satellite": {
+      "vm_gib": 1,
+      "host_gib": 0,
+      "description": "Configuration and project content; the Satellite server itself is external."
+    },
+    "opa": {
+      "vm_gib": 2,
+      "host_gib": 0,
+      "description": "OPA image, policy bundle, and logs."
+    },
+    "ollama": {
+      "vm_gib": 15,
+      "host_gib": 0,
+      "description": "Ollama image, local model, and runtime data."
+    },
+    "satellite-manifest": {
+      "vm_gib": 0,
+      "host_gib": 1,
+      "description": "Satellite subscription manifest and lab metadata on the host; the Satellite VM itself is provisioned separately by satellite-lab."
+    }
+  }
+}

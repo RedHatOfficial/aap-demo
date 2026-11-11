@@ -1,6 +1,11 @@
 # ADR-020: Full OpenShift Support and Resource-Aware Provisioning
 
-**Status**: Declined
+**Status**: Partially accepted — opt-in only
+
+**Update**: 2026-10-27 — `CRC_PRESET=openshift` is now supported as an opt-in
+preset so a single-node OpenShift web console is available (`aap-demo console`).
+MicroShift remains the default. The interactive preset prompt and resource-aware
+provisioning described below were not reintroduced.
 
 **Declined**: 2026-08-04 — Full OpenShift support requires ~20+ GB RAM and introduces
 `redhat-operators`/`certified-operators` catalog dependencies not present in developer laptop

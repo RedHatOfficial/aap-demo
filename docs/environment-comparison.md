@@ -2,6 +2,12 @@
 
 A comparison of the infrastructure backends supported by aap-demo.
 
+For current host-specific installation instructions and CLI feature boundaries,
+start with [Linux](../Linux_Quickstart.md), [macOS](../MAC_Quickstart.md),
+[Windows](../Windows_Quickstart.md), or [WSL](../WSL_Quickstart.md).
+The startup behavior below describes the Bash CRC workflow; native PowerShell
+and addon availability are not automatically identical.
+
 ## Executive Summary
 
 | Backend | Platform | Best For | Startup | System Pods |
@@ -142,3 +148,35 @@ aap-demo deploy
 
 The CRC preset (MicroShift vs OpenShift) is selected during `aap-demo create` and saved to `~/.aap-demo/config` as
 `CRC_PRESET=microshift` or `CRC_PRESET=openshift`.
+
+## Resuming an existing CRC demo
+
+`aap-demo start` resumes the configured CRC environment without redeploying it.
+It restores DNS routing and catalog connectivity, resumes idle AAP, waits for
+installed infrastructure and enabled addon workloads, starts preserved Fleet
+VMs, and reapplies addon integrations. It reports success only after readiness
+checks pass. Healthy application pods are not forcibly restarted.
+
+On each start, if CRC's `/var` filesystem is at least **90% used**, the existing
+VM disk grows by **20%**, rounded up to whole GiB. For example, a 220 GiB disk
+becomes 264 GiB. CRC performs disk and guest filesystem expansion through a brief
+stop/start, preserving cluster data and the PV reservation. No destructive rebuild
+or automatic forced power-off is performed. Host free space and the resulting
+filesystem size are verified, and an interrupted resize retries the saved target.
+This is a startup check, not continuous monitoring; there is no fixed
+100 GiB free-space requirement. PVCs and separate persistent image-store disks
+are not automatically expanded by this policy.
+
+Use `AAP_START_TIMEOUT=900 aap-demo start` to allow up to 900 seconds per readiness
+phase (default: 600). Resolve reported resource, storage or image-pull failures and
+rerun `aap-demo start`; it does not silently resize memory or enable disabled addons.
+
+Linux CRC/libvirt installations can opt into
+[shutdown backup and boot restore](state-service.md) using `aap-demo service install`.
+That service wraps `start`, `restart` and `stop` with full cold-state backup and
+restore. It always brings the demo online after reboot and retains only the
+latest completed state unless a different retention count is configured.
+
+macOS/vfkit and native Windows instead use explicit cold checkpoints plus
+restore/start at **user login**. They do not guarantee a backup during host
+shutdown; checkpoint before reboot. See [native recovery](state-service.md#macos-and-windows-login-recovery).
