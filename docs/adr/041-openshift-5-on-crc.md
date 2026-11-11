@@ -62,7 +62,7 @@ A value can be as broad or as exact as the user wants:
 |-------|-------------|-------|
 | `4`, `5` | The stable version aap-demo pins for that major version | `4` → 4.22.13, `5` → 5.0.0 |
 | `4.22`, `5.0` | The stable version for that minor, the same as the major when it is the newest minor | `4.22` → 4.22.13 |
-| `4.21` (an older minor) | The newest patch for that minor on the mirror | `4.21` → 4.21.7 |
+| `4.21` (an older minor) | The newest patch for that minor on the mirror, looked up at create | `4.21` → 4.21.7 |
 | `4.22.0`, `5.0.0` | Exactly that bundle | as given |
 
 - The stable versions are pinned in the profiles (below), so `4` and `4.22` give the same tested
@@ -70,8 +70,10 @@ A value can be as broad or as exact as the user wants:
 - A version that isn't a profile's stable version prints a warning that it is untested. A version
   below 4.21, or one with no bundle on the mirror for this host, is refused with the list of
   supported values.
-- `create` saves the resolved full version. `deploy` on an existing VM compares the setting with
-  the running cluster: `4` matches any 4.x, `4.22` any 4.22.z, and an exact value only itself. A
+- `crc.ocp_version` keeps what the user gave (`4`, `5.0.0`, or nothing), so an unset setting keeps
+  following the newest supported version on the next create. The version the cluster was built
+  with goes in aap-demo state, and `status` shows it. `deploy` on an existing VM compares the
+  setting with the running cluster: `4` matches any 4.x, `4.22` any 4.22.z, and an exact value only itself. A
   mismatch stops before any change, with "this cluster runs 4.22.13; run aap-demo destroy, then
   create --ocp-version 5".
 - `crc.version` / `CRC_VERSION` (today a MicroShift floor, for example `4.21`) is replaced.
