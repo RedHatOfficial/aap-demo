@@ -82,6 +82,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [037](037-fleet-systemd-nodes.md) | Fleet Nodes Run systemd as PID 1 | Accepted |
 | [039](039-product-demos-on-v2-enable.md) | Product Demos Run from the New Enable Command | Accepted |
 | [040](040-addon-framework-and-bash-fallback.md) | Shared Addon Framework and Bash Fallback for the Python Command | Accepted |
+| [034](034-apme-abbenay-bundled-config.md) | APME Abbenay Bundled Config on Redeploy | Accepted |
 
 ## Creating a New ADR
 

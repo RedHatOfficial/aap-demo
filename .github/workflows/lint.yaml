@@ -49,6 +49,14 @@ jobs:
           set -euo pipefail
           git ls-files '*.yml' '*.yaml' -z | xargs -0 -r yamllint -c .yamllint
 
+      # .yamllint excludes .github; explicitly override it for publishing CI.
+      - name: Lint APME publishing workflow
+        uses: ibiqlik/action-yamllint@v3
+        with:
+          config_data: "{extends: .yamllint, ignore: ''}"
+          file_or_dir: .github/workflows/apme-eap-image.yaml
+          strict: true
+
   markdownlint:
     name: Markdown Lint
     runs-on: ubuntu-latest
@@ -65,10 +73,10 @@ jobs:
         run: npm install -g markdownlint-cli
 
       - name: Run markdownlint
-        run: |
-          set -euo pipefail
-          git ls-files '*.md' ':!.claude/**' ':!.github/**' -z \
-            | xargs -0 -r -n 50 markdownlint --config .markdownlint.json
+        # Addon CI documentation is included; existing GitHub templates stay excluded.
+        run: >-
+          markdownlint . addons/apme-eap --config .markdownlint.json
+          --ignore '.claude/**' --ignore '.github/**'
 
   ansible-lint:
     name: Ansible Lint

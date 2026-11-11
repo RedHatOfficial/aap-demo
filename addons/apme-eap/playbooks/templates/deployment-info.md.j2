@@ -18,8 +18,8 @@ Deployment date: {{ ansible_date_time.iso8601 }}
 
 ## Dynamic plugins
 
-- **Plugin image:** {{ oci_registry }}/apme-prototype-plugins:{{ plugin_sha }}
-- **Delivery:** Helm chart `install-dynamic-plugins` init container
+- **Portal image:** {{ apme_preloaded_image_ref | default('') or apme_image_build_target }}
+- **Delivery:** Six verified plugins baked into the portal container image
 
 ## Automation Hub (setup-pah)
 
@@ -47,3 +47,4 @@ oc get secret secrets-rhaap-portal -n {{ openshift_project_name }}
 1. Sign in to the automation portal via AAP OAuth.
 2. Register a repository (public repos support direct register).
 3. Open the **Quality** tab and run a scan on the default branch.
+4. If you use AI escalation, configure LLM providers under **Modernization → AI providers** (re-add after each `aap-demo enable apme-eap`; see ADR-034).
