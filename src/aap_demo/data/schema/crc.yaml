@@ -85,8 +85,9 @@ properties:
     default: ""
     title: CRC version (deprecated)
     description: >
-      Deprecated: use ocp_version. A value here is read as --ocp-version
-      when ocp_version is unset.
+      Deprecated. The lowest MicroShift version the installed CRC may
+      ship, so an older CRC already on PATH is kept. To choose the cluster
+      version, use --ocp-version.
     x-cli: {flag: "--crc-version"}
     x-env: CRC_VERSION
     x-config: crc.version
