@@ -130,12 +130,40 @@ aap-demo pins that release, the 5 profile's `crc_bundle` names its version, and 
 `crc_bundle` is cleared, so `--ocp-version 4` downloads and verifies 4.22.13 the same way 5.0.0 is
 handled today.
 
+### 5. `aap-demo ocp-versions`
+
+A read-only command that lists what `--ocp-version` can build on this host, listed in
+`aap-demo help` next to `version`. It needs no cluster.
+
+```text
+$ aap-demo ocp-versions
+VERSION   STATUS                 SOURCE
+5.0.0     stable, not default    download (1.4 GB)
+4.22.13   stable, default        CRC 2.64.0 (built in)
+4.22.0    untested               download
+4.21.7    untested               download
+```
+
+- It reads the mirror's `crc/bundles/microshift/` directory, then the directory of each version at
+  or above the oldest profile `minimum`, and keeps the versions that have a bundle for this host
+  (for example `vfkit` and `arm64`). Parsing is limited to the directory listing's links; anything
+  that doesn't look like a version is skipped.
+- `--all` also lists versions below the minimum, marked "not supported".
+- `--output json|yaml` works like the other commands, for scripts.
+- With no network it still prints the profile versions, marked "not checked".
+- It never downloads a bundle and never checks signatures. `create` does that.
+
+The mirror lists MicroShift bundles only for versions CRC built. OpenShift's `stable-4.22` channel
+was at 4.22.22 on 2026-11-11, but the newest MicroShift bundle for 4.22 was 4.22.13, so 4.22.13 is
+the newest 4.22 aap-demo can build.
+
 ## Consequences
 
 ### Positive
 
 - `create --ocp-version 5` works now, without waiting for a CRC release.
-- One flag covers both the simple case (`4`, `5`) and a pinned version (`4.22.0`).
+- One flag covers both the simple case (`4`, `5`) and a pinned version (`4.22.0`), and
+  `ocp-versions` shows what is available.
 - 4 and 5 differ in data, not in code paths. Moving to 5.1 is a change to `stable` in a profile.
 - The bundle is verified more strictly than `crc start -b` does on its own, with no host tools.
 - Addons and channels that don't exist on 5 refuse up front instead of failing halfway.
