@@ -46,13 +46,19 @@ Constraints:
 
 ### 1. A setting for the OpenShift major version
 
-Add `crc.openshift`, `4` or `5`, default `4`, with `--openshift` on `create` and `deploy` and
-`CRC_OPENSHIFT` in the environment. It comes from the schema like the other `crc.*` settings.
+Add `crc.ocp_version_major`, `4` or `5`, default `4`, with `--ocp-version-major` on `create` and
+`deploy` and `CRC_OCP_VERSION_MAJOR` in the environment. It comes from the schema like the other
+`crc.*` settings. The name keeps `ocp` because aap-demo already has several versions (CRC, AAP,
+the MicroShift floor in `crc.version`), and the preset stays `microshift`: this picks which
+OpenShift release the MicroShift bundle comes from, not full OpenShift.
 
 - `create` builds the chosen version and saves it.
 - `deploy` on an existing VM compares the setting with the running cluster. A mismatch stops before
-  any change, with "this cluster runs OpenShift N; run aap-demo destroy, then create --openshift M".
+  any change, with "this cluster runs OpenShift N; run aap-demo destroy, then
+  create --ocp-version-major M".
 - `CRC_VERSION` still lowers the minimum minor version. Its default comes from the chosen profile.
+- `AAP_OCP_VERSION` keeps overriding the operator index tag (`v5.0`). A value whose major version
+  differs from the cluster's is refused.
 
 ### 2. One profile file per major version
 
@@ -73,7 +79,7 @@ profile.
 
 ### 3. Download and verify the 5.0 bundle in aap-demo
 
-While CRC has no 5.0 release, `create --openshift 5` downloads the bundle for the host from the
+While CRC has no 5.0 release, `create --ocp-version-major 5` downloads the bundle for the host from the
 profile's mirror directory, verifies it, caches it under `~/.crc/cache`, and runs
 `crc start -b <file>`.
 
@@ -100,7 +106,7 @@ whichever version isn't the CRC default.
 
 ### Positive
 
-- `create --openshift 5` works now, without waiting for a CRC release.
+- `create --ocp-version-major 5` works now, without waiting for a CRC release.
 - 4 and 5 differ in data, not in code paths. Adding 5.1 is a new profile.
 - The bundle is verified more strictly than `crc start -b` does on its own, with no host tools.
 - Addons and channels that don't exist on 5 refuse up front instead of failing halfway.
