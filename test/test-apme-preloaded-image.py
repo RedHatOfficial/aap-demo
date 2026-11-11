@@ -175,7 +175,7 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(rc, 0, output)
         image = values["redhat-developer-hub"]["upstream"]["backstage"]["image"]
         self.assertEqual(image["registry"], "quay.io")
-        self.assertEqual(image["repository"], "aapdemo/apme-eap")
+        self.assertEqual(image["repository"], "ansible-automation-platform-dev-preview/automation-portal")
         self.assertEqual(image["digest"], DIGEST)
         plugins = values["redhat-developer-hub"]["global"]["dynamic"]["plugins"]
         self.assertEqual(sum(p["package"].startswith("./dynamic-plugins/dist/ansible-") for p in plugins), 6)
