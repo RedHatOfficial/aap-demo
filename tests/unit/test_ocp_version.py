@@ -1,0 +1,129 @@
+"""``--ocp-version`` resolution and the per-major profiles (ADR-041)."""
+
+from __future__ import annotations
+
+import re
+from types import SimpleNamespace
+
+import pytest
+
+from aap_demo.core import schema
+from aap_demo.core.errors import AapDemoError
+from aap_demo.infra import crc as infra_crc
+from aap_demo.infra import ocp_version as ocp
+
+MIRROR = ["4.21.0", "4.21.7", "4.22.0", "4.22.13", "5.0.0"]
+
+
+def _no_network():
+    raise AssertionError("the mirror must not be read for this value")
+
+
+def test_profiles_load_for_4_and_5() -> None:
+    profiles = ocp.load_profiles()
+    assert sorted(profiles) == [4, 5]
+    assert profiles[4].crc_bundle == profiles[4].stable
+    assert profiles[5].crc_bundle is None
+    assert "stable-2.6" not in profiles[5].aap_channels
+    assert profiles[5].operators == ()
+
+
+def test_the_4_profile_matches_the_pinned_crc_release() -> None:
+    """crc-release and the 4 profile move together when CRC is bumped."""
+    assert infra_crc.managed_crc_release() == "2.64.0"
+    assert ocp.load_profiles()[4].crc_bundle == "4.22.13"
+
+
+def test_unset_is_the_newest_supported_stable_without_the_network() -> None:
+    resolved = ocp.resolve("", available=_no_network)
+    assert resolved.version == "4.22.13"
+    assert resolved.builtin and resolved.stable
+
+
+def test_unset_follows_a_newly_supported_major() -> None:
+    profiles = ocp.load_profiles()
+    profiles[5] = ocp.Profile(**{**profiles[5].__dict__, "supported": True})
+    assert ocp.resolve("", profiles=profiles, available=_no_network).version == "5.0.0"
+
+
+@pytest.mark.parametrize("value", ["4", "4.22", "4.22.13"])
+def test_major_minor_and_exact_stable_agree(value: str) -> None:
+    resolved = ocp.resolve(value, available=_no_network)
+    assert (resolved.version, resolved.builtin) == ("4.22.13", True)
+
+
+@pytest.mark.parametrize("value", ["5", "5.0", "5.0.0"])
+def test_5_needs_a_download_but_no_lookup(value: str) -> None:
+    resolved = ocp.resolve(value, available=_no_network)
+    assert resolved.version == "5.0.0"
+    assert resolved.builtin is False and resolved.stable is True
+
+
+def test_an_older_minor_takes_its_newest_patch_from_the_mirror() -> None:
+    resolved = ocp.resolve("4.21", available=lambda: MIRROR)
+    assert resolved.version == "4.21.7"
+    assert resolved.stable is False and resolved.builtin is False
+
+
+def test_an_exact_version_must_be_on_the_mirror() -> None:
+    assert ocp.resolve("4.22.0", available=lambda: MIRROR).version == "4.22.0"
+    with pytest.raises(AapDemoError, match="No MicroShift 4.22.22 bundle"):
+        ocp.resolve("4.22.22", available=lambda: MIRROR)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("3", "OpenShift 3 is not supported"),
+        ("6.0", "OpenShift 6 is not supported"),
+        ("4.20", "older than 4.21"),
+        ("4.12.9", "older than 4.21"),
+        ("latest", "Not an OpenShift version"),
+        ("4.22.13.1", "Not an OpenShift version"),
+    ],
+)
+def test_bad_values_are_refused_before_any_lookup(value: str, message: str) -> None:
+    with pytest.raises(AapDemoError, match=re.escape(message)):
+        ocp.resolve(value, available=_no_network)
+
+
+@pytest.mark.parametrize(
+    ("requested", "cluster", "expected"),
+    [
+        ("", "5.0.0", True),
+        ("4", "4.22.13", True),
+        ("4", "5.0.0", False),
+        ("4.22", "4.22.13", True),
+        ("4.22", "4.21.7", False),
+        ("4.22.13", "4.22.13", True),
+        ("4.22.0", "4.22.13", False),
+    ],
+)
+def test_matches(requested: str, cluster: str, expected: bool) -> None:
+    assert ocp.matches(requested, cluster) is expected
+
+
+def _ctx(config: dict, env: dict):
+    return SimpleNamespace(config=SimpleNamespace(get=lambda k, d=None: config.get(k, d)), env=env)
+
+
+def test_requested_prefers_the_new_setting() -> None:
+    ctx = _ctx({"crc.ocp_version": "5", "crc.version": "4.21"}, {"CRC_VERSION": "4.21"})
+    assert ocp.requested(ctx) == ("5", None)
+
+
+def test_requested_reads_the_old_floor_and_names_it() -> None:
+    assert ocp.requested(_ctx({}, {"CRC_VERSION": "4.21"})) == ("4.21", "CRC_VERSION")
+    assert ocp.requested(_ctx({"crc.version": "4.21"}, {})) == ("4.21", "crc.version")
+    assert ocp.requested(_ctx({}, {})) == ("", None)
+
+
+def test_versions_in_keeps_full_versions_only() -> None:
+    names = ["../", "4.22.13/", "latest/", "4.9.0/", "4.22.0/", "5.0.0", "4.22/"]
+    assert ocp.versions_in(names) == ["4.9.0", "4.22.0", "4.22.13", "5.0.0"]
+
+
+def test_schema_declares_the_flag_and_env() -> None:
+    prop = schema.section("crc")["properties"]["ocp_version"]
+    assert prop["x-cli"] == {"flag": "--ocp-version"}
+    assert prop["x-env"] == "CRC_OCP_VERSION"

@@ -66,15 +66,27 @@ properties:
     x-gui: {group: cluster, widget: number, step: 10}
     x-order: 50
 
+  ocp_version:
+    type: string
+    default: ""
+    title: OpenShift version
+    description: >
+      MicroShift version create builds: a major (5), a minor (4.22), or an
+      exact version (4.22.13). Empty uses the newest supported stable
+      version. List the choices with aap-demo ocp-version-list.
+    x-cli: {flag: "--ocp-version"}
+    x-env: CRC_OCP_VERSION
+    x-config: crc.ocp_version
+    x-gui: {group: cluster, widget: text}
+    x-order: 5
+
   version:
     type: string
     default: ""
-    title: CRC version
+    title: CRC version (deprecated)
     description: >
-      MicroShift version floor for create and deploy. Empty uses 4.22.
-      A lower value such as 4.21 keeps the CRC binary already on PATH
-      instead of installing the pinned release. CRC 2.64 setup needs sudo
-      to grant CAP_NET_BIND_SERVICE; aap-demo does not run setcap itself.
+      Deprecated: use ocp_version. A value here is read as --ocp-version
+      when ocp_version is unset.
     x-cli: {flag: "--crc-version"}
     x-env: CRC_VERSION
     x-config: crc.version
