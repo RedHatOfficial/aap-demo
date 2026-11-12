@@ -2,7 +2,8 @@
 
 Fleet stays in Python. Legacy addons still live in ``addons/*/deploy.sh``.
 This module runs those scripts with the new command's kubeconfig and records
-the result in ``addons.enabled``.
+the result in ``addons.enabled``. A wheel carries them under
+``aap_demo/bundled/`` in the repository's layout (ADR-040).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 import aap_demo
 from aap_demo.addons.base import AddonKind
@@ -39,10 +40,23 @@ BUNDLED_ADDON_DIRS: tuple = (
     "product-demo-openshift",
     "product-demo-satellite",
     "eda-playground",
+    "ao",
+    "mcp-server",
+    "ollama",
 )
 
 #: Names ``aap-demo enable`` prints when no addon is given.
-PUBLIC_SHELL_ADDONS: tuple = ("product-demos", "product-demo-satellite", "eda-playground")
+PUBLIC_SHELL_ADDONS: tuple = (
+    "product-demos",
+    "product-demo-satellite",
+    "eda-playground",
+    "ao",
+    "mcp-server",
+    "ollama",
+)
+
+#: Extra environment for one installer run, worked out before it starts.
+Prepare = Callable[[AppContext], Dict[str, str]]
 
 
 _INSTALLER_TOOLS = ("bash", "curl", "jq")
@@ -54,7 +68,7 @@ def scripts_root() -> Path:
     """Directory that contains the bundled addon deploy scripts.
 
     A checkout wins so ``pip install -e`` uses the tree you are editing.
-    A wheel falls back to the copy under ``aap_demo/bundled_addons``.
+    A wheel falls back to the copy under ``aap_demo/bundled/addons``.
     """
     package = Path(aap_demo.__file__).resolve().parent
     checkout = package.parents[1]
@@ -63,7 +77,7 @@ def scripts_root() -> Path:
         checkout_addons / "product-demos" / "deploy.sh"
     ).is_file():
         return checkout_addons
-    packaged = package / "bundled_addons"
+    packaged = package / "bundled" / "addons"
     if (packaged / "product-demos" / "deploy.sh").is_file():
         return packaged
     raise AddonError(
@@ -108,6 +122,8 @@ class ShellAddon:
         wire_after_enable: bool = True,
         dependencies: Sequence[str] = ("product-demos-base",),
         state_dir_env: Optional[str] = None,
+        self_wire: bool = False,
+        prepare: Optional[Prepare] = None,
     ) -> None:
         self.name = name
         self.public = name in PUBLIC_SHELL_ADDONS
@@ -116,6 +132,10 @@ class ShellAddon:
         self.wire_after_enable = wire_after_enable
         self.dependencies = tuple(dependencies)
         self.state_dir_env = state_dir_env
+        #: The installer wires itself after a good install (``AAP_DEMO_WIRE_AFTER_DEPLOY=1``).
+        self.self_wire = self_wire
+        #: Runs before the installer on enable: dependencies first, then extra environment.
+        self.prepare = prepare
 
     def enable(self, ctx: AppContext, args: object) -> int:
         extra = getattr(args, "addon_args", None) or []
@@ -137,11 +157,13 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
     if not deploy.is_file():
         raise AddonError(f"addon {name!r} has no deploy.sh")
 
+    extra_env = addon.prepare(ctx) if addon.prepare is not None and not delete else {}
     env = ctx.kube_env()
+    env.update(extra_env)
     env["NAMESPACE"] = ctx.namespace
-    # Bash wires once after enable. Leave the installer's own wiring off so a
-    # wheel, which has no includes/addon-wire.sh, still exits 0 after a good install.
-    env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "0"
+    # Product demos wire once, after enable, from this module. Addons such as AO
+    # wire inside their installer, before steps that need the wiring.
+    env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "1" if addon.self_wire and not delete else "0"
     env["AAP_DEMO_ENABLED_ADDONS"] = " ".join(_enabled(ctx))
     if addon.state_dir_env:
         env[addon.state_dir_env] = str(ctx.paths.state_dir / name)
