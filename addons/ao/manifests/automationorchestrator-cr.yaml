@@ -37,7 +37,8 @@ spec:
         name: orchestrator-postgres-secret
     caCertSecretRef:
       name: orchestrator-postgres-ca
-    host: orchestrator-postgres-rw
+    # The full Service name: Temporal checks it against the service-ca certificate.
+    host: orchestrator-postgres-rw.__NAMESPACE__.svc
     port: 5432
     sslMode: verify-ca
     temporalDatabase:

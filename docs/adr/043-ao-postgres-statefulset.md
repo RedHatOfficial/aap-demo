@@ -36,7 +36,9 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
 ([`addons/ao/manifests/postgres.yaml`](../../addons/ao/manifests/postgres.yaml)), and drop `aapctl`.
 
 - **Same names.** The Service is `orchestrator-postgres-rw` and the credential Secrets keep their
-  names, so the AutomationOrchestrator CR does not change.
+  names. The CR's `postgres.host` becomes the full name, `orchestrator-postgres-rw.<namespace>.svc`:
+  Temporal checks the host name against the certificate even with `verify-ca`, and the service-ca
+  certificate names only the `.svc` and `.svc.cluster.local` forms.
 - **Image.** `deploy.sh` reads the `rhel9/postgresql-15` image from AAP's own StatefulSet in the AAP
   namespace. That image is already on the node, so nothing new is pulled. When it can't be read, the
   addon uses `registry.redhat.io/rhel9/postgresql-15`. `AO_POSTGRES_IMAGE` overrides both.
@@ -73,7 +75,7 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
 
 ### Neutral
 
-- The AutomationOrchestrator CR and the Secret names are unchanged.
+- The Secret names are unchanged. The CR changes only `postgres.host`.
 - The Python port of the addon can apply the same manifest later.
 
 ## Alternatives Considered
