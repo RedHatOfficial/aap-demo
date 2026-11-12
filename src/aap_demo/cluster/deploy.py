@@ -241,14 +241,16 @@ def run(
             ),
         )
     ctx.console.checkpoint(f"Connected to {kubectl.current_context(ctx.runner)}")
+    # Version checks come first: a mismatch stops before the host trust store changes.
+    # --ocp-version goes first so a wrong major reads as a mismatch, not "too old".
+    _check_ocp_version(ctx)
+    if not infra_crc.verify_version(ctx):
+        raise AapDemoError("CRC version check failed")
+
     ctx.console.step("Trusting the ingress certificate")
     from aap_demo.cluster import ingress_ca
 
     ingress_ca.install(ctx)
-
-    if not infra_crc.verify_version(ctx):
-        raise AapDemoError("CRC version check failed")
-    _check_ocp_version(ctx)
 
     ctx.console.step("Waiting for cluster networking")
     wait_for_ovn(ctx, sleep=sleep, clock=clock)
