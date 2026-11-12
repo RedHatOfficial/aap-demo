@@ -104,6 +104,25 @@ def test_a_failed_dependency_stops_before_ao(app_ctx) -> None:
     assert app_ctx.config.get("addons.enabled") in (None, [])
 
 
+def test_the_global_force_flag_reaches_the_installer(app_ctx) -> None:
+    app_ctx.config.set("addons.enabled", ["product-demos", "mcp-server", "ollama"])
+    app_ctx.force = True
+    app_ctx.runner.ok(["bash", _deploy("ao")])
+
+    assert _enable(app_ctx) == 0
+
+    assert _call(app_ctx, "ao").env["FORCE"] == "1"
+
+
+def test_force_is_not_set_without_the_flag(app_ctx) -> None:
+    app_ctx.config.set("addons.enabled", ["product-demos", "mcp-server", "ollama"])
+    app_ctx.runner.ok(["bash", _deploy("ao")])
+
+    assert _enable(app_ctx) == 0
+
+    assert "FORCE" not in _call(app_ctx, "ao").env
+
+
 def test_disable_ao_runs_only_its_delete(app_ctx) -> None:
     app_ctx.config.set("addons.enabled", ["mcp-server", "ollama", "ao"])
     app_ctx.runner.ok(["bash", _deploy("ao"), "--delete"])

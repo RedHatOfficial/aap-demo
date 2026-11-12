@@ -165,6 +165,9 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
     # wire inside their installer, before steps that need the wiring.
     env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "1" if addon.self_wire and not delete else "0"
     env["AAP_DEMO_ENABLED_ADDONS"] = " ".join(_enabled(ctx))
+    # The global --force reaches installers the way the bash command passed it.
+    if ctx.force:
+        env["FORCE"] = "1"
     if addon.state_dir_env:
         env[addon.state_dir_env] = str(ctx.paths.state_dir / name)
 
