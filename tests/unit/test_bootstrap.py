@@ -676,11 +676,15 @@ def test_grow_root_warns_when_the_volume_group_is_too_small(
         assert console.lines == expected
 
 
-def test_grow_root_warns_when_the_resize_fails(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize(("returncode", "stdout"), [(5, ""), (0, "unknown\n")])
+def test_grow_root_warns_when_the_resize_fails(monkeypatch, tmp_path, returncode, stdout) -> None:
+    """A failed resize, or a root size the probe couldn't read, both warn."""
     monkeypatch.setattr(
         bootstrap.ssh_mod,
         "exec_remote",
-        lambda *args, **kwargs: CompletedCommand(argv=("ssh",), returncode=5, stdout=""),
+        lambda *args, **kwargs: CompletedCommand(
+            argv=("ssh",), returncode=returncode, stdout=stdout
+        ),
     )
     console = _GrowConsole()
     ctx = type("Ctx", (), {"console": console, "runner": None})()

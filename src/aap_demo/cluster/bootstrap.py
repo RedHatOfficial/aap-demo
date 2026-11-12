@@ -309,12 +309,13 @@ def _grow_root(ctx: AppContext, key: Path) -> None:
         "2>/dev/null | awk '{print int($1)}'); "
         "free=$(sudo vgs --noheadings -o vg_free --units g --nosuffix rhel "
         "2>/dev/null | awk '{print int($1)}'); "
-        'if [ -z "$size" ] || [ "$size" -ge 40 ]; then echo unchanged; exit 0; fi; '
+        'if [ -z "$size" ]; then echo unknown; exit 0; fi; '
+        'if [ "$size" -ge 40 ]; then echo unchanged; exit 0; fi; '
         'if [ -z "$free" ] || [ "$free" -lt 20 ]; then echo "small $size"; exit 0; fi; '
         "sudo lvextend -L 40G /dev/rhel/root && sudo xfs_growfs /sysroot && echo grown"
     )
     result = ssh_mod.exec_remote(ctx.runner, key, "bash", "-c", script, sudo=False)
-    if not result.ok:
+    if not result.ok or "unknown" in result.stdout:
         ctx.console.warn(
             "Could not grow the CRC root filesystem to 40G. A full AAP needs about 40G, so image "
             "pulls can fill it. Check with: aap-demo ssh, then df -h /var"
