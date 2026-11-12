@@ -436,8 +436,9 @@ kubectl get automationorchestrator -n automation-orchestrator -o yaml
 
 ### Upgrading from a CloudNativePG install
 
-Installs from before ADR-043 keep AO's database in a CloudNativePG cluster. `enable ao` stops on one
-and says so. `aap-demo enable ao --force` replaces it with the new PostgreSQL, which deletes AO's data.
+Installs from before ADR-043 keep AO's database in a CloudNativePG cluster. A running one is left as
+it is, and `enable ao` prints a note. If AO is not running, `enable ao` stops and says so.
+`aap-demo enable ao --force` replaces the database with the new PostgreSQL, which deletes AO's data.
 CloudNativePG itself (`cnpg-system`) is left installed.
 
 ## Related documentation

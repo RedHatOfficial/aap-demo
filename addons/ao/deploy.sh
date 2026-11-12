@@ -1390,7 +1390,11 @@ if [ -z "$FORCE" ]; then
     deploy_ao_instance
     wait_for_ao_instance_ready
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
-    echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
+    echo "  Use aap-demo enable ao --force (or ./deploy.sh --force) to reinstall."
+    if ao_cnpg_cluster_exists; then
+      echo "  Its database is still in CloudNativePG, which aap-demo no longer uses."
+      echo "  aap-demo enable ao --force moves AO to the new PostgreSQL and deletes AO's data."
+    fi
     echo ""
     configure_ao_local_aap_access
     allow_aap_to_ao_backend

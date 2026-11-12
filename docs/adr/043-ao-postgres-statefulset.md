@@ -49,9 +49,10 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
   the NFS class AO's other volumes use. `AO_POSTGRES_STORAGE_CLASS` overrides it.
 - **No aapctl.** `scripts/generate-manifests.sh` and the `aapctl uninstall` call on disable are removed.
   The CR is maintained against the CRD (`kubectl explain automationorchestrator.spec`).
-- **Existing installs.** An AO namespace that still has a CNPG `Cluster` stops `enable ao` with a
-  message. `enable ao --force` deletes it and creates the new database, which loses AO's data, as
-  `--force` already did. CNPG itself is left installed and disable says so.
+- **Existing installs.** A running AO on a CNPG `Cluster` is left as it is, and `enable ao` prints a
+  note. One that is not running stops `enable ao` with a message. `enable ao --force` deletes the CNPG
+  cluster and creates the new database, which loses AO's data, as `--force` already did. CNPG itself
+  is left installed and disable says so.
 - **Windows.** The PowerShell native AO path (ADR-030) applies the same `postgres.yaml`.
 
 ## Consequences
