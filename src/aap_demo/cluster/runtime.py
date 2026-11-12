@@ -34,7 +34,7 @@ def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> No
     """
     ctx.console.out("")
     ctx.console.step("aap-demo start - Starting CRC cluster...")
-    started = ctx.runner.run(["crc", "start"], sink=ctx.console.log_sink())
+    started = ctx.runner.run(["crc", "start"], sink=ctx.console.log_sink(verbose=ctx.verbose))
     if not started.ok:
         raise AapDemoError(
             f"crc start failed (exit {started.returncode})",
@@ -62,7 +62,7 @@ def stop(ctx: AppContext) -> None:
     """Ports ``cmd_stop``. A failed ``crc stop`` still reports the attempt, as bash does."""
     ctx.console.out("")
     ctx.console.step("aap-demo stop - Stopping CRC cluster...")
-    ctx.runner.run(["crc", "stop"], sink=ctx.console.log_sink())
+    ctx.runner.run(["crc", "stop"], sink=ctx.console.log_sink(verbose=ctx.verbose))
     ctx.console.success("CRC cluster stopped")
     ctx.console.out("To restart: aap-demo start")
 

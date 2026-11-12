@@ -155,7 +155,7 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
     if result_file is not None:
         env["AAP_DEMO_RESULT_FILE"] = str(result_file)
     try:
-        result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink())
+        result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink(verbose=ctx.verbose))
         failed_domains = _partial_domains(result_file) if not result.ok else None
     finally:
         if result_file is not None:
@@ -236,7 +236,7 @@ def _wire(ctx: AppContext, env: Dict[str, str]) -> None:
         result = ctx.runner.run(
             ["bash", str(script), str(library)],
             env=wire_env,
-            sink=ctx.console.log_sink(),
+            sink=ctx.console.log_sink(verbose=ctx.verbose),
         )
     finally:
         if token_path is not None:

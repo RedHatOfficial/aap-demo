@@ -180,14 +180,14 @@ def _start_crc(ctx: AppContext, secret: Path, *, bundle: Optional[Path] = None) 
             "bundle against Red Hat's signed checksum before starting it."
         )
     started = ctx.runner.run(
-        ["crc", "start", "-p", str(secret), *extra], sink=ctx.console.log_sink()
+        ["crc", "start", "-p", str(secret), *extra], sink=ctx.console.log_sink(verbose=ctx.verbose)
     )
     if started.ok:
         ctx.console.checkpoint("CRC is running")
         return
     ctx.console.warn("CRC post-start did not finish; retrying")
     retried = ctx.runner.run(
-        ["crc", "start", "--pull-secret-file", str(secret), *extra], sink=ctx.console.log_sink()
+        ["crc", "start", "--pull-secret-file", str(secret), *extra], sink=ctx.console.log_sink(verbose=ctx.verbose)
     )
     if not retried.ok:
         raise AapDemoError("crc start failed", hint="See the crc output above.")
@@ -516,7 +516,9 @@ def _ensure_stable(ctx: AppContext, secret: Path, *, sleep: Callable[[float], No
     if infra_crc.wait_until_stable(ctx.runner, attempts=attempts, sleep_seconds=pause, sleep=sleep):
         return
     ctx.console.warn("CRC did not remain healthy after setup; restarting CRC once...")
-    restarted = ctx.runner.run(["crc", "start", "-p", str(secret)], sink=ctx.console.log_sink())
+    restarted = ctx.runner.run(
+        ["crc", "start", "-p", str(secret)], sink=ctx.console.log_sink(verbose=ctx.verbose)
+    )
     if restarted.ok and infra_crc.wait_until_stable(
         ctx.runner, attempts=attempts, sleep_seconds=pause, sleep=sleep
     ):
@@ -665,7 +667,7 @@ def create(
 
     if state == infra_crc.STATE_NOT_CREATED:
         ctx.console.progress("Running CRC setup...")
-        setup = ctx.runner.run(["crc", "setup"], sink=ctx.console.log_sink())
+        setup = ctx.runner.run(["crc", "setup"], sink=ctx.console.log_sink(verbose=ctx.verbose))
         if not setup.ok:
             release = infra_crc.managed_crc_release()
             raise AapDemoError(
