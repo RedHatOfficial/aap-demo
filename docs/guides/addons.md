@@ -85,9 +85,10 @@ aap-demo enable eda-playground
 kubectl get route eda-playground -n eda-playground
 ```
 
-Open the Route and finish AAP OAuth login manually. The default image is an
-experimental maintainer-hosted image; set `EDA_PLAYGROUND_IMAGE` to a reviewed
-tag or digest when appropriate. This addon is not supported for production use.
+Open the Route and finish AAP OAuth login manually. Set
+`EDA_PLAYGROUND_IMAGE` to a reviewed immutable digest before enabling the addon;
+mutable tags require the explicit `EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true`
+override for disposable testing. This addon is not supported for production use.
 The live smoke test waits for the browser check by default; use
 `AAP_DEMO_LIVE_NONINTERACTIVE=true` for unattended validation, which reports
 OAuth as unverified.
@@ -145,8 +146,9 @@ The addon creates the Gateway OAuth application and removes its owned
 application and namespace during cleanup. Retry disable if cleanup reports an
 error.
 
-The default image is an experimental image in a maintainer's personal GHCR
-namespace. Review it or set `EDA_PLAYGROUND_IMAGE` to a reviewed tag or digest.
-This addon is not supported for production use. See the
+The image is experimental and hosted in a maintainer's personal GHCR namespace.
+Set `EDA_PLAYGROUND_IMAGE` to a reviewed immutable digest; mutable tags require
+the explicit `EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true` override for disposable
+testing. This addon is not supported for production use. See the
 [addon README](../../addons/eda-playground/README.md) for configuration and
 limitations.

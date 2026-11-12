@@ -14,9 +14,15 @@ It is experimental and not supported for production use.
 
 The current image is experimental and hosted in the maintainer's personal
 GitHub Container Registry namespace. It is not an official Red Hat image.
-Review the image before use. The default is the upstream
-`ghcr.io/bbgrimmett2/eda-playground:latest` tag. For repeatable deployments,
-set `EDA_PLAYGROUND_IMAGE` to a reviewed tag or digest before deploying.
+Review the image before use and set `EDA_PLAYGROUND_IMAGE` to a reviewed
+immutable digest before deploying:
+
+```bash
+  export EDA_PLAYGROUND_IMAGE=ghcr.io/bbgrimmett2/eda-playground@sha256:<reviewed-digest>
+```
+
+The deployer rejects mutable tags by default. For a disposable test only,
+`EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true` explicitly opts into a tag.
 
 ## Prerequisites
 
@@ -71,6 +77,9 @@ that mode skips the wait and reports OAuth as unverified.
   namespaces must carry the addon ownership label before deployment can reuse
   them. The AAP namespace and system namespaces are refused.
 - Image: `EDA_PLAYGROUND_IMAGE`.
+- TLS: Gateway certificates are validated by default. Set
+  `EDA_PLAYGROUND_INSECURE_TLS=true` only for a disposable cluster with an
+  untrusted certificate.
 - Application resources: 100m CPU and 128Mi memory requested; 500m CPU and
   512Mi memory limit.
 - OAuth client and session values are read from the Kubernetes Secret and are

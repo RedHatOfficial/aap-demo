@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export EDA_PLAYGROUND_IMAGE='ghcr.io/test/eda-playground@sha256:fixture'
 mkdir -p "$TMP/bin"
 export REAL_MV
 REAL_MV="$(command -v mv)"
@@ -279,6 +280,7 @@ run_case() {
   if [[ "$MOCK_CASE" == paginated_* || "$MOCK_CASE" == repeated_id || "$MOCK_CASE" == page_* ]]; then
     grep -Fq '/applications/?page=2' "$MOCK_LOG" || fail 'did not exhaust pagination'
   fi
+  ! grep -Fq 'curl --config - -fsS -k' "$MOCK_LOG" || fail 'disabled TLS verification by default'
   ! grep -Fq 'curl --config - -fsSk https://untrusted.example' "$MOCK_LOG" || fail 'sent credentials to foreign pagination URL'
   echo "PASS: $MOCK_CASE"
 }
@@ -286,6 +288,7 @@ failures=0
 cases=(state_write_deploy state_write_delete state_write_marker_only state_write_conflict
   ingress_warning ingress_invalid ingress_long_label ingress_invalid_override ingress_error_with_domain
   saved_mismatch marker_mismatch state_conflict invalid_saved invalid_marker marker_only matching_state owned_absent
+  unowned_existing
   paginated_duplicate paginated_saved paginated_marker repeated_id page_failure page_invalid foreign_next traversal_next cyclic_next invalid_app_id
   secret_dry_run secret_apply ingress_absent ingress_api_absent ingress_forbidden ingress_transport ingress_timeout ingress_other_notfound ingress_empty)
 if [ "$#" -gt 0 ]; then cases=("$@"); fi

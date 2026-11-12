@@ -9,7 +9,9 @@ AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
 NAMESPACE="${EDA_PLAYGROUND_NAMESPACE:-eda-playground}"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-EDA Playground}"
 STATE_DIR="${EDA_PLAYGROUND_STATE_DIR:-${HOME}/.aap-demo/eda-playground}"
-IMAGE="${EDA_PLAYGROUND_IMAGE:-ghcr.io/bbgrimmett2/eda-playground:latest}"
+IMAGE="${EDA_PLAYGROUND_IMAGE:-}"
+ALLOW_UNPINNED_IMAGE="${EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE:-false}"
+INSECURE_TLS="${EDA_PLAYGROUND_INSECURE_TLS:-false}"
 ACTION="${1:-deploy}"
 
 if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [[ "$ACTION" != "--delete" && "$ACTION" != "delete" ]]; }; then
@@ -31,8 +33,19 @@ command -v kubectl >/dev/null 2>&1 || {
 
 # curl reads credentials from its configuration on stdin, never from argv.
 # Escape values interpreted by curl's quoted configuration syntax.
+case "$INSECURE_TLS" in
+  true) CURL_INSECURE=true ;;
+  false) CURL_INSECURE=false ;;
+  *) echo 'ERROR: EDA_PLAYGROUND_INSECURE_TLS must be true or false' >&2; exit 2 ;;
+esac
 gateway_curl() {
-  printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | curl --config - -fsSk "$@" 2>/dev/null
+  if [ "$CURL_INSECURE" = true ]; then
+    printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | \
+      curl --config - -fsS --insecure "$@" 2>/dev/null
+  else
+    printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | \
+      curl --config - -fsS "$@" 2>/dev/null
+  fi
 }
 
 CREDENTIALS="$STATE_DIR/oauth_credentials.json"
@@ -340,6 +353,14 @@ for required in jq curl openssl base64; do
   }
 done
 
+if [ -z "$IMAGE" ]; then
+  echo 'ERROR: EDA_PLAYGROUND_IMAGE must be set to an immutable image digest' >&2
+  exit 2
+fi
+if [[ "$IMAGE" != *@sha256:* ]] && [ "$ALLOW_UNPINNED_IMAGE" != true ]; then
+  echo 'ERROR: EDA_PLAYGROUND_IMAGE must use a sha256 digest; set EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true only for disposable testing' >&2
+  exit 2
+fi
 if [[ "$IMAGE" == *'|'* || "$IMAGE" == *$'\n'* ]]; then
   echo "ERROR: EDA_PLAYGROUND_IMAGE contains unsupported characters" >&2
   exit 2
@@ -467,7 +488,8 @@ elif [ -n "$SAVED_ID" ] && [ "$MATCH_COUNT" -gt 0 ]; then
   echo 'ERROR: OAuth application ownership mismatch or duplicate ID; restore matching state or resolve duplicates before retrying' >&2
   exit 1
 elif [ "$MATCH_COUNT" -eq 1 ]; then
-  OAUTH_APP_ID="$(jq -r --arg name "$OAUTH_APP_NAME" '.results[] | select(.name == $name) | .id' <<<"$APPS")"
+  echo 'ERROR: existing OAuth application is not owned by EDA Playground; provide matching local state or choose a unique OAUTH_APP_NAME' >&2
+  exit 1
 elif [ "$MATCH_COUNT" -gt 1 ]; then
   echo "ERROR: multiple OAuth applications have the configured name; restore matching saved credentials or resolve duplicates before retrying" >&2
   exit 1

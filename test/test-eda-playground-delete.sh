@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export EDA_PLAYGROUND_IMAGE='ghcr.io/test/eda-playground@sha256:fixture'
 mkdir -p "$TMP/bin"
 REAL_BASE64="$(command -v base64)"
 cat >"$TMP/bin/kubectl" <<'STUB'

@@ -28,10 +28,10 @@ redirect URI after the route exists.
 
 The addon is experimental. Its current container image is hosted in Brian’s
 personal GHCR namespace and is not an official Red Hat image. The image remains
-configurable; the maintained default is `:latest` at the user's explicit request
-so live testing picks up the newest published image. The deployment therefore
-uses `imagePullPolicy: Always`. Operators needing reproducibility should set
-`EDA_PLAYGROUND_IMAGE` to a reviewed immutable tag or digest.
+configurable; operators must set `EDA_PLAYGROUND_IMAGE` to a reviewed immutable
+digest before deployment. Mutable tags require an explicit
+`EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true` override for disposable testing. The
+deployment therefore uses `imagePullPolicy: Always`.
 
 ## Design
 

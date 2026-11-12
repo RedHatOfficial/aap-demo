@@ -27,6 +27,12 @@ for file in README.md deploy.sh namespace.yaml configmap.yaml service.yaml deplo
 done
 
 README="$ADDON_DIR/README.md"
+DEPLOY="$ADDON_DIR/deploy.sh"
+grep -Fq 'EDA_PLAYGROUND_IMAGE:-}' "$DEPLOY" || fail "deployment must require an explicit image"
+grep -Fq 'EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE' "$DEPLOY" || fail "deployment must make unpinned images explicit"
+grep -Fq -- '--insecure' "$DEPLOY" || fail "deployment must make insecure TLS explicit"
+grep -Fq 'existing OAuth application is not owned' "$DEPLOY" \
+  || fail "deployment must reject unowned OAuth applications"
 for required in \
   'aap-demo enable eda-playground' \
   'aap-demo disable eda-playground' \

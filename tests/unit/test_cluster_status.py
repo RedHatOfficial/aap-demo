@@ -175,6 +175,7 @@ def test_gather_running_cluster_full_report(
 
     addon_names = {a.name: a.enabled for a in report.addons}
     assert addon_names["ao"] is False
+    assert "eda-playground" in status_mod.AVAILABLE_ADDONS
     assert set(addon_names) == set(status_mod.AVAILABLE_ADDONS)
 
 

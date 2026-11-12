@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export EDA_PLAYGROUND_IMAGE='ghcr.io/test/eda-playground@sha256:fixture'
 mkdir -p "$TMP/bin"
 REAL_JQ="$(command -v jq)" REAL_BASE64="$(command -v base64)"
 cat >"$TMP/bin/kubectl" <<'STUB'
@@ -42,7 +43,7 @@ case " $* " in
     # Repeated deploys see the ID created on the first deploy.
     if [[ "$MOCK_CASE" = repeat || "$MOCK_CASE" = revision_collision ]] && [ -f "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ]; then
       echo '{"count":1,"results":[{"id":43,"name":"EDA Playground","client_id":"client-new"}]}'
-    elif [ "$MOCK_CASE" = first ]; then echo '{"count":0,"results":[]}'; elif [[ "$MOCK_CASE" = later_saved || "$MOCK_CASE" = ambiguous ]]; then echo '{"count":2,"results":[{"id":41,"name":"EDA Playground","client_id":"client-wrong"},{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; else echo '{"count":1,"results":[{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; fi ;;
+    elif [[ "$MOCK_CASE" = first || "$MOCK_CASE" = micro || "$MOCK_CASE" = micro_override || "$MOCK_CASE" = custom_namespace || "$MOCK_CASE" = revision_collision ]]; then echo '{"count":0,"results":[]}'; elif [[ "$MOCK_CASE" = later_saved || "$MOCK_CASE" = ambiguous ]]; then echo '{"count":2,"results":[{"id":41,"name":"EDA Playground","client_id":"client-wrong"},{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; else echo '{"count":1,"results":[{"id":42,"name":"EDA Playground","client_id":"client-existing"}]}'; fi ;;
   *'/applications/'*) if [[ " $* " == *' -X POST '* ]]; then echo '{"id":43,"client_id":"client-new","client_secret":"fixture-client-secret"}'; elif [ "$MOCK_CASE" = patch_secret_fail ] && [[ " $* " == *' -X PATCH '* ]]; then echo '{"client_secret":"fixture-client-secret","password":"fixture-admin-password","session":"fixture-session-secret"}' >&2; exit 22; else echo '{}'; fi ;;
 esac
 STUB
@@ -95,6 +96,10 @@ run_case() {
   if [[ "$case_name" = reuse || "$case_name" = later_saved ]]; then
     mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
     printf '%s\n' '{"oauth_app_id":"42","client_id":"client-existing","client_secret":"fixture-saved-secret"}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
+  fi
+  if [ "$case_name" = missing ]; then
+    mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
+    printf '%s\n' 42 >"$EDA_PLAYGROUND_STATE_DIR/oauth_app_id"
   fi
   if [[ "$case_name" = micro || "$case_name" = micro_override ]]; then export MOCK_MICRO=yes; fi
   if [ "$case_name" = micro_override ]; then export EDA_PLAYGROUND_DOMAIN=apps.override.test; else unset EDA_PLAYGROUND_DOMAIN || true; fi
