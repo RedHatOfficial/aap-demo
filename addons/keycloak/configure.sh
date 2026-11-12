@@ -188,7 +188,9 @@ print_plan() {
   else
     echo "  Mode: apply"
   fi
-  [ "$MAP_GROUPS" = true ] && echo "  Group mapping: enabled"
+  if [ "$MAP_GROUPS" = true ]; then
+    echo "  Group mapping: enabled"
+  fi
 }
 
 print_plan
@@ -252,8 +254,16 @@ fi
 
 if [ "$TARGET" != aap ]; then
   AO_PASSWORD="$(kubectl get secret automation-orchestrator-initial-admin-password -n automation-orchestrator -o jsonpath='{.data.password}' | base64 -d)"
+  AO_COOKIE="$REQUEST_DIR/ao.cookie"
+  CSRF="$(curl_local -f -X POST -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/csrf_token" | jq -r .csrf_token)"
+  [ -n "$CSRF" ] || {
+    echo "ERROR: AO CSRF token request failed" >&2
+    exit 1
+  }
+  AO_CSRF_AUTH="$REQUEST_DIR/ao-csrf.conf"
+  printf 'header = "X-CSRF-Token: %s"\n' "$CSRF" >"$AO_CSRF_AUTH"
   printf '%s' "$(jq -nc --arg p "$AO_PASSWORD" '{username:"admin",password:$p}')" >"$REQUEST_DIR/ao-login.json"
-  AO_TOKEN="$(curl_local -f -X POST "https://${AO_HOST}/api/v1/auth/login" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
+  AO_TOKEN="$(curl_local -f -X POST -b "$AO_COOKIE" -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/login" --config "$AO_CSRF_AUTH" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
   [ -n "$AO_TOKEN" ] && [ "$AO_TOKEN" != null ] || {
     echo "ERROR: AO admin login failed" >&2
     exit 1
