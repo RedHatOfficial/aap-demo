@@ -383,6 +383,19 @@ def test_deploy_rejects_crc_older_than_the_minimum(app_ctx, healthy) -> None:
     assert not healthy.called("kubectl create namespace")
 
 
+def test_an_ocp_version_mismatch_stops_before_the_trust_store_changes(
+    app_ctx, healthy, monkeypatch
+) -> None:
+    trusted: list = []
+    monkeypatch.setattr("aap_demo.cluster.ingress_ca.install", lambda ctx: trusted.append(ctx))
+    app_ctx.config.set("crc.ocp_version", "5")
+
+    with pytest.raises(AapDemoError, match="runs OpenShift 4.22.3, not 5"):
+        _run(app_ctx, cr_name="controller")
+    assert trusted == []
+    assert not healthy.called("kubectl create namespace")
+
+
 def test_catalog_scc_admission_is_not_reported_as_a_timeout(app_ctx, healthy) -> None:
     healthy._rules.insert(
         0, (("kubectl", "get", "catalogsource"), CompletedCommand(argv=(), returncode=0, stdout=""))

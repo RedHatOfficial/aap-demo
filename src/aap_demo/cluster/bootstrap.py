@@ -11,10 +11,11 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from aap_demo import data as packaged
 from aap_demo.cluster import coredns, pull_secret
@@ -27,6 +28,7 @@ from aap_demo.core.output import is_structured
 from aap_demo.core.paths import display_path
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
+from aap_demo.infra import bundle_fetch, bundle_mirror, ocp_version
 from aap_demo.infra import crc as infra_crc
 
 CRIO_PULL_SECRET = "/etc/crio/openshift-pull-secret"
@@ -169,15 +171,23 @@ def _persistent_store_ok(ctx: AppContext) -> bool:
     return True
 
 
-def _start_crc(ctx: AppContext, secret: Path) -> None:
+def _start_crc(ctx: AppContext, secret: Path, *, bundle: Optional[Path] = None) -> None:
     ctx.console.step("Starting CRC")
-    started = ctx.runner.run(["crc", "start", "-p", str(secret)], sink=ctx.console.log_sink())
+    extra = ["-b", str(bundle)] if bundle is not None else []
+    if bundle is not None:
+        ctx.console.note(
+            "CRC will warn that it expected its own bundle version. aap-demo checked this "
+            "bundle against Red Hat's signed checksum before starting it."
+        )
+    started = ctx.runner.run(
+        ["crc", "start", "-p", str(secret), *extra], sink=ctx.console.log_sink()
+    )
     if started.ok:
         ctx.console.checkpoint("CRC is running")
         return
     ctx.console.warn("CRC post-start did not finish; retrying")
     retried = ctx.runner.run(
-        ["crc", "start", "--pull-secret-file", str(secret)], sink=ctx.console.log_sink()
+        ["crc", "start", "--pull-secret-file", str(secret), *extra], sink=ctx.console.log_sink()
     )
     if not retried.ok:
         raise AapDemoError("crc start failed", hint="See the crc output above.")
@@ -299,13 +309,28 @@ def _grow_root(ctx: AppContext, key: Path) -> None:
         "2>/dev/null | awk '{print int($1)}'); "
         "free=$(sudo vgs --noheadings -o vg_free --units g --nosuffix rhel "
         "2>/dev/null | awk '{print int($1)}'); "
-        'if [ -z "$size" ] || [ "$size" -ge 40 ]; then echo unchanged; exit 0; fi; '
-        'if [ -z "$free" ] || [ "$free" -lt 20 ]; then echo unchanged; exit 0; fi; '
+        'if [ -z "$size" ]; then echo unknown; exit 0; fi; '
+        'if [ "$size" -ge 40 ]; then echo unchanged; exit 0; fi; '
+        'if [ -z "$free" ] || [ "$free" -lt 20 ]; then echo "small $size"; exit 0; fi; '
         "sudo lvextend -L 40G /dev/rhel/root && sudo xfs_growfs /sysroot && echo grown"
     )
     result = ssh_mod.exec_remote(ctx.runner, key, "bash", "-c", script, sudo=False)
-    if result.ok and "grown" in result.stdout:
+    if not result.ok or "unknown" in result.stdout:
+        ctx.console.warn(
+            "Could not grow the CRC root filesystem to 40G. A full AAP needs about 40G, so image "
+            "pulls can fill it. Check with: aap-demo ssh, then df -h /var"
+        )
+        return
+    if "grown" in result.stdout:
         ctx.console.checkpoint("CRC root filesystem extended to 40G")
+        return
+    small = re.search(r"small (\d+)", result.stdout)
+    if small:
+        ctx.console.warn(
+            f"The CRC root filesystem stays at {small.group(1)}G. A full AAP needs about 40G, "
+            "so image pulls can fill it. Raise --disk or lower --pv-size, then destroy and "
+            "create again."
+        )
 
 
 def _configure_nipio(ctx: AppContext, key: Path, *, sleep: Callable[[float], None]) -> None:
@@ -502,6 +527,44 @@ def _ensure_stable(ctx: AppContext, secret: Path, *, sleep: Callable[[float], No
     )
 
 
+def _mirror_versions(floor: str) -> List[str]:
+    """The mirror's versions for this host, or a retry message when it can't be read."""
+    try:
+        return bundle_mirror.host_versions(minimum=floor)
+    except OSError as exc:
+        raise AapDemoError(
+            "Could not read the MicroShift versions from mirror.openshift.com",
+            hint=f"Check the network connection and run create again. ({exc})",
+        ) from exc
+
+
+def _target_version(ctx: AppContext, home: Path, state: str) -> Optional[ocp_version.Resolved]:
+    """The ``--ocp-version`` create builds, or None for the old ``CRC_VERSION`` path.
+
+    An existing VM of another version stops here, before any change.
+    """
+    legacy = ocp_version.legacy_setting(ctx)
+    value = ocp_version.requested(ctx)
+    if legacy and not value:
+        ctx.console.warn(f"{legacy} is deprecated. Use --ocp-version (aap-demo ocp-version-list).")
+        return None
+    profiles = ocp_version.load_profiles()
+    floor = min((p.minimum for p in profiles.values()), key=ocp_version.parse)
+    target = ocp_version.resolve(
+        value,
+        profiles=profiles,
+        available=lambda: _mirror_versions(floor),
+    )
+    if state != infra_crc.STATE_NOT_CREATED:
+        existing = infra_crc.machine_bundle_version(home)
+        if existing and value and not ocp_version.matches(value, existing):
+            raise AapDemoError(
+                f"The existing cluster runs MicroShift {existing}, not {value}",
+                hint=f"Run aap-demo destroy, then aap-demo create --ocp-version {value}.",
+            )
+    return target
+
+
 def create(
     ctx: AppContext,
     *,
@@ -532,6 +595,8 @@ def create(
                     "Use 'aap-demo destroy' to remove it first, or 'aap-demo deploy' to deploy AAP"
                 ),
             )
+
+    target = _target_version(ctx, home, state)
 
     host_info = host if host is not None else _host_resources(ctx.runner)
     _ask_vm_size(ctx, host_info, which=which)
@@ -575,7 +640,14 @@ def create(
     )
     ctx.console.tasks(steps, title="Creating aap-demo crc cluster")
     ctx.console.step("MicroShift")
-    ctx.console.checkpoint(f"MicroShift: {bundled}")
+    bundle_path: Optional[Path] = None
+    if target is not None and not target.builtin and state == infra_crc.STATE_NOT_CREATED:
+        bundle_path = bundle_fetch.ensure_bundle(ctx, target.version)
+    # CRC's own bundle: report what the installed CRC says it ships.
+    shown = target.version if target is not None and not target.builtin else bundled
+    if target is not None and not target.stable:
+        ctx.console.warn(f"MicroShift {shown} is not a version aap-demo has tested")
+    ctx.console.checkpoint(f"MicroShift: {shown}")
     ctx.console.step("Checking host resources")
     cpus, memory_mb = host_info
     if cpus > 0 and memory_mb > 0:
@@ -643,7 +715,7 @@ def create(
         )
     ctx.console.checkpoint(f"Pull secret: {display_path(secret, home)}")
 
-    _start_crc(ctx, secret)
+    _start_crc(ctx, secret, bundle=bundle_path)
     if not _persistent_store_ok(ctx):
         raise AapDemoError("Persistent CRI-O storage setup failed")
 

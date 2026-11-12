@@ -249,6 +249,9 @@ def build_parser(
     oc_parser.set_defaults(func=ops.oc)
     add("update", "Update aap-demo to the latest release").set_defaults(func=ops.update)
     add("version", "Show aap-demo version and build metadata").set_defaults(func=ops.version)
+    p = add("ocp-version-list", "List the OpenShift versions --ocp-version can build here")
+    p.add_argument("--all", action="store_true", help="Also list versions aap-demo doesn't support")
+    p.set_defaults(func=ops.ocp_version_list)
     add("redhat-status", "Check Red Hat registry status", aliases=["rh-status"]).set_defaults(
         func=ops.redhat_status
     )
