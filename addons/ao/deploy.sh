@@ -951,7 +951,10 @@ provision_aap_demos() {
   )
   if [ -n "${AAP_DEMO_FLEET_HOST:-}" ]; then
     _fleet_service_status=$(mktemp) || return 1
-    _fleet_manual_status=$(mktemp) || { rm -f "$_fleet_service_status"; return 1; }
+    _fleet_manual_status=$(mktemp) || {
+      rm -f "$_fleet_service_status"
+      return 1
+    }
     _provision_args+=(--fleet-host "$AAP_DEMO_FLEET_HOST" --fleet-service-status-file "$_fleet_service_status" --fleet-manual-status-file "$_fleet_manual_status")
   fi
   if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then

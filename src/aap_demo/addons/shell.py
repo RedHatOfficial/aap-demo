@@ -16,7 +16,8 @@ from typing import Dict, List, Optional, Sequence
 import aap_demo
 from aap_demo.addons.base import AddonKind
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
-from aap_demo.addons.product_demos_fleet import discover_fleet_host
+from aap_demo.addons.product_demos_fleet import NoFleetHostError, discover_fleet_host
+from aap_demo.core import prompts
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
@@ -152,7 +153,18 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
 
     env = ctx.kube_env()
     if name == "product-demos" and not delete:
-        env["AAP_DEMO_FLEET_HOST"] = discover_fleet_host(ctx)
+        try:
+            env["AAP_DEMO_FLEET_HOST"] = discover_fleet_host(ctx)
+        except NoFleetHostError:
+            env.pop("AAP_DEMO_FLEET_HOST", None)
+            ctx.console.warn(
+                "No ready Fleet host found. To run end-to-end workflows using Fleet, "
+                "first run aap-demo enable fleet, then enable product-demos again."
+            )
+            if not ctx.assume_yes and not ctx.quiet and prompts.can_ask(ctx.env):
+                if not prompts.confirm("Continue installing Product Demos without Fleet? [y/N] "):
+                    ctx.console.out("Product Demos installation cancelled.")
+                    return 0
     env["NAMESPACE"] = ctx.namespace
     # Bash wires once after enable. Leave the installer's own wiring off so a
     # wheel, which has no includes/addon-wire.sh, still exits 0 after a good install.
@@ -198,7 +210,7 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
     previously_enabled = _enabled(ctx)
     _remember(ctx, name)
     _wire(ctx, env)
-    if name == "product-demos":
+    if name == "product-demos" and env.get("AAP_DEMO_FLEET_HOST"):
         try:
             _enable_ao(ctx, env)
         except AddonError:

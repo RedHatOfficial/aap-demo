@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[2]
 def run_provision(
     exit_code, missing_aap=False, missing_ao=False, service_ready=False, manual_ready=False
 ):
-    source = (REPO / "addons/ao/deploy.sh").read_text()
+    source = (REPO / "addons/ao/deploy.sh").read_text(encoding="utf-8")
     function = source.split("\nprovision_aap_demos() {", 1)[1].split("\n\nAO_PULL_SECRET_NAME=", 1)[
         0
     ]

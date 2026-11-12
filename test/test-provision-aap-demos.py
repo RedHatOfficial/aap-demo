@@ -267,11 +267,61 @@ def test_service_demo_template_uses_product_demo_project_and_fleet_credential():
         p for path, method, p in api.calls if path == "/job_templates/" and method == "POST"
     )
     assert payload["project"] == 52
-    assert payload["playbook"] == "linux/run_script.yml"
+    assert payload["playbook"] == "linux/fleet_ao_smoke.yml"
+    assert json.loads(payload["extra_vars"]) == {"_hosts": "fleet-ubi9"}
     assert payload["inventory"] == 11
     assert payload["limit"] == "fleet-ubi9"
-    assert "aap-demo-fleet-smoke" in payload["extra_vars"]
     assert ("/job_templates/44/credentials/", "POST", {"id": 22}) in api.calls
+
+
+def test_service_template_migrates_only_unmodified_managed_script():
+    old_script = (
+        "systemctl is-active --quiet aap-demo-fleet-smoke.service || "
+        "systemd-run --collect --unit=aap-demo-fleet-smoke /usr/bin/sleep 300"
+    )
+    old = {
+        "id": 44,
+        "name": "Fleet | Start Demo Service",
+        "description": MODULE.FLEET_TEMPLATE_MARKER,
+        "organization": 1,
+        "job_type": "run",
+        "project": 52,
+        "playbook": "linux/run_script.yml",
+        "inventory": 11,
+        "limit": "fleet-ubi9",
+        "ask_variables_on_launch": False,
+        "extra_vars": json.dumps({"_hosts": "fleet-ubi9", "shell_script": old_script}),
+    }
+
+    class API:
+        def __init__(self):
+            self.calls = []
+
+        def find(self, endpoint, name):
+            return old
+
+        def request(self, path, method="GET", payload=None):
+            self.calls.append((path, method, payload))
+            return {"results": [{"id": 22}]}
+
+    api = API()
+    MODULE.provision_service_template(api, 1, 52, 11, 22, "fleet-ubi9")
+    assert any(
+        method == "PATCH" and payload["playbook"] == "linux/fleet_ao_smoke.yml"
+        for path, method, payload in api.calls
+    )
+    old["limit"] = "other-host"
+    with pytest.raises(RuntimeError, match="changed"):
+        MODULE.provision_service_template(API(), 1, 52, 11, 22, "fleet-ubi9")
+
+
+def test_missing_service_playbook_does_not_mark_workflow_ready(monkeypatch):
+    monkeypatch.setattr(MODULE, "product_demos_project", lambda api: (2, 33))
+    monkeypatch.setattr(MODULE, "provision_manual_intervention_template", lambda *args: None)
+    api = SimpleNamespace(
+        wait_for_project_sync=lambda project_id: None, request=lambda path: ["linux/run_script.yml"]
+    )
+    assert MODULE.provision_optional_fleet_templates(api, 11, 22, "fleet-ubi9") == (False, True)
 
 
 def test_manual_intervention_template_succeeds_with_explicit_message():
@@ -403,7 +453,10 @@ def test_manual_template_is_attempted_when_service_template_fails(monkeypatch):
     monkeypatch.setattr(
         MODULE, "provision_manual_intervention_template", lambda *a: called.append("manual")
     )
-    api = SimpleNamespace(wait_for_project_sync=lambda project_id: None)
+    api = SimpleNamespace(
+        wait_for_project_sync=lambda project_id: None,
+        request=lambda path: ["linux/fleet_ao_smoke.yml"],
+    )
     assert MODULE.provision_optional_fleet_templates(api, 11, 22, "fleet-ubi9") == (False, True)
     assert called == ["manual"]
 

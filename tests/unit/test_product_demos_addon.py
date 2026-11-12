@@ -33,17 +33,68 @@ def _fleet_preflight(monkeypatch: pytest.MonkeyPatch, app_ctx) -> None:
     app_ctx.runner.ok(["bash", _deploy("ao")])
 
 
-def test_enable_stops_before_install_if_fleet_has_no_suitable_host(app_ctx, monkeypatch) -> None:
+def test_missing_fleet_warns_and_continues_when_confirmed(app_ctx, monkeypatch) -> None:
+    from aap_demo.addons.product_demos_fleet import NoFleetHostError
+
+    _present_tools(monkeypatch)
+    monkeypatch.setattr(
+        "aap_demo.addons.shell.discover_fleet_host",
+        lambda ctx: (_ for _ in ()).throw(NoFleetHostError("no Fleet host")),
+    )
+    monkeypatch.setattr("aap_demo.addons.shell.prompts.can_ask", lambda env: True)
+    monkeypatch.setattr("aap_demo.addons.shell.prompts.confirm", lambda question: True)
+    app_ctx.runner.ok(["bash", _deploy("product-demos")])
+    app_ctx.runner.ok(["bash", str(wire_script())])
+    get("product-demos").enable(app_ctx, argparse.Namespace())
+    assert "AAP_DEMO_FLEET_HOST" not in app_ctx.runner.calls[0].env
+    assert all(call.argv != ("bash", _deploy("ao")) for call in app_ctx.runner.calls)
+    assert "product-demos" in app_ctx.config.get("addons.enabled")
+
+
+def test_missing_fleet_declined_stops_before_install(app_ctx, monkeypatch) -> None:
+    from aap_demo.addons.product_demos_fleet import NoFleetHostError
+
+    _present_tools(monkeypatch)
+    monkeypatch.setattr(
+        "aap_demo.addons.shell.discover_fleet_host",
+        lambda ctx: (_ for _ in ()).throw(NoFleetHostError("no Fleet host")),
+    )
+    monkeypatch.setattr("aap_demo.addons.shell.prompts.can_ask", lambda env: True)
+    monkeypatch.setattr("aap_demo.addons.shell.prompts.confirm", lambda question: False)
+    get("product-demos").enable(app_ctx, argparse.Namespace())
+    assert app_ctx.runner.calls == []
+    assert "product-demos" not in (app_ctx.config.get("addons.enabled") or [])
+
+
+def test_missing_fleet_noninteractive_continues_with_warning(app_ctx, monkeypatch) -> None:
+    from aap_demo.addons.product_demos_fleet import NoFleetHostError
+
+    _present_tools(monkeypatch)
+    app_ctx.env["AAP_DEMO_FLEET_HOST"] = "stale"
+
+    def unavailable(ctx):
+        raise NoFleetHostError("no Fleet host")
+
+    monkeypatch.setattr("aap_demo.addons.shell.discover_fleet_host", unavailable)
+    monkeypatch.setattr("aap_demo.addons.shell.prompts.can_ask", lambda env: False)
+    app_ctx.runner.ok(["bash", _deploy("product-demos")])
+    app_ctx.runner.ok(["bash", str(wire_script())])
+    get("product-demos").enable(app_ctx, argparse.Namespace())
+    assert "AAP_DEMO_FLEET_HOST" not in app_ctx.runner.calls[0].env
+    assert all(call.argv != ("bash", _deploy("ao")) for call in app_ctx.runner.calls)
+    assert "aap-demo enable fleet" in app_ctx.console.stderr
+
+
+def test_fleet_inspection_errors_are_not_hidden(app_ctx, monkeypatch) -> None:
     _present_tools(monkeypatch)
 
     def unavailable(ctx):
-        raise AddonError("no suitable ready Fleet pod found")
+        raise AddonError("could not inspect Fleet pods")
 
     monkeypatch.setattr("aap_demo.addons.shell.discover_fleet_host", unavailable)
-    with pytest.raises(AddonError, match="no suitable ready Fleet"):
+    with pytest.raises(AddonError, match="could not inspect Fleet pods"):
         get("product-demos").enable(app_ctx, argparse.Namespace())
     assert app_ctx.runner.calls == []
-    assert "product-demos" not in (app_ctx.config.get("addons.enabled") or [])
 
 
 def test_product_demos_automatically_enables_ao(app_ctx, monkeypatch) -> None:

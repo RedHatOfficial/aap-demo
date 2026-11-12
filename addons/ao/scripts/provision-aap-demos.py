@@ -206,21 +206,34 @@ def provision_service_template(
     credential_id: int,
     host: str,
 ) -> None:
-    """Create a short-lived demo service through the existing Product Demos shell playbook."""
-    script = (
+    """Bind the Product Demos service playbook to the selected Fleet host."""
+    name = "Fleet | Start Demo Service"
+    current = api.find("job_templates", name)
+    payload = {
+        "name": name,
+        "description": FLEET_TEMPLATE_MARKER,
+        "organization": organization_id,
+        "job_type": "run",
+        "project": project_id,
+        "playbook": "linux/fleet_ao_smoke.yml",
+        "inventory": inventory_id,
+        "limit": host,
+        "ask_variables_on_launch": False,
+        "extra_vars": json.dumps({"_hosts": host}),
+    }
+    old_script = (
         "systemctl is-active --quiet aap-demo-fleet-smoke.service || "
         "systemd-run --collect --unit=aap-demo-fleet-smoke /usr/bin/sleep 300"
     )
-    _provision_script_template(
-        api,
-        organization_id,
-        project_id,
-        inventory_id,
-        credential_id,
-        host,
-        "Fleet | Start Demo Service",
-        script,
-    )
+    previous = {
+        **payload,
+        "playbook": "linux/run_script.yml",
+        "extra_vars": json.dumps({"_hosts": host, "shell_script": old_script}),
+    }
+    if current and all(current.get(key) == value for key, value in previous.items()):
+        api.request(f"/job_templates/{current['id']}/", "PATCH", payload)
+        current = {**current, **payload}
+    ensure_owned_template(api, payload, credential_id, current)
 
 
 def provision_manual_intervention_template(
@@ -353,6 +366,15 @@ def provision_optional_fleet_templates(
         ("manual-intervention", provision_manual_intervention_template),
     ):
         try:
+            if label == "service":
+                playbooks = api.request(f"/projects/{project_id}/playbooks/")
+                if isinstance(playbooks, dict):
+                    playbooks = playbooks.get("results") or playbooks.get("playbooks") or []
+                if "linux/fleet_ao_smoke.yml" not in playbooks:
+                    raise RuntimeError(
+                        "linux/fleet_ao_smoke.yml is missing from the synced Product Demos "
+                        "project; use a revision containing ansible/product-demos PR 403"
+                    )
             provision(api, org_id, project_id, inventory_id, credential_id, host)
             ready.append(True)
         except RuntimeError as exc:

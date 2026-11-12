@@ -18,8 +18,12 @@ This runs `product-demos-base` and then installs five domains via dedicated AAP 
 
 Each template runs `setup_demo.yml` for one domain so you can see per-domain job history and failures in the UI.
 
-The Python command also requires an existing, ready Kubernetes-native Fleet pod and its AAP inventory
-and machine credential. It enables Automation Orchestrator (AO) as needed and creates Fleet-specific
+For Fleet workflows, enable the Fleet addon and ensure it has a ready Kubernetes-native pod and its
+AAP inventory and machine credential. If no suitable Fleet host exists, the Python command warns and
+asks whether to continue installing Product Demos without Fleet workflows. Non-interactive runs
+continue without Fleet workflows. To configure them later, run `aap-demo enable fleet`, then rerun
+`aap-demo enable product-demos`. With a Fleet host available, setup enables Automation Orchestrator
+(AO) as needed and creates Fleet-specific
 disk-check and disk-and-service workflows. The latter uses the Product Demos Linux shell playbook to
 start a temporary `aap-demo-fleet-smoke.service`; the service expires after five minutes. If no AO
 LLM provider is configured, setup uses `none` without prompting. The other imported workflows are

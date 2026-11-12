@@ -96,3 +96,14 @@ def test_discovery_reports_cluster_errors(app_ctx):
     app_ctx.runner.fail(["kubectl", "get", "pods"], stderr="connection refused")
     with pytest.raises(AddonError, match="could not inspect Fleet pods"):
         discover_fleet_host(app_ctx)
+
+
+def test_discovery_treats_missing_fleet_namespace_as_no_host(app_ctx):
+    app_ctx.runner.fail(
+        ["kubectl", "get", "pods"],
+        stderr='Error from server (NotFound): namespaces "fleet" not found',
+    )
+    from aap_demo.addons.product_demos_fleet import NoFleetHostError
+
+    with pytest.raises(NoFleetHostError):
+        discover_fleet_host(app_ctx)

@@ -10,6 +10,10 @@ from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 
 
+class NoFleetHostError(AddonError):
+    """No ready Fleet pod with an SSH service can be used."""
+
+
 def select_fleet_host(pods: List[Dict[str, Any]]) -> str:
     """Choose a ready RHEL-compatible Fleet host in stable name order."""
     eligible = []
@@ -33,7 +37,7 @@ def select_fleet_host(pods: List[Dict[str, Any]]) -> str:
             continue
         eligible.append((0 if os_id.startswith("rhel") else 1, str(name)))
     if not eligible:
-        raise AddonError(
+        raise NoFleetHostError(
             "no suitable ready Fleet pod found",
             hint="Enable Fleet and ensure a RHEL or UBI Fleet pod is ready, then retry.",
         )
@@ -57,7 +61,10 @@ def discover_fleet_host(ctx: AppContext) -> str:
         ]
     )
     if not result.ok:
-        raise AddonError("could not inspect Fleet pods", hint=(result.stderr or "").strip() or None)
+        detail = (result.stderr or "").strip()
+        if f'namespaces "{namespace}" not found' in detail:
+            raise NoFleetHostError("no suitable ready Fleet pod found")
+        raise AddonError("could not inspect Fleet pods", hint=detail or None)
     try:
         document = json.loads(result.stdout or "{}")
         items = document.get("items", [])
