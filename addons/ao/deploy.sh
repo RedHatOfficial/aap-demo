@@ -1697,6 +1697,15 @@ done
 echo ""
 
 echo "Waiting for operator to become available..."
+# kubectl wait fails at once on a Deployment that doesn't exist yet, which is
+# the case right after a forced reinstall. Wait for it to appear first.
+for _i in $(seq 1 60); do
+  if kubectl get deployment automation-orchestrator-operator-controller-manager \
+    -n "$(operator_controller_namespace)" &>/dev/null; then
+    break
+  fi
+  sleep 5
+done
 if ! kubectl wait --for=condition=Available \
   deployment/automation-orchestrator-operator-controller-manager \
   -n "$(operator_controller_namespace)" --timeout=300s 2>/dev/null; then
