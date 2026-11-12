@@ -15,7 +15,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 from aap_demo import data as packaged
 from aap_demo.cluster import coredns, pull_secret
@@ -526,6 +526,17 @@ def _ensure_stable(ctx: AppContext, secret: Path, *, sleep: Callable[[float], No
     )
 
 
+def _mirror_versions(floor: str) -> List[str]:
+    """The mirror's versions for this host, or a retry message when it can't be read."""
+    try:
+        return bundle_mirror.host_versions(minimum=floor)
+    except OSError as exc:
+        raise AapDemoError(
+            "Could not read the MicroShift versions from mirror.openshift.com",
+            hint=f"Check the network connection and run create again. ({exc})",
+        ) from exc
+
+
 def _target_version(ctx: AppContext, home: Path, state: str) -> Optional[ocp_version.Resolved]:
     """The ``--ocp-version`` create builds, or None for the old ``CRC_VERSION`` path.
 
@@ -541,7 +552,7 @@ def _target_version(ctx: AppContext, home: Path, state: str) -> Optional[ocp_ver
     target = ocp_version.resolve(
         value,
         profiles=profiles,
-        available=lambda: bundle_mirror.host_versions(minimum=floor),
+        available=lambda: _mirror_versions(floor),
     )
     if state != infra_crc.STATE_NOT_CREATED:
         existing = infra_crc.machine_bundle_version(home)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -572,6 +573,22 @@ def test_create_ocp_5_starts_the_verified_bundle(app_ctx, tmp_path, monkeypatch)
     assert start.endswith(f"-b {bundle}")
     assert "MicroShift: 5.0.0" in app_ctx.console.stdout
     assert "checked this bundle against Red Hat's signed checksum" in app_ctx.console.stdout
+
+
+def test_an_unreachable_mirror_is_a_retry_message(app_ctx, tmp_path, monkeypatch) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.config.set("crc.ocp_version", "4.21")
+
+    def offline(**_kwargs):
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(bootstrap.bundle_mirror, "host_versions", offline)
+    with pytest.raises(AapDemoError, match="Could not read the MicroShift versions") as excinfo:
+        bootstrap.create(
+            app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+        )
+    assert "no route to host" in excinfo.value.hint
+    assert not any(c.startswith(("crc start", "crc config set")) for c in runner.commands)
 
 
 def test_create_default_downloads_nothing(app_ctx, tmp_path, monkeypatch) -> None:
