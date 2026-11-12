@@ -55,6 +55,12 @@ make ci
 make update-hooks
 ```
 
+The GitHub Actions lint jobs use the same repository configuration files and
+tracked-file scopes as the local Make targets. ShellCheck, shfmt, yamllint,
+markdownlint, ansible-lint, and Kubernetes manifest validation are blocking
+checks; a validation error fails the workflow. Kubernetes schema downloads
+are required for manifest validation, so run that check with network access.
+
 ## Linters in Detail
 
 ### ShellCheck
@@ -129,7 +135,8 @@ Ensures consistent Markdown formatting.
 
 ```bash
 markdownlint .
-markdownlint --fix .  # Auto-fix issues
+# Pre-commit runs markdownlint in check-only mode. Apply fixes explicitly when needed:
+markdownlint --fix .
 ```
 
 **Inline disable**:
@@ -158,6 +165,14 @@ Validates Ansible playbooks and roles.
 ```bash
 ansible-lint
 ansible-lint playbook.yml
+```
+
+The offline lint target requires the public Kubernetes collection to be
+installed before running it:
+
+```bash
+ansible-galaxy collection install kubernetes.core:2.4.0
+make lint-ansible
 ```
 
 **Skip specific rules**:
@@ -260,6 +275,14 @@ shfmt -d .
 # Fix formatting
 shfmt -w -i 2 -ci -bn .
 ```
+
+### Kubernetes manifest validation
+
+Kubeconform validates the tracked manifests and custom resources under
+`config/manifests/` and `config/crs/`. It skips the five Ansible Automation
+Platform custom resources, the `SecurityContextConstraints`, and the
+`Kustomization`, because those resource schemas are not available to the
+validator.
 
 ## GitHub Actions
 

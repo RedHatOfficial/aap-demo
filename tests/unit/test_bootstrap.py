@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -484,3 +487,63 @@ def test_metrics_server_still_fails_when_the_network_stays_down(app_ctx) -> None
     app_ctx.runner = runner
     with pytest.raises(AapDemoError, match="no such host"):
         bootstrap._install_metrics(app_ctx, sleep=lambda _s: None)
+
+
+def test_crio_pull_secret_rejects_a_file_without_registry_redhat_io(app_ctx, tmp_path) -> None:
+    secret = tmp_path / "auth.json"
+    secret.write_text('{"auths":{"quay.io":{"auth":"dGVzdA=="}}}\n', encoding="utf-8")
+    key = tmp_path / "id_ecdsa"
+    runner = FakeRunner()
+    runner.fail("ssh")
+    app_ctx.runner = runner
+
+    with pytest.raises(AapDemoError, match="no registry.redhat.io credential"):
+        bootstrap.ensure_crio_pull_secret(app_ctx, key, secret)
+    assert all(call.input is None for call in runner.calls)
+
+
+@pytest.mark.parametrize(
+    ("auths", "configured"),
+    [
+        ({"registry.redhat.io": {"auth": "dGVzdA=="}}, True),
+        ({"registry.redhat.io": {"identitytoken": "t"}}, True),
+        ({"quay.io": {"auth": "dGVzdA=="}}, False),
+        ({"registry.redhat.io": {}}, False),
+        ({}, False),
+    ],
+)
+def test_node_probe_needs_a_registry_redhat_io_credential(tmp_path, auths, configured) -> None:
+    node_file = tmp_path / "openshift-pull-secret"
+    node_file.write_text(json.dumps({"auths": auths}), encoding="utf-8")
+    probe = subprocess.run(
+        [sys.executable, "-c", bootstrap._REGISTRY_PROBE, str(node_file)], check=False, timeout=30
+    )
+    assert (probe.returncode == 0) is configured
+    assert bootstrap._has_required_registry(auths) is configured
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the probe runs on the Linux CRC node")
+def test_node_probe_runs_through_the_remote_shell(app_ctx, tmp_path) -> None:
+    """The probe survives bash -c quoting, as CRI-O's file is checked over ssh."""
+    node_file = tmp_path / "openshift-pull-secret"
+    node_file.write_text('{"auths":{"quay.io":{"auth":"dGVzdA=="}}}', encoding="utf-8")
+    seen = []
+
+    def ssh(argv):
+        # The last token is the quoted remote command line, ``sudo bash -c '...'``.
+        remote = argv[-1].removeprefix("sudo ")
+        script = remote.replace(bootstrap.CRIO_PULL_SECRET, str(node_file))
+        seen.append(script)
+        done = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False, timeout=30
+        )
+        return CompletedCommand(argv=tuple(argv), returncode=done.returncode, stdout=done.stdout)
+
+    runner = FakeRunner()
+    runner.register("ssh", ssh)
+    app_ctx.runner = runner
+
+    assert bootstrap._crio_pull_secret_configured(app_ctx, tmp_path / "key") is False
+    node_file.write_text('{"auths":{"registry.redhat.io":{"auth":"dGVzdA=="}}}', encoding="utf-8")
+    assert bootstrap._crio_pull_secret_configured(app_ctx, tmp_path / "key") is True
+    assert seen

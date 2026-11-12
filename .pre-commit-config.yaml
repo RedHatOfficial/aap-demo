@@ -26,7 +26,7 @@ repos:
         entry: scripts/require-tool.sh shellcheck "brew install shellcheck"
         language: system
         types: [shell]
-        args: ['--severity=warning', '--shell=bash']
+        args: ['--severity=warning']
         exclude: ^(\.git/|\.github/|docs/|scripts/.*\.zsh)
 
   # YAML linting (uses venv yamllint, no docker)
@@ -37,8 +37,7 @@ repos:
         entry: scripts/require-tool.sh yamllint "pip install yamllint"
         language: system
         types: [yaml]
-        args: ['-d', '{extends: default, rules: {line-length: {max: 120}}}']
-        exclude: ^(\.serena/|test/)
+        args: ['-c', '.yamllint']
 
   # Markdown linting
   - repo: local
@@ -50,7 +49,7 @@ repos:
           "npm install -g markdownlint-cli"
         language: system
         types: [markdown]
-        args: ['--fix']
+        args: ['--config', '.markdownlint.json']
         exclude: ^(\.github/|\.claude/)
 
   # Ansible linting (uses venv ansible-lint if available)

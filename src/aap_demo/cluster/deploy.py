@@ -386,9 +386,11 @@ def _await_catalog(
 
 
 def _finish_wait(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:
-    """Check off the timed wait so its duration freezes when ``wait_ready`` returns."""
-    note = "AAP is ready" if readiness.ready else "AAP did not become ready"
-    ctx.console.checkpoint(note)
+    """Close the timed wait, ready or not, so its duration freezes when ``wait_ready`` returns."""
+    if readiness.ready:
+        ctx.console.checkpoint("AAP is ready")
+    else:
+        ctx.console.fail_step("AAP did not become ready")
 
 
 def _ensure_subscription(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:
