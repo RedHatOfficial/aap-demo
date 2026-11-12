@@ -249,6 +249,17 @@ def test_console_ascii_fallback_when_the_stream_cannot_encode() -> None:
     assert console.glyphs == ASCII_GLYPHS
 
 
+def test_diagnose_report_is_safe_for_cp1252_stream() -> None:
+    from aap_demo.core.console import Console
+    from aap_demo.diagnostics.checks import DiagnoseReport
+    from aap_demo.diagnostics.report import render_text
+
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    render_text(Console(stdout=stream, stderr=stream, color=False), DiagnoseReport())
+    stream.flush()
+    assert "=" * 37 in stream.buffer.getvalue().decode("cp1252")
+
+
 def test_recording_console_captures_streams() -> None:
     console = RecordingConsole()
     console.success("done")

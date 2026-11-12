@@ -15,10 +15,19 @@ from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
 
 _FLEET = FleetAddon()
+_EDA_PLAYGROUND = ShellAddon(
+    "eda-playground",
+    required_tools=("bash", "curl", "jq", "kubectl", "base64"),
+    delete_tools=("bash", "curl", "jq", "kubectl", "base64"),
+    wire_after_enable=False,
+    dependencies=(),
+    state_dir_env="EDA_PLAYGROUND_STATE_DIR",
+)
 
 _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
-    **{name: ShellAddon(name) for name in BUNDLED_ADDON_DIRS},
+    **{name: ShellAddon(name) for name in BUNDLED_ADDON_DIRS if name != "eda-playground"},
+    _EDA_PLAYGROUND.name: _EDA_PLAYGROUND,
 }
 
 #: How to run the bash command next to this one, for addons not ported yet.
