@@ -20,7 +20,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "microshift-5.0.0"
 SIGNED = (FIXTURES / "sha256sum.txt.sig").read_text(encoding="utf-8")
 SUMS = (FIXTURES / "sha256sum.txt").read_text(encoding="utf-8")
 ARM64 = "crc_microshift_vfkit_5.0.0_arm64.crcbundle"
-ARM64_SHA = "48b150b27389aee0"
+ARM64_SHA = "48b150b27389aee0"  # pragma: allowlist secret
 
 
 @pytest.fixture(scope="module")
@@ -29,7 +29,7 @@ def key() -> pgp.RsaKey:
 
 
 def test_the_packaged_key_is_red_hat_release_key_2(key) -> None:
-    assert key.fingerprint == "567E347AD0044ADE55BA8A5F199E2F91FD431D51"
+    assert key.fingerprint == "567E347AD0044ADE55BA8A5F199E2F91FD431D51"  # pragma: allowlist secret
     assert key.n.bit_length() == 4096
 
 

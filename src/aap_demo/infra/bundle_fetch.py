@@ -24,7 +24,7 @@ from aap_demo.infra import bundle_mirror, pgp
 
 #: Red Hat, Inc. (release key 2) <security@redhat.com>. Checked every time the
 #: packaged key is loaded, so a changed key file fails instead of being trusted.
-RED_HAT_RELEASE_KEY_2 = "567E347AD0044ADE55BA8A5F199E2F91FD431D51"
+RED_HAT_RELEASE_KEY_2 = "567E347AD0044ADE55BA8A5F199E2F91FD431D51"  # pragma: allowlist secret
 KEY_FILE = "redhat-release-key-2.asc"
 SIGNED_SUMS = "sha256sum.txt.sig"
 _CHUNK = 1 << 20
