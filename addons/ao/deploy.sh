@@ -10,6 +10,8 @@ source "${SCRIPT_DIR}/lib/admin-password.sh"
 source "${SCRIPT_DIR}/lib/replica-profile.sh"
 # shellcheck source=lib/install-plan-approval.sh
 source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
+# shellcheck source=lib/postgres-storage.sh
+source "${SCRIPT_DIR}/lib/postgres-storage.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -1589,15 +1591,7 @@ EOF
 
 # CNPG rejects shrinking storage. Keep an existing Cluster size unless FORCE
 # already deleted the PVC (fresh init uses AO_STORAGE_SIZE / default 3Gi).
-PG_STORAGE_SIZE="${AO_STORAGE_SIZE:-3Gi}"
-_existing_pg_size=$(kubectl get cluster orchestrator-postgres -n "$NAMESPACE" \
-  -o jsonpath='{.spec.storage.size}' 2>/dev/null || true)
-if [ -n "$_existing_pg_size" ]; then
-  if [ "$_existing_pg_size" != "$PG_STORAGE_SIZE" ]; then
-    echo "  Preserving existing PostgreSQL storage size: ${_existing_pg_size} (manifest default: ${PG_STORAGE_SIZE})"
-  fi
-  PG_STORAGE_SIZE="$_existing_pg_size"
-fi
+PG_STORAGE_SIZE=$(ao_postgres_storage_size "$NAMESPACE" "${AO_STORAGE_SIZE:-3Gi}") || exit 1
 
 sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
   -e "s|__STORAGE_CLASS__|${STORAGE_CLASS}|g" \
@@ -1607,8 +1601,6 @@ sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
   if ! cnpg_database_crd_available; then
     echo "  CloudNativePG Database CRD is missing. Re-run after CNPG upgrade completes."
   fi
-  echo "  If the error is about shrinking storage, set AO_STORAGE_SIZE to the"
-  echo "  existing PVC size, or FORCE=1 aap-demo enable ao to recreate Postgres."
   exit 1
 }
 
