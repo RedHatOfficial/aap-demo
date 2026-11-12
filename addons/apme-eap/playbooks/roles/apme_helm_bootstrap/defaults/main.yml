@@ -2,9 +2,25 @@
 # Helm is not included in the standard AAP execution environment. Download a
 # pinned client into the job's writable /tmp area so kubernetes.core.helm can
 # run entirely inside AAP.
+#
+# When running locally (non-AAP), auto-detect platform and architecture.
 
-apme_helm_version: "3.15.4"  # noqa: var-naming[no-role-prefix]
-apme_helm_install_dir: "/tmp/apme-helm"  # noqa: var-naming[no-role-prefix]
-apme_helm_binary: "{{ apme_helm_install_dir }}/helm"  # noqa: var-naming[no-role-prefix]
-apme_helm_archive: "/tmp/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"  # noqa: var-naming[no-role-prefix]
-apme_helm_download_url: "https://get.helm.sh/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"  # noqa: var-naming[no-role-prefix]
+apme_helm_version: "3.15.4"  # noqa var-naming[no-role-prefix]
+apme_helm_install_dir: "/tmp/apme-helm"  # noqa var-naming[no-role-prefix]
+apme_helm_binary: "{{ apme_helm_install_dir }}/helm"  # noqa var-naming[no-role-prefix]
+
+# Auto-detect OS and architecture for local execution
+# AAP execution environments are always linux-amd64, but local macOS needs darwin-{amd64,arm64}
+apme_helm_os: >-  # noqa var-naming[no-role-prefix]
+  {{ 'darwin' if ansible_system == 'Darwin' else 'linux' }}
+apme_helm_arch: >-  # noqa: var-naming[no-role-prefix]
+  {%- if ansible_machine in ['arm64', 'aarch64'] -%} arm64{%-
+  elif ansible_machine in ['x86_64', 'amd64'] -%} amd64{%-
+  else -%} {{ ansible_machine }}{%- endif -%}
+apme_helm_platform: "{{ apme_helm_os }}-{{ apme_helm_arch }}"  # noqa var-naming[no-role-prefix]
+apme_helm_platform_marker: "{{ apme_helm_install_dir }}/.platform"  # noqa var-naming[no-role-prefix]
+
+apme_helm_archive: >-  # noqa var-naming[no-role-prefix]
+  /tmp/helm-v{{ apme_helm_version }}-{{ apme_helm_platform }}.tar.gz
+apme_helm_download_url: >-  # noqa var-naming[no-role-prefix]
+  https://get.helm.sh/helm-v{{ apme_helm_version }}-{{ apme_helm_platform }}.tar.gz
