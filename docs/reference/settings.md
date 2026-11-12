@@ -66,6 +66,18 @@ aap-demo create --cpus 6 --memory 16384 --disk 80 --pv-size 60
 
 See [Choose a version](../guides/choose-a-version.md).
 
+## OpenShift version
+
+| | |
+| --- | --- |
+| Default | The newest supported stable version (4.22.13) |
+| Flag | `--ocp-version` on `create` |
+| Environment variable | `CRC_OCP_VERSION` |
+| Saved key | `crc.ocp_version` |
+
+It takes a major (`5`), a minor (`4.22`), or an exact version (`4.22.13`). List the choices with
+`aap-demo ocp-version-list`. See [Choose an OpenShift version](../guides/openshift-version.md).
+
 ## Where files go
 
 | What | Where |
