@@ -75,7 +75,7 @@ GA install via checked-in GitOps manifests (`aap-demo enable ao`):
 - Namespace: `automation-orchestrator`
 - AO operator OLM + catalog live in **app namespace** (not `aap-operator` — avoids MultipleOperatorGroupsFound)
 - Default channel: `stable` (`AO_OPERATOR_CHANNEL=early-access` to override)
-- Dev Postgres: CloudNativePG upstream manifest (not Red Hat supported)
+- Postgres: one `rhel9/postgresql-15` StatefulSet, reusing AAP's image (ADR-043)
 - Force reinstall after password drift: `FORCE=1 aap-demo enable ao`
 
 **Access**: `aap-demo status` or `kubectl get routes -n automation-orchestrator`. Admin password in `automation-orchestrator-initial-admin-password`.

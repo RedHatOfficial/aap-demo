@@ -142,22 +142,72 @@ function Ensure-AapAoCatalogSource {
   throw "AO CatalogSource did not become READY in $Namespace"
 }
 
-function Ensure-AapAoCloudNativePg {
-  foreach ($scc in @('anyuid', 'privileged')) {
-    Invoke-AapAoSccGrant -Scc $scc -ServiceAccount 'cnpg-manager' -Namespace 'cnpg-system'
+function Get-AapAoPostgresStorageClass {
+  # PostgreSQL wants block storage, not NFS.
+  $explicit = Get-AapAoSetting -Name 'AO_POSTGRES_STORAGE_CLASS'
+  if ($explicit) { return $explicit }
+  if ((Invoke-AapKubectlNative -Arguments @('get', 'sc', 'topolvm-provisioner') -AllowFailure).Success) {
+    return 'topolvm-provisioner'
   }
-  $crdsReady = (Invoke-AapKubectlNative -Arguments @('get', 'crd', 'clusters.postgresql.cnpg.io') -AllowFailure).Success -and
-    (Invoke-AapKubectlNative -Arguments @('get', 'crd', 'databases.postgresql.cnpg.io') -AllowFailure).Success
-  $controller = Invoke-AapKubectlNative -Arguments @('get', 'deployment', 'cnpg-controller-manager', '-n', 'cnpg-system') -AllowFailure
-  if ($crdsReady -and $controller.Success) {
-    Invoke-AapKubectlNative -Arguments @('wait', '--for=condition=Available', 'deployment/cnpg-controller-manager', '-n', 'cnpg-system', '--timeout=300s') | Out-Null
-    return
-  }
+  return (Get-AapAoStorageClass)
+}
 
-  $version = Get-AapAoSetting -Name 'CNPG_VERSION' -Default '1.25.1'
-  $url = "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v$version/cnpg-$version.yaml"
-  Invoke-AapKubectlNative -Arguments @('apply', '--server-side', '-f', $url) | Out-Null
-  Invoke-AapKubectlNative -Arguments @('wait', '--for=condition=Available', 'deployment/cnpg-controller-manager', '-n', 'cnpg-system', '--timeout=300s') | Out-Null
+function Get-AapAoPostgresImage {
+  # AAP's own PostgreSQL 15 image is already on the node (ADR-043).
+  $explicit = Get-AapAoSetting -Name 'AO_POSTGRES_IMAGE'
+  if ($explicit) { return $explicit }
+  $sets = Get-AapKubectlJson -Arguments @('get', 'statefulset', '-n', $Script:AapDemoDefaultNamespace)
+  foreach ($set in @($sets.items)) {
+    foreach ($container in @($set.spec.template.spec.containers)) {
+      if ($container.image -match '/rhel[0-9]+/postgresql-15[@:]') { return $container.image }
+    }
+  }
+  return 'registry.redhat.io/rhel9/postgresql-15'
+}
+
+function Ensure-AapAoPostgres {
+  param([Parameter(Mandatory)][string]$Namespace)
+
+  $postgres = New-AapAoManifestFile -Name 'postgres.yaml' -Replacements @{
+    '__NAMESPACE__' = $Namespace
+    '__STORAGE_CLASS__' = (Get-AapAoPostgresStorageClass)
+    '__POSTGRES_IMAGE__' = (Get-AapAoPostgresImage)
+  }
+  try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $postgres) | Out-Null }
+  finally { Remove-Item -LiteralPath $postgres -Force -ErrorAction SilentlyContinue }
+
+  # The CR's caCertSecretRef names orchestrator-postgres-ca. service-ca signs the
+  # server certificate and publishes its CA in the -ca-bundle ConfigMap.
+  $ca = $null
+  for ($i = 0; $i -lt 120; $i += 2) {
+    $result = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'get', 'configmap', 'orchestrator-postgres-ca-bundle', '-n', $Namespace, '-o', 'jsonpath={.data.service-ca\.crt}'
+    )
+    if ($result.Success -and $result.Stdout -and $result.Stdout.Trim()) { $ca = $result.Stdout; break }
+    Start-Sleep -Seconds 2
+  }
+  if (-not $ca) { throw 'service-ca did not issue the PostgreSQL certificate within 2 minutes' }
+  $manifest = [ordered]@{
+    apiVersion = 'v1'; kind = 'Secret'; metadata = @{ name = 'orchestrator-postgres-ca'; namespace = $Namespace }
+    type = 'Opaque'; stringData = @{ 'ca.crt' = $ca }
+  }
+  $path = New-AapAoJsonFile -Object $manifest
+  try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $path) | Out-Null }
+  finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+
+  Invoke-AapKubectlNative -Arguments @('rollout', 'status', 'statefulset/orchestrator-postgres', '-n', $Namespace, '--timeout=600s') | Out-Null
+  foreach ($database in @('temporal', 'temporal_visibility')) {
+    $exists = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'exec', '-n', $Namespace, 'orchestrator-postgres-0', '--', 'psql', '-U', 'postgres', '-tAc',
+      "SELECT 1 FROM pg_database WHERE datname='$database'"
+    )
+    if (-not ($exists.Success -and $exists.Stdout -and $exists.Stdout.Trim() -eq '1')) {
+      Invoke-AapKubectlNative -Arguments @(
+        'exec', '-n', $Namespace, 'orchestrator-postgres-0', '--', 'psql', '-U', 'postgres', '-c',
+        "CREATE DATABASE `"$database`" OWNER orchestrator"
+      ) | Out-Null
+    }
+  }
 }
 
 function Wait-AapAoOperator {
@@ -320,7 +370,6 @@ function Invoke-AapAoAddonNative {
   Ensure-AapAoNamespace -Namespace $Namespace
   Copy-AapAoPullSecret -Namespace $Namespace
   Ensure-AapAoCatalogSource -Namespace $Namespace
-  Ensure-AapAoCloudNativePg
   Ensure-AapAoDatabaseSecrets -Namespace $Namespace
 
   $channel = Get-AapAoSetting -Name 'AO_OPERATOR_CHANNEL' -Default 'stable'
@@ -336,11 +385,7 @@ function Invoke-AapAoAddonNative {
   }
   Wait-AapAoOperator -Namespace $Namespace
 
-  $postgres = New-AapAoManifestFile -Name 'postgres-cluster.yaml' -Replacements @{
-    '__NAMESPACE__' = $Namespace; '__STORAGE_CLASS__' = (Get-AapAoStorageClass)
-  }
-  try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $postgres) | Out-Null }
-  finally { Remove-Item -LiteralPath $postgres -Force -ErrorAction SilentlyContinue }
+  Ensure-AapAoPostgres -Namespace $Namespace
 
   $replicas = Get-AapAoSetting -Name 'AO_REPLICA_COUNT' -Default '1'
   $domain = Get-AapClusterAppsDomain -Namespace $Script:AapDemoDefaultNamespace

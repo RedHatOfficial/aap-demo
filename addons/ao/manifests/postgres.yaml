@@ -1,0 +1,157 @@
+# PostgreSQL for Automation Orchestrator (ADR-043): one StatefulSet of the Red Hat
+# rhel9/postgresql-15 image. The Service keeps the name the AO CR already uses,
+# orchestrator-postgres-rw.
+#
+# TLS: MicroShift's service-ca signs a serving certificate for the Service
+# (orchestrator-postgres-tls) and injects its CA into the -ca-bundle ConfigMap.
+# deploy.sh copies that CA into the orchestrator-postgres-ca Secret, which the
+# CR's caCertSecretRef names, so sslMode verify-ca holds.
+#
+# Placeholders substituted by deploy.sh:
+#   __NAMESPACE__         -> automation-orchestrator
+#   __STORAGE_CLASS__     -> topolvm-provisioner (or AO_POSTGRES_STORAGE_CLASS)
+#   __POSTGRES_IMAGE__    -> AAP's own PostgreSQL image, or registry.redhat.io/rhel9/postgresql-15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator-postgres-rw
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: orchestrator-postgres-tls
+spec:
+  selector:
+    app.kubernetes.io/name: orchestrator-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-postgres-ca-bundle
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-postgres-config
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+data:
+  # Sourced by the image before PostgreSQL starts. PostgreSQL refuses a key
+  # file that other users can read, so the mounted pair is copied with mode 0600.
+  tls-files.sh: |
+    mkdir -p /tmp/pgtls
+    cp /etc/postgres-tls/tls.crt /etc/postgres-tls/tls.key /tmp/pgtls/
+    chmod 0600 /tmp/pgtls/tls.key
+  # Included into postgresql.conf by the image.
+  tls.conf: |
+    ssl = on
+    ssl_cert_file = '/tmp/pgtls/tls.crt'
+    ssl_key_file = '/tmp/pgtls/tls.key'
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: orchestrator-postgres
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+spec:
+  serviceName: orchestrator-postgres-rw
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orchestrator-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: __POSTGRES_IMAGE__
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-postgres-secret
+                  key: username
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-postgres-secret
+                  key: password
+            - name: POSTGRESQL_DATABASE
+              value: orchestrator
+            - name: POSTGRESQL_MAX_CONNECTIONS
+              value: "200"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["/usr/libexec/check-container"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["/usr/libexec/check-container", "--live"]
+            initialDelaySeconds: 120
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+            - name: tls
+              mountPath: /etc/postgres-tls
+              readOnly: true
+            - name: config
+              mountPath: /opt/app-root/src/postgresql-pre-start
+              readOnly: true
+            - name: config-tls
+              mountPath: /opt/app-root/src/postgresql-cfg
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: orchestrator-postgres-tls
+        - name: config
+          configMap:
+            name: orchestrator-postgres-config
+            items:
+              - key: tls-files.sh
+                path: tls-files.sh
+        - name: config-tls
+          configMap:
+            name: orchestrator-postgres-config
+            items:
+              - key: tls.conf
+                path: tls.conf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: orchestrator-postgres
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: __STORAGE_CLASS__
+        resources:
+          requests:
+            storage: 3Gi

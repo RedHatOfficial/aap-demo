@@ -17,7 +17,7 @@ if ($source -match '(?im)\b(bash|wsl|sh)\b') {
   throw 'Native AO implementation must not invoke Bash, WSL, or shell interpreters'
 }
 if ($source -notmatch 'operator-subscription\.yaml' -or
-    $source -notmatch 'postgres-cluster\.yaml' -or
+    $source -notmatch "'postgres\.yaml'" -or
     $source -notmatch 'automationorchestrator-cr\.yaml' -or
     $source -notmatch 'installplan' -or
     $source -notmatch 'approved') {

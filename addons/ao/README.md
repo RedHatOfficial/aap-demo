@@ -8,9 +8,9 @@ Deploys **Automation Orchestrator (GA)** on aap-demo MicroShift clusters.
 - **Requires:** `mcp-server` addon (`aap-demo enable ao` installs it automatically)
 - **Does not require:** `aapctl`, Quay credentials, GitHub CLI, or a private operator index
 
-Manifests follow the
-[aapctl GitOps shape](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)
-and are checked in under [`manifests/`](manifests/). `deploy.sh` applies them with `kubectl`.
+The operator is installed with an OLM Subscription, the supported CLI method. The instance CR and a
+one-pod PostgreSQL (`rhel9/postgresql-15`, ADR-043) are checked in under [`manifests/`](manifests/).
+`deploy.sh` applies them with `kubectl`.
 
 ## Quick start
 
@@ -103,8 +103,7 @@ Remove:
 aap-demo disable ao
 ```
 
-This removes the `automation-orchestrator` namespace and AO OLM resources. The CloudNativePG
-operator in `cnpg-system` is **not** removed (it may be shared).
+This removes the `automation-orchestrator` namespace, its PostgreSQL, and AO OLM resources.
 
 ### Auto-wiring (AAP + MCP)
 
@@ -160,10 +159,6 @@ and `credential_id`; that message is expected before both are chosen on the node
 | Operator in index | `automation-orchestrator-operator` in `redhat-operator-index` v4.18+; automatic fallback index if missing |
 | StorageClass | Auto-detected: `nfs-local-rwx` or `topolvm-provisioner` |
 
-**`aapctl` is optional.** Install it only to refresh checked-in templates via
-[`scripts/generate-manifests.sh`](scripts/generate-manifests.sh). On disable, `deploy.sh` calls
-`aapctl uninstall` if the binary happens to be on your PATH.
-
 ## How it works
 
 ```
@@ -172,23 +167,22 @@ aap-demo deploy                    aap-demo enable ao
      ▼                                    ▼
  redhat-operators                  automation-orchestrator ns
  in aap-operator          ──►      + local CatalogSource copy
- (AAP subscription)                + CNPG (upstream manifest)
-                                   + Postgres secrets + Cluster
+ (AAP subscription)                + Postgres secrets + StatefulSet
                                    + OLM Subscription (AO operator)
                                    + AutomationOrchestrator CR
 ```
 
 ### MicroShift OLM constraints
 
-Stock `aapctl` assumes full OpenShift (`openshift-marketplace`, `certified-operators`). On MicroShift:
+The documented install assumes full OpenShift (`openshift-marketplace`). On MicroShift:
 
-| Topic | Full OpenShift / aapctl default | aap-demo |
+| Topic | Full OpenShift default | aap-demo |
 |-------|----------------------------------|----------|
 | AO catalog | `sourceNamespace: openshift-marketplace` | Local `redhat-operators` CatalogSource in `automation-orchestrator` |
 | AO subscription | Same namespace as catalog | `automation-orchestrator` (not `aap-operator`) |
 | OperatorGroup | Varies | Empty spec (`AllNamespaces`) — **cannot** share `aap-operator` with AAP's OperatorGroup |
-| CNPG operator | `certified-operators` subscription | Upstream `cnpg-*.yaml` into `cnpg-system` |
-| Database secrets | Random each `aapctl --dry-run` | Created once at install; password reused on re-run |
+| PostgreSQL | An external or operator-managed database | One `rhel9/postgresql-15` StatefulSet, TLS from service-ca |
+| Database secrets | Supplied by the administrator | Created once at install; password reused on re-run |
 
 See [`manifests/README.md`](manifests/README.md) for file-level detail and apply order.
 
@@ -196,8 +190,9 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AO_STORAGE_CLASS` | auto-detected | StorageClass for CNPG PostgreSQL PVC |
-| `CNPG_VERSION` | `1.25.1` | CloudNativePG operator version (dev-only) |
+| `AO_STORAGE_CLASS` | auto-detected | StorageClass for AO's shared volumes |
+| `AO_POSTGRES_STORAGE_CLASS` | `topolvm-provisioner` | StorageClass for the PostgreSQL volume |
+| `AO_POSTGRES_IMAGE` | AAP's PostgreSQL image | PostgreSQL image; falls back to `registry.redhat.io/rhel9/postgresql-15` |
 | `AAP_DEMO_NAMESPACE` | `aap-operator` | Used to derive cluster ingress domain for the AO route |
 | `AO_LOW_RESOURCE` | unset | Unset/`1`/`true` selects one backend, UI, and worker replica; set to `0`/`false` for two replicas |
 | `FORCE` | unset | Set to `1` or use `--force` to reinstall |
@@ -409,8 +404,9 @@ FORCE=1 aap-demo enable ao
 
 ### Backend migration / `InvalidPasswordError`
 
-Usually a **password drift** between CNPG bootstrap and connection secrets (e.g. after upgrading from
-older `orchestrator-pg-credentials` names). Force reinstall recreates Postgres with matching secrets:
+Usually a **password drift** between the PostgreSQL user and the connection secrets (e.g. after
+upgrading from older `orchestrator-pg-credentials` names). Force reinstall recreates Postgres with
+matching secrets:
 
 ```bash
 FORCE=1 aap-demo enable ao
@@ -418,10 +414,8 @@ FORCE=1 aap-demo enable ao
 
 ### Backend migration / `database "orchestrator" does not exist`
 
-The operator on **`stable`** can install successfully while Postgres databases are still missing. This
-happens when an older CloudNativePG install (without the `Database` CRD) was already on the cluster;
-`deploy.sh` now upgrades CNPG and verifies `orchestrator`, `temporal`, and `temporal_visibility` exist
-before continuing. Re-run:
+`deploy.sh` creates `temporal` and `temporal_visibility` next to `orchestrator` and checks all three
+before it applies the CR. If one is still missing, re-run:
 
 ```bash
 FORCE=1 aap-demo enable ao
@@ -430,8 +424,7 @@ FORCE=1 aap-demo enable ao
 Verify databases:
 
 ```bash
-kubectl exec -n automation-orchestrator orchestrator-postgres-1 -- psql -U postgres -c '\l'
-kubectl get database -n automation-orchestrator
+kubectl exec -n automation-orchestrator orchestrator-postgres-0 -- psql -U postgres -c '\l'
 ```
 
 Check migration job logs:
@@ -441,21 +434,16 @@ kubectl logs -n automation-orchestrator -l job-name --tail=50
 kubectl get automationorchestrator -n automation-orchestrator -o yaml
 ```
 
-### Maintainer: refresh manifests from aapctl
+### Upgrading from a CloudNativePG install
 
-Requires `aapctl` (Technology Preview):
-
-```bash
-./addons/ao/scripts/generate-manifests.sh
-```
-
-See [Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops).
+Installs from before ADR-043 keep AO's database in a CloudNativePG cluster. `enable ao` stops on one
+and says so. `aap-demo enable ao --force` replaces it with the new PostgreSQL, which deletes AO's data.
+CloudNativePG itself (`cnpg-system`) is left installed.
 
 ## Related documentation
 
 - ADR: [`docs/adr/017-ao-addon.md`](../../docs/adr/017-ao-addon.md)
 - ADR: [`docs/adr/023-addon-auto-wiring.md`](../../docs/adr/023-addon-auto-wiring.md)
+- ADR: [`docs/adr/043-ao-postgres-statefulset.md`](../../docs/adr/043-ao-postgres-statefulset.md)
 - Manifest index: [`manifests/README.md`](manifests/README.md)
 - [Install the operator from the OpenShift CLI](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-install_the_operator_from_the_openshift_cli)
-- [Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)
-- [Manifest application order](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-understand_aapctl_manifest_application_order)
