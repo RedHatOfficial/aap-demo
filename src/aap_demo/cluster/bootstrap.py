@@ -198,16 +198,30 @@ def _wait_ssh(ctx: AppContext, key: Path, *, sleep: Callable[[float], None]) -> 
     )
 
 
+#: AAP's images come from here. A node auth file without it can't pull them.
+REQUIRED_REGISTRY = "registry.redhat.io"
+#: Exits 0 when the auth file at ``sys.argv[1]`` has a REQUIRED_REGISTRY credential.
+_REGISTRY_PROBE = (
+    "import json,sys; d=json.load(open(sys.argv[1])); a=d.get('auths') or {}; "
+    f"r=a.get('{REQUIRED_REGISTRY}') if isinstance(a, dict) else None; "
+    "sys.exit(0 if isinstance(r, dict) and (r.get('auth') or r.get('identitytoken')) else 1)"
+)
+
+
+def _has_required_registry(auths: object) -> bool:
+    entry = auths.get(REQUIRED_REGISTRY) if isinstance(auths, dict) else None
+    return isinstance(entry, dict) and bool(entry.get("auth") or entry.get("identitytoken"))
+
+
 def _crio_pull_secret_configured(ctx: AppContext, key: Path) -> bool:
-    """True when CRI-O's global auth file exists and has registry credentials.
+    """True when CRI-O's global auth file has a registry.redhat.io credential.
 
     The probe prints ``configured`` or nothing. It does not print the file.
     """
     script = (
         f"f={CRIO_PULL_SECRET}; "
         '[ -s "$f" ] || exit 1; '
-        "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); "
-        'a=d.get("auths"); sys.exit(0 if isinstance(a, dict) and a else 1)\' "$f" '
+        f'python3 -c "{_REGISTRY_PROBE}" "$f" '
         "&& echo configured"
     )
     result = ssh_mod.exec_remote(ctx.runner, key, "bash", "-c", script, sudo=True)
@@ -215,13 +229,14 @@ def _crio_pull_secret_configured(ctx: AppContext, key: Path) -> bool:
 
 
 def ensure_crio_pull_secret(ctx: AppContext, key: Path, secret: Path) -> None:
-    """Require CRI-O's global pull secret before create continues.
+    """Require CRI-O's global pull secret before create or deploy continues.
 
     CRC post-start is supposed to write ``/etc/crio/openshift-pull-secret``
-    from ``crc start --pull-secret-file``. When that step fails, MicroShift
-    still boots and image pulls have no registry credentials. Install the
-    file from the same pull secret, then fail create if it is still absent
-    or has no ``auths`` entries.
+    from ``crc start --pull-secret-file``. When that step fails, or CRC was
+    started with an auth file that lacks registry.redhat.io, MicroShift still
+    boots and AAP's image pulls fail as unauthorized. Install the file from
+    the configured pull secret, then fail if it still has no
+    registry.redhat.io credential.
     """
     ctx.console.step("Checking the CRI-O pull secret")
     if _crio_pull_secret_configured(ctx, key):
@@ -239,6 +254,11 @@ def ensure_crio_pull_secret(ctx: AppContext, key: Path, secret: Path) -> None:
     if not isinstance(auths, dict) or not auths:
         raise AapDemoError(
             "Pull secret is not a registry auth file",
+            hint=pull_secret.unset_hint(ctx),
+        )
+    if not _has_required_registry(auths):
+        raise AapDemoError(
+            f"The pull secret has no {REQUIRED_REGISTRY} credential, so AAP images can't be pulled",
             hint=pull_secret.unset_hint(ctx),
         )
     ctx.console.progress("Installing the pull secret into CRI-O")
@@ -261,7 +281,7 @@ def ensure_crio_pull_secret(ctx: AppContext, key: Path, secret: Path) -> None:
     if not wrote.ok or not _crio_pull_secret_configured(ctx, key):
         raise AapDemoError(
             "CRI-O global pull secret is not configured",
-            hint=f"Expected {CRIO_PULL_SECRET} to contain registry credentials.",
+            hint=f"Expected {CRIO_PULL_SECRET} to contain a {REQUIRED_REGISTRY} credential.",
         )
     ctx.console.checkpoint("CRI-O pull secret is configured")
 

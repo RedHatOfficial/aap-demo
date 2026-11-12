@@ -434,8 +434,9 @@ def test_aap_that_never_becomes_successful_is_reported_as_a_timeout(app_ctx, hea
     result = _run(app_ctx, cr_name="controller")
     assert result.ready is False
     assert "not complete after 60 minutes" in app_ctx.console.stderr
-    assert ("Waiting for AAP", "done") in app_ctx.console.task_states()
+    assert ("Waiting for AAP", "failed") in app_ctx.console.task_states()
     assert _wait_task(app_ctx).note == "AAP did not become ready"
+    assert "✓ AAP did not become ready" not in app_ctx.console.stdout
     assert "Username: admin" in app_ctx.console.stdout
     assert "Password:" in app_ctx.console.stdout
 
