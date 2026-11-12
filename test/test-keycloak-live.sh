@@ -46,8 +46,13 @@ admin_token="$(curl -skf -X POST "https://${host}/realms/master/protocol/openid-
   exit 1
 }
 
+admin_auth="$(mktemp "${TMPDIR:-/tmp}/aap-demo-keycloak-admin.XXXXXX")"
+chmod 600 "$admin_auth"
+trap 'rm -f "$admin_auth"' EXIT
+printf 'header = "Authorization: Bearer %s"\n' "$admin_token" >"$admin_auth"
+
 admin_curl() {
-  curl -skf -H "Authorization: Bearer ${admin_token}" "$@"
+  curl -skf --config "$admin_auth" "$@"
 }
 
 curl -skf "https://${host}/realms/${REALM}/.well-known/openid-configuration" \
