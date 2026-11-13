@@ -1144,6 +1144,8 @@ apply_ao_postgres_manifest() {
 reconcile_ao_postgres() {
   local _rc=0
   kubectl get statefulset orchestrator-postgres -n "$NAMESPACE" &>/dev/null || return 0
+  # A CNPG install shares the Service name; applying would repoint it.
+  ! ao_cnpg_cluster_exists || return 0
   if apply_ao_postgres_manifest \
     && kubectl rollout status statefulset/orchestrator-postgres -n "$NAMESPACE" \
       --timeout=10m >/dev/null; then

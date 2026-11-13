@@ -71,7 +71,8 @@ if grep -q 'pg_reload_conf' "$TMP_DIR/psql.log" && grep -q '127.0.0.1' "$TMP_DIR
 else
   fail "a renewed certificate did not reload PostgreSQL"
 fi
-if ! ls -A "$TMP_DIR/dst" | grep -q '\.new$'; then
+leftovers=("$TMP_DIR"/dst/.*.new)
+if [ ! -e "${leftovers[0]}" ]; then
   pass "no temporary files are left behind"
 else
   fail "temporary files were left in the target directory"
@@ -79,7 +80,7 @@ fi
 
 # ── CA Secret sync ──────────────────────────────────────────────────────────
 BUNDLE_CA=""
-SECRET_CA=""
+STORED_CA=""
 RESTARTED=()
 # kubectl create runs on the left of a pipe, in a subshell, so it records here.
 APPLIED_FILE="$TMP_DIR/applied"
@@ -89,8 +90,8 @@ kubectl() {
   case "$*" in
     "get configmap orchestrator-postgres-ca-bundle"*) printf '%s' "$BUNDLE_CA" ;;
     "get secret orchestrator-postgres-ca"*)
-      [ -n "$SECRET_CA" ] || return 1
-      printf '%s' "$SECRET_CA" | base64
+      [ -n "$STORED_CA" ] || return 1
+      printf '%s' "$STORED_CA" | base64
       ;;
     "create secret generic orchestrator-postgres-ca"*)
       local arg
@@ -121,11 +122,11 @@ sync_rc() {
   echo "$rc"
 }
 
-BUNDLE_CA="" SECRET_CA=""
+BUNDLE_CA="" STORED_CA=""
 rm -f "$APPLIED_FILE"
 [ "$(sync_rc)" = 2 ] && pass "no published CA returns 2" || fail "no published CA did not return 2"
 
-BUNDLE_CA="ca-1" SECRET_CA=""
+BUNDLE_CA="ca-1" STORED_CA=""
 rm -f "$APPLIED_FILE"
 rc=$(sync_rc)
 if [ "$rc" = 0 ] && [ "$(applied)" = "ca-1" ]; then
@@ -134,7 +135,7 @@ else
   fail "a missing CA Secret was not written (rc=$rc)"
 fi
 
-BUNDLE_CA="ca-1" SECRET_CA="ca-1"
+BUNDLE_CA="ca-1" STORED_CA="ca-1"
 rm -f "$APPLIED_FILE"
 rc=$(sync_rc)
 if [ "$rc" = 1 ] && [ -z "$(applied)" ]; then
@@ -143,7 +144,7 @@ else
   fail "a matching CA Secret was rewritten (rc=$rc)"
 fi
 
-BUNDLE_CA="ca-2" SECRET_CA="ca-1"
+BUNDLE_CA="ca-2" STORED_CA="ca-1"
 rm -f "$APPLIED_FILE"
 rc=$(sync_rc)
 if [ "$rc" = 0 ] && [ "$(applied)" = "ca-2" ]; then
