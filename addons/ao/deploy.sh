@@ -1555,6 +1555,15 @@ stringData:
 EOF
 
 POSTGRES_IMAGE="$(ao_postgres_image)"
+# Both values go into sed and YAML, so allow only image and name characters.
+if [[ ! "$POSTGRES_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
+  echo "ERROR: PostgreSQL image '${POSTGRES_IMAGE}' is not a valid image reference." >&2
+  exit 1
+fi
+if [[ ! "$POSTGRES_STORAGE_CLASS" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+  echo "ERROR: StorageClass '${POSTGRES_STORAGE_CLASS}' is not a valid name." >&2
+  exit 1
+fi
 if [ "$POSTGRES_IMAGE" = "$POSTGRES_IMAGE_FALLBACK" ]; then
   echo "  PostgreSQL image: ${POSTGRES_IMAGE}"
 else

@@ -168,10 +168,15 @@ function Get-AapAoPostgresImage {
 function Ensure-AapAoPostgres {
   param([Parameter(Mandatory)][string]$Namespace)
 
+  # Both values go into the YAML, so allow only image and name characters.
+  $image = Get-AapAoPostgresImage
+  if ($image -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9._/:@-]*\z') { throw "PostgreSQL image '$image' is not a valid image reference" }
+  $storageClass = Get-AapAoPostgresStorageClass
+  if ($storageClass -cnotmatch '\A[a-z0-9]([a-z0-9.-]*[a-z0-9])?\z') { throw "StorageClass '$storageClass' is not a valid name" }
   $postgres = New-AapAoManifestFile -Name 'postgres.yaml' -Replacements @{
     '__NAMESPACE__' = $Namespace
-    '__STORAGE_CLASS__' = (Get-AapAoPostgresStorageClass)
-    '__POSTGRES_IMAGE__' = (Get-AapAoPostgresImage)
+    '__STORAGE_CLASS__' = $storageClass
+    '__POSTGRES_IMAGE__' = $image
   }
   try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $postgres) | Out-Null }
   finally { Remove-Item -LiteralPath $postgres -Force -ErrorAction SilentlyContinue }
