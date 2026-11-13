@@ -10,6 +10,8 @@ source "${SCRIPT_DIR}/lib/admin-password.sh"
 source "${SCRIPT_DIR}/lib/replica-profile.sh"
 # shellcheck source=lib/install-plan-approval.sh
 source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
+# shellcheck source=lib/postgres-storage.sh
+source "${SCRIPT_DIR}/lib/postgres-storage.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -1634,8 +1636,13 @@ stringData:
   username: orchestrator
 EOF
 
+# CNPG rejects shrinking storage. Keep an existing Cluster size unless FORCE
+# already deleted the PVC (fresh init uses AO_STORAGE_SIZE / default 3Gi).
+PG_STORAGE_SIZE=$(ao_postgres_storage_size "$NAMESPACE" "${AO_STORAGE_SIZE:-3Gi}") || exit 1
+
 sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
   -e "s|__STORAGE_CLASS__|${STORAGE_CLASS}|g" \
+  -e "s|__STORAGE_SIZE__|${PG_STORAGE_SIZE}|g" \
   "${MANIFESTS_DIR}/postgres-cluster.yaml" | kubectl apply -f - || {
   echo "ERROR: Failed to apply PostgreSQL manifests."
   if ! cnpg_database_crd_available; then

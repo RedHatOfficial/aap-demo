@@ -197,6 +197,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AO_STORAGE_CLASS` | auto-detected | StorageClass for CNPG PostgreSQL PVC |
+| `AO_STORAGE_SIZE` | `3Gi` | PostgreSQL PVC size for new clusters; existing Cluster size is preserved (CNPG cannot shrink) |
 | `CNPG_VERSION` | `1.25.1` | CloudNativePG operator version (dev-only) |
 | `AAP_DEMO_NAMESPACE` | `aap-operator` | Used to derive cluster ingress domain for the AO route |
 | `AO_LOW_RESOURCE` | unset | Unset/`1`/`true` selects one backend, UI, and worker replica; set to `0`/`false` for two replicas |
