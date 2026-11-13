@@ -279,7 +279,7 @@ def main() -> int:
     if not token:
         raise RuntimeError("AO access token is unavailable")
     base = f"https://{args.route}/api/v1"
-    context = ssl._create_unverified_context()
+    context = ssl.create_default_context()
 
     def request(method: str, path: str, payload: Any = None) -> Dict[str, Any]:
         data = None if payload is None else json.dumps(payload).encode()

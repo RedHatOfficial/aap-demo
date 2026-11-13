@@ -299,3 +299,37 @@ def test_sync_disk_demo_101_creates_distinct_owned_copy(monkeypatch):
     )
     MODULE.sync_disk_workflow(request, "cred", "integration", demo_101=True)
     assert calls[-1][2]["labels"]["source_file"] == "fleet-disk-demo-101-routed.json"
+
+
+def test_ao_requests_verify_certificates_and_hostname(monkeypatch):
+    import ssl
+    import sys
+
+    monkeypatch.setenv("AO_ACCESS_TOKEN", "test-token")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(SCRIPT),
+            "--route",
+            "ao.example.test",
+            "--credential-id",
+            "c",
+            "--integration-id",
+            "i",
+        ],
+    )
+
+    def check_request(request, credential_id, integration_id, **kwargs):
+        request("GET", "/projects")
+        return "id"
+
+    def open_request(req, *, context, timeout):
+        assert context.verify_mode == ssl.CERT_REQUIRED
+        assert context.check_hostname
+        raise RuntimeError("verified TLS context")
+
+    monkeypatch.setattr(MODULE, "sync_disk_workflow", check_request)
+    monkeypatch.setattr(MODULE.urllib.request, "urlopen", open_request)
+    with pytest.raises(RuntimeError, match="verified TLS context"):
+        MODULE.main()
