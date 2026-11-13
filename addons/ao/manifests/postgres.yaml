@@ -146,7 +146,7 @@ spec:
       volumes:
         - name: tls
           secret:
-            secretName: orchestrator-postgres-tls
+            secretName: orchestrator-postgres-tls # pragma: allowlist secret
         - name: config
           configMap:
             name: orchestrator-postgres-config

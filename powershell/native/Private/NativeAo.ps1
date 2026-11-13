@@ -374,6 +374,21 @@ function Invoke-AapAoAddonNative {
   if ($cnpg) {
     $force = ($ScriptArgs -contains '--force') -or (Get-AapAoSetting -Name 'FORCE')
     if (-not $force) {
+      # Like the Bash path: a running CNPG-backed AO is left alone, with a note.
+      $instance = Get-AapKubectlJson -Arguments @('get', 'automationorchestrator', 'automation-orchestrator', '-n', $Namespace)
+      $conditions = if ($instance -and $instance.PSObject.Properties['status'] -and $instance.status.PSObject.Properties['conditions']) {
+        @($instance.status.conditions)
+      } else {
+        @()
+      }
+      $ready = @($conditions | Where-Object { $_.type -eq 'Ready' -and $_.status -eq 'True' })
+      if ($ready.Count -gt 0) {
+        Write-AapStep 'Automation Orchestrator already running'
+        Write-Host "  Its database is still in CloudNativePG, which aap-demo no longer uses."
+        Write-Host "  aap-demo enable ao --force moves AO to the new PostgreSQL and deletes AO's data."
+        Set-AapAoLocalAccess -Namespace $Namespace
+        return
+      }
       Write-AapStep "This AO keeps its database in CloudNativePG, which aap-demo no longer uses"
       throw "Run aap-demo enable ao --force to move it to the new PostgreSQL. That deletes AO's data."
     }
