@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-11-09 (updated 2026-11-10, after #329 merged)
+**Date**: 2026-11-09 (updated 2026-11-10, after #329 merged; updated 2026-11-12, AO on the fallback)
 
 **Authors**: aap-demo maintainers
 
@@ -126,6 +126,26 @@ registered from a single list.
 - **Errors:** a name that is neither native nor legacy is an error that lists
   both groups. When a script fails, the error gives its exit code and the path of
   the script that ran.
+
+#### Progress: AO, mcp-server and ollama (2026-11-12)
+
+AO, with the two add-ons it needs, is the first group on this fallback:
+
+- **Layout:** the wheel carries the bundled files under `aap_demo/bundled/`, in the
+  repository's own layout (`bundled/addons/<name>`, `bundled/includes`,
+  `bundled/config/olm`). It replaces ADR-039's `aap_demo/bundled_addons/`, so the
+  scripts' `../../includes` and `REPO_ROOT` paths resolve unchanged. `includes/` is
+  bundled whole. `addons/subscription-attach` is bundled because `addon-wire.sh` runs it.
+- **Wiring:** a `self_wire` option sets `AAP_DEMO_WIRE_AFTER_DEPLOY=1` for these three,
+  because AO wires itself to AAP before it imports its workflows. Product demos keep the
+  post-install step.
+- **What `aap-demo.sh` did before `deploy.sh`:** a `prepare` hook covers it. mcp-server and,
+  with the default `AO_LLM_PROVIDER=ollama`, ollama are enabled first and recorded in
+  `addons.enabled`. The LLM provider comes from `AO_LLM_PROVIDER`, with no prompt, so
+  nothing is saved to `~/.aap-demo/config`. The product-demos question became a note.
+  The pull secret this command found is passed as `PULL_SECRET_PATH`.
+- **Not yet:** `AAP_DEMO_DIR` is not set, so AO's saved admin password stays in
+  `~/.aap-demo/ao/`, where an existing install already has it.
 
 ### 4. Porting an addon later
 

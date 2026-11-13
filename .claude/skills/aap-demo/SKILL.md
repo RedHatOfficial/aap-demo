@@ -51,7 +51,7 @@ This environment includes characteristics specific to local development:
 | Destroy and rebuild from scratch | `aap-demo redeploy-all` |
 | Show help | `aap-demo help` |
 
-Available addons: olm, console, registry, mcp-server, devspaces, prometheus, portal, **ao** (Automation Orchestrator)
+Available addons: olm, console, registry, mcp-server, prometheus, portal, **ao** (Automation Orchestrator)
 
 ## Portal Addon
 

@@ -1,0 +1,12 @@
+# OpenShift 5 profile (ADR-041). The MicroShift preset only.
+major: 5
+stable: "5.0.0"
+minimum: "5.0"
+# Not the default until 5.0 has had live runs on every supported host.
+supported: false
+# CRC 2.64.0 has no 5.0 bundle, so create downloads and verifies it.
+crc_bundle: null
+# The v5.0 operator index at GA (2026-11-09) has AAP 2.7 only.
+aap_channels: [stable-2.7, stable-2.7-cluster-scoped]
+# The v5.0 index has no Automation Orchestrator or Automation Portal operator yet.
+operators: []

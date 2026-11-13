@@ -1,8 +1,9 @@
-"""Run a bash addon installer from the new command.
+"""Run a bundled bash addon installer from the new command.
 
-Fleet stays in Python. Product demos still live in ``addons/*/deploy.sh``.
+Fleet stays in Python. Legacy addons still live in ``addons/*/deploy.sh``.
 This module runs those scripts with the new command's kubeconfig and records
-the result in ``addons.enabled``.
+the result in ``addons.enabled``. A wheel carries them under
+``aap_demo/bundled/`` in the repository's layout (ADR-040).
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 import aap_demo
 from aap_demo.addons.base import AddonKind
@@ -40,22 +41,36 @@ BUNDLED_ADDON_DIRS: tuple = (
     "product-demo-cloud",
     "product-demo-openshift",
     "product-demo-satellite",
+    "eda-playground",
+    "ao",
+    "mcp-server",
+    "ollama",
 )
 
 #: Names ``aap-demo enable`` prints when no addon is given.
-PUBLIC_SHELL_ADDONS: tuple = ("product-demos", "product-demo-satellite")
+PUBLIC_SHELL_ADDONS: tuple = (
+    "product-demos",
+    "product-demo-satellite",
+    "eda-playground",
+    "ao",
+    "mcp-server",
+    "ollama",
+)
+
+#: Extra environment for one installer run, worked out before it starts.
+Prepare = Callable[[AppContext], Dict[str, str]]
 
 
 _INSTALLER_TOOLS = ("bash", "curl", "jq")
-#: The delete handlers only print cleanup steps, so disable needs bash alone.
+#: Product-demo delete handlers only need Bash; addons can override this.
 _DELETE_TOOLS = ("bash",)
 
 
 def scripts_root() -> Path:
-    """Directory that contains ``product-demos/deploy.sh``.
+    """Directory that contains the bundled addon deploy scripts.
 
     A checkout wins so ``pip install -e`` uses the tree you are editing.
-    A wheel falls back to the copy under ``aap_demo/bundled_addons``.
+    A wheel falls back to the copy under ``aap_demo/bundled/addons``.
     """
     package = Path(aap_demo.__file__).resolve().parent
     checkout = package.parents[1]
@@ -64,12 +79,12 @@ def scripts_root() -> Path:
         checkout_addons / "product-demos" / "deploy.sh"
     ).is_file():
         return checkout_addons
-    packaged = package / "bundled_addons"
+    packaged = package / "bundled" / "addons"
     if (packaged / "product-demos" / "deploy.sh").is_file():
         return packaged
     raise AddonError(
-        "product demos installer is not included in this aap-demo install",
-        hint="Reinstall aap-demo, or run ./aap-demo.sh enable product-demos from a git checkout.",
+        "addon installers are not included in this aap-demo install",
+        hint="Reinstall aap-demo, or run the command from a git checkout.",
     )
 
 
@@ -79,12 +94,7 @@ def wire_script() -> Path:
 
 def ao_script() -> Path:
     """Find AO's installer in a checkout or in the bundled shell runtime."""
-    checkout = scripts_root() / "ao" / "deploy.sh"
-    if checkout.is_file():
-        return checkout
-    return (
-        Path(aap_demo.__file__).resolve().parent / "bundled_runtime" / "addons" / "ao" / "deploy.sh"
-    )
+    return scripts_root() / "ao" / "deploy.sh"
 
 
 def _enable_ao(ctx: AppContext, env: Dict[str, str]) -> None:
@@ -112,16 +122,19 @@ def _enable_ao(ctx: AppContext, env: Dict[str, str]) -> None:
         )
 
 
-def require_tools(*, delete: bool = False) -> None:
-    tools = _DELETE_TOOLS if delete else _INSTALLER_TOOLS
+def require_tools(
+    *, delete: bool = False, tools: Optional[Sequence[str]] = None, name: str = ""
+) -> None:
+    tools = tuple(tools or (_DELETE_TOOLS if delete else _INSTALLER_TOOLS))
     missing = [name for name in tools if shutil.which(name) is None]
     if not missing:
         return
     hint = "Install " + ", ".join(missing) + " and run the command again."
     if "jq" in missing:
         hint += " On macOS: brew install jq"
+    label = "product demos" if name == "product-demos" else (name or "the addon")
     raise PrerequisiteError(
-        "product demos need " + " and ".join(missing),
+        label + " need " + " and ".join(missing),
         hint=hint,
     )
 
@@ -132,26 +145,53 @@ class ShellAddon:
     kind: AddonKind = "legacy"
     needs_cluster = True
 
-    def __init__(self, name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        required_tools: Sequence[str] = _INSTALLER_TOOLS,
+        delete_tools: Sequence[str] = _DELETE_TOOLS,
+        wire_after_enable: bool = True,
+        dependencies: Sequence[str] = ("product-demos-base",),
+        state_dir_env: Optional[str] = None,
+        self_wire: bool = False,
+        prepare: Optional[Prepare] = None,
+    ) -> None:
         self.name = name
         self.public = name in PUBLIC_SHELL_ADDONS
+        self.required_tools = tuple(required_tools)
+        self.delete_tools = tuple(delete_tools)
+        self.wire_after_enable = wire_after_enable
+        self.dependencies = tuple(dependencies)
+        self.state_dir_env = state_dir_env
+        #: The installer wires itself after a good install (``AAP_DEMO_WIRE_AFTER_DEPLOY=1``).
+        self.self_wire = self_wire
+        #: Runs before the installer on enable: dependencies first, then extra environment.
+        self.prepare = prepare
 
     def enable(self, ctx: AppContext, args: object) -> int:
         extra = getattr(args, "addon_args", None) or []
-        return _run(ctx, self.name, delete=False, extra=list(extra))
+        return _run(ctx, self, delete=False, extra=list(extra))
 
     def disable(self, ctx: AppContext, args: object) -> int:
         del args
-        return _run(ctx, self.name, delete=True, extra=[])
+        return _run(ctx, self, delete=True, extra=[])
 
 
-def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> int:
-    require_tools(delete=delete)
-    deploy = scripts_root() / name / "deploy.sh"
+def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[str]) -> int:
+    name = addon.name
+    require_tools(
+        delete=delete,
+        tools=addon.delete_tools if delete else addon.required_tools,
+        name=name,
+    )
+    deploy = scripts_root() / addon.name / "deploy.sh"
     if not deploy.is_file():
         raise AddonError(f"addon {name!r} has no deploy.sh")
 
+    extra_env = addon.prepare(ctx) if addon.prepare is not None and not delete else {}
     env = ctx.kube_env()
+    env.update(extra_env)
     if name == "product-demos" and not delete:
         try:
             env["AAP_DEMO_FLEET_HOST"] = discover_fleet_host(ctx)
@@ -166,10 +206,15 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
                     ctx.console.out("Product Demos installation cancelled.")
                     return 0
     env["NAMESPACE"] = ctx.namespace
-    # Bash wires once after enable. Leave the installer's own wiring off so a
-    # wheel, which has no includes/addon-wire.sh, still exits 0 after a good install.
-    env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "0"
+    # Product demos wire once, after enable, from this module. Addons such as AO
+    # wire inside their installer, before steps that need the wiring.
+    env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "1" if addon.self_wire and not delete else "0"
     env["AAP_DEMO_ENABLED_ADDONS"] = " ".join(_enabled(ctx))
+    # The global --force reaches installers the way the bash command passed it.
+    if ctx.force:
+        env["FORCE"] = "1"
+    if addon.state_dir_env:
+        env[addon.state_dir_env] = str(ctx.paths.state_dir / name)
 
     argv = ["bash", str(deploy)]
     if delete:
@@ -188,8 +233,9 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
     if failed_domains is not None:
         # The base and some domains are in AAP. Record them so disable and a
         # retry see them, wire the credentials, then report the failure.
-        _remember(ctx, name)
-        _wire(ctx, env)
+        _remember(ctx, name, addon.dependencies)
+        if addon.wire_after_enable:
+            _wire(ctx, env)
         failed = ", ".join(failed_domains) or "some domains"
         raise AddonError(
             f"{name} installed, and these demo domains failed: {failed}",
@@ -208,8 +254,9 @@ def _run(ctx: AppContext, name: str, *, delete: bool, extra: Sequence[str]) -> i
         return 0
 
     previously_enabled = _enabled(ctx)
-    _remember(ctx, name)
-    _wire(ctx, env)
+    _remember(ctx, name, addon.dependencies)
+    if addon.wire_after_enable:
+        _wire(ctx, env)
     if name == "product-demos" and env.get("AAP_DEMO_FLEET_HOST"):
         try:
             _enable_ao(ctx, env)
@@ -245,10 +292,10 @@ def _partial_domains(path: Optional[Path]) -> Optional[List[str]]:
     return words[1:]
 
 
-def _remember(ctx: AppContext, name: str) -> None:
-    """Record the addon and the base installer it depends on."""
+def _remember(ctx: AppContext, name: str, dependencies: Sequence[str]) -> None:
+    """Record the addon and any legacy installers it depends on."""
     current = _enabled(ctx)
-    for item in (name, "product-demos-base"):
+    for item in (name, *dependencies):
         if item not in current:
             current.append(item)
     _save_enabled(ctx, current)

@@ -100,6 +100,13 @@ def status_json(runner: Any) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def openshift_version(runner: Any) -> str:
+    """``4.22.13`` from ``crc status``. Empty when CRC is absent or doesn't say."""
+    reported = str(status_json(runner).get("openshiftVersion", "") or "")
+    match = re.match(r"\d+\.\d+(?:\.\d+)?", reported.strip())
+    return match.group(0) if match else ""
+
+
 def state_from_status(data: Dict[str, Any]) -> str:
     """The state for a ``crc status -o json`` answer (``{}`` when CRC did not answer)."""
     crc_status = data.get("crcStatus", "Unknown")
@@ -118,6 +125,22 @@ def get_state(runner: Any) -> str:
 def machine_exists(home: Path) -> bool:
     """True when CRC's machine directory holds a VM, whether or not CRC answers."""
     return (home / ".crc" / "machines" / "crc" / "config.json").is_file()
+
+
+_BUNDLE_VERSION_RE = re.compile(r"_(\d+\.\d+\.\d+)_")
+
+
+def machine_bundle_version(home: Path) -> Optional[str]:
+    """MicroShift version of the existing VM, from its bundle name. Works while stopped."""
+    config = home / ".crc" / "machines" / "crc" / "config.json"
+    try:
+        document = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    driver = document.get("Driver") if isinstance(document, dict) else None
+    name = str(driver.get("BundleName", "") or "") if isinstance(driver, dict) else ""
+    match = _BUNDLE_VERSION_RE.search(name)
+    return match.group(1) if match else None
 
 
 def has_instance(runner: Any, *, home: Optional[Path] = None) -> bool:
@@ -229,6 +252,18 @@ def requested_version(ctx: Any) -> str:
     return str(config.get("crc.version", "") or "").strip()
 
 
+def _ocp_minimum(ctx: Any) -> str:
+    """The profile minimum when ``--ocp-version`` is set, so 4.21 clusters pass."""
+    from aap_demo.infra import ocp_version
+
+    config = getattr(ctx, "config", None)
+    value = str(config.get("crc.ocp_version", "") or "").strip() if config is not None else ""
+    if not value:
+        return ""
+    profile = ocp_version.load_profiles().get(ocp_version.parse(value)[0])
+    return profile.minimum if profile is not None else ""
+
+
 def verify_version(ctx: Any) -> bool:
     """Ports ``_verify_crc_version`` (upstream #167).
 
@@ -251,7 +286,7 @@ def verify_version(ctx: Any) -> bool:
         return False
 
     recommended = _version_pair(ctx.env.get("CRC_RECOMMENDED_VERSION", ""), RECOMMENDED_VERSION)
-    minimum = _version_pair(requested_version(ctx), MINIMUM_VERSION)
+    minimum = _version_pair(requested_version(ctx) or _ocp_minimum(ctx), MINIMUM_VERSION)
     shown = _VERSION_RE.match(installed_text.strip())
     shown_text = shown.group(0) if shown else installed_text
 

@@ -36,6 +36,7 @@ from aap_demo.core.errors import AapDemoError, ClusterUnreachableError, env_numb
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
 from aap_demo.infra import crc as infra_crc
+from aap_demo.infra import ocp_version
 
 #: ``_check_disk_space`` thresholds.
 DISK_ERROR_PERCENT = 95
@@ -164,6 +165,16 @@ def wait_for_ovn(
         sleep(OVN_POLL_SECONDS)
 
 
+def _check_ocp_version(ctx: AppContext) -> None:
+    """``--ocp-version`` and ``--channel`` against the running cluster (ADR-041)."""
+    version = infra_crc.openshift_version(ctx.runner)
+    if not version:
+        return
+    channel = str(ctx.config.get("deploy.channel", "stable-2.7") or "stable-2.7")
+    index = str(ctx.env.get("AAP_OCP_VERSION", "") or "").strip()
+    ocp_version.check_cluster(ocp_version.requested(ctx), version, channel=channel, index=index)
+
+
 def _preset(ctx: AppContext) -> str:
     return str(ctx.config.get("crc.preset", "microshift") or "microshift")
 
@@ -230,13 +241,16 @@ def run(
             ),
         )
     ctx.console.checkpoint(f"Connected to {kubectl.current_context(ctx.runner)}")
+    # Version checks come first: a mismatch stops before the host trust store changes.
+    # --ocp-version goes first so a wrong major reads as a mismatch, not "too old".
+    _check_ocp_version(ctx)
+    if not infra_crc.verify_version(ctx):
+        raise AapDemoError("CRC version check failed")
+
     ctx.console.step("Trusting the ingress certificate")
     from aap_demo.cluster import ingress_ca
 
     ingress_ca.install(ctx)
-
-    if not infra_crc.verify_version(ctx):
-        raise AapDemoError("CRC version check failed")
 
     ctx.console.step("Waiting for cluster networking")
     wait_for_ovn(ctx, sleep=sleep, clock=clock)
@@ -386,9 +400,11 @@ def _await_catalog(
 
 
 def _finish_wait(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:
-    """Check off the timed wait so its duration freezes when ``wait_ready`` returns."""
-    note = "AAP is ready" if readiness.ready else "AAP did not become ready"
-    ctx.console.checkpoint(note)
+    """Close the timed wait, ready or not, so its duration freezes when ``wait_ready`` returns."""
+    if readiness.ready:
+        ctx.console.checkpoint("AAP is ready")
+    else:
+        ctx.console.fail_step("AAP did not become ready")
 
 
 def _ensure_subscription(ctx: AppContext, readiness: aap_mod.AapReadiness) -> None:

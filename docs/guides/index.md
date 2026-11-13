@@ -13,6 +13,7 @@ resource: https://github.com/RedHatOfficial/aap-demo
 - [Install](install.md) - Put the `aap-demo` command on your computer and update it later.
 - [First deploy](first-deploy.md) - Create the local cluster and install Ansible Automation Platform.
 - [Choose a version](choose-a-version.md) - Deploy AAP 2.7 or try 2.6.
+- [Choose an OpenShift version](openshift-version.md) - Build the cluster on OpenShift 4, a specific 4.x version, or 5.
 - [Subscription](subscription.md) - Get a manifest and apply it, or sign in through AAP.
 - [Daily use](daily-use.md) - Start, stop, pause, and check the cluster.
 - [Add-ons](addons.md) - Extra demo machines and the pieces the new command does not install yet.

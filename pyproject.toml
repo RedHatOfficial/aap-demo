@@ -61,21 +61,25 @@ path = "src/aap_demo/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/aap_demo"]
 
-# Product-demos installers stay shell scripts. The wheel has to carry them or
-# `pipx install aap-demo` cannot run `aap-demo enable product-demos`.
+# Addons that are not ported to Python stay shell scripts (ADR-040). The wheel
+# carries them, and the files they load, under aap_demo/bundled/ in the same
+# layout as the repository, so `../../includes` and REPO_ROOT paths resolve.
 [tool.hatch.build.targets.wheel.force-include]
-"addons/product-demos" = "aap_demo/bundled_addons/product-demos"
-"addons/product-demos-base" = "aap_demo/bundled_addons/product-demos-base"
-"addons/product-demo-linux" = "aap_demo/bundled_addons/product-demo-linux"
-"addons/product-demo-windows" = "aap_demo/bundled_addons/product-demo-windows"
-"addons/product-demo-network" = "aap_demo/bundled_addons/product-demo-network"
-"addons/product-demo-cloud" = "aap_demo/bundled_addons/product-demo-cloud"
-"addons/product-demo-openshift" = "aap_demo/bundled_addons/product-demo-openshift"
-"addons/product-demo-satellite" = "aap_demo/bundled_addons/product-demo-satellite"
-"addons/ao" = "aap_demo/bundled_runtime/addons/ao"
-"addons/mcp-server" = "aap_demo/bundled_runtime/addons/mcp-server"
-"includes" = "aap_demo/bundled_runtime/includes"
-"config/olm" = "aap_demo/bundled_runtime/config/olm"
+"addons/product-demos" = "aap_demo/bundled/addons/product-demos"
+"addons/product-demos-base" = "aap_demo/bundled/addons/product-demos-base"
+"addons/product-demo-linux" = "aap_demo/bundled/addons/product-demo-linux"
+"addons/product-demo-windows" = "aap_demo/bundled/addons/product-demo-windows"
+"addons/product-demo-network" = "aap_demo/bundled/addons/product-demo-network"
+"addons/product-demo-cloud" = "aap_demo/bundled/addons/product-demo-cloud"
+"addons/product-demo-openshift" = "aap_demo/bundled/addons/product-demo-openshift"
+"addons/product-demo-satellite" = "aap_demo/bundled/addons/product-demo-satellite"
+"addons/eda-playground" = "aap_demo/bundled/addons/eda-playground"
+"addons/ao" = "aap_demo/bundled/addons/ao"
+"addons/mcp-server" = "aap_demo/bundled/addons/mcp-server"
+"addons/ollama" = "aap_demo/bundled/addons/ollama"
+"addons/subscription-attach" = "aap_demo/bundled/addons/subscription-attach"
+"includes" = "aap_demo/bundled/includes"
+"config/olm" = "aap_demo/bundled/config/olm"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

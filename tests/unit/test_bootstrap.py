@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -484,3 +488,208 @@ def test_metrics_server_still_fails_when_the_network_stays_down(app_ctx) -> None
     app_ctx.runner = runner
     with pytest.raises(AapDemoError, match="no such host"):
         bootstrap._install_metrics(app_ctx, sleep=lambda _s: None)
+
+
+def test_crio_pull_secret_rejects_a_file_without_registry_redhat_io(app_ctx, tmp_path) -> None:
+    secret = tmp_path / "auth.json"
+    secret.write_text('{"auths":{"quay.io":{"auth":"dGVzdA=="}}}\n', encoding="utf-8")
+    key = tmp_path / "id_ecdsa"
+    runner = FakeRunner()
+    runner.fail("ssh")
+    app_ctx.runner = runner
+
+    with pytest.raises(AapDemoError, match="no registry.redhat.io credential"):
+        bootstrap.ensure_crio_pull_secret(app_ctx, key, secret)
+    assert all(call.input is None for call in runner.calls)
+
+
+@pytest.mark.parametrize(
+    ("auths", "configured"),
+    [
+        ({"registry.redhat.io": {"auth": "dGVzdA=="}}, True),
+        ({"registry.redhat.io": {"identitytoken": "t"}}, True),
+        ({"quay.io": {"auth": "dGVzdA=="}}, False),
+        ({"registry.redhat.io": {}}, False),
+        ({}, False),
+    ],
+)
+def test_node_probe_needs_a_registry_redhat_io_credential(tmp_path, auths, configured) -> None:
+    node_file = tmp_path / "openshift-pull-secret"
+    node_file.write_text(json.dumps({"auths": auths}), encoding="utf-8")
+    probe = subprocess.run(
+        [sys.executable, "-c", bootstrap._REGISTRY_PROBE, str(node_file)], check=False, timeout=30
+    )
+    assert (probe.returncode == 0) is configured
+    assert bootstrap._has_required_registry(auths) is configured
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the probe runs on the Linux CRC node")
+def test_node_probe_runs_through_the_remote_shell(app_ctx, tmp_path) -> None:
+    """The probe survives bash -c quoting, as CRI-O's file is checked over ssh."""
+    node_file = tmp_path / "openshift-pull-secret"
+    node_file.write_text('{"auths":{"quay.io":{"auth":"dGVzdA=="}}}', encoding="utf-8")
+    seen = []
+
+    def ssh(argv):
+        # The last token is the quoted remote command line, ``sudo bash -c '...'``.
+        remote = argv[-1].removeprefix("sudo ")
+        script = remote.replace(bootstrap.CRIO_PULL_SECRET, str(node_file))
+        seen.append(script)
+        done = subprocess.run(
+            ["bash", "-c", script], capture_output=True, text=True, check=False, timeout=30
+        )
+        return CompletedCommand(argv=tuple(argv), returncode=done.returncode, stdout=done.stdout)
+
+    runner = FakeRunner()
+    runner.register("ssh", ssh)
+    app_ctx.runner = runner
+
+    assert bootstrap._crio_pull_secret_configured(app_ctx, tmp_path / "key") is False
+    node_file.write_text('{"auths":{"registry.redhat.io":{"auth":"dGVzdA=="}}}', encoding="utf-8")
+    assert bootstrap._crio_pull_secret_configured(app_ctx, tmp_path / "key") is True
+    assert seen
+
+
+# --- --ocp-version (ADR-041) -----------------------------------------------
+
+
+def test_create_ocp_5_starts_the_verified_bundle(app_ctx, tmp_path, monkeypatch) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.config.set("crc.ocp_version", "5")
+    bundle = tmp_path / "crc_microshift_vfkit_5.0.0_arm64.crcbundle"
+    fetched: list = []
+    monkeypatch.setattr(
+        bootstrap.bundle_fetch,
+        "ensure_bundle",
+        lambda ctx, version: fetched.append(version) or bundle,
+    )
+
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+
+    assert fetched == ["5.0.0"]
+    start = next(c for c in runner.commands if c.startswith("crc start -p"))
+    assert start.endswith(f"-b {bundle}")
+    assert "MicroShift: 5.0.0" in app_ctx.console.stdout
+    assert "checked this bundle against Red Hat's signed checksum" in app_ctx.console.stdout
+
+
+def test_an_unreachable_mirror_is_a_retry_message(app_ctx, tmp_path, monkeypatch) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.config.set("crc.ocp_version", "4.21")
+
+    def offline(**_kwargs):
+        raise urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(bootstrap.bundle_mirror, "host_versions", offline)
+    with pytest.raises(AapDemoError, match="Could not read the MicroShift versions") as excinfo:
+        bootstrap.create(
+            app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+        )
+    assert "no route to host" in excinfo.value.hint
+    assert not any(c.startswith(("crc start", "crc config set")) for c in runner.commands)
+
+
+def test_create_default_downloads_nothing(app_ctx, tmp_path, monkeypatch) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+
+    def no_download(ctx, version):
+        raise AssertionError("the default version must not be downloaded")
+
+    monkeypatch.setattr(bootstrap.bundle_fetch, "ensure_bundle", no_download)
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    start = next(c for c in runner.commands if c.startswith("crc start -p"))
+    assert " -b " not in start
+
+
+def test_create_refuses_an_existing_vm_of_another_version(app_ctx, tmp_path) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Stopped"}')
+    config = tmp_path / "home" / ".crc" / "machines" / "crc" / "config.json"
+    config.write_text('{"Driver": {"BundleName": "crc_microshift_vfkit_4.22.13_arm64.crcbundle"}}')
+    app_ctx.config.set("crc.ocp_version", "5")
+
+    with pytest.raises(AapDemoError, match="runs MicroShift 4.22.13, not 5"):
+        bootstrap.create(
+            app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+        )
+    assert not any(
+        c.startswith(("crc start", "crc config set", "crc delete")) for c in runner.commands
+    )
+
+
+def test_create_with_the_old_crc_version_warns_and_keeps_the_old_path(
+    app_ctx, tmp_path, monkeypatch
+) -> None:
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.env["CRC_VERSION"] = "4.22"
+    monkeypatch.setattr(
+        bootstrap.bundle_fetch,
+        "ensure_bundle",
+        lambda ctx, version: (_ for _ in ()).throw(AssertionError("no download")),
+    )
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    assert "CRC_VERSION is deprecated" in app_ctx.console.stdout + app_ctx.console.stderr
+    assert not any(" -b " in c for c in runner.commands)
+
+
+class _GrowConsole:
+    def __init__(self) -> None:
+        self.lines: list = []
+
+    def checkpoint(self, text: str) -> None:
+        self.lines.append(("ok", text))
+
+    def warn(self, text: str) -> None:
+        self.lines.append(("warn", text))
+
+
+@pytest.mark.parametrize(
+    ("stdout", "expected"),
+    [
+        ("grown\n", [("ok", "CRC root filesystem extended to 40G")]),
+        ("unchanged\n", []),
+        ("small 19\n", ["warn"]),
+    ],
+)
+def test_grow_root_warns_when_the_volume_group_is_too_small(
+    monkeypatch, tmp_path, stdout, expected
+) -> None:
+    monkeypatch.setattr(
+        bootstrap.ssh_mod,
+        "exec_remote",
+        lambda *args, **kwargs: CompletedCommand(argv=("ssh",), returncode=0, stdout=stdout),
+    )
+    console = _GrowConsole()
+    ctx = type("Ctx", (), {"console": console, "runner": None})()
+
+    bootstrap._grow_root(ctx, tmp_path / "key")
+
+    if expected == ["warn"]:
+        assert len(console.lines) == 1 and console.lines[0][0] == "warn"
+        assert "stays at 19G" in console.lines[0][1]
+    else:
+        assert console.lines == expected
+
+
+@pytest.mark.parametrize(("returncode", "stdout"), [(5, ""), (0, "unknown\n")])
+def test_grow_root_warns_when_the_resize_fails(monkeypatch, tmp_path, returncode, stdout) -> None:
+    """A failed resize, or a root size the probe couldn't read, both warn."""
+    monkeypatch.setattr(
+        bootstrap.ssh_mod,
+        "exec_remote",
+        lambda *args, **kwargs: CompletedCommand(
+            argv=("ssh",), returncode=returncode, stdout=stdout
+        ),
+    )
+    console = _GrowConsole()
+    ctx = type("Ctx", (), {"console": console, "runner": None})()
+
+    bootstrap._grow_root(ctx, tmp_path / "key")
+
+    assert [kind for kind, _text in console.lines] == ["warn"]
+    assert "Could not grow the CRC root filesystem" in console.lines[0][1]
