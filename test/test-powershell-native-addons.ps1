@@ -23,6 +23,11 @@ if ($source -notmatch 'operator-subscription\.yaml' -or
     $source -notmatch 'approved') {
   throw 'Native AO implementation must apply the checked-in AO manifests'
 }
+if ($source -notmatch 'data-orchestrator-postgres-0' -or
+    $source -notmatch 'Reset:\$force' -or
+    $source -notmatch 'Restart-AapAoPostgresClients -Namespace') {
+  throw 'Native AO must reset PostgreSQL on --force and restart AO when the CA rotates'
+}
 $manifestPath = & $module {
   New-AapAoManifestFile -Name 'automationorchestrator-cr.yaml' -Replacements @{
     '__NAMESPACE__' = 'automation-orchestrator-test'

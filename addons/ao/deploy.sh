@@ -10,6 +10,8 @@ source "${SCRIPT_DIR}/lib/admin-password.sh"
 source "${SCRIPT_DIR}/lib/replica-profile.sh"
 # shellcheck source=lib/install-plan-approval.sh
 source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
+# shellcheck source=lib/postgres-tls.sh
+source "${SCRIPT_DIR}/lib/postgres-tls.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -1083,13 +1085,13 @@ reset_ao_cnpg_storage() {
 # The CR names orchestrator-postgres-ca for sslMode verify-ca. service-ca signs
 # the server certificate and publishes its CA in the -ca-bundle ConfigMap.
 ensure_ao_postgres_ca() {
-  local _ca="" _i
+  local _ca="" _i _rc=0
   for _i in $(seq 1 60); do
-    _ca=$(kubectl get configmap orchestrator-postgres-ca-bundle -n "$NAMESPACE" \
-      -o jsonpath='{.data.service-ca\.crt}' 2>/dev/null || true)
+    _ca=$(ao_postgres_bundle_ca "$NAMESPACE")
     if [ -n "$_ca" ] && kubectl get secret orchestrator-postgres-tls -n "$NAMESPACE" &>/dev/null; then
       break
     fi
+    _ca=""
     sleep 2
   done
   if [ -z "$_ca" ]; then
@@ -1097,9 +1099,68 @@ ensure_ao_postgres_ca() {
     echo "  Check: kubectl get pods -n openshift-service-ca" >&2
     exit 1
   fi
-  kubectl create secret generic orchestrator-postgres-ca -n "$NAMESPACE" \
-    --from-literal=ca.crt="$_ca" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  ao_postgres_ca_sync "$NAMESPACE" || _rc=$?
+  if [ "$_rc" -gt 1 ]; then
+    echo "ERROR: could not write the PostgreSQL CA to orchestrator-postgres-ca." >&2
+    exit 1
+  fi
   echo "✓ PostgreSQL TLS certificate issued by service-ca"
+  # A changed CA with AO already running: its pods trust the old one until they
+  # restart. A fresh install has no AO pods yet, so this does nothing.
+  if [ "$_rc" -eq 0 ]; then
+    ao_restart_postgres_clients "$NAMESPACE" \
+      || echo "⚠ Could not restart AO; run: kubectl rollout restart deployment -n $NAMESPACE" >&2
+  fi
+}
+
+# Applies postgres.yaml. Both values go into sed and YAML, so only image and
+# name characters are allowed.
+apply_ao_postgres_manifest() {
+  local _image
+  _image="$(ao_postgres_image)"
+  if [[ ! "$_image" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
+    echo "ERROR: PostgreSQL image '${_image}' is not a valid image reference." >&2
+    exit 1
+  fi
+  if [[ ! "$POSTGRES_STORAGE_CLASS" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+    echo "ERROR: StorageClass '${POSTGRES_STORAGE_CLASS}' is not a valid name." >&2
+    exit 1
+  fi
+  if [ "$_image" = "$POSTGRES_IMAGE_FALLBACK" ]; then
+    echo "  PostgreSQL image: ${_image}"
+  else
+    echo "  PostgreSQL image: $(short_image_ref "$_image") (the one AAP runs)"
+  fi
+  sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+    -e "s|__STORAGE_CLASS__|${POSTGRES_STORAGE_CLASS}|g" \
+    -e "s|__POSTGRES_IMAGE__|${_image}|g" \
+    "${MANIFESTS_DIR}/postgres.yaml" | kubectl apply -f - >/dev/null
+}
+
+# On an already-running AO: reapplies postgres.yaml, so an install from an
+# earlier version gets the tls-reload sidecar, then picks up a CA that
+# service-ca has rotated since the last enable and restarts AO's pods so they
+# trust it. An unchanged StatefulSet does not restart.
+reconcile_ao_postgres() {
+  local _rc=0
+  kubectl get statefulset orchestrator-postgres -n "$NAMESPACE" &>/dev/null || return 0
+  if apply_ao_postgres_manifest \
+    && kubectl rollout status statefulset/orchestrator-postgres -n "$NAMESPACE" \
+      --timeout=10m >/dev/null; then
+    echo "✓ PostgreSQL up to date"
+  else
+    echo "⚠ Could not update PostgreSQL; check: kubectl describe statefulset orchestrator-postgres -n $NAMESPACE" >&2
+  fi
+  ao_postgres_ca_sync "$NAMESPACE" || _rc=$?
+  case "$_rc" in
+    0)
+      echo "✓ PostgreSQL CA renewed by service-ca; restarting AO to trust it"
+      ao_restart_postgres_clients "$NAMESPACE" \
+        || echo "⚠ Could not restart AO; run: kubectl rollout restart deployment -n $NAMESPACE" >&2
+      ;;
+    1) ;;
+    *) echo "⚠ Could not check the PostgreSQL CA in orchestrator-postgres-ca" >&2 ;;
+  esac
 }
 
 ensure_postgres_database() {
@@ -1388,6 +1449,7 @@ if [ -z "$FORCE" ]; then
         automation-orchestrator-operator "$AO_INSTALL_PLAN_APPROVAL_REQUESTED"
     fi
     deploy_ao_instance
+    reconcile_ao_postgres
     wait_for_ao_instance_ready
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
     echo "  Use aap-demo enable ao --force (or ./deploy.sh --force) to reinstall."
@@ -1554,25 +1616,7 @@ stringData:
   username: orchestrator
 EOF
 
-POSTGRES_IMAGE="$(ao_postgres_image)"
-# Both values go into sed and YAML, so allow only image and name characters.
-if [[ ! "$POSTGRES_IMAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
-  echo "ERROR: PostgreSQL image '${POSTGRES_IMAGE}' is not a valid image reference." >&2
-  exit 1
-fi
-if [[ ! "$POSTGRES_STORAGE_CLASS" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
-  echo "ERROR: StorageClass '${POSTGRES_STORAGE_CLASS}' is not a valid name." >&2
-  exit 1
-fi
-if [ "$POSTGRES_IMAGE" = "$POSTGRES_IMAGE_FALLBACK" ]; then
-  echo "  PostgreSQL image: ${POSTGRES_IMAGE}"
-else
-  echo "  PostgreSQL image: $(short_image_ref "$POSTGRES_IMAGE") (the one AAP runs)"
-fi
-sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
-  -e "s|__STORAGE_CLASS__|${POSTGRES_STORAGE_CLASS}|g" \
-  -e "s|__POSTGRES_IMAGE__|${POSTGRES_IMAGE}|g" \
-  "${MANIFESTS_DIR}/postgres.yaml" | kubectl apply -f - || {
+apply_ao_postgres_manifest || {
   echo "ERROR: Failed to apply the PostgreSQL manifests."
   exit 1
 }

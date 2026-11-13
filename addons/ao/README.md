@@ -441,6 +441,12 @@ it is, and `enable ao` prints a note. If AO is not running, `enable ao` stops an
 `aap-demo enable ao --force` replaces the database with the new PostgreSQL, which deletes AO's data.
 CloudNativePG itself (`cnpg-system`) is left installed.
 
+### PostgreSQL certificate rotation
+
+service-ca renews the PostgreSQL certificate and its CA in place. The `tls-reload` container in
+`orchestrator-postgres-0` reloads a renewed certificate within five minutes. A renewed CA reaches AO
+the next time you run `aap-demo enable ao`, which copies it and restarts AO's pods.
+
 ## Related documentation
 
 - ADR: [`docs/adr/017-ao-addon.md`](../../docs/adr/017-ao-addon.md)

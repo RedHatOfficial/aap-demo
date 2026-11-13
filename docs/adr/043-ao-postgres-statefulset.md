@@ -47,6 +47,10 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
   `verify-ca` holds. A pre-start hook copies the key to a 0600 file, which PostgreSQL requires.
   The addon's own `pg_hba.conf` replaces the image's, which accepts plain TCP from any host: only
   loopback is trusted, and every other connection needs TLS and a password.
+- **Rotation.** service-ca renews the certificate and its CA in place. A `tls-reload` sidecar, from
+  the same image, copies a renewed certificate and key into place and runs `pg_reload_conf()` over
+  loopback. A rotated CA reaches AO on the next `aap-demo enable ao`, which copies it into
+  `orchestrator-postgres-ca` and restarts AO's workloads, because they read that Secret only at start.
 - **Databases.** The image creates `orchestrator` and its user from the Secret. `deploy.sh` creates
   `temporal` and `temporal_visibility` with `psql`, as it already did when CNPG's were late.
 - **Storage.** The PostgreSQL volume uses `topolvm-provisioner` (block storage) when it exists, not
@@ -74,6 +78,8 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
 - aap-demo now owns the PostgreSQL configuration (TLS, probes, extra databases) that CNPG handled.
 - The TLS setup depends on service-ca, which MicroShift runs. A cluster without it stops with a
   message after two minutes.
+- A rotated service-ca CA is not copied until the next `aap-demo enable ao`. Doing it inside the
+  cluster would need a controller with write access to Secrets and Deployments.
 
 ### Neutral
 
