@@ -252,7 +252,7 @@ class DeploymentImageTests(unittest.TestCase):
 
     def test_failed_plugin_check_stops_before_helm_rendering(self):
         rc, output, values, _ = self.run_roles(
-            {"apme_preloaded_image_ref": "quay.io/ansible-automation-platform-dev-preview/automation-portal:v1", "apme_preloaded_image_verify": False},
+            {"apme_preloaded_image_ref": "quay.io/ansible-automation-platform-dev-preview/automation-portal:v1"},
             ["apme_preloaded_image", "apme_helm_values"], run_exit=1,
         )
         self.assertNotEqual(rc, 0, output)
@@ -387,7 +387,7 @@ class DeploymentImageTests(unittest.TestCase):
     def test_private_image_creates_scoped_pull_secret_and_renders_its_name(self):
         def prepare(work):
             (work / "auth.json").write_text(json.dumps({"auths": {
-                "quay.io": {"auth": "ZGVtbzpkZW1v"}, "other.example": {"auth": "dW51c2Vk"}
+                "quay.io": {"auth": "fixture-auth"}, "other.example": {"auth": "unused-fixture"}
             }}))
             module = work / "collections/ansible_collections/kubernetes/core/plugins/modules/k8s.py"
             module.parent.mkdir(parents=True)
@@ -400,7 +400,7 @@ class DeploymentImageTests(unittest.TestCase):
                 "    auth = json.loads(base64.b64decode(d['data']['.dockerconfigjson']))\n"
                 "    if d['type'] != 'kubernetes.io/dockerconfigjson' or d['metadata'] != "
                 "{'name': 'quay-pull', 'namespace': 'apme'} or auth != "
-                "{'auths': {'quay.io': {'auth': 'ZGVtbzpkZW1v'}}}:\n"
+                "{'auths': {'quay.io': {'auth': 'fixture-auth'}}}:\n"
                 "        m.fail_json(msg='incorrect pull secret payload')\n"
                 f"    with open({str(work / 'commands')!r}, 'a') as f: f.write('[\"secret-created\"]\\n')\n"
                 "    m.exit_json(changed=False)\n"

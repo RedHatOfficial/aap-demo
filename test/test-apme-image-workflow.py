@@ -77,9 +77,9 @@ class ManifestPublicationTests(unittest.TestCase):
                 (bindir / tool).chmod(0o755)
             (work / "resolved").mkdir(exist_ok=True)
             (work / "resolved/artifact.env").write_text(
-                "export APME_SOURCE_REPO=ansible/apme APME_SOURCE_SHA=" + "a" * 40 + "\n"
+                "export APME_SOURCE_REPO=ansible/apme APME_SOURCE_SHA=" + "1" * 40 + "\n"
                 "export APME_RUN_ID=1 APME_ARTIFACT_ID=2 APME_ARTIFACT_NAME=plugins\n"
-                "export APME_PACK_FORMAT=oci APME_PACK_SHA256=sha256:" + "b" * 64 + "\n")
+                "export APME_PACK_FORMAT=oci APME_PACK_SHA256=sha256:" + "2" * 64 + "\n")
             image_manifests = {
                 arch: json.dumps({
                     "schemaVersion": 2,
@@ -102,7 +102,7 @@ class ManifestPublicationTests(unittest.TestCase):
                    "ARCH_MANIFESTS": json.dumps(image_manifests),
                    "ARCH_STATES": json.dumps(arch_states or {}),
                    "DIGEST": digest, "IMAGE": "quay.io/ansible-automation-platform-dev-preview/automation-portal",
-                   "IMMUTABLE_TAG": immutable_tag or "apme-" + "a" * 40 + "-" + "b" * 12,
+                   "IMMUTABLE_TAG": immutable_tag or "apme-" + "1" * 40 + "-" + "2" * 12,
                    "FAIL_COPY": "true" if fail_copy else "false",
                    "QUAY_USERNAME": "robot", "QUAY_TOKEN": "workflow-test-token",
                    "EVENT_NAME": event, "EVENT_REF": "refs/heads/main",

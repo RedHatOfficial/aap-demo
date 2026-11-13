@@ -151,7 +151,7 @@
       when: abbenay_live_config_raw.stdout != abbenay_config_rendered
       register: abbenay_pvc_apply
 
-    - name: Restart APME engine after Abbenay config change on PVC  # noqa: var-naming[no-role-prefix]
+    - name: Restart APME engine after Abbenay config change on PVC  # noqa: var-naming[no-role-prefix] no-handler
       kubernetes.core.k8s:
         state: patched
         api_version: apps/v1

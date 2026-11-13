@@ -41,7 +41,7 @@
     - not ansible_check_mode
     - apme_oci_tar_resolved is not defined
 
-- name: Set verified external artifact facts
+- name: Set verified external artifact facts  # noqa var-naming[no-role-prefix]
   ansible.builtin.set_fact:
     apme_oci_tar_resolved: "{{ apme_image_build_artifact_dir.path }}/plugin-pack.tar.gz"
     plugin_sha: "{{ apme_image_build_artifact_metadata.stdout_lines[0] }}"
