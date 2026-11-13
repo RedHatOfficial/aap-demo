@@ -156,6 +156,22 @@ jq -n \
         standardFlowEnabled: true,
         directAccessGrantsEnabled: false,
         defaultClientScopes: ["profile", "email", "roles", "web-origins", "acr", "groups"],
+        protocolMappers: [{
+          name: "aap-demo-aap audience",
+          protocol: "openid-connect",
+          protocolMapper: "oidc-audience-mapper",
+          config: {"included.client.audience": "aap-demo-aap", "id.token.claim": "false", "access.token.claim": "true"}
+        }, {
+          name: "aap-demo-aap preferred username",
+          protocol: "openid-connect",
+          protocolMapper: "oidc-usermodel-property-mapper",
+          config: {"user.attribute": "username", "claim.name": "preferred_username", "jsonType.label": "String", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
+        }, {
+          name: "aap-demo-aap email",
+          protocol: "openid-connect",
+          protocolMapper: "oidc-usermodel-property-mapper",
+          config: {"user.attribute": "email", "claim.name": "email", "jsonType.label": "String", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
+        }],
         redirectUris: [$aap_redirect_uri],
         webOrigins: ["https://" + $aap_host],
         attributes: {"post.logout.redirect.uris": $aap_redirect_uri}
@@ -170,6 +186,22 @@ jq -n \
         standardFlowEnabled: true,
         directAccessGrantsEnabled: false,
         defaultClientScopes: ["profile", "email", "roles", "web-origins", "acr", "groups"],
+        protocolMappers: [{
+          name: "aap-demo-ao audience",
+          protocol: "openid-connect",
+          protocolMapper: "oidc-audience-mapper",
+          config: {"included.client.audience": "aap-demo-ao", "id.token.claim": "false", "access.token.claim": "true"}
+        }, {
+          name: "aap-demo-ao preferred username",
+          protocol: "openid-connect",
+          protocolMapper: "oidc-usermodel-property-mapper",
+          config: {"user.attribute": "username", "claim.name": "preferred_username", "jsonType.label": "String", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
+        }, {
+          name: "aap-demo-ao email",
+          protocol: "openid-connect",
+          protocolMapper: "oidc-usermodel-property-mapper",
+          config: {"user.attribute": "email", "claim.name": "email", "jsonType.label": "String", "id.token.claim": "true", "access.token.claim": "true", "userinfo.token.claim": "true"}
+        }],
         redirectUris: [$ao_redirect_uri],
         webOrigins: ["https://" + $ao_host],
         attributes: {"post.logout.redirect.uris": $ao_redirect_uri}
@@ -187,6 +219,8 @@ jq -n \
         enabled: true,
         email: "aap-oidc-admin@example.test",
         emailVerified: true,
+        firstName: "AAP OIDC",
+        lastName: "Admin",
         groups: ["/aap-admins"],
         credentials: [{type: "password", value: ($aap_password_file | rtrimstr("\n")), temporary: false}]
       },
@@ -195,6 +229,8 @@ jq -n \
         enabled: true,
         email: "aap-oidc-operator@example.test",
         emailVerified: true,
+        firstName: "AAP OIDC",
+        lastName: "Operator",
         groups: ["/aap-operators"],
         credentials: [{type: "password", value: ($ao_password_file | rtrimstr("\n")), temporary: false}]
       },
@@ -203,6 +239,8 @@ jq -n \
         enabled: true,
         email: "aap-oidc-auditor@example.test",
         emailVerified: true,
+        firstName: "AAP OIDC",
+        lastName: "Auditor",
         groups: ["/aap-auditors"],
         credentials: [{type: "password", value: ($auditor_password_file | rtrimstr("\n")), temporary: false}]
       },
@@ -211,6 +249,8 @@ jq -n \
         enabled: true,
         email: "aap-oidc-developer@example.test",
         emailVerified: true,
+        firstName: "AAP OIDC",
+        lastName: "Developer",
         groups: ["/aap-developers"],
         credentials: [{type: "password", value: ($developer_password_file | rtrimstr("\n")), temporary: false}]
       }

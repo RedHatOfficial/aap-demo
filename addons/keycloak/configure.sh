@@ -176,7 +176,7 @@ AAP_PAYLOAD="$(jq -nc \
 AO_PAYLOAD="$(jq -nc \
   --arg name "$AO_NAME" --arg issuer "$ISSUER" --arg client_secret "$AO_SECRET" --arg redirect "$AO_REDIRECT_URI" \
   --argjson disable_tls_verify "$([ "$KEYCLOAK_INSECURE_TLS" = true ] && echo true || echo false)" \
-  '{name:$name,enabled:true,configuration:{provider_type:"oidc",idp_type:"custom",auto_discovery:true,issuer_url:$issuer,client_id:"aap-demo-ao",client_secret:$client_secret,redirect_uri:$redirect,scopes:"openid profile email groups",claim_mapping:{subject:"sub",email:"email",username:"preferred_username",first_name:"given_name",last_name:"family_name"},group_jmespath_expression:"groups[*]",group_mapping_entries:[],allow_all_authenticated:true,enable_rp_initiated_logout:true,disable_tls_verify:$disable_tls_verify}}')"
+  '{name:$name,enabled:true,configuration:{provider_type:"oidc",idp_type:"custom",auto_discovery:true,issuer_url:$issuer,client_id:"aap-demo-ao",client_secret:$client_secret,redirect_uri:$redirect,scopes:"openid",claim_mapping:{subject:"sub",email:"email",username:"preferred_username",first_name:"given_name",last_name:"family_name"},group_jmespath_expression:"groups[*]",group_mapping_entries:[],allow_all_authenticated:true,enable_rp_initiated_logout:true,disable_tls_verify:$disable_tls_verify}}')"
 
 print_plan() {
   echo "Keycloak OIDC configuration plan"
@@ -188,7 +188,9 @@ print_plan() {
   else
     echo "  Mode: apply"
   fi
-  [ "$MAP_GROUPS" = true ] && echo "  Group mapping: enabled"
+  if [ "$MAP_GROUPS" = true ]; then
+    echo "  Group mapping: enabled"
+  fi
 }
 
 print_plan
@@ -285,7 +287,7 @@ if [ "$TARGET" != aap ]; then
         AO_GROUPS_PAYLOAD="$(printf '%s' "$AO_GROUPS_PAYLOAD" | jq --arg value "$group" --arg id "$group_id" '. + [{idp_group_value:$value,mapped_group_id:$id}]')"
       done
       AO_CURRENT="$(curl_local -f "${AO_BASE}/${AO_ID}" --config "$AO_AUTH")"
-      AO_PAYLOAD="$(printf '%s' "$AO_CURRENT" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" '{name,enabled,configuration:(.configuration | del(.client_secret) | .group_mapping_entries=$mappings | .allow_all_authenticated=false)}')"
+      AO_PAYLOAD="$(printf '%s' "$AO_CURRENT" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" --arg scopes "openid" '{name,enabled,configuration:(.configuration | del(.client_secret) | .scopes=$scopes | .group_mapping_entries=$mappings | .allow_all_authenticated=false)}')"
       echo "  AO group mappings: $(printf '%s' "$AO_PAYLOAD" | jq '.configuration.group_mapping_entries | length')"
     fi
     printf '%s' "$AO_PAYLOAD" >"$REQUEST_DIR/ao.json"
