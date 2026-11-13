@@ -69,13 +69,15 @@ if [ -z "${AO_STORAGE_CLASS:-}" ]; then
 else
   STORAGE_CLASS="$AO_STORAGE_CLASS"
 fi
-# PostgreSQL wants block storage, not NFS.
+# PostgreSQL wants block storage, not NFS: topolvm-provisioner, else the
+# cluster's default class unless that is the NFS one. Never AO's shared class.
 if [ -n "${AO_POSTGRES_STORAGE_CLASS:-}" ]; then
   POSTGRES_STORAGE_CLASS="$AO_POSTGRES_STORAGE_CLASS"
 elif kubectl get sc topolvm-provisioner &>/dev/null 2>&1; then
   POSTGRES_STORAGE_CLASS="topolvm-provisioner"
 else
-  POSTGRES_STORAGE_CLASS="$STORAGE_CLASS"
+  POSTGRES_STORAGE_CLASS=$(kubectl get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}' 2>/dev/null | head -n 1 || true)
+  [ "$POSTGRES_STORAGE_CLASS" != "nfs-local-rwx" ] || POSTGRES_STORAGE_CLASS=""
 fi
 POSTGRES_IMAGE_FALLBACK="registry.redhat.io/rhel9/postgresql-15"
 
@@ -1122,6 +1124,11 @@ apply_ao_postgres_manifest() {
     echo "ERROR: PostgreSQL image '${_image}' is not a valid image reference." >&2
     exit 1
   fi
+  if [ -z "$POSTGRES_STORAGE_CLASS" ]; then
+    echo "ERROR: No block StorageClass found for AO's PostgreSQL." >&2
+    echo "  Set AO_POSTGRES_STORAGE_CLASS to a ReadWriteOnce block StorageClass." >&2
+    exit 1
+  fi
   if [[ ! "$POSTGRES_STORAGE_CLASS" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
     echo "ERROR: StorageClass '${POSTGRES_STORAGE_CLASS}' is not a valid name." >&2
     exit 1
@@ -1138,7 +1145,7 @@ apply_ao_postgres_manifest() {
 }
 
 # On an already-running AO: reapplies postgres.yaml, so an install from an
-# earlier version gets the tls-reload sidecar, then picks up a CA that
+# earlier version gets the certificate reload, then picks up a CA that
 # service-ca has rotated since the last enable and restarts AO's pods so they
 # trust it. An unchanged StatefulSet does not restart.
 reconcile_ao_postgres() {

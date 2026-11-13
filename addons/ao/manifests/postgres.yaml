@@ -7,7 +7,7 @@
 # (orchestrator-postgres-tls) and injects its CA into the -ca-bundle ConfigMap.
 # deploy.sh copies that CA into the orchestrator-postgres-ca Secret, which the
 # CR's caCertSecretRef names, so sslMode verify-ca holds. Each enable copies it
-# again and restarts AO when service-ca has rotated it. The tls-reload sidecar
+# again and restarts AO when service-ca has rotated it. The liveness probe
 # picks up a renewed server certificate without a restart.
 #
 # Placeholders substituted by deploy.sh:
@@ -59,30 +59,26 @@ data:
     mkdir -p /tmp/pgtls
     cp /etc/postgres-tls/tls.crt /etc/postgres-tls/tls.key /tmp/pgtls/
     chmod 0600 /tmp/pgtls/tls.key
-  # Run by the tls-reload sidecar. service-ca renews the mounted pair in place;
-  # PostgreSQL reads the copies in /tmp/pgtls, so a renewed pair is copied there
-  # and PostgreSQL reloads it. A failed reload is retried on the next pass.
+  # Run by the liveness probe, inside the postgres container. service-ca renews
+  # the mounted pair in place; PostgreSQL reads the copies in /tmp/pgtls, so a
+  # renewed pair is copied there and PostgreSQL reloads it over the local
+  # socket. The marker keeps a failed reload pending for the next probe.
   tls-reload.sh: |
     src="${TLS_SOURCE_DIR:-/etc/postgres-tls}"
     dst="${TLS_TARGET_DIR:-/tmp/pgtls}"
-    pending=""
-    while :; do
-      sleep "${TLS_RELOAD_INTERVAL:-300}"
-      for f in tls.crt tls.key; do
-        [ -s "$src/$f" ] || continue
-        if [ ! -f "$dst/$f" ] || [ "$(<"$src/$f")" != "$(<"$dst/$f")" ]; then
-          cp "$src/$f" "$dst/.$f.new" && chmod 0600 "$dst/.$f.new" \
-            && mv -f "$dst/.$f.new" "$dst/$f" && pending=1
-        fi
-      done
-      if [ -n "$pending" ] \
-        && psql -h 127.0.0.1 -U postgres -tAc 'SELECT pg_reload_conf()' >/dev/null 2>&1; then
-        echo "Reloaded PostgreSQL with the renewed TLS certificate"
-        pending=""
+    pending="$dst/.reload-pending"
+    for f in tls.crt tls.key; do
+      [ -s "$src/$f" ] || continue
+      if [ ! -f "$dst/$f" ] || [ "$(<"$src/$f")" != "$(<"$dst/$f")" ]; then
+        : >"$pending"
+        cp "$src/$f" "$dst/.$f.new" && chmod 0600 "$dst/.$f.new" \
+          && mv -f "$dst/.$f.new" "$dst/$f"
       fi
-      [ -z "${TLS_RELOAD_ONCE:-}" ] && continue
-      break
     done
+    if [ -e "$pending" ] && psql -U postgres -tAc 'SELECT pg_reload_conf()' >/dev/null 2>&1; then
+      rm -f "$pending"
+      echo "Reloaded PostgreSQL with the renewed TLS certificate"
+    fi
   # Included into postgresql.conf by the image.
   tls.conf: |
     ssl = on
@@ -90,14 +86,14 @@ data:
     ssl_key_file = '/tmp/pgtls/tls.key'
     hba_file = '/etc/postgres-hba/pg_hba.conf'
   # Replaces the image's own rules, which accept plain TCP from any host.
-  # Loopback stays trusted for the readiness probe and kubectl exec psql.
-  # Everything else must use TLS and a password.
+  # Only the local socket is trusted, for kubectl exec psql and the liveness
+  # probe; other containers in the pod cannot reach it. Every TCP connection,
+  # loopback included, must use TLS and a password. The probes' pg_isready
+  # does not authenticate.
   pg_hba.conf: |
-    local     all  all                 trust
-    host      all  all  127.0.0.1/32   trust
-    host      all  all  ::1/128        trust
-    hostssl   all  all  all            scram-sha-256
-    hostnossl all  all  all            reject
+    local     all  all        trust
+    hostssl   all  all  all   scram-sha-256
+    hostnossl all  all  all   reject
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -146,9 +142,13 @@ spec:
             periodSeconds: 10
           livenessProbe:
             exec:
-              command: ["/usr/libexec/check-container", "--live"]
+              command:
+                - /bin/bash
+                - -c
+                - bash /opt/aap-demo/tls-reload.sh; exec /usr/libexec/check-container --live
             initialDelaySeconds: 120
             periodSeconds: 10
+            timeoutSeconds: 10
           resources:
             requests:
               cpu: 50m
@@ -159,10 +159,11 @@ spec:
             - name: tls
               mountPath: /etc/postgres-tls
               readOnly: true
-            - name: pgtls
-              mountPath: /tmp/pgtls
             - name: config
               mountPath: /opt/app-root/src/postgresql-pre-start
+              readOnly: true
+            - name: tls-reload
+              mountPath: /opt/aap-demo
               readOnly: true
             - name: config-tls
               mountPath: /opt/app-root/src/postgresql-cfg
@@ -171,26 +172,7 @@ spec:
             - name: config-hba
               mountPath: /etc/postgres-hba
               readOnly: true
-        # Same image and user as postgres, so the copied key stays readable by it.
-        - name: tls-reload
-          image: __POSTGRES_IMAGE__
-          command: ["/bin/bash", "/opt/aap-demo/tls-reload.sh"]
-          resources:
-            requests:
-              cpu: 5m
-              memory: 16Mi
-          volumeMounts:
-            - name: tls
-              mountPath: /etc/postgres-tls
-              readOnly: true
-            - name: pgtls
-              mountPath: /tmp/pgtls
-            - name: tls-reload
-              mountPath: /opt/aap-demo
-              readOnly: true
       volumes:
-        - name: pgtls
-          emptyDir: {}
         - name: tls
           secret:
             secretName: orchestrator-postgres-tls # pragma: allowlist secret

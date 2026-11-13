@@ -14,7 +14,7 @@ fail() {
   FAILED=1
 }
 
-# ── tls-reload sidecar ──────────────────────────────────────────────────────
+# ── tls-reload.sh (liveness probe) ──────────────────────────────────────────
 # Pull the script out of the ConfigMap so the test runs what the pod runs.
 awk '
   /^  tls-reload\.sh: \|$/ { on = 1; next }
@@ -38,7 +38,7 @@ chmod +x "$TMP_DIR/bin/psql"
 run_reload() {
   PATH="$TMP_DIR/bin:$PATH" PSQL_LOG="$TMP_DIR/psql.log" \
     TLS_SOURCE_DIR="$TMP_DIR/src" TLS_TARGET_DIR="$TMP_DIR/dst" \
-    TLS_RELOAD_INTERVAL=0 TLS_RELOAD_ONCE=1 bash "$TMP_DIR/tls-reload.sh"
+    bash "$TMP_DIR/tls-reload.sh"
 }
 
 printf 'cert-1\n' >"$TMP_DIR/src/tls.crt"
@@ -54,6 +54,13 @@ fi
 
 printf 'cert-2\n' >"$TMP_DIR/src/tls.crt"
 printf 'key-2\n' >"$TMP_DIR/src/tls.key"
+output=$(PSQL_FAIL=1 run_reload)
+if [ -e "$TMP_DIR/dst/.reload-pending" ] && [ -z "$output" ]; then
+  pass "a failed reload stays pending"
+else
+  fail "a failed reload was not kept pending"
+fi
+: >"$TMP_DIR/psql.log"
 output=$(run_reload)
 if [ "$(<"$TMP_DIR/dst/tls.crt")" = "cert-2" ] && [ "$(<"$TMP_DIR/dst/tls.key")" = "key-2" ]; then
   pass "a renewed certificate and key are copied into place"
@@ -65,17 +72,34 @@ if [ "$(ls -l "$TMP_DIR/dst/tls.key" | cut -c1-10)" = "-rw-------" ]; then
 else
   fail "the copied key is not mode 0600"
 fi
-if grep -q 'pg_reload_conf' "$TMP_DIR/psql.log" && grep -q '127.0.0.1' "$TMP_DIR/psql.log" \
-  && [[ "$output" == *"Reloaded PostgreSQL"* ]]; then
-  pass "a renewed certificate reloads PostgreSQL over loopback"
+if grep -q 'pg_reload_conf' "$TMP_DIR/psql.log" && ! grep -q -- '-h' "$TMP_DIR/psql.log" \
+  && [[ "$output" == *"Reloaded PostgreSQL"* ]] && [ ! -e "$TMP_DIR/dst/.reload-pending" ]; then
+  pass "the pending reload runs over the local socket on the next probe"
 else
-  fail "a renewed certificate did not reload PostgreSQL"
+  fail "the pending reload did not run over the local socket"
 fi
 leftovers=("$TMP_DIR"/dst/.*.new)
 if [ ! -e "${leftovers[0]}" ]; then
   pass "no temporary files are left behind"
 else
   fail "temporary files were left in the target directory"
+fi
+
+# ── pg_hba.conf ─────────────────────────────────────────────────────────────
+hba=$(awk '
+  /^  pg_hba\.conf: \|$/ { on = 1; next }
+  on && /^  [^ ]/ { exit }
+  on { print }
+' "$REPO_ROOT/addons/ao/manifests/postgres.yaml")
+if ! grep -E '^ *host +' <<<"$hba" | grep -q trust; then
+  pass "no TCP connection is trusted, loopback included"
+else
+  fail "pg_hba.conf trusts a TCP connection"
+fi
+if grep -qE '^ *hostnossl +all +all +all +reject' <<<"$hba"; then
+  pass "plain TCP is rejected"
+else
+  fail "plain TCP is not rejected"
 fi
 
 # ── CA Secret sync ──────────────────────────────────────────────────────────

@@ -46,15 +46,17 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
   a ConfigMap. `deploy.sh` copies that CA into `orchestrator-postgres-ca` as `ca.crt`, so
   `verify-ca` holds. A pre-start hook copies the key to a 0600 file, which PostgreSQL requires.
   The addon's own `pg_hba.conf` replaces the image's, which accepts plain TCP from any host: only
-  loopback is trusted, and every other connection needs TLS and a password.
-- **Rotation.** service-ca renews the certificate and its CA in place. A `tls-reload` sidecar, from
-  the same image, copies a renewed certificate and key into place and runs `pg_reload_conf()` over
-  loopback. A rotated CA reaches AO on the next `aap-demo enable ao`, which copies it into
-  `orchestrator-postgres-ca` and restarts AO's workloads, because they read that Secret only at start.
+  the local socket is trusted, and every TCP connection, loopback included, needs TLS and a password.
+- **Rotation.** service-ca renews the certificate and its CA in place. The postgres container's
+  liveness probe copies a renewed certificate and key into place and runs `pg_reload_conf()` over the
+  local socket, so no other container needs database access. A rotated CA reaches AO on the next
+  `aap-demo enable ao`, which copies it into `orchestrator-postgres-ca` and restarts AO's workloads,
+  because they read that Secret only at start.
 - **Databases.** The image creates `orchestrator` and its user from the Secret. `deploy.sh` creates
   `temporal` and `temporal_visibility` with `psql`, as it already did when CNPG's were late.
 - **Storage.** The PostgreSQL volume uses `topolvm-provisioner` (block storage) when it exists, not
-  the NFS class AO's other volumes use. `AO_POSTGRES_STORAGE_CLASS` overrides it.
+  the NFS class AO's other volumes use. Without it, the cluster's default class is used unless that is
+  `nfs-local-rwx`, and enable stops if neither exists. `AO_POSTGRES_STORAGE_CLASS` overrides it.
 - **No aapctl.** `scripts/generate-manifests.sh` and the `aapctl uninstall` call on disable are removed.
   The CR is maintained against the CRD (`kubectl explain automationorchestrator.spec`).
 - **Existing installs.** A running AO on a CNPG `Cluster` is left as it is, and `enable ao` prints a

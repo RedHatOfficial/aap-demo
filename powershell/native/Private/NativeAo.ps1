@@ -143,13 +143,23 @@ function Ensure-AapAoCatalogSource {
 }
 
 function Get-AapAoPostgresStorageClass {
-  # PostgreSQL wants block storage, not NFS.
+  # PostgreSQL wants block storage, not NFS: topolvm-provisioner, else the
+  # cluster's default class unless that is the NFS one. Never AO's shared class.
   $explicit = Get-AapAoSetting -Name 'AO_POSTGRES_STORAGE_CLASS'
   if ($explicit) { return $explicit }
   if ((Invoke-AapKubectlNative -Arguments @('get', 'sc', 'topolvm-provisioner') -AllowFailure).Success) {
     return 'topolvm-provisioner'
   }
-  return (Get-AapAoStorageClass)
+  $classes = Get-AapKubectlJson -Arguments @('get', 'sc')
+  foreach ($class in @($classes.items)) {
+    $annotations = $class.metadata.annotations
+    if ($annotations -and $annotations.PSObject.Properties['storageclass.kubernetes.io/is-default-class'] -and
+        $annotations.'storageclass.kubernetes.io/is-default-class' -eq 'true' -and
+        $class.metadata.name -ne 'nfs-local-rwx') {
+      return $class.metadata.name
+    }
+  }
+  throw "No block StorageClass found for AO's PostgreSQL. Set AO_POSTGRES_STORAGE_CLASS to a ReadWriteOnce block StorageClass."
 }
 
 function Get-AapAoPostgresImage {

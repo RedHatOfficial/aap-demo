@@ -191,7 +191,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AO_STORAGE_CLASS` | auto-detected | StorageClass for AO's shared volumes |
-| `AO_POSTGRES_STORAGE_CLASS` | `topolvm-provisioner` | StorageClass for the PostgreSQL volume |
+| `AO_POSTGRES_STORAGE_CLASS` | `topolvm-provisioner`, else the cluster default unless it is NFS | StorageClass for the PostgreSQL volume |
 | `AO_POSTGRES_IMAGE` | AAP's PostgreSQL image | PostgreSQL image; falls back to `registry.redhat.io/rhel9/postgresql-15` |
 | `AAP_DEMO_NAMESPACE` | `aap-operator` | Used to derive cluster ingress domain for the AO route |
 | `AO_LOW_RESOURCE` | unset | Unset/`1`/`true` selects one backend, UI, and worker replica; set to `0`/`false` for two replicas |
@@ -443,9 +443,10 @@ CloudNativePG itself (`cnpg-system`) is left installed.
 
 ### PostgreSQL certificate rotation
 
-service-ca renews the PostgreSQL certificate and its CA in place. The `tls-reload` container in
-`orchestrator-postgres-0` reloads a renewed certificate within five minutes. A renewed CA reaches AO
-the next time you run `aap-demo enable ao`, which copies it and restarts AO's pods.
+service-ca renews the PostgreSQL certificate and its CA in place. The liveness probe of
+`orchestrator-postgres-0` reloads a renewed certificate soon after the kubelet updates the mounted
+Secret. A renewed CA reaches AO the next time you run `aap-demo enable ao`, which copies it and
+restarts AO's pods.
 
 ## Related documentation
 
