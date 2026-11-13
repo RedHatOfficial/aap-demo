@@ -43,14 +43,14 @@ def _token_files(app_ctx) -> list:
 def test_packaged_scripts_are_used_outside_a_checkout(monkeypatch, tmp_path: Path) -> None:
     import aap_demo
 
-    packaged = tmp_path / "aap_demo" / "bundled_addons" / "product-demos"
+    packaged = tmp_path / "aap_demo" / "bundled" / "addons" / "product-demos"
     packaged.mkdir(parents=True)
     (packaged / "deploy.sh").write_text("#!/bin/bash\n", encoding="utf-8")
     init = tmp_path / "aap_demo" / "__init__.py"
     init.write_text("", encoding="utf-8")
     monkeypatch.setattr(aap_demo, "__file__", str(init))
 
-    assert scripts_root() == tmp_path / "aap_demo" / "bundled_addons"
+    assert scripts_root() == tmp_path / "aap_demo" / "bundled" / "addons"
 
 
 def test_checkout_scripts_are_the_ones_enable_runs() -> None:
@@ -69,7 +69,15 @@ def test_pyproject_ships_every_product_demo_installer() -> None:
 
 
 def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
-    assert names() == ["eda-playground", "fleet", "product-demo-satellite", "product-demos"]
+    assert names() == [
+        "ao",
+        "eda-playground",
+        "fleet",
+        "mcp-server",
+        "ollama",
+        "product-demo-satellite",
+        "product-demos",
+    ]
 
 
 def test_product_demos_preflight_uses_the_cluster_and_portal_does_not() -> None:

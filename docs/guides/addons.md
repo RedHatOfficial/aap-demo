@@ -1,8 +1,8 @@
 ---
 type: Guide
 title: Add-ons
-description: Fleet machines and product demos in the new command, and where the other extras still live.
-tags: [addons, fleet, eda]
+description: Fleet machines, product demos and Automation Orchestrator in the new command, and where the other extras still live.
+tags: [addons, fleet, eda, ao]
 status: draft
 stale_after: 2027-01-28
 resource: https://github.com/RedHatOfficial/aap-demo
@@ -98,11 +98,48 @@ When the manual check is complete, remove the addon:
 aap-demo disable eda-playground
 ```
 
+## Automation Orchestrator
+
+`aap-demo enable ao` installs Automation Orchestrator next to AAP and wires the two together. It runs the
+same Bash installer as the older command, so it needs `bash`, `curl`, `jq`, `kubectl`, `base64`, and `python3`.
+AO is not in the OpenShift 5 catalog yet, so it needs the default OpenShift 4 cluster.
+
+```bash
+aap-demo enable product-demos   # optional, before AO
+aap-demo enable ao
+```
+
+AO needs two other add-ons, and `enable ao` installs them first when they are missing:
+
+- `mcp-server`, the MCP server for AAP.
+- `ollama`, a local model for AO's agentic demos.
+
+AO links its workflows to the product demos' job templates when it installs. When no product demos are
+enabled, `enable ao` says so and carries on. Enable them and run `aap-demo enable ao` again to link them later.
+
+The new command does not ask which model to use. Set `AO_LLM_PROVIDER` instead:
+
+| `AO_LLM_PROVIDER` | Model |
+|---|---|
+| `ollama` (default) | The local `ollama` add-on |
+| `external` | An OpenAI-compatible service (see below) |
+| `none` | No model. The agentic demos are unavailable |
+
+For `external`, set `AO_LLM_BASE_URL` and `AO_LLM_MODEL`, and put the API key in `~/.aap-demo/ao/llm-api-key`.
+
+To reinstall AO, run `aap-demo enable ao --force`. To remove it:
+
+```bash
+aap-demo disable ao
+AO_PURGE_DATA=1 aap-demo disable ao   # also remove its database and saved admin password
+```
+
+`disable ao` leaves `mcp-server` and `ollama` installed. Disable them by name.
+
 ## Everything else
 
-Portal, Automation Orchestrator, a local cache of container images, and the MCP server are not in the
-new command yet. Asking the new command for one of them stops with a short error, and your cluster is
-left as it was.
+Portal, a local cache of container images, and the other extras are not in the new command yet.
+Asking the new command for one of them stops with a short error, and your cluster is left as it was.
 
 Use [the older command](older-command.md) for those. For example, after you have renamed it:
 

@@ -48,4 +48,4 @@ def test_eda_playground_scripts_are_bundled() -> None:
     root = Path(__file__).resolve().parents[2]
     assert (root / "addons/eda-playground/deploy.sh").is_file()
     text = (root / "pyproject.toml").read_text(encoding="utf-8")
-    assert '"addons/eda-playground" = "aap_demo/bundled_addons/eda-playground"' in text
+    assert '"addons/eda-playground" = "aap_demo/bundled/addons/eda-playground"' in text
