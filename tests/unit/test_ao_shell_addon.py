@@ -25,7 +25,8 @@ def _deploy(name: str) -> str:
 
 
 def _ran(app_ctx) -> list:
-    return [call.argv[1].split("/")[-2] for call in app_ctx.runner.calls if call.argv[0] == "bash"]
+    calls = app_ctx.runner.calls
+    return [Path(call.argv[1]).parent.name for call in calls if call.argv[0] == "bash"]
 
 
 def _call(app_ctx, name: str):
