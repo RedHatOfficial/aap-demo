@@ -84,6 +84,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [040](040-addon-framework-and-bash-fallback.md) | Shared Addon Framework and Bash Fallback for the Python Command | Accepted |
 | [041](041-openshift-5-on-crc.md) | OpenShift 5 on CRC | Accepted |
 | [042](042-eda-playground-on-python-command.md) | EDA Playground on the Python Command | Accepted |
+| [043](043-addon-classification-system.md) | Addon Classification System (Certified and Community Tiers) | Proposed |
 
 ## Creating a New ADR
 
