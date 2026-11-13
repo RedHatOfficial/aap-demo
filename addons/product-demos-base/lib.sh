@@ -28,11 +28,15 @@ apd_common_extra_vars_yaml() {
   jq -r -n \
     --arg version "$APD_AAP_VERSION" \
     --arg ee_image "$ee_image" \
+    --arg repo "${PRODUCT_DEMOS_REPO:-https://github.com/ansible/product-demos}" \
+    --arg branch "${PRODUCT_DEMOS_BRANCH:-main}" \
     '{
+      apd_git_repo: $repo,
+      apd_git_repo_branch: $branch,
       _aap_version: $version,
       apd_ee_image: $ee_image,
       aap_validate_certs: false
-    } | to_entries | map("\(.key): \(.value)") | join("\n")'
+    } | tojson'
 }
 
 apd_wait_for_controller_api() {

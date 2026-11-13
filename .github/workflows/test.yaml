@@ -120,8 +120,11 @@ jobs:
       - name: Run AO importer tests
         run: python3 ./test/test-ao-import-demos.py
 
+      - name: Install pytest
+        run: python3 -m pip install pytest
+
       - name: Run AO provisioning tests
-        run: python3 ./test/test-provision-aap-demos.py
+        run: python3 -m pytest test/test-provision-aap-demos.py -q
 
       - name: Run plaibook EE CI configuration test
         run: bash ./test/test-plaibook-ee-ci.sh

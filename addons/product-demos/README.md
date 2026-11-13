@@ -18,6 +18,47 @@ This runs `product-demos-base` and then installs five domains via dedicated AAP 
 
 Each template runs `setup_demo.yml` for one domain so you can see per-domain job history and failures in the UI.
 
+For Fleet workflows, enable the Fleet addon and ensure it has a ready Kubernetes-native pod and its
+AAP inventory and machine credential. If no suitable Fleet host exists, the Python command warns and
+asks whether to continue installing Product Demos without Fleet workflows. Non-interactive runs
+continue without Fleet workflows. To configure them later, run `aap-demo enable fleet`, then rerun
+`aap-demo enable product-demos`. With a Fleet host available, setup enables Automation Orchestrator
+(AO) as needed and creates Fleet-specific
+disk-check and disk-and-service workflows. The latter uses the Product Demos Linux shell playbook to
+start a temporary `aap-demo-fleet-smoke.service`; the service expires after five minutes. If no AO
+LLM provider is configured, setup uses `none` without prompting. The other imported workflows are
+reported individually because their Fleet adaptations or external integrations are still pending.
+
+`Fleet | disk-demo-101` keeps the source workflow's disk-usage switch and checks the Fleet pod's
+`/var` volume. The healthy branch records that no action is needed. The warning branch runs the
+upstream disk-cleanup playbook in **check mode**, so it previews cleanup without deleting files.
+Its reported removed-file counts and reclaimed space are estimates of candidates, not actual changes.
+The critical and fallback branches deliberately fail the AO workflow to flag manual intervention;
+open the linked AAP job output for the explanation. This adaptation does not expand a Fleet PVC.
+Mattermost notifications are not sent.
+
+The legacy shell command does not yet provide the same Fleet integration.
+
+### Verify the Fleet workflow
+
+From a repository checkout, set `AO_API_TOKEN` in your environment to an AO token with workflow
+execution permission. Supply the AO workflow ID and manual trigger ID from the workflow, the Fleet
+namespace and pod, and the CA certificate for your AO route:
+
+```bash
+python scripts/ao-fleet-smoke.py \
+  --ao-url "https://<ao-route>/api/v1" \
+  --workflow-id "<fleet-disk-and-service-workflow-id>" \
+  --trigger-id "trigger_manual" \
+  --namespace fleet --pod deployment/fleet-ubi10 \
+  --service aap-demo-fleet-smoke.service --expected-state active \
+  --ca-file "<ingress-ca-file>"
+```
+
+The test requires the service to be inactive before it starts. It launches the workflow, checks that
+the service job completed successfully, and verifies that the pod service changed to active. Wait for
+the temporary service to expire before repeating the test.
+
 **Satellite is not included by default** — it requires a real Satellite server and causes the domain
 install job to fail when placeholders are used. Install it separately when ready (see below).
 
@@ -53,6 +94,8 @@ aap-demo disable product-demos
 ```
 
 Demo job templates remain in AAP until removed manually from the UI.
+The Fleet-specific AO workflows and AAP templates currently also require manual cleanup; disabling
+product-demos leaves AO running.
 
 ## Satellite domain
 
