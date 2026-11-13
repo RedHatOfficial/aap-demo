@@ -366,6 +366,29 @@ function Invoke-AapAoAddonNative {
     throw 'AO dependency mcp-server is not deployed'
   }
 
+  # An install from before ADR-043 keeps AO's database in CloudNativePG. Stop
+  # before any change unless a forced reinstall was asked for.
+  $cnpg = (Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'get', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace
+    )).Success
+  if ($cnpg) {
+    $force = ($ScriptArgs -contains '--force') -or (Get-AapAoSetting -Name 'FORCE')
+    if (-not $force) {
+      Write-AapStep "This AO keeps its database in CloudNativePG, which aap-demo no longer uses"
+      throw "Run aap-demo enable ao --force to move it to the new PostgreSQL. That deletes AO's data."
+    }
+    Write-Host 'Removing the CloudNativePG database from an older AO install...'
+    Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'delete', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace, '--wait=true', '--timeout=180s'
+    ) | Out-Null
+    Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'delete', 'databases.postgresql.cnpg.io', '--all', '-n', $Namespace, '--wait=false'
+    ) | Out-Null
+    Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'delete', 'pvc', 'orchestrator-postgres-1', '-n', $Namespace, '--wait=false'
+    ) | Out-Null
+  }
+
   Write-Host 'Deploying Automation Orchestrator natively...'
   Ensure-AapAoNamespace -Namespace $Namespace
   Copy-AapAoPullSecret -Namespace $Namespace

@@ -45,6 +45,8 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
 - **TLS.** MicroShift's service-ca signs a serving certificate for the Service and injects its CA into
   a ConfigMap. `deploy.sh` copies that CA into `orchestrator-postgres-ca` as `ca.crt`, so
   `verify-ca` holds. A pre-start hook copies the key to a 0600 file, which PostgreSQL requires.
+  The addon's own `pg_hba.conf` replaces the image's, which accepts plain TCP from any host: only
+  loopback is trusted, and every other connection needs TLS and a password.
 - **Databases.** The image creates `orchestrator` and its user from the Secret. `deploy.sh` creates
   `temporal` and `temporal_visibility` with `psql`, as it already did when CNPG's were late.
 - **Storage.** The PostgreSQL volume uses `topolvm-provisioner` (block storage) when it exists, not
