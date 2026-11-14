@@ -12,6 +12,8 @@ source "${SCRIPT_DIR}/lib/replica-profile.sh"
 source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
 # shellcheck source=lib/postgres-tls.sh
 source "${SCRIPT_DIR}/lib/postgres-tls.sh"
+# shellcheck source=lib/postgres-reset.sh
+source "${SCRIPT_DIR}/lib/postgres-reset.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -1055,19 +1057,7 @@ postgres_database_exists() {
 }
 
 reset_ao_postgres_storage() {
-  kubectl delete statefulset orchestrator-postgres -n "$NAMESPACE" --wait=true \
-    2>/dev/null || true
-  kubectl wait --for=delete pod/orchestrator-postgres-0 -n "$NAMESPACE" \
-    --timeout=180s 2>/dev/null || true
-  if kubectl get pvc data-orchestrator-postgres-0 -n "$NAMESPACE" &>/dev/null; then
-    kubectl delete pvc data-orchestrator-postgres-0 -n "$NAMESPACE" --wait=false \
-      2>/dev/null || true
-    if ! kubectl wait --for=delete pvc/data-orchestrator-postgres-0 \
-      -n "$NAMESPACE" --timeout=180s 2>/dev/null; then
-      echo "ERROR: PostgreSQL PVC did not finish deleting; refusing to recreate AO." >&2
-      exit 1
-    fi
-  fi
+  ao_postgres_reset_storage "$NAMESPACE" || exit 1
   reset_ao_cnpg_storage
 }
 

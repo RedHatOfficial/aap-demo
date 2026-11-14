@@ -448,6 +448,11 @@ service-ca renews the PostgreSQL certificate and its CA in place. The liveness p
 Secret. A renewed CA reaches AO the next time you run `aap-demo enable ao`, which copies it and
 restarts AO's pods.
 
+service-ca refreshes its CA when less than 13 months of its 26 months remain, and the old CA keeps
+working until it expires, so AO keeps connecting in the meantime. Any `aap-demo enable ao` in that
+year picks up the new CA. If you rotate the service CA by hand, run `aap-demo enable ao` right after:
+a manual rotation stops trusting the old CA at once.
+
 ## Related documentation
 
 - ADR: [`docs/adr/017-ao-addon.md`](../../docs/adr/017-ao-addon.md)

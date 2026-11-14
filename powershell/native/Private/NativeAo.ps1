@@ -185,15 +185,31 @@ function Reset-AapAoPostgresStorage {
   Invoke-AapKubectlNative -AllowFailure -Arguments @(
     'wait', '--for=delete', 'pod/orchestrator-postgres-0', '-n', $Namespace, '--timeout=180s'
   ) | Out-Null
-  if ((Invoke-AapKubectlNative -AllowFailure -Arguments @('get', 'pvc', 'data-orchestrator-postgres-0', '-n', $Namespace)).Success) {
-    Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'pvc', 'data-orchestrator-postgres-0', '-n', $Namespace, '--wait=false'
-    ) | Out-Null
-    $gone = Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'wait', '--for=delete', 'pvc/data-orchestrator-postgres-0', '-n', $Namespace, '--timeout=180s'
-    )
-    if (-not $gone.Success) { throw 'PostgreSQL PVC did not finish deleting; refusing to recreate AO' }
+  # Check what is left rather than the exit codes above: kubectl wait on a pod
+  # that is already gone fails on some kubectl versions.
+  foreach ($left in @('statefulset/orchestrator-postgres', 'pod/orchestrator-postgres-0')) {
+    if (-not (Test-AapAoResourceAbsent -Namespace $Namespace -Resource $left)) {
+      throw "$left is still present or could not be checked; refusing to delete its PVC"
+    }
   }
+  if (Test-AapAoResourceAbsent -Namespace $Namespace -Resource 'pvc/data-orchestrator-postgres-0') { return }
+  Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'delete', 'pvc', 'data-orchestrator-postgres-0', '-n', $Namespace, '--wait=false'
+  ) | Out-Null
+  $gone = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'wait', '--for=delete', 'pvc/data-orchestrator-postgres-0', '-n', $Namespace, '--timeout=180s'
+  )
+  if (-not $gone.Success) { throw 'PostgreSQL PVC did not finish deleting; refusing to recreate AO' }
+}
+
+function Test-AapAoResourceAbsent {
+  # True only when the API server answers that the resource does not exist.
+  # Any other error (API unreachable, RBAC) counts as present.
+  param([Parameter(Mandatory)][string]$Namespace, [Parameter(Mandatory)][string]$Resource)
+  $result = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', $Resource, '-n', $Namespace, '--ignore-not-found', '-o', 'name'
+  )
+  return ($result.Success -and -not ([string]$result.Stdout).Trim())
 }
 
 function Get-AapAoSecretValue {

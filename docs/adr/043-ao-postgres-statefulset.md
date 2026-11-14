@@ -81,7 +81,11 @@ Replace CNPG with one StatefulSet of the Red Hat `rhel9/postgresql-15` image
 - The TLS setup depends on service-ca, which MicroShift runs. A cluster without it stops with a
   message after two minutes.
 - A rotated service-ca CA is not copied until the next `aap-demo enable ao`. Doing it inside the
-  cluster would need a controller with write access to Secrets and Deployments.
+  cluster would need a controller with write access to Secrets and Deployments. Automatic rotation
+  leaves room for that: the service CA is valid for 26 months, is refreshed when less than 13 months
+  remain, and the old CA keeps validating new certificates until it expires. AO breaks only if it
+  runs for over a year after a refresh with no `enable ao`. A manual service-ca rotation ends trust
+  in the old CA at once, so it must be followed by `aap-demo enable ao`.
 
 ### Neutral
 
@@ -116,3 +120,4 @@ cluster, rotates it, and needs no host tool.
 - [ADR-040: Shared Addon Framework and Bash Fallback](040-addon-framework-and-bash-fallback.md)
 - `registry.redhat.io/rhel9/postgresql-15`, the image AAP 2.7 also runs for its database
 - [Install the operator from the OpenShift CLI](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-install_the_operator_from_the_openshift_cli)
+- [OKD: Service CA certificates](https://docs.okd.io/4.20/security/certificate_types_descriptions/service-ca-certificates.html)

@@ -185,4 +185,74 @@ else
   fail "unexpected restarts: ${RESTARTED[*]}"
 fi
 
+# ── --force storage reset ───────────────────────────────────────────────────
+# PRESENT lists what `kubectl get` still finds; GET_ERROR makes `get` fail.
+PRESENT=""
+GET_ERROR=""
+CALLS_FILE="$TMP_DIR/reset-calls"
+kubectl() {
+  echo "$*" >>"$CALLS_FILE"
+  case "$*" in
+    "delete statefulset"*) [ -z "${DELETE_FAIL:-}" ] ;;
+    "wait --for=delete pod/"*) [ -z "${DELETE_FAIL:-}" ] ;;
+    "get "*)
+      [ -z "$GET_ERROR" ] || return 1
+      case " $PRESENT " in *" $2 "*) echo "$2" ;; esac
+      ;;
+    "delete pvc"*) PRESENT="${PRESENT//pvc\/data-orchestrator-postgres-0/}" ;;
+    "wait --for=delete pvc/"*) [ -z "${PVC_STUCK:-}" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# shellcheck source=../addons/ao/lib/postgres-reset.sh
+source "$REPO_ROOT/addons/ao/lib/postgres-reset.sh"
+
+reset_case() {
+  : >"$CALLS_FILE"
+  local rc=0
+  ao_postgres_reset_storage automation-orchestrator 2>/dev/null || rc=$?
+  echo "$rc"
+}
+
+PRESENT="pvc/data-orchestrator-postgres-0"
+rc=$(reset_case)
+if [ "$rc" = 0 ] && grep -q '^delete pvc data-orchestrator-postgres-0' "$CALLS_FILE"; then
+  pass "--force deletes the PVC once the StatefulSet and pod are gone"
+else
+  fail "--force did not delete the PVC after a clean delete (rc=$rc)"
+fi
+
+PRESENT="pod/orchestrator-postgres-0 pvc/data-orchestrator-postgres-0"
+rc=$(DELETE_FAIL=1 reset_case)
+if [ "$rc" = 1 ] && ! grep -q '^delete pvc' "$CALLS_FILE"; then
+  pass "--force stops while the old pod is still running"
+else
+  fail "--force went on with the old pod present (rc=$rc)"
+fi
+
+PRESENT="statefulset/orchestrator-postgres pvc/data-orchestrator-postgres-0"
+rc=$(DELETE_FAIL=1 reset_case)
+if [ "$rc" = 1 ] && ! grep -q '^delete pvc' "$CALLS_FILE"; then
+  pass "--force stops while the old StatefulSet is still present"
+else
+  fail "--force went on with the old StatefulSet present (rc=$rc)"
+fi
+
+PRESENT="pvc/data-orchestrator-postgres-0"
+rc=$(GET_ERROR=1 reset_case)
+if [ "$rc" = 1 ] && ! grep -q '^delete pvc' "$CALLS_FILE"; then
+  pass "--force stops when it cannot check what is left"
+else
+  fail "--force went on without confirming the pod was gone (rc=$rc)"
+fi
+
+PRESENT="pvc/data-orchestrator-postgres-0"
+rc=$(PVC_STUCK=1 reset_case)
+if [ "$rc" = 1 ]; then
+  pass "--force stops when the PVC does not finish deleting"
+else
+  fail "--force went on with the PVC still deleting (rc=$rc)"
+fi
+
 exit "$FAILED"
