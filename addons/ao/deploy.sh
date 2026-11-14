@@ -10,25 +10,26 @@ source "${SCRIPT_DIR}/lib/admin-password.sh"
 source "${SCRIPT_DIR}/lib/replica-profile.sh"
 # shellcheck source=lib/install-plan-approval.sh
 source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
+# shellcheck source=lib/postgres-tls.sh
+source "${SCRIPT_DIR}/lib/postgres-tls.sh"
+# shellcheck source=lib/postgres-reset.sh
+source "${SCRIPT_DIR}/lib/postgres-reset.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
 # Deploy Automation Orchestrator (GA) to aap-demo.
 #
-# Instance manifests come from `aapctl install ao --dry-run` (GitOps path):
-#   https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops
+# Installs the operator with an OLM Subscription and applies an
+# AutomationOrchestrator CR written for aap-demo (manifests/). PostgreSQL is one
+# StatefulSet of the Red Hat rhel9/postgresql-15 image (ADR-043).
 #
 # MicroShift still needs a CatalogSource in the AO namespace (OLM cannot
-# resolve openshift-marketplace). CNPG is installed from the upstream
-# manifest because certified-operators is not on MicroShift.
+# resolve openshift-marketplace).
 #
 # Prerequisites:
 #   1. aap-demo cluster with OLM (aap-demo deploy)
 #   2. mcp-server addon (installed automatically by `aap-demo enable ao`)
 #   3. Valid registry.redhat.io pull secret
-#
-# aapctl is NOT required at install time (manifests are checked in under manifests/).
-# Optional: aapctl for disable cleanup and for scripts/generate-manifests.sh refresh.
 #
 # Usage:
 #   ./deploy.sh                    # Install Automation Orchestrator
@@ -39,6 +40,7 @@ export KUBECONFIG="$KUBECONFIG_PATH"
 #   AO_REFRESH_CATALOG=1 ./deploy.sh
 #   AO_INSTALL_PLAN_APPROVAL=Manual ./deploy.sh  # Pause upgrades for review
 #   AO_INDEX_IMAGE=registry.redhat.io/redhat/redhat-operator-index:v4.22-... ./deploy.sh
+#   AO_POSTGRES_IMAGE=registry.redhat.io/rhel9/postgresql-15 ./deploy.sh  # skip reusing AAP's image
 
 NAMESPACE="automation-orchestrator"
 AAP_NAMESPACE="${AAP_DEMO_NAMESPACE:-aap-operator}"
@@ -69,6 +71,17 @@ if [ -z "${AO_STORAGE_CLASS:-}" ]; then
 else
   STORAGE_CLASS="$AO_STORAGE_CLASS"
 fi
+# PostgreSQL wants block storage, not NFS: topolvm-provisioner, else the
+# cluster's default class unless that is the NFS one. Never AO's shared class.
+if [ -n "${AO_POSTGRES_STORAGE_CLASS:-}" ]; then
+  POSTGRES_STORAGE_CLASS="$AO_POSTGRES_STORAGE_CLASS"
+elif kubectl get sc topolvm-provisioner &>/dev/null 2>&1; then
+  POSTGRES_STORAGE_CLASS="topolvm-provisioner"
+else
+  POSTGRES_STORAGE_CLASS=$(kubectl get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}' 2>/dev/null | head -n 1 || true)
+  [ "$POSTGRES_STORAGE_CLASS" != "nfs-local-rwx" ] || POSTGRES_STORAGE_CLASS=""
+fi
+POSTGRES_IMAGE_FALLBACK="registry.redhat.io/rhel9/postgresql-15"
 
 ACTION="${1:-deploy}"
 FORCE="${FORCE:-}"
@@ -1043,60 +1056,24 @@ provision_aap_demos() {
 
 AO_PULL_SECRET_NAME="${AO_PULL_SECRET_NAME:-automation-orchestrator-pull-secret}"
 
-cnpg_database_crd_available() {
-  kubectl get crd databases.postgresql.cnpg.io &>/dev/null 2>&1
-}
-
-ensure_cnpg_operator() {
-  CNPG_VERSION="${CNPG_VERSION:-1.25.1}"
-  CNPG_MANIFEST="https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
-
-  if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
-    && cnpg_database_crd_available; then
-    echo "✓ CloudNativePG operator ready"
-    kubectl create serviceaccount "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" \
-      -n cnpg-system 2>/dev/null || true
-    if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
-      return 1
-    fi
-    if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
-      return 1
-    fi
-    kubectl rollout restart deployment/cnpg-controller-manager -n cnpg-system >/dev/null 2>&1 || true
-    echo "Waiting for CloudNativePG operator..."
-    kubectl rollout status deployment/cnpg-controller-manager \
-      -n cnpg-system --timeout=5m
-    echo "✓ CloudNativePG operator running"
-    mkdir -p "$(dirname "$AO_STATE_FILE")"
-    grep -q "^CNPG_VERSION=" "$AO_STATE_FILE" 2>/dev/null \
-      || echo "CNPG_VERSION=${CNPG_VERSION}" >>"$AO_STATE_FILE"
+# AAP's own PostgreSQL 15 image is already on the node, so reuse it. Fall back
+# to the public image when AAP's can't be read.
+ao_postgres_image() {
+  if [ -n "${AO_POSTGRES_IMAGE:-}" ]; then
+    printf '%s\n' "$AO_POSTGRES_IMAGE"
     return 0
   fi
+  local _image
+  _image=$(kubectl get statefulset -n "$AAP_NAMESPACE" -o json 2>/dev/null \
+    | jq -r '[.items[].spec.template.spec.containers[].image
+        | select(test("/rhel[0-9]+/postgresql-15[@:]"))][0] // empty' 2>/dev/null || true)
+  printf '%s\n' "${_image:-$POSTGRES_IMAGE_FALLBACK}"
+}
 
-  if kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1; then
-    echo "Upgrading CloudNativePG to v${CNPG_VERSION} (Database CRD required)..."
-  else
-    echo "Installing CloudNativePG operator v${CNPG_VERSION} (dev-only, not Red Hat supported)..."
-  fi
-
-  if ! kubectl apply --server-side -f "$CNPG_MANIFEST" 2>&1 | tail -5; then
-    echo "ERROR: Failed to install CloudNativePG from ${CNPG_MANIFEST}"
-    exit 1
-  fi
-  mkdir -p "$(dirname "$AO_STATE_FILE")"
-  echo "CNPG_VERSION=${CNPG_VERSION}" >"$AO_STATE_FILE"
-  kubectl create serviceaccount "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" \
-    -n cnpg-system 2>/dev/null || true
-  if ! grant_scc_to_serviceaccount anyuid "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
-    return 1
-  fi
-  if ! grant_scc_to_serviceaccount privileged "${AO_CNPG_SERVICE_ACCOUNT:-cnpg-manager}" cnpg-system; then
-    return 1
-  fi
-  echo "Waiting for CloudNativePG operator..."
-  kubectl rollout status deployment/cnpg-controller-manager \
-    -n cnpg-system --timeout=5m
-  echo "✓ CloudNativePG operator running"
+# An install from before ADR-043 keeps its database in a CloudNativePG cluster.
+ao_cnpg_cluster_exists() {
+  kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
+    && kubectl get clusters.postgresql.cnpg.io orchestrator-postgres -n "$NAMESPACE" &>/dev/null 2>&1
 }
 
 grant_scc_to_serviceaccount() {
@@ -1115,9 +1092,7 @@ grant_scc_to_serviceaccount() {
 }
 
 postgres_primary_pod() {
-  kubectl get pod -n "$NAMESPACE" -l "cnpg.io/cluster=orchestrator-postgres,role=primary" \
-    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null \
-    || echo "orchestrator-postgres-1"
+  echo "orchestrator-postgres-0"
 }
 
 postgres_database_exists() {
@@ -1129,44 +1104,109 @@ postgres_database_exists() {
 }
 
 reset_ao_postgres_storage() {
-  local _pod _pods _i
+  ao_postgres_reset_storage "$NAMESPACE" || exit 1
+  reset_ao_cnpg_storage
+}
 
-  kubectl delete cluster orchestrator-postgres -n "$NAMESPACE" 2>/dev/null || true
-  kubectl wait --for=delete cluster/orchestrator-postgres -n "$NAMESPACE" \
-    --timeout=180s 2>/dev/null || true
+# Removes a CloudNativePG cluster left by an install from before ADR-043.
+reset_ao_cnpg_storage() {
+  if ! kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1; then
+    return 0
+  fi
+  kubectl delete clusters.postgresql.cnpg.io orchestrator-postgres -n "$NAMESPACE" \
+    --wait=true --timeout=180s 2>/dev/null || true
+  kubectl delete databases.postgresql.cnpg.io --all -n "$NAMESPACE" \
+    --wait=false 2>/dev/null || true
+  kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --wait=false \
+    2>/dev/null || true
+}
 
-  # CNPG can leave the old primary terminating while its PVC is being
-  # released. Do not recreate the cluster until every old pod is gone.
-  _pods=$(kubectl get pods -n "$NAMESPACE" \
-    -l cnpg.io/cluster=orchestrator-postgres -o name 2>/dev/null || true)
-  for _pod in $_pods; do
-    kubectl delete "$_pod" -n "$NAMESPACE" --wait=false 2>/dev/null || true
-  done
-  for _i in $(seq 1 90); do
-    if ! kubectl get pods -n "$NAMESPACE" \
-      -l cnpg.io/cluster=orchestrator-postgres --no-headers 2>/dev/null \
-      | grep -q .; then
+# The CR names orchestrator-postgres-ca for sslMode verify-ca. service-ca signs
+# the server certificate and publishes its CA in the -ca-bundle ConfigMap.
+ensure_ao_postgres_ca() {
+  local _ca="" _i _rc=0
+  for _i in $(seq 1 60); do
+    _ca=$(ao_postgres_bundle_ca "$NAMESPACE")
+    if [ -n "$_ca" ] && kubectl get secret orchestrator-postgres-tls -n "$NAMESPACE" &>/dev/null; then
       break
     fi
+    _ca=""
     sleep 2
   done
-  _pods=$(kubectl get pods -n "$NAMESPACE" \
-    -l cnpg.io/cluster=orchestrator-postgres -o name 2>/dev/null || true)
-  for _pod in $_pods; do
-    echo "  Force-removing stale PostgreSQL pod ${_pod#pod/}..."
-    kubectl delete "$_pod" -n "$NAMESPACE" --grace-period=0 --force \
-      2>/dev/null || true
-  done
-
-  if kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
-    kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" \
-      --wait=false 2>/dev/null || true
-    if ! kubectl wait --for=delete pvc/orchestrator-postgres-1 \
-      -n "$NAMESPACE" --timeout=180s 2>/dev/null; then
-      echo "ERROR: PostgreSQL PVC did not finish deleting; refusing to recreate AO." >&2
-      exit 1
-    fi
+  if [ -z "$_ca" ]; then
+    echo "ERROR: service-ca did not issue the PostgreSQL certificate within 2 minutes." >&2
+    echo "  Check: kubectl get pods -n openshift-service-ca" >&2
+    exit 1
   fi
+  ao_postgres_ca_sync "$NAMESPACE" || _rc=$?
+  if [ "$_rc" -gt 1 ]; then
+    echo "ERROR: could not write the PostgreSQL CA to orchestrator-postgres-ca." >&2
+    exit 1
+  fi
+  echo "✓ PostgreSQL TLS certificate issued by service-ca"
+  # A changed CA with AO already running: its pods trust the old one until they
+  # restart. A fresh install has no AO pods yet, so this does nothing.
+  if [ "$_rc" -eq 0 ]; then
+    ao_restart_postgres_clients "$NAMESPACE" \
+      || echo "⚠ Could not restart AO; run: kubectl rollout restart deployment -n $NAMESPACE" >&2
+  fi
+}
+
+# Applies postgres.yaml. Both values go into sed and YAML, so only image and
+# name characters are allowed.
+apply_ao_postgres_manifest() {
+  local _image
+  _image="$(ao_postgres_image)"
+  if [[ ! "$_image" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
+    echo "ERROR: PostgreSQL image '${_image}' is not a valid image reference." >&2
+    exit 1
+  fi
+  if [ -z "$POSTGRES_STORAGE_CLASS" ]; then
+    echo "ERROR: No block StorageClass found for AO's PostgreSQL." >&2
+    echo "  Set AO_POSTGRES_STORAGE_CLASS to a ReadWriteOnce block StorageClass." >&2
+    exit 1
+  fi
+  if [[ ! "$POSTGRES_STORAGE_CLASS" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+    echo "ERROR: StorageClass '${POSTGRES_STORAGE_CLASS}' is not a valid name." >&2
+    exit 1
+  fi
+  if [ "$_image" = "$POSTGRES_IMAGE_FALLBACK" ]; then
+    echo "  PostgreSQL image: ${_image}"
+  else
+    echo "  PostgreSQL image: $(short_image_ref "$_image") (the one AAP runs)"
+  fi
+  sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
+    -e "s|__STORAGE_CLASS__|${POSTGRES_STORAGE_CLASS}|g" \
+    -e "s|__POSTGRES_IMAGE__|${_image}|g" \
+    "${MANIFESTS_DIR}/postgres.yaml" | kubectl apply -f - >/dev/null
+}
+
+# On an already-running AO: reapplies postgres.yaml, so an install from an
+# earlier version gets the certificate reload, then picks up a CA that
+# service-ca has rotated since the last enable and restarts AO's pods so they
+# trust it. An unchanged StatefulSet does not restart.
+reconcile_ao_postgres() {
+  local _rc=0
+  kubectl get statefulset orchestrator-postgres -n "$NAMESPACE" &>/dev/null || return 0
+  # A CNPG install shares the Service name; applying would repoint it.
+  ! ao_cnpg_cluster_exists || return 0
+  if apply_ao_postgres_manifest \
+    && kubectl rollout status statefulset/orchestrator-postgres -n "$NAMESPACE" \
+      --timeout=10m >/dev/null; then
+    echo "✓ PostgreSQL up to date"
+  else
+    echo "⚠ Could not update PostgreSQL; check: kubectl describe statefulset orchestrator-postgres -n $NAMESPACE" >&2
+  fi
+  ao_postgres_ca_sync "$NAMESPACE" || _rc=$?
+  case "$_rc" in
+    0)
+      echo "✓ PostgreSQL CA renewed by service-ca; restarting AO to trust it"
+      ao_restart_postgres_clients "$NAMESPACE" \
+        || echo "⚠ Could not restart AO; run: kubectl rollout restart deployment -n $NAMESPACE" >&2
+      ;;
+    1) ;;
+    *) echo "⚠ Could not check the PostgreSQL CA in orchestrator-postgres-ca" >&2 ;;
+  esac
 }
 
 ensure_postgres_database() {
@@ -1182,19 +1222,7 @@ ensure_postgres_database() {
 }
 
 wait_for_ao_postgres_databases() {
-  local _cr _db_pg _i _applied
-  if cnpg_database_crd_available; then
-    for _cr in orchestrator temporal temporal-visibility; do
-      for _i in $(seq 1 30); do
-        _applied=$(kubectl get database "$_cr" -n "$NAMESPACE" \
-          -o jsonpath='{.status.applied}' 2>/dev/null || echo "")
-        if [ "$_applied" = "true" ]; then
-          break
-        fi
-        sleep 2
-      done
-    done
-  fi
+  local _db_pg
   for _db_pg in orchestrator temporal temporal_visibility; do
     if ! postgres_database_exists "$_db_pg"; then
       ensure_postgres_database "$_db_pg"
@@ -1274,7 +1302,7 @@ deploy_ao_instance() {
     ao_admin_password_generate "$NAMESPACE"
   fi
 
-  echo "Creating AutomationOrchestrator instance (aapctl GitOps CR)..."
+  echo "Creating AutomationOrchestrator instance..."
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     -e "s|__INGRESS_HOST__|${INGRESS_HOST}|g" \
     -e "s|__PULL_SECRET_NAME__|${AO_PULL_SECRET_NAME}|g" \
@@ -1308,10 +1336,6 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
     reset_ao_postgres_storage
   else
     ao_admin_password_save "$NAMESPACE"
-  fi
-
-  if command -v aapctl >/dev/null 2>&1; then
-    aapctl uninstall automation-orchestrator --force --yes 2>/dev/null || true
   fi
 
   kubectl get automationorchestrator -n "$NAMESPACE" -o name 2>/dev/null \
@@ -1353,7 +1377,9 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   rm -f "$AO_STATE_FILE"
 
   echo "✓ Automation Orchestrator removed"
-  echo "  CloudNativePG operator (cnpg-system) was left installed — it may be shared by other workloads."
+  if kubectl get namespace cnpg-system &>/dev/null 2>&1; then
+    echo "  CloudNativePG (cnpg-system) from an older AO install was left installed. AO no longer uses it."
+  fi
   exit 0
 fi
 
@@ -1469,9 +1495,14 @@ if [ -z "$FORCE" ]; then
         automation-orchestrator-operator "$AO_INSTALL_PLAN_APPROVAL_REQUESTED"
     fi
     deploy_ao_instance
+    reconcile_ao_postgres
     wait_for_ao_instance_ready
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
-    echo "  Use FORCE=1 aap-demo enable ao (or ./deploy.sh --force) to reinstall."
+    echo "  Use aap-demo enable ao --force (or ./deploy.sh --force) to reinstall."
+    if ao_cnpg_cluster_exists; then
+      echo "  Its database is still in CloudNativePG, which aap-demo no longer uses."
+      echo "  aap-demo enable ao --force moves AO to the new PostgreSQL and deletes AO's data."
+    fi
     echo ""
     configure_ao_local_aap_access
     allow_aap_to_ao_backend
@@ -1552,18 +1583,18 @@ if ! operator_package_in_catalog "$CATALOG_NAMESPACE"; then
 fi
 echo "✓ Operator package found in AO catalog (${CATALOG_NAMESPACE}, ${OPERATOR_CHANNEL})"
 
-# --- CloudNativePG operator (dev-only PostgreSQL) ---
-ensure_cnpg_operator
+# --- PostgreSQL (one StatefulSet of rhel9/postgresql-15, ADR-043) ---
+# Secret names and keys are the ones the AutomationOrchestrator CR references.
+echo "Creating PostgreSQL for Automation Orchestrator..."
 
-# --- PostgreSQL cluster + aapctl-shaped credential secrets ---
-# Secret names/keys match `aapctl install ao --dry-run` (GitOps manifests).
-echo "Creating PostgreSQL cluster for Automation Orchestrator..."
+if ao_cnpg_cluster_exists && [ -z "$FORCE" ]; then
+  echo "ERROR: This AO keeps its database in CloudNativePG, which aap-demo no longer uses." >&2
+  echo "  To replace it with the new PostgreSQL, which deletes AO's data, run:" >&2
+  echo "    aap-demo enable ao --force" >&2
+  exit 1
+fi
 
 _legacy_secret=""
-if kubectl get cluster orchestrator-postgres -n "$NAMESPACE" -o jsonpath='{.spec.bootstrap.initdb.secret.name}' 2>/dev/null \
-  | grep -qx "orchestrator-pg-credentials"; then
-  _legacy_secret=1
-fi
 if kubectl get secret orchestrator-pg-credentials -n "$NAMESPACE" &>/dev/null \
   || kubectl get secret temporal-pg-credentials -n "$NAMESPACE" &>/dev/null; then
   _legacy_secret=1
@@ -1571,18 +1602,15 @@ fi
 
 if [ -n "$FORCE" ] || [ -n "$_legacy_secret" ]; then
   if [ -n "$_legacy_secret" ]; then
-    echo "  Recreating postgres to match aapctl secret names..."
+    echo "  Recreating PostgreSQL to match the current secret names..."
     kubectl delete secret orchestrator-pg-credentials temporal-pg-credentials -n "$NAMESPACE" \
       --ignore-not-found 2>/dev/null || true
   fi
-  if kubectl get cluster orchestrator-postgres -n "$NAMESPACE" &>/dev/null \
-    || kubectl get pvc orchestrator-postgres-1 -n "$NAMESPACE" &>/dev/null; then
-    echo "  Resetting postgres cluster for fresh init..."
-    reset_ao_postgres_storage
-  fi
+  echo "  Resetting PostgreSQL for a fresh database..."
+  reset_ao_postgres_storage
 fi
 
-# Reuse the existing aapctl secret password so we never desync from CNPG.
+# Reuse the existing password so the database and the secrets never disagree.
 if kubectl get secret orchestrator-postgres-secret -n "$NAMESPACE" &>/dev/null; then
   PG_PASSWORD=$(kubectl get secret orchestrator-postgres-secret -n "$NAMESPACE" \
     -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
@@ -1634,32 +1662,19 @@ stringData:
   username: orchestrator
 EOF
 
-sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
-  -e "s|__STORAGE_CLASS__|${STORAGE_CLASS}|g" \
-  "${MANIFESTS_DIR}/postgres-cluster.yaml" | kubectl apply -f - || {
-  echo "ERROR: Failed to apply PostgreSQL manifests."
-  if ! cnpg_database_crd_available; then
-    echo "  CloudNativePG Database CRD is missing. Re-run after CNPG upgrade completes."
-  fi
+apply_ao_postgres_manifest || {
+  echo "ERROR: Failed to apply the PostgreSQL manifests."
   exit 1
 }
+ensure_ao_postgres_ca
 
-echo "Waiting for PostgreSQL cluster to be ready..."
-for i in $(seq 1 60); do
-  READY=$(kubectl get cluster orchestrator-postgres -n "$NAMESPACE" \
-    -o jsonpath='{.status.readyInstances}' 2>/dev/null || echo "0")
-  if [ "$READY" = "1" ]; then
-    echo "✓ PostgreSQL cluster ready"
-    break
-  fi
-  if [ "$i" -eq 60 ]; then
-    echo "ERROR: PostgreSQL cluster not ready after 10 minutes."
-    exit 1
-  fi
-  printf "\r  $(hat) readyInstances: %-4s    " "${READY}"
-  sleep 10
-done
-echo ""
+echo "Waiting for PostgreSQL to be ready..."
+if ! kubectl rollout status statefulset/orchestrator-postgres -n "$NAMESPACE" --timeout=10m; then
+  echo "ERROR: PostgreSQL not ready after 10 minutes."
+  echo "  Check: kubectl describe pod orchestrator-postgres-0 -n ${NAMESPACE}"
+  exit 1
+fi
+echo "✓ PostgreSQL ready"
 wait_for_ao_postgres_databases
 
 # --- Operator install (GA OLM subscription) ---
@@ -1781,6 +1796,15 @@ done
 echo ""
 
 echo "Waiting for operator to become available..."
+# kubectl wait fails at once on a Deployment that doesn't exist yet, which is
+# the case right after a forced reinstall. Wait for it to appear first.
+for _i in $(seq 1 60); do
+  if kubectl get deployment automation-orchestrator-operator-controller-manager \
+    -n "$(operator_controller_namespace)" &>/dev/null; then
+    break
+  fi
+  sleep 5
+done
 if ! kubectl wait --for=condition=Available \
   deployment/automation-orchestrator-operator-controller-manager \
   -n "$(operator_controller_namespace)" --timeout=300s 2>/dev/null; then

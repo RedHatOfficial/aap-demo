@@ -117,8 +117,8 @@ enable/disable behavior for both replica profiles. `AO_IMPORT_DEMOS=0` keeps
 the scenario focused on AO installation and avoids importing demo workflows.
 
 The ordinary disable command is intentional: it removes the AO namespace and
-OLM resources while preserving the bootstrap credential and shared
-CloudNativePG operator. Use the separate purge scenario below only when
+OLM resources while preserving the bootstrap credential. Use the separate
+purge scenario below only when
 irreversible database deletion is explicitly required.
 
 ```bash
