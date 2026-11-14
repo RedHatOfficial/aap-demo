@@ -105,6 +105,7 @@ fi
 # ── CA Secret sync ──────────────────────────────────────────────────────────
 BUNDLE_CA=""
 STORED_CA=""
+LIST_FAIL=""
 RESTARTED=()
 # kubectl create runs on the left of a pipe, in a subshell, so it records here.
 APPLIED_FILE="$TMP_DIR/applied"
@@ -126,6 +127,7 @@ kubectl() {
       ;;
     "apply -f -") cat >/dev/null ;;
     "get deployment"*)
+      [ -z "${LIST_FAIL:-}" ] || return 1
       printf '%s\n' \
         deployment.apps/automation-orchestrator-backend \
         deployment.apps/automation-orchestrator-temporal \
@@ -184,6 +186,15 @@ if [ "${RESTARTED[*]}" = "deployment.apps/automation-orchestrator-backend deploy
 else
   fail "unexpected restarts: ${RESTARTED[*]}"
 fi
+
+RESTARTED=()
+LIST_FAIL=1
+if ! ao_restart_postgres_clients automation-orchestrator && [ "${#RESTARTED[@]}" -eq 0 ]; then
+  pass "a failed deployment list is reported, not treated as nothing to restart"
+else
+  fail "a failed deployment list was treated as success"
+fi
+LIST_FAIL=""
 
 # ── --force storage reset ───────────────────────────────────────────────────
 # PRESENT lists what `kubectl get` still finds; GET_ERROR makes `get` fail.

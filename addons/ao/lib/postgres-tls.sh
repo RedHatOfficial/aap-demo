@@ -31,8 +31,11 @@ ao_postgres_ca_sync() {
 # Restarts the AO workloads, which read the CA Secret only when they start.
 # The operator does not connect to PostgreSQL and is left running.
 ao_restart_postgres_clients() {
-  local _ns="$1" _deployment
-  for _deployment in $(kubectl get deployment -n "$_ns" -o name 2>/dev/null); do
+  local _ns="$1" _deployment _list
+  # A failed list must not look like "nothing to restart": the CA Secret is
+  # already updated, so the next enable would not try again.
+  _list=$(kubectl get deployment -n "$_ns" -o name 2>/dev/null) || return 1
+  for _deployment in $_list; do
     case "$_deployment" in
       *-operator-controller-manager) ;;
       */automation-orchestrator-*)

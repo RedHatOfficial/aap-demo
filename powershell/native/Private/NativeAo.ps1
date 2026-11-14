@@ -227,7 +227,10 @@ function Restart-AapAoPostgresClients {
   # connect to PostgreSQL and is left running.
   param([Parameter(Mandatory)][string]$Namespace)
   $list = Invoke-AapKubectlNative -AllowFailure -Arguments @('get', 'deployment', '-n', $Namespace, '-o', 'name')
-  if (-not $list.Success) { return }
+  # The CA Secret is already updated, so a later enable would not retry the restart.
+  if (-not $list.Success) {
+    throw "Could not list AO deployments to restart them for the renewed PostgreSQL CA; run: kubectl rollout restart deployment -n $Namespace"
+  }
   foreach ($deployment in @($list.Stdout -split "`r?`n" | Where-Object { $_ })) {
     if ($deployment -like '*-operator-controller-manager') { continue }
     if ($deployment -notlike '*/automation-orchestrator-*') { continue }
