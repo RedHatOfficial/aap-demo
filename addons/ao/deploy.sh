@@ -935,7 +935,8 @@ AO_AAP_SYNC_RAN=0
 
 provision_aap_demos() {
   local _aap_route _ao_route _aap_token _ao_namespace _ao_token _ao_credential _ao_integration
-  local -a _provision_args
+  local _fleet_service_status="" _fleet_manual_status=""
+  local -a _provision_args _fleet_workflow_args
   _aap_route=$(aap_gateway_route_host)
   _ao_route=$(wire_ao_route_host 2>/dev/null || true)
   _ao_token=$(wire_ao_login_token 2>/dev/null || true)
@@ -946,13 +947,29 @@ provision_aap_demos() {
   _aap_token=$(wire_aap_gateway_token "aap-demo AO template provisioning" write 2>/dev/null || true)
   NAMESPACE="$_ao_namespace"
   if [ -z "$_aap_route" ] || [ -z "$_aap_token" ]; then
+    if [ -n "${AAP_DEMO_FLEET_HOST:-}" ]; then
+      echo "ERROR: AAP route or credentials are unavailable; Fleet integration cannot be configured." >&2
+      return 1
+    fi
     echo "  ⚠ AAP demo template provisioning deferred (AAP credentials not ready)"
     return 0
+  fi
+  if [ -n "${AAP_DEMO_FLEET_HOST:-}" ] && { [ -z "$_ao_route" ] || [ -z "$_ao_token" ] || [ -z "$_ao_credential" ] || [ -z "$_ao_integration" ]; }; then
+    echo "ERROR: AO route, credentials, or AAP integration are unavailable; Fleet workflows cannot be configured." >&2
+    return 1
   fi
   _provision_args=(
     --route "$_aap_route"
     --token "$_aap_token"
   )
+  if [ -n "${AAP_DEMO_FLEET_HOST:-}" ]; then
+    _fleet_service_status=$(mktemp) || return 1
+    _fleet_manual_status=$(mktemp) || {
+      rm -f "$_fleet_service_status"
+      return 1
+    }
+    _provision_args+=(--fleet-host "$AAP_DEMO_FLEET_HOST" --fleet-service-status-file "$_fleet_service_status" --fleet-manual-status-file "$_fleet_manual_status")
+  fi
   if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
     _provision_args+=(
       --ao-api-url "${AO_SYNC_API_URL:-https://router-internal-default.openshift-ingress.svc.cluster.local/api/v1}"
@@ -963,6 +980,7 @@ provision_aap_demos() {
       --control-repository "${AO_SYNC_REPOSITORY:-https://github.com/RedHatOfficial/aap-demo.git}"
       --control-branch "${AO_SYNC_BRANCH:-main}"
       --ao-demo-ref "${AO_DEMOS_REF:-abcc1a1482a}"
+      --ao-demo-repository "${AO_DEMOS_REPOSITORY:-https://github.com/ansible-tmm/aap-orchestrator-demos.git}"
     )
     if [ "${AO_LLM_PROVIDER:-ollama}" != none ]; then
       local _agent_cred="${AO_AGENT_CREDENTIAL_ID:-}"
@@ -990,15 +1008,44 @@ provision_aap_demos() {
   local _provision_rc
   local _python_cmd
   if ! _python_cmd=$(ao_python_command); then
+    [ -z "$_fleet_service_status" ] || rm -f "$_fleet_service_status"
+    [ -z "$_fleet_manual_status" ] || rm -f "$_fleet_manual_status"
+    if [ -n "${AAP_DEMO_FLEET_HOST:-}" ]; then
+      echo "ERROR: Python is required to configure the Fleet integration." >&2
+      return 1
+    fi
     echo "  ⚠ Python runtime unavailable; skipping optional AAP demo provisioning"
     return 0
   fi
   if "$_python_cmd" "${SCRIPT_DIR}/scripts/provision-aap-demos.py" "${_provision_args[@]}"; then
     if [ -n "$_ao_token" ] && [ -n "$_ao_credential" ] && [ -n "$_ao_integration" ]; then
+      if [ -n "${AAP_DEMO_FLEET_HOST:-}" ]; then
+        _fleet_workflow_args=(--route "$_ao_route" --credential-id "$_ao_credential" --integration-id "$_ao_integration")
+        if [ "$(cat "$_fleet_service_status")" = ready ]; then
+          _fleet_workflow_args+=(--include-service)
+        else
+          echo "  ⚠ Fleet disk-and-service workflow unavailable: Product Demos service template is not ready"
+        fi
+        if [ "$(cat "$_fleet_manual_status")" = ready ]; then
+          _fleet_workflow_args+=(--include-disk-demo-101)
+        else
+          echo "  ⚠ Fleet disk-demo-101 unavailable: manual-intervention template is not ready"
+        fi
+        rm -f "$_fleet_service_status"
+        rm -f "$_fleet_manual_status"
+        AO_ACCESS_TOKEN="$_ao_token" "$_python_cmd" "${SCRIPT_DIR}/scripts/fleet-workflow.py" \
+          "${_fleet_workflow_args[@]}" || return 1
+      fi
       AO_AAP_SYNC_RAN=1
     fi
   else
     _provision_rc=$?
+    [ -z "$_fleet_service_status" ] || rm -f "$_fleet_service_status"
+    [ -z "$_fleet_manual_status" ] || rm -f "$_fleet_manual_status"
+    if [ -n "${AAP_DEMO_FLEET_HOST:-}" ]; then
+      echo "ERROR: Fleet integration provisioning failed; product demos setup cannot continue." >&2
+      return "$_provision_rc"
+    fi
     if [ "$_provision_rc" -eq 2 ]; then
       echo "  Continuing with direct AO workflow import."
     else
