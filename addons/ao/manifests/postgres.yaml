@@ -1,0 +1,213 @@
+# PostgreSQL for Automation Orchestrator (ADR-043): one StatefulSet of the Red Hat
+# rhel9/postgresql-15 image. The Service keeps the name the AO CR already uses,
+# orchestrator-postgres-rw.
+#
+# TLS: required for every connection that is not from inside the pod.
+# MicroShift's service-ca signs a serving certificate for the Service
+# (orchestrator-postgres-tls) and injects its CA into the -ca-bundle ConfigMap.
+# deploy.sh copies that CA into the orchestrator-postgres-ca Secret, which the
+# CR's caCertSecretRef names, so sslMode verify-ca holds. Each enable copies it
+# again and restarts AO when service-ca has rotated it. The liveness probe
+# picks up a renewed server certificate without a restart.
+#
+# Placeholders substituted by deploy.sh:
+#   __NAMESPACE__         -> automation-orchestrator
+#   __STORAGE_CLASS__     -> topolvm-provisioner (or AO_POSTGRES_STORAGE_CLASS)
+#   __POSTGRES_IMAGE__    -> AAP's own PostgreSQL image, or registry.redhat.io/rhel9/postgresql-15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator-postgres-rw
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: orchestrator-postgres-tls
+spec:
+  selector:
+    app.kubernetes.io/name: orchestrator-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-postgres-ca-bundle
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orchestrator-postgres-config
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+data:
+  # Sourced by the image before PostgreSQL starts. PostgreSQL refuses a key
+  # file that other users can read, so the mounted pair is copied with mode 0600.
+  tls-files.sh: |
+    mkdir -p /tmp/pgtls
+    cp /etc/postgres-tls/tls.crt /etc/postgres-tls/tls.key /tmp/pgtls/
+    chmod 0600 /tmp/pgtls/tls.key
+  # Run by the liveness probe, inside the postgres container. service-ca renews
+  # the mounted pair in place; PostgreSQL reads the copies in /tmp/pgtls, so a
+  # renewed pair is copied there and PostgreSQL reloads it over the local
+  # socket. The marker keeps a failed reload pending for the next probe.
+  tls-reload.sh: |
+    src="${TLS_SOURCE_DIR:-/etc/postgres-tls}"
+    dst="${TLS_TARGET_DIR:-/tmp/pgtls}"
+    pending="$dst/.reload-pending"
+    for f in tls.crt tls.key; do
+      [ -s "$src/$f" ] || continue
+      if [ ! -f "$dst/$f" ] || [ "$(<"$src/$f")" != "$(<"$dst/$f")" ]; then
+        : >"$pending"
+        cp "$src/$f" "$dst/.$f.new" && chmod 0600 "$dst/.$f.new" \
+          && mv -f "$dst/.$f.new" "$dst/$f"
+      fi
+    done
+    if [ -e "$pending" ] && psql -U postgres -tAc 'SELECT pg_reload_conf()' >/dev/null 2>&1; then
+      rm -f "$pending"
+      echo "Reloaded PostgreSQL with the renewed TLS certificate"
+    fi
+  # Included into postgresql.conf by the image.
+  tls.conf: |
+    ssl = on
+    ssl_cert_file = '/tmp/pgtls/tls.crt'
+    ssl_key_file = '/tmp/pgtls/tls.key'
+    hba_file = '/etc/postgres-hba/pg_hba.conf'
+  # Replaces the image's own rules, which accept plain TCP from any host.
+  # Only the local socket is trusted, for kubectl exec psql and the liveness
+  # probe; other containers in the pod cannot reach it. Every TCP connection,
+  # loopback included, must use TLS and a password. The probes' pg_isready
+  # does not authenticate.
+  pg_hba.conf: |
+    local     all  all        trust
+    hostssl   all  all  all   scram-sha-256
+    hostnossl all  all  all   reject
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: orchestrator-postgres
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: orchestrator-postgres
+    app.kubernetes.io/managed-by: aap-demo
+spec:
+  serviceName: orchestrator-postgres-rw
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orchestrator-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: __POSTGRES_IMAGE__
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-postgres-secret
+                  key: username
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: orchestrator-postgres-secret
+                  key: password
+            - name: POSTGRESQL_DATABASE
+              value: orchestrator
+            - name: POSTGRESQL_MAX_CONNECTIONS
+              value: "200"
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["/usr/libexec/check-container"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - bash /opt/aap-demo/tls-reload.sh; exec /usr/libexec/check-container --live
+            initialDelaySeconds: 120
+            periodSeconds: 10
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/pgsql/data
+            - name: tls
+              mountPath: /etc/postgres-tls
+              readOnly: true
+            - name: config
+              mountPath: /opt/app-root/src/postgresql-pre-start
+              readOnly: true
+            - name: tls-reload
+              mountPath: /opt/aap-demo
+              readOnly: true
+            - name: config-tls
+              mountPath: /opt/app-root/src/postgresql-cfg
+              readOnly: true
+            # Not under postgresql-cfg: the image includes every *.conf there.
+            - name: config-hba
+              mountPath: /etc/postgres-hba
+              readOnly: true
+      volumes:
+        - name: tls
+          secret:
+            secretName: orchestrator-postgres-tls # pragma: allowlist secret
+        - name: config
+          configMap:
+            name: orchestrator-postgres-config
+            items:
+              - key: tls-files.sh
+                path: tls-files.sh
+        - name: tls-reload
+          configMap:
+            name: orchestrator-postgres-config
+            items:
+              - key: tls-reload.sh
+                path: tls-reload.sh
+        - name: config-tls
+          configMap:
+            name: orchestrator-postgres-config
+            items:
+              - key: tls.conf
+                path: tls.conf
+        - name: config-hba
+          configMap:
+            name: orchestrator-postgres-config
+            items:
+              - key: pg_hba.conf
+                path: pg_hba.conf
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: orchestrator-postgres
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: __STORAGE_CLASS__
+        resources:
+          requests:
+            storage: 3Gi
