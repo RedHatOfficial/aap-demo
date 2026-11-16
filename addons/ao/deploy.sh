@@ -1101,20 +1101,12 @@ postgres_database_exists() {
 
 reset_ao_postgres_storage() {
   ao_postgres_reset_storage "$NAMESPACE" || exit 1
-  reset_ao_cnpg_storage
+  reset_ao_cnpg_storage || exit 1
 }
 
 # Removes a CloudNativePG cluster left by an install from before ADR-043.
 reset_ao_cnpg_storage() {
-  if ! kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1; then
-    return 0
-  fi
-  kubectl delete clusters.postgresql.cnpg.io orchestrator-postgres -n "$NAMESPACE" \
-    --wait=true --timeout=180s 2>/dev/null || true
-  kubectl delete databases.postgresql.cnpg.io --all -n "$NAMESPACE" \
-    --wait=false 2>/dev/null || true
-  kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --wait=false \
-    2>/dev/null || true
+  ao_remove_cnpg_storage "$NAMESPACE" "${_AO_CNPG_CLUSTER:-}"
 }
 
 # The CR names orchestrator-postgres-ca for sslMode verify-ca. service-ca signs

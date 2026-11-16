@@ -252,6 +252,33 @@ function Test-AapAoCnpgClusterPresent {
   return [bool]([string]$cluster.Stdout).Trim()
 }
 
+function Remove-AapAoCnpgStorage {
+  param([Parameter(Mandatory)][string]$Namespace)
+  $deleted = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'delete', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace,
+    '--ignore-not-found', '--wait=true', '--timeout=180s'
+  )
+  if (-not $deleted.Success) { throw 'Could not delete the CloudNativePG cluster; refusing to replace PostgreSQL' }
+  if (Test-AapAoCnpgClusterPresent -Namespace $Namespace) {
+    throw 'CloudNativePG cluster still exists; refusing to replace PostgreSQL'
+  }
+  $crd = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', 'crd', 'databases.postgresql.cnpg.io', '--ignore-not-found', '-o', 'name'
+  )
+  if (-not $crd.Success) { throw 'Could not check CloudNativePG databases; refusing to replace PostgreSQL' }
+  if (([string]$crd.Stdout).Trim()) {
+    $databases = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'delete', 'databases.postgresql.cnpg.io', '--all', '-n', $Namespace, '--wait=false'
+    )
+    if (-not $databases.Success) { throw 'Could not delete CloudNativePG databases; refusing to replace PostgreSQL' }
+  }
+  $pvc = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'delete', 'pvc', 'orchestrator-postgres-1', '-n', $Namespace,
+    '--ignore-not-found', '--wait=true', '--timeout=180s'
+  )
+  if (-not $pvc.Success) { throw 'Could not delete the CloudNativePG PVC; refusing to replace PostgreSQL' }
+}
+
 function Assert-AapAoPostgresStorageSize {
   param([Parameter(Mandatory)][string]$Size)
   if ($Size -cnotmatch '\A[0-9]+([.][0-9]+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?\z' -or
@@ -542,15 +569,7 @@ function Invoke-AapAoAddonNative {
       throw "Run aap-demo enable ao --force to move it to the new PostgreSQL. That deletes AO's data."
     }
     Write-Host 'Removing the CloudNativePG database from an older AO install...'
-    Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace, '--wait=true', '--timeout=180s'
-    ) | Out-Null
-    Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'databases.postgresql.cnpg.io', '--all', '-n', $Namespace, '--wait=false'
-    ) | Out-Null
-    Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'pvc', 'orchestrator-postgres-1', '-n', $Namespace, '--wait=false'
-    ) | Out-Null
+    Remove-AapAoCnpgStorage -Namespace $Namespace
   }
 
   Write-Host 'Deploying Automation Orchestrator natively...'

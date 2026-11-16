@@ -150,6 +150,71 @@ def test_cnpg_detection_distinguishes_missing_from_failed(
 
 
 @pytest.mark.parametrize(
+    ("failure", "ok", "pvc_deleted"),
+    [
+        ("", True, True),
+        ("crd", False, False),
+        ("crd-disappeared", False, False),
+        ("cluster-get", False, False),
+        ("cluster-delete", False, False),
+        ("cluster-stuck", False, False),
+        ("database-crd", False, False),
+        ("database-delete", False, False),
+        ("pvc-delete", False, True),
+    ],
+)
+def test_cnpg_reset_fails_closed_before_replacement(tmp_path, failure, ok, pvc_deleted):
+    kubectl = tmp_path / "kubectl"
+    state = tmp_path / "cluster-present"
+    state.touch()
+    log = tmp_path / "calls"
+    kubectl.write_text(
+        "#!/bin/bash\n"
+        'echo "$1 $2 $3" >> "$LOG"\n'
+        'case "$1 $2 $3" in\n'
+        '  "get crd clusters.postgresql.cnpg.io") '
+        '[ "$FAIL" != crd ] || exit 1; '
+        '[ "$FAIL" = crd-disappeared ] || echo crd/clusters ;;\n'
+        '  "get crd databases.postgresql.cnpg.io") '
+        '[ "$FAIL" != database-crd ] || exit 1; echo crd/databases ;;\n'
+        '  "get clusters.postgresql.cnpg.io orchestrator-postgres") '
+        '[ "$FAIL" != cluster-get ] || exit 1; '
+        '[ ! -f "$STATE" ] || echo cluster/orchestrator-postgres ;;\n'
+        '  "delete clusters.postgresql.cnpg.io orchestrator-postgres") '
+        '[ "$FAIL" != cluster-delete ] || exit 1; '
+        '[ "$FAIL" = cluster-stuck ] || rm -f "$STATE" ;;\n'
+        '  "delete databases.postgresql.cnpg.io --all") '
+        '[ "$FAIL" != database-delete ] || exit 1 ;;\n'
+        '  "delete pvc orchestrator-postgres-1") '
+        '[ "$FAIL" != pvc-delete ] || exit 1 ;;\n'
+        "  *) exit 2 ;;\nesac\n",
+        encoding="utf-8",
+    )
+    kubectl.chmod(0o755)
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; ao_remove_cnpg_storage ao cluster/orchestrator-postgres',
+            "_",
+            str(HELPER),
+        ],
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "FAIL": failure,
+            "LOG": str(log),
+            "STATE": str(state),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is ok, result.stderr
+    assert ("delete pvc orchestrator-postgres-1" in log.read_text()) is pvc_deleted
+
+
+@pytest.mark.parametrize(
     ("legacy", "force", "expected_reset", "expected_code"),
     [(True, "", False, 1), (True, "1", True, 0), (False, "", False, 0), (False, "1", True, 0)],
 )

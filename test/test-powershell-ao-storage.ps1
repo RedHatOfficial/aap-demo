@@ -77,6 +77,53 @@ foreach ($case in $cnpgCases) {
     throw "CNPG detection case '$($case.Name)' failed"
   }
 }
+$deleteCases = @(
+  @{ Name = 'success'; Fail = ''; Throws = $false; DeletesPvc = $true },
+  @{ Name = 'cluster deletion fails'; Fail = 'cluster-delete'; Throws = $true; DeletesPvc = $false },
+  @{ Name = 'cluster remains'; Fail = 'cluster-stuck'; Throws = $true; DeletesPvc = $false },
+  @{ Name = 'cluster lookup fails'; Fail = 'cluster-check'; Throws = $true; DeletesPvc = $false },
+  @{ Name = 'database CRD lookup fails'; Fail = 'database-crd'; Throws = $true; DeletesPvc = $false },
+  @{ Name = 'database deletion fails'; Fail = 'database-delete'; Throws = $true; DeletesPvc = $false },
+  @{ Name = 'PVC deletion fails'; Fail = 'pvc-delete'; Throws = $true; DeletesPvc = $true }
+)
+foreach ($case in $deleteCases) {
+  $outcome = & $module {
+    param($Case)
+    $script:DeleteCase = $Case
+    $script:ClusterPresent = $true
+    $script:PvcDeleted = $false
+    $original = ${function:script:Invoke-AapKubectlNative}
+    function script:Invoke-AapKubectlNative {
+      param([string[]]$Arguments, [switch]$AllowFailure)
+      $line = $Arguments -join ' '
+      $ok = $true; $out = ''
+      if ($line -like 'delete clusters.postgresql.cnpg.io*') {
+        $ok = $script:DeleteCase.Fail -ne 'cluster-delete'
+        if ($ok -and $script:DeleteCase.Fail -ne 'cluster-stuck') { $script:ClusterPresent = $false }
+      } elseif ($line -like 'get crd clusters.postgresql.cnpg.io*') {
+        $ok = $script:DeleteCase.Fail -ne 'cluster-check'; $out = 'crd/clusters'
+      } elseif ($line -like 'get clusters.postgresql.cnpg.io*') {
+        if ($script:ClusterPresent) { $out = 'cluster/orchestrator-postgres' }
+      } elseif ($line -like 'get crd databases.postgresql.cnpg.io*') {
+        $ok = $script:DeleteCase.Fail -ne 'database-crd'; $out = 'crd/databases'
+      } elseif ($line -like 'delete databases.postgresql.cnpg.io*') {
+        $ok = $script:DeleteCase.Fail -ne 'database-delete'
+      } elseif ($line -like 'delete pvc orchestrator-postgres-1*') {
+        $script:PvcDeleted = $true; $ok = $script:DeleteCase.Fail -ne 'pvc-delete'
+      } else { throw "Unexpected kubectl command: $line" }
+      return [pscustomobject]@{ Success = $ok; Stdout = $out; Stderr = '' }
+    }
+    try {
+      Remove-AapAoCnpgStorage -Namespace ao
+      [pscustomobject]@{ Failed = $false; DeletedPvc = $script:PvcDeleted }
+    } catch {
+      [pscustomobject]@{ Failed = $true; DeletedPvc = $script:PvcDeleted }
+    } finally { ${function:script:Invoke-AapKubectlNative} = $original }
+  } $case
+  if ($outcome.Failed -ne $case.Throws -or $outcome.DeletedPvc -ne $case.DeletesPvc) {
+    throw "CNPG deletion case '$($case.Name)' failed"
+  }
+}
 $forceOutcome = & $module {
   $originalSetting = ${function:script:Get-AapAoSetting}
   $originalReset = ${function:script:Reset-AapAoPostgresStorage}

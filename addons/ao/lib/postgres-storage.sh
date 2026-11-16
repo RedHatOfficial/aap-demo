@@ -27,6 +27,50 @@ ao_cnpg_cluster_name() {
   printf '%s' "$cluster"
 }
 
+# Do not create a replacement database until the old CNPG controller and its
+# data have been removed. Failed reads/deletes are not proof of removal.
+ao_remove_cnpg_storage() {
+  local namespace="$1" expected_cluster="${2:-}" cluster cluster_crd databases_crd
+  if ! cluster_crd=$(kubectl get crd clusters.postgresql.cnpg.io --ignore-not-found -o name); then
+    echo "ERROR: Could not check for CloudNativePG; refusing to replace PostgreSQL." >&2
+    return 1
+  fi
+  if [ -z "$cluster_crd" ]; then
+    if [ -n "$expected_cluster" ]; then
+      echo "ERROR: CloudNativePG CRD disappeared; refusing to replace PostgreSQL." >&2
+      return 1
+    fi
+    return 0
+  fi
+  cluster=$(ao_cnpg_cluster_name "$namespace") || return 1
+  if [ -n "$cluster" ]; then
+    if ! kubectl delete clusters.postgresql.cnpg.io orchestrator-postgres -n "$namespace" \
+      --ignore-not-found --wait=true --timeout=180s; then
+      echo "ERROR: Could not delete the CloudNativePG cluster; refusing to replace PostgreSQL." >&2
+      return 1
+    fi
+    cluster=$(ao_cnpg_cluster_name "$namespace") || return 1
+    if [ -n "$cluster" ]; then
+      echo "ERROR: CloudNativePG cluster still exists; refusing to replace PostgreSQL." >&2
+      return 1
+    fi
+  fi
+  if ! databases_crd=$(kubectl get crd databases.postgresql.cnpg.io --ignore-not-found -o name); then
+    echo "ERROR: Could not check CloudNativePG databases; refusing to replace PostgreSQL." >&2
+    return 1
+  fi
+  if [ -n "$databases_crd" ] && ! kubectl delete databases.postgresql.cnpg.io --all \
+    -n "$namespace" --wait=false; then
+    echo "ERROR: Could not delete CloudNativePG databases; refusing to replace PostgreSQL." >&2
+    return 1
+  fi
+  if ! kubectl delete pvc orchestrator-postgres-1 -n "$namespace" \
+    --ignore-not-found --wait=true --timeout=180s; then
+    echo "ERROR: Could not delete the CloudNativePG PVC; refusing to replace PostgreSQL." >&2
+    return 1
+  fi
+}
+
 # A StatefulSet's volumeClaimTemplates are immutable. Reuse the template size,
 # not the potentially expanded PVC size, when reapplying an existing set. If
 # the set is gone but its PVC remains, use the PVC's requested size instead.
