@@ -297,3 +297,53 @@ def test_a_vm_crc_cannot_answer_for_is_not_called_missing(
     out = app_ctx.console.stdout
     assert "CRC is not responding, but a cluster exists" in out
     assert "No cluster exists" not in out
+
+
+def test_cluster_info_timeout_is_bounded_and_treated_as_unreachable(
+    app_ctx, fake_runner, have_kubectl, monkeypatch
+):
+    monkeypatch.setattr(preflight.ssh_mod, "detect_ssh_key", lambda _: None)
+    fake_runner.register("kubectl cluster-info", AapDemoError("timed out"))
+    preflight.setup_kubeconfig(app_ctx)
+    call = next(call for call in fake_runner.calls if call.argv[:2] == ("kubectl", "cluster-info"))
+    assert call.timeout is not None
+
+
+@pytest.mark.parametrize("setting", ["KUBECONFIG", "AAP_DEMO_KUBECONFIG"])
+@pytest.mark.parametrize("timeout", [False, True])
+def test_shared_kubeconfig_is_not_replaced_after_unreachable_api(
+    app_ctx, fake_runner, have_kubectl, tmp_path, monkeypatch, setting, timeout
+):
+    shared = tmp_path / "shared.yaml"
+    original = "apiVersion: v1\ncontexts:\n- name: local\n- name: other\n"
+    shared.write_text(original)
+    app_ctx.env = {**app_ctx.env, setting: str(shared)}
+    fake_runner.ok("kubectl --kubeconfig", stdout="https://127.0.0.1:6443")
+    if timeout:
+        fake_runner.register("kubectl cluster-info", AapDemoError("timed out"))
+    else:
+        fake_runner.fail("kubectl cluster-info")
+    key = tmp_path / "key"
+    key.write_text("key")
+    monkeypatch.setattr(preflight.ssh_mod, "detect_ssh_key", lambda _: key)
+    fake_runner.ok("ssh", stdout="apiVersion: v1\nkind: Config\n")
+    preflight.setup_kubeconfig(app_ctx)
+    assert shared.read_text() == original
+    assert not fake_runner.called("ssh")
+
+
+def test_managed_kubeconfig_symlink_is_not_replaced_after_failed_probe(
+    app_ctx, fake_runner, have_kubectl, tmp_path, monkeypatch
+):
+    target = tmp_path / "shared.yaml"
+    target.write_text("apiVersion: v1\ncontexts: [other]\n")
+    managed = app_ctx.paths.kubeconfig
+    managed.parent.mkdir(parents=True, exist_ok=True)
+    managed.symlink_to(target)
+    fake_runner.ok("kubectl --kubeconfig", stdout="https://127.0.0.1:6443")
+    fake_runner.fail("kubectl cluster-info")
+    monkeypatch.setattr(preflight.ssh_mod, "detect_ssh_key", lambda _: tmp_path / "key")
+    preflight.setup_kubeconfig(app_ctx)
+    assert managed.is_symlink()
+    assert target.read_text() == "apiVersion: v1\ncontexts: [other]\n"
+    assert not fake_runner.called("ssh")
