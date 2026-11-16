@@ -28,7 +28,11 @@ class _GuardedPopen(_RealPopen):  # type: ignore[type-arg]
 
     def __init__(self, args: Any, *pargs: Any, **kwargs: Any) -> None:
         program = str(args if isinstance(args, (str, Path)) else args[0])
-        allowed = program == sys.executable or Path(program).name in _ALLOWED
+        original_name = Path(program).name
+        name = original_name
+        if os.name == "nt" and name.lower().endswith(".exe"):
+            name = name[:-4].lower()
+        allowed = program == sys.executable or name in _ALLOWED or original_name in _ALLOWED
         if shutil.which(program) and not allowed:
             raise FileNotFoundError(2, "blocked in unit tests", program)
         super().__init__(args, *pargs, **kwargs)
