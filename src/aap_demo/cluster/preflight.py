@@ -274,7 +274,11 @@ def setup_kubeconfig(
         reachable = ctx.runner.run(["kubectl", "cluster-info"], timeout=10).ok
     except AapDemoError:
         reachable = False
-    if not reachable and _refresh_from_vm(ctx, path):
+    # Only our managed file may be replaced. Ambient kubeconfigs can contain
+    # credentials and contexts for other clusters, even when their current
+    # context points at CRC.
+    owned = path == ctx.paths.kubeconfig and not path.is_symlink()
+    if not reachable and owned and _refresh_from_vm(ctx, path):
         _export(ctx, path)
         _apply_context(ctx)
         if guard:

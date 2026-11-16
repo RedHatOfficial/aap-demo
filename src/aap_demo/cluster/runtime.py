@@ -92,6 +92,27 @@ def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> No
     preflight.setup_kubeconfig(ctx)
     preflight.require_local_kubeconfig(ctx)
     with _vm_kubeconfig(ctx):
+
+        def require_stable() -> None:
+            if not infra_crc.wait_until_stable(
+                ctx.runner,
+                kubeconfig=ctx.kubeconfig,
+                attempts=int(
+                    env_number(
+                        ctx.env, "AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS
+                    )
+                ),
+                sleep_seconds=env_number(
+                    ctx.env, "AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS
+                ),
+                sleep=sleep,
+            ):
+                raise AapDemoError(
+                    "CRC did not stay healthy after start",
+                    hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
+                )
+
+        require_stable()
         runner = ctx.runner
         ctx.runner = _BoundedRunner(runner)
         try:
@@ -103,21 +124,7 @@ def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> No
             ) from exc
         finally:
             ctx.runner = runner
-        if not infra_crc.wait_until_stable(
-            ctx.runner,
-            kubeconfig=ctx.kubeconfig,
-            attempts=int(
-                env_number(ctx.env, "AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS)
-            ),
-            sleep_seconds=env_number(
-                ctx.env, "AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS
-            ),
-            sleep=sleep,
-        ):
-            raise AapDemoError(
-                "CRC did not stay healthy after start",
-                hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
-            )
+        require_stable()
     ctx.console.success("CRC cluster started")
     ctx.console.out("")
     ctx.console.out("Run 'aap-demo status' to check cluster health")

@@ -594,6 +594,41 @@ def create(
     host: Optional[HostResources] = None,
     which: Callable[[str], Optional[str]] = _which,
 ) -> None:
+    """Bound create's subprocesses so stalled setup cannot hide the final gate."""
+
+    class CreateRunner:
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def run(self, argv: Any, **kwargs: Any) -> Any:
+            if kwargs.get("timeout") is None:
+                # CRC setup/start can take much longer than individual probes.
+                kwargs["timeout"] = (
+                    1200 if list(argv[:2]) in (["crc", "start"], ["crc", "setup"]) else 300
+                )
+            return self.inner.run(argv, **kwargs)
+
+    runner = ctx.runner
+    ctx.runner = CreateRunner(runner)
+    try:
+        _create(ctx, sleep=sleep, host=host, which=which)
+    except AapDemoError as exc:
+        if exc.message.startswith("command timed out"):
+            raise AapDemoError(
+                exc.message, hint=infra_crc.health_failure_hint(ctx.env, platform.system())
+            ) from exc
+        raise
+    finally:
+        ctx.runner = runner
+
+
+def _create(
+    ctx: AppContext,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    host: Optional[HostResources] = None,
+    which: Callable[[str], Optional[str]] = _which,
+) -> None:
     """Create a MicroShift CRC cluster. Raises where bash called ``exit 1``."""
     preset = str(ctx.config.get("crc.preset", "microshift") or "microshift")
     if preset != "microshift":

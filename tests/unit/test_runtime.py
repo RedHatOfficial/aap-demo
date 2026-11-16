@@ -195,11 +195,11 @@ def test_start_checks_health_after_coredns_before_success(app_ctx, monkeypatch) 
     monkeypatch.setattr(
         runtime.infra_crc,
         "wait_until_stable",
-        lambda *args, **kwargs: events.append("health") or False,
+        lambda *args, **kwargs: events.append("health") or events.count("health") == 1,
     )
     with pytest.raises(AapDemoError):
         runtime.start(app_ctx, sleep=lambda _: None)
-    assert events == ["kubeconfig", "dns", "health"]
+    assert events == ["kubeconfig", "health", "dns", "health"]
     assert "CRC cluster started" not in app_ctx.console.stdout
 
 
@@ -264,7 +264,7 @@ users:
         lambda runner, **kw: seen.append(kw["kubeconfig"]) or True,
     )
     runtime.start(app_ctx, sleep=lambda _: None)
-    assert seen[0] == seen[1]
+    assert len(seen) == 3 and seen[0] == seen[1] == seen[2]
     assert seen[0] != app_ctx.kubeconfig
     assert not seen[0].exists()
 
@@ -278,3 +278,16 @@ def test_start_reports_unreachable_vm_kubeconfig(app_ctx, monkeypatch):
     assert "github.com/crc-org/crc/issues" in caught.value.hint
     assert "CRC cluster started" not in app_ctx.console.stdout
     assert next(call for call in runner.calls if call.argv[0] == "ssh").timeout == 15
+
+
+def test_start_checks_stability_before_mutating_dns(app_ctx, monkeypatch):
+    _starting(app_ctx, monkeypatch, "Running")
+    events = []
+    monkeypatch.setattr(
+        runtime.infra_crc, "wait_until_stable", lambda *args, **kw: events.append("health") or False
+    )
+    monkeypatch.setattr(runtime.coredns, "configure", lambda *args, **kw: events.append("dns"))
+    with pytest.raises(AapDemoError):
+        runtime.start(app_ctx, sleep=lambda _: None)
+    assert events == ["health"]
+    assert "CRC cluster started" not in app_ctx.console.stdout
