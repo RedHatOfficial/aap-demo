@@ -257,8 +257,7 @@ def test_recording_console_captures_streams() -> None:
     assert "careful" in console.stderr
 
 
-def test_diagnose_has_no_ai_flag(capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit) as caught:
-        build_parser().parse_args(["diagnose", "--ai"])
-    assert caught.value.code == 2
-    assert "--ai" in capsys.readouterr().err
+def test_diagnose_accepts_ai_flag() -> None:
+    args = build_parser().parse_args(["diagnose", "--ai"])
+    assert args.ai is True
+    assert args.command == "diagnose"

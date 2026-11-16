@@ -189,6 +189,50 @@ def test_diagnose_returns_0_when_issues_exist_but_the_cluster_is_reachable(
     assert "Storage:" in app_ctx.console.stdout_lines
 
 
+def test_diagnose_ai_embedded_after_healthy_report(
+    app_ctx: AppContext, fake_runner: FakeRunner
+) -> None:
+    fake_runner.ok(
+        "crc status -o json", stdout='{"crcStatus": "Running", "diskUse": 1, "diskSize": 100}'
+    )
+    fake_runner.ok("kubectl cluster-info", stdout="ok")
+    fake_runner.fail(["kubectl", "get", "sc", "topolvm-provisioner"])
+    fake_runner.fail(["kubectl", "get", "sc", "nfs-local-rwx"])
+    fake_runner.fail(["kubectl", "get", "namespace", app_ctx.namespace])
+    fake_runner.ok(["kubectl", "get", "clusterrolebinding", "-o", "wide"], stdout="")
+    fake_runner.ok(
+        [
+            "kubectl",
+            "get",
+            "aap",
+            "-n",
+            app_ctx.namespace,
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ],
+        stdout="",
+    )
+    fake_runner.ok(["kubectl", "get", "pods", "-n", "openshift-dns", "--no-headers"], stdout="")
+    fake_runner.ok(
+        f"kubectl get pods -n {app_ctx.namespace} -o wide --no-headers", stdout="No pods"
+    )
+    fake_runner.ok(f"kubectl get pvc -n {app_ctx.namespace}", stdout="No PVCs")
+    fake_runner.ok("kubectl get sc", stdout="No storage classes")
+    fake_runner.ok(f"kubectl get aap -n {app_ctx.namespace} -o yaml", stdout="No AAP CR")
+    fake_runner.ok(
+        f"kubectl get events -n {app_ctx.namespace} --sort-by=.lastTimestamp",
+        stdout="No events",
+    )
+    app_ctx.env = {"CURSOR_AGENT": "1"}
+
+    rc = observe.diagnose(app_ctx, _ns(ai=True))
+
+    assert rc == 0
+    assert "AI Analysis (Cursor Agent)" in app_ctx.console.stdout
+    saved = app_ctx.paths.state_dir / "diagnose-ai-context.txt"
+    assert saved.is_file()
+
+
 def test_diagnose_json_output(app_ctx: AppContext, fake_runner: FakeRunner) -> None:
     fake_runner.fail("crc status -o json")
     fake_runner.fail("kubectl cluster-info")
