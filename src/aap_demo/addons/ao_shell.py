@@ -16,10 +16,11 @@ from __future__ import annotations
 import argparse
 from typing import Dict, List
 
-from aap_demo.addons.common.state import enabled_names
+from aap_demo.addons.common import mcp
+from aap_demo.addons.common.state import enabled_names, set_enabled_names
 from aap_demo.cluster import pull_secret
 from aap_demo.core.context import AppContext
-from aap_demo.core.errors import UsageError
+from aap_demo.core.errors import AddonError, UsageError
 
 LLM_PROVIDERS = ("ollama", "external", "none")
 DEFAULT_LLM_PROVIDER = "ollama"
@@ -53,6 +54,18 @@ def prepare(ctx: AppContext) -> Dict[str, str]:
     for name in dependencies(provider):
         if name in enabled_names(ctx):
             continue
+        if name == "mcp-server":
+            present = mcp.installed(ctx)
+            if present is None:
+                raise AddonError(
+                    "Could not determine whether MCP Server is installed",
+                    hint="Check access to the MCP server resource and deployment in "
+                    f"namespace {ctx.namespace}, then retry.",
+                )
+            if present:
+                set_enabled_names(ctx, [*enabled_names(ctx), name], save=True)
+                ctx.console.note("Using the existing MCP Server addon.")
+                continue
         ctx.console.note(f"AO needs the {name} addon. Enabling it first.")
         get(name).enable(ctx, argparse.Namespace(addon=name, addon_args=[]))
 

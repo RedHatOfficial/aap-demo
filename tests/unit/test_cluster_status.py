@@ -32,9 +32,11 @@ FAKE_VERSION = VersionInfo(
 
 
 @pytest.fixture(autouse=True)
-def _stub_version(monkeypatch: pytest.MonkeyPatch) -> None:
+def _stub_version(monkeypatch: pytest.MonkeyPatch, fake_runner: FakeRunner) -> None:
     monkeypatch.setattr(status_mod.version_mod, "version_info", lambda runner: FAKE_VERSION)
     monkeypatch.setattr(status_mod.version_mod, "remote_url", lambda runner: "unknown")
+    fake_runner.ok("kubectl get ansiblemcpservers.mcpserver.ansible.com")
+    fake_runner.ok("kubectl get deployment aap-mcp-server")
 
 
 def test_gather_reports_not_created_without_further_probing(
