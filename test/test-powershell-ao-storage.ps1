@@ -16,6 +16,7 @@ $cases = @(
   @{ Name = 'malformed set'; Set = '{"spec":{}}'; Pvc = ''; Requested = '3Gi'; Expected = ''; Fail = '' },
   @{ Name = 'malformed PVC'; Set = ''; Pvc = '{"spec":{}}'; Requested = '3Gi'; Expected = ''; Fail = '' },
   @{ Name = 'unsafe value'; Set = ''; Pvc = ''; Requested = '3Gi|bad'; Expected = ''; Fail = '' }
+  @{ Name = 'zero value'; Set = ''; Pvc = ''; Requested = '0Gi'; Expected = ''; Fail = '' }
 )
 foreach ($case in $cases) {
   $outcome = & $module {

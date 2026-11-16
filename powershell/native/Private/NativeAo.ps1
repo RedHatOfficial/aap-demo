@@ -254,7 +254,8 @@ function Test-AapAoCnpgClusterPresent {
 
 function Assert-AapAoPostgresStorageSize {
   param([Parameter(Mandatory)][string]$Size)
-  if ($Size -cnotmatch '\A[0-9]+([.][0-9]+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?\z') {
+  if ($Size -cnotmatch '\A[0-9]+([.][0-9]+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?\z' -or
+      $Size -cmatch '\A0+([.]0+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?\z') {
     throw "PostgreSQL storage size '$Size' is not a supported Kubernetes quantity"
   }
 }

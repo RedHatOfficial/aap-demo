@@ -262,7 +262,9 @@ def test_running_cnpg_install_does_not_apply_the_new_ao_or_postgres_manifests(cn
     assert result.stdout == expected
 
 
-@pytest.mark.parametrize(("size", "ok"), [("bad|value", False), ("10Gi", True)])
+@pytest.mark.parametrize(
+    ("size", "ok"), [("bad|value", False), ("0Gi", False), ("0.0", False), ("10Gi", True)]
+)
 def test_force_validates_requested_size_before_database_reset(size, ok):
     script = DEPLOY.read_text(encoding="utf-8")
     begin = script.index('\nif [ -n "$FORCE" ]; then\n  ao_validate_postgres_storage_size')

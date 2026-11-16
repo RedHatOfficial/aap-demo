@@ -2,7 +2,8 @@
 
 ao_validate_postgres_storage_size() {
   local size="$1"
-  if [[ ! "$size" =~ ^[0-9]+([.][0-9]+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?$ ]]; then
+  if [[ ! "$size" =~ ^[0-9]+([.][0-9]+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?$ ]] \
+    || [[ "$size" =~ ^0+([.]0+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?$ ]]; then
     echo "ERROR: PostgreSQL storage size '${size}' is not a supported Kubernetes quantity." >&2
     return 1
   fi
