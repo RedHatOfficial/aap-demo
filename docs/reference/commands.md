@@ -27,6 +27,7 @@ still run with [the older command](../guides/older-command.md).
 | `oc …` | Run `oc` against this cluster. Everything after `oc` is passed through. |
 | `kubeconfig` | Refresh the login file and the `aap-demo` context in `~/.kube/config`. |
 | `diagnose` | Print a health report: CRC on the host (the `crc` binary, its daemon, the VM's SSH forward), then the cluster. |
+| `diagnose --ai` | Analyze that report with Cursor Agent, Cursor CLI, or Claude CLI (`AAP_DIAGNOSE_AI_BACKEND`). |
 | `repair` | Fix the usual breakage after the laptop sleeps. |
 | `must-gather` | Collect logs into a folder. An optional path picks the folder. |
 | `clean` | Remove AAP and keep the cluster. |

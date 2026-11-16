@@ -1,6 +1,6 @@
 # ADR-035: Remove `diagnose --ai` from the Python CLI
 
-**Status**: Accepted
+**Status**: Superseded by [ADR-044](044-diagnose-ai-multi-backend.md)
 
 **Date**: 2026-11-01
 
