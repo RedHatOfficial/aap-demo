@@ -11,6 +11,7 @@ CURL_LOG="$TEST_DIR/curl.log"
 mkdir -p "$STATE_DIR" "$STUB_DIR"
 printf '%s' 'aap-client-test-value' >"$STATE_DIR/aap-client-secret"
 printf '%s' 'ao-client-test-value' >"$STATE_DIR/ao-client-secret"
+printf '%s' 'keycloak-admin-test-value' >"$STATE_DIR/admin-password"
 
 cat >"$STUB_DIR/kubectl" <<'EOF'
 #!/usr/bin/env bash
@@ -32,12 +33,26 @@ cat >"$STUB_DIR/curl" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >>"$CURL_LOG"
 case "$*" in
+  *'/realms/master/protocol/openid-connect/token'*) printf '%s' '{"access_token":"keycloak-admin-token"}' ;;
+  *'/admin/realms/aap-lab/clients?clientId=aap-demo-aap'*) printf '%s' '[{"id":"aap-client-id"}]' ;;
+  *'-X PUT'*'/admin/realms/aap-lab/clients/aap-client-id'*) printf '%s' '{}' ;;
+  *'/admin/realms/aap-lab/clients/aap-client-id'*) printf '%s' '{"id":"aap-client-id","clientId":"aap-demo-aap","redirectUris":[],"webOrigins":[],"attributes":{}}' ;;
   *'/realms/aap-lab'*) printf '%s' '{"public_key":"test-public-key"}' ;;
-  *'-X POST'*'/authenticators/'*) printf '%s' '{"id":42}' ;;
+  *'-X POST'*'/authenticators/'*)
+    body_file=""
+    for arg in "$@"; do
+      case "$arg" in @*) body_file="${arg#@}" ;; esac
+    done
+    jq -e '.configuration.ADDITIONAL_UNVERIFIED_ARGS.VERIFY_SSL == false' "$body_file" >/dev/null || {
+      echo "AAP Keycloak authenticator did not disable TLS verification for the insecure-TLS test" >&2
+      exit 1
+    }
+    printf '%s' '{"id":42}'
+    ;;
+  *'/authenticators/42/'*) printf '%s' '{"id":42,"slug":"aap-authenticator-slug"}' ;;
   *'/authenticator_maps/?authenticator=42'*) printf '%s' '{"results":[]}' ;;
   *'-X POST'*'/authenticator_maps/'*) printf '%s' '{}' ;;
   *'/authenticators/'*) printf '%s' '{"results":[]}' ;;
-  *'/api/v1/auth/csrf_token'*) printf '%s' '{"csrf_token":"csrf-test"}' ;;
   *'-X POST'*'/api/v1/auth/login'*) printf '%s' '{"access_token":"ao-token"}' ;;
   *'-X POST'*'/api/v1/identity_providers'*) printf '%s' '{"id":"ao-id"}' ;;
   *'/api/v1/identity_providers'*) printf '%s' '{"resources":[]}' ;;
@@ -60,6 +75,16 @@ output="$({
 grep -q 'Created AAP authenticator: Keycloak lab' <<<"$output" || {
   echo "FAIL: mocked AAP authenticator was not created"
   echo "$output"
+  exit 1
+}
+grep -q 'Set AAP Gateway callback: https://aap.apps.example.test/api/gateway/social/complete/aap-authenticator-slug/' <<<"$output" || {
+  echo "FAIL: AAP Gateway callback was not derived from the authenticator slug"
+  echo "$output"
+  exit 1
+}
+grep -q -- '-X PUT' "$CURL_LOG" || {
+  echo "FAIL: Keycloak AAP client redirect URI was not updated"
+  cat "$CURL_LOG"
   exit 1
 }
 test "$(grep -c 'authenticator=42' "$CURL_LOG")" -eq 1 || {
@@ -106,18 +131,14 @@ grep -q 'Created AO identity provider: Keycloak lab' <<<"$ao_output" || {
   echo "$ao_output"
   exit 1
 }
-grep -q '/api/v1/auth/csrf_token' "$CURL_LOG" || {
-  echo "FAIL: AO login did not request a CSRF token"
+if grep -q '/api/v1/auth/csrf_token' "$CURL_LOG"; then
+  echo "FAIL: AO bearer login must not request a cookie-flow CSRF token"
   cat "$CURL_LOG"
   exit 1
-}
-grep -q -- '-b ' "$CURL_LOG" || {
-  echo "FAIL: AO login did not send the CSRF cookie"
+fi
+grep -q -- '-X POST https://ao.apps.example.test/api/v1/auth/login' "$CURL_LOG" || {
+  echo "FAIL: AO bearer login request was not sent directly"
   cat "$CURL_LOG"
-  exit 1
-}
-grep -q 'X-CSRF-Token' "$ROOT_DIR/addons/keycloak/configure.sh" || {
-  echo "FAIL: AO login did not send the CSRF header"
   exit 1
 }
 if grep -Eq 'ao-token|ao-admin-test|ao-client-test-value' "$CURL_LOG"; then

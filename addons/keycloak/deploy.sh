@@ -113,6 +113,7 @@ fi
 KEYCLOAK_HOST="${KEYCLOAK_HOST:-keycloak.${cluster_domain}}"
 AAP_HOST="$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" -o jsonpath='{.spec.host}' 2>/dev/null || printf 'aap-aap-operator.%s' "$cluster_domain")"
 AO_HOST="$(kubectl get route -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || printf 'automation-orchestrator.%s' "$cluster_domain")"
+AAP_REDIRECT_OVERRIDE="${KEYCLOAK_AAP_REDIRECT_URI:-}"
 KEYCLOAK_AAP_REDIRECT_URI="${KEYCLOAK_AAP_REDIRECT_URI:-https://${AAP_HOST}/}"
 KEYCLOAK_AO_REDIRECT_URI="${KEYCLOAK_AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback}"
 case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in
@@ -123,6 +124,8 @@ case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in
 esac
 printf '%s' "$KEYCLOAK_AO_REDIRECT_URI" >"$STATE_DIR/ao-redirect-uri"
 chmod 600 "$STATE_DIR/ao-redirect-uri"
+printf '%s' "$AAP_REDIRECT_OVERRIDE" >"$STATE_DIR/aap-redirect-uri"
+chmod 600 "$STATE_DIR/aap-redirect-uri"
 
 realm_file="$(mktemp "${TMPDIR:-/tmp}/aap-lab-realm.XXXXXX.json")"
 cleanup() { rm -f "$realm_file"; }
@@ -312,9 +315,13 @@ echo "  Issuer:        ${issuer}"
 echo "  Realm:         ${KEYCLOAK_REALM}"
 echo "  AAP client:    aap-demo-aap"
 echo "  AO client:     aap-demo-ao"
-echo "  AAP callback:  ${KEYCLOAK_AAP_REDIRECT_URI}"
+if [ -n "$AAP_REDIRECT_OVERRIDE" ]; then
+  echo "  AAP callback:  ${KEYCLOAK_AAP_REDIRECT_URI}"
+else
+  echo "  AAP callback:  Set by 'aap-demo keycloak configure --apply' from the Gateway authenticator slug"
+fi
 echo "  AO callback:   ${KEYCLOAK_AO_REDIRECT_URI}"
 echo "  Credentials:   ${STATE_DIR}/"
 echo ""
-echo "  Configure AAP/AO manually with the issuer and client files."
+echo "  Run 'aap-demo keycloak configure --target all --apply' to wire AAP and AO."
 echo "  Users:       aap-oidc-admin, aap-oidc-operator, aap-oidc-auditor, aap-oidc-developer"

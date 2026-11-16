@@ -69,15 +69,22 @@ an unowned namespace.
 `keycloak configure` discovers local routes and configures both consumers through
 their APIs. It is dry-run by default; `--apply` is required for mutation. Use
 `--target aap` or `--target ao` to configure one consumer. AAP Gateway callback
-URL still must be copied into Keycloak when Gateway reports it. AO group claim
-extraction is configured as `groups[*]`; lab mode allows all authenticated users.
+URL is derived from the authenticator slug and applied to the Keycloak AAP client
+redirect URI. Set `KEYCLOAK_AAP_REDIRECT_URI` when enabling Keycloak or running
+configure only when you need to override that generated URL.
+AO group claim extraction is configured as `groups[*]`; lab mode allows all
+authenticated users.
 AO-to-AAP job execution must continue using a separate AAP API key/PAT.
 
 Configuration verifies TLS by default. On CRC/MicroShift installations using the
 local self-signed ingress certificate, set `KEYCLOAK_INSECURE_TLS=true` explicitly
-or provide `KEYCLOAK_CA_FILE=/path/to/ingress-ca.crt`. The AO redirect URI used by
-`enable keycloak` is retained under `~/.aap-demo/keycloak/` so a later configure
-run continues to match the registered Keycloak client.
+to disable verification for the configure script and the AAP authenticator's
+Keycloak token exchange through `ADDITIONAL_UNVERIFIED_ARGS.VERIFY_SSL`.
+`KEYCLOAK_CA_FILE=/path/to/ingress-ca.crt` supplies a CA to the configure script's
+own requests; the Gateway pod has a separate trust store.
+The AO redirect URI used by `enable keycloak` is retained under
+`~/.aap-demo/keycloak/` so a later configure run continues to match the registered
+Keycloak client.
 
 `--map-groups` creates matching AO groups and explicit mappings, then creates
 local AAP authenticator maps: `aap-admins` becomes AAP superuser,

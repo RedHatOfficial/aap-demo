@@ -92,6 +92,8 @@ case "$KEYCLOAK_INSECURE_TLS" in
     exit 1
     ;;
 esac
+AAP_VERIFY_SSL=true
+[ "$KEYCLOAK_INSECURE_TLS" != true ] || AAP_VERIFY_SSL=false
 
 curl_local() { curl "${CURL_TLS_ARGS[@]}" "$@"; }
 
@@ -171,7 +173,8 @@ AO_REDIRECT_URI="${AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback
 
 AAP_PAYLOAD="$(jq -nc \
   --arg name "$AAP_NAME" --arg issuer "$ISSUER" --arg key "$AAP_SECRET" --arg public_key "$PUBLIC_KEY" \
-  '{name:$name,enabled:true,create_objects:true,remove_users:false,type:"ansible_base.authentication.authenticator_plugins.keycloak",configuration:{ACCESS_TOKEN_URL:($issuer+"/protocol/openid-connect/token"),AUTHORIZATION_URL:($issuer+"/protocol/openid-connect/auth"),GROUPS_CLAIM:"groups",KEY:"aap-demo-aap",PUBLIC_KEY:$public_key,SECRET:$key}}')"
+  --argjson verify_ssl "$AAP_VERIFY_SSL" \
+  '{name:$name,enabled:true,create_objects:true,remove_users:false,type:"ansible_base.authentication.authenticator_plugins.keycloak",configuration:{ACCESS_TOKEN_URL:($issuer+"/protocol/openid-connect/token"),AUTHORIZATION_URL:($issuer+"/protocol/openid-connect/auth"),GROUPS_CLAIM:"groups",KEY:"aap-demo-aap",PUBLIC_KEY:$public_key,SECRET:$key,ADDITIONAL_UNVERIFIED_ARGS:{VERIFY_SSL:$verify_ssl}}}')"
 
 AO_PAYLOAD="$(jq -nc \
   --arg name "$AO_NAME" --arg issuer "$ISSUER" --arg client_secret "$AO_SECRET" --arg redirect "$AO_REDIRECT_URI" \
@@ -222,7 +225,51 @@ if [ "$TARGET" != ao ]; then
     }
     echo "✓ Created AAP authenticator: ${AAP_NAME}"
   fi
-  echo "  Update Keycloak client redirect URI with callback shown by AAP Gateway, if required."
+
+  AAP_DETAIL="$(curl_local -f "${AAP_BASE}${AAP_ID}/" --config "$AAP_AUTH")"
+  AAP_SLUG="$(printf '%s' "$AAP_DETAIL" | jq -r '.slug // empty')"
+  [ -n "$AAP_SLUG" ] || {
+    echo "ERROR: AAP authenticator response did not include its callback slug" >&2
+    exit 1
+  }
+  AAP_CALLBACK_OVERRIDE="${KEYCLOAK_AAP_REDIRECT_URI:-}"
+  if [ -z "$AAP_CALLBACK_OVERRIDE" ] && [ -s "$STATE_DIR/aap-redirect-uri" ]; then
+    AAP_CALLBACK_OVERRIDE="$(read_secret "$STATE_DIR/aap-redirect-uri")"
+  fi
+  AAP_CALLBACK_URL="${AAP_CALLBACK_OVERRIDE:-https://${AAP_HOST}/api/gateway/social/complete/${AAP_SLUG}/}"
+
+  KC_ADMIN_PASSWORD_FILE="$STATE_DIR/admin-password"
+  [ -s "$KC_ADMIN_PASSWORD_FILE" ] || {
+    echo "ERROR: missing $KC_ADMIN_PASSWORD_FILE; enable Keycloak first" >&2
+    exit 1
+  }
+  KC_BASE="https://${KEYCLOAK_HOST}"
+  KC_TOKEN="$(curl_local -f -X POST "${KC_BASE}/realms/master/protocol/openid-connect/token" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode 'client_id=admin-cli' \
+    --data-urlencode 'grant_type=password' \
+    --data-urlencode 'username=admin' \
+    --data-urlencode "password@${KC_ADMIN_PASSWORD_FILE}" | jq -r '.access_token // empty')"
+  [ -n "$KC_TOKEN" ] || {
+    echo "ERROR: unable to authenticate to the Keycloak admin API" >&2
+    exit 1
+  }
+  KC_ADMIN_AUTH="$REQUEST_DIR/keycloak-admin-curl.conf"
+  printf 'header = "Authorization: Bearer %s"\n' "$KC_TOKEN" >"$KC_ADMIN_AUTH"
+  KC_CLIENT_LIST="$(curl_local -f "${KC_BASE}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=aap-demo-aap" --config "$KC_ADMIN_AUTH")"
+  KC_CLIENT_ID="$(printf '%s' "$KC_CLIENT_LIST" | jq -r 'if length == 1 then .[0].id else empty end')"
+  [ -n "$KC_CLIENT_ID" ] || {
+    echo "ERROR: Keycloak client aap-demo-aap was not found uniquely" >&2
+    exit 1
+  }
+  KC_CLIENT="$(curl_local -f "${KC_BASE}/admin/realms/${KEYCLOAK_REALM}/clients/${KC_CLIENT_ID}" --config "$KC_ADMIN_AUTH")"
+  KC_CLIENT="$(printf '%s' "$KC_CLIENT" | jq --arg callback "$AAP_CALLBACK_URL" --arg logout "https://${AAP_HOST}/" \
+    '.redirectUris=[$callback] | .attributes["post.logout.redirect.uris"]=$logout')"
+  printf '%s' "$KC_CLIENT" >"$REQUEST_DIR/keycloak-aap-client.json"
+  curl_local -f -X PUT "${KC_BASE}/admin/realms/${KEYCLOAK_REALM}/clients/${KC_CLIENT_ID}" \
+    --config "$KC_ADMIN_AUTH" -H 'Content-Type: application/json' \
+    --data-binary "@$REQUEST_DIR/keycloak-aap-client.json" >/dev/null
+  echo "✓ Set AAP Gateway callback: ${AAP_CALLBACK_URL}"
 
   if [ "$MAP_GROUPS" = true ]; then
     AAP_MAP_BASE="https://${AAP_HOST}/api/gateway/v1/authenticator_maps/"
@@ -254,16 +301,8 @@ fi
 
 if [ "$TARGET" != aap ]; then
   AO_PASSWORD="$(kubectl get secret automation-orchestrator-initial-admin-password -n automation-orchestrator -o jsonpath='{.data.password}' | base64 -d)"
-  AO_COOKIE="$REQUEST_DIR/ao.cookie"
-  CSRF="$(curl_local -f -X POST -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/csrf_token" | jq -r .csrf_token)"
-  [ -n "$CSRF" ] || {
-    echo "ERROR: AO CSRF token request failed" >&2
-    exit 1
-  }
-  AO_CSRF_AUTH="$REQUEST_DIR/ao-csrf.conf"
-  printf 'header = "X-CSRF-Token: %s"\n' "$CSRF" >"$AO_CSRF_AUTH"
   printf '%s' "$(jq -nc --arg p "$AO_PASSWORD" '{username:"admin",password:$p}')" >"$REQUEST_DIR/ao-login.json"
-  AO_TOKEN="$(curl_local -f -X POST -b "$AO_COOKIE" -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/login" --config "$AO_CSRF_AUTH" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
+  AO_TOKEN="$(curl_local -f -X POST "https://${AO_HOST}/api/v1/auth/login" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
   [ -n "$AO_TOKEN" ] && [ "$AO_TOKEN" != null ] || {
     echo "ERROR: AO admin login failed" >&2
     exit 1
