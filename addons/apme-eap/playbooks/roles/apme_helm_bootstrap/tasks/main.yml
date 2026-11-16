@@ -50,7 +50,7 @@
     state: absent
   when: apme_helm_platform_changed | default(false) | bool
 
-- name: Recheck Helm after platform cleanup
+- name: Recheck Helm after platform cleanup  # noqa var-naming[no-role-prefix]
   ansible.builtin.stat:
     path: "{{ apme_helm_binary }}"
   register: apme_helm_binary_stat
