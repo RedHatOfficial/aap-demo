@@ -1,6 +1,7 @@
 """AO provisioning forwards the selected Fleet target to the AAP adapter."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -46,7 +47,7 @@ provision_aap_demos() {\n"""
         + "\nprovision_aap_demos\n"
     )
     return subprocess.run(
-        ["bash", "-c", script],
+        [shutil.which("bash") or "bash", "-c", script],
         env={
             **os.environ,
             "AAP_DEMO_FLEET_HOST": "fleet-ubi9",
