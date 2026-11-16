@@ -281,7 +281,7 @@ Then run `aap-demo enable apme-eap` again.
 [`abbenay-config.yaml.j2`](playbooks/roles/apme_gateway_helm/templates/abbenay-config.yaml.j2)
 (includes `chat: true` for [apme#755](https://github.com/ansible/apme/issues/755)).
 **Re-enable resets Ansible Modernization Content Engine AI settings** (portal-configured providers
-are cleared); see [ADR-034](../../docs/adr/034-apme-abbenay-bundled-config.md).
+are cleared); see [ADR-045](../../docs/adr/045-apme-abbenay-bundled-config.md).
 
 For detailed GitHub setup instructions, see the
 [APME EAP welcome pack documentation](https://drive.google.com/drive/folders/146Yc3TDKgX0l7k1etdJVXZ2NqhBvPuqr).

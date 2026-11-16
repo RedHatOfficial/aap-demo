@@ -361,7 +361,7 @@ kubectl get pods -n apme  # Should exist again
 
 ---
 
-### TC-010: Bundled Ansible Modernization Content Engine config (ADR-034)
+### TC-010: Bundled Ansible Modernization Content Engine config (ADR-045)
 
 **Objective**: Verify enable applies bundled AMCE config with `chat: true` and that
 re-enable resets portal AI providers.
@@ -401,7 +401,7 @@ kubectl exec -n apme deploy/apme-engine -c gateway -- \
 **Pass Criteria**: Bundled `chat: true` on every enable; portal-added providers
 cleared on re-enable; galaxy seed succeeds.
 
-**Reference**: [ADR-034](../../docs/adr/034-apme-abbenay-bundled-config.md)
+**Reference**: [ADR-045](../../docs/adr/045-apme-abbenay-bundled-config.md)
 
 ---
 
@@ -423,7 +423,7 @@ cleared on re-enable; galaxy seed succeeds.
 **Expected Results**:
 
 - After step 3: **custom portal AI settings persist** (PVC unchanged; no redeploy).
-- After step 4: **custom settings cleared** (ADR-034 bundled config applied).
+- After step 4: **custom settings cleared** (ADR-045 bundled config applied).
 
 **Validation**: Same `kubectl exec … cat "$CFG"` as TC-010; compare provider sections after steps 3 and 4.
 
@@ -603,7 +603,7 @@ most one logical `github_catalog_org`; portal Git Repositories sync org matches 
 | TC-007 | Tar-Free File Copy | ✅ PASS | |
 | TC-008 | Cleanup and Re-Deploy | ✅ PASS | |
 | TC-009 | AAP Not Deployed Error | ✅ PASS | |
-| TC-010 | Bundled AMCE config (ADR-034) | | |
+| TC-010 | Bundled AMCE config (ADR-045) | | |
 | TC-011 | Stop/start vs re-enable persistence | | |
 | TC-012 | Invalid Credentials Error | ✅ PASS | |
 | TC-013 | GitHub catalog org (manual) | | PAT / App / reuse |

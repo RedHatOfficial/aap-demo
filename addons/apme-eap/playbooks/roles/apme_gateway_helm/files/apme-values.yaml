@@ -78,7 +78,7 @@ persistence:
     size: 2Gi
   postgres:
     size: 2Gi
-  # Abbenay admin config + secrets (portal AI provider settings; ADR-034 bundled config on redeploy)
+  # Abbenay admin config + secrets (portal AI provider settings; ADR-045 bundled config on redeploy)
   abbenay:
     enabled: true
     size: 100Mi

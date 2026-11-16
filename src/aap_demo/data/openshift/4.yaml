@@ -1,0 +1,12 @@
+# OpenShift 4 profile (ADR-041). The MicroShift preset only.
+major: 4
+# What --ocp-version 4 and 4.22 resolve to, and the default while supported.
+stable: "4.22.13"
+# The oldest version --ocp-version accepts.
+minimum: "4.21"
+# An unset --ocp-version may resolve to this profile.
+supported: true
+# The bundle the pinned CRC release ships. That version needs no download.
+crc_bundle: "4.22.13"
+aap_channels: [stable-2.6, stable-2.6-cluster-scoped, stable-2.7, stable-2.7-cluster-scoped]
+operators: [automation-orchestrator, automation-portal]

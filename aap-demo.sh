@@ -188,16 +188,9 @@ for arg in "$@"; do
     --backend)
       PENDING_FLAG="backend"
       ;;
-    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | storage | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | fleet | keycloak | v2 | version | help | --help | -h | --version | -V)
+    deploy | deploy-all | repair | trust-ca | clean | stop | start | setup | create | storage | watch | status | update | config | redeploy | redeploy-all | redhat-status | rh-status | kubeconfig | ssh | idle | diagnose | must-gather | enable | disable | wire | keycloak | v2 | version | help | --help | -h | --version | -V)
       case "$arg" in
         --version | -V) COMMAND="version" ;;
-        fleet)
-          if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
-            EXTRA_ARGS+=("$arg")
-          else
-            COMMAND="fleet"
-          fi
-          ;;
         keycloak)
           if [ -z "$COMMAND" ]; then COMMAND="keycloak"; else EXTRA_ARGS+=("$arg"); fi
           ;;
@@ -214,6 +207,19 @@ for arg in "$@"; do
           ;;
         *) COMMAND="$arg" ;;
       esac
+      ;;
+    fleet)
+      # fleet is both a command and an addon name. enable/disable must keep it
+      # as an addon; otherwise the token overwrites the command.
+      if [ "$COMMAND" = "enable" ] || [ "$COMMAND" = "disable" ]; then
+        EXTRA_ARGS+=("$arg")
+      elif [ -n "$COMMAND" ]; then
+        echo "Unknown argument for '$COMMAND': $arg"
+        echo "Run '$0 help' for usage"
+        exit 1
+      else
+        COMMAND="fleet"
+      fi
       ;;
     destroy)
       # Fleet owns destroy as a subcommand; otherwise destroy is top-level.
@@ -236,7 +242,7 @@ for arg in "$@"; do
       # Subcommand args for fleet command
       EXTRA_ARGS+=("$arg")
       ;;
-    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak)
+    fleet | mcp-server | portal | portal-operator | setup-pah | ao | ao-eap | ao-pr-testing | apme-eap | local-cache | product-demos-base | product-demos | product-demo-linux | product-demo-windows | product-demo-network | product-demo-cloud | product-demo-openshift | product-demo-satellite | opa | ollama | keycloak | eda-playground)
       # Addon names for enable/disable commands
       EXTRA_ARGS+=("$arg")
       ;;
@@ -594,6 +600,10 @@ AAP
 Health
   diagnose          Check environment health
 
+Fleet
+  enable fleet       Enable Fleet managed VMs; QEMU can download a CentOS image
+  fleet               Manage Fleet node VMs (--backend qemu|kube-native|all)
+
 Addons
   enable            Enable an addon
   fleet             Manage fleet node VMs
@@ -664,14 +674,20 @@ ENVIRONMENT:
     AAP_IMAGE_STORE_SIZE_GB  Persistent disk size (default: 60)
     AAP_IMAGE_STORE_FORMAT=true
                         Explicitly format a blank persistent disk once
+    FLEET_IMAGE         Local QCOW2 path or http(s) URL used by Fleet
+    FLEET_IMAGE_URL     Download this URL when FLEET_IMAGE is unset
+    FLEET_DOWNLOAD_IMAGE=true
+                        Download CentOS Stream 9 GenericCloud for this architecture
+    FLEET_IMAGE_SHA256  SHA256 to require before accepting a downloaded QCOW2
 
 EXAMPLES:
     aap-demo create                              # Create OpenShift Local cluster
     aap-demo storage                             # Show disk and persistent-volume size
     aap-demo storage 160 100                     # Set a 160GB disk and 100GB PV pool
     aap-demo deploy                              # Deploy AAP $AAP_VERSION
-    aap-demo enable fleet                        # Enable fleet addon
-    aap-demo fleet add 3 --image ~/rhel9.qcow2   # Create 3 managed VMs
+    aap-demo enable fleet                            # Enable QEMU fleet and bring in a QCOW2
+    FLEET_DOWNLOAD_IMAGE=true aap-demo enable fleet  # Download CentOS Stream 9 without prompting
+    aap-demo fleet add 3 --image ~/rhel9.qcow2       # Create 3 managed VMs from a local image
     aap-demo fleet list                          # Show running fleet nodes
     aap-demo status                              # Show cluster and AAP status
     aap-demo stop                                # Stop cluster
@@ -688,6 +704,7 @@ Addons
   disable           Disable an addon
   fleet             Manage fleet node VMs
   keycloak          Configure Keycloak OIDC for AAP and AO
+  eda-playground    EDA Playground for testing event-driven integrations
 
 Other
   config            Configure aap-demo settings
@@ -721,7 +738,8 @@ Environment
 Notes
   idle                No argument shows state; true scales down; false scales up
   diagnose            Checks cluster, storage, SCCs, pods, PVCs, and DNS
-  diagnose --ai       Analyze issues with Claude (requires the claude CLI)
+  diagnose --ai       AI analysis (Cursor Agent, Cursor CLI, or Claude CLI)
+                      AAP_DIAGNOSE_AI_BACKEND=embedded|cursor|claude|auto
   must-gather [dir]   Uses the AAP must-gather image. Output is
                       must-gather.local.<timestamp>, or the directory given
   destroy             --reset also clears config; --skip-cache skips the image cache
@@ -1394,6 +1412,158 @@ cmd_must_gather() {
   echo "To share: tar czf must-gather.tar.gz ${dest_dir}"
 }
 
+# Prompt shared by diagnose --ai backends (Cursor Agent, Cursor CLI, Claude CLI)
+_DIAGNOSE_AI_PROMPT='You are an AAP Demo troubleshooting assistant. Analyze the diagnostic output below and:
+1. Identify the root cause of any issues
+2. Provide specific fix commands the user can run
+3. If the issue appears to be a bug in aap-demo itself, suggest filing a GitHub issue at https://github.com/RedHatOfficial/aap-demo/issues
+
+Be concise and actionable. Focus on what the user needs to do next.'
+
+_diagnose_ai_resolve_backend() {
+  local backend="${AAP_DIAGNOSE_AI_BACKEND:-auto}"
+  case "$backend" in
+    embedded | cursor | claude)
+      echo "$backend"
+      return 0
+      ;;
+    auto)
+      if [ "${CURSOR_AGENT:-}" = "1" ]; then
+        echo embedded
+      elif command -v cursor &>/dev/null; then
+        echo cursor
+      elif command -v claude &>/dev/null; then
+        echo claude
+      else
+        echo none
+      fi
+      ;;
+    *)
+      echo none
+      ;;
+  esac
+}
+
+_build_diagnose_ai_context() {
+  local issues="$1" warnings="$2"
+  local pod_output problem_pod_names problem_pod_logs
+
+  pod_output=$(kubectl get pods -n "$NAMESPACE" -o wide --no-headers 2>/dev/null || echo "No pods")
+  problem_pod_names=$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" | awk '{print $1}' || true)
+  problem_pod_logs=""
+  if [ -n "$problem_pod_names" ]; then
+    while IFS= read -r pod; do
+      problem_pod_logs="${problem_pod_logs}--- ${pod} ---
+$(kubectl logs "$pod" -n "$NAMESPACE" --tail=20 2>/dev/null || true)
+"
+    done <<<"$problem_pod_names"
+  fi
+
+  cat <<EOF
+AAP Demo Diagnose Results:
+Issues: $issues, Warnings: $warnings
+Infra: OpenShift Local (CRC)
+Namespace: $NAMESPACE
+
+Cluster State:
+$pod_output
+
+PVC State:
+$(kubectl get pvc -n "$NAMESPACE" 2>/dev/null || echo "No PVCs")
+
+Storage Classes:
+$(kubectl get sc 2>/dev/null || echo "No storage classes")
+
+AAP CR Status:
+$(kubectl get aap -n "$NAMESPACE" -o yaml 2>/dev/null | grep -A20 "status:" || echo "No AAP CR")
+
+Recent Events:
+$(kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events")
+
+Problem Pods:
+$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" || echo "None")
+
+Problem Pod Logs:
+${problem_pod_logs:-None}
+EOF
+}
+
+_run_diagnose_ai_claude() {
+  local context="$1"
+  echo "$context" | claude -p "${_DIAGNOSE_AI_PROMPT}
+
+Diagnostic data:"
+}
+
+_run_diagnose_ai_analysis() {
+  local issues="$1" warnings="$2"
+  local backend context context_file
+
+  backend=$(_diagnose_ai_resolve_backend)
+  context=$(_build_diagnose_ai_context "$issues" "$warnings")
+
+  echo ""
+  echo "─────────────────────────────────────"
+
+  case "$backend" in
+    embedded)
+      printf "\033[1mAI Analysis\033[0m (Cursor Agent)\n"
+      echo ""
+      echo "Diagnostic context for the active Cursor agent:"
+      echo ""
+      printf '%s\n' "$context"
+      echo ""
+      echo "$_DIAGNOSE_AI_PROMPT"
+      context_file="${AAP_DEMO_HOME:-$HOME/.aap-demo}/diagnose-ai-context.txt"
+      mkdir -p "$(dirname "$context_file")"
+      printf '%s\n' "$context" >"$context_file"
+      echo ""
+      echo "Context saved to: $context_file"
+      ;;
+    cursor)
+      printf "\033[1mAI Analysis\033[0m (powered by Cursor)\n"
+      echo ""
+      echo "(Diagnostic data is sent to Cursor for analysis)"
+      echo ""
+      if cursor agent --print --mode ask "${_DIAGNOSE_AI_PROMPT}
+
+${context}" 2>&1; then
+        return 0
+      fi
+      echo ""
+      echo "⚠ Cursor agent failed. Try: cursor agent login"
+      if command -v claude &>/dev/null; then
+        echo "  Falling back to Claude CLI..."
+        _run_diagnose_ai_claude "$context" || true
+      else
+        echo "  Showing diagnostic context for manual analysis:"
+        echo ""
+        printf '%s\n' "$context"
+      fi
+      ;;
+    claude)
+      printf "\033[1mAI Analysis\033[0m (powered by Claude)\n"
+      echo ""
+      echo "(Diagnostic data is sent to the Claude API for analysis)"
+      echo ""
+      _run_diagnose_ai_claude "$context" || {
+        echo ""
+        echo "⚠ AI analysis failed. The diagnostic data above should help with manual troubleshooting."
+      }
+      ;;
+    none)
+      echo "✗ No AI backend available for diagnose --ai"
+      echo ""
+      echo "  Options:"
+      echo "    • Run from Cursor Agent (CURSOR_AGENT=1) for embedded analysis"
+      echo "    • Install Cursor CLI: cursor agent login"
+      echo "    • Install Claude CLI: https://docs.anthropic.com/en/docs/claude-code"
+      echo "    • Set AAP_DIAGNOSE_AI_BACKEND=embedded|cursor|claude"
+      return 1
+      ;;
+  esac
+}
+
 cmd_diagnose() {
   echo ""
   printf "\033[1maap-demo diagnose\033[0m - Checking environment health...\n"
@@ -1672,74 +1842,7 @@ cmd_diagnose() {
 
   # AI analysis mode
   if [ "${_DIAGNOSE_AI:-false}" = "true" ]; then
-    echo ""
-
-    if ! command -v claude &>/dev/null; then
-      echo "✗ 'claude' CLI not found"
-      echo "  Install: https://docs.anthropic.com/en/docs/claude-code"
-      return 1
-    fi
-
-    echo "─────────────────────────────────────"
-    printf "\033[1mAI Analysis\033[0m (powered by Claude)\n"
-    echo ""
-
-    echo "(Diagnostic data is sent to the Claude API for analysis)"
-    echo ""
-
-    # Collect additional context for AI — cache pod list to avoid duplicate kubectl calls
-    local pod_output
-    pod_output=$(kubectl get pods -n "$NAMESPACE" -o wide --no-headers 2>/dev/null || echo "No pods")
-    local problem_pod_names
-    problem_pod_names=$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" | awk '{print $1}' || true)
-    local problem_pod_logs=""
-    if [ -n "$problem_pod_names" ]; then
-      while IFS= read -r pod; do
-        problem_pod_logs="${problem_pod_logs}--- ${pod} ---
-$(kubectl logs "$pod" -n "$NAMESPACE" --tail=20 2>/dev/null || true)
-"
-      done <<<"$problem_pod_names"
-    fi
-
-    local ai_context
-    ai_context="AAP Demo Diagnose Results:
-Issues: $issues, Warnings: $warnings
-Infra: OpenShift Local (CRC)
-Namespace: $NAMESPACE
-
-Cluster State:
-$pod_output
-
-PVC State:
-$(kubectl get pvc -n "$NAMESPACE" 2>/dev/null || echo "No PVCs")
-
-Storage Classes:
-$(kubectl get sc 2>/dev/null || echo "No storage classes")
-
-AAP CR Status:
-$(kubectl get aap -n "$NAMESPACE" -o yaml 2>/dev/null | grep -A20 "status:" || echo "No AAP CR")
-
-Recent Events:
-$(kubectl get events -n "$NAMESPACE" --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No events")
-
-Problem Pods:
-$(echo "$pod_output" | grep -E "CrashLoopBackOff|Error|ImagePullBackOff|Pending" || echo "None")
-
-Problem Pod Logs:
-${problem_pod_logs:-None}"
-
-    echo "$ai_context" | claude -p \
-      "You are an AAP Demo troubleshooting assistant. Analyze the diagnostic output below and:
-1. Identify the root cause of any issues
-2. Provide specific fix commands the user can run
-3. If the issue appears to be a bug in aap-demo itself, suggest filing a GitHub issue at https://github.com/RedHatOfficial/aap-demo/issues
-
-Be concise and actionable. Focus on what the user needs to do next.
-
-Diagnostic data:" 2>&1 || {
-      echo ""
-      echo "⚠ AI analysis failed. The diagnostic data above should help with manual troubleshooting."
-    }
+    _run_diagnose_ai_analysis "$issues" "$warnings"
   fi
 }
 
@@ -3309,19 +3412,16 @@ cmd_fleet_qemu() {
       count="${count:-1}"
       image="${image:-${FLEET_IMAGE:-}}"
 
-      if [ -z "$image" ]; then
-        _err "No QCOW2 image specified"
-        echo ""
-        echo "Usage: aap-demo fleet add [count] --image <path-to-qcow2>"
-        echo ""
-        echo "  count    Number of VMs to create (default: 1)"
-        echo "  --image  Path to a RHEL/CentOS QCOW2 cloud image"
+      _verify_cluster || return 1
+      fleet_check_prereqs || return 1
+      if ! fleet_acquire_image "$image"; then
         return 1
       fi
-
-      image=$(cd "$(dirname "$image")" 2>/dev/null && echo "$(pwd)/$(basename "$image")")
-
-      _verify_cluster || return 1
+      image="${FLEET_ACQUIRED_IMAGE:-}"
+      if [ -z "$image" ]; then
+        _err "Fleet did not resolve a QCOW2 image"
+        return 1
+      fi
       fleet_check_prereqs "$image" || return 1
       fleet_create_all "$count" "$image"
       _fleet_save_image_config "$image"
@@ -3366,13 +3466,14 @@ cmd_fleet_qemu() {
       echo "Usage: aap-demo fleet <subcommand>"
       echo ""
       echo "Subcommands:"
-      echo "  add [count] --image <path>   Create fleet node VMs"
+      echo "  add [count] --image <path-or-url>  Create fleet node VMs"
       echo "  remove [count|name]          Remove fleet node VMs"
       echo "  list                         List fleet node VMs"
       echo "  destroy                      Remove all VMs and AAP resources"
       echo ""
       echo "Options:"
-      echo "  --image <path>    Path to RHEL/CentOS QCOW2 cloud image"
+      echo "  --image <path-or-url>  Local QCOW2 or http(s) URL"
+      echo "  FLEET_DOWNLOAD_IMAGE=true  Download CentOS Stream 9 GenericCloud"
       echo "  FLEET_NODE_MEM=N   VM memory in MB (default: 1024)"
       echo "  FLEET_NODE_CPUS=N  VM CPU count (default: 2)"
       echo ""
@@ -3416,7 +3517,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak eda-playground"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3757,8 +3858,8 @@ cmd_disable() {
     echo "Disabling addon: $addon"
     setup_kubeconfig
     if ! bash "$addon_dir/deploy.sh" --delete "$@"; then
-      if [ "$addon" = "keycloak" ]; then
-        echo "ERROR: Keycloak removal failed; leaving addon enabled in config" >&2
+      if [ "$addon" = "keycloak" ] || [ "$addon" = "eda-playground" ]; then
+        echo "ERROR: $addon removal failed; leaving addon enabled in config" >&2
         return 1
       fi
     fi
@@ -3963,7 +4064,7 @@ case "$COMMAND" in
     ;;
   fleet)
     reject_windows_deferred_addon fleet || exit 1
-    cmd_fleet "${EXTRA_ARGS[@]}"
+    cmd_fleet "${EXTRA_ARGS[@]}" || exit
     ;;
   enable)
     reject_windows_deferred_addon "${EXTRA_ARGS[0]:-}" || exit 1
@@ -3973,7 +4074,7 @@ case "$COMMAND" in
         check_python_windows || exit 1
         ;;
     esac
-    cmd_enable "${EXTRA_ARGS[@]}"
+    cmd_enable "${EXTRA_ARGS[@]}" || exit
     ;;
   wire)
     cmd_wire

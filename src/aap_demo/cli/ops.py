@@ -23,6 +23,7 @@ from aap_demo.core.output import is_structured
 from aap_demo.core.paths import display_path
 from aap_demo.exec import oc as oc_mod
 from aap_demo.exec import ssh as ssh_mod
+from aap_demo.infra import bundle_mirror, ocp_list
 from aap_demo.infra import crc as infra_crc
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,24 @@ def version(ctx: AppContext, args: argparse.Namespace) -> int:
         output=ctx.output,
         text=lambda: version_mod.render_text(info),
     )
+    return 0
+
+
+def ocp_version_list(ctx: AppContext, args: argparse.Namespace) -> int:
+    """What ``--ocp-version`` can build on this host. Reads the mirror only."""
+    table = ocp_list.rows(
+        crc_release=infra_crc.managed_crc_release(),
+        show_all=bool(getattr(args, "all", False)),
+        host_versions=lambda minimum: bundle_mirror.host_versions(minimum=minimum),
+    )
+    output.render(
+        ctx.console,
+        table,
+        output=ctx.output,
+        text=lambda: ocp_list.render_text(table),
+    )
+    if table and not table[0]["checked"]:
+        ctx.console.warn("Could not read the bundle mirror. Showing the pinned versions only.")
     return 0
 
 

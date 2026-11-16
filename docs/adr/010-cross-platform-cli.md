@@ -49,7 +49,7 @@ AapDemo.psm1
 |---------|------|------------|
 | create, deploy, status | ✓ | ✓ |
 | diagnose | ✓ | ✓ |
-| diagnose --ai | ✓ (claude CLI) | Delegates to Git Bash |
+| diagnose --ai | ✓ (Cursor Agent/CLI or Claude CLI) | Python package, or bash fallback |
 | enable mcp-server | ✓ | ✓ |
 | enable portal | ✓ | Limited / Git Bash |
 | test, watch | ✓ | Git Bash delegation |
