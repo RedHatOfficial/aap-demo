@@ -27,6 +27,7 @@ still run with [the older command](../guides/older-command.md).
 | `oc …` | Run `oc` against this cluster. Everything after `oc` is passed through. |
 | `kubeconfig` | Refresh the login file and the `aap-demo` context in `~/.kube/config`. |
 | `diagnose` | Print a health report: CRC on the host (the `crc` binary, its daemon, the VM's SSH forward), then the cluster. |
+| `diagnose --ai` | Analyze that report with Cursor Agent, Cursor CLI, or Claude CLI (`AAP_DIAGNOSE_AI_BACKEND`). |
 | `repair` | Fix the usual breakage after the laptop sleeps. |
 | `must-gather` | Collect logs into a folder. An optional path picks the folder. |
 | `clean` | Remove AAP and keep the cluster. |
@@ -34,7 +35,7 @@ still run with [the older command](../guides/older-command.md).
 | `redeploy-all` | Delete the cluster, create it again, and install AAP. |
 | `destroy` | Delete the cluster. `--reset` also clears saved settings. |
 | `update` | Upgrade the pipx install of the command. |
-| `version` | Print the installed version, such as `2.0.0rc2`, and how this copy was installed. A git install adds the commit, as in `2.0.0rc2+g27b505d`, and the `git+...@ref` it came from. |
+| `version` | Print the installed version, such as `2.0.0rc3`, and how this copy was installed. A git install adds the commit, as in `2.0.0rc3+g27b505d`, and the `git+...@ref` it came from. |
 | `ocp-version-list` | List the MicroShift versions `create --ocp-version` can build on this host, newest first: the stable version for each OpenShift release, which one is the default, and whether CRC ships it or `create` downloads it. `--all` adds versions aap-demo doesn't support. Needs no cluster. |
 | `enable fleet` | Add the practice machines. `--no-import` skips registering them in AAP. |
 | `disable fleet` | Turn those machines off. Leaves their AAP registration. |

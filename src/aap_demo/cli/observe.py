@@ -40,7 +40,9 @@ def watch(ctx: AppContext, args: argparse.Namespace) -> int:
 
 
 def diagnose(ctx: AppContext, args: argparse.Namespace) -> int:
-    """Ports ``cmd_diagnose``, without bash's ``--ai``."""
+    """Ports ``cmd_diagnose``, including optional ``--ai`` analysis."""
+    from aap_demo.diagnostics import ai as diagnose_ai
+
     home = Path(ctx.env.get("HOME") or Path.home())
     host = diagnose_crc_host.HostProbe.live(ctx.runner, home)
     report = diagnose_checks.run(ctx.runner, ctx.namespace, host=host)
@@ -56,7 +58,22 @@ def diagnose(ctx: AppContext, args: argparse.Namespace) -> int:
     # for anything scripted against the tool", and scripts today read
     # `diagnose`'s status as "did we get a report?", not "is everything
     # green?". Callers that want the issue count read --output json.
-    return 1 if not report.cluster_reachable else 0
+    if not report.cluster_reachable:
+        return 1
+
+    if getattr(args, "ai", False):
+        if is_structured(ctx.output):
+            ctx.console.err("diagnose --ai needs text output; re-run without --output json/yaml")
+            return 1
+        return diagnose_ai.run_analysis(
+            console=ctx.console,
+            runner=ctx.runner,
+            namespace=ctx.namespace,
+            report=report,
+            env=ctx.env,
+            state_dir=ctx.paths.state_dir,
+        )
+    return 0
 
 
 def must_gather(ctx: AppContext, args: argparse.Namespace) -> int:

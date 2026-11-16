@@ -216,9 +216,16 @@ def build_parser(
     add("status", "Show cluster and AAP status").set_defaults(func=observe.status)
     add("watch", "Watch AAP deployment status").set_defaults(func=observe.watch)
 
-    add("diagnose", "Check environment health and identify common issues").set_defaults(
-        func=observe.diagnose
+    p = add("diagnose", "Check environment health and identify common issues")
+    p.add_argument(
+        "--ai",
+        action="store_true",
+        help=(
+            "Analyze issues with AI (Cursor Agent, Cursor CLI, or Claude CLI). "
+            "Override with AAP_DIAGNOSE_AI_BACKEND=embedded|cursor|claude|auto"
+        ),
     )
+    p.set_defaults(func=observe.diagnose)
 
     p = add("must-gather", "Collect AAP and cluster diagnostics")
     p.add_argument("dest", nargs="?", metavar="DIR", help="Output directory")
@@ -259,7 +266,7 @@ def build_parser(
     _add_config_command(add, sub)
 
     # -- addons -------------------------------------------------------------
-    p = add("enable", "Enable an addon (fleet, product-demos, or EDA Playground)")
+    p = add("enable", "Enable an addon (fleet, product-demos, ao, EDA Playground, ...)")
     p.add_argument("addon", nargs="?", help="Addon name; omit to list available addons")
     p.add_argument("addon_args", nargs="*", metavar="ARGS", help="Addon-specific arguments")
     p.add_argument(

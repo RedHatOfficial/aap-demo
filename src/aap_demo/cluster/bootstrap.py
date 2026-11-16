@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 
 from aap_demo import data as packaged
-from aap_demo.cluster import coredns, pull_secret
+from aap_demo.cluster import coredns, preflight, pull_secret
 from aap_demo.cluster import kubeconfig as kubeconfig_mod
 from aap_demo.core import config as config_mod
 from aap_demo.core import prompts
@@ -187,7 +187,8 @@ def _start_crc(ctx: AppContext, secret: Path, *, bundle: Optional[Path] = None) 
         return
     ctx.console.warn("CRC post-start did not finish; retrying")
     retried = ctx.runner.run(
-        ["crc", "start", "--pull-secret-file", str(secret), *extra], sink=ctx.console.log_sink(verbose=ctx.verbose)
+        ["crc", "start", "--pull-secret-file", str(secret), *extra],
+        sink=ctx.console.log_sink(verbose=ctx.verbose),
     )
     if not retried.ok:
         raise AapDemoError("crc start failed", hint="See the crc output above.")
@@ -513,19 +514,41 @@ def install_nfs(ctx: AppContext) -> None:
 def _ensure_stable(ctx: AppContext, secret: Path, *, sleep: Callable[[float], None]) -> None:
     attempts = int(ctx.env.get("AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS))
     pause = float(ctx.env.get("AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS))
-    if infra_crc.wait_until_stable(ctx.runner, attempts=attempts, sleep_seconds=pause, sleep=sleep):
+    if infra_crc.wait_until_stable(
+        ctx.runner, kubeconfig=ctx.kubeconfig, attempts=attempts, sleep_seconds=pause, sleep=sleep
+    ):
         return
     ctx.console.warn("CRC did not remain healthy after setup; restarting CRC once...")
-    restarted = ctx.runner.run(
-        ["crc", "start", "-p", str(secret)], sink=ctx.console.log_sink(verbose=ctx.verbose)
-    )
-    if restarted.ok and infra_crc.wait_until_stable(
-        ctx.runner, attempts=attempts, sleep_seconds=pause, sleep=sleep
+    try:
+        # Allow a slow VM restart while ensuring a stuck recovery eventually fails.
+        restarted = ctx.runner.run(
+            ["crc", "start", "-p", str(secret)],
+            sink=ctx.console.log_sink(verbose=ctx.verbose),
+            timeout=600,
+        )
+    except AapDemoError as exc:
+        raise AapDemoError(
+            f"CRC recovery restart failed: {exc.message}",
+            hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
+        ) from exc
+    if not restarted.ok:
+        detail = (restarted.stderr or restarted.stdout or "").strip()
+        hint = infra_crc.health_failure_hint(ctx.env, platform.system())
+        raise AapDemoError(
+            f"CRC recovery restart failed (exit {restarted.returncode})",
+            hint=f"{detail}\n{hint}" if detail else hint,
+        )
+    if infra_crc.wait_until_stable(
+        ctx.runner,
+        kubeconfig=ctx.kubeconfig,
+        attempts=attempts,
+        sleep_seconds=pause,
+        sleep=sleep,
     ):
         return
     raise AapDemoError(
         "CRC did not remain running after create",
-        hint="Check: crc status",
+        hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
     )
 
 
@@ -574,6 +597,41 @@ def create(
     host: Optional[HostResources] = None,
     which: Callable[[str], Optional[str]] = _which,
 ) -> None:
+    """Bound create's subprocesses so stalled setup cannot hide the final gate."""
+
+    class CreateRunner:
+        def __init__(self, inner: Any) -> None:
+            self.inner = inner
+
+        def run(self, argv: Any, **kwargs: Any) -> Any:
+            if kwargs.get("timeout") is None:
+                # CRC setup/start can take much longer than individual probes.
+                kwargs["timeout"] = (
+                    1200 if list(argv[:2]) in (["crc", "start"], ["crc", "setup"]) else 300
+                )
+            return self.inner.run(argv, **kwargs)
+
+    runner = ctx.runner
+    ctx.runner = CreateRunner(runner)
+    try:
+        _create(ctx, sleep=sleep, host=host, which=which)
+    except AapDemoError as exc:
+        if exc.message.startswith("command timed out"):
+            raise AapDemoError(
+                exc.message, hint=infra_crc.health_failure_hint(ctx.env, platform.system())
+            ) from exc
+        raise
+    finally:
+        ctx.runner = runner
+
+
+def _create(
+    ctx: AppContext,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    host: Optional[HostResources] = None,
+    which: Callable[[str], Optional[str]] = _which,
+) -> None:
     """Create a MicroShift CRC cluster. Raises where bash called ``exit 1``."""
     preset = str(ctx.config.get("crc.preset", "microshift") or "microshift")
     if preset != "microshift":
@@ -581,6 +639,8 @@ def create(
             "The OpenShift preset is not available in this release",
             hint="Use the MicroShift preset.",
         )
+
+    preflight.require_local_kubeconfig(ctx)
 
     home = Path(ctx.env.get("HOME") or Path.home())
     if platform.system() == "Linux" and not (home / ".crc" / "crc-http.sock").is_socket():
@@ -791,6 +851,19 @@ def create(
             ctx.console.checkpoint("Ingress certificate is trusted locally")
         else:
             ctx.console.cancel_step()
+    if not infra_crc.wait_until_stable(
+        ctx.runner,
+        kubeconfig=ctx.kubeconfig,
+        attempts=int(ctx.env.get("AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS)),
+        sleep_seconds=float(
+            ctx.env.get("AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS)
+        ),
+        sleep=sleep,
+    ):
+        raise AapDemoError(
+            "CRC did not remain healthy after create",
+            hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
+        )
     ctx.console.finish_checklist()
     ctx.console.next_steps(
         (

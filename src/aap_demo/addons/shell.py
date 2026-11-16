@@ -2,7 +2,8 @@
 
 Fleet stays in Python. Legacy addons still live in ``addons/*/deploy.sh``.
 This module runs those scripts with the new command's kubeconfig and records
-the result in ``addons.enabled``.
+the result in ``addons.enabled``. A wheel carries them under
+``aap_demo/bundled/`` in the repository's layout (ADR-040).
 """
 
 from __future__ import annotations
@@ -11,11 +12,13 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 import aap_demo
 from aap_demo.addons.base import AddonKind
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
+from aap_demo.addons.product_demos_fleet import NoFleetHostError, discover_fleet_host
+from aap_demo.core import prompts
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
@@ -39,10 +42,23 @@ BUNDLED_ADDON_DIRS: tuple = (
     "product-demo-openshift",
     "product-demo-satellite",
     "eda-playground",
+    "ao",
+    "mcp-server",
+    "ollama",
 )
 
 #: Names ``aap-demo enable`` prints when no addon is given.
-PUBLIC_SHELL_ADDONS: tuple = ("product-demos", "product-demo-satellite", "eda-playground")
+PUBLIC_SHELL_ADDONS: tuple = (
+    "product-demos",
+    "product-demo-satellite",
+    "eda-playground",
+    "ao",
+    "mcp-server",
+    "ollama",
+)
+
+#: Extra environment for one installer run, worked out before it starts.
+Prepare = Callable[[AppContext], Dict[str, str]]
 
 
 _INSTALLER_TOOLS = ("bash", "curl", "jq")
@@ -54,7 +70,7 @@ def scripts_root() -> Path:
     """Directory that contains the bundled addon deploy scripts.
 
     A checkout wins so ``pip install -e`` uses the tree you are editing.
-    A wheel falls back to the copy under ``aap_demo/bundled_addons``.
+    A wheel falls back to the copy under ``aap_demo/bundled/addons``.
     """
     package = Path(aap_demo.__file__).resolve().parent
     checkout = package.parents[1]
@@ -63,7 +79,7 @@ def scripts_root() -> Path:
         checkout_addons / "product-demos" / "deploy.sh"
     ).is_file():
         return checkout_addons
-    packaged = package / "bundled_addons"
+    packaged = package / "bundled" / "addons"
     if (packaged / "product-demos" / "deploy.sh").is_file():
         return packaged
     raise AddonError(
@@ -74,6 +90,36 @@ def scripts_root() -> Path:
 
 def wire_script() -> Path:
     return Path(__file__).resolve().with_name("product_demos_wire.sh")
+
+
+def ao_script() -> Path:
+    """Find AO's installer in a checkout or in the bundled shell runtime."""
+    return scripts_root() / "ao" / "deploy.sh"
+
+
+def _enable_ao(ctx: AppContext, env: Dict[str, str]) -> None:
+    from aap_demo.core.migration import parse_legacy_config
+
+    script = ao_script()
+    if not script.is_file():
+        raise AddonError("Automation Orchestrator installer is not included in this installation")
+    ao_env = dict(env)
+    legacy = ctx.paths.legacy_config_file
+    try:
+        saved = parse_legacy_config(legacy.read_text(encoding="utf-8")) if legacy.is_file() else {}
+    except OSError as exc:
+        raise AddonError("could not read existing AO configuration", hint=str(exc)) from exc
+    for key in ("AO_LLM_PROVIDER", "AO_LLM_BASE_URL", "AO_LLM_MODEL"):
+        if not ao_env.get(key) and saved.get(key):
+            ao_env[key] = saved[key]
+    ao_env.setdefault("AO_LLM_PROVIDER", "none")
+    ao_env["AAP_DEMO_NAMESPACE"] = ctx.namespace
+    ao_env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "1"
+    result = ctx.runner.run(["bash", str(script)], env=ao_env, sink=ctx.console.log_sink())
+    if not result.ok:
+        raise AddonError(
+            "Automation Orchestrator setup failed", hint="Review the installer log and retry."
+        )
 
 
 def require_tools(
@@ -108,6 +154,8 @@ class ShellAddon:
         wire_after_enable: bool = True,
         dependencies: Sequence[str] = ("product-demos-base",),
         state_dir_env: Optional[str] = None,
+        self_wire: bool = False,
+        prepare: Optional[Prepare] = None,
     ) -> None:
         self.name = name
         self.public = name in PUBLIC_SHELL_ADDONS
@@ -116,6 +164,10 @@ class ShellAddon:
         self.wire_after_enable = wire_after_enable
         self.dependencies = tuple(dependencies)
         self.state_dir_env = state_dir_env
+        #: The installer wires itself after a good install (``AAP_DEMO_WIRE_AFTER_DEPLOY=1``).
+        self.self_wire = self_wire
+        #: Runs before the installer on enable: dependencies first, then extra environment.
+        self.prepare = prepare
 
     def enable(self, ctx: AppContext, args: object) -> int:
         extra = getattr(args, "addon_args", None) or []
@@ -137,12 +189,30 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
     if not deploy.is_file():
         raise AddonError(f"addon {name!r} has no deploy.sh")
 
+    extra_env = addon.prepare(ctx) if addon.prepare is not None and not delete else {}
     env = ctx.kube_env()
+    env.update(extra_env)
+    if name == "product-demos" and not delete:
+        try:
+            env["AAP_DEMO_FLEET_HOST"] = discover_fleet_host(ctx)
+        except NoFleetHostError:
+            env.pop("AAP_DEMO_FLEET_HOST", None)
+            ctx.console.warn(
+                "No ready Fleet host found. To run end-to-end workflows using Fleet, "
+                "first run aap-demo enable fleet, then enable product-demos again."
+            )
+            if not ctx.assume_yes and not ctx.quiet and prompts.can_ask(ctx.env):
+                if not prompts.confirm("Continue installing Product Demos without Fleet? [y/N] "):
+                    ctx.console.out("Product Demos installation cancelled.")
+                    return 0
     env["NAMESPACE"] = ctx.namespace
-    # Bash wires once after enable. Leave the installer's own wiring off so a
-    # wheel, which has no includes/addon-wire.sh, still exits 0 after a good install.
-    env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "0"
+    # Product demos wire once, after enable, from this module. Addons such as AO
+    # wire inside their installer, before steps that need the wiring.
+    env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "1" if addon.self_wire and not delete else "0"
     env["AAP_DEMO_ENABLED_ADDONS"] = " ".join(_enabled(ctx))
+    # The global --force reaches installers the way the bash command passed it.
+    if ctx.force:
+        env["FORCE"] = "1"
     if addon.state_dir_env:
         env[addon.state_dir_env] = str(ctx.paths.state_dir / name)
 
@@ -183,9 +253,17 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
         _say(ctx, f"{name} disabled", addon=name, enabled=False)
         return 0
 
+    previously_enabled = _enabled(ctx)
     _remember(ctx, name, addon.dependencies)
     if addon.wire_after_enable:
         _wire(ctx, env)
+    if name == "product-demos" and env.get("AAP_DEMO_FLEET_HOST"):
+        try:
+            _enable_ao(ctx, env)
+        except AddonError:
+            if name not in previously_enabled:
+                _save_enabled(ctx, [item for item in _enabled(ctx) if item != name])
+            raise
     _say(ctx, _enabled_message(name), addon=name, enabled=True)
     return 0
 

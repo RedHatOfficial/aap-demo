@@ -98,6 +98,10 @@ def _prepare(
     runner.ok("kubectl get sc nfs-local-rwx")
     runner.ok("kubectl wait --for=condition=Available deployment/nfs-server")
     runner.ok("kubectl get deployment metrics-server")
+    runner.ok(
+        "kubectl --kubeconfig",
+        stdout='{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}',
+    )
     runner.ok("kubectl")
     runner.ok("oc")
     runner.ok("podman")
@@ -693,3 +697,81 @@ def test_grow_root_warns_when_the_resize_fails(monkeypatch, tmp_path, returncode
 
     assert [kind for kind, _text in console.lines] == ["warn"]
     assert "Could not grow the CRC root filesystem" in console.lines[0][1]
+
+
+def test_create_checks_health_after_ingress_trust(app_ctx, tmp_path, monkeypatch) -> None:
+    from aap_demo.cluster import ingress_ca
+    from aap_demo.infra import crc
+
+    _prepare(app_ctx, tmp_path, first_status='{"crcStatus":"Unknown"}')
+    events = []
+    monkeypatch.setattr(ingress_ca, "install", lambda ctx: events.append("trust") or True)
+
+    def stable(*args, **kwargs):
+        events.append("health")
+        return len([event for event in events if event == "health"]) == 1
+
+    monkeypatch.setattr(crc, "wait_until_stable", stable)
+    with pytest.raises(AapDemoError):
+        bootstrap.create(app_ctx, sleep=lambda _: None, host=(8, 32768), which=lambda _: "/bin/crc")
+    assert events == ["health", "trust", "health"]
+    assert "Next:" not in app_ctx.console.stdout
+
+
+def test_recovery_restart_timeout_fails_without_another_restart(
+    app_ctx, monkeypatch, tmp_path
+) -> None:
+    from aap_demo.infra import crc
+
+    monkeypatch.setattr(crc, "wait_until_stable", lambda *args, **kwargs: False)
+    runner = FakeRunner().register("crc start", AapDemoError("timed out"))
+    app_ctx.runner = runner
+    with pytest.raises(AapDemoError) as excinfo:
+        bootstrap._ensure_stable(app_ctx, tmp_path / "secret", sleep=lambda _: None)
+    assert len(runner.calls) == 1
+    assert runner.calls[0].timeout is not None
+    assert "github.com/crc-org/crc/issues" in excinfo.value.hint
+
+
+def test_recovery_restart_is_attempted_only_once(app_ctx, monkeypatch, tmp_path) -> None:
+    from aap_demo.infra import crc
+
+    samples = iter([False, True])
+    monkeypatch.setattr(crc, "wait_until_stable", lambda *args, **kwargs: next(samples))
+    runner = FakeRunner().ok("crc start")
+    app_ctx.runner = runner
+    bootstrap._ensure_stable(app_ctx, tmp_path / "secret", sleep=lambda _: None)
+    assert len(runner.calls) == 1
+
+
+def test_recovery_restart_reports_failure_details(app_ctx, monkeypatch, tmp_path):
+    from aap_demo.infra import crc
+
+    monkeypatch.setattr(crc, "wait_until_stable", lambda *args, **kwargs: False)
+    app_ctx.runner = FakeRunner().fail("crc start", returncode=7, stderr="hypervisor unavailable")
+    with pytest.raises(AapDemoError) as caught:
+        bootstrap._ensure_stable(app_ctx, tmp_path / "secret", sleep=lambda _: None)
+    assert "exit 7" in caught.value.message
+    assert "hypervisor unavailable" in (caught.value.hint or "")
+
+
+@pytest.mark.parametrize("step", ["dns", "trust"])
+def test_create_bounds_setup_timeouts_with_diagnostics(app_ctx, tmp_path, monkeypatch, step):
+    from aap_demo.cluster import ingress_ca
+
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus":"Unknown"}')
+
+    def stalled(ctx, **kwargs):
+        ctx.runner.run(["kubectl", "get", "stalled"])
+
+    if step == "dns":
+        monkeypatch.setattr(bootstrap.coredns, "configure", stalled)
+    else:
+        monkeypatch.setattr(ingress_ca, "install", stalled)
+    runner._rules.insert(0, (("kubectl", "get", "stalled"), AapDemoError("command timed out")))
+    with pytest.raises(AapDemoError) as caught:
+        bootstrap.create(app_ctx, sleep=lambda _: None, host=(8, 32768), which=lambda _: "/bin/crc")
+    call = next(c for c in runner.calls if c.argv[:3] == ("kubectl", "get", "stalled"))
+    assert call.timeout is not None
+    assert "github.com/crc-org/crc/issues" in (caught.value.hint or "")
+    assert "Next:" not in app_ctx.console.stdout
