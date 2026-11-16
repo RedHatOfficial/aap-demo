@@ -67,14 +67,18 @@ def _refresh_from_vm(ctx: AppContext, path: Path) -> bool:
     key = ssh_mod.detect_ssh_key(ssh_mod.crc_machines_dir(ctx.env))
     if key is None:
         return False
-    result = ssh_mod.exec_remote(
-        ctx.runner,
-        key,
-        "cat",
-        kubeconfig_mod.REMOTE_KUBECONFIG_PATH,
-        sudo=True,
-        connect_timeout=REFRESH_CONNECT_TIMEOUT,
-    )
+    try:
+        result = ssh_mod.exec_remote(
+            ctx.runner,
+            key,
+            "cat",
+            kubeconfig_mod.REMOTE_KUBECONFIG_PATH,
+            sudo=True,
+            connect_timeout=REFRESH_CONNECT_TIMEOUT,
+            timeout=10,
+        )
+    except AapDemoError:
+        return False
     if not result.ok or not result.stdout.strip():
         return False
     try:
@@ -188,9 +192,15 @@ def _remote_hint(path: Path, context: str, server: str, suggestion: Optional[str
     )
 
 
-def _reject_remote(ctx: AppContext, path: Path, finder: Callable[[str], Optional[str]]) -> None:
+def _reject_remote(
+    ctx: AppContext,
+    path: Path,
+    finder: Callable[[str], Optional[str]],
+    *,
+    allow_override: bool = True,
+) -> None:
     """Ports ``aap_demo_reject_remote_kubeconfig``."""
-    if ctx.env.get(ALLOW_REMOTE_ENV, "") in ALLOW_REMOTE_VALUES:
+    if allow_override and ctx.env.get(ALLOW_REMOTE_ENV, "") in ALLOW_REMOTE_VALUES:
         return
     if not path.is_file() or path.stat().st_size == 0:
         return
@@ -198,14 +208,24 @@ def _reject_remote(ctx: AppContext, path: Path, finder: Callable[[str], Optional
     if not server or _host_is_local(ctx, _server_host(server), finder):
         return
     current = ctx.runner.run(["kubectl", "--kubeconfig", str(path), "config", "current-context"])
+    hint = _remote_hint(
+        path,
+        current.stdout.strip() or "(unknown)",
+        server,
+        _local_context_name(ctx, path, finder),
+    )
+    if not allow_override:
+        hint = hint.split("  To target this API server on purpose:")[0].rstrip()
     raise AapDemoError(
         "Kubeconfig points at a remote cluster",
-        hint=_remote_hint(
-            path,
-            current.stdout.strip() or "(unknown)",
-            server,
-            _local_context_name(ctx, path, finder),
-        ),
+        hint=hint,
+    )
+
+
+def require_local_kubeconfig(ctx: AppContext, *, which=None) -> None:
+    """Lifecycle operations must not target a remote cluster, even with opt-in."""
+    _reject_remote(
+        ctx, ctx.kubeconfig, shutil.which if which is None else which, allow_override=False
     )
 
 
@@ -250,7 +270,11 @@ def setup_kubeconfig(
         _reject_remote(ctx, path, finder)
     # Refresh only after the context is known to be local, so a reachable remote
     # context can't skip the refresh and stay the target.
-    if not ctx.runner.run(["kubectl", "cluster-info"]).ok and _refresh_from_vm(ctx, path):
+    try:
+        reachable = ctx.runner.run(["kubectl", "cluster-info"], timeout=10).ok
+    except AapDemoError:
+        reachable = False
+    if not reachable and _refresh_from_vm(ctx, path):
         _export(ctx, path)
         _apply_context(ctx)
         if guard:

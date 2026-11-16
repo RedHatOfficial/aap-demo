@@ -297,3 +297,13 @@ def test_a_vm_crc_cannot_answer_for_is_not_called_missing(
     out = app_ctx.console.stdout
     assert "CRC is not responding, but a cluster exists" in out
     assert "No cluster exists" not in out
+
+
+def test_cluster_info_timeout_is_bounded_and_treated_as_unreachable(
+    app_ctx, fake_runner, have_kubectl, monkeypatch
+):
+    monkeypatch.setattr(preflight.ssh_mod, "detect_ssh_key", lambda _: None)
+    fake_runner.register("kubectl cluster-info", AapDemoError("timed out"))
+    preflight.setup_kubeconfig(app_ctx)
+    call = next(call for call in fake_runner.calls if call.argv[:2] == ("kubectl", "cluster-info"))
+    assert call.timeout is not None

@@ -8,30 +8,79 @@
 
 from __future__ import annotations
 
+import platform
 import shutil
+import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
 from aap_demo.cluster import aap as aap_mod
-from aap_demo.cluster import coredns, preflight
+from aap_demo.cluster import coredns, kubeconfig, preflight
 from aap_demo.cluster import scc as scc_mod
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AapDemoError, env_number
 from aap_demo.exec import kubectl
+from aap_demo.exec import ssh as ssh_mod
+from aap_demo.exec.runner import EnvRunner
 from aap_demo.infra import crc as infra_crc
 
 MUST_GATHER_IMAGE = "registry.redhat.io/ansible-automation-platform-26/aap-must-gather-rhel9:latest"
 PROBLEM_POD_TOKENS = ("CrashLoopBackOff", "Error", "ImagePullBackOff")
 
 
+class _BoundedRunner:
+    """Bound setup commands, including SSH and kubectl, when the VM disappears."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def run(self, argv, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = 70
+        return self.inner.run(argv, **kwargs)
+
+
+@contextmanager
+def _vm_kubeconfig(ctx: AppContext):
+    """Use the kubeconfig obtained from this VM for lifecycle setup and checks."""
+    key = ssh_mod.detect_ssh_key(ssh_mod.crc_machines_dir(ctx.env))
+    if key is None:
+        raise AapDemoError(
+            "CRC SSH key not found", hint=infra_crc.health_failure_hint(ctx.env, platform.system())
+        )
+    try:
+        result = ssh_mod.exec_remote(
+            ctx.runner, key, "cat", kubeconfig.REMOTE_KUBECONFIG_PATH, timeout=15
+        )
+        if not result.ok or not result.stdout.strip():
+            raise AapDemoError("Could not obtain the CRC VM kubeconfig")
+        rendered = kubeconfig.render(result.stdout)
+    except AapDemoError as exc:
+        raise AapDemoError(
+            f"Could not read CRC VM kubeconfig: {exc.message}",
+            hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
+        ) from exc
+    with tempfile.TemporaryDirectory(prefix="aap-demo-crc-") as directory:
+        path = kubeconfig.write_private(Path(directory) / "kubeconfig", rendered)
+        old_override, old_runner = ctx.kubeconfig_override, ctx.runner
+        ctx.kubeconfig_override = path
+        ctx.runner = EnvRunner(old_runner, ctx.kube_env())
+        try:
+            yield
+        finally:
+            ctx.kubeconfig_override, ctx.runner = old_override, old_runner
+
+
 def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> None:
-    """``crc start``, a check that CRC stayed up, then re-apply CoreDNS.
+    """Start CRC, re-apply CoreDNS, then check that the cluster stayed healthy.
 
     CRC can exit 0 and stop seconds later, so the exit status alone does not
     show that the cluster started.
     """
+    preflight.require_local_kubeconfig(ctx)
     ctx.console.out("")
     ctx.console.step("aap-demo start - Starting CRC cluster...")
     started = ctx.runner.run(["crc", "start"], sink=ctx.console.log_sink())
@@ -40,19 +89,35 @@ def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> No
             f"crc start failed (exit {started.returncode})",
             hint="Check: crc status",
         )
-    if not infra_crc.wait_until_stable(
-        ctx.runner,
-        attempts=int(
-            env_number(ctx.env, "AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS)
-        ),
-        sleep_seconds=env_number(
-            ctx.env, "AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS
-        ),
-        sleep=sleep,
-    ):
-        raise AapDemoError("CRC did not stay running after start", hint="Check: crc status")
     preflight.setup_kubeconfig(ctx)
-    coredns.configure(ctx, sleep=sleep)
+    preflight.require_local_kubeconfig(ctx)
+    with _vm_kubeconfig(ctx):
+        runner = ctx.runner
+        ctx.runner = _BoundedRunner(runner)
+        try:
+            coredns.configure(ctx, sleep=sleep)
+        except AapDemoError as exc:
+            raise AapDemoError(
+                f"CoreDNS setup failed: {exc.message}",
+                hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
+            ) from exc
+        finally:
+            ctx.runner = runner
+        if not infra_crc.wait_until_stable(
+            ctx.runner,
+            kubeconfig=ctx.kubeconfig,
+            attempts=int(
+                env_number(ctx.env, "AAP_DEMO_CRC_STABILITY_ATTEMPTS", infra_crc.STABILITY_ATTEMPTS)
+            ),
+            sleep_seconds=env_number(
+                ctx.env, "AAP_DEMO_CRC_STABILITY_SLEEP", infra_crc.STABILITY_SLEEP_SECONDS
+            ),
+            sleep=sleep,
+        ):
+            raise AapDemoError(
+                "CRC did not stay healthy after start",
+                hint=infra_crc.health_failure_hint(ctx.env, platform.system()),
+            )
     ctx.console.success("CRC cluster started")
     ctx.console.out("")
     ctx.console.out("Run 'aap-demo status' to check cluster health")

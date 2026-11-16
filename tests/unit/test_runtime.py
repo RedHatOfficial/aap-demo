@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 
 import pytest
 
@@ -128,8 +129,22 @@ def _starting(app_ctx, monkeypatch, status: str) -> FakeRunner:
         "AAP_DEMO_CRC_STABILITY_ATTEMPTS": "3",
         "AAP_DEMO_CRC_STABILITY_SLEEP": "0",
     }
+    monkeypatch.setattr(runtime.ssh_mod, "detect_ssh_key", lambda _: Path("/tmp/fake-crc-key"))
     runner = FakeRunner().ok("crc start")
+    runner.ok(
+        "ssh",
+        stdout=(
+            "apiVersion: v1\nkind: Config\nclusters:\n- name: microshift\n"
+            '  cluster: {server: "https://localhost:6443", certificate-authority-data: QQ==}\n'
+            "contexts:\n- name: microshift\n  context: {cluster: microshift, user: user}\n"
+            "users:\n- name: user\n  user: {token: token}\n"
+        ),
+    )
     runner.ok("crc status", stdout=json.dumps({"crcStatus": status, "openshiftStatus": "Running"}))
+    runner.ok(
+        "kubectl --kubeconfig",
+        stdout='{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}',
+    )
     runner.ok("kubectl")
     app_ctx.runner = runner
     return runner
@@ -154,7 +169,7 @@ def test_start_fails_when_crc_exits_zero_and_then_stops(app_ctx, monkeypatch) ->
     _starting(app_ctx, monkeypatch, "Stopped")
     with pytest.raises(AapDemoError) as excinfo:
         runtime.start(app_ctx, sleep=lambda _s: None)
-    assert "did not stay running" in excinfo.value.message
+    assert "did not stay healthy" in excinfo.value.message
     assert "CRC cluster started" not in app_ctx.console.stdout
 
 
@@ -168,3 +183,98 @@ def test_idle_reports_a_rejected_patch(app_ctx) -> None:
         runtime.idle(app_ctx, "true")
     assert "admission webhook denied" in (caught.value.hint or "")
     assert "set to idle" not in app_ctx.console.stdout
+
+
+def test_start_checks_health_after_coredns_before_success(app_ctx, monkeypatch) -> None:
+    _starting(app_ctx, monkeypatch, "Running")
+    events = []
+    monkeypatch.setattr(
+        runtime.preflight, "setup_kubeconfig", lambda ctx: events.append("kubeconfig")
+    )
+    monkeypatch.setattr(runtime.coredns, "configure", lambda ctx, sleep: events.append("dns"))
+    monkeypatch.setattr(
+        runtime.infra_crc,
+        "wait_until_stable",
+        lambda *args, **kwargs: events.append("health") or False,
+    )
+    with pytest.raises(AapDemoError):
+        runtime.start(app_ctx, sleep=lambda _: None)
+    assert events == ["kubeconfig", "dns", "health"]
+    assert "CRC cluster started" not in app_ctx.console.stdout
+
+
+def test_start_bounds_coredns_commands_and_reports_timeouts(app_ctx, monkeypatch) -> None:
+    runner = _starting(app_ctx, monkeypatch, "Running")
+
+    def configure(ctx, sleep):
+        ctx.runner.run(["kubectl", "get", "configmap"])
+        raise AapDemoError("command timed out")
+
+    monkeypatch.setattr(runtime.coredns, "configure", configure)
+    with pytest.raises(AapDemoError) as excinfo:
+        runtime.start(app_ctx, sleep=lambda _: None)
+    assert runner.calls[-1].timeout is not None
+    assert "github.com/crc-org/crc/issues" in excinfo.value.hint
+    assert "CRC cluster started" not in app_ctx.console.stdout
+
+
+def test_start_rechecks_target_after_kubeconfig_context_changes(app_ctx, monkeypatch):
+    _starting(app_ctx, monkeypatch, "Running")
+    calls = []
+
+    def guard(ctx):
+        calls.append("guard")
+        if calls.count("guard") == 2:
+            raise AapDemoError("Kubeconfig points at a remote cluster")
+
+    monkeypatch.setattr(runtime.preflight, "require_local_kubeconfig", guard)
+    monkeypatch.setattr(runtime.preflight, "setup_kubeconfig", lambda ctx: calls.append("setup"))
+    with pytest.raises(AapDemoError, match="remote cluster"):
+        runtime.start(app_ctx, sleep=lambda _: None)
+    assert calls == ["guard", "setup", "guard"]
+
+
+def test_start_uses_vm_kubeconfig_for_dns_and_health(app_ctx, monkeypatch, tmp_path):
+    runner = _starting(app_ctx, monkeypatch, "Running")
+    key = tmp_path / "key"
+    key.write_text("fake")
+    monkeypatch.setattr(runtime.ssh_mod, "detect_ssh_key", lambda _: key)
+    raw = """apiVersion: v1
+kind: Config
+clusters:
+- name: microshift
+  cluster:
+    server: https://localhost:6443
+    certificate-authority-data: QQ==
+contexts:
+- name: microshift
+  context: {cluster: microshift, user: user}
+users:
+- name: user
+  user: {token: token}
+"""
+    runner.ok("ssh", stdout=raw)
+    seen = []
+    monkeypatch.setattr(
+        runtime.coredns, "configure", lambda ctx, sleep: seen.append(ctx.kubeconfig)
+    )
+    monkeypatch.setattr(
+        runtime.infra_crc,
+        "wait_until_stable",
+        lambda runner, **kw: seen.append(kw["kubeconfig"]) or True,
+    )
+    runtime.start(app_ctx, sleep=lambda _: None)
+    assert seen[0] == seen[1]
+    assert seen[0] != app_ctx.kubeconfig
+    assert not seen[0].exists()
+
+
+def test_start_reports_unreachable_vm_kubeconfig(app_ctx, monkeypatch):
+    runner = _starting(app_ctx, monkeypatch, "Running")
+    runner._rules.insert(0, (("ssh",), AapDemoError("command timed out")))
+    with pytest.raises(AapDemoError) as caught:
+        runtime.start(app_ctx, sleep=lambda _: None)
+    assert "timed out" in caught.value.message
+    assert "github.com/crc-org/crc/issues" in caught.value.hint
+    assert "CRC cluster started" not in app_ctx.console.stdout
+    assert next(call for call in runner.calls if call.argv[0] == "ssh").timeout == 15
