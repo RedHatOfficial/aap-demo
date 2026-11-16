@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 import pytest
 
@@ -35,8 +36,9 @@ def _ns(**kwargs) -> argparse.Namespace:
 
 
 def test_status_text_output_reports_not_created(
-    app_ctx: AppContext, fake_runner: FakeRunner
+    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path
 ) -> None:
+    app_ctx.env["HOME"] = str(tmp_path)
     fake_runner.fail("crc status -o json")
     rc = observe.status(app_ctx, _ns())
     assert rc == 0
@@ -49,7 +51,10 @@ def test_status_text_output_reports_not_created(
     assert app_ctx.console.stderr == ""
 
 
-def test_status_json_output_is_well_formed(app_ctx: AppContext, fake_runner: FakeRunner) -> None:
+def test_status_json_output_is_well_formed(
+    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path
+) -> None:
+    app_ctx.env["HOME"] = str(tmp_path)
     fake_runner.fail("crc status -o json")
     app_ctx.output = "json"
     rc = observe.status(app_ctx, _ns())
@@ -104,7 +109,7 @@ def test_diagnose_names_a_hung_crc_instead_of_a_missing_cluster(
     assert "a 'crc start' may be hung" in out
     assert "crc daemon is not running" in out
     assert "127.0.0.1:2222" in out
-    assert "crc cleanup && crc setup" in out
+    assert "run 'crc setup'" in out
     assert "OpenShift Local is not responding" in out
     assert "cluster not found" not in out
 

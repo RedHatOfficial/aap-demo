@@ -373,7 +373,11 @@ def gather(ctx: AppContext) -> StatusReport:
         built=info.git_date,
     )
 
-    report.cluster_state = infra_crc.get_state(runner)
+    data = infra_crc.status_json(runner)
+    report.cluster_state = infra_crc.state_from_status(data)
+    home = Path(ctx.env.get("HOME") or Path.home())
+    if report.cluster_state == infra_crc.STATE_NOT_CREATED and infra_crc.machine_exists(home):
+        report.cluster_state = infra_crc.STATE_UNKNOWN
     if report.cluster_state != infra_crc.STATE_RUNNING:
         return report
 
@@ -465,6 +469,11 @@ def render_text(console: Any, report: StatusReport) -> None:
         console.out(f"Cluster:     {console.paint('stopped', 'yellow')}")
         console.out("")
         console.out("Start with: crc start")
+        return
+    elif report.cluster_state == infra_crc.STATE_UNKNOWN:
+        console.out(f"Cluster:     {console.paint('unknown (CRC not responding)', 'yellow')}")
+        console.out("")
+        console.out("Run 'aap-demo diagnose' and check 'crc status'")
         return
     else:
         console.out(f"Cluster:     {console.paint('not running', 'red')}")

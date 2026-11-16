@@ -269,7 +269,7 @@ def warn_cluster_state(ctx: AppContext, runner: Any = None) -> None:
     data = infra_crc.status_json(runner if runner is not None else ctx.runner)
     state = infra_crc.state_from_status(data)
     home = Path(ctx.env.get("HOME") or Path.home())
-    if not data and infra_crc.machine_exists(home):
+    if state == infra_crc.STATE_NOT_CREATED and infra_crc.machine_exists(home):
         # A VM is on disk but `crc status` did not answer: a hung `crc start`
         # or a dead CRC daemon, not a missing cluster.
         ctx.console.out("WARNING: CRC is not responding, but a cluster exists")
