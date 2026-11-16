@@ -58,12 +58,8 @@ This builds the virtual machine only. It does not install AAP yet. If a cluster 
 is `CAP_NET_BIND_SERVICE`, so CRC can bind low ports without staying root. aap-demo does not
 run `setcap` itself. If sudo cannot prompt, `create` stops.
 
-To keep an older CRC that is already installed, lower the MicroShift floor for this command.
-This is the same override `deploy` accepts:
-
-```bash
-CRC_VERSION=4.21 aap-demo create
-```
+`create` builds the newest OpenShift version aap-demo supports. To build another one, such as
+OpenShift 5, see [Choose an OpenShift version](openshift-version.md).
 
 ## 3. Install AAP
 

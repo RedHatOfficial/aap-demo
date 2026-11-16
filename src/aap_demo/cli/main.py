@@ -249,6 +249,9 @@ def build_parser(
     oc_parser.set_defaults(func=ops.oc)
     add("update", "Update aap-demo to the latest release").set_defaults(func=ops.update)
     add("version", "Show aap-demo version and build metadata").set_defaults(func=ops.version)
+    p = add("ocp-version-list", "List the OpenShift versions --ocp-version can build here")
+    p.add_argument("--all", action="store_true", help="Also list versions aap-demo doesn't support")
+    p.set_defaults(func=ops.ocp_version_list)
     add("redhat-status", "Check Red Hat registry status", aliases=["rh-status"]).set_defaults(
         func=ops.redhat_status
     )
@@ -256,7 +259,7 @@ def build_parser(
     _add_config_command(add, sub)
 
     # -- addons -------------------------------------------------------------
-    p = add("enable", "Enable an addon (fleet or product-demos)")
+    p = add("enable", "Enable an addon (fleet, product-demos, ao, EDA Playground, ...)")
     p.add_argument("addon", nargs="?", help="Addon name; omit to list available addons")
     p.add_argument("addon_args", nargs="*", metavar="ARGS", help="Addon-specific arguments")
     p.add_argument(

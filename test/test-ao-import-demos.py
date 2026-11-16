@@ -14,6 +14,12 @@ IMPORT_DEMOS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(IMPORT_DEMOS)
 
 
+def test_archive_url_removes_git_suffix_and_trailing_slash():
+    assert IMPORT_DEMOS.archive_url("https://example.test/fork.git/", "abc") == (
+        "https://example.test/fork/archive/abc.tar.gz"
+    )
+
+
 class NormalizeWebhookTests(unittest.TestCase):
     def test_binds_agentic_node_to_provider_integration_and_model(self):
         workflow = {

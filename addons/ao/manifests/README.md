@@ -1,10 +1,9 @@
 # Automation Orchestrator manifests
 
-Checked-in Kubernetes templates applied by [`../deploy.sh`](../deploy.sh). Shapes match
-[Automation Orchestrator documentation](https://docs.redhat.com/en/documentation/automation_orchestrator/)
-(the GitOps guide used when these files were generated:
-[Generate aapctl manifests for GitOps](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-generate_aapctl_manifests_for_gitops)).
-**`deploy.sh` applies them without calling `aapctl`.**
+Checked-in Kubernetes templates applied by [`../deploy.sh`](../deploy.sh). The operator is installed
+with an OLM Subscription, the supported CLI method in the
+[Automation Orchestrator documentation](https://docs.redhat.com/en/documentation/automation_orchestrator/).
+The instance CR follows the CRD (`kubectl explain automationorchestrator.spec`).
 
 ## Files
 
@@ -12,47 +11,36 @@ Checked-in Kubernetes templates applied by [`../deploy.sh`](../deploy.sh). Shape
 |------|-------|----------|
 | [`operator-subscription.yaml`](operator-subscription.yaml) | 2 — OLM | `OperatorGroup` (AllNamespaces) + `Subscription` |
 | [`operator-rbac.yaml`](operator-rbac.yaml) | 2 — OLM compatibility | Explicit cluster permissions for the operator service account on MicroShift |
-| [`postgres-cluster.yaml`](postgres-cluster.yaml) | 3 — data | CNPG `Cluster` + `Database` CRs (`orchestrator`, `temporal`, `temporal_visibility`) |
+| [`postgres.yaml`](postgres.yaml) | 3 — data | One `StatefulSet` of `rhel9/postgresql-15`, its `Service`, and TLS from service-ca (ADR-043) |
 | [`automationorchestrator-cr.yaml`](automationorchestrator-cr.yaml) | 3 — instance | `AutomationOrchestrator` CR |
 
 Placeholders (`__NAMESPACE__`, `__OPERATOR_CHANNEL__`, etc.) are substituted by `deploy.sh` before `kubectl apply`.
 
 ## Not checked in (by design)
 
-Database **Secrets are not committed** (Red Hat GitOps guidance: credentials must not live in git).
-**`deploy.sh` creates them at install time**—no `aapctl` call is required. Maintainers who regenerate
-templates with `./scripts/generate-manifests.sh` / `aapctl --dry-run` must strip Secret manifests before
-committing; dry-run output uses one-time passwords.
+Database **Secrets are not committed**. `deploy.sh` creates them at install time and reuses the
+PostgreSQL password on a re-run.
 
 | Secret | Purpose |
 |--------|---------|
-| `orchestrator-postgres-secret` | CNPG bootstrap + backend DB connection (`kubernetes.io/basic-auth`) |
+| `orchestrator-postgres-secret` | PostgreSQL user and backend DB connection (`kubernetes.io/basic-auth`) |
 | `temporal-postgres-secret` | Temporal DB connection |
 | `temporal-visibility-postgres-secret` | Temporal visibility DB connection |
+| `orchestrator-postgres-ca` | The service-ca CA, for the CR's `caCertSecretRef` and `sslMode: verify-ca` |
+| `orchestrator-postgres-tls` | PostgreSQL's serving certificate, issued by service-ca |
 | `automation-orchestrator-initial-admin-password` | Explicitly referenced bootstrap password, restored across re-enable |
 | `automation-orchestrator-pull-secret` | Copied from `redhat-operators-pull-secret` in `aap-operator` |
 
-CNPG also creates `orchestrator-postgres-ca`, referenced by the instance CR as `caCertSecretRef`.
+## PostgreSQL image
+
+`deploy.sh` reuses the `rhel9/postgresql-15` image AAP's own PostgreSQL StatefulSet runs, which is
+already on the node. When it can't be read, it uses `registry.redhat.io/rhel9/postgresql-15`.
+`AO_POSTGRES_IMAGE` overrides both.
 
 ## Application order
 
-Matches [Understand aapctl manifest application order](https://docs.redhat.com/en/documentation/automation_orchestrator/)
-(doc version at generation time:
-[application order](https://docs.redhat.com/en/documentation/automation_orchestrator/2026.8/install-understand_aapctl_manifest_application_order)):
-
 1. Namespace + SCC grants (script)
 2. AO-local `CatalogSource` copy (MicroShift only — script)
-3. CloudNativePG operator from upstream manifest (script)
-4. Postgres secrets + [`postgres-cluster.yaml`](postgres-cluster.yaml)
-5. [`operator-subscription.yaml`](operator-subscription.yaml) — wait for CSV, approve InstallPlan
-6. Pull secret link + [`automationorchestrator-cr.yaml`](automationorchestrator-cr.yaml)
-
-## Regenerating templates
-
-Maintainers with `aapctl` installed:
-
-```bash
-./addons/ao/scripts/generate-manifests.sh
-```
-
-Review the dry-run output, then update the YAML files above (strip Secrets before committing).
+3. Postgres secrets + [`postgres.yaml`](postgres.yaml), then the `orchestrator-postgres-ca` Secret
+4. [`operator-subscription.yaml`](operator-subscription.yaml) — wait for CSV, approve InstallPlan
+5. Pull secret link + [`automationorchestrator-cr.yaml`](automationorchestrator-cr.yaml)

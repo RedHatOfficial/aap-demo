@@ -29,6 +29,7 @@ The [project home page](../README.md) is the short start. These pages are the re
 
 ## Reference
 
+- [Changelog](CHANGELOG.md) - Notable changes to add-ons and documentation.
 - [Commands](reference/commands.md) - What each command does.
 - [Settings](reference/settings.md) - Memory, disk, channels, and file locations.
 

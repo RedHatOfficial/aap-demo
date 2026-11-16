@@ -48,7 +48,7 @@ BASH_COMMANDS = [
 BASH_ALIASES = {"rh-status": "redhat-status", "deploy-all": "deploy"}
 
 #: New in the rewrite.
-NEW_COMMANDS = ["addon", "playbooks", "gui", "completion", "oc", "fleet"]
+NEW_COMMANDS = ["addon", "playbooks", "gui", "completion", "oc", "fleet", "ocp-version-list"]
 
 
 @pytest.fixture(scope="module")

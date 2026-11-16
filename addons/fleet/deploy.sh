@@ -9,10 +9,10 @@
 #   - qemu (qemu-system-aarch64 or qemu-system-x86_64)
 #   - qemu-img
 #   - mkisofs or genisoimage
-#   - A RHEL/CentOS QCOW2 cloud image
+#   - A RHEL/CentOS QCOW2 cloud image, or a download of CentOS Stream 9 GenericCloud
 #
 # Usage:
-#   ./deploy.sh          # Validate prerequisites
+#   ./deploy.sh          # Install tools, bring in a QCOW2, and create VMs
 #   ./deploy.sh --delete # Destroy all VMs and remove AAP resources
 
 set -e
@@ -45,13 +45,14 @@ source "${SCRIPT_DIR}/fleet.sh"
 
 if fleet_check_prereqs; then
   echo ""
-  echo "✓ Fleet addon enabled — prerequisites verified"
+  echo "✓ Fleet prerequisites verified"
 else
   echo ""
   echo "⚠ Fleet prerequisites are missing."
   if [ "${QUIET:-false}" = true ] || [ ! -t 0 ]; then
     echo "  Automatic installation is disabled in quiet or non-interactive mode."
     echo "  Re-run interactively to be offered automatic installation."
+    exit 1
   else
     read -r -p "  Install the missing Fleet prerequisites now? [y/N] " _install_prereqs
     case "$_install_prereqs" in
@@ -64,7 +65,8 @@ else
         fi
         ;;
       *)
-        echo "  Install missing tools before creating VMs"
+        echo "  Install missing tools before creating VMs" >&2
+        exit 1
         ;;
     esac
   fi
@@ -75,22 +77,12 @@ if [ -z "$_fleet_image" ] && [ -f "${AAP_DEMO_CONFIG_FILE:-$HOME/.aap-demo/confi
   _fleet_image=$(sed -n 's/^FLEET_IMAGE=//p' "${AAP_DEMO_CONFIG_FILE:-$HOME/.aap-demo/config}" | tail -n 1)
 fi
 
-if [ -z "$_fleet_image" ]; then
-  if [ "${QUIET:-false}" = true ] || [ ! -t 0 ]; then
-    echo "ERROR: FLEET_IMAGE is required in quiet or non-interactive mode" >&2
-    echo "  Set FLEET_IMAGE=/path/to/rhel.qcow2 and retry" >&2
-    exit 1
-  fi
-  read -r -p "  Path to RHEL/CentOS QCOW2 cloud image: " _fleet_image
-fi
-
-if [ -z "$_fleet_image" ]; then
-  echo "ERROR: A QCOW2 image path is required to enable Fleet" >&2
+if ! fleet_acquire_image "$_fleet_image"; then
   exit 1
 fi
-
-if ! _fleet_image=$(cd "$(dirname "$_fleet_image")" 2>/dev/null && printf '%s/%s\n' "$(pwd)" "$(basename "$_fleet_image")"); then
-  echo "ERROR: Could not resolve Fleet image path: $_fleet_image" >&2
+_fleet_image="${FLEET_ACQUIRED_IMAGE:-}"
+if [ -z "$_fleet_image" ]; then
+  echo "ERROR: Fleet did not resolve a QCOW2 image" >&2
   exit 1
 fi
 
@@ -134,8 +126,11 @@ echo "✓ Fleet enabled with ${_fleet_count} managed VM(s)"
 fleet_list
 
 echo ""
+echo "  Image: ${_fleet_image}"
+echo ""
 echo "  Next steps:"
-echo "    aap-demo fleet add <count> --image <path-to-qcow2>"
+echo "    aap-demo fleet add <count>"
+echo "    aap-demo fleet add <count> --image <path-or-url>"
 echo ""
 echo "  Examples:"
 echo "    aap-demo fleet add 3 --image ~/rhel9.qcow2"
@@ -144,5 +139,6 @@ echo "    aap-demo fleet remove 1"
 echo "    aap-demo fleet destroy"
 echo ""
 echo "  Options:"
-echo "    FLEET_NODE_MEM=N   VM memory in MB (default: 1024)"
-echo "    FLEET_NODE_CPUS=N  VM CPU count (default: 2)"
+echo "    FLEET_NODE_MEM=N          VM memory in MB (default: 1024)"
+echo "    FLEET_NODE_CPUS=N         VM CPU count (default: 2)"
+echo "    FLEET_DOWNLOAD_IMAGE=true Download CentOS Stream 9 when no image is set"
