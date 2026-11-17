@@ -12,6 +12,14 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 Add-ons are optional extras on top of AAP: a self-service portal, demo job templates, a local model, and practice machines.
 
+`aap-demo status` reports MCP Server as enabled when it is recorded in settings or when
+its custom resource or deployment is detected in the AAP namespace. The label identifies
+the source; it does not indicate readiness. Check the namespace's pod counts or run
+`kubectl get deployment aap-mcp-server -n aap-operator` to check the deployment. If the
+resource check fails, status reports MCP as unknown rather than disabled.
+When enabling AO, the command reuses an existing MCP Server and records it in settings.
+If it cannot check for an existing server, it stops and asks you to resolve access first.
+
 ## Practice machines (Fleet)
 
 The new command can add small Linux machines that show up as hosts in AAP. They run inside the same local cluster.
