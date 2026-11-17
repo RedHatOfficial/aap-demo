@@ -3,8 +3,17 @@
 # pinned client into the job's writable /tmp area so kubernetes.core.helm can
 # run entirely inside AAP.
 
-apme_helm_version: "3.15.4"
-apme_helm_install_dir: "/tmp/apme-helm"
-apme_helm_binary: "{{ apme_helm_install_dir }}/helm"
-apme_helm_archive: "/tmp/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"
-apme_helm_download_url: "https://get.helm.sh/helm-v{{ apme_helm_version }}-linux-amd64.tar.gz"
+apme_helm_bootstrap_version: "3.15.4"
+apme_helm_bootstrap_platform: >-
+  {{ 'darwin' if ansible_system == 'Darwin' else 'linux' }}
+apme_helm_bootstrap_arch: >-
+  {{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}
+apme_helm_bootstrap_install_dir: >-
+  /tmp/apme-helm-{{ apme_helm_bootstrap_platform }}-{{ apme_helm_bootstrap_arch }}
+apme_helm_bootstrap_binary: "{{ apme_helm_bootstrap_install_dir }}/helm"
+apme_helm_bootstrap_archive: >-
+  /tmp/helm-v{{ apme_helm_bootstrap_version }}-{{ apme_helm_bootstrap_platform }}-{{ apme_helm_bootstrap_arch
+  }}.tar.gz
+apme_helm_bootstrap_download_url: >-
+  {{ 'https://get.helm.sh/helm-v' ~ apme_helm_bootstrap_version ~ '-'
+     ~ apme_helm_bootstrap_platform ~ '-' ~ apme_helm_bootstrap_arch ~ '.tar.gz' }}

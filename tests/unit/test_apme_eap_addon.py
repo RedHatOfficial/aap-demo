@@ -115,6 +115,26 @@ def test_fresh_enable_bootstraps_the_dedicated_venv(app_ctx, monkeypatch) -> Non
     assert (venv_dir / ".collections.sha256").is_file()
 
 
+def test_apme_helm_bootstrap_selects_architecture_specific_client() -> None:
+    root = Path(__file__).resolve().parents[2]
+    defaults = (
+        root
+        / "addons"
+        / "apme-eap"
+        / "playbooks"
+        / "roles"
+        / "apme_helm_bootstrap"
+        / "defaults"
+        / "main.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "apme_helm_bootstrap_platform: >-" in defaults
+    assert "apme_helm_bootstrap_arch: >-" in defaults
+    assert "apme_helm_bootstrap_platform ~ '-' ~ apme_helm_bootstrap_arch" in defaults
+    assert "aarch64" in defaults
+    assert "linux-amd64.tar.gz" not in defaults
+
+
 def test_crc_portal_url_and_custom_aap_secret_are_discovered(app_ctx) -> None:
     app_ctx.env = {
         "APME_EAP_OPENSHIFT_API_URL": "https://api.crc.testing:6443",
