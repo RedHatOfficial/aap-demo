@@ -28,6 +28,7 @@ fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI="${AAP_DEMO_CLI:-$ROOT_DIR/aap-demo.sh}"
 NAMESPACE="${EDA_PLAYGROUND_NAMESPACE:-eda-playground}"
+STATE_DIR="${EDA_PLAYGROUND_STATE_DIR:-${HOME}/.aap-demo/eda-playground}"
 
 # Match the legacy CLI's kubeconfig selection and pin it for every child.
 # shellcheck source=../includes/aap-demo-paths.sh
@@ -100,6 +101,26 @@ cleanup_on_exit() {
   fi
   exit "$status"
 }
+
+# Validate the image before arming cleanup.  The deploy script intentionally
+# fails early when no reviewed image is configured, and that failure must not
+# trigger cleanup of an installation that existed before this test started.
+LIVE_IMAGE="${EDA_PLAYGROUND_IMAGE:-}"
+LIVE_ALLOW_UNPINNED="${EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE:-false}"
+if [ -z "$LIVE_IMAGE" ]; then
+  fail 'EDA_PLAYGROUND_IMAGE must be set before the live test starts'
+fi
+if [[ "$LIVE_IMAGE" != *@sha256:* ]] && [ "$LIVE_ALLOW_UNPINNED" != true ]; then
+  fail 'EDA_PLAYGROUND_IMAGE must use a sha256 digest before the live test starts'
+fi
+if EXISTING_NAMESPACE="$(kubectl get namespace "$NAMESPACE" --ignore-not-found -o name 2>/dev/null)"; then
+  :
+else
+  status=$?
+  fail 'could not determine whether the EDA Playground namespace already exists' "$status"
+fi
+[ -z "$EXISTING_NAMESPACE" ] || fail "refusing to run over existing EDA Playground namespace $NAMESPACE"
+[ ! -e "$STATE_DIR" ] || fail "refusing to run with existing EDA Playground state directory $STATE_DIR"
 
 trap cleanup_on_exit EXIT
 CLEANUP_REQUIRED=true

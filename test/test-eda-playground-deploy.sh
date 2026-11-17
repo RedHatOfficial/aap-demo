@@ -190,6 +190,10 @@ for failure in route_fail secret_fail rollout_fail patch_secret_fail; do
   : >"$MOCK_LOG"
   : >"$MOCK_MANIFEST"
   : >"$MOCK_PATCH"
+  if [[ "$failure" = rollout_fail || "$failure" = patch_secret_fail ]]; then
+    mkdir -p "$EDA_PLAYGROUND_STATE_DIR"
+    printf '%s\n' '{"oauth_app_id":"42","client_id":"client-existing","client_secret":"fixture-saved-secret"}' >"$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json"
+  fi
   if PATH="$TMP/bin:$PATH" REAL_JQ="$REAL_JQ" REAL_BASE64="$REAL_BASE64" "$ROOT/addons/eda-playground/deploy.sh" >"$TMP/$failure.out" 2>&1; then fail "$failure unexpectedly passed"; fi
   case "$failure" in
     route_fail) grep -Fq 'AAP route unavailable' "$TMP/$failure.out" || fail 'route failure diagnostic' ;;
