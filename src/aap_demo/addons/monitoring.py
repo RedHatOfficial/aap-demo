@@ -11,6 +11,7 @@ import argparse
 import base64
 import json
 import secrets
+from pathlib import Path
 from typing import Any, Dict, List
 
 from aap_demo.addons.base import AddonKind
@@ -23,6 +24,11 @@ from aap_demo.exec import kubectl
 NAME = "monitoring"
 NAMESPACE = "aap-monitoring"
 STATE_PASSWORD = "grafana-admin-password"  # pragma: allowlist secret
+OWNERSHIP_TOKEN = "namespace-ownership-token"
+NAMESPACE_UID = "namespace-uid"
+MANAGED_BY = "aap-demo-monitoring"
+OWNERSHIP_LABEL = "app.kubernetes.io/managed-by"
+OWNERSHIP_TOKEN_LABEL = "aap-demo-monitoring-token"
 PROMETHEUS_IMAGE = (
     "quay.io/prometheus/prometheus:v3.16.0@sha256:"
     "9332054523223e2ddc18d8101799d54a4a8d823b030c53216f063a6c117773cd"  # pragma: allowlist secret
@@ -84,8 +90,10 @@ def _dashboard() -> dict:
     }
 
 
-def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dict]:
-    ownership = {"app.kubernetes.io/managed-by": "aap-demo-monitoring"}
+def _documents(
+    password: str, aap_password: str, aap_namespace: str, ownership_token: str
+) -> List[dict]:
+    ownership = {OWNERSHIP_LABEL: MANAGED_BY, OWNERSHIP_TOKEN_LABEL: ownership_token}
     prometheus_config = {
         "global": {"scrape_interval": "30s"},
         "scrape_configs": [
@@ -239,6 +247,24 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
                                     "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
                                 },
                                 "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                            }
+                        ],
+                        "ports": [
+                            {"protocol": "UDP", "port": 53},
+                            {"protocol": "TCP", "port": 53},
+                        ],
+                    },
+                    {
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {"kubernetes.io/metadata.name": "openshift-dns"}
+                                },
+                                "podSelector": {
+                                    "matchLabels": {
+                                        "dns.operator.openshift.io/daemonset-dns": "default"
+                                    }
+                                },
                             }
                         ],
                         "ports": [
@@ -404,15 +430,18 @@ class MonitoringAddon:
             )
         if actions:
             raise AddonError(f"unsupported monitoring action: {actions[0]}")
-        namespace = kube.read_object(ctx, "namespace", NAMESPACE)
-        if namespace is not None:
-            labels = namespace.get("metadata", {}).get("labels", {})
-            if labels.get("app.kubernetes.io/managed-by") != "aap-demo-monitoring":
-                raise AddonError(
-                    f"refusing to use unowned namespace {NAMESPACE!r}",
-                    hint="The namespace is not labeled as managed by the monitoring addon.",
-                )
         state_dir = ctx.paths.addon_dir(NAME)
+        namespace = kube.read_object(ctx, "namespace", NAMESPACE)
+        ownership_token_path = state_dir / OWNERSHIP_TOKEN
+        namespace_uid_path = state_dir / NAMESPACE_UID
+        if namespace is not None:
+            _verify_namespace_ownership(namespace, ownership_token_path, namespace_uid_path)
+            ownership_token = ownership_token_path.read_text(encoding="utf-8").strip()
+        else:
+            ownership_token = secrets.token_hex(16)
+            state_dir.mkdir(parents=True, exist_ok=True)
+            ownership_token_path.write_text(ownership_token + "\n", encoding="utf-8")
+            ownership_token_path.chmod(0o600)
         state_dir.mkdir(parents=True, exist_ok=True)
         password_path = state_dir / STATE_PASSWORD
         password = (
@@ -426,9 +455,17 @@ class MonitoringAddon:
         aap_password = _aap_password(ctx)
         kube.apply_or_raise(
             ctx,
-            _manifest(_documents(password, aap_password, ctx.namespace)),
+            _manifest(_documents(password, aap_password, ctx.namespace, ownership_token)),
             message="could not install monitoring addon",
         )
+        if namespace is None:
+            applied_namespace = kube.read_object(ctx, "namespace", NAMESPACE)
+            metadata = (applied_namespace or {}).get("metadata", {})
+            namespace_uid = metadata.get("uid")
+            if not namespace_uid:
+                raise AddonError("monitoring namespace has no stable UID after apply")
+            namespace_uid_path.write_text(str(namespace_uid) + "\n", encoding="utf-8")
+            namespace_uid_path.chmod(0o600)
         _wait_for_readiness(ctx)
         names = enabled_names(ctx)
         if NAME not in names:
@@ -441,12 +478,10 @@ class MonitoringAddon:
         del args
         namespace = kube.read_object(ctx, "namespace", NAMESPACE)
         if namespace is not None:
-            labels = namespace.get("metadata", {}).get("labels", {})
-            if labels.get("app.kubernetes.io/managed-by") != "aap-demo-monitoring":
-                raise AddonError(
-                    f"refusing to delete unowned namespace {NAMESPACE!r}",
-                    hint="The namespace is not labeled as managed by the monitoring addon.",
-                )
+            state_dir = ctx.paths.addon_dir(NAME)
+            _verify_namespace_ownership(
+                namespace, state_dir / OWNERSHIP_TOKEN, state_dir / NAMESPACE_UID
+            )
         result = kubectl.delete(ctx.runner, "namespace", NAMESPACE, "--ignore-not-found")
         if not result.ok:
             raise AddonError(
@@ -498,6 +533,34 @@ def _say(ctx: AppContext, message: str, **fields: object) -> None:
         for key, value in fields.items():
             if value:
                 ctx.console.out(f"{key}: {value}")
+
+
+def _verify_namespace_ownership(
+    namespace: Dict[str, Any], token_path: Path, uid_path: Path
+) -> None:
+    metadata = namespace.get("metadata", {})
+    labels = metadata.get("labels", {})
+    if labels.get(OWNERSHIP_LABEL) != MANAGED_BY:
+        raise AddonError(
+            f"refusing to use unowned namespace {NAMESPACE!r}",
+            hint="The namespace is not labeled as managed by the monitoring addon.",
+        )
+    if (
+        not token_path.exists()
+        or labels.get(OWNERSHIP_TOKEN_LABEL) != token_path.read_text(encoding="utf-8").strip()
+    ):
+        raise AddonError(
+            f"refusing to use unowned namespace {NAMESPACE!r}",
+            hint="The monitoring ownership token does not match.",
+        )
+    if (
+        not uid_path.exists()
+        or str(metadata.get("uid") or "") != uid_path.read_text(encoding="utf-8").strip()
+    ):
+        raise AddonError(
+            f"refusing to use unowned namespace {NAMESPACE!r}",
+            hint="The monitoring namespace UID does not match.",
+        )
 
 
 def _aap_password(ctx: AppContext) -> str:

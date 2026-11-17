@@ -10,8 +10,10 @@ import os
 import pytest
 
 from aap_demo.addons import get
+from aap_demo.addons.monitoring import NAMESPACE_UID, OWNERSHIP_TOKEN, OWNERSHIP_TOKEN_LABEL
 from aap_demo.cli import observe
 from aap_demo.core.errors import AddonError
+from aap_demo.exec.runner import CompletedCommand
 
 
 def test_monitoring_is_a_native_public_addon() -> None:
@@ -23,7 +25,23 @@ def test_monitoring_is_a_native_public_addon() -> None:
 
 def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -> None:
     addon = get("monitoring")
-    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
+    namespace_reads = iter(
+        [
+            CompletedCommand(
+                argv=("kubectl", "get", "namespace", "aap-monitoring"),
+                returncode=1,
+                stderr="NotFound",
+            ),
+            CompletedCommand(
+                argv=("kubectl", "get", "namespace", "aap-monitoring"),
+                returncode=0,
+                stdout=json.dumps({"metadata": {"uid": "monitoring-uid"}}),
+            ),
+        ]
+    )
+    app_ctx.runner.register(
+        ["kubectl", "get", "namespace", "aap-monitoring"], lambda _: next(namespace_reads)
+    )
     app_ctx.runner.ok(
         ["kubectl", "get", "secret", "aap-admin-password"],
         stdout=json.dumps({"data": {"password": base64.b64encode(b"aap-password").decode()}}),
@@ -59,6 +77,11 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
         ]
         == "aap-gateway"
     )
+    assert any(
+        rule["to"][0]["namespaceSelector"]["matchLabels"].get("kubernetes.io/metadata.name")
+        == "openshift-dns"
+        for rule in policy["spec"]["egress"]
+    )
     provisioning = [
         item for item in applied if item.get("metadata", {}).get("name") == "grafana-provisioning"
     ]
@@ -74,7 +97,23 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
 
 def test_enable_uses_configured_aap_namespace(app_ctx) -> None:
     app_ctx.config.set("core.namespace", "custom-aap")
-    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
+    namespace_reads = iter(
+        [
+            CompletedCommand(
+                argv=("kubectl", "get", "namespace", "aap-monitoring"),
+                returncode=1,
+                stderr="NotFound",
+            ),
+            CompletedCommand(
+                argv=("kubectl", "get", "namespace", "aap-monitoring"),
+                returncode=0,
+                stdout=json.dumps({"metadata": {"uid": "monitoring-uid"}}),
+            ),
+        ]
+    )
+    app_ctx.runner.register(
+        ["kubectl", "get", "namespace", "aap-monitoring"], lambda _: next(namespace_reads)
+    )
     app_ctx.runner.ok(
         ["kubectl", "get", "secret", "aap-admin-password"],
         stdout=json.dumps({"data": {"password": base64.b64encode(b"aap-password").decode()}}),
@@ -107,10 +146,22 @@ def test_disable_deletes_only_owned_namespace(app_ctx) -> None:
     addon = get("monitoring")
     app_ctx.config.set("addons.enabled", ["monitoring"])
     app_ctx.config.save()
+    state_dir = app_ctx.paths.addon_dir("monitoring")
+    state_dir.mkdir(parents=True)
+    (state_dir / OWNERSHIP_TOKEN).write_text("token\n", encoding="utf-8")
+    (state_dir / NAMESPACE_UID).write_text("monitoring-uid\n", encoding="utf-8")
     app_ctx.runner.ok(
         ["kubectl", "get", "namespace", "aap-monitoring"],
         stdout=json.dumps(
-            {"metadata": {"labels": {"app.kubernetes.io/managed-by": "aap-demo-monitoring"}}}
+            {
+                "metadata": {
+                    "uid": "monitoring-uid",
+                    "labels": {
+                        "app.kubernetes.io/managed-by": "aap-demo-monitoring",
+                        OWNERSHIP_TOKEN_LABEL: "token",
+                    },
+                }
+            }
         ),
     )
     app_ctx.runner.ok(["kubectl", "delete", "namespace", "aap-monitoring"])
