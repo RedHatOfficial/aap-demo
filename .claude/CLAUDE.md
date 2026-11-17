@@ -113,6 +113,11 @@ Three Claude Code skills are available to guide common development workflows:
 
 **IMPORTANT**: When making architectural decisions (new addons, platform support, deployment model changes, CLI modifications, storage/networking changes, security model updates), **always create an ADR first** using the `/aap-adr` skill.
 
+If the change has a related local plan or specification under
+`docs/superpowers/`, review it as working input and integrate its relevant
+context, decision, consequences, alternatives, and references into the ADR.
+Those files are local-only and must not be added to the pull request.
+
 ADRs document:
 - Why the decision was made (context and constraints)
 - What approach was chosen (decision)
