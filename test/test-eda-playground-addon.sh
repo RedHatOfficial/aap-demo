@@ -246,4 +246,9 @@ MOCK_DELETE_LOG="$MOCK_BIN/deletes" MOCK_NAMESPACE_EXISTS=yes MOCK_NAMESPACE_OWN
 [ "$(cat "$MOCK_BIN/deletes")" = deleted ] || fail "cleanup should delete its owned namespace"
 [ "$HOME_STATE_BEFORE" = "$(home_state_fingerprint)" ] || fail "static checks changed real home OAuth state"
 
+# gawk 5.2+ rejects its reserved words as -v variable names; BSD awk and mawk accept them.
+if grep -nE 'awk[^|]*-v[[:space:]]+(namespace|func|function|BEGINFILE|ENDFILE|switch|case|default|nextfile|delete|getline)=' "$ADDON_DIR/deploy.sh"; then
+  fail "deploy.sh passes a gawk reserved word as an awk -v variable"
+fi
+
 echo "PASS: EDA Playground addon static checks"

@@ -6,7 +6,27 @@ function Invoke-AapDemoDiagnose {
   )
 
   if ($Ai) {
-    throw 'diagnose --ai has no native PowerShell provider yet. Use the native checks or install an explicitly supported AI provider.'
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $python) { $python = Get-Command python3 -ErrorAction SilentlyContinue }
+    if ($python) {
+      if ($Namespace) { $env:NAMESPACE = $Namespace }
+      & $python.Source -m aap_demo diagnose --ai
+      if ($LASTEXITCODE -ne 0) {
+        throw "diagnose --ai failed (exit code: $LASTEXITCODE)"
+      }
+      return
+    }
+    $bashScript = Join-Path $Script:AapDemoRepoRoot 'aap-demo.sh'
+    $bash = Get-Command bash -ErrorAction SilentlyContinue
+    if (-not $bash) {
+      throw 'diagnose --ai needs the Python aap-demo package (pipx install aap-demo) or bash (Git Bash/WSL).'
+    }
+    if ($Namespace) { $env:NAMESPACE = $Namespace }
+    & $bash.Source $bashScript diagnose --ai
+    if ($LASTEXITCODE -ne 0) {
+      throw "diagnose --ai failed (exit code: $LASTEXITCODE)"
+    }
+    return
   }
 
   $counts = @{ Issues = 0; Warnings = 0 }

@@ -142,22 +142,160 @@ function Ensure-AapAoCatalogSource {
   throw "AO CatalogSource did not become READY in $Namespace"
 }
 
-function Ensure-AapAoCloudNativePg {
-  foreach ($scc in @('anyuid', 'privileged')) {
-    Invoke-AapAoSccGrant -Scc $scc -ServiceAccount 'cnpg-manager' -Namespace 'cnpg-system'
+function Get-AapAoPostgresStorageClass {
+  # PostgreSQL wants block storage, not NFS: topolvm-provisioner, else the
+  # cluster's default class unless that is the NFS one. Never AO's shared class.
+  $explicit = Get-AapAoSetting -Name 'AO_POSTGRES_STORAGE_CLASS'
+  if ($explicit) { return $explicit }
+  if ((Invoke-AapKubectlNative -Arguments @('get', 'sc', 'topolvm-provisioner') -AllowFailure).Success) {
+    return 'topolvm-provisioner'
   }
-  $crdsReady = (Invoke-AapKubectlNative -Arguments @('get', 'crd', 'clusters.postgresql.cnpg.io') -AllowFailure).Success -and
-    (Invoke-AapKubectlNative -Arguments @('get', 'crd', 'databases.postgresql.cnpg.io') -AllowFailure).Success
-  $controller = Invoke-AapKubectlNative -Arguments @('get', 'deployment', 'cnpg-controller-manager', '-n', 'cnpg-system') -AllowFailure
-  if ($crdsReady -and $controller.Success) {
-    Invoke-AapKubectlNative -Arguments @('wait', '--for=condition=Available', 'deployment/cnpg-controller-manager', '-n', 'cnpg-system', '--timeout=300s') | Out-Null
-    return
+  $classes = Get-AapKubectlJson -Arguments @('get', 'sc')
+  foreach ($class in @($classes.items)) {
+    $annotations = $class.metadata.annotations
+    if ($annotations -and $annotations.PSObject.Properties['storageclass.kubernetes.io/is-default-class'] -and
+        $annotations.'storageclass.kubernetes.io/is-default-class' -eq 'true' -and
+        $class.metadata.name -ne 'nfs-local-rwx') {
+      return $class.metadata.name
+    }
+  }
+  throw "No block StorageClass found for AO's PostgreSQL. Set AO_POSTGRES_STORAGE_CLASS to a ReadWriteOnce block StorageClass."
+}
+
+function Get-AapAoPostgresImage {
+  # AAP's own PostgreSQL 15 image is already on the node (ADR-043).
+  $explicit = Get-AapAoSetting -Name 'AO_POSTGRES_IMAGE'
+  if ($explicit) { return $explicit }
+  $sets = Get-AapKubectlJson -Arguments @('get', 'statefulset', '-n', $Script:AapDemoDefaultNamespace)
+  foreach ($set in @($sets.items)) {
+    foreach ($container in @($set.spec.template.spec.containers)) {
+      if ($container.image -match '/rhel[0-9]+/postgresql-15[@:]') { return $container.image }
+    }
+  }
+  return 'registry.redhat.io/rhel9/postgresql-15'
+}
+
+function Reset-AapAoPostgresStorage {
+  # --force starts AO on an empty database, as the macOS and Linux installer does.
+  param([Parameter(Mandatory)][string]$Namespace)
+  Write-Host 'Resetting PostgreSQL for a fresh database...'
+  Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'delete', 'statefulset', 'orchestrator-postgres', '-n', $Namespace, '--ignore-not-found', '--wait=true'
+  ) | Out-Null
+  Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'wait', '--for=delete', 'pod/orchestrator-postgres-0', '-n', $Namespace, '--timeout=180s'
+  ) | Out-Null
+  # Check what is left rather than the exit codes above: kubectl wait on a pod
+  # that is already gone fails on some kubectl versions.
+  foreach ($left in @('statefulset/orchestrator-postgres', 'pod/orchestrator-postgres-0')) {
+    if (-not (Test-AapAoResourceAbsent -Namespace $Namespace -Resource $left)) {
+      throw "$left is still present or could not be checked; refusing to delete its PVC"
+    }
+  }
+  if (Test-AapAoResourceAbsent -Namespace $Namespace -Resource 'pvc/data-orchestrator-postgres-0') { return }
+  Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'delete', 'pvc', 'data-orchestrator-postgres-0', '-n', $Namespace, '--wait=false'
+  ) | Out-Null
+  $gone = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'wait', '--for=delete', 'pvc/data-orchestrator-postgres-0', '-n', $Namespace, '--timeout=180s'
+  )
+  if (-not $gone.Success) { throw 'PostgreSQL PVC did not finish deleting; refusing to recreate AO' }
+}
+
+function Test-AapAoResourceAbsent {
+  # True only when the API server answers that the resource does not exist.
+  # Any other error (API unreachable, RBAC) counts as present.
+  param([Parameter(Mandatory)][string]$Namespace, [Parameter(Mandatory)][string]$Resource)
+  $result = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', $Resource, '-n', $Namespace, '--ignore-not-found', '-o', 'name'
+  )
+  return ($result.Success -and -not ([string]$result.Stdout).Trim())
+}
+
+function Get-AapAoSecretValue {
+  param([Parameter(Mandatory)][string]$Namespace, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Key)
+  $escaped = $Key.Replace('.', '\.')
+  $result = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', 'secret', $Name, '-n', $Namespace, '-o', "jsonpath={.data.$escaped}"
+  )
+  if (-not ($result.Success -and $result.Stdout -and $result.Stdout.Trim())) { return $null }
+  [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($result.Stdout.Trim()))
+}
+
+function Restart-AapAoPostgresClients {
+  # AO's pods read the CA Secret only when they start. The operator does not
+  # connect to PostgreSQL and is left running.
+  param([Parameter(Mandatory)][string]$Namespace)
+  $list = Invoke-AapKubectlNative -AllowFailure -Arguments @('get', 'deployment', '-n', $Namespace, '-o', 'name')
+  # The CA Secret is already updated, so a later enable would not retry the restart.
+  if (-not $list.Success) {
+    throw "Could not list AO deployments to restart them for the renewed PostgreSQL CA; run: kubectl rollout restart deployment -n $Namespace"
+  }
+  foreach ($deployment in @($list.Stdout -split "`r?`n" | Where-Object { $_ })) {
+    if ($deployment -like '*-operator-controller-manager') { continue }
+    if ($deployment -notlike '*/automation-orchestrator-*') { continue }
+    Invoke-AapKubectlNative -Arguments @('rollout', 'restart', $deployment, '-n', $Namespace) | Out-Null
+  }
+}
+
+function Ensure-AapAoPostgres {
+  param([Parameter(Mandatory)][string]$Namespace, [switch]$Reset)
+
+  if ($Reset) { Reset-AapAoPostgresStorage -Namespace $Namespace }
+
+  # Both values go into the YAML, so allow only image and name characters.
+  $image = Get-AapAoPostgresImage
+  if ($image -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9._/:@-]*\z') { throw "PostgreSQL image '$image' is not a valid image reference" }
+  $storageClass = Get-AapAoPostgresStorageClass
+  if ($storageClass -cnotmatch '\A[a-z0-9]([a-z0-9.-]*[a-z0-9])?\z') { throw "StorageClass '$storageClass' is not a valid name" }
+  $postgres = New-AapAoManifestFile -Name 'postgres.yaml' -Replacements @{
+    '__NAMESPACE__' = $Namespace
+    '__STORAGE_CLASS__' = $storageClass
+    '__POSTGRES_IMAGE__' = $image
+  }
+  try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $postgres) | Out-Null }
+  finally { Remove-Item -LiteralPath $postgres -Force -ErrorAction SilentlyContinue }
+
+  # The CR's caCertSecretRef names orchestrator-postgres-ca. service-ca signs the
+  # server certificate and publishes its CA in the -ca-bundle ConfigMap.
+  $ca = $null
+  for ($i = 0; $i -lt 120; $i += 2) {
+    $result = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'get', 'configmap', 'orchestrator-postgres-ca-bundle', '-n', $Namespace, '-o', 'jsonpath={.data.service-ca\.crt}'
+    )
+    if ($result.Success -and $result.Stdout -and $result.Stdout.Trim()) { $ca = $result.Stdout; break }
+    Start-Sleep -Seconds 2
+  }
+  if (-not $ca) { throw 'service-ca did not issue the PostgreSQL certificate within 2 minutes' }
+  # Each enable copies the CA again. When service-ca has rotated it, AO's
+  # running pods still trust the old one until they restart.
+  $previous = Get-AapAoSecretValue -Namespace $Namespace -Name 'orchestrator-postgres-ca' -Key 'ca.crt'
+  $rotated = $previous -and ($previous.TrimEnd() -ne $ca.TrimEnd())
+  $manifest = [ordered]@{
+    apiVersion = 'v1'; kind = 'Secret'; metadata = @{ name = 'orchestrator-postgres-ca'; namespace = $Namespace }
+    type = 'Opaque'; stringData = @{ 'ca.crt' = $ca }
+  }
+  $path = New-AapAoJsonFile -Object $manifest
+  try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $path) | Out-Null }
+  finally { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
+  if ($rotated) {
+    Write-AapStep 'PostgreSQL CA renewed by service-ca; restarting AO to trust it'
+    Restart-AapAoPostgresClients -Namespace $Namespace
   }
 
-  $version = Get-AapAoSetting -Name 'CNPG_VERSION' -Default '1.25.1'
-  $url = "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v$version/cnpg-$version.yaml"
-  Invoke-AapKubectlNative -Arguments @('apply', '--server-side', '-f', $url) | Out-Null
-  Invoke-AapKubectlNative -Arguments @('wait', '--for=condition=Available', 'deployment/cnpg-controller-manager', '-n', 'cnpg-system', '--timeout=300s') | Out-Null
+  Invoke-AapKubectlNative -Arguments @('rollout', 'status', 'statefulset/orchestrator-postgres', '-n', $Namespace, '--timeout=600s') | Out-Null
+  foreach ($database in @('temporal', 'temporal_visibility')) {
+    $exists = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'exec', '-n', $Namespace, 'orchestrator-postgres-0', '--', 'psql', '-U', 'postgres', '-tAc',
+      "SELECT 1 FROM pg_database WHERE datname='$database'"
+    )
+    if (-not ($exists.Success -and $exists.Stdout -and $exists.Stdout.Trim() -eq '1')) {
+      Invoke-AapKubectlNative -Arguments @(
+        'exec', '-n', $Namespace, 'orchestrator-postgres-0', '--', 'psql', '-U', 'postgres', '-c',
+        "CREATE DATABASE `"$database`" OWNER orchestrator"
+      ) | Out-Null
+    }
+  }
 }
 
 function Wait-AapAoOperator {
@@ -316,11 +454,48 @@ function Invoke-AapAoAddonNative {
     throw 'AO dependency mcp-server is not deployed'
   }
 
+  # An install from before ADR-043 keeps AO's database in CloudNativePG. Stop
+  # before any change unless a forced reinstall was asked for.
+  $force = [bool](($ScriptArgs -contains '--force') -or (Get-AapAoSetting -Name 'FORCE'))
+  $cnpg = (Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'get', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace
+    )).Success
+  if ($cnpg) {
+    if (-not $force) {
+      # As on macOS and Linux, a running CNPG-backed AO is left alone, with a note.
+      $instance = Get-AapKubectlJson -Arguments @('get', 'automationorchestrator', 'automation-orchestrator', '-n', $Namespace)
+      $conditions = if ($instance -and $instance.PSObject.Properties['status'] -and $instance.status.PSObject.Properties['conditions']) {
+        @($instance.status.conditions)
+      } else {
+        @()
+      }
+      $ready = @($conditions | Where-Object { $_.type -eq 'Ready' -and $_.status -eq 'True' })
+      if ($ready.Count -gt 0) {
+        Write-AapStep 'Automation Orchestrator already running'
+        Write-Host "  Its database is still in CloudNativePG, which aap-demo no longer uses."
+        Write-Host "  aap-demo enable ao --force moves AO to the new PostgreSQL and deletes AO's data."
+        Set-AapAoLocalAccess -Namespace $Namespace
+        return
+      }
+      Write-AapStep "This AO keeps its database in CloudNativePG, which aap-demo no longer uses"
+      throw "Run aap-demo enable ao --force to move it to the new PostgreSQL. That deletes AO's data."
+    }
+    Write-Host 'Removing the CloudNativePG database from an older AO install...'
+    Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'delete', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace, '--wait=true', '--timeout=180s'
+    ) | Out-Null
+    Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'delete', 'databases.postgresql.cnpg.io', '--all', '-n', $Namespace, '--wait=false'
+    ) | Out-Null
+    Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'delete', 'pvc', 'orchestrator-postgres-1', '-n', $Namespace, '--wait=false'
+    ) | Out-Null
+  }
+
   Write-Host 'Deploying Automation Orchestrator natively...'
   Ensure-AapAoNamespace -Namespace $Namespace
   Copy-AapAoPullSecret -Namespace $Namespace
   Ensure-AapAoCatalogSource -Namespace $Namespace
-  Ensure-AapAoCloudNativePg
   Ensure-AapAoDatabaseSecrets -Namespace $Namespace
 
   $channel = Get-AapAoSetting -Name 'AO_OPERATOR_CHANNEL' -Default 'stable'
@@ -336,11 +511,7 @@ function Invoke-AapAoAddonNative {
   }
   Wait-AapAoOperator -Namespace $Namespace
 
-  $postgres = New-AapAoManifestFile -Name 'postgres-cluster.yaml' -Replacements @{
-    '__NAMESPACE__' = $Namespace; '__STORAGE_CLASS__' = (Get-AapAoStorageClass)
-  }
-  try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $postgres) | Out-Null }
-  finally { Remove-Item -LiteralPath $postgres -Force -ErrorAction SilentlyContinue }
+  Ensure-AapAoPostgres -Namespace $Namespace -Reset:$force
 
   $replicas = Get-AapAoSetting -Name 'AO_REPLICA_COUNT' -Default '1'
   $domain = Get-AapClusterAppsDomain -Namespace $Script:AapDemoDefaultNamespace

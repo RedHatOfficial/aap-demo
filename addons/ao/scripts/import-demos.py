@@ -27,6 +27,10 @@ UPSTREAM_REPOSITORY = "https://github.com/ansible-tmm/aap-orchestrator-demos"
 UPSTREAM_REF = "abcc1a1482a"
 
 
+def archive_url(repository: str, ref: str) -> str:
+    return f"{repository.rstrip('/').removesuffix('.git')}/archive/{ref}.tar.gz"
+
+
 def download_archive(url: str, destination: Path) -> None:
     """Download a public archive using the host's native TLS trust."""
     download_env = os.environ.copy()
@@ -118,11 +122,11 @@ def workflow_sources(source_dir: str | None, repository: str, ref: str):
         yield Path(source_dir)
         return
 
-    archive_url = f"{repository.rstrip('/')}/archive/{ref}.tar.gz"
+    source_url = archive_url(repository, ref)
     with tempfile.TemporaryDirectory(prefix="aap-demo-ao-demos-") as temp_dir:
         archive_path = Path(temp_dir) / "demos.tar.gz"
         try:
-            download_archive(archive_url, archive_path)
+            download_archive(source_url, archive_path)
             extract_dir = Path(temp_dir) / "source"
             extract_dir.mkdir()
             with tarfile.open(archive_path, "r:gz") as archive:
@@ -133,11 +137,11 @@ def workflow_sources(source_dir: str | None, repository: str, ref: str):
                         raise RuntimeError("upstream demo archive contains an unsafe path")
                 archive.extractall(extract_dir)
         except (OSError, RuntimeError, tarfile.TarError, urllib.error.URLError) as exc:
-            raise RuntimeError(f"unable to download upstream demos from {archive_url}: {exc}") from exc
+            raise RuntimeError(f"unable to download upstream demos from {source_url}: {exc}") from exc
 
         roots = [path for path in extract_dir.iterdir() if path.is_dir()]
         if len(roots) != 1 or not (roots[0] / "demos").is_dir():
-            raise RuntimeError(f"upstream demo archive does not contain a demos directory: {archive_url}")
+            raise RuntimeError(f"upstream demo archive does not contain a demos directory: {source_url}")
         yield roots[0]
 
 

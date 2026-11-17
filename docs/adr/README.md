@@ -77,13 +77,17 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [032](032-open-issues-remediation-strategy.md) | Open Issue Remediation Strategy | Proposed |
 | [033](033-apme-local-oci-plugin-publishing.md) | APME Local OCI Plugin Publishing | Accepted |
 | [034](034-create-vm-size-prompt.md) | VM Size Prompt and Host Fit Check on Create | Accepted |
-| [035](035-remove-diagnose-ai.md) | Remove `diagnose --ai` from the Python CLI | Accepted |
+| [035](035-remove-diagnose-ai.md) | Remove `diagnose --ai` from the Python CLI | Superseded by [044](044-diagnose-ai-multi-backend.md) |
+| [044](044-diagnose-ai-multi-backend.md) | Restore `diagnose --ai` with Cursor/Claude backends | Accepted |
 | [036](036-subscription-manifest.md) | Apply a Subscription Manifest Only When Asked | Accepted |
 | [037](037-fleet-systemd-nodes.md) | Fleet Nodes Run systemd as PID 1 | Accepted |
 | [039](039-product-demos-on-v2-enable.md) | Product Demos Run from the New Enable Command | Accepted |
 | [040](040-addon-framework-and-bash-fallback.md) | Shared Addon Framework and Bash Fallback for the Python Command | Accepted |
-| [041](041-eda-playground-on-python-command.md) | EDA Playground on the Python Command | Accepted |
-| [042](042-monitoring-addon.md) | AAP-Focused Monitoring Addon | Proposed |
+| [041](041-openshift-5-on-crc.md) | OpenShift 5 on CRC | Accepted |
+| [042](042-eda-playground-on-python-command.md) | EDA Playground on the Python Command | Accepted |
+| [038](038-fleet-cloud-image-download.md) | Fleet Cloud Image Download | Accepted |
+| [045](045-monitoring-addon.md) | AAP-Focused Monitoring Addon | Proposed |
+| [043](043-ao-postgres-statefulset.md) | One PostgreSQL StatefulSet for Automation Orchestrator | Proposed |
 
 ## Creating a New ADR
 

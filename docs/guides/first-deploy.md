@@ -58,12 +58,8 @@ This builds the virtual machine only. It does not install AAP yet. If a cluster 
 is `CAP_NET_BIND_SERVICE`, so CRC can bind low ports without staying root. aap-demo does not
 run `setcap` itself. If sudo cannot prompt, `create` stops.
 
-To keep an older CRC that is already installed, lower the MicroShift floor for this command.
-This is the same override `deploy` accepts:
-
-```bash
-CRC_VERSION=4.21 aap-demo create
-```
+`create` builds the newest OpenShift version aap-demo supports. To build another one, such as
+OpenShift 5, see [Choose an OpenShift version](openshift-version.md).
 
 ## 3. Install AAP
 
@@ -78,6 +74,17 @@ if there is none and starts one that was stopped. It does not add extra demo con
 `status` prints the web address and the admin password. Open that address in your browser.
 
 AAP runs without a subscription, but it needs one before it can add hosts. See [Subscription](subscription.md).
+
+## Restart after a shutdown
+
+Run `aap-demo start` to start an existing cluster. If CRC cannot reach its daemon or
+`crc status` says CRC is not set up, run `aap-demo diagnose` for host checks. On macOS,
+`crc setup` can restore the launch agent; then check `crc status` and try `aap-demo start`
+again. Setup may ask for an administrator password. If a start is already in progress,
+let it finish before attempting recovery.
+
+The VM may still exist when CRC cannot report its status. Avoid `aap-demo destroy` or
+creating a replacement if you need the existing cluster: destroying it removes its data.
 
 ## Your cluster login file
 

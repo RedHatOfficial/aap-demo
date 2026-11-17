@@ -213,6 +213,14 @@ if [ -n "$saved_home" ]; then
   export HOME="$saved_home"
 fi
 
+# Bootstrap must pass the selected source through to the APD-managed project.
+bootstrap_vars=$(PRODUCT_DEMOS_REPO=https://example.invalid/fork PRODUCT_DEMOS_BRANCH=feature apd_common_extra_vars_yaml example-ee)
+if printf '%s\n' "$bootstrap_vars" | jq -e '.apd_git_repo == "https://example.invalid/fork" and .apd_git_repo_branch == "feature"' >/dev/null; then
+  pass "bootstrap_uses_selected_product_demos_source"
+else
+  fail "bootstrap_uses_selected_product_demos_source"
+fi
+
 echo ""
 echo "Passed: $PASSED  Failed: $FAILED"
 [ "$FAILED" -eq 0 ]

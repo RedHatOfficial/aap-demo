@@ -143,9 +143,13 @@ def test_wait_until_stable_needs_consecutive_healthy_samples() -> None:
         "crc status -o json",
         lambda argv: CompletedCommand(argv=argv, returncode=0, stdout=next(samples)),
     )
+    runner.ok(
+        "kubectl", stdout='{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}'
+    )
     slept = []
     assert infra_crc.wait_until_stable(
         runner,
+        kubeconfig=Path("/tmp/config"),
         samples=3,
         attempts=6,
         sleep_seconds=5,
@@ -160,5 +164,75 @@ def test_wait_until_stable_accepts_an_unreachable_status_when_the_api_answers() 
         "crc status -o json",
         stdout='{"crcStatus": "Running", "openshiftStatus": "Unreachable"}',
     )
-    runner.ok("kubectl get nodes", stdout="crc Ready")
-    assert infra_crc.wait_until_stable(runner, samples=1, attempts=1, sleep=lambda _s: None)
+    runner.ok(
+        "kubectl", stdout='{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}'
+    )
+    assert infra_crc.wait_until_stable(
+        runner, kubeconfig=Path("/tmp/config"), samples=1, attempts=1, sleep=lambda _s: None
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ('{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}', True),
+        ('{"items":[]}', False),
+        ('{"items":[{"status":{"conditions":[{"type":"Ready","status":"False"}]}}]}', False),
+        ('{"items":[{"status":{"conditions":[{"type":"Ready","status":"Unknown"}]}}]}', False),
+        ('{"items":[{"status":{}}]}', False),
+        ('{"items":[null]}', False),
+        ("invalid", False),
+    ],
+)
+def test_stability_requires_api_and_ready_node(body, expected, tmp_path) -> None:
+    runner = FakeRunner().ok(
+        "crc status", stdout='{"crcStatus":"Running","openshiftStatus":"Running"}'
+    )
+    runner.ok("kubectl", stdout=body)
+    assert (
+        infra_crc.wait_until_stable(
+            runner, kubeconfig=tmp_path / "config", samples=1, attempts=1, sleep=lambda _: None
+        )
+        is expected
+    )
+    call = runner.calls[-1]
+    assert str(tmp_path / "config") in call.argv
+    assert "--request-timeout=5s" in call.argv
+    assert call.timeout == 7
+
+
+def test_health_failure_guidance_includes_platform_logs(tmp_path) -> None:
+    mac = infra_crc.health_failure_hint({"HOME": str(tmp_path)}, "Darwin")
+    assert "crc status --log-level debug" in mac
+    assert str(tmp_path / ".crc/machines/crc/vfkit.log") in mac
+    assert "github.com/crc-org/crc/issues" in mac
+    assert "if present" in mac
+    linux = infra_crc.health_failure_hint({"HOME": str(tmp_path)}, "Linux")
+    assert "crc status --log-level debug" in linux
+    assert "vfkit.log" not in linux
+
+
+def test_stability_rejects_timed_out_api(tmp_path) -> None:
+    runner = FakeRunner().ok(
+        "crc status", stdout='{"crcStatus":"Running","openshiftStatus":"Running"}'
+    )
+    runner.register("kubectl", AapDemoError("timed out"))
+    assert not infra_crc.wait_until_stable(
+        runner, kubeconfig=tmp_path / "config", samples=1, attempts=1
+    )
+
+
+def test_node_readiness_loss_resets_stability_window(tmp_path) -> None:
+    ready = '{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}'
+    responses = iter([ready, '{"items":[]}', ready, ready, ready])
+    runner = FakeRunner().ok(
+        "crc status", stdout='{"crcStatus":"Running","openshiftStatus":"Running"}'
+    )
+    runner.register(
+        "kubectl", lambda argv: CompletedCommand(argv=argv, returncode=0, stdout=next(responses))
+    )
+    sleeps = []
+    assert infra_crc.wait_until_stable(
+        runner, kubeconfig=tmp_path / "config", samples=3, attempts=5, sleep=sleeps.append
+    )
+    assert len(sleeps) == 4

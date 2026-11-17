@@ -33,9 +33,12 @@ def test_kinds_and_listed_names() -> None:
     assert get("prometheus") is get("monitoring")
     assert get("product-demos").kind == "legacy"
     assert names() == [
+        "ao",
         "eda-playground",
         "fleet",
+        "mcp-server",
         "monitoring",
+        "ollama",
         "product-demo-satellite",
         "product-demos",
     ]
@@ -53,7 +56,7 @@ def test_needs_cluster_is_false_for_no_name_or_an_unknown_one(name) -> None:
 
 
 def test_unknown_addon_lists_what_is_implemented() -> None:
-    with pytest.raises(AddonError, match="implemented addons: eda-playground, fleet, monitoring"):
+    with pytest.raises(AddonError, match="implemented addons: ao, eda-playground, fleet"):
         get("portal")
 
 

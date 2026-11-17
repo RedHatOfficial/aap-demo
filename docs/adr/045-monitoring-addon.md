@@ -1,4 +1,4 @@
-# ADR-042: AAP-Focused Monitoring Addon
+# ADR-045: AAP-Focused Monitoring Addon
 
 **Status**: Proposed
 

@@ -531,12 +531,12 @@ fi
 REDIRECT="https://$ROUTE_HOST/auth/callback"
 
 # Build Secret JSON on stdin; command output and shell tracing never expose values.
-awk -v namespace="$NAMESPACE" '
+awk -v target_namespace="$NAMESPACE" '
   /^  name: eda-playground$/ && !namespace_name_seen {
-    sub(/eda-playground$/, namespace)
+    sub(/eda-playground$/, target_namespace)
     namespace_name_seen = 1
   }
-  /^  namespace: eda-playground$/ { sub(/eda-playground$/, namespace) }
+  /^  namespace: eda-playground$/ { sub(/eda-playground$/, target_namespace) }
   { print }
 ' "$SCRIPT_DIR/namespace.yaml" | kubectl apply -f - >/dev/null
 if ! {
