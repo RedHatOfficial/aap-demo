@@ -26,10 +26,15 @@ Users and groups:
 
 | User | Group | Password file |
 |---|---|---|
-| `aap-oidc-admin` | `aap-admins` | `aap-user-password` |
-| `aap-oidc-operator` | `aap-operators` | `ao-user-password` |
-| `aap-oidc-auditor` | `aap-auditors` | `aap-auditor-password` |
-| `aap-oidc-developer` | `aap-developers` | `aap-developer-password` |
+| `aap-oidc-admin` | `aap-admins` | `aap-oidc-admin-password` |
+| `aap-oidc-operator` | `aap-operators` | `aap-oidc-operator-password` |
+| `aap-oidc-auditor` | `aap-auditors` | `aap-oidc-auditor-password` |
+| `aap-oidc-developer` | `aap-developers` | `aap-oidc-developer-password` |
+
+When upgrading from an earlier version, the addon renames the old user-password
+files to these username-based filenames and preserves their contents. If both a
+legacy and username-based file exist for the same user, deployment stops so you
+can resolve which password is active without overwriting either file.
 
 Map these groups to AAP organizations, teams, and roles, and to AO roles when
 configuring each OIDC client. Keycloak emits membership in the `groups` claim.

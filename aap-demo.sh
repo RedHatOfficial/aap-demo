@@ -2151,8 +2151,11 @@ cmd_status() {
         echo "------------"
         _cred_found=true
       fi
-      echo "  Keycloak users: aap-oidc-admin, aap-oidc-operator, aap-oidc-auditor, aap-oidc-developer"
-      echo "  Keycloak credential files: ${_keycloak_state_dir}/"
+      echo "  Keycloak user password files:"
+      echo "    aap-oidc-admin:     ${_keycloak_state_dir}/aap-oidc-admin-password"
+      echo "    aap-oidc-operator:  ${_keycloak_state_dir}/aap-oidc-operator-password"
+      echo "    aap-oidc-auditor:   ${_keycloak_state_dir}/aap-oidc-auditor-password"
+      echo "    aap-oidc-developer: ${_keycloak_state_dir}/aap-oidc-developer-password"
       echo ""
     fi
   fi
