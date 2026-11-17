@@ -113,7 +113,7 @@ def check(probe: HostProbe, rec: Any) -> HostFindings:
     data = probe.status()
     exists = probe.machine_exists()
     failed = False
-    if not data and exists:
+    if exists and infra_crc.state_from_status(data) == infra_crc.STATE_NOT_CREATED:
         findings.unresponsive = True
         failed = True
         rec.fail("CRC does not answer 'crc status', but a VM exists — a 'crc start' may be hung")
