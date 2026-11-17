@@ -67,7 +67,7 @@ if [ "$(<"$TMP_DIR/dst/tls.crt")" = "cert-2" ] && [ "$(<"$TMP_DIR/dst/tls.key")"
 else
   fail "the renewed certificate was not copied"
 fi
-if [ "$(ls -l "$TMP_DIR/dst/tls.key" | cut -c1-10)" = "-rw-------" ]; then
+if [ "$(stat -c '%a' "$TMP_DIR/dst/tls.key")" = "600" ]; then
   pass "the copied key is mode 0600"
 else
   fail "the copied key is not mode 0600"
@@ -111,6 +111,7 @@ RESTARTED=()
 APPLIED_FILE="$TMP_DIR/applied"
 applied() { cat "$APPLIED_FILE" 2>/dev/null; }
 
+# shellcheck disable=SC2329 # called indirectly by the sourced CA-sync functions
 kubectl() {
   case "$*" in
     "get configmap orchestrator-postgres-ca-bundle"*) printf '%s' "$BUNDLE_CA" ;;
@@ -150,7 +151,11 @@ sync_rc() {
 
 BUNDLE_CA="" STORED_CA=""
 rm -f "$APPLIED_FILE"
-[ "$(sync_rc)" = 2 ] && pass "no published CA returns 2" || fail "no published CA did not return 2"
+if [ "$(sync_rc)" = 2 ]; then
+  pass "no published CA returns 2"
+else
+  fail "no published CA did not return 2"
+fi
 
 BUNDLE_CA="ca-1" STORED_CA=""
 rm -f "$APPLIED_FILE"
@@ -201,6 +206,7 @@ LIST_FAIL=""
 PRESENT=""
 GET_ERROR=""
 CALLS_FILE="$TMP_DIR/reset-calls"
+# shellcheck disable=SC2329 # called indirectly by the sourced reset functions
 kubectl() {
   echo "$*" >>"$CALLS_FILE"
   case "$*" in
