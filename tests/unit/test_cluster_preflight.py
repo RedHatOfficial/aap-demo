@@ -283,14 +283,15 @@ def test_unported_commands_skip_the_preflight(
     assert "not yet implemented" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("status", ["", '{"crcStatus": "Unknown"}'])
 def test_a_vm_crc_cannot_answer_for_is_not_called_missing(
-    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path
+    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path, status: str
 ) -> None:
     machine = tmp_path / ".crc" / "machines" / "crc"
     machine.mkdir(parents=True)
     (machine / "config.json").write_text("{}", encoding="utf-8")
     app_ctx.env["HOME"] = str(tmp_path)
-    fake_runner.fail("crc status -o json")
+    fake_runner.ok("crc status -o json", stdout=status)
 
     preflight.warn_cluster_state(app_ctx)
 

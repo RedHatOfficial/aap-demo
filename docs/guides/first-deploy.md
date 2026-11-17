@@ -75,6 +75,17 @@ if there is none and starts one that was stopped. It does not add extra demo con
 
 AAP runs without a subscription, but it needs one before it can add hosts. See [Subscription](subscription.md).
 
+## Restart after a shutdown
+
+Run `aap-demo start` to start an existing cluster. If CRC cannot reach its daemon or
+`crc status` says CRC is not set up, run `aap-demo diagnose` for host checks. On macOS,
+`crc setup` can restore the launch agent; then check `crc status` and try `aap-demo start`
+again. Setup may ask for an administrator password. If a start is already in progress,
+let it finish before attempting recovery.
+
+The VM may still exist when CRC cannot report its status. Avoid `aap-demo destroy` or
+creating a replacement if you need the existing cluster: destroying it removes its data.
+
 ## Your cluster login file
 
 `create` saves a kubeconfig file at:

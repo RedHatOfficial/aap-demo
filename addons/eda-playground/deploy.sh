@@ -36,15 +36,18 @@ command -v kubectl >/dev/null 2>&1 || {
 case "$INSECURE_TLS" in
   true) CURL_INSECURE=true ;;
   false) CURL_INSECURE=false ;;
-  *) echo 'ERROR: EDA_PLAYGROUND_INSECURE_TLS must be true or false' >&2; exit 2 ;;
+  *)
+    echo 'ERROR: EDA_PLAYGROUND_INSECURE_TLS must be true or false' >&2
+    exit 2
+    ;;
 esac
 gateway_curl() {
   if [ "$CURL_INSECURE" = true ]; then
-    printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | \
-      curl --config - -fsS --insecure "$@" 2>/dev/null
+    printf 'user = "admin:%s"\n' "$CURL_PASSWORD" \
+      | curl --config - -fsS --insecure "$@" 2>/dev/null
   else
-    printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | \
-      curl --config - -fsS "$@" 2>/dev/null
+    printf 'user = "admin:%s"\n' "$CURL_PASSWORD" \
+      | curl --config - -fsS "$@" 2>/dev/null
   fi
 }
 

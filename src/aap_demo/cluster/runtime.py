@@ -87,7 +87,8 @@ def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> No
     if not started.ok:
         raise AapDemoError(
             f"crc start failed (exit {started.returncode})",
-            hint="Check: crc status",
+            hint="Check: crc status; run aap-demo diagnose for host checks.\n"
+            "  If CRC says it is not set up, run: crc setup",
         )
     preflight.setup_kubeconfig(ctx)
     preflight.require_local_kubeconfig(ctx)

@@ -21,6 +21,18 @@ ls docs/adr/
 
 To create a new ADR, copy `docs/adr/000-template.md` and follow the numbering convention.
 
+### Superpowers plans and specs
+
+`docs/superpowers/` is a local working area for generated or in-progress plans and
+specifications, so it is ignored by Git. Treat those documents as inputs to the
+architecture process, not as a replacement for an ADR.
+
+Before implementing or opening a pull request for work that changes architecture,
+review the relevant superpowers plan or spec and the existing ADRs. Create a new
+ADR or update the applicable ADR so it records the plan's context, decision, and
+consequences, and link the ADR from the implementation or pull request when useful.
+The ADR is the durable source of truth after the plan has been integrated.
+
 ## API Access Patterns
 
 ### Always use the Gateway API, not direct controller access

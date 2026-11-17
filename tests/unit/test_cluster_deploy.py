@@ -780,6 +780,8 @@ def test_an_unreadable_status_never_creates_over_an_existing_vm(
         deploy_mod.ensure_cluster_running(app_ctx)
     assert "could not be read" in excinfo.value.message
     assert "which crc" in (excinfo.value.hint or "")
+    assert "crc setup" in (excinfo.value.hint or "")
+    assert "destroy" not in (excinfo.value.hint or "")
     assert calls == []
 
 
