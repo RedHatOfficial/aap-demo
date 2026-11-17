@@ -20,6 +20,7 @@ The [project home page](../README.md) is the short start. These pages are the re
 - [Subscription](guides/subscription.md) - Get a manifest and apply it, or sign in through AAP.
 - [Daily use](guides/daily-use.md) - Start, stop, pause, and check the cluster.
 - [Add-ons](guides/addons.md) - Practice machines, product demos, and extras that still use the older command.
+- [Monitoring](monitoring.md) - Optional AAP-focused Prometheus and Grafana dashboards.
 - [The older command](guides/older-command.md) - Keep using the bash command for work that has not moved over.
 
 ## Concepts
