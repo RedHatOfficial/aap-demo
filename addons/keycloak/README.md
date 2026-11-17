@@ -76,12 +76,18 @@ AO group claim extraction is configured as `groups[*]`; lab mode allows all
 authenticated users.
 AO-to-AAP job execution must continue using a separate AAP API key/PAT.
 
-Configuration verifies TLS by default. On CRC/MicroShift installations using the
-local self-signed ingress certificate, set `KEYCLOAK_INSECURE_TLS=true` explicitly
-to disable verification for the configure script and the AAP authenticator's
-Keycloak token exchange through `ADDITIONAL_UNVERIFIED_ARGS.VERIFY_SSL`.
-`KEYCLOAK_CA_FILE=/path/to/ingress-ca.crt` supplies a CA to the configure script's
-own requests; the Gateway pod has a separate trust store.
+Configuration verifies TLS by default. Set `KEYCLOAK_CA_FILE` if the ingress CA
+is not at the default aap-demo path. When applying AAP configuration with a CA
+file available, the script merges it into the AAP `bundle-ca-secret`, links that
+secret through `spec.bundle_cacert_secret`, and waits for the Gateway rollout.
+This makes Gateway trust the local Keycloak route while keeping certificate
+verification enabled. The AAP CA bundle is shared across AAP services, so an
+existing bundle is preserved and extended.
+
+On CRC/MicroShift, `KEYCLOAK_INSECURE_TLS=true` remains available as an explicit
+local-lab fallback to disable verification for the configure script and AAP's
+Keycloak token exchange through `ADDITIONAL_UNVERIFIED_ARGS.VERIFY_SSL`. It is
+not needed after Gateway trusts the ingress CA.
 The AO redirect URI used by `enable keycloak` is retained under
 `~/.aap-demo/keycloak/` so a later configure run continues to match the registered
 Keycloak client.

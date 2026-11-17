@@ -80,10 +80,24 @@ esac
 
 for cmd in kubectl jq curl; do require_cmd "$cmd"; done
 KEYCLOAK_INSECURE_TLS="${KEYCLOAK_INSECURE_TLS:-false}"
+KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-}"
+if [ -z "$KEYCLOAK_CA_FILE" ]; then
+  for _candidate_ca in \
+    "${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt" \
+    "${HOME}/.local/state/aap-demo/certs/crc-ingress-ca.crt"; do
+    if [ -s "$_candidate_ca" ]; then
+      KEYCLOAK_CA_FILE="$_candidate_ca"
+      break
+    fi
+  done
+fi
 case "$KEYCLOAK_INSECURE_TLS" in
   true) CURL_TLS_ARGS=(-k) ;;
   false)
-    KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-${HOME}/.aap-demo/crc-ingress-ca.crt}"
+    if [ -n "$KEYCLOAK_CA_FILE" ] && [ ! -s "$KEYCLOAK_CA_FILE" ]; then
+      echo "ERROR: KEYCLOAK_CA_FILE does not exist or is empty: ${KEYCLOAK_CA_FILE}" >&2
+      exit 1
+    fi
     CURL_TLS_ARGS=()
     [ -s "$KEYCLOAK_CA_FILE" ] && CURL_TLS_ARGS+=(--cacert "$KEYCLOAK_CA_FILE")
     ;;
@@ -203,6 +217,111 @@ REQUEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aap-demo-keycloak-configure.XXXXXX")"
 chmod 700 "$REQUEST_DIR"
 cleanup_request_files() { rm -rf "$REQUEST_DIR"; }
 trap cleanup_request_files EXIT
+
+ensure_aap_ca_trust() {
+  [ "$KEYCLOAK_INSECURE_TLS" = false ] || return 0
+  [ -s "$KEYCLOAK_CA_FILE" ] || return 0
+  require_cmd openssl
+
+  local aap_cr current_secret bundle_secret existing_bundle merged_bundle
+  aap_cr="$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  [ -n "$aap_cr" ] || {
+    echo "ERROR: no AAP custom resource found in namespace ${NAMESPACE}" >&2
+    exit 1
+  }
+  current_secret="$(kubectl get aap "$aap_cr" -n "$NAMESPACE" -o jsonpath='{.spec.bundle_cacert_secret}' 2>/dev/null || true)"
+  bundle_secret="${current_secret:-bundle-ca-secret}"
+  existing_bundle="$REQUEST_DIR/existing-bundle-ca.crt"
+  merged_bundle="$REQUEST_DIR/bundle-ca.crt"
+  : >"$existing_bundle"
+
+  if kubectl get secret "$bundle_secret" -n "$NAMESPACE" >/dev/null 2>&1; then
+    local encoded_bundle
+    encoded_bundle="$(kubectl get secret "$bundle_secret" -n "$NAMESPACE" -o jsonpath='{.data.bundle-ca\.crt}')"
+    [ -n "$encoded_bundle" ] || {
+      echo "ERROR: Secret ${bundle_secret} has no bundle-ca.crt key; refusing to replace it" >&2
+      exit 1
+    }
+    printf '%s' "$encoded_bundle" | base64 -d >"$existing_bundle" || {
+      echo "ERROR: could not decode bundle-ca.crt from Secret ${bundle_secret}" >&2
+      exit 1
+    }
+  elif [ -n "$current_secret" ]; then
+    echo "ERROR: AAP references missing CA bundle Secret ${current_secret}" >&2
+    exit 1
+  fi
+
+  local cert_dir="$REQUEST_DIR/ingress-certs" existing_dir="$REQUEST_DIR/existing-certs"
+  mkdir -p "$cert_dir" "$existing_dir"
+  split_certificates() {
+    local input="$1" output_dir="$2"
+    awk -v dir="$output_dir" '
+      /-----BEGIN CERTIFICATE-----/ { total++; active=1; file=sprintf("%s/cert-%04d.pem", dir, total) }
+      active { print > file }
+      /-----END CERTIFICATE-----/ { close(file); active=0 }
+      END { if (active) exit 1 }
+    ' "$input"
+  }
+  split_certificates "$KEYCLOAK_CA_FILE" "$cert_dir" || {
+    echo "ERROR: KEYCLOAK_CA_FILE is not a valid PEM certificate bundle: ${KEYCLOAK_CA_FILE}" >&2
+    exit 1
+  }
+  [ -n "$(find "$cert_dir" -type f -name 'cert-*.pem' -print -quit)" ] || {
+    echo "ERROR: KEYCLOAK_CA_FILE contains no PEM certificates: ${KEYCLOAK_CA_FILE}" >&2
+    exit 1
+  }
+
+  local fingerprints="$REQUEST_DIR/ca-fingerprints" cert fingerprint
+  : >"$fingerprints"
+  if [ -s "$existing_bundle" ]; then
+    split_certificates "$existing_bundle" "$existing_dir" || {
+      echo "ERROR: existing CA bundle Secret ${bundle_secret} is not valid PEM" >&2
+      exit 1
+    }
+    [ -n "$(find "$existing_dir" -type f -name 'cert-*.pem' -print -quit)" ] || {
+      echo "ERROR: existing CA bundle Secret ${bundle_secret} contains no PEM certificates" >&2
+      exit 1
+    }
+    cat "$existing_bundle" >"$merged_bundle"
+    while IFS= read -r cert; do
+      fingerprint="$(openssl x509 -in "$cert" -noout -fingerprint -sha256 | sed 's/^[^=]*=//')"
+      printf '%s\n' "$fingerprint" >>"$fingerprints"
+    done < <(find "$existing_dir" -type f -name 'cert-*.pem' -print | sort)
+  else
+    : >"$merged_bundle"
+  fi
+  while IFS= read -r cert; do
+    fingerprint="$(openssl x509 -in "$cert" -noout -fingerprint -sha256 | sed 's/^[^=]*=//')"
+    if ! grep -Fqx "$fingerprint" "$fingerprints"; then
+      cat "$cert" >>"$merged_bundle"
+      printf '%s\n' "$fingerprint" >>"$fingerprints"
+    fi
+  done < <(find "$cert_dir" -type f -name 'cert-*.pem' -print | sort)
+
+  kubectl create secret generic "$bundle_secret" -n "$NAMESPACE" \
+    --from-file="bundle-ca.crt=$merged_bundle" --dry-run=client -o yaml \
+    | kubectl apply -f - >/dev/null
+  if [ "$current_secret" != "$bundle_secret" ]; then
+    kubectl patch aap "$aap_cr" -n "$NAMESPACE" --type=merge \
+      -p "$(jq -nc --arg secret "$bundle_secret" '{spec:{bundle_cacert_secret:$secret}}')" >/dev/null
+  fi
+
+  local gateway_deployments deployment
+  gateway_deployments="$(kubectl get deployments -n "$NAMESPACE" -l app.kubernetes.io/component=aap-gateway -o name)"
+  [ -n "$gateway_deployments" ] || {
+    echo "ERROR: unable to find the AAP Gateway deployment to verify CA bundle rollout" >&2
+    exit 1
+  }
+  while IFS= read -r deployment; do
+    [ -n "$deployment" ] || continue
+    kubectl rollout status "$deployment" -n "$NAMESPACE" --timeout="${AAP_GATEWAY_ROLLOUT_TIMEOUT:-5m}"
+  done <<<"$gateway_deployments"
+  echo "✓ AAP Gateway trusts the Keycloak ingress CA (TLS verification remains enabled)"
+}
+
+if [ "$TARGET" != ao ]; then
+  ensure_aap_ca_trust
+fi
 
 if [ "$TARGET" != ao ]; then
   AAP_PASSWORD="$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' | base64 -d)"
