@@ -84,6 +84,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [040](040-addon-framework-and-bash-fallback.md) | Shared Addon Framework and Bash Fallback for the Python Command | Accepted |
 | [041](041-eda-playground-on-python-command.md) | EDA Playground on the Python Command | Accepted |
 | [042](042-monitoring-addon.md) | AAP-Focused Monitoring Addon | Proposed |
+| [043](043-native-v2-addon-migrations.md) | Native V2 Migration of Non-AO Bash Addons | Proposed |
 
 ## Creating a New ADR
 
