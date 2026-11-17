@@ -80,10 +80,24 @@ esac
 
 for cmd in kubectl jq curl; do require_cmd "$cmd"; done
 KEYCLOAK_INSECURE_TLS="${KEYCLOAK_INSECURE_TLS:-false}"
+KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-}"
+if [ -z "$KEYCLOAK_CA_FILE" ]; then
+  for _candidate_ca in \
+    "${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt" \
+    "${HOME}/.local/state/aap-demo/certs/crc-ingress-ca.crt"; do
+    if [ -s "$_candidate_ca" ]; then
+      KEYCLOAK_CA_FILE="$_candidate_ca"
+      break
+    fi
+  done
+fi
 case "$KEYCLOAK_INSECURE_TLS" in
   true) CURL_TLS_ARGS=(-k) ;;
   false)
-    KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-${HOME}/.aap-demo/crc-ingress-ca.crt}"
+    if [ -n "$KEYCLOAK_CA_FILE" ] && [ ! -s "$KEYCLOAK_CA_FILE" ]; then
+      echo "ERROR: KEYCLOAK_CA_FILE does not exist or is empty: ${KEYCLOAK_CA_FILE}" >&2
+      exit 1
+    fi
     CURL_TLS_ARGS=()
     [ -s "$KEYCLOAK_CA_FILE" ] && CURL_TLS_ARGS+=(--cacert "$KEYCLOAK_CA_FILE")
     ;;
@@ -92,6 +106,8 @@ case "$KEYCLOAK_INSECURE_TLS" in
     exit 1
     ;;
 esac
+AAP_VERIFY_SSL=true
+[ "$KEYCLOAK_INSECURE_TLS" != true ] || AAP_VERIFY_SSL=false
 
 curl_local() { curl "${CURL_TLS_ARGS[@]}" "$@"; }
 
@@ -171,12 +187,13 @@ AO_REDIRECT_URI="${AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback
 
 AAP_PAYLOAD="$(jq -nc \
   --arg name "$AAP_NAME" --arg issuer "$ISSUER" --arg key "$AAP_SECRET" --arg public_key "$PUBLIC_KEY" \
-  '{name:$name,enabled:true,create_objects:true,remove_users:false,type:"ansible_base.authentication.authenticator_plugins.keycloak",configuration:{ACCESS_TOKEN_URL:($issuer+"/protocol/openid-connect/token"),AUTHORIZATION_URL:($issuer+"/protocol/openid-connect/auth"),GROUPS_CLAIM:"groups",KEY:"aap-demo-aap",PUBLIC_KEY:$public_key,SECRET:$key}}')"
+  --argjson verify_ssl "$AAP_VERIFY_SSL" \
+  '{name:$name,enabled:true,create_objects:true,remove_users:false,type:"ansible_base.authentication.authenticator_plugins.keycloak",configuration:{ACCESS_TOKEN_URL:($issuer+"/protocol/openid-connect/token"),AUTHORIZATION_URL:($issuer+"/protocol/openid-connect/auth"),GROUPS_CLAIM:"groups",KEY:"aap-demo-aap",PUBLIC_KEY:$public_key,SECRET:$key,ADDITIONAL_UNVERIFIED_ARGS:{VERIFY_SSL:$verify_ssl}}}')"
 
 AO_PAYLOAD="$(jq -nc \
   --arg name "$AO_NAME" --arg issuer "$ISSUER" --arg client_secret "$AO_SECRET" --arg redirect "$AO_REDIRECT_URI" \
   --argjson disable_tls_verify "$([ "$KEYCLOAK_INSECURE_TLS" = true ] && echo true || echo false)" \
-  '{name:$name,enabled:true,configuration:{provider_type:"oidc",idp_type:"custom",auto_discovery:true,issuer_url:$issuer,client_id:"aap-demo-ao",client_secret:$client_secret,redirect_uri:$redirect,scopes:"openid profile email groups",claim_mapping:{subject:"sub",email:"email",username:"preferred_username",first_name:"given_name",last_name:"family_name"},group_jmespath_expression:"groups[*]",group_mapping_entries:[],allow_all_authenticated:true,enable_rp_initiated_logout:true,disable_tls_verify:$disable_tls_verify}}')"
+  '{name:$name,enabled:true,configuration:{provider_type:"oidc",idp_type:"custom",auto_discovery:true,issuer_url:$issuer,client_id:"aap-demo-ao",client_secret:$client_secret,redirect_uri:$redirect,scopes:"openid",claim_mapping:{subject:"sub",email:"email",username:"preferred_username",first_name:"given_name",last_name:"family_name"},group_jmespath_expression:"groups[*]",group_mapping_entries:[],allow_all_authenticated:true,enable_rp_initiated_logout:true,disable_tls_verify:$disable_tls_verify}}')"
 
 print_plan() {
   echo "Keycloak OIDC configuration plan"
@@ -188,7 +205,9 @@ print_plan() {
   else
     echo "  Mode: apply"
   fi
-  [ "$MAP_GROUPS" = true ] && echo "  Group mapping: enabled"
+  if [ "$MAP_GROUPS" = true ]; then
+    echo "  Group mapping: enabled"
+  fi
 }
 
 print_plan
@@ -198,6 +217,111 @@ REQUEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aap-demo-keycloak-configure.XXXXXX")"
 chmod 700 "$REQUEST_DIR"
 cleanup_request_files() { rm -rf "$REQUEST_DIR"; }
 trap cleanup_request_files EXIT
+
+ensure_aap_ca_trust() {
+  [ "$KEYCLOAK_INSECURE_TLS" = false ] || return 0
+  [ -s "$KEYCLOAK_CA_FILE" ] || return 0
+  require_cmd openssl
+
+  local aap_cr current_secret bundle_secret existing_bundle merged_bundle
+  aap_cr="$(kubectl get aap -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  [ -n "$aap_cr" ] || {
+    echo "ERROR: no AAP custom resource found in namespace ${NAMESPACE}" >&2
+    exit 1
+  }
+  current_secret="$(kubectl get aap "$aap_cr" -n "$NAMESPACE" -o jsonpath='{.spec.bundle_cacert_secret}' 2>/dev/null || true)"
+  bundle_secret="${current_secret:-bundle-ca-secret}"
+  existing_bundle="$REQUEST_DIR/existing-bundle-ca.crt"
+  merged_bundle="$REQUEST_DIR/bundle-ca.crt"
+  : >"$existing_bundle"
+
+  if kubectl get secret "$bundle_secret" -n "$NAMESPACE" >/dev/null 2>&1; then
+    local encoded_bundle
+    encoded_bundle="$(kubectl get secret "$bundle_secret" -n "$NAMESPACE" -o jsonpath='{.data.bundle-ca\.crt}')"
+    [ -n "$encoded_bundle" ] || {
+      echo "ERROR: Secret ${bundle_secret} has no bundle-ca.crt key; refusing to replace it" >&2
+      exit 1
+    }
+    printf '%s' "$encoded_bundle" | base64 -d >"$existing_bundle" || {
+      echo "ERROR: could not decode bundle-ca.crt from Secret ${bundle_secret}" >&2
+      exit 1
+    }
+  elif [ -n "$current_secret" ]; then
+    echo "ERROR: AAP references missing CA bundle Secret ${current_secret}" >&2
+    exit 1
+  fi
+
+  local cert_dir="$REQUEST_DIR/ingress-certs" existing_dir="$REQUEST_DIR/existing-certs"
+  mkdir -p "$cert_dir" "$existing_dir"
+  split_certificates() {
+    local input="$1" output_dir="$2"
+    awk -v dir="$output_dir" '
+      /-----BEGIN CERTIFICATE-----/ { total++; active=1; file=sprintf("%s/cert-%04d.pem", dir, total) }
+      active { print > file }
+      /-----END CERTIFICATE-----/ { close(file); active=0 }
+      END { if (active) exit 1 }
+    ' "$input"
+  }
+  split_certificates "$KEYCLOAK_CA_FILE" "$cert_dir" || {
+    echo "ERROR: KEYCLOAK_CA_FILE is not a valid PEM certificate bundle: ${KEYCLOAK_CA_FILE}" >&2
+    exit 1
+  }
+  [ -n "$(find "$cert_dir" -type f -name 'cert-*.pem' -print -quit)" ] || {
+    echo "ERROR: KEYCLOAK_CA_FILE contains no PEM certificates: ${KEYCLOAK_CA_FILE}" >&2
+    exit 1
+  }
+
+  local fingerprints="$REQUEST_DIR/ca-fingerprints" cert fingerprint
+  : >"$fingerprints"
+  if [ -s "$existing_bundle" ]; then
+    split_certificates "$existing_bundle" "$existing_dir" || {
+      echo "ERROR: existing CA bundle Secret ${bundle_secret} is not valid PEM" >&2
+      exit 1
+    }
+    [ -n "$(find "$existing_dir" -type f -name 'cert-*.pem' -print -quit)" ] || {
+      echo "ERROR: existing CA bundle Secret ${bundle_secret} contains no PEM certificates" >&2
+      exit 1
+    }
+    cat "$existing_bundle" >"$merged_bundle"
+    while IFS= read -r cert; do
+      fingerprint="$(openssl x509 -in "$cert" -noout -fingerprint -sha256 | sed 's/^[^=]*=//')"
+      printf '%s\n' "$fingerprint" >>"$fingerprints"
+    done < <(find "$existing_dir" -type f -name 'cert-*.pem' -print | sort)
+  else
+    : >"$merged_bundle"
+  fi
+  while IFS= read -r cert; do
+    fingerprint="$(openssl x509 -in "$cert" -noout -fingerprint -sha256 | sed 's/^[^=]*=//')"
+    if ! grep -Fqx "$fingerprint" "$fingerprints"; then
+      cat "$cert" >>"$merged_bundle"
+      printf '%s\n' "$fingerprint" >>"$fingerprints"
+    fi
+  done < <(find "$cert_dir" -type f -name 'cert-*.pem' -print | sort)
+
+  kubectl create secret generic "$bundle_secret" -n "$NAMESPACE" \
+    --from-file="bundle-ca.crt=$merged_bundle" --dry-run=client -o yaml \
+    | kubectl apply -f - >/dev/null
+  if [ "$current_secret" != "$bundle_secret" ]; then
+    kubectl patch aap "$aap_cr" -n "$NAMESPACE" --type=merge \
+      -p "$(jq -nc --arg secret "$bundle_secret" '{spec:{bundle_cacert_secret:$secret}}')" >/dev/null
+  fi
+
+  local gateway_deployments deployment
+  gateway_deployments="$(kubectl get deployments -n "$NAMESPACE" -l app.kubernetes.io/component=aap-gateway -o name)"
+  [ -n "$gateway_deployments" ] || {
+    echo "ERROR: unable to find the AAP Gateway deployment to verify CA bundle rollout" >&2
+    exit 1
+  }
+  while IFS= read -r deployment; do
+    [ -n "$deployment" ] || continue
+    kubectl rollout status "$deployment" -n "$NAMESPACE" --timeout="${AAP_GATEWAY_ROLLOUT_TIMEOUT:-5m}"
+  done <<<"$gateway_deployments"
+  echo "✓ AAP Gateway trusts the Keycloak ingress CA (TLS verification remains enabled)"
+}
+
+if [ "$TARGET" != ao ]; then
+  ensure_aap_ca_trust
+fi
 
 if [ "$TARGET" != ao ]; then
   AAP_PASSWORD="$(kubectl get secret aap-admin-password -n "$NAMESPACE" -o jsonpath='{.data.password}' | base64 -d)"
@@ -220,7 +344,51 @@ if [ "$TARGET" != ao ]; then
     }
     echo "✓ Created AAP authenticator: ${AAP_NAME}"
   fi
-  echo "  Update Keycloak client redirect URI with callback shown by AAP Gateway, if required."
+
+  AAP_DETAIL="$(curl_local -f "${AAP_BASE}${AAP_ID}/" --config "$AAP_AUTH")"
+  AAP_SLUG="$(printf '%s' "$AAP_DETAIL" | jq -r '.slug // empty')"
+  [ -n "$AAP_SLUG" ] || {
+    echo "ERROR: AAP authenticator response did not include its callback slug" >&2
+    exit 1
+  }
+  AAP_CALLBACK_OVERRIDE="${KEYCLOAK_AAP_REDIRECT_URI:-}"
+  if [ -z "$AAP_CALLBACK_OVERRIDE" ] && [ -s "$STATE_DIR/aap-redirect-uri" ]; then
+    AAP_CALLBACK_OVERRIDE="$(read_secret "$STATE_DIR/aap-redirect-uri")"
+  fi
+  AAP_CALLBACK_URL="${AAP_CALLBACK_OVERRIDE:-https://${AAP_HOST}/api/gateway/social/complete/${AAP_SLUG}/}"
+
+  KC_ADMIN_PASSWORD_FILE="$STATE_DIR/admin-password"
+  [ -s "$KC_ADMIN_PASSWORD_FILE" ] || {
+    echo "ERROR: missing $KC_ADMIN_PASSWORD_FILE; enable Keycloak first" >&2
+    exit 1
+  }
+  KC_BASE="https://${KEYCLOAK_HOST}"
+  KC_TOKEN="$(curl_local -f -X POST "${KC_BASE}/realms/master/protocol/openid-connect/token" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    --data-urlencode 'client_id=admin-cli' \
+    --data-urlencode 'grant_type=password' \
+    --data-urlencode 'username=admin' \
+    --data-urlencode "password@${KC_ADMIN_PASSWORD_FILE}" | jq -r '.access_token // empty')"
+  [ -n "$KC_TOKEN" ] || {
+    echo "ERROR: unable to authenticate to the Keycloak admin API" >&2
+    exit 1
+  }
+  KC_ADMIN_AUTH="$REQUEST_DIR/keycloak-admin-curl.conf"
+  printf 'header = "Authorization: Bearer %s"\n' "$KC_TOKEN" >"$KC_ADMIN_AUTH"
+  KC_CLIENT_LIST="$(curl_local -f "${KC_BASE}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=aap-demo-aap" --config "$KC_ADMIN_AUTH")"
+  KC_CLIENT_ID="$(printf '%s' "$KC_CLIENT_LIST" | jq -r 'if length == 1 then .[0].id else empty end')"
+  [ -n "$KC_CLIENT_ID" ] || {
+    echo "ERROR: Keycloak client aap-demo-aap was not found uniquely" >&2
+    exit 1
+  }
+  KC_CLIENT="$(curl_local -f "${KC_BASE}/admin/realms/${KEYCLOAK_REALM}/clients/${KC_CLIENT_ID}" --config "$KC_ADMIN_AUTH")"
+  KC_CLIENT="$(printf '%s' "$KC_CLIENT" | jq --arg callback "$AAP_CALLBACK_URL" --arg logout "https://${AAP_HOST}/" \
+    '.redirectUris=[$callback] | .attributes["post.logout.redirect.uris"]=$logout')"
+  printf '%s' "$KC_CLIENT" >"$REQUEST_DIR/keycloak-aap-client.json"
+  curl_local -f -X PUT "${KC_BASE}/admin/realms/${KEYCLOAK_REALM}/clients/${KC_CLIENT_ID}" \
+    --config "$KC_ADMIN_AUTH" -H 'Content-Type: application/json' \
+    --data-binary "@$REQUEST_DIR/keycloak-aap-client.json" >/dev/null
+  echo "✓ Set AAP Gateway callback: ${AAP_CALLBACK_URL}"
 
   if [ "$MAP_GROUPS" = true ]; then
     AAP_MAP_BASE="https://${AAP_HOST}/api/gateway/v1/authenticator_maps/"
@@ -252,16 +420,8 @@ fi
 
 if [ "$TARGET" != aap ]; then
   AO_PASSWORD="$(kubectl get secret automation-orchestrator-initial-admin-password -n automation-orchestrator -o jsonpath='{.data.password}' | base64 -d)"
-  AO_COOKIE="$REQUEST_DIR/ao.cookie"
-  CSRF="$(curl_local -f -X POST -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/csrf_token" | jq -r .csrf_token)"
-  [ -n "$CSRF" ] || {
-    echo "ERROR: AO CSRF token request failed" >&2
-    exit 1
-  }
-  AO_CSRF_AUTH="$REQUEST_DIR/ao-csrf.conf"
-  printf 'header = "X-CSRF-Token: %s"\n' "$CSRF" >"$AO_CSRF_AUTH"
   printf '%s' "$(jq -nc --arg p "$AO_PASSWORD" '{username:"admin",password:$p}')" >"$REQUEST_DIR/ao-login.json"
-  AO_TOKEN="$(curl_local -f -X POST -b "$AO_COOKIE" -c "$AO_COOKIE" "https://${AO_HOST}/api/v1/auth/login" --config "$AO_CSRF_AUTH" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
+  AO_TOKEN="$(curl_local -f -X POST "https://${AO_HOST}/api/v1/auth/login" -H 'Content-Type: application/json' --data-binary "@$REQUEST_DIR/ao-login.json" | jq -r .access_token)"
   [ -n "$AO_TOKEN" ] && [ "$AO_TOKEN" != null ] || {
     echo "ERROR: AO admin login failed" >&2
     exit 1
@@ -285,7 +445,7 @@ if [ "$TARGET" != aap ]; then
         AO_GROUPS_PAYLOAD="$(printf '%s' "$AO_GROUPS_PAYLOAD" | jq --arg value "$group" --arg id "$group_id" '. + [{idp_group_value:$value,mapped_group_id:$id}]')"
       done
       AO_CURRENT="$(curl_local -f "${AO_BASE}/${AO_ID}" --config "$AO_AUTH")"
-      AO_PAYLOAD="$(printf '%s' "$AO_CURRENT" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" '{name,enabled,configuration:(.configuration | del(.client_secret) | .group_mapping_entries=$mappings | .allow_all_authenticated=false)}')"
+      AO_PAYLOAD="$(printf '%s' "$AO_CURRENT" | jq --argjson mappings "$AO_GROUPS_PAYLOAD" --arg scopes "openid" '{name,enabled,configuration:(.configuration | del(.client_secret) | .scopes=$scopes | .group_mapping_entries=$mappings | .allow_all_authenticated=false)}')"
       echo "  AO group mappings: $(printf '%s' "$AO_PAYLOAD" | jq '.configuration.group_mapping_entries | length')"
     fi
     printf '%s' "$AO_PAYLOAD" >"$REQUEST_DIR/ao.json"

@@ -24,7 +24,9 @@ python3 ./test/test-provision-aap-demos.py
 ./test/test-keycloak-addon.sh
 ./test/test-keycloak-configure.sh
 
-# Run against a running local MicroShift cluster after enabling Keycloak.
+# Manual live check. Hosted CI does not provision a MicroShift cluster.
+# Run after enabling Keycloak; this authenticates to Keycloak admin API and
+# validates active realm clients, mappers, groups, and users.
 KUBECONFIG="$HOME/.aap-demo/kubeconfig.microshift" ./test/test-keycloak-live.sh
 ```
 
