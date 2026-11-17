@@ -387,7 +387,12 @@ class AAP:
     def __init__(self, route: str, token: str) -> None:
         self.base = f"https://{route}/api/controller/v2"
         self.token = token
-        self.context = ssl._create_unverified_context()
+        ca_bundle = (
+            os.environ.get("SSL_CERT_FILE")
+            or os.environ.get("REQUESTS_CA_BUNDLE")
+            or os.environ.get("CURL_CA_BUNDLE")
+        )
+        self.context = ssl.create_default_context(cafile=ca_bundle or None)
 
     def request(self, path: str, method: str = "GET", payload: Any = None) -> Any:
         data = None if payload is None else json.dumps(payload).encode()

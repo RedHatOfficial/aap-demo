@@ -14,9 +14,10 @@ It is experimental and not supported for production use.
 
 The current image is experimental and hosted in the maintainer's personal
 GitHub Container Registry namespace. It is not an official Red Hat image.
-Review the image before use. The default is the upstream
-`ghcr.io/bbgrimmett2/eda-playground:latest` tag. For repeatable deployments,
-set `EDA_PLAYGROUND_IMAGE` to a reviewed tag or digest before deploying.
+Review the image before use. The default is
+`ghcr.io/bbgrimmett2/eda-playground@sha256:7308850254a69088e583b07a1c60234e24aef2360bfe8bac7762c97e3ff873f1`,
+an immutable digest. Set `EDA_PLAYGROUND_IMAGE` to another reviewed digest
+before deploying if needed.
 
 ## Prerequisites
 

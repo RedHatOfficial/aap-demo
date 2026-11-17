@@ -208,6 +208,17 @@ if apd_base_is_recorded; then
 else
   pass "legacy_domain_does_not_count_as_base"
 fi
+printf 'ADDONS=product-demos-base\n' >"$HOME/.aap-demo/config"
+if apd_base_is_recorded; then
+  pass "legacy_config_records_exact_base_addon"
+else
+  fail "legacy_config_records_exact_base_addon"
+fi
+if apd_addon_enabled product-demos; then
+  fail "legacy_base_does_not_count_as_umbrella"
+else
+  pass "legacy_base_does_not_count_as_umbrella"
+fi
 rm -rf "$record_home"
 if [ -n "$saved_home" ]; then
   export HOME="$saved_home"

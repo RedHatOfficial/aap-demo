@@ -40,6 +40,12 @@ for required in \
   'AAP_DEMO_LIVE_NONINTERACTIVE=true'; do
   grep -Fq "$required" "$README" || fail "README missing: $required"
 done
+grep -Eq 'IMAGE=.*@sha256:[0-9a-f]{64}' "$ADDON_DIR/deploy.sh" \
+  || fail "EDA Playground default image must be pinned by digest"
+grep -Fq 'curl --config - -fsS' "$ADDON_DIR/deploy.sh" \
+  || fail "EDA Playground Gateway calls must verify TLS certificates"
+grep -Fq 'value: "false"' "$ADDON_DIR/deployment.yaml" \
+  || fail "EDA Playground must reject self-signed certificates by default"
 README_ENABLE_LINE="$(grep -n -m1 'aap-demo enable eda-playground' "$README" | cut -d: -f1)"
 README_OAUTH_LINE="$(grep -n -m1 'complete AAP Gateway OAuth login manually' "$README" | cut -d: -f1)"
 README_DISABLE_LINE="$(grep -n -m1 'aap-demo disable eda-playground' "$README" | cut -d: -f1)"

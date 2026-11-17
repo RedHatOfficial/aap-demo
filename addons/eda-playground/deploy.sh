@@ -9,7 +9,7 @@ AAP_NAMESPACE="${AAP_NAMESPACE:-${NAMESPACE:-aap-operator}}"
 NAMESPACE="${EDA_PLAYGROUND_NAMESPACE:-eda-playground}"
 OAUTH_APP_NAME="${OAUTH_APP_NAME:-EDA Playground}"
 STATE_DIR="${EDA_PLAYGROUND_STATE_DIR:-${HOME}/.aap-demo/eda-playground}"
-IMAGE="${EDA_PLAYGROUND_IMAGE:-ghcr.io/bbgrimmett2/eda-playground:latest}"
+IMAGE="${EDA_PLAYGROUND_IMAGE:-ghcr.io/bbgrimmett2/eda-playground@sha256:7308850254a69088e583b07a1c60234e24aef2360bfe8bac7762c97e3ff873f1}"
 ACTION="${1:-deploy}"
 
 if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [[ "$ACTION" != "--delete" && "$ACTION" != "delete" ]]; }; then
@@ -32,7 +32,7 @@ command -v kubectl >/dev/null 2>&1 || {
 # curl reads credentials from its configuration on stdin, never from argv.
 # Escape values interpreted by curl's quoted configuration syntax.
 gateway_curl() {
-  printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | curl --config - -fsSk "$@" 2>/dev/null
+  printf 'user = "admin:%s"\n' "$CURL_PASSWORD" | curl --config - -fsS "$@" 2>/dev/null
 }
 
 CREDENTIALS="$STATE_DIR/oauth_credentials.json"

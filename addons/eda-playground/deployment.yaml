@@ -39,7 +39,7 @@ spec:
             - name: PORT
               value: "8080"
             - name: ALLOW_SELF_SIGNED_CERTS
-              value: "true"
+              value: "false"
             - name: AAP_BASE_URL
               value: __EDA_PLAYGROUND_AAP_BASE_URL__
             - name: AAP_REDIRECT_URI
