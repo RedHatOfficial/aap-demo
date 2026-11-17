@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 
 ao_validate_postgres_storage_size() {
   local size="$1"
@@ -30,7 +30,7 @@ ao_cnpg_cluster_name() {
 # Do not create a replacement database until the old CNPG controller and its
 # data have been removed. Failed reads/deletes are not proof of removal.
 ao_remove_cnpg_storage() {
-  local namespace="$1" expected_cluster="${2:-}" cluster cluster_crd databases_crd
+  local namespace="$1" expected_cluster="${2:-}" cluster cluster_crd databases_crd database database_cluster
   if ! cluster_crd=$(kubectl get crd clusters.postgresql.cnpg.io --ignore-not-found -o name); then
     echo "ERROR: Could not check for CloudNativePG; refusing to replace PostgreSQL." >&2
     return 1
@@ -59,10 +59,26 @@ ao_remove_cnpg_storage() {
     echo "ERROR: Could not check CloudNativePG databases; refusing to replace PostgreSQL." >&2
     return 1
   fi
-  if [ -n "$databases_crd" ] && ! kubectl delete databases.postgresql.cnpg.io --all \
-    -n "$namespace" --wait=false; then
-    echo "ERROR: Could not delete CloudNativePG databases; refusing to replace PostgreSQL." >&2
-    return 1
+  if [ -n "$databases_crd" ]; then
+    # These are the databases declared by the legacy AO cluster. Never use
+    # --all: an AO namespace may contain unrelated Database resources.
+    for database in orchestrator temporal temporal-visibility; do
+      if ! database_cluster=$(kubectl get database "$database" -n "$namespace" \
+        --ignore-not-found -o jsonpath='{.spec.cluster.name}'); then
+        echo "ERROR: Could not check CloudNativePG database ${database}; refusing to replace PostgreSQL." >&2
+        return 1
+      fi
+      [ -z "$database_cluster" ] && continue
+      if [ "$database_cluster" != orchestrator-postgres ]; then
+        echo "ERROR: CloudNativePG database ${database} belongs to ${database_cluster}; refusing to replace PostgreSQL." >&2
+        return 1
+      fi
+      if ! kubectl delete database "$database" -n "$namespace" \
+        --wait=true --timeout=180s; then
+        echo "ERROR: Could not delete CloudNativePG database ${database}; refusing to replace PostgreSQL." >&2
+        return 1
+      fi
+    done
   fi
   if ! kubectl delete pvc orchestrator-postgres-1 -n "$namespace" \
     --ignore-not-found --wait=true --timeout=180s; then

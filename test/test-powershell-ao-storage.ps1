@@ -84,6 +84,8 @@ $deleteCases = @(
   @{ Name = 'cluster lookup fails'; Fail = 'cluster-check'; Throws = $true; DeletesPvc = $false },
   @{ Name = 'database CRD lookup fails'; Fail = 'database-crd'; Throws = $true; DeletesPvc = $false },
   @{ Name = 'database deletion fails'; Fail = 'database-delete'; Throws = $true; DeletesPvc = $false },
+  @{ Name = 'database ownership lookup fails'; Fail = 'database-lookup'; Throws = $true; DeletesPvc = $false },
+  @{ Name = 'database belongs to another cluster'; Fail = 'database-owner'; Throws = $true; DeletesPvc = $false },
   @{ Name = 'PVC deletion fails'; Fail = 'pvc-delete'; Throws = $true; DeletesPvc = $true }
 )
 foreach ($case in $deleteCases) {
@@ -106,7 +108,10 @@ foreach ($case in $deleteCases) {
         if ($script:ClusterPresent) { $out = 'cluster/orchestrator-postgres' }
       } elseif ($line -like 'get crd databases.postgresql.cnpg.io*') {
         $ok = $script:DeleteCase.Fail -ne 'database-crd'; $out = 'crd/databases'
-      } elseif ($line -like 'delete databases.postgresql.cnpg.io*') {
+      } elseif ($line -like 'get database *') {
+        $ok = $script:DeleteCase.Fail -ne 'database-lookup'
+        $out = if ($script:DeleteCase.Fail -eq 'database-owner') { 'other-cluster' } else { 'orchestrator-postgres' }
+      } elseif ($line -like 'delete database *') {
         $ok = $script:DeleteCase.Fail -ne 'database-delete'
       } elseif ($line -like 'delete pvc orchestrator-postgres-1*') {
         $script:PvcDeleted = $true; $ok = $script:DeleteCase.Fail -ne 'pvc-delete'

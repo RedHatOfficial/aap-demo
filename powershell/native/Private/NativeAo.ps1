@@ -267,10 +267,25 @@ function Remove-AapAoCnpgStorage {
   )
   if (-not $crd.Success) { throw 'Could not check CloudNativePG databases; refusing to replace PostgreSQL' }
   if (([string]$crd.Stdout).Trim()) {
-    $databases = Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'databases.postgresql.cnpg.io', '--all', '-n', $Namespace, '--wait=false'
-    )
-    if (-not $databases.Success) { throw 'Could not delete CloudNativePG databases; refusing to replace PostgreSQL' }
+    foreach ($database in @('orchestrator', 'temporal', 'temporal-visibility')) {
+      $databaseCluster = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+        'get', 'database', $database, '-n', $Namespace, '--ignore-not-found', '-o', 'jsonpath={.spec.cluster.name}'
+      )
+      if (-not $databaseCluster.Success) {
+        throw "Could not check CloudNativePG database $database; refusing to replace PostgreSQL"
+      }
+      $databaseClusterName = ([string]$databaseCluster.Stdout).Trim()
+      if (-not $databaseClusterName) { continue }
+      if ($databaseClusterName -ne 'orchestrator-postgres') {
+        throw "CloudNativePG database $database belongs to $databaseClusterName; refusing to replace PostgreSQL"
+      }
+      $databaseDelete = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+        'delete', 'database', $database, '-n', $Namespace, '--wait=true', '--timeout=180s'
+      )
+      if (-not $databaseDelete.Success) {
+        throw "Could not delete CloudNativePG database $database; refusing to replace PostgreSQL"
+      }
+    }
   }
   $pvc = Invoke-AapKubectlNative -AllowFailure -Arguments @(
     'delete', 'pvc', 'orchestrator-postgres-1', '-n', $Namespace,
