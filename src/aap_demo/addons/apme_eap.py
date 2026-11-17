@@ -165,20 +165,30 @@ def _discover_vars(ctx: AppContext) -> Dict[str, Any]:
     )
     if not aap_route.startswith("http"):
         aap_route = "https://" + aap_route
-    domain = _env_or_discover(
-        ctx,
-        "APME_EAP_CLUSTER_DOMAIN",
-        [
-            "kubectl",
-            "get",
-            "route",
-            "-n",
-            "openshift-console",
-            "console",
-            "-o",
-            "jsonpath={.spec.host}",
-        ],
-    )
+    domain = str(ctx.env.get("APME_EAP_CLUSTER_DOMAIN", "") or "").strip()
+    if not domain:
+        console = ctx.runner.run(
+            [
+                "kubectl",
+                "get",
+                "route",
+                "-n",
+                "openshift-console",
+                "console",
+                "-o",
+                "jsonpath={.spec.host}",
+            ]
+        )
+        if console.ok and console.stdout.strip():
+            domain = console.stdout.strip()
+        else:
+            route_host = aap_route.removeprefix("https://").removeprefix("http://")
+            if "." not in route_host:
+                raise AddonError(
+                    "could not discover APME_EAP_CLUSTER_DOMAIN",
+                    hint=(console.stderr or console.stdout).strip() or None,
+                )
+            domain = route_host.split(".", 1)[1]
     if domain.startswith("console-openshift-console."):
         domain = domain.removeprefix("console-openshift-console.")
     password = str(ctx.env.get("APME_EAP_AAP_PASSWORD", "") or "")

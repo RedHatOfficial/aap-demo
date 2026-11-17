@@ -138,6 +138,22 @@ def test_crc_portal_url_and_custom_aap_secret_are_discovered(app_ctx) -> None:
     assert values["openshift_validate_certs"] is True
 
 
+def test_cluster_domain_falls_back_to_aap_route_on_microshift(app_ctx) -> None:
+    app_ctx.env = {
+        "APME_EAP_OPENSHIFT_API_URL": "https://api.example.test:6443",
+        "APME_EAP_AAP_HOST": "https://aap-aap-operator.apps.example.test",
+        "APME_EAP_AAP_PASSWORD": "password",  # pragma: allowlist secret
+    }
+    app_ctx.runner.fail(
+        ["kubectl", "get", "route", "-n", "openshift-console"],
+        stderr='namespaces "openshift-console" not found',
+    )
+
+    values = apme_eap._discover_vars(app_ctx)
+
+    assert values["openshift_cluster_domain"] == "apps.example.test"
+
+
 def test_user_overrides_survive_and_run_vars_are_ephemeral(app_ctx) -> None:
     _env(app_ctx)
     user_vars = app_ctx.paths.addon_dir("apme-eap") / "vars.yml"
