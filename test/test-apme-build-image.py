@@ -27,6 +27,11 @@ PLUGINS = (
 
 
 class BuildImageTests(unittest.TestCase):
+    @staticmethod
+    def build_input_tag(base="registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10"):
+        recipe_sha = hashlib.sha256((ROOT / "addons/apme-eap/Containerfile.ci").read_bytes()).hexdigest()
+        return hashlib.sha256(f"{base}:{recipe_sha}".encode()).hexdigest()[:12]
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="apme build test ")
         self.addCleanup(self.temp.cleanup)
@@ -182,7 +187,8 @@ sys.exit(1)
         calls = self.calls()
         self.assertEqual([call[0] for call in calls], ["build", "image"])
         build = calls[0]
-        self.assertIn("quay.io/ansible-automation-platform-dev-preview/automation-portal:apme-" + SHA + "-" + self.pack_hash[7:19], build)
+        self.assertIn("quay.io/ansible-automation-platform-dev-preview/automation-portal:apme-" + SHA + "-" + self.pack_hash[7:19]
+                      + "-" + self.build_input_tag(), build)
         for arg in ("PLUGIN_PACK_SHA256=" + self.pack_hash, "PLUGIN_PACK_FORMAT=npm",
                     "BASE_IMAGE=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10",
                     "org.opencontainers.image.revision=" + SHA,
@@ -199,7 +205,7 @@ sys.exit(1)
         result = self.run_build("--push", "--tag", "release_1")
         calls = self.calls()
         self.assertEqual([c[0] for c in calls], ["build", "image", "login", "push", "tag", "push"])
-        immutable = "apme-" + SHA + "-" + self.pack_hash[7:19] + "-amd64"
+        immutable = "apme-" + SHA + "-" + self.pack_hash[7:19] + "-" + self.build_input_tag() + "-amd64"
         push_refs = [call[-1] for call in calls if call[0] == "push"]
         self.assertEqual(push_refs, [
             "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:" + immutable,
@@ -215,7 +221,7 @@ sys.exit(1)
                 self.run_build("--push")
                 push = next(c for c in self.calls() if c[0] == "push")
                 self.assertEqual(push[-1], "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:apme-"
-                                 + SHA + "-" + self.pack_hash[7:19] + "-" + arch)
+                                 + SHA + "-" + self.pack_hash[7:19] + "-" + self.build_input_tag() + "-" + arch)
 
     def test_push_rejects_unknown_host_architecture(self):
         self.env["HOST_ARCH"] = "s390x"
@@ -336,7 +342,7 @@ sys.exit(1)
                 self.assertIn("--arch", calls[0])
                 self.assertEqual(calls[0][calls[0].index("--arch") + 1], arch)
                 self.assertEqual(calls[-1][-1], "docker://quay.io/ansible-automation-platform-dev-preview/automation-portal:apme-"
-                                 + SHA + "-" + self.pack_hash[7:19] + "-" + arch)
+                                 + SHA + "-" + self.pack_hash[7:19] + "-" + self.build_input_tag() + "-" + arch)
 
     def test_resolved_pack_rejects_tampering_before_build_or_login(self):
         resolved = self.resolved_pack()

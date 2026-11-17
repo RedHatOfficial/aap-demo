@@ -1,5 +1,6 @@
 """Exercise the deployment roles against local files and container-command doubles."""
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -91,6 +92,11 @@ class QuayAuthFileTests(unittest.TestCase):
 
 @unittest.skipIf(shutil.which("ansible-playbook") is None, "ansible-playbook is not installed")
 class DeploymentImageTests(unittest.TestCase):
+    @staticmethod
+    def build_input_tag(base="registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10"):
+        recipe_sha = hashlib.sha256((ADDON / "Containerfile.ci").read_text().rstrip("\n").encode()).hexdigest()
+        return hashlib.sha256(f"{base}:{recipe_sha}".encode()).hexdigest()[:12]
+
     def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0,
                   inspect_exit=0, build_exit=0, installed_plugins=None, pushed_digest=PUSH_DIGEST,
                   inspected_digest=DIGEST):
@@ -282,14 +288,15 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["registry"], "registry.example.test")
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
         self.assertEqual(image["digest"], PUSH_DIGEST)
-        self.assertEqual(image["tag"], "8593383-" + DIGEST[7:19])
+        self.assertEqual(image["tag"], "8593383-" + DIGEST[7:19] + "-" + self.build_input_tag())
         build = next(c for c in commands if c[0] == "build")
         self.assertIn("--build-arg=PLUGIN_PACK_FORMAT=oci", build)
         self.assertIn("--build-arg=PLUGIN_PACK_SHA256=" + DIGEST, build)
         push = next(c for c in commands if c[0] == "push")
         self.assertIn("--digestfile", push)
-        self.assertEqual(push[-2:], ["localhost/rhdh-apme-preloaded:8593383-" + DIGEST[7:19],
-                                    "docker://registry.example.test/apme/rhdh-apme-preloaded:8593383-" + DIGEST[7:19]])
+        expected_tag = "8593383-" + DIGEST[7:19] + "-" + self.build_input_tag()
+        self.assertEqual(push[-2:], ["localhost/rhdh-apme-preloaded:" + expected_tag,
+                                    "docker://registry.example.test/apme/rhdh-apme-preloaded:" + expected_tag])
         self.assertFalse(any(c[0] == "run" for c in commands))
 
     def local_image_variables(self):
@@ -310,7 +317,7 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["registry"], "registry.example.test")
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
         self.assertEqual(image["digest"], DIGEST)
-        self.assertEqual(image["tag"], "8593383-" + DIGEST[7:19])
+        self.assertEqual(image["tag"], "8593383-" + DIGEST[7:19] + "-" + self.build_input_tag())
         self.assertEqual([c[0] for c in commands], ["inspect", "run"])
         validation = commands[1]
         self.assertIn("registry.example.test/apme/rhdh-apme-preloaded@" + DIGEST, validation)
@@ -319,6 +326,19 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertIn("--network=none", validation)
         self.assertIn("--read-only", validation)
         self.assertIn("--entrypoint=python3", validation)
+
+    def test_base_image_change_selects_a_new_cache_tag(self):
+        installed = {name: name + "-dynamic" for name in PLUGIN_NAMES}
+        tags = []
+        for base in ("registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10",
+                     "registry.redhat.io/rhdh/rhdh-hub-rhel9:1.11"):
+            rc, output, values, _ = self.run_roles(
+                {**self.local_image_variables(), "apme_image_build_base_x86": base},
+                ["apme_image_build", "apme_helm_values"], installed_plugins=installed,
+            )
+            self.assertEqual(rc, 0, output)
+            tags.append(values["redhat-developer-hub"]["upstream"]["backstage"]["image"]["tag"])
+        self.assertNotEqual(tags[0], tags[1])
 
     def test_incomplete_or_wrong_identity_cached_image_is_rebuilt_before_rendering(self):
         incomplete = {name: name + "-dynamic" for name in PLUGIN_NAMES[:-1]}

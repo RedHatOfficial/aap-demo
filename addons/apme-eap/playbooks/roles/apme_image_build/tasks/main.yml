@@ -27,15 +27,35 @@
 
 - name: Resolve local build references with pack tag
   ansible.builtin.set_fact:
-    apme_image_build_tag: "{{ plugin_sha }}-{{ apme_image_build_pack_tag }}"
-    apme_image_build_target: "{{ apme_image_build_repository }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}"
-    apme_image_build_push_target: >-
-      {{ (apme_image_build_push_registry | default(oci_registry, true) | regex_replace('/$', ''))
-         }}/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}
-    apme_image_build_local: "localhost/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}"
-    apme_image_build_digest: ""
+    apme_image_build_recipe_sha256: >-
+      {{ lookup('ansible.builtin.file', collection_root ~ '/Containerfile.ci') | hash('sha256') }}
     apme_image_build_base: >-
       {{ apme_image_build_base_arm if ansible_architecture in ['aarch64', 'arm64'] else apme_image_build_base_x86 }}
+
+- name: Resolve local build references with all build inputs
+  ansible.builtin.set_fact:
+    apme_image_build_input_sha256: >-
+      {{ (apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256') }}
+    apme_image_build_tag: >-
+      {{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
+         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256'))[:12] }}
+    apme_image_build_target: >-
+      {{ apme_image_build_repository }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
+         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256'))[:12] }}
+    apme_image_build_push_target: >-
+      {{ (apme_image_build_push_registry | default(oci_registry, true) | regex_replace('/$', ''))
+         }}/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
+         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256'))[:12] }}
+    apme_image_build_local: >-
+      localhost/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
+      ((apme_image_build_base ~ '\n' ~ apme_image_build_recipe_sha256 ~ '\n') | hash('sha256'))[:12] }}
+    apme_image_build_digest: ""
+
+- name: Normalize the local build reference with all build inputs
+  ansible.builtin.set_fact:
+    apme_image_build_local: >-
+      localhost/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
+      apme_image_build_input_sha256[:12] }}
 
 - name: Inspect the local preloaded image
   ansible.builtin.command:
@@ -125,6 +145,8 @@
                  'build', '--build-arg=BASE_IMAGE=' ~ apme_image_build_base,
                  '--build-arg=PLUGIN_PACK_SHA256=' ~ apme_image_build_pack_sha256,
                  '--build-arg=PLUGIN_PACK_FORMAT=' ~ apme_image_build_pack_format,
+                 '--label=io.apme.base.image=' ~ apme_image_build_base,
+                 '--label=io.apme.build.recipe.sha256=' ~ apme_image_build_recipe_sha256,
                  '--tag=' ~ apme_image_build_local, apme_image_build_context.path
               ] }}
           register: apme_image_build_result

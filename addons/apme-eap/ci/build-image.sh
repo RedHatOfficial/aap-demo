@@ -32,6 +32,7 @@ source_repo="${APME_SOURCE_REPO:-ansible/ansible-rhdh-plugins}"
 source_ref="${APME_SOURCE_REF:-${APME_SOURCE_SHA:-latest}}"
 expected_pack_sha="${APME_PACK_SHA256:-}"
 base_image="${BASE_IMAGE:-registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10}"
+build_recipe="${script_dir}/../Containerfile.ci"
 image_repo=quay.io/ansible-automation-platform-dev-preview/automation-portal
 tag=''
 output=''
@@ -72,7 +73,7 @@ done
 [[ "$source_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die 'invalid source repository; use owner/repo'
 [[ "$source_ref" == latest || "$source_ref" =~ ^[0-9a-f]{40}$ ]] || die 'source ref must be latest or a full 40-character commit SHA'
 [[ -z "$tag" || "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die 'invalid image tag'
-if [[ "$tag" =~ ^apme-[0-9a-f]{40}-[0-9a-f]{12}(-[a-z0-9]+)?$ ]]; then
+if [[ "$tag" =~ ^apme-[0-9a-f]{40}-[0-9a-f]{12}(-[0-9a-f]{12})?(-[a-z0-9]+)?$ ]]; then
   die 'artifact-derived tags are reserved; --tag must name an explicit non-release alias'
 fi
 if "$push" && [[ "$tag" == latest ]]; then
@@ -81,6 +82,8 @@ fi
 [[ -z "$expected_pack_sha" || "$expected_pack_sha" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid expected pack SHA256'
 [[ -z "$architecture" || "$architecture" == amd64 || "$architecture" == arm64 ]] || die 'architecture must be amd64 or arm64'
 [[ -z "$architecture" || -z "$tag" ]] || die 'architecture builds cannot publish unqualified aliases'
+[[ -z "${APME_BUILD_INPUT_SHA256:-}" || "${APME_BUILD_INPUT_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+  || die 'invalid build input SHA256'
 if "$reuse_existing"; then
   [[ "$push" == true && -n "$pack_dir" && -n "$architecture" && -z "$tag" ]] \
     || die '--reuse-existing requires --push, --pack-dir, and an explicit --architecture without aliases'
@@ -99,6 +102,9 @@ fi
 if [[ -n "${REGISTRY_REDHAT_USERNAME:-}${REGISTRY_REDHAT_PASSWORD:-}" ]]; then
   [[ -n "${REGISTRY_REDHAT_USERNAME:-}" && -n "${REGISTRY_REDHAT_PASSWORD:-}" ]] || die 'provide both Red Hat registry credentials'
 fi
+build_recipe_sha256="$(sha256sum "$build_recipe" | awk '{print $1}')"
+build_input_sha256="${APME_BUILD_INPUT_SHA256:-$(printf '%s:%s' "$base_image" "$build_recipe_sha256" | sha256sum | awk '{print $1}')}"
+build_input_tag="${build_input_sha256:0:12}"
 for tool in podman jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required command unavailable: $tool"
 done
@@ -140,7 +146,7 @@ fi
 [[ "$APME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || die 'invalid resolved source SHA'
 [[ "$APME_PACK_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'invalid resolved pack SHA256'
 pack_hex="${APME_PACK_SHA256#sha256:}"
-immutable_tag="apme-${APME_SOURCE_SHA}-${pack_hex:0:12}"
+immutable_tag="apme-${APME_SOURCE_SHA}-${pack_hex:0:12}-${build_input_tag}"
 [[ -z "$architecture" ]] || immutable_tag+="-$architecture"
 image="$image_repo:$immutable_tag"
 alias_image=''
@@ -220,7 +226,7 @@ if [[ -n "${REGISTRY_REDHAT_USERNAME:-}" ]]; then
     --password-stdin registry.redhat.io
   build_cmd+=(--authfile "$auth_dir/auth.json")
 fi
-"${build_cmd[@]}" --file "$script_dir/../Containerfile.ci" \
+"${build_cmd[@]}" --file "$build_recipe" \
   --build-arg "BASE_IMAGE=$base_image" \
   --build-arg "PLUGIN_PACK_SHA256=$APME_PACK_SHA256" \
   --build-arg "PLUGIN_PACK_FORMAT=$APME_PACK_FORMAT" \
@@ -229,6 +235,8 @@ fi
   --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --label "io.apme.artifact.id=$APME_ARTIFACT_ID" \
   --label "io.apme.pack.sha256=$APME_PACK_SHA256" \
+  --label "io.apme.base.image=$base_image" \
+  --label "io.apme.build.recipe.sha256=$build_recipe_sha256" \
   --tag "$image" "$context"
 local_digest="$(podman image inspect --format '{{.Id}}' "$image")"
 # Podman versions can expose .Id as either bare hex or a prefixed digest.

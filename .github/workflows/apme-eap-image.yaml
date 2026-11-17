@@ -59,6 +59,7 @@ jobs:
       artifact_id: ${{ steps.resolve.outputs.artifact_id }}
       pack_format: ${{ steps.resolve.outputs.pack_format }}
       pack_sha256: ${{ steps.resolve.outputs.pack_sha256 }}
+      build_input_sha256: ${{ steps.resolve.outputs.build_input_sha256 }}
     steps:
       - name: Require validation before latest
         env:
@@ -100,11 +101,17 @@ jobs:
             python3 addons/apme-eap/ci/extract-plugin-pack.py \
             --archive "$RUNNER_TEMP/resolved/plugin-pack.tar.gz" --dest "$RUNNER_TEMP/verified-plugins"
           pack_hex="${APME_PACK_SHA256#sha256:}"
+          recipe_sha256="$(sha256sum addons/apme-eap/Containerfile.ci | awk '{print $1}')"
+          build_input_sha256="$(printf '%s:%s:%s' \
+            'amd64=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10' \
+            'arm64=quay.io/rhdh-community/rhdh:1.10' "$recipe_sha256" \
+            | sha256sum | awk '{print $1}')"
           {
-            printf 'immutable_tag=apme-%s-%s\n' "$APME_SOURCE_SHA" "${pack_hex:0:12}"
+            printf 'immutable_tag=apme-%s-%s-%s\n' "$APME_SOURCE_SHA" "${pack_hex:0:12}" "${build_input_sha256:0:12}"
             printf 'source_repo=%s\nsource_sha=%s\n' "$APME_SOURCE_REPO" "$APME_SOURCE_SHA"
             printf 'run_id=%s\nartifact_id=%s\n' "$APME_RUN_ID" "$APME_ARTIFACT_ID"
             printf 'pack_format=%s\npack_sha256=%s\n' "$APME_PACK_FORMAT" "$APME_PACK_SHA256"
+            printf 'build_input_sha256=%s\n' "$build_input_sha256"
           } >> "$GITHUB_OUTPUT"
       - name: Retain verified pack for this run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -147,6 +154,7 @@ jobs:
           ARCHITECTURE: ${{ matrix.architecture }}
           BASE_IMAGE: ${{ matrix.base_image }}
           APME_PACK_SHA256: ${{ needs.resolve.outputs.pack_sha256 }}
+          APME_BUILD_INPUT_SHA256: ${{ needs.resolve.outputs.build_input_sha256 }}
           QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
           QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
           REGISTRY_REDHAT_USERNAME: ${{ matrix.architecture == 'amd64' && secrets.REGISTRY_REDHAT_USERNAME || '' }}
@@ -175,6 +183,7 @@ jobs:
       - name: Assemble, verify, and optionally promote the manifest
         env:
           IMMUTABLE_TAG: ${{ needs.resolve.outputs.immutable_tag }}
+          BUILD_INPUT_SHA256: ${{ needs.resolve.outputs.build_input_sha256 }}
           EVENT_NAME: ${{ github.event_name }}
           EVENT_REF: ${{ github.ref }}
           REQUEST_LATEST: ${{ inputs.publish_latest || false }}
@@ -187,8 +196,10 @@ jobs:
           fail() { printf '::error::%s\n' "$*" >&2; exit 1; }
           source "$RUNNER_TEMP/resolved/artifact.env"
           pack_hex="${APME_PACK_SHA256#sha256:}"
+          build_input_sha256="$BUILD_INPUT_SHA256"
           [[ "$APME_SOURCE_SHA" =~ ^[0-9a-f]{40}$ && "$pack_hex" =~ ^[0-9a-f]{64}$ &&
-             "$IMMUTABLE_TAG" == "apme-$APME_SOURCE_SHA-${pack_hex:0:12}" ]] ||
+             "$build_input_sha256" =~ ^[0-9a-f]{64}$ &&
+             "$IMMUTABLE_TAG" == "apme-$APME_SOURCE_SHA-${pack_hex:0:12}-${build_input_sha256:0:12}" ]] ||
             fail 'Resolved source/pack does not match immutable tag'
           : "${QUAY_USERNAME:?Missing QUAY_USERNAME}" "${QUAY_TOKEN:?Missing QUAY_TOKEN}"
           umask 077
