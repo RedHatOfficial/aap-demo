@@ -88,6 +88,9 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [038](038-fleet-cloud-image-download.md) | Fleet Cloud Image Download | Accepted |
 | [045](045-monitoring-addon.md) | AAP-Focused Monitoring Addon | Proposed |
 | [043](043-ao-postgres-statefulset.md) | One PostgreSQL StatefulSet for Automation Orchestrator | Proposed |
+| [041](041-eda-playground-on-python-command.md) | EDA Playground on the Python Command | Accepted |
+| [042](042-monitoring-addon.md) | AAP-Focused Monitoring Addon | Proposed |
+| [043](043-native-v2-addon-migrations.md) | Native V2 Migration of Non-AO Bash Addons | Proposed |
 
 ## Creating a New ADR
 
