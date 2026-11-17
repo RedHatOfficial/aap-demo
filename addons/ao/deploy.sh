@@ -161,7 +161,7 @@ report_catalog_failure() {
   _reason=$(catalog_pod_wait_reason "$_catalog_ns" "$_catalog_name")
   if [ -n "$_reason" ]; then
     echo "  Pod detail:" >&2
-    echo "$_reason" | sed 's/^/    /' >&2
+    printf '    %s\n' "${_reason//$'\n'/$'\n    '}" >&2
   fi
   if catalog_pod_has_signature_pull_failure "$_catalog_ns" "$_catalog_name"; then
     local _fail_phase
@@ -1753,7 +1753,7 @@ for i in $(seq 1 30); do
       echo "  Subscription resolution failed — resetting OLM state..."
       reset_operator_subscription
       _sub_reset=1
-      printf "\r  $(hat) subscription reset, waiting for OLM...    "
+      printf '\r  %s subscription reset, waiting for OLM...    ' "$(hat)"
       sleep 10
       continue
     fi

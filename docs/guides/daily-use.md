@@ -36,11 +36,13 @@ aap-demo watch         # follow the wake-up
 
 ```bash
 aap-demo diagnose
+aap-demo diagnose --ai
 aap-demo repair
 aap-demo must-gather
 ```
 
 `diagnose` prints a health report. It exits with an error only when it cannot reach the cluster at all.
+`diagnose --ai` sends that report (plus pod logs and events) to Cursor Agent, the Cursor CLI, or the Claude CLI.
 `repair` is the one to try after the laptop sleeps and the site will not load. `must-gather` collects a folder
 of logs you can hand to someone else.
 

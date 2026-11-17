@@ -11,13 +11,16 @@ import pytest
 from aap_demo.addons import get, names
 from aap_demo.addons.shell import scripts_root
 from aap_demo.core.errors import AddonError, UsageError
+from aap_demo.exec.runner import CompletedCommand
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
-def _tools(monkeypatch) -> None:
+def _tools(monkeypatch, fake_runner) -> None:
     monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda name: f"/usr/bin/{name}")
+    fake_runner.ok("kubectl get ansiblemcpservers.mcpserver.ansible.com")
+    fake_runner.ok("kubectl get deployment aap-mcp-server")
 
 
 def _deploy(name: str) -> str:
@@ -76,6 +79,38 @@ def test_enabled_dependencies_are_not_installed_again(app_ctx) -> None:
 
     assert _ran(app_ctx) == ["ao"]
     assert "No product demos are enabled" not in app_ctx.console.stdout + app_ctx.console.stderr
+
+
+def test_ao_reuses_and_records_a_detected_mcp_server(app_ctx) -> None:
+    app_ctx.env["AO_LLM_PROVIDER"] = "none"
+    app_ctx.config.set("addons.enabled", ["product-demos"])
+    app_ctx.runner._rules.insert(
+        0,
+        (
+            ("kubectl", "get", "ansiblemcpservers.mcpserver.ansible.com"),
+            CompletedCommand(argv=(), returncode=0, stdout="ansiblemcpserver/aap-mcp-server\n"),
+        ),
+    )
+    app_ctx.runner.ok(["bash", _deploy("ao")])
+
+    assert _enable(app_ctx) == 0
+    assert _ran(app_ctx) == ["ao"]
+    assert app_ctx.config.get("addons.enabled") == ["product-demos", "mcp-server", "ao"]
+    assert "Using the existing MCP Server" in app_ctx.console.stdout + app_ctx.console.stderr
+
+
+def test_ao_stops_if_existing_mcp_cannot_be_checked(app_ctx) -> None:
+    app_ctx.runner._rules.insert(
+        0,
+        (
+            ("kubectl", "get", "ansiblemcpservers.mcpserver.ansible.com"),
+            CompletedCommand(argv=(), returncode=1, stderr="forbidden"),
+        ),
+    )
+    with pytest.raises(AddonError, match="Could not determine whether MCP Server is installed"):
+        _enable(app_ctx)
+    assert _ran(app_ctx) == []
+    assert app_ctx.config.get("addons.enabled") in (None, [])
 
 
 @pytest.mark.parametrize("provider", ["none", "external"])

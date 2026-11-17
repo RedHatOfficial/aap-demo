@@ -10,13 +10,14 @@ import json
 import re
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from aap_demo.core.errors import AapDemoError
 
 STATE_RUNNING = "running"
 STATE_STOPPED = "stopped"
 STATE_NOT_CREATED = "not_created"
+STATE_UNKNOWN = "unknown"
 
 #: Bash defaults (aap-demo.sh). ``CRC_VERSION`` may be lowered; the warning
 #: still uses ``CRC_RECOMMENDED_VERSION``. Create and deploy both use this
@@ -459,20 +460,52 @@ def ensure_managed_crc(ctx: Any, *, which: Callable[[str], Optional[str]]) -> Tu
     return shown.strip(), True
 
 
-def _api_healthy(data: Dict[str, Any], runner: Any) -> bool:
+def health_failure_hint(env: Mapping[str, str], platform: str) -> str:
+    """Help collect CRC diagnostics without assuming a particular failure cause."""
+    hint = "Check CRC diagnostics: crc status --log-level debug."
+    if platform == "Darwin":
+        home = Path(env.get("HOME") or Path.home())
+        hint += f" VM serial log, if present: {home / '.crc/machines/crc/vfkit.log'}."
+    return (
+        hint
+        + " For an apparent CRC or vfkit failure, report it at https://github.com/crc-org/crc/issues."
+    )
+
+
+def _api_healthy(data: Dict[str, Any], runner: Any, kubeconfig: Path) -> bool:
     openshift = str(data.get("openshiftStatus", "") or "")
-    if openshift == "Running":
-        return True
-    if openshift != "Unreachable":
+    if openshift not in ("Running", "Unreachable"):
         return False
-    # CRC's status probe can lose the host alias while the API still answers.
-    result = runner.run(["kubectl", "get", "nodes", "--request-timeout=5s"])
-    return bool(getattr(result, "ok", False))
+    try:
+        result = runner.run(
+            [
+                "kubectl",
+                "--kubeconfig",
+                str(kubeconfig),
+                "get",
+                "nodes",
+                "-o",
+                "json",
+                "--request-timeout=5s",
+            ],
+            timeout=7,
+        )
+        if not result.ok:
+            return False
+        nodes = json.loads(result.stdout)["items"]
+        return any(
+            condition.get("type") == "Ready" and condition.get("status") == "True"
+            for node in nodes
+            for condition in node.get("status", {}).get("conditions", [])
+        )
+    except (AapDemoError, OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 
 def wait_until_stable(
     runner: Any,
     *,
+    kubeconfig: Path,
     samples: int = STABILITY_SAMPLES,
     attempts: Optional[int] = None,
     sleep_seconds: Optional[float] = None,
@@ -494,7 +527,7 @@ def wait_until_stable(
     healthy = 0
     for attempt in range(1, attempts + 1):
         data = status_json(runner)
-        if data.get("crcStatus") == "Running" and _api_healthy(data, runner):
+        if data.get("crcStatus") == "Running" and _api_healthy(data, runner, kubeconfig):
             healthy += 1
             if healthy >= samples:
                 return True

@@ -22,7 +22,10 @@ from aap_demo.infra import crc as infra_crc
 SSH_FORWARD = ("127.0.0.1", 2222)
 #: Bound on ``crc version`` and ``ps`` so a stuck host cannot hang diagnose.
 PROBE_TIMEOUT_SECONDS = 6.0
-FIX_HINT = "Fix: crc stop; pkill -f 'crc daemon'; crc cleanup && crc setup; then aap-demo start"
+FIX_HINT = (
+    "Check for a running 'crc start' and let it finish. If CRC is not set up, "
+    "run 'crc setup', check 'crc status', then run 'aap-demo start'."
+)
 
 
 @dataclass
@@ -121,7 +124,7 @@ def check(probe: HostProbe, rec: Any) -> HostFindings:
     elif not lines:
         if exists:
             failed = True
-            rec.fail("crc daemon is not running — the VM has no network")
+            rec.fail("crc daemon is not running")
         else:
             rec.info("crc daemon is not running (no VM yet)")
     else:

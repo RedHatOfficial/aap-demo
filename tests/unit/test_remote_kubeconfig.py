@@ -204,3 +204,28 @@ def test_an_unusable_refresh_leaves_the_file_alone(
     app_ctx.runner = runner
     preflight.setup_kubeconfig(app_ctx, which=_no_crc)
     assert app_ctx.kubeconfig.read_text() == ""
+
+
+def test_lifecycle_guard_rejects_remote_even_when_remote_override_is_set(app_ctx, kubeconfig):
+    _runner(app_ctx, REMOTE)
+    app_ctx.env = {**app_ctx.env, preflight.ALLOW_REMOTE_ENV: "true"}
+    with pytest.raises(AapDemoError, match="remote cluster") as caught:
+        preflight.require_local_kubeconfig(app_ctx, which=_no_crc)
+    assert "AAP_DEMO_ALLOW_REMOTE_KUBECONFIG=true" not in (caught.value.hint or "")
+
+
+@pytest.mark.parametrize("operation", ["start", "create"])
+def test_lifecycle_commands_refuse_remote_override_before_starting_crc(
+    app_ctx, kubeconfig, operation
+):
+    from aap_demo.cluster import bootstrap, runtime
+
+    runner = _runner(app_ctx, REMOTE)
+    runner.fail("crc ip")
+    app_ctx.env = {**app_ctx.env, preflight.ALLOW_REMOTE_ENV: "true"}
+    with pytest.raises(AapDemoError, match="remote cluster"):
+        if operation == "start":
+            runtime.start(app_ctx)
+        else:
+            bootstrap.create(app_ctx)
+    assert not runner.called("crc start")

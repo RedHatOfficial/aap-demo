@@ -24,6 +24,7 @@ import time
 from typing import Any, Callable, Optional
 
 from aap_demo.core.context import AppContext
+from aap_demo.core.errors import AapDemoError
 from aap_demo.exec import kubectl
 from aap_demo.exec import ssh as ssh_mod
 
@@ -170,7 +171,9 @@ def ensure_search_domain(ctx: AppContext) -> bool:
     if key is None:
         return False
     current = ssh_mod.exec_remote(ctx.runner, key, "cat", "/etc/resolv.conf", sudo=True)
-    existing = current.stdout if current.ok else ""
+    if not current.ok:
+        raise AapDemoError("Could not read the CRC VM's /etc/resolv.conf")
+    existing = current.stdout
     rendered = render_resolv(existing)
     if current.ok and _resolv_matches(existing, rendered):
         return True

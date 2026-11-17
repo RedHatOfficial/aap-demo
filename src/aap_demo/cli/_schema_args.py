@@ -56,6 +56,7 @@ CLI_ONLY_OPTIONS = frozenset(
         "--purge-creds",
         "--refresh-catalog",
         "--no-import",
+        "--ai",
         "--os",
         "--name",
         "--backend",

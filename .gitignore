@@ -8,6 +8,7 @@ tsd.json
 test/testing-framework/
 .claude/skills/*/evals/workspace/
 .claude/plans/
+docs/superpowers/
 .tokensave/
 .serena/
 
