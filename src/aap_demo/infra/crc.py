@@ -17,6 +17,7 @@ from aap_demo.core.errors import AapDemoError
 STATE_RUNNING = "running"
 STATE_STOPPED = "stopped"
 STATE_NOT_CREATED = "not_created"
+STATE_UNKNOWN = "unknown"
 
 #: Bash defaults (aap-demo.sh). ``CRC_VERSION`` may be lowered; the warning
 #: still uses ``CRC_RECOMMENDED_VERSION``. Create and deploy both use this

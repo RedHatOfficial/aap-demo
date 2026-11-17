@@ -40,8 +40,9 @@ def _stub_version(monkeypatch: pytest.MonkeyPatch, fake_runner: FakeRunner) -> N
 
 
 def test_gather_reports_not_created_without_further_probing(
-    app_ctx: AppContext, fake_runner: FakeRunner
+    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path
 ) -> None:
+    app_ctx.env["HOME"] = str(tmp_path)
     fake_runner.fail("crc status -o json")
     report = status_mod.gather(app_ctx)
     assert report.cluster_state == status_mod.infra_crc.STATE_NOT_CREATED
@@ -57,6 +58,26 @@ def test_gather_reports_stopped_without_further_probing(
     fake_runner.ok("crc status -o json", stdout='{"crcStatus": "Stopped"}')
     report = status_mod.gather(app_ctx)
     assert report.cluster_state == status_mod.infra_crc.STATE_STOPPED
+    assert not fake_runner.called("kubectl")
+
+
+@pytest.mark.parametrize("status", ["", '{"crcStatus": "Unknown"}'])
+def test_unreadable_existing_vm_is_unknown(
+    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path, status: str
+) -> None:
+    machine = tmp_path / ".crc" / "machines" / "crc"
+    machine.mkdir(parents=True)
+    (machine / "config.json").write_text("{}", encoding="utf-8")
+    app_ctx.env["HOME"] = str(tmp_path)
+    fake_runner.ok("crc status -o json", stdout=status)
+
+    report = status_mod.gather(app_ctx)
+    status_mod.render_text(app_ctx.console, report)
+
+    assert report.as_dict()["cluster_state"] == "unknown"
+    assert "CRC not responding" in app_ctx.console.stdout
+    assert "aap-demo diagnose" in app_ctx.console.stdout
+    assert "aap-demo create" not in app_ctx.console.stdout
     assert not fake_runner.called("kubectl")
 
 

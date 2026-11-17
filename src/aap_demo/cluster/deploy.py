@@ -494,8 +494,9 @@ def ensure_cluster_running(ctx: AppContext) -> str:
         raise ClusterUnreachableError(
             "A CRC VM exists, but its status could not be read",
             hint=(
-                "Check: crc status, and which crc is first on PATH.\n"
-                "  To replace the VM: aap-demo destroy --yes"
+                "Run: aap-demo diagnose\n"
+                "  Check: crc status and which crc is first on PATH.\n"
+                "  If CRC says it is not set up, run: crc setup"
             ),
         )
     return state
