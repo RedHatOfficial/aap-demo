@@ -218,8 +218,8 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
 
 
 def _deployment(name: str, image: str, command: List[str]) -> dict:
-    volumes = []
-    mounts = []
+    volumes: List[Dict[str, Any]] = []
+    mounts: List[Dict[str, Any]] = []
     if name == "prometheus":
         volumes = [
             {"name": "config", "configMap": {"name": "prometheus-config"}},
@@ -366,12 +366,11 @@ class MonitoringAddon:
             password_path.write_text(password + "\n", encoding="utf-8")
             password_path.chmod(0o600)
         aap_password = _aap_password(ctx)
-        result = kube.apply_or_raise(
+        kube.apply_or_raise(
             ctx,
             _manifest(_documents(password, aap_password, ctx.namespace)),
             message="could not install monitoring addon",
         )
-        del result
         _wait_for_readiness(ctx)
         names = enabled_names(ctx)
         if NAME not in names:

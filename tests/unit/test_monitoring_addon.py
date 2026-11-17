@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 
 import pytest
 
@@ -50,7 +51,8 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
     assert "dashboards.yaml" in provisioning[0]["data"]
     password = app_ctx.paths.addon_dir("monitoring") / "grafana-admin-password"
     assert password.exists()
-    assert password.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert password.stat().st_mode & 0o777 == 0o600
     assert app_ctx.config.get("addons.enabled") == ["monitoring"]
 
 
@@ -123,9 +125,7 @@ def test_status_command_can_target_monitoring(app_ctx) -> None:
 
 
 def test_status_reports_not_ready_when_resources_are_missing(app_ctx) -> None:
-    app_ctx.runner.fail(
-        ["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound"
-    )
+    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
     app_ctx.runner.ok(["kubectl", "get", "route", "grafana"], stdout="")
 
     assert observe.status(app_ctx, argparse.Namespace(addon="monitoring")) == 1
