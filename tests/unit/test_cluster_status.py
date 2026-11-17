@@ -178,6 +178,19 @@ def test_gather_running_cluster_full_report(
     assert set(addon_names) == set(status_mod.AVAILABLE_ADDONS)
 
 
+def test_gather_marks_monitoring_enabled_from_config(
+    app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path
+) -> None:
+    _register_running_cluster(fake_runner)
+    app_ctx.env = {"HOME": str(tmp_path)}
+    app_ctx.config.data.setdefault("addons", {})["enabled"] = ["monitoring"]
+
+    report = status_mod.gather(app_ctx)
+
+    addon_names = {a.name: a.enabled for a in report.addons}
+    assert addon_names["monitoring"] is True
+
+
 def test_gather_picks_up_vm_stats_when_ssh_key_present(
     app_ctx: AppContext, fake_runner: FakeRunner, tmp_path: Path
 ) -> None:

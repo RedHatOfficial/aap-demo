@@ -213,7 +213,9 @@ def build_parser(
     add("redeploy", "Clean AAP and redeploy").set_defaults(func=lifecycle.redeploy)
 
     # -- observation --------------------------------------------------------
-    add("status", "Show cluster and AAP status").set_defaults(func=observe.status)
+    p = add("status", "Show cluster and AAP status")
+    p.set_defaults(func=observe.status)
+    p.add_argument("addon", nargs="?", help="Show status for one native addon")
     add("watch", "Watch AAP deployment status").set_defaults(func=observe.watch)
 
     add("diagnose", "Check environment health and identify common issues").set_defaults(
