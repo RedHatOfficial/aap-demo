@@ -73,6 +73,7 @@ packages = ["src/aap_demo"]
 "addons/product-demo-openshift" = "aap_demo/bundled_addons/product-demo-openshift"
 "addons/product-demo-satellite" = "aap_demo/bundled_addons/product-demo-satellite"
 "addons/eda-playground" = "aap_demo/bundled_addons/eda-playground"
+"addons/apme-eap" = "aap_demo/bundled_addons/apme-eap"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

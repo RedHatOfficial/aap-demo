@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, Literal, Optional, overload
 
+from aap_demo.addons.apme_eap import ApmeEapAddon
 from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
 from aap_demo.addons.monitoring import MonitoringAddon
@@ -17,6 +18,7 @@ from aap_demo.core.errors import AddonError
 
 _FLEET = FleetAddon()
 _MONITORING = MonitoringAddon()
+_APME_EAP = ApmeEapAddon()
 _EDA_PLAYGROUND = ShellAddon(
     "eda-playground",
     required_tools=("bash", "curl", "jq", "kubectl", "base64"),
@@ -29,6 +31,7 @@ _EDA_PLAYGROUND = ShellAddon(
 _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
     _MONITORING.name: _MONITORING,
+    _APME_EAP.name: _APME_EAP,
     **{name: ShellAddon(name) for name in BUNDLED_ADDON_DIRS if name != "eda-playground"},
     _EDA_PLAYGROUND.name: _EDA_PLAYGROUND,
 }
