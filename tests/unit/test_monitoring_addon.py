@@ -23,6 +23,7 @@ def test_monitoring_is_a_native_public_addon() -> None:
 
 def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -> None:
     addon = get("monitoring")
+    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
     app_ctx.runner.ok(
         ["kubectl", "get", "secret", "aap-admin-password"],
         stdout=json.dumps({"data": {"password": base64.b64encode(b"aap-password").decode()}}),
@@ -43,6 +44,21 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
     assert any(
         item.get("kind") == "Deployment" and item.get("apiVersion") == "apps/v1" for item in applied
     )
+    policies = [item for item in applied if item.get("kind") == "NetworkPolicy"]
+    assert policies
+    policy = policies[0]
+    assert (
+        policy["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"][
+            "app.kubernetes.io/name"
+        ]
+        == "prometheus"
+    )
+    assert (
+        policy["spec"]["egress"][0]["to"][0]["podSelector"]["matchLabels"][
+            "app.kubernetes.io/component"
+        ]
+        == "aap-gateway"
+    )
     provisioning = [
         item for item in applied if item.get("metadata", {}).get("name") == "grafana-provisioning"
     ]
@@ -58,6 +74,7 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
 
 def test_enable_uses_configured_aap_namespace(app_ctx) -> None:
     app_ctx.config.set("core.namespace", "custom-aap")
+    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
     app_ctx.runner.ok(
         ["kubectl", "get", "secret", "aap-admin-password"],
         stdout=json.dumps({"data": {"password": base64.b64encode(b"aap-password").decode()}}),
@@ -71,6 +88,19 @@ def test_enable_uses_configured_aap_namespace(app_ctx) -> None:
         call for call in app_ctx.runner.calls if call.argv[:2] == ("kubectl", "apply")
     )
     assert "aap.custom-aap.svc.cluster.local" in apply_call.input
+
+
+def test_enable_refuses_unowned_namespace_before_writing_state(app_ctx) -> None:
+    app_ctx.runner.ok(
+        ["kubectl", "get", "namespace", "aap-monitoring"],
+        stdout=json.dumps({"metadata": {"labels": {"owner": "someone-else"}}}),
+    )
+
+    with pytest.raises(AddonError, match="unowned namespace"):
+        get("monitoring").enable(app_ctx, argparse.Namespace(addon_args=[]))
+
+    assert not app_ctx.runner.called(["kubectl", "get", "secret", "aap-admin-password"])
+    assert not app_ctx.runner.called(["kubectl", "apply"])
 
 
 def test_disable_deletes_only_owned_namespace(app_ctx) -> None:

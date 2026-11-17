@@ -1,4 +1,4 @@
-# Verify the Windows installer cannot leave a policy-blocked .ps1 command ahead of the .cmd shim.
+# Verify the Windows installer preserves the Python default and Bash compatibility command.
 [CmdletBinding()]
 param()
 
@@ -11,8 +11,8 @@ if ($installer -match '(?s)Set-Content\s+-LiteralPath\s+\$WrapperTarget') {
 if ($installer -notmatch 'Remove-Item\s+-LiteralPath\s+\$WrapperTarget\s+-Force') {
   throw 'The installer must remove stale .ps1 launchers during installation'
 }
-if ($installer -notmatch 'ExecutionPolicy Bypass' -or $installer -notmatch '\$CmdShim') {
-  throw 'The installer .cmd shim must invoke PowerShell with ExecutionPolicy Bypass'
+if ($installer -notmatch '\$LegacyShim' -or $installer -notmatch 'bash .*aap-demo\.sh') {
+  throw 'The installer must preserve the legacy Bash compatibility launcher'
 }
 
 Write-Output 'PowerShell installer launcher checks passed'

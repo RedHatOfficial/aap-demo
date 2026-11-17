@@ -200,6 +200,56 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
             spec={"selector": _labels("json-exporter"), "ports": [{"name": "http", "port": 7979}]},
         ),
         _doc(
+            "NetworkPolicy",
+            "json-exporter-network",
+            apiVersion="networking.k8s.io/v1",
+            spec={
+                "podSelector": {"matchLabels": _labels("json-exporter")},
+                "policyTypes": ["Ingress", "Egress"],
+                "ingress": [
+                    {
+                        "from": [{"podSelector": {"matchLabels": _labels("prometheus")}}],
+                        "ports": [{"protocol": "TCP", "port": 7979}],
+                    }
+                ],
+                "egress": [
+                    {
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {"kubernetes.io/metadata.name": aap_namespace}
+                                },
+                                "podSelector": {
+                                    "matchLabels": {
+                                        "app.kubernetes.io/component": "aap-gateway",
+                                        "app.kubernetes.io/managed-by": "aap-operator",
+                                    }
+                                },
+                            }
+                        ],
+                        "ports": [
+                            {"protocol": "TCP", "port": 80},
+                            {"protocol": "TCP", "port": 443},
+                        ],
+                    },
+                    {
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                                },
+                                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                            }
+                        ],
+                        "ports": [
+                            {"protocol": "UDP", "port": 53},
+                            {"protocol": "TCP", "port": 53},
+                        ],
+                    },
+                ],
+            },
+        ),
+        _doc(
             "Service",
             "grafana",
             spec={"selector": _labels("grafana"), "ports": [{"name": "http", "port": 3000}]},
@@ -354,6 +404,14 @@ class MonitoringAddon:
             )
         if actions:
             raise AddonError(f"unsupported monitoring action: {actions[0]}")
+        namespace = kube.read_object(ctx, "namespace", NAMESPACE)
+        if namespace is not None:
+            labels = namespace.get("metadata", {}).get("labels", {})
+            if labels.get("app.kubernetes.io/managed-by") != "aap-demo-monitoring":
+                raise AddonError(
+                    f"refusing to use unowned namespace {NAMESPACE!r}",
+                    hint="The namespace is not labeled as managed by the monitoring addon.",
+                )
         state_dir = ctx.paths.addon_dir(NAME)
         state_dir.mkdir(parents=True, exist_ok=True)
         password_path = state_dir / STATE_PASSWORD
