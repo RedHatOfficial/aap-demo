@@ -97,5 +97,6 @@ Organization Admin/Member in `AAP Demo`. This role profile is for local testing.
 remain so a later reinstall can reproduce the same realm data. Remove that directory
 only when its test credentials are no longer needed.
 
-Realm import runs on first startup. To apply changed route or client data, disable
-then enable the addon so Keycloak starts with a fresh local realm.
+Realm import runs on first startup. Re-enabling the addon also reconciles the
+generated client claims and user profile fields in an existing realm; route and
+consumer configuration is applied by `keycloak configure --apply`.

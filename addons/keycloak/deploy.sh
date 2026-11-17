@@ -66,7 +66,7 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   exit 0
 fi
 
-for _cmd in jq openssl; do require_cmd "$_cmd"; done
+for _cmd in curl jq openssl; do require_cmd "$_cmd"; done
 kubectl cluster-info >/dev/null 2>&1 || {
   echo "ERROR: kubectl is not connected to a cluster" >&2
   exit 1
@@ -113,6 +113,20 @@ fi
 KEYCLOAK_HOST="${KEYCLOAK_HOST:-keycloak.${cluster_domain}}"
 AAP_HOST="$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" -o jsonpath='{.spec.host}' 2>/dev/null || printf 'aap-aap-operator.%s' "$cluster_domain")"
 AO_HOST="$(kubectl get route -n automation-orchestrator -o jsonpath='{.items[0].spec.host}' 2>/dev/null || printf 'automation-orchestrator.%s' "$cluster_domain")"
+KEYCLOAK_INSECURE_TLS="${KEYCLOAK_INSECURE_TLS:-false}"
+case "$KEYCLOAK_INSECURE_TLS" in
+  true) CURL_TLS_ARGS=(-k) ;;
+  false)
+    KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-${HOME}/.aap-demo/crc-ingress-ca.crt}"
+    CURL_TLS_ARGS=()
+    [ -s "$KEYCLOAK_CA_FILE" ] && CURL_TLS_ARGS+=(--cacert "$KEYCLOAK_CA_FILE")
+    ;;
+  *)
+    echo "ERROR: KEYCLOAK_INSECURE_TLS must be true or false" >&2
+    exit 1
+    ;;
+esac
+curl_local() { curl "${CURL_TLS_ARGS[@]}" "$@"; }
 AAP_REDIRECT_OVERRIDE="${KEYCLOAK_AAP_REDIRECT_URI:-}"
 KEYCLOAK_AAP_REDIRECT_URI="${KEYCLOAK_AAP_REDIRECT_URI:-https://${AAP_HOST}/}"
 KEYCLOAK_AO_REDIRECT_URI="${KEYCLOAK_AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback}"
@@ -306,6 +320,58 @@ sed \
 
 echo "Waiting for Keycloak..."
 kubectl rollout status deployment/keycloak -n "$KEYCLOAK_NAMESPACE" --timeout="${KEYCLOAK_ROLLOUT_TIMEOUT:-10m}"
+
+# --import-realm only applies to a new realm. Reconcile the claims and user
+# profile fields for realms created by an earlier version of this addon.
+REQUEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aap-demo-keycloak-migrate.XXXXXX")"
+chmod 700 "$REQUEST_DIR"
+cleanup_request_dir() { rm -rf "$REQUEST_DIR"; }
+trap 'cleanup_request_dir; cleanup' EXIT
+
+KC_TOKEN="$(curl_local -fsS -X POST "https://${KEYCLOAK_HOST}/realms/master/protocol/openid-connect/token" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'client_id=admin-cli' \
+  --data-urlencode 'grant_type=password' \
+  --data-urlencode 'username=admin' \
+  --data-urlencode "password@${STATE_DIR}/admin-password" | jq -r '.access_token // empty')"
+[ -n "$KC_TOKEN" ] || {
+  echo "ERROR: unable to authenticate to the Keycloak admin API for realm migration" >&2
+  exit 1
+}
+KC_AUTH="$REQUEST_DIR/keycloak-admin-curl.conf"
+printf 'header = "Authorization: Bearer %s"\n' "$KC_TOKEN" >"$KC_AUTH"
+
+for client_id in aap-demo-aap aap-demo-ao; do
+  desired_client="$(jq -c --arg client_id "$client_id" '.clients[] | select(.clientId==$client_id)' "$realm_file")"
+  existing_client_id="$(curl_local -fsS "https://${KEYCLOAK_HOST}/admin/realms/${KEYCLOAK_REALM}/clients?clientId=${client_id}" --config "$KC_AUTH" | jq -r 'if length == 1 then .[0].id else empty end')"
+  [ -n "$existing_client_id" ] || {
+    echo "ERROR: Keycloak client ${client_id} was not found during realm migration" >&2
+    exit 1
+  }
+  curl_local -fsS "https://${KEYCLOAK_HOST}/admin/realms/${KEYCLOAK_REALM}/clients/${existing_client_id}" --config "$KC_AUTH" \
+    | jq --argjson desired "$desired_client" '.protocolMappers=$desired.protocolMappers' >"$REQUEST_DIR/${client_id}.json"
+  curl_local -fsS -X PUT "https://${KEYCLOAK_HOST}/admin/realms/${KEYCLOAK_REALM}/clients/${existing_client_id}" \
+    --config "$KC_AUTH" -H 'Content-Type: application/json' \
+    --data-binary "@$REQUEST_DIR/${client_id}.json" >/dev/null
+done
+
+existing_users="$(curl_local -fsS "https://${KEYCLOAK_HOST}/admin/realms/${KEYCLOAK_REALM}/users?max=100" --config "$KC_AUTH")"
+for username in aap-oidc-admin aap-oidc-operator aap-oidc-auditor aap-oidc-developer; do
+  desired_user="$(jq -c --arg username "$username" '.users[] | select(.username==$username)' "$realm_file")"
+  existing_user_id="$(printf '%s' "$existing_users" | jq -r --arg username "$username" '.[] | select(.username==$username) | .id' | head -n1)"
+  [ -n "$existing_user_id" ] || {
+    echo "ERROR: Keycloak user ${username} was not found during realm migration" >&2
+    exit 1
+  }
+  existing_user="$(curl_local -fsS "https://${KEYCLOAK_HOST}/admin/realms/${KEYCLOAK_REALM}/users/${existing_user_id}" --config "$KC_AUTH")"
+  printf '%s' "$existing_user" | jq --argjson desired "$desired_user" \
+    '.firstName=$desired.firstName | .lastName=$desired.lastName | .email=$desired.email | .emailVerified=$desired.emailVerified | .enabled=$desired.enabled' \
+    >"$REQUEST_DIR/${username}.json"
+  curl_local -fsS -X PUT "https://${KEYCLOAK_HOST}/admin/realms/${KEYCLOAK_REALM}/users/${existing_user_id}" \
+    --config "$KC_AUTH" -H 'Content-Type: application/json' \
+    --data-binary "@$REQUEST_DIR/${username}.json" >/dev/null
+done
+echo "✓ Reconciled Keycloak realm claims and user profiles"
 
 issuer="https://${KEYCLOAK_HOST}/realms/${KEYCLOAK_REALM}"
 echo ""

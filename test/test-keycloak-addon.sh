@@ -31,6 +31,18 @@ grep -q 'oidc-usermodel-property-mapper' "$ROOT_DIR/addons/keycloak/deploy.sh" |
   echo "FAIL: OIDC username/profile mappers missing"
   exit 1
 }
+grep -q 'Reconciled Keycloak realm claims and user profiles' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: existing Keycloak realms must be migrated after import"
+  exit 1
+}
+grep -q 'protocolMappers=' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: existing Keycloak clients must receive protocol mappers"
+  exit 1
+}
+grep -q 'firstName=' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: existing Keycloak users must receive profile fields"
+  exit 1
+}
 grep -q 'preferred_username' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: preferred_username claim missing"
   exit 1
