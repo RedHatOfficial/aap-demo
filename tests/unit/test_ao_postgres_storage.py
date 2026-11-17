@@ -159,6 +159,8 @@ def test_cnpg_detection_distinguishes_missing_from_failed(
         ("cluster-delete", False, False),
         ("cluster-stuck", False, False),
         ("database-crd", False, False),
+        ("database-lookup", False, False),
+        ("database-owner", False, False),
         ("database-delete", False, False),
         ("pvc-delete", False, True),
     ],
@@ -183,7 +185,11 @@ def test_cnpg_reset_fails_closed_before_replacement(tmp_path, failure, ok, pvc_d
         '  "delete clusters.postgresql.cnpg.io orchestrator-postgres") '
         '[ "$FAIL" != cluster-delete ] || exit 1; '
         '[ "$FAIL" = cluster-stuck ] || rm -f "$STATE" ;;\n'
-        '  "delete databases.postgresql.cnpg.io --all") '
+        '  "get database "*) '
+        '[ "$FAIL" != database-lookup ] || exit 1; '
+        '[ "$FAIL" != database-owner ] || [ "$3" != temporal ] || printf other-cluster; '
+        '[ "$FAIL" = database-owner ] && [ "$3" = temporal ] || printf orchestrator-postgres ;;\n'
+        '  "delete database "*) '
         '[ "$FAIL" != database-delete ] || exit 1 ;;\n'
         '  "delete pvc orchestrator-postgres-1") '
         '[ "$FAIL" != pvc-delete ] || exit 1 ;;\n'
