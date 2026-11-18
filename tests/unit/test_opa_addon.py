@@ -86,13 +86,14 @@ def test_password_is_absent_from_output_and_error(app_ctx, monkeypatch) -> None:
 
 def test_bootstrap_job_keeps_password_in_secret_backed_extra_vars(app_ctx, monkeypatch) -> None:
     password = "super-secret-password"  # pragma: allowlist secret
-    monkeypatch.setattr("aap_demo.addons.opa.gateway.gateway_url", lambda ctx: "https://aap.apps.test")
+    monkeypatch.setattr(
+        "aap_demo.addons.opa.gateway.gateway_url", lambda ctx: "https://aap.apps.test"
+    )
     monkeypatch.setattr("aap_demo.addons.opa.aap_mod.admin_password", lambda ctx, ns: password)
     monkeypatch.setattr(
         "aap_demo.addons.opa.ee.discover_image",
         lambda ctx, addon: (
-            "registry.redhat.io/ansible-automation-platform-25/"
-            "ee-supported-rhel8:latest"
+            "registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8:latest"
         ),
     )
     job = opa_mod._bootstrap_job(app_ctx, opa_mod.DEFAULTS, "present")
