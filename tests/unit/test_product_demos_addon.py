@@ -194,6 +194,19 @@ def test_pyproject_ships_every_product_demo_installer() -> None:
         assert (REPO_ROOT / "addons" / name / "deploy.sh").is_file()
 
 
+def test_pyproject_ships_the_opa_fallback_and_native_playbooks() -> None:
+    text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"addons/opa" = "aap_demo/bundled/addons/opa"' in text
+    assert (REPO_ROOT / "addons/opa/deploy.sh").is_file()
+    assert all((REPO_ROOT / "addons/opa/playbooks" / name).is_file() for name in (
+        "bootstrap.yml",
+        "load-policies.yml",
+        "test-policies.yml",
+        "clear-policies.yml",
+        "demo-policy.yml",
+    ))
+
+
 def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
     assert names() == [
         "ao",
@@ -201,6 +214,7 @@ def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
         "fleet",
         "mcp-server",
         "ollama",
+        "opa",
         "product-demo-satellite",
         "product-demos",
     ]
