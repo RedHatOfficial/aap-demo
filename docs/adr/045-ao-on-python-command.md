@@ -58,9 +58,10 @@ The Python addon must take over any AO the Bash installer left, without
   installer does today. Moving it to the StatefulSet needs `--force`, which deletes
   AO's data. Cleanup deletes only the CNPG objects AO created.
 - **Legacy Secret names**: refused without `--force`, as in the Bash installer.
-- **Admin password**: the first Python run imports
-  `~/.aap-demo/ao/initial-admin-password` into the secret store and leaves the
-  file in place for `aap-demo-v1`. A retained database is detected by the
+- **Admin password**: the first Python run copies
+  `~/.aap-demo/ao/initial-admin-password` into the Python state directory
+  (mode 0600) and leaves the original for `aap-demo-v1`. A file, not the OS
+  keyring, because the keyring is not available on every host. A retained database is detected by the
   StatefulSet PVC `data-orchestrator-postgres-0` as well as the CNPG names.
 - **LLM settings**: `AO_LLM_PROVIDER`, `AO_LLM_BASE_URL` and `AO_LLM_MODEL` from
   the legacy config move to `addons.options.ao` in `config.yaml` through the
