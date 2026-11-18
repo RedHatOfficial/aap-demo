@@ -429,6 +429,19 @@ def _realm(credentials: Dict[str, str], aap_redirect: str, ao_redirect: str) -> 
                             "userinfo.token.claim": "true",
                         },
                     },
+                    {
+                        "name": f"{client_id} email",
+                        "protocol": "openid-connect",
+                        "protocolMapper": "oidc-usermodel-property-mapper",
+                        "config": {
+                            "user.attribute": "email",
+                            "claim.name": "email",
+                            "jsonType.label": "String",
+                            "id.token.claim": "true",
+                            "access.token.claim": "true",
+                            "userinfo.token.claim": "true",
+                        },
+                    },
                 ],
             }
         )
