@@ -139,7 +139,7 @@ KEYCLOAK_INSECURE_TLS="${KEYCLOAK_INSECURE_TLS:-false}"
 case "$KEYCLOAK_INSECURE_TLS" in
   true) CURL_TLS_ARGS=(-k) ;;
   false)
-    KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-${HOME}/.aap-demo/crc-ingress-ca.crt}"
+    KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt}"
     CURL_TLS_ARGS=()
     [ -s "$KEYCLOAK_CA_FILE" ] && CURL_TLS_ARGS+=(--cacert "$KEYCLOAK_CA_FILE")
     ;;
@@ -152,11 +152,15 @@ curl_local() { curl "${CURL_TLS_ARGS[@]}" "$@"; }
 AAP_REDIRECT_OVERRIDE="${KEYCLOAK_AAP_REDIRECT_URI:-}"
 KEYCLOAK_AAP_REDIRECT_URI="${KEYCLOAK_AAP_REDIRECT_URI:-https://${AAP_HOST}/}"
 KEYCLOAK_AO_REDIRECT_URI="${KEYCLOAK_AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback}"
-case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in
-  *\**)
-    echo "ERROR: Keycloak redirect URIs must be exact URLs, not wildcards" >&2
-    exit 1
-    ;;
+case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in *\** | *\?* | *\#* | *@*)
+  echo "ERROR: Keycloak redirect URIs must not contain wildcards, queries, fragments, or credentials" >&2
+  exit 1
+  ;;
+esac
+case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in https://*/*:https://*/*) ;; *)
+  echo "ERROR: Keycloak redirect URIs must be absolute HTTPS URLs" >&2
+  exit 1
+  ;;
 esac
 printf '%s' "$KEYCLOAK_AO_REDIRECT_URI" >"$STATE_DIR/ao-redirect-uri"
 chmod 600 "$STATE_DIR/ao-redirect-uri"

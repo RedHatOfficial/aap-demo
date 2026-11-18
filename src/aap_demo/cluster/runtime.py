@@ -53,7 +53,7 @@ def _vm_kubeconfig(ctx: AppContext):
         )
     try:
         result = ssh_mod.exec_remote(
-            ctx.runner, key, "cat", kubeconfig.REMOTE_KUBECONFIG_PATH, timeout=15
+            ctx.runner, key, "cat", kubeconfig.REMOTE_KUBECONFIG_PATH, sudo=True, timeout=15
         )
         if not result.ok or not result.stdout.strip():
             raise AapDemoError("Could not obtain the CRC VM kubeconfig")
