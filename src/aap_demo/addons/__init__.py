@@ -1,6 +1,6 @@
 """Addon registry: one table of every addon the new command can enable.
 
-``fleet`` and ``ao`` are native Python (ADR-045). Product demos, EDA
+``fleet``, ``opa`` and ``ao`` (ADR-045) are native Python. Product demos, EDA
 Playground, mcp-server and ollama run their bundled bash installers
 (``kind == "legacy"``). Any other name is an error that points at the older
 command. See ADR-040.
