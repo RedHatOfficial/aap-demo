@@ -95,6 +95,18 @@
     - name: Configure Policy as Code resources
       when: state == 'present'
       block:
+        - name: Find existing project
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/projects/?name={{ project_name | urlencode }}"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: project_lookup
+          no_log: true
+
         - name: Create or update project
           ansible.builtin.uri:
             url: "{{ aap_api }}/projects/{{ project_lookup.json.results[0].id | default('') }}/"
@@ -113,10 +125,6 @@
               scm_update_on_launch: false
               organization: "{{ organization.id }}"
             status_code: [200, 201]
-          vars:
-            project_lookup: >-
-              {{ lookup('ansible.builtin.url', aap_api + '/projects/?name=' +
-              (project_name | urlencode), split_lines=false) | from_json }}
           register: project_configured
           no_log: true
 
@@ -155,6 +163,18 @@
             msg: "OPA AAP project sync failed"
           when: project_status.json.status != 'successful'
 
+        - name: Find existing localhost inventory
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/inventories/?name={{ inventory_name | urlencode }}"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: inventory_lookup
+          no_log: true
+
         - name: Create or update localhost inventory
           ansible.builtin.uri:
             url: "{{ aap_api }}/inventories/{{ inventory_lookup.json.results[0].id | default('') }}/"
@@ -168,10 +188,6 @@
               name: "{{ inventory_name }}"
               organization: "{{ organization.id }}"
             status_code: [200, 201]
-          vars:
-            inventory_lookup: >-
-              {{ lookup('ansible.builtin.url', aap_api + '/inventories/?name=' +
-              (inventory_name | urlencode), split_lines=false) | from_json }}
           register: inventory_configured
           no_log: true
 
@@ -206,6 +222,18 @@
           register: credential_type_lookup
           no_log: true
 
+        - name: Find existing AAP credential
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/credentials/?name={{ credential_name | urlencode }}"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: credential_lookup
+          no_log: true
+
         - name: Create or update AAP credential
           ansible.builtin.uri:
             url: "{{ aap_api }}/credentials/{{ credential_lookup.json.results[0].id | default('') }}/"
@@ -226,10 +254,6 @@
                 password: "{{ aap_password }}"
                 verify_ssl: false
             status_code: [200, 201]
-          vars:
-            credential_lookup: >-
-              {{ lookup('ansible.builtin.url', aap_api + '/credentials/?name=' +
-              (credential_name | urlencode), split_lines=false) | from_json }}
           register: credential_configured
           no_log: true
 
@@ -252,7 +276,7 @@
         - name: Create or update OPA job templates
           ansible.builtin.uri:
             url: "{{ aap_api }}/job_templates/{{ existing.id | default('') }}/"
-            method: "{{ 'PATCH' if existing is defined else 'POST' }}"
+            method: "{{ 'PATCH' if existing.id is defined else 'POST' }}"
             user: "{{ aap_username }}"
             password: "{{ aap_password }}"
             force_basic_auth: true
@@ -270,10 +294,91 @@
               ask_variables_on_launch: false
             status_code: [200, 201]
           vars:
-            existing: >-
-              {{ (template_lookup.json.results | selectattr('name', 'equalto', item.name) |
-              list | first) | default({}) }}
+            existing: "{{ (template_lookup.json.results | selectattr('name', 'equalto', item.name) | list | first) | default({}) }}"
           loop: "{{ template_definitions }}"
+          no_log: true
+
+        - name: Read upstream policy names for the demo survey
+          ansible.builtin.uri:
+            url: >-
+              https://api.github.com/repos/{{ opa_repo |
+              regex_replace('^https://github.com/', '') |
+              regex_replace('\\.git$', '') }}/contents/aap_policy_examples?ref={{ opa_ref }}
+            method: GET
+            headers:
+              Accept: application/vnd.github+json
+            validate_certs: false
+            status_code: [200, 404]
+          register: upstream_policy_files
+
+        - name: Build demo survey choices
+          ansible.builtin.set_fact:
+            policy_choices: >-
+              {{ (upstream_policy_files.json | default([]) |
+              selectattr('name', 'search', '\\.rego$') | map(attribute='name') |
+              map('regex_replace', '\\.rego$', '') | list) + ['REMOVE'] }}
+
+        - name: Refresh job templates for demo survey
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/job_templates/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: survey_templates
+          no_log: true
+
+        - name: Enable demo policy survey
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/"
+            method: PATCH
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              survey_enabled: true
+              ask_variables_on_launch: false
+            status_code: [200]
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+          when: demo_template.id is defined
+          no_log: true
+
+        - name: Set demo policy survey specification
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/survey_spec/"
+            method: POST
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              name: Policy Demo Survey
+              description: Select a policy to apply
+              spec:
+                - question_name: Policy to Apply
+                  question_description: Select a policy or REMOVE to clear it.
+                  required: true
+                  type: multiplechoice
+                  variable: policy_name
+                  default: ""
+                  choices: "{{ policy_choices | join('\\n') }}"
+                - question_name: Target Organization
+                  question_description: Organization to test policy against.
+                  required: false
+                  type: text
+                  variable: organization_name
+                  default: Policy as Code
+                  max: 100
+                  choices: ""
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+          when: demo_template.id is defined
           no_log: true
 
         - name: Configure OPA policy settings
@@ -329,7 +434,19 @@
           loop: "{{ cleanup_templates.json.results | selectattr('name', 'match', '^OPA \\| ') | list }}"
           no_log: true
 
-        - name: Find and delete OPA projects
+        - name: Find OPA projects for cleanup
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/projects/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: cleanup_projects
+          no_log: true
+
+        - name: Delete OPA projects
           ansible.builtin.uri:
             url: "{{ aap_api }}/projects/{{ item.id }}/"
             method: DELETE
@@ -338,11 +455,23 @@
             force_basic_auth: true
             validate_certs: false
             status_code: [202, 204, 404]
-          loop: "{{ lookup('ansible.builtin.url', aap_api + '/organizations/' + organization.id | string + '/projects/', split_lines=false) | from_json | json_query('results') | default([]) }}"
+          loop: "{{ cleanup_projects.json.results }}"
           when: item.name == project_name
           no_log: true
 
-        - name: Find and delete OPA inventories
+        - name: Find OPA inventories for cleanup
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/inventories/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: cleanup_inventories
+          no_log: true
+
+        - name: Delete OPA inventories
           ansible.builtin.uri:
             url: "{{ aap_api }}/inventories/{{ item.id }}/"
             method: DELETE
@@ -351,7 +480,7 @@
             force_basic_auth: true
             validate_certs: false
             status_code: [202, 204, 404]
-          loop: "{{ lookup('ansible.builtin.url', aap_api + '/organizations/' + organization.id | string + '/inventories/', split_lines=false) | from_json | json_query('results') | default([]) }}"
+          loop: "{{ cleanup_inventories.json.results }}"
           when: item.name == inventory_name
           no_log: true
 

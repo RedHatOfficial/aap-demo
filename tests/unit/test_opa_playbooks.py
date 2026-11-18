@@ -41,5 +41,7 @@ def test_bootstrap_uses_uri_and_has_both_states() -> None:
         "OPA | Demo Policy",
     ):
         assert name in text
+    assert "survey_enabled: true" in text
+    assert "lookup('ansible.builtin.url'" not in text
     assert "aap_password" not in text.split("debug", 1)[-1]
     assert documents
