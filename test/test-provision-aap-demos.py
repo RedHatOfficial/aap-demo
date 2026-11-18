@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+import ssl
 from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,26 @@ SPEC = importlib.util.spec_from_file_location("provision_aap_demos", SCRIPT)
 assert SPEC and SPEC.loader
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+
+
+def test_aap_client_uses_verified_tls_without_custom_bundle(monkeypatch):
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        monkeypatch.delenv(name, raising=False)
+
+    api = MODULE.AAP("aap.example.test", "token")
+
+    assert api.context.verify_mode == ssl.CERT_REQUIRED
+    assert api.context.check_hostname
+
+
+@pytest.mark.parametrize("variable", ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"])
+def test_aap_client_loads_configured_ca_bundle(variable, monkeypatch, tmp_path):
+    for name in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(variable, str(tmp_path / "missing-ca.pem"))
+
+    with pytest.raises(FileNotFoundError):
+        MODULE.AAP("aap.example.test", "token")
 
 
 def test_reuses_successfully_synced_project():
