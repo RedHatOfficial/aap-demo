@@ -1,12 +1,16 @@
 # ADR-010: Cross-Platform CLI (Bash and PowerShell)
 
-**Status**: Accepted
+**Status**: Superseded by [ADR-045](045-python-cli-windows-default.md)
 
 **Date**: 2026-06-15
 
 **Authors**: aap-demo maintainers
 
 ## Context
+
+> Historical decision. The two-implementation Windows architecture below was
+> replaced by the Python-first Windows default in ADR-045. Keep this record for
+> the original cross-platform rationale; follow ADR-045 for current behavior.
 
 aap-demo targets macOS and Linux (bash) and Windows (PowerShell). Windows lacks native bash,
 CRC uses Hyper-V, and path conventions differ (`%USERPROFILE%` vs `$HOME`).

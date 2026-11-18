@@ -13,10 +13,14 @@
 
 .EXAMPLE
   .\powershell\install.ps1 -Uninstall
+
+.EXAMPLE
+  .\powershell\install.ps1 -RollbackToV1
 #>
 [CmdletBinding()]
 param(
   [switch]$Uninstall,
+  [switch]$RollbackToV1,
   [switch]$Quiet
 )
 
@@ -27,6 +31,7 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ConfigDir = Join-Path $env:USERPROFILE '.aap-demo'
 $BinDir = Join-Path $env:USERPROFILE '.local\bin'
 $RepoMarker = Join-Path $ConfigDir 'repo-path'
+$PathEntryMarker = Join-Path $ConfigDir 'local-bin-path-added'
 $WrapperTarget = Join-Path $BinDir 'aap-demo.ps1'
 $CmdShim = Join-Path $BinDir 'aap-demo.cmd'
 $LegacyShim = Join-Path $BinDir 'aap-demo-v1.cmd'
@@ -133,6 +138,54 @@ function Add-UserPathEntry {
   return $true
 }
 
+function Ensure-LauncherPath {
+  if (Add-UserPathEntry -Directory $BinDir) {
+    Set-Content -LiteralPath $PathEntryMarker -Value 'added-by-aap-demo-installer' -NoNewline -Encoding ascii
+    Write-Ok 'Added %USERPROFILE%\.local\bin to user PATH'
+  } else {
+    Write-Ok 'PATH already contains %USERPROFILE%\.local\bin'
+  }
+}
+
+function Install-LegacyShim {
+  New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+@"
+@echo off
+setlocal
+set "AAP_DEMO_REPO="
+for /f "usebackq delims=" %%R in ("%USERPROFILE%\.aap-demo\repo-path") do set "AAP_DEMO_REPO=%%R"
+if not defined AAP_DEMO_REPO (
+  echo aap-demo-v1 is not installed: missing %USERPROFILE%\.aap-demo\repo-path 1>&2
+  exit /b 1
+)
+bash "%AAP_DEMO_REPO%\aap-demo.sh" %*
+exit /b %ERRORLEVEL%
+"@ | Set-Content -LiteralPath $LegacyShim -Encoding ascii
+}
+
+function Uninstall-PythonCli {
+  $pipx = Get-Command pipx -ErrorAction SilentlyContinue
+  $python = Get-PythonCommand
+  $pythonShim = Join-Path $BinDir 'aap-demo.exe'
+
+  if ($null -eq $pipx -and $null -eq $python) {
+    if (Test-Path -LiteralPath $pythonShim) {
+      throw 'Python and pipx are unavailable; cannot safely remove the installed Python CLI.'
+    }
+    return
+  }
+
+  if ($null -ne $pipx) {
+    & $pipx.Source uninstall aap-demo
+  } else {
+    & $python -m pipx uninstall aap-demo
+  }
+
+  if (Test-Path -LiteralPath $pythonShim) {
+    throw "Could not uninstall the Python CLI with pipx (exit $LASTEXITCODE)"
+  }
+}
+
 function Remove-UserPathEntry {
   param([Parameter(Mandatory)][string]$Directory)
 
@@ -227,25 +280,10 @@ function Install-AapDemo {
   Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $CmdShim -Force -ErrorAction SilentlyContinue
 
-@"
-@echo off
-setlocal
-set "AAP_DEMO_REPO="
-for /f "usebackq delims=" %%R in ("%USERPROFILE%\.aap-demo\repo-path") do set "AAP_DEMO_REPO=%%R"
-if not defined AAP_DEMO_REPO (
-  echo aap-demo-v1 is not installed: missing %USERPROFILE%\.aap-demo\repo-path 1>&2
-  exit /b 1
-)
-bash "%AAP_DEMO_REPO%\aap-demo.sh" %*
-exit /b %ERRORLEVEL%
-"@ | Set-Content -LiteralPath $LegacyShim -Encoding ascii
+  Install-LegacyShim
   Write-Ok "Legacy Bash launcher installed: $LegacyShim"
 
-  if (Add-UserPathEntry -Directory $BinDir) {
-    Write-Ok 'Added %USERPROFILE%\.local\bin to user PATH'
-  } else {
-    Write-Ok 'PATH already contains %USERPROFILE%\.local\bin'
-  }
+  Ensure-LauncherPath
 
   Install-OperatorSdk
   Ensure-PullSecretHint
@@ -271,17 +309,55 @@ function Uninstall-AapDemo {
   Write-Host 'Uninstalling aap-demo...' -ForegroundColor Cyan
   Write-Host ''
 
+  Uninstall-PythonCli
   Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $CmdShim -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $LegacyShim -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $RepoMarker -Force -ErrorAction SilentlyContinue
+  if (Test-Path -LiteralPath $PathEntryMarker) {
+    Remove-UserPathEntry -Directory $BinDir
+    Remove-Item -LiteralPath $PathEntryMarker -Force -ErrorAction SilentlyContinue
+  }
 
-  Write-Ok 'Removed wrapper, shim, and repo marker'
+  Write-Ok 'Removed the Python CLI, launchers, repo marker, and any installer-owned PATH entry'
   Write-Info 'VM data under %USERPROFILE%\.aap-demo\ and %USERPROFILE%\.crc\ was NOT removed'
   Write-Host ''
 }
 
-if ($Uninstall) {
+function Rollback-AapDemoToV1 {
+  if (-not (Test-Path -LiteralPath $RepoMarker)) {
+    throw "Cannot roll back: the Bash v1 repo marker is missing. Re-run install.ps1 from the repository first."
+  }
+
+  $registeredRepo = (Get-Content -LiteralPath $RepoMarker -Raw).Trim()
+  if (-not (Test-Path -LiteralPath (Join-Path $registeredRepo 'aap-demo.sh'))) {
+    throw "Cannot roll back: aap-demo.sh was not found under $registeredRepo"
+  }
+
+  New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
+  Install-LegacyShim
+@"
+@echo off
+call "%~dp0aap-demo-v1.cmd" %*
+exit /b %ERRORLEVEL%
+"@ | Set-Content -LiteralPath $CmdShim -Encoding ascii
+
+  # Remove the Python app after installing the v1 default shim. pipx removes
+  # its .exe launcher, leaving aap-demo.cmd to forward to the retained v1 shim.
+  Uninstall-PythonCli
+  Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
+  Ensure-LauncherPath
+
+  Write-Ok 'Rolled back the default command to Bash v1.'
+  Write-Info 'aap-demo and aap-demo-v1 now both use the registered Bash checkout.'
+  Write-Info 'Cluster and configuration data were not changed.'
+}
+
+if ($Uninstall -and $RollbackToV1) {
+  throw 'Choose either -Uninstall or -RollbackToV1, not both.'
+} elseif ($RollbackToV1) {
+  Rollback-AapDemoToV1
+} elseif ($Uninstall) {
   Uninstall-AapDemo
 } else {
   Install-AapDemo

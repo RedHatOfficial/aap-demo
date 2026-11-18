@@ -12,6 +12,10 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 You need Python 3.9 or newer.
 
+On Windows, follow the [Windows install and migration guide](../../powershell/README.md)
+for the PowerShell installer, existing-state migration, Bash v1 fallback, and
+rollback instructions.
+
 ## New install
 
 [pipx](https://pipx.pypa.io/) keeps aap-demo in its own corner, away from your other Python tools.

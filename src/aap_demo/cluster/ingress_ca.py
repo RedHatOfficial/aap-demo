@@ -111,6 +111,12 @@ def system_trusts(ctx: AppContext, path: Path, *, system: Optional[str] = None) 
     if kind == "Darwin":
         result = ctx.runner.run(["security", "verify-cert", "-p", "ssl", "-c", str(path)])
         return bool(result.ok)
+    if kind == "Windows":
+        try:
+            pem = path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return _windows_store_contains(ctx, _windows_thumbprint(pem))
     for candidate in (RHEL_ANCHOR, DEBIAN_ANCHOR):
         if not candidate.is_file():
             continue
@@ -126,6 +132,22 @@ def system_trusts(ctx: AppContext, path: Path, *, system: Optional[str] = None) 
 def _certutil_available(system: str) -> bool:
     """Windows ships an unrelated ``certutil``, so only Linux counts."""
     return system == "Linux" and shutil.which("certutil") is not None
+
+
+def _windows_thumbprint(pem: str) -> str:
+    """Windows certificate stores identify certificates by their SHA-1 thumbprint."""
+    body = pem.replace("-----BEGIN CERTIFICATE-----", "")
+    body = body.replace("-----END CERTIFICATE-----", "")
+    der = base64.b64decode("".join(body.split()))
+    # SHA-1 is used only for the Windows store's certificate identifier.
+    return hashlib.sha1(der).hexdigest().upper()
+
+
+def _windows_store_contains(ctx: AppContext, thumbprint: str) -> bool:
+    """Check the Current User Root store without parsing localized certutil labels."""
+    result = ctx.runner.run(["certutil.exe", "-user", "-store", "Root", thumbprint])
+    output = re.sub(r"[^0-9A-F]", "", (result.stdout + result.stderr).upper())
+    return bool(result.ok) and thumbprint in output
 
 
 def _default_nss_database(ctx: AppContext) -> Path:
@@ -167,6 +189,12 @@ def _nss_holds(ctx: AppContext, database: Path, expected: str) -> bool:
 
 def _browser_trust(ctx: AppContext, path: Path, *, system: str) -> str:
     """Status wording. Trust is reported only after every database was read."""
+    if system == "Windows":
+        return (
+            "trusted (Windows Current User Root)"
+            if system_trusts(ctx, path, system=system)
+            else "not trusted"
+        )
     databases = _nss_databases(ctx)
     if not _certutil_available(system):
         return "unknown (install nss-tools to check Chrome and Firefox)"
@@ -231,11 +259,25 @@ def install(ctx: AppContext, *, system: Optional[str] = None) -> bool:
 def _trust_complete(ctx: AppContext, path: Path, *, system: str) -> bool:
     if system == "Darwin":
         return system_trusts(ctx, path, system=system)
+    if system == "Windows":
+        return system_trusts(ctx, path, system=system)
     return _linux_trust_complete(ctx, path, system=system)
 
 
 def _import(ctx: AppContext, path: Path, *, system: str) -> List[str]:
     """Import the CA and return what still needs the user. Empty means trusted."""
+    if system == "Windows":
+        thumbprint = _windows_thumbprint(path.read_text(encoding="utf-8"))
+        if _windows_store_contains(ctx, thumbprint):
+            return []
+        ctx.runner.run(["certutil.exe", "-user", "-addstore", "Root", str(path)])
+        if _windows_store_contains(ctx, thumbprint):
+            return []
+        return [
+            "Could not add the CA to the Current User certificate store. "
+            "Run from PowerShell: "
+            f'certutil.exe -user -addstore Root "{path}"'
+        ]
     if system == "Darwin":
         if _import_macos(ctx, path):
             return []
@@ -361,6 +403,8 @@ def describe(ctx: AppContext, *, system: Optional[str] = None) -> dict:
         trusted = False
     if kind == "Darwin":
         browser = "trusted (macOS keychain)" if trusted else "not trusted"
+    elif kind == "Windows":
+        browser = "trusted (Windows Current User Root)" if trusted else "not trusted"
     else:
         try:
             browser = _browser_trust(ctx, path, system=kind)

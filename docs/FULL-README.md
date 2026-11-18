@@ -22,23 +22,28 @@ The 24GB default supports AAP plus EAP addons (AO, APME); use `CRC_MEMORY=16384`
 
 - Windows 11 Pro, Enterprise, or Server (Hyper-V is not available on Windows 11 Home)
 - [OpenShift Local](https://console.redhat.com/openshift/create/local) — includes `crc`; Hyper-V must be enabled
-- [Git for Windows](https://git-scm.com/download/win) — required by the PowerShell wrapper
-  for deploys and addon commands
+- Python 3.9+ and pipx — install the Python CLI with `powershell/install.ps1`
+- [Git for Windows](https://git-scm.com/download/win) — required by `aap-demo-v1`
+  and Python v2 addon handlers that still call bundled Bash scripts
 
   ```powershell
   winget install --id Git.Git -e --source winget
   ```
 
 - PowerShell 5.1 or later (included with Windows 10/11)
-- `jq` — used by the Bash deployment and addon wiring paths
-- Python 3.12 — used to provision AAP demos and import AO demo workflows
+- `oc` — installed by `powershell/install.ps1` with winget when missing
+- `jq` — required by Python v2 addons that invoke bundled Bash scripts
 
-The Windows deploy and AO/Product Demo preflight installs `jq` and Python with
-winget when they are missing:
+Start here for Windows installation, existing-state migration, addon
+requirements, fallback, and rollback instructions:
+
+[Windows install and migration guide](../powershell/README.md)
+
+Install Git for Windows and `jq` when you need a shell-backed addon:
 
 ```powershell
+winget install --id Git.Git -e --source winget
 winget install --id jqlang.jq -e --source winget
-winget install --id Python.Python.3.12 -e --source winget
 ```
 
 #### OpenShift Local
@@ -275,8 +280,8 @@ design, storage, OLM, addons, and cross-platform support).
 - **Networking:** SSH (2222), API (6443), HTTP/HTTPS (443) — all on localhost
 - **Routes:** `*.apps.127.0.0.1.nip.io` (nip.io DNS, no /etc/hosts needed)
 - **TLS:** MicroShift's ingress CA auto-trusted on macOS keychain / Linux ca-trust;
-  on Windows, run `aap-demo deploy` from an elevated PowerShell (see
-  [powershell/README.md](powershell/README.md#ingress-ca-and-browser-tls))
+  on Windows, Python v2 imports it into Current User Root without elevation (see
+  [Windows ingress CA guidance](../powershell/README.md#ingress-ca-and-browser-tls))
 
 ## Environment Variables
 

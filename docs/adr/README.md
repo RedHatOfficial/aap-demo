@@ -50,7 +50,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [007](007-coredns-route-resolution.md) | CoreDNS Route Resolution for nip.io | Accepted |
 | [008](008-addon-system.md) | Addon System Architecture | Accepted |
 | [009](009-aap-operator-olm-deployment.md) | AAP Operator Deployment via OLM | Accepted |
-| [010](010-cross-platform-cli.md) | Cross-Platform CLI (Bash and PowerShell) | Accepted |
+| [010](010-cross-platform-cli.md) | Cross-Platform CLI (Bash and PowerShell) | Superseded by [045](045-python-cli-windows-default.md) |
 | [011](011-mcp-server-addon.md) | MCP Server Addon | Accepted |
 | [012](012-scc-and-pod-security.md) | Security Context Constraints and Pod Security | Accepted |
 | [013](013-in-cluster-registry.md) | In-Cluster Container Registry | Accepted |
@@ -72,13 +72,14 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [028](028-ao-agentic-model-binding.md) | AO Agentic Task Model Binding | Accepted |
 | [029](029-windows-feature-parity.md) | Windows Feature Parity Strategy | Proposed |
 | [030](030-windows-native-addon-execution.md) | Native PowerShell Addon Execution | Superseded |
-| [031](031-windows-git-bash-wrapper.md) | Windows Git Bash Command Wrapper | Accepted |
+| [031](031-windows-git-bash-wrapper.md) | Windows Git Bash Command Wrapper | Superseded by [045](045-python-cli-windows-default.md) |
 | [032](032-fleet-v2-addon.md) | Fleet v2 Addon | Accepted |
 | [032](032-open-issues-remediation-strategy.md) | Open Issue Remediation Strategy | Proposed |
 | [033](033-apme-local-oci-plugin-publishing.md) | APME Local OCI Plugin Publishing | Accepted |
 | [034](034-create-vm-size-prompt.md) | VM Size Prompt and Host Fit Check on Create | Accepted |
 | [035](035-remove-diagnose-ai.md) | Remove `diagnose --ai` from the Python CLI | Superseded by [044](044-diagnose-ai-multi-backend.md) |
 | [044](044-diagnose-ai-multi-backend.md) | Restore `diagnose --ai` with Cursor/Claude backends | Accepted |
+| [045](045-python-cli-windows-default.md) | Python CLI as the Windows Default | Accepted |
 | [036](036-subscription-manifest.md) | Apply a Subscription Manifest Only When Asked | Accepted |
 | [037](037-fleet-systemd-nodes.md) | Fleet Nodes Run systemd as PID 1 | Accepted |
 | [039](039-product-demos-on-v2-enable.md) | Product Demos Run from the New Enable Command | Accepted |
