@@ -45,8 +45,10 @@ class AoAddon:
     # -- enable -----------------------------------------------------------------
 
     def enable(self, ctx: AppContext, args: argparse.Namespace) -> int:
-        del args
         aap_ns = ctx.namespace
+        fleet_host = str(
+            getattr(args, "fleet_host", "") or ctx.env.get("AAP_DEMO_FLEET_HOST") or ""
+        )
         pull_secret = deps.prepare(ctx)
         force = bool(ctx.force)
         if force:
@@ -66,7 +68,7 @@ class AoAddon:
             self._adopt(ctx, aap_ns, host=host, cnpg=cnpg, running=running)
         else:
             self._install(ctx, aap_ns, host=host, cnpg=cnpg, force=force, pull_secret=pull_secret)
-        self._connect(ctx, aap_ns)
+        self._connect(ctx, aap_ns, fleet_host=fleet_host)
         _record(ctx)
         ctx.console.success("Automation Orchestrator enabled")
         return 0
@@ -163,7 +165,7 @@ class AoAddon:
         instance.wait_ready(ctx, sleep=self.sleep)
         ctx.console.success("Automation Orchestrator operator and instance applied")
 
-    def _connect(self, ctx: AppContext, aap_ns: str) -> None:
+    def _connect(self, ctx: AppContext, aap_ns: str, *, fleet_host: str) -> None:
         instance.configure_local_access(ctx, aap_ns)
         instance.allow_aap_ingress(ctx, aap_ns)
         instance.show_access(ctx, password=admin.saved(ctx))
@@ -176,7 +178,7 @@ class AoAddon:
                 session.context,
                 session.routes,
                 aap_ns,
-                fleet_host=str(ctx.env.get("AAP_DEMO_FLEET_HOST") or ""),
+                fleet_host=fleet_host,
             )
 
     # -- disable ----------------------------------------------------------------

@@ -59,6 +59,11 @@ def _value(ctx: AppContext, option: str, legacy: Dict[str, str]) -> str:
     ).strip()
 
 
+def configured_provider(ctx: AppContext) -> str:
+    """The provider set in the environment, config.yaml or the Bash config, or ""."""
+    return _value(ctx, "llm_provider", _legacy(ctx))
+
+
 def settings(ctx: AppContext) -> Settings:
     legacy = _legacy(ctx)
     provider = _value(ctx, "llm_provider", legacy) or DEFAULT_PROVIDER
