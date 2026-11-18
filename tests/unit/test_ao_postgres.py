@@ -244,12 +244,17 @@ def test_reset_stops_when_the_pvc_is_stuck(app_ctx) -> None:
 # -- Secrets and CA ---------------------------------------------------------------
 
 
-def _secret_runner(stored: Dict[str, str]) -> FakeRunner:
+def _secret_runner(stored: Dict[str, str], *, pvc: bool = False) -> FakeRunner:
     def read(args):
         name = args[3]
         return _ok(stored.get(name, ""))
 
-    return FakeRunner().register("kubectl get secret", read).ok("kubectl apply -f -")
+    return (
+        FakeRunner()
+        .register("kubectl get secret", read)
+        .ok(f"kubectl get pvc/{postgres.PVC}", f"pvc/{postgres.PVC}" if pvc else "")
+        .ok("kubectl apply -f -")
+    )
 
 
 def test_database_secrets_reuse_the_existing_password(app_ctx) -> None:
@@ -309,3 +314,10 @@ def test_restart_clients_reports_a_failed_list(app_ctx) -> None:
     app_ctx.runner = FakeRunner().fail("kubectl get deployment -n")
     with pytest.raises(AddonError, match="Could not list AO deployments"):
         postgres.restart_clients(app_ctx)
+
+
+def test_a_kept_database_without_its_secret_is_not_given_a_new_password(app_ctx) -> None:
+    app_ctx.runner = _secret_runner({}, pvc=True)
+    with pytest.raises(AddonError, match="password Secret is missing"):
+        postgres.ensure_database_secrets(app_ctx)
+    assert not app_ctx.runner.called("kubectl apply -f -")

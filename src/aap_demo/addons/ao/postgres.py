@@ -395,8 +395,22 @@ def database_secrets_manifest(password: str) -> str:
 
 
 def ensure_database_secrets(ctx: AppContext) -> None:
-    """Reuse the existing password so the database and the Secrets never disagree."""
-    password = _secret_value(ctx, "orchestrator-postgres-secret", "password") or _new_password()
+    """Reuse the existing password so the database and the Secrets never disagree.
+
+    A new password is only safe for a new database: a retained volume keeps the
+    role password it was created with.
+    """
+    password = _secret_value(
+        ctx, "orchestrator-postgres-secret", "password"
+    )  # pragma: allowlist secret
+    if not password:
+        if not _absent(ctx, f"pvc/{PVC}"):
+            raise AddonError(
+                "AO's PostgreSQL data was kept but its password Secret is missing.",
+                hint="Restore orchestrator-postgres-secret, or run aap-demo enable ao --force "
+                "to reset AO's data.",
+            )
+        password = _new_password()
     applied = kubectl.apply_stdin(ctx.runner, database_secrets_manifest(password))
     if not applied.ok:
         raise AddonError("Could not write AO's PostgreSQL Secrets", hint=output_of(applied) or None)
