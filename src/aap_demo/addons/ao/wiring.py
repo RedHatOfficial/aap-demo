@@ -553,16 +553,33 @@ def rebind_workflows(ctx: AppContext, ao: AoClient) -> None:
 # -- entry point ----------------------------------------------------------------------
 
 
+@dataclass
+class Session:
+    """What the wiring opened, reused by the demo import."""
+
+    ao: AoClient
+    http: Http
+    context: Any
+    routes: Routes
+
+
 def wire(
-    ctx: AppContext, aap_namespace: str, *, http: Optional[Http] = None, sleep: Sleep = time.sleep
-) -> None:
-    """Everything ``aap_demo_wire`` did for AO. Raises on AAP or MCP failure."""
+    ctx: AppContext,
+    aap_namespace: str,
+    *,
+    http: Optional[Http] = None,
+    sleep: Sleep = time.sleep,
+) -> Optional[Session]:
+    """Everything ``aap_demo_wire`` did for AO. Raises on AAP or MCP failure.
+
+    None when AO's backend is not deployed.
+    """
     from aap_demo.addons.ao.api import tls_context
 
     if not kubectl.exists(
         ctx.runner, "deployment", "automation-orchestrator-backend", "-n", NAMESPACE
     ):
-        return
+        return None
     routes = Routes.read(ctx, aap_namespace)
     for attempt in range(12):
         if routes.ao:
@@ -573,7 +590,8 @@ def wire(
     else:
         raise AddonError("Automation Orchestrator route not ready after 60s")
     network_access(ctx, routes, aap_namespace, sleep=sleep)
-    client = http or Http(context=tls_context(ctx))
+    context = http.context if http is not None else tls_context(ctx)
+    client = http or Http(context=context)
     ao = AoClient(http=client, route=routes.ao)
     ao.login(_secret(ctx, ADMIN_SECRET, NAMESPACE))
     if kubectl.exists(ctx.runner, "aap", "-n", aap_namespace):
@@ -584,6 +602,7 @@ def wire(
     except AddonError as exc:
         ctx.console.warn(f"AO LLM provider wiring skipped: {exc.message}")
     rebind_workflows(ctx, ao)
+    return Session(ao=ao, http=client, context=context, routes=routes)
 
 
-__all__ = ["Routes", "wire"]
+__all__ = ["Routes", "Session", "wire"]
