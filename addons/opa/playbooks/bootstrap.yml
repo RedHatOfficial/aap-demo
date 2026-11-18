@@ -315,8 +315,8 @@
           ansible.builtin.set_fact:
             policy_choices: >-
               {{ (upstream_policy_files.json | default([]) |
-              selectattr('name', 'search', '\\.rego$') | map(attribute='name') |
-              map('regex_replace', '\\.rego$', '') | list) + ['REMOVE'] }}
+              selectattr('name', 'match', '.*[.]rego$') | map(attribute='name') |
+              map('regex_replace', '[.]rego$', '') | list) + ['REMOVE'] }}
 
         - name: Refresh job templates for demo survey
           ansible.builtin.uri:
