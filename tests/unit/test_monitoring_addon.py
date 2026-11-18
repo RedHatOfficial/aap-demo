@@ -123,9 +123,7 @@ def test_status_command_can_target_monitoring(app_ctx) -> None:
 
 
 def test_status_reports_not_ready_when_resources_are_missing(app_ctx) -> None:
-    app_ctx.runner.fail(
-        ["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound"
-    )
+    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
     app_ctx.runner.ok(["kubectl", "get", "route", "grafana"], stdout="")
 
     assert observe.status(app_ctx, argparse.Namespace(addon="monitoring")) == 1
