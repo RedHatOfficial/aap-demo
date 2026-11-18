@@ -330,6 +330,23 @@
           register: survey_templates
           no_log: true
 
+        - name: Attach AAP credential to demo policy template
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/credentials/"
+            method: POST
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              id: "{{ credential_id }}"
+            status_code: [200, 201, 204, 400]
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+          when: demo_template.id is defined
+          no_log: true
+
         - name: Enable demo policy survey
           ansible.builtin.uri:
             url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/"
@@ -482,6 +499,31 @@
             status_code: [202, 204, 404]
           loop: "{{ cleanup_inventories.json.results }}"
           when: item.name == inventory_name
+          no_log: true
+
+        - name: Find OPA credentials for cleanup
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/credentials/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: cleanup_credentials
+          no_log: true
+
+        - name: Delete OPA credentials
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/credentials/{{ item.id }}/"
+            method: DELETE
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [202, 204, 404]
+          loop: "{{ cleanup_credentials.json.results }}"
+          when: item.name == credential_name
           no_log: true
 
         - name: Clear OPA policy settings
