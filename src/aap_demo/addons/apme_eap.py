@@ -25,6 +25,8 @@ from aap_demo.core.output import is_structured, render
 
 NAME = "apme-eap"
 NAMESPACE = "apme"
+REGISTRY_NAMESPACE = "aap-demo-registry"
+REGISTRY_DEPLOYMENT = "registry"
 _TOOLS = ("python3", "kubectl")
 _OWNER_LABEL = "app.kubernetes.io/managed-by"
 _OWNER_VALUE = "aap-demo-apme-eap"
@@ -315,6 +317,37 @@ def _label_namespace(ctx: AppContext) -> None:
         )
 
 
+def _ensure_registry(ctx: AppContext, root: Path) -> None:
+    registry = kube.read_object(
+        ctx,
+        "deployment",
+        REGISTRY_DEPLOYMENT,
+        namespace=REGISTRY_NAMESPACE,
+    )
+    if registry is None:
+        manifest = root / "registry.yaml"
+        if not manifest.is_file():
+            raise AddonError("APME local registry manifest is not included in this installation")
+        kube.apply_or_raise(
+            ctx,
+            manifest.read_text(encoding="utf-8"),
+            message="could not deploy the APME local registry",
+        )
+    kube.run_or_raise(
+        ctx,
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=available",
+            f"deployment/{REGISTRY_DEPLOYMENT}",
+            "-n",
+            REGISTRY_NAMESPACE,
+            "--timeout=120s",
+        ],
+        message="APME local registry did not become ready",
+    )
+
+
 def _say(ctx: AppContext, message: str, **fields: object) -> None:
     if is_structured(ctx.output):
         render(ctx.console, {"message": message, **fields}, output=ctx.output)
@@ -334,28 +367,40 @@ class ApmeEapAddon:
         root = _addon_root()
         if not (root / "playbooks" / "deploy_apme_portal.yml").is_file():
             raise AddonError("APME addon playbooks are not included in this installation")
+        _ensure_registry(ctx, root)
+        namespace_existed = kube.read_object(ctx, "namespace", NAMESPACE) is not None
         _claim_namespace(ctx)
         ansible_python = _ensure_venv(ctx, root)
         vars_path = _write_run_vars(ctx, _discover_vars(ctx))
         env = ctx.kube_env()
         env["K8S_AUTH_KUBECONFIG"] = str(ctx.kubeconfig)
-        try:
-            result = ctx.runner.run(
-                [
-                    str(ansible_python.parent / "ansible-playbook"),
-                    str(root / "playbooks" / "deploy_apme_portal.yml"),
-                    "-e",
-                    f"@{root / 'defaults.yml'}",
-                    "-e",
-                    f"@{vars_path}",
-                ],
-                env=env,
-                cwd=str(root),
-                sink=ctx.console.log_sink(),
-            )
-        finally:
-            vars_path.unlink(missing_ok=True)
+        # Ansible defaults to ~/.ansible/tmp, which may not be writable in a
+        # managed/containerized environment. The playbook targets localhost,
+        # so one short-lived writable directory is valid for both temp roots.
+        with tempfile.TemporaryDirectory(prefix="aap-demo-apme-eap-ansible-") as ansible_tmp:
+            env["ANSIBLE_LOCAL_TEMP"] = ansible_tmp
+            env["ANSIBLE_REMOTE_TEMP"] = ansible_tmp
+            try:
+                result = ctx.runner.run(
+                    [
+                        str(ansible_python.parent / "ansible-playbook"),
+                        str(root / "playbooks" / "deploy_apme_portal.yml"),
+                        "-e",
+                        f"@{root / 'defaults.yml'}",
+                        "-e",
+                        f"@{vars_path}",
+                    ],
+                    env=env,
+                    cwd=str(root),
+                    sink=ctx.console.log_sink(),
+                )
+            finally:
+                vars_path.unlink(missing_ok=True)
         if not result.ok:
+            if not namespace_existed:
+                ctx.runner.run(
+                    ["kubectl", "delete", "namespace", NAMESPACE, "--ignore-not-found=true"]
+                )
             raise AddonError(
                 "enable apme-eap failed",
                 hint=(result.stderr or result.stdout).strip() or None,

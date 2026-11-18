@@ -43,6 +43,11 @@ def _namespace_missing(app_ctx) -> None:
     app_ctx.runner.fail(["kubectl", "get", "namespace", "apme"], stderr="NotFound")
 
 
+def _registry_ready(app_ctx) -> None:
+    app_ctx.runner.ok(["kubectl", "get", "deployment", "registry"])
+    app_ctx.runner.ok(["kubectl", "wait", "--for=condition=available", "deployment/registry"])
+
+
 def test_apme_eap_is_a_public_native_addon() -> None:
     addon = get("apme-eap")
 
@@ -54,6 +59,25 @@ def test_apme_eap_is_a_public_native_addon() -> None:
     assert needs_cluster("apme-eap") is True
 
 
+def test_missing_registry_is_bootstrapped_before_apme(app_ctx) -> None:
+    app_ctx.runner.fail(
+        ["kubectl", "get", "deployment", "registry"],
+        stderr="NotFound",
+    )
+    app_ctx.runner.ok(["kubectl", "apply", "-f", "-"])
+    app_ctx.runner.ok(["kubectl", "wait", "--for=condition=available", "deployment/registry"])
+
+    apme_eap._ensure_registry(app_ctx, apme_eap._addon_root())
+
+    apply = next(
+        call for call in app_ctx.runner.calls if call.argv[:3] == ("kubectl", "apply", "-f")
+    )
+    assert "aap-demo-registry" in (apply.input or "")
+    assert app_ctx.runner.index_of(["kubectl", "apply"]) < app_ctx.runner.index_of(
+        ["kubectl", "wait"]
+    )
+
+
 def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -> None:
     _env(app_ctx)
     monkeypatch.setattr(
@@ -61,6 +85,7 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
         lambda name: f"/usr/bin/{name}",
     )
     _cached_venv(app_ctx)
+    _registry_ready(app_ctx)
     _namespace_missing(app_ctx)
     app_ctx.runner.ok(["~ansible-playbook$"], stdout="completed\n")
     app_ctx.runner.ok(["kubectl", "label", "namespace", "apme"])
@@ -71,6 +96,11 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
     assert call.argv[0].endswith("/ansible-playbook")
     assert "playbooks/deploy_apme_portal.yml" in call.argv[1]
     assert call.env["K8S_AUTH_KUBECONFIG"] == str(app_ctx.kubeconfig)
+    assert call.env["ANSIBLE_LOCAL_TEMP"].startswith("/tmp/")
+    assert call.env["ANSIBLE_REMOTE_TEMP"].startswith("/tmp/")
+    assert app_ctx.runner.index_of(["kubectl", "wait"]) < app_ctx.runner.index_of(
+        ["~ansible-playbook$"]
+    )
     assert call.cwd.endswith("addons/apme-eap")
     assert app_ctx.config.get("addons.enabled") == ["apme-eap"]
     assert not (app_ctx.paths.addon_dir("apme-eap") / "vars.yml").exists()
@@ -84,12 +114,33 @@ def test_failed_enable_does_not_record_state(app_ctx, monkeypatch) -> None:
         lambda name: f"/usr/bin/{name}",
     )
     _cached_venv(app_ctx)
+    _registry_ready(app_ctx)
     _namespace_missing(app_ctx)
     app_ctx.runner.fail(["~ansible-playbook$"], stderr="playbook failed")
+    app_ctx.runner.ok(["kubectl", "delete", "namespace", "apme"])
 
     with pytest.raises(AddonError, match="enable apme-eap failed"):
         get("apme-eap").enable(app_ctx, argparse.Namespace(addon="apme-eap"))
 
+    assert app_ctx.config.get("addons.enabled") == []
+
+
+def test_failed_first_enable_removes_partial_namespace(app_ctx, monkeypatch) -> None:
+    _env(app_ctx)
+    monkeypatch.setattr(
+        "aap_demo.addons.apme_eap.shutil.which",
+        lambda name: f"/usr/bin/{name}",
+    )
+    _cached_venv(app_ctx)
+    _registry_ready(app_ctx)
+    _namespace_missing(app_ctx)
+    app_ctx.runner.fail(["~ansible-playbook$"], stderr="playbook failed")
+    app_ctx.runner.ok(["kubectl", "delete", "namespace", "apme"])
+
+    with pytest.raises(AddonError, match="enable apme-eap failed"):
+        get("apme-eap").enable(app_ctx, argparse.Namespace(addon="apme-eap"))
+
+    assert app_ctx.runner.called(["kubectl", "delete", "namespace", "apme"])
     assert app_ctx.config.get("addons.enabled") == []
 
 
