@@ -34,6 +34,7 @@ def test_kinds_and_listed_names() -> None:
         "ao",
         "eda-playground",
         "fleet",
+        "local-cache",
         "mcp-server",
         "ollama",
         "opa",
