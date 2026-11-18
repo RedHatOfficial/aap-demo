@@ -63,9 +63,13 @@ The Python addon must take over any AO the Bash installer left, without
   (mode 0600) and leaves the original for `aap-demo-v1`. A file, not the OS
   keyring, because the keyring is not available on every host. A retained database is detected by the
   StatefulSet PVC `data-orchestrator-postgres-0` as well as the CNPG names.
-- **LLM settings**: `AO_LLM_PROVIDER`, `AO_LLM_BASE_URL` and `AO_LLM_MODEL` from
-  the legacy config move to `addons.options.ao` in `config.yaml` through the
-  existing config migration.
+- **LLM settings**: `AO_LLM_PROVIDER`, `AO_LLM_BASE_URL` and `AO_LLM_MODEL` are
+  read from the environment, then `addons.options.ao` in `config.yaml`, then the
+  legacy config. The external provider's API key is copied from
+  `~/.aap-demo/ao/llm-api-key` into the Python state directory (mode 0600) the
+  same way as the admin password.
+- **TLS**: the wiring verifies the AO and AAP routes against the cluster's
+  ingress CA instead of the Bash wiring's `curl -k`.
 - **State files**: `ao-state` and `ao-eap-state` carry nothing the Python addon
   needs and are left alone.
 
