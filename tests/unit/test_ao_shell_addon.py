@@ -16,23 +16,64 @@ from aap_demo.core.errors import AddonError, UsageError
 from aap_demo.exec.runner import CompletedCommand
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+_CERT = "-----BEGIN CERTIFICATE-----\nZm9v\n-----END CERTIFICATE-----"
 
 
 @pytest.fixture(autouse=True)
 def _tools(monkeypatch, fake_runner) -> None:
     monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda name: f"/usr/bin/{name}")
     fake_runner.ok("kubectl get ansiblemcpservers.mcpserver.ansible.com")
-    fake_runner.ok("kubectl get deployment aap-mcp-server")
+
+    def deployment(args):
+        if "name" in args:
+            return CompletedCommand(argv=tuple(args), returncode=0)
+        return CompletedCommand(
+            argv=tuple(args),
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "spec": {
+                        "template": {
+                            "spec": {
+                                "volumes": [{"name": "ingress-ca"}],
+                                "containers": [
+                                    {
+                                        "volumeMounts": [{"name": "ingress-ca"}],
+                                        "env": [{"name": "NODE_EXTRA_CA_CERTS"}],
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                }
+            ),
+        )
+
+    fake_runner.register("kubectl get deployment aap-mcp-server", deployment)
     fake_runner.ok("kubectl cluster-info")
     fake_runner.ok("kubectl get route aap", stdout="aap-aap-operator.apps.example.test")
     fake_runner.ok("kubectl get ingresses.config/cluster")
     fake_runner.ok(
         "kubectl get secret router-certs-default",
-        stdout=json.dumps({"data": {"tls.crt": base64.b64encode(b"chain").decode()}}),
+        stdout=json.dumps({"data": {"tls.crt": base64.b64encode(_CERT.encode()).decode()}}),
     )
     fake_runner.ok("kubectl apply")
     fake_runner.ok("kubectl rollout status")
     fake_runner.ok("kubectl patch deployment")
+    fake_runner.ok(
+        "kubectl get configmap aap-ingress-ca",
+        stdout=json.dumps(
+            {
+                "metadata": {
+                    "labels": {
+                        "app.kubernetes.io/managed-by": "aap-demo",
+                        "app.kubernetes.io/name": "mcp-server",
+                    }
+                }
+            }
+        ),
+    )
+    fake_runner.fail("kubectl get secret aap-admin-password")
 
 
 def _deploy(name: str) -> str:

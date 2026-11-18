@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import json
 import time
+from pathlib import Path
 
 import yaml
 
@@ -59,13 +61,16 @@ class McpServerAddon:
                 "MCP server rollout did not complete", hint=rollout.stderr.strip() or None
             )
         _apply_ingress_ca(ctx)
+        token = _generate_token(ctx, aap_host)
+        if token:
+            _configure_claude(ctx, mcp_host, token)
         _remember(ctx)
         _say(ctx, "MCP Server deployed", endpoint=f"https://{mcp_host}/mcp")
         return 0
 
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
-        for argv in (
+        result = ctx.runner.run(
             [
                 "kubectl",
                 "delete",
@@ -74,18 +79,27 @@ class McpServerAddon:
                 "-n",
                 ctx.namespace,
                 "--ignore-not-found",
-            ],
-            [
-                "kubectl",
-                "delete",
-                "configmap",
-                "aap-ingress-ca",
-                "-n",
-                ctx.namespace,
-                "--ignore-not-found",
-            ],
-        ):
-            result = ctx.runner.run(argv)
+            ]
+        )
+        if not result.ok:
+            raise AddonError(
+                "could not remove MCP server resources", hint=result.stderr.strip() or None
+            )
+        owned = ctx.runner.run(
+            ["kubectl", "get", "configmap", "aap-ingress-ca", "-n", ctx.namespace, "-o", "json"]
+        )
+        if owned.ok and _owned_configmap(owned.stdout):
+            result = ctx.runner.run(
+                [
+                    "kubectl",
+                    "delete",
+                    "configmap",
+                    "aap-ingress-ca",
+                    "-n",
+                    ctx.namespace,
+                    "--ignore-not-found",
+                ]
+            )
             if not result.ok:
                 raise AddonError(
                     "could not remove MCP server resources", hint=result.stderr.strip() or None
@@ -180,8 +194,10 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
     try:
         encoded = (json.loads(result.stdout or "{}").get("data") or {}).get("tls.crt", "")
         chain = base64.b64decode(encoded).decode()
-    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+    except (ValueError, UnicodeError, json.JSONDecodeError, binascii.Error) as exc:
         raise AddonError("could not decode the ingress certificate") from exc
+    if "-----BEGIN CERTIFICATE-----" not in chain:
+        raise AddonError("could not decode the ingress certificate")
     certs = chain.split("-----END CERTIFICATE-----")
     ca = next(
         (part + "-----END CERTIFICATE-----" for part in certs[1:] if "BEGIN CERTIFICATE" in part),
@@ -191,7 +207,14 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
         {
             "apiVersion": "v1",
             "kind": "ConfigMap",
-            "metadata": {"name": "aap-ingress-ca", "namespace": ctx.namespace},
+            "metadata": {
+                "name": "aap-ingress-ca",
+                "namespace": ctx.namespace,
+                "labels": {
+                    "app.kubernetes.io/managed-by": "aap-demo",
+                    "app.kubernetes.io/name": "mcp-server",
+                },
+            },
             "data": {"ca.crt": ca},
         },
         sort_keys=False,
@@ -201,13 +224,29 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
         raise AddonError(
             "could not apply the ingress CA ConfigMap", hint=applied.stderr.strip() or None
         )
-    patch = json.dumps(
-        [
+    deployment = ctx.runner.run(
+        ["kubectl", "get", "deployment", "aap-mcp-server", "-n", ctx.namespace, "-o", "json"]
+    )
+    if not deployment.ok:
+        raise AddonError(
+            "could not inspect MCP server deployment", hint=deployment.stderr.strip() or None
+        )
+    try:
+        pod_spec = json.loads(deployment.stdout)["spec"]["template"]["spec"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise AddonError("could not inspect MCP server deployment") from exc
+    operations = []
+    if not any(item.get("name") == "ingress-ca" for item in pod_spec.get("volumes", [])):
+        operations.append(
             {
                 "op": "add",
                 "path": "/spec/template/spec/volumes/-",
                 "value": {"name": "ingress-ca", "configMap": {"name": "aap-ingress-ca"}},
-            },
+            }
+        )
+    container = (pod_spec.get("containers") or [{}])[0]
+    if not any(item.get("name") == "ingress-ca" for item in container.get("volumeMounts", [])):
+        operations.append(
             {
                 "op": "add",
                 "path": "/spec/template/spec/containers/0/volumeMounts/-",
@@ -216,29 +255,125 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
                     "mountPath": "/etc/ssl/ingress-ca",
                     "readOnly": True,
                 },
-            },
+            }
+        )
+    if not any(item.get("name") == "NODE_EXTRA_CA_CERTS" for item in container.get("env", [])):
+        operations.append(
             {
                 "op": "add",
                 "path": "/spec/template/spec/containers/0/env/-",
                 "value": {"name": "NODE_EXTRA_CA_CERTS", "value": "/etc/ssl/ingress-ca/ca.crt"},
-            },
-        ]
+            }
+        )
+    if operations:
+        patched = ctx.runner.run(
+            [
+                "kubectl",
+                "patch",
+                "deployment",
+                "aap-mcp-server",
+                "-n",
+                ctx.namespace,
+                "--type=json",
+                "-p",
+                json.dumps(operations),
+            ]
+        )
+        if not patched.ok:
+            raise AddonError(
+                "could not configure MCP ingress CA", hint=patched.stderr.strip() or None
+            )
+        rollout = ctx.runner.run(
+            [
+                "kubectl",
+                "rollout",
+                "status",
+                "deployment/aap-mcp-server",
+                "-n",
+                ctx.namespace,
+                "--timeout=600s",
+            ]
+        )
+        if not rollout.ok:
+            raise AddonError(
+                "MCP server rollout did not complete", hint=rollout.stderr.strip() or None
+            )
+
+
+def _owned_configmap(payload: str) -> bool:
+    try:
+        labels = json.loads(payload).get("metadata", {}).get("labels", {})
+    except (TypeError, json.JSONDecodeError):
+        return False
+    return (
+        labels.get("app.kubernetes.io/managed-by") == "aap-demo"
+        and labels.get("app.kubernetes.io/name") == "mcp-server"
     )
-    patched = ctx.runner.run(
+
+
+def _generate_token(ctx: AppContext, aap_host: str) -> str | None:
+    password = ctx.runner.run(
         [
             "kubectl",
-            "patch",
-            "deployment",
-            "aap-mcp-server",
+            "get",
+            "secret",
+            "aap-admin-password",
             "-n",
             ctx.namespace,
-            "--type=json",
-            "-p",
-            patch,
+            "-o",
+            "jsonpath={.data.password}",
         ]
     )
-    if not patched.ok and "already exists" not in patched.stderr.lower():
-        raise AddonError("could not configure MCP ingress CA", hint=patched.stderr.strip() or None)
+    if not password.ok or not password.stdout.strip():
+        return None
+    try:
+        admin_password = base64.b64decode(password.stdout.strip(), validate=True).decode()
+    except (binascii.Error, UnicodeError):
+        return None
+    curl_config = (
+        f"url = https://{aap_host}/api/gateway/v1/tokens/\n"
+        f"user = admin:{admin_password}\n"
+        "request = POST\n"
+        "header = Content-Type: application/json\n"
+        'data = {"description":"claude-mcp","scope":"write"}\n'
+        "insecure\n"
+    )
+    response = ctx.runner.run(
+        ["curl", "--silent", "--show-error", "--max-time", "30", "--config", "-"], input=curl_config
+    )
+    if not response.ok:
+        return None
+    try:
+        token = json.loads(response.stdout).get("token")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return token if isinstance(token, str) and token else None
+
+
+def _configure_claude(ctx: AppContext, mcp_host: str, token: str) -> None:
+    if not ctx.runner.run(["claude", "--version"]).ok:
+        return
+    ctx.runner.run(["claude", "mcp", "remove", "aap-demo", "--scope", "user"])
+    env = None
+    ca_path = ctx.paths.config_dir / "crc-ingress-ca.crt"
+    if isinstance(ca_path, Path) and ca_path.exists():
+        env = {"NODE_EXTRA_CA_CERTS": str(ca_path)}
+    ctx.runner.run(
+        [
+            "claude",
+            "mcp",
+            "add",
+            "aap-demo",
+            f"https://{mcp_host}/mcp",
+            "--transport",
+            "http",
+            "--scope",
+            "user",
+            "--header",
+            f"Authorization: Bearer {token}",
+        ],
+        env=env,
+    )
 
 
 def _remember(ctx: AppContext) -> None:
