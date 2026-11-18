@@ -14,6 +14,8 @@ source "${SCRIPT_DIR}/lib/install-plan-approval.sh"
 source "${SCRIPT_DIR}/lib/postgres-tls.sh"
 # shellcheck source=lib/postgres-reset.sh
 source "${SCRIPT_DIR}/lib/postgres-reset.sh"
+# shellcheck source=lib/postgres-storage.sh
+source "${SCRIPT_DIR}/lib/postgres-storage.sh"
 KUBECONFIG_PATH="$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")"
 export KUBECONFIG="$KUBECONFIG_PATH"
 
@@ -1070,12 +1072,6 @@ ao_postgres_image() {
   printf '%s\n' "${_image:-$POSTGRES_IMAGE_FALLBACK}"
 }
 
-# An install from before ADR-043 keeps its database in a CloudNativePG cluster.
-ao_cnpg_cluster_exists() {
-  kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1 \
-    && kubectl get clusters.postgresql.cnpg.io orchestrator-postgres -n "$NAMESPACE" &>/dev/null 2>&1
-}
-
 grant_scc_to_serviceaccount() {
   local _scc="$1" _service_account="$2" _namespace="$3"
   local _binding_name="aap-demo-scc-${_scc}-${_namespace}-${_service_account}"
@@ -1105,20 +1101,12 @@ postgres_database_exists() {
 
 reset_ao_postgres_storage() {
   ao_postgres_reset_storage "$NAMESPACE" || exit 1
-  reset_ao_cnpg_storage
+  reset_ao_cnpg_storage || exit 1
 }
 
 # Removes a CloudNativePG cluster left by an install from before ADR-043.
 reset_ao_cnpg_storage() {
-  if ! kubectl get crd clusters.postgresql.cnpg.io &>/dev/null 2>&1; then
-    return 0
-  fi
-  kubectl delete clusters.postgresql.cnpg.io orchestrator-postgres -n "$NAMESPACE" \
-    --wait=true --timeout=180s 2>/dev/null || true
-  kubectl delete databases.postgresql.cnpg.io --all -n "$NAMESPACE" \
-    --wait=false 2>/dev/null || true
-  kubectl delete pvc orchestrator-postgres-1 -n "$NAMESPACE" --wait=false \
-    2>/dev/null || true
+  ao_remove_cnpg_storage "$NAMESPACE" "${_AO_CNPG_CLUSTER:-}"
 }
 
 # The CR names orchestrator-postgres-ca for sslMode verify-ca. service-ca signs
@@ -1152,10 +1140,9 @@ ensure_ao_postgres_ca() {
   fi
 }
 
-# Applies postgres.yaml. Both values go into sed and YAML, so only image and
-# name characters are allowed.
+# Applies postgres.yaml. Values substituted into sed and YAML are validated.
 apply_ao_postgres_manifest() {
-  local _image
+  local _image _storage_size
   _image="$(ao_postgres_image)"
   if [[ ! "$_image" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]]; then
     echo "ERROR: PostgreSQL image '${_image}' is not a valid image reference." >&2
@@ -1170,6 +1157,7 @@ apply_ao_postgres_manifest() {
     echo "ERROR: StorageClass '${POSTGRES_STORAGE_CLASS}' is not a valid name." >&2
     exit 1
   fi
+  _storage_size=$(ao_postgres_storage_size "$NAMESPACE" "${AO_STORAGE_SIZE:-3Gi}") || return 1
   if [ "$_image" = "$POSTGRES_IMAGE_FALLBACK" ]; then
     echo "  PostgreSQL image: ${_image}"
   else
@@ -1177,6 +1165,7 @@ apply_ao_postgres_manifest() {
   fi
   sed -e "s|__NAMESPACE__|${NAMESPACE}|g" \
     -e "s|__STORAGE_CLASS__|${POSTGRES_STORAGE_CLASS}|g" \
+    -e "s|__STORAGE_SIZE__|${_storage_size}|g" \
     -e "s|__POSTGRES_IMAGE__|${_image}|g" \
     "${MANIFESTS_DIR}/postgres.yaml" | kubectl apply -f - >/dev/null
 }
@@ -1189,7 +1178,7 @@ reconcile_ao_postgres() {
   local _rc=0
   kubectl get statefulset orchestrator-postgres -n "$NAMESPACE" &>/dev/null || return 0
   # A CNPG install shares the Service name; applying would repoint it.
-  ! ao_cnpg_cluster_exists || return 0
+  [ -z "$_AO_CNPG_CLUSTER" ] || return 0
   if apply_ao_postgres_manifest \
     && kubectl rollout status statefulset/orchestrator-postgres -n "$NAMESPACE" \
       --timeout=10m >/dev/null; then
@@ -1310,6 +1299,15 @@ deploy_ao_instance() {
     "${MANIFESTS_DIR}/automationorchestrator-cr.yaml" | kubectl apply -f -
 }
 
+# Preserve a running CNPG-backed instance as-is until the user chooses --force.
+# The new CR points at the StatefulSet's service-ca host and must not be
+# applied to a legacy database that still uses CNPG certificates.
+reconcile_existing_ao() {
+  [ -z "$_AO_CNPG_CLUSTER" ] || return 0
+  deploy_ao_instance
+  reconcile_ao_postgres
+}
+
 cleanup_legacy_ea_resources() {
   local _ns
   for _ns in aap-operator olm openshift-marketplace; do
@@ -1382,6 +1380,11 @@ if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
   fi
   exit 0
 fi
+
+if [ -n "$FORCE" ]; then
+  ao_validate_postgres_storage_size "${AO_STORAGE_SIZE:-3Gi}" || exit 1
+fi
+_AO_CNPG_CLUSTER=$(ao_cnpg_cluster_name "$NAMESPACE") || exit 1
 
 AO_REPLICA_COUNT="$(ao_resolve_replica_count)"
 if [ "$AO_REPLICA_COUNT" = "1" ]; then
@@ -1494,12 +1497,11 @@ if [ -z "$FORCE" ]; then
       ao_apply_install_plan_approval "$NAMESPACE" \
         automation-orchestrator-operator "$AO_INSTALL_PLAN_APPROVAL_REQUESTED"
     fi
-    deploy_ao_instance
-    reconcile_ao_postgres
+    reconcile_existing_ao
     wait_for_ao_instance_ready
     echo "✓ Automation Orchestrator already running (${_ao_running}/${_ao_total} pods, ${OPERATOR_CHANNEL} channel)"
     echo "  Use aap-demo enable ao --force (or ./deploy.sh --force) to reinstall."
-    if ao_cnpg_cluster_exists; then
+    if [ -n "$_AO_CNPG_CLUSTER" ]; then
       echo "  Its database is still in CloudNativePG, which aap-demo no longer uses."
       echo "  aap-demo enable ao --force moves AO to the new PostgreSQL and deletes AO's data."
     fi
@@ -1587,7 +1589,7 @@ echo "✓ Operator package found in AO catalog (${CATALOG_NAMESPACE}, ${OPERATOR
 # Secret names and keys are the ones the AutomationOrchestrator CR references.
 echo "Creating PostgreSQL for Automation Orchestrator..."
 
-if ao_cnpg_cluster_exists && [ -z "$FORCE" ]; then
+if [ -n "$_AO_CNPG_CLUSTER" ] && [ -z "$FORCE" ]; then
   echo "ERROR: This AO keeps its database in CloudNativePG, which aap-demo no longer uses." >&2
   echo "  To replace it with the new PostgreSQL, which deletes AO's data, run:" >&2
   echo "    aap-demo enable ao --force" >&2
@@ -1600,7 +1602,13 @@ if kubectl get secret orchestrator-pg-credentials -n "$NAMESPACE" &>/dev/null \
   _legacy_secret=1
 fi
 
-if [ -n "$FORCE" ] || [ -n "$_legacy_secret" ]; then
+if [ -n "$_legacy_secret" ] && [ -z "$FORCE" ]; then
+  echo "ERROR: Legacy PostgreSQL credentials exist; refusing to reset the database automatically." >&2
+  echo "  To replace the database and delete its data, run: aap-demo enable ao --force" >&2
+  exit 1
+fi
+
+if [ -n "$FORCE" ]; then
   if [ -n "$_legacy_secret" ]; then
     echo "  Recreating PostgreSQL to match the current secret names..."
     kubectl delete secret orchestrator-pg-credentials temporal-pg-credentials -n "$NAMESPACE" \
