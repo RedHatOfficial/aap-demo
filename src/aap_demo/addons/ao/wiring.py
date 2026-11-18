@@ -136,7 +136,13 @@ def network_access(
     containers = {name: _container_env(ctx, name) for name in CALLERS}
     if containers["automation-orchestrator-backend"] is None:
         return
-    if all(
+    backend = containers["automation-orchestrator-backend"] or {}
+    oidc = any(
+        as_dict(e).get("name") == "APP_OIDC_ALLOW_PRIVATE_NETWORKS"
+        and as_dict(e).get("value") == "true"
+        for e in backend.get("env") or []
+    )
+    if oidc and all(
         _allowed(container) == sorted(hosts)
         for container in containers.values()
         if container is not None
