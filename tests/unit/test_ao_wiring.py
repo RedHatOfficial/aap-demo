@@ -356,3 +356,16 @@ def test_backend_without_private_network_oidc_is_patched(app_ctx) -> None:
     )
     wiring.network_access(app_ctx, routes, "aap-operator", sleep=lambda _s: None)
     assert app_ctx.runner.called("kubectl patch deployment automation-orchestrator-backend")
+
+
+def test_a_failed_caller_patch_is_reported(app_ctx) -> None:
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    app_ctx.runner = (
+        FakeRunner()
+        .ok("kubectl get deployment", _deployment(None))
+        .fail("kubectl patch deployment automation-orchestrator-worker")
+        .ok("kubectl patch deployment")
+        .ok("kubectl rollout status")
+    )
+    wiring.network_access(app_ctx, routes, "aap-operator", sleep=lambda _s: None)
+    assert "allow-list on automation-orchestrator-worker" in app_ctx.console.stderr

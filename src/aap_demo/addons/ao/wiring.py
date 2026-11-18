@@ -151,6 +151,7 @@ def network_access(
         return
     ctx.console.info("Configuring Automation Orchestrator integration URL allow-list...")
     patched = False
+    failed: List[str] = []
     for deployment in CALLERS:
         found = _container_env(ctx, deployment)
         if found is None:
@@ -174,9 +175,16 @@ def network_access(
             "-p",
             json.dumps(patch),
         )
-        patched = patched or bool(result.ok)
+        if result.ok:
+            patched = True
+        else:
+            failed.append(deployment)
+    for deployment in failed:
+        ctx.console.warn(
+            f"Could not set the integration allow-list on {deployment}; it may not reach "
+            "AAP, MCP or Ollama. Run aap-demo enable ao again."
+        )
     if not patched:
-        ctx.console.warn("Could not patch AO deployments for the integration allow-list")
         return
     for deployment in CALLERS:
         kubectl.run(
