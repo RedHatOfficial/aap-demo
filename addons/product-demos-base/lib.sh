@@ -13,9 +13,7 @@ apd_addon_enabled() {
   case "$recorded" in
     *" ${name} "*) return 0 ;;
   esac
-  if [ -f "${HOME}/.aap-demo/config" ] && awk -F= -v addon="$name" \
-    '$1 == "ADDONS" { count = split($2, addons, ","); for (i = 1; i <= count; i++) if (addons[i] == addon) found = 1 } END { exit !found }' \
-    "${HOME}/.aap-demo/config"; then
+  if [ -f "${HOME}/.aap-demo/config" ] && grep -q "$name" "${HOME}/.aap-demo/config" 2>/dev/null; then
     return 0
   fi
   return 1
