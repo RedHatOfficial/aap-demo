@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import stat
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -304,3 +305,35 @@ def test_integrations_skip_verification_only_without_a_ca() -> None:
     assert wiring._tls("https://aap.x", "")["insecure_skip_tls_verify"] is True
     plain = wiring._tls("http://aap-mcp-server.ns.svc.cluster.local:8086/mcp", "")
     assert plain == {"allow_http": True, "insecure_skip_tls_verify": False}
+
+
+def _deployment(hosts):
+    env = (
+        []
+        if hosts is None
+        else [{"name": "APP_INTEGRATION_URL_ALLOWED_HOSTS", "value": json.dumps(hosts)}]
+    )
+    return json.dumps({"spec": {"template": {"spec": {"containers": [{"name": "c", "env": env}]}}}})
+
+
+def test_allow_list_is_patched_when_only_a_worker_is_missing_it(app_ctx) -> None:
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    hosts = wiring.allowed_hosts(routes, "aap-operator")
+    app_ctx.runner = (
+        FakeRunner()
+        .ok("kubectl get deployment automation-orchestrator-backend", _deployment(hosts))
+        .ok("kubectl get deployment automation-orchestrator-worker", _deployment(None))
+        .ok("kubectl get deployment automation-orchestrator-background-worker", _deployment(hosts))
+        .ok("kubectl patch deployment")
+        .ok("kubectl rollout status")
+    )
+    wiring.network_access(app_ctx, routes, "aap-operator", sleep=lambda _s: None)
+    assert app_ctx.runner.called("kubectl patch deployment automation-orchestrator-worker")
+
+
+def test_allow_list_already_on_every_caller_is_left_alone(app_ctx) -> None:
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    hosts = wiring.allowed_hosts(routes, "aap-operator")
+    app_ctx.runner = FakeRunner().ok("kubectl get deployment", _deployment(hosts))
+    wiring.network_access(app_ctx, routes, "aap-operator", sleep=lambda _s: None)
+    assert not app_ctx.runner.called("kubectl patch")

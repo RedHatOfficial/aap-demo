@@ -117,28 +117,32 @@ def _container_env(ctx: AppContext, deployment: str) -> Optional[Dict[str, Any]]
     return as_dict(containers[0]) if containers else None
 
 
+def _allowed(container: Dict[str, Any]) -> List[str]:
+    """The container's APP_INTEGRATION_URL_ALLOWED_HOSTS, sorted; [] when unset."""
+    for entry in container.get("env") or []:
+        if as_dict(entry).get("name") == "APP_INTEGRATION_URL_ALLOWED_HOSTS":
+            try:
+                return sorted(json.loads(str(as_dict(entry).get("value") or "[]")))
+            except ValueError:
+                return []
+    return []
+
+
 def network_access(
     ctx: AppContext, routes: Routes, aap_namespace: str, *, sleep: Sleep = time.sleep
 ) -> None:
     """Put AAP, AO, MCP and Ollama hosts on AO's integration allow-list."""
     hosts = allowed_hosts(routes, aap_namespace)
-    container = _container_env(ctx, "automation-orchestrator-backend")
-    if container is None:
+    containers = {name: _container_env(ctx, name) for name in CALLERS}
+    if containers["automation-orchestrator-backend"] is None:
         return
-    current = next(
-        (
-            str(as_dict(e).get("value") or "")
-            for e in container.get("env") or []
-            if as_dict(e).get("name") == "APP_INTEGRATION_URL_ALLOWED_HOSTS"
-        ),
-        "",
-    )
-    try:
-        if current and sorted(json.loads(current)) == sorted(hosts):
-            ctx.console.success("AO integration allow-list already configured")
-            return
-    except ValueError:
-        pass
+    if all(
+        _allowed(container) == sorted(hosts)
+        for container in containers.values()
+        if container is not None
+    ):
+        ctx.console.success("AO integration allow-list already configured")
+        return
     ctx.console.info("Configuring Automation Orchestrator integration URL allow-list...")
     patched = False
     for deployment in CALLERS:
