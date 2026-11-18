@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional
 from aap_demo.addons.ao import llm as llm_mod
 from aap_demo.addons.ao.admin import SECRET as ADMIN_SECRET
 from aap_demo.addons.ao.api import AoClient, Http, Response, aap_token, error_text, quote
-from aap_demo.addons.ao.instance import CALLERS
+from aap_demo.addons.ao.instance import CALLERS, OLLAMA_NAMESPACE
 from aap_demo.addons.ao.postgres import NAMESPACE
 from aap_demo.addons.common.kube import as_dict
 from aap_demo.core.context import AppContext
@@ -27,7 +27,6 @@ AAP_CREDENTIAL = "aap-demo AAP Token"
 MCP_CREDENTIAL = "aap-demo MCP Token"
 AAP_INTEGRATION = "aap-demo AAP"
 MCP_INTEGRATION = "aap-demo MCP Server"
-OLLAMA_NAMESPACE = "aap-demo-ollama"
 TOOL_CHUNK = 50
 REBIND_NOTE = "Rebound AO agentic nodes to the selected aap-demo LLM model"
 #: Restarted after the allow-list changes so they pick up the new hosts.
