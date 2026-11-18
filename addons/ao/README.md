@@ -10,7 +10,11 @@ Deploys **Automation Orchestrator (GA)** on aap-demo MicroShift clusters.
 
 The operator is installed with an OLM Subscription, the supported CLI method. The instance CR and a
 one-pod PostgreSQL (`rhel9/postgresql-15`, ADR-043) are checked in under [`manifests/`](manifests/).
-`deploy.sh` applies them with `kubectl`.
+
+`aap-demo enable ao` runs the native installer in `src/aap_demo/addons/ao/`
+([ADR-045](../../docs/adr/045-ao-on-python-command.md)). `deploy.sh` and `lib/` are frozen for
+`aap-demo-v1 enable ao` and will be removed in a later release. Both use the same manifests. The
+`./deploy.sh` examples below apply to `aap-demo-v1` only.
 
 ## Quick start
 
