@@ -25,6 +25,8 @@ UPSTREAM_REPOSITORY = "https://github.com/ansible-tmm/aap-orchestrator-demos"
 UPSTREAM_REF = "abcc1a1482a"
 
 
+#: curl gives up on a stalled demo download after this many seconds.
+DOWNLOAD_TIMEOUT = 300
 SYNC_NOTE = "Synchronized from aap-orchestrator-demos by aap-demo"
 #: Set by main(): the TLS context for AO API calls.
 _CONTEXT: "ssl.SSLContext | None" = None
@@ -62,11 +64,16 @@ def download_archive(url: str, destination: Path) -> None:
             capture_output=True,
             text=True,
             env=download_env,
+            timeout=DOWNLOAD_TIMEOUT,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"downloading {url} took longer than {DOWNLOAD_TIMEOUT}s; check the network and retry"
+        ) from exc
     except FileNotFoundError:
         # curl is part of the aap-demo prerequisites, but retain a portable
         # fallback for minimal Python-only test environments.
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT) as response:
             destination.write_bytes(response.read())
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip() or f"curl exited with status {exc.returncode}"
@@ -131,12 +138,17 @@ def workflow_sources(source_dir: str | None, repository: str, ref: str):
             extract_dir = Path(temp_dir) / "source"
             extract_dir.mkdir()
             with tarfile.open(archive_path, "r:gz") as archive:
-                root = Path(temp_dir).resolve()
-                for member in archive.getmembers():
+                root = extract_dir.resolve()
+                members = archive.getmembers()
+                for member in members:
+                    # Only plain files and directories: a link could point a
+                    # later member outside the extraction directory.
+                    if not (member.isfile() or member.isdir()):
+                        raise RuntimeError("upstream demo archive contains a link or device")
                     target = (root / member.name).resolve()
                     if target != root and root not in target.parents:
                         raise RuntimeError("upstream demo archive contains an unsafe path")
-                archive.extractall(extract_dir)
+                archive.extractall(extract_dir, members=members)
         except (OSError, RuntimeError, tarfile.TarError, urllib.error.URLError) as exc:
             raise RuntimeError(
                 f"unable to download upstream demos from {source_url}: {exc}"

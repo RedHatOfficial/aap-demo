@@ -27,15 +27,15 @@ STATEFULSET = "orchestrator-postgres"
 POD = "orchestrator-postgres-0"
 PVC = "data-orchestrator-postgres-0"
 SERVICE_HOST = f"orchestrator-postgres-rw.{NAMESPACE}.svc"
-CA_SECRET = "orchestrator-postgres-ca"
+CA_SECRET = "orchestrator-postgres-ca"  # pragma: allowlist secret
 CA_BUNDLE = "orchestrator-postgres-ca-bundle"
 TLS_SECRET = "orchestrator-postgres-tls"  # pragma: allowlist secret
 DATABASES = ("orchestrator", "temporal", "temporal_visibility")
 #: Secret name -> database, all owned by the ``orchestrator`` role.
 DATABASE_SECRETS = {
-    "orchestrator-postgres-secret": "orchestrator",
-    "temporal-postgres-secret": "temporal",
-    "temporal-visibility-postgres-secret": "temporal_visibility",
+    "orchestrator-postgres-secret": "orchestrator",  # pragma: allowlist secret
+    "temporal-postgres-secret": "temporal",  # pragma: allowlist secret
+    "temporal-visibility-postgres-secret": "temporal_visibility",  # pragma: allowlist secret
 }
 #: Names from installs before ADR-043. Their presence needs ``--force``.
 LEGACY_SECRETS = ("orchestrator-pg-credentials", "temporal-pg-credentials")

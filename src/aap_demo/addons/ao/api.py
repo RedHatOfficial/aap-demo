@@ -39,9 +39,10 @@ def _open(request: urllib.request.Request, *, timeout: float, context: ssl.SSLCo
     return opener.open(request, timeout=timeout)
 
 
-def tls_context(ctx: AppContext) -> ssl.SSLContext:
+def tls_context(ctx: AppContext, ca: Optional[str] = None) -> ssl.SSLContext:
     context = ssl.create_default_context()
-    ca = ingress_ca.fetch_cluster_ca(ctx)
+    if ca is None:
+        ca = ingress_ca.fetch_cluster_ca(ctx)
     if ca:
         context.load_verify_locations(cadata=ca)
     return context

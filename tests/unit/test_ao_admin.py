@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import stat
+import sys
 
 import pytest
 
@@ -44,7 +45,8 @@ def test_fresh_install_generates_a_private_password(app_ctx) -> None:
     admin.ensure(app_ctx)
     value = admin.path(app_ctx).read_text()
     assert len(value) == 32
-    assert stat.S_IMODE(admin.path(app_ctx).stat().st_mode) == 0o600
+    if sys.platform != "win32":  # Windows has no POSIX file modes
+        assert stat.S_IMODE(admin.path(app_ctx).stat().st_mode) == 0o600
     assert _applied_password(app_ctx.runner) == value
     assert not any(value in " ".join(call.argv) for call in app_ctx.runner.calls)
 

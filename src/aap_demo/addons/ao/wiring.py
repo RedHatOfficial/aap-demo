@@ -18,6 +18,7 @@ from aap_demo.addons.ao.api import AoClient, Http, Response, aap_token, error_te
 from aap_demo.addons.ao.instance import CALLERS, OLLAMA_NAMESPACE
 from aap_demo.addons.ao.postgres import NAMESPACE
 from aap_demo.addons.common.kube import as_dict
+from aap_demo.cluster import ingress_ca
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
@@ -28,6 +29,8 @@ MCP_CREDENTIAL = "aap-demo MCP Token"
 AAP_INTEGRATION = "aap-demo AAP"
 MCP_INTEGRATION = "aap-demo MCP Server"
 TOOL_CHUNK = 50
+#: Ollama ignores the key, but AO requires one on an LLM credential.
+OLLAMA_INPUTS = {"api_key": "ollama"}  # pragma: allowlist secret
 REBIND_NOTE = "Rebound AO agentic nodes to the selected aap-demo LLM model"
 #: Restarted after the allow-list changes so they pick up the new hosts.
 OTHERS = (
@@ -53,6 +56,8 @@ class Routes:
     ao: str
     mcp: str
     ollama: str
+    #: The cluster ingress CA that signs these routes, or "" when unreadable.
+    ca: str = ""
 
     @classmethod
     def read(cls, ctx: AppContext, aap_namespace: str) -> "Routes":
@@ -329,13 +334,18 @@ def enable_tools(ao: AoClient, integration: str, *, sleep: Sleep = time.sleep) -
         )
 
 
-def _plain_config(kind: str, url: str) -> Dict[str, Any]:
-    return {
-        "integration_type": kind,
-        "base_url": url,
-        "allow_http": True,
-        "insecure_skip_tls_verify": True,
-    }
+def _tls(url: str, ca: str) -> Dict[str, Any]:
+    """Verify the route against the ingress CA. Skip only when no CA is known."""
+    settings: Dict[str, Any] = {"allow_http": url.startswith("http://")}
+    if ca:
+        settings.update(ca_certificate=ca, insecure_skip_tls_verify=False)
+    else:
+        settings["insecure_skip_tls_verify"] = url.startswith("https://")
+    return settings
+
+
+def _plain_config(kind: str, url: str, ca: str) -> Dict[str, Any]:
+    return {"integration_type": kind, "base_url": url, **_tls(url, ca)}
 
 
 def wire_aap(ctx: AppContext, ao: AoClient, http: Http, routes: Routes, aap_namespace: str) -> None:
@@ -357,7 +367,7 @@ def wire_aap(ctx: AppContext, ao: AoClient, http: Http, routes: Routes, aap_name
         ao,
         AAP_INTEGRATION,
         "ansible_automation_platform",
-        _plain_config("ansible_automation_platform", url),
+        _plain_config("ansible_automation_platform", url, routes.ca),
         credential,
     )
     ctx.console.success(f"AO integration configured: {AAP_INTEGRATION}")
@@ -407,7 +417,7 @@ def wire_mcp(
         ao,
         MCP_INTEGRATION,
         "mcp_server",
-        _plain_config("mcp_server", url),
+        _plain_config("mcp_server", url, routes.ca),
         credential,
         discover=True,
         sleep=sleep,
@@ -463,14 +473,14 @@ def wire_llm(ctx: AppContext, ao: AoClient, routes: Routes) -> None:
             ctx.console.warn("Ollama is not deployed; skipping AO LLM wiring")
             return
         ctx.console.info("Wiring Automation Orchestrator to the Ollama LLM provider...")
+        url = f"https://{routes.ollama}/v1"
         config = {
             "integration_type": "llm_provider",
             "provider_hint": "custom",
-            "base_url": f"https://{routes.ollama}/v1",
-            "allow_http": True,
-            "insecure_skip_tls_verify": True,
+            "base_url": url,
+            **_tls(url, routes.ca),
         }
-        _wire_llm(ao, settings.integration, config, {"api_key": "ollama"}, settings.model)
+        _wire_llm(ao, settings.integration, config, OLLAMA_INPUTS, settings.model)
     else:
         ctx.console.info("Wiring Automation Orchestrator to the external LLM provider...")
         config = {
@@ -589,7 +599,13 @@ def wire(
     else:
         raise AddonError("Automation Orchestrator route not ready after 60s")
     network_access(ctx, routes, aap_namespace, sleep=sleep)
-    context = http.context if http is not None else tls_context(ctx)
+    routes.ca = ingress_ca.fetch_cluster_ca(ctx) or ""
+    if not routes.ca:
+        ctx.console.warn(
+            "Could not read the cluster ingress CA; AO's integrations will not verify "
+            "the AAP, MCP and Ollama route certificates."
+        )
+    context = http.context if http is not None else tls_context(ctx, routes.ca)
     client = http or Http(context=context)
     ao = AoClient(http=client, route=routes.ao)
     ao.login(_secret(ctx, ADMIN_SECRET, NAMESPACE))

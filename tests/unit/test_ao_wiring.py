@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
@@ -97,7 +98,8 @@ def test_bash_api_key_is_copied_privately(app_ctx) -> None:
     legacy.parent.mkdir(parents=True)
     legacy.write_text("sk-legacy\n")
     assert llm.api_key(app_ctx) == "sk-legacy"
-    assert stat.S_IMODE(llm.key_path(app_ctx).stat().st_mode) == 0o600
+    if sys.platform != "win32":  # Windows has no POSIX file modes
+        assert stat.S_IMODE(llm.key_path(app_ctx).stat().st_mode) == 0o600
     assert legacy.is_file()
 
 
@@ -286,3 +288,19 @@ def test_wait_ready_times_out_with_the_degraded_reason(app_ctx) -> None:
     with pytest.raises(AddonError, match="not Ready") as excinfo:
         instance.wait_ready(app_ctx, sleep=lambda _s: None, clock=lambda: next(ticks))
     assert "DbDown" in (excinfo.value.hint or "")
+
+
+# -- TLS for AO's integrations -----------------------------------------------------
+
+
+def test_integrations_trust_the_ingress_ca() -> None:
+    config = wiring._plain_config("mcp_server", "https://mcp.x/mcp", "PEM")
+    assert config["ca_certificate"] == "PEM"
+    assert config["insecure_skip_tls_verify"] is False
+    assert config["allow_http"] is False
+
+
+def test_integrations_skip_verification_only_without_a_ca() -> None:
+    assert wiring._tls("https://aap.x", "")["insecure_skip_tls_verify"] is True
+    plain = wiring._tls("http://aap-mcp-server.ns.svc.cluster.local:8086/mcp", "")
+    assert plain == {"allow_http": True, "insecure_skip_tls_verify": False}
