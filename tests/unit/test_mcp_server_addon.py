@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from aap_demo.addons import get
+from aap_demo.addons.mcp_server import _generate_token
 from aap_demo.core.errors import AddonError
 from aap_demo.exec.runner import CompletedCommand
 
@@ -160,3 +161,30 @@ def test_disable_preserves_unowned_ingress_ca_configmap(app_ctx) -> None:
     )
     assert get("mcp-server").disable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
     assert not runner.called("kubectl delete configmap")
+
+
+def test_token_request_quotes_curl_config_values_and_parses_response(app_ctx) -> None:
+    app_ctx.runner.ok(
+        "kubectl get secret aap-admin-password",
+        stdout=base64.b64encode(b'p@ss"word').decode(),
+    )
+    app_ctx.runner.ok(
+        "curl --silent --show-error --fail",
+        stdout=json.dumps({"token": "temporary-token"}),
+    )
+
+    assert _generate_token(app_ctx, "aap.apps.example.test") == "temporary-token"
+    request = next(call for call in app_ctx.runner.calls if call.argv[0] == "curl")
+    assert 'header = "Content-Type: application/json"' in request.input
+    assert 'user = "admin:p@ss\\"word"' in request.input
+    assert 'data = "{\\"description\\":\\"claude-mcp\\",\\"scope\\":\\"write\\"}"' in request.input
+
+
+def test_token_request_treats_http_failure_as_no_token(app_ctx) -> None:
+    app_ctx.runner.ok(
+        "kubectl get secret aap-admin-password",
+        stdout=base64.b64encode(b"password").decode(),
+    )
+    app_ctx.runner.fail("curl --silent --show-error --fail", stderr="HTTP 401")
+
+    assert _generate_token(app_ctx, "aap.apps.example.test") is None

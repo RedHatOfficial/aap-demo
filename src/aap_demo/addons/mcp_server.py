@@ -330,16 +330,27 @@ def _generate_token(ctx: AppContext, aap_host: str) -> str | None:
         admin_password = base64.b64decode(password.stdout.strip(), validate=True).decode()
     except (binascii.Error, UnicodeError):
         return None
+    token_request = '{"description":"claude-mcp","scope":"write"}'
     curl_config = (
-        f"url = https://{aap_host}/api/gateway/v1/tokens/\n"
-        f"user = admin:{admin_password}\n"
+        f"url = {_curl_config_value(f'https://{aap_host}/api/gateway/v1/tokens/')}\n"
+        f"user = {_curl_config_value(f'admin:{admin_password}')}\n"
         "request = POST\n"
-        "header = Content-Type: application/json\n"
-        'data = {"description":"claude-mcp","scope":"write"}\n'
+        f"header = {_curl_config_value('Content-Type: application/json')}\n"
+        f"data = {_curl_config_value(token_request)}\n"
         "insecure\n"
     )
     response = ctx.runner.run(
-        ["curl", "--silent", "--show-error", "--max-time", "30", "--config", "-"], input=curl_config
+        [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "30",
+            "--config",
+            "-",
+        ],
+        input=curl_config,
     )
     if not response.ok:
         return None
@@ -348,6 +359,11 @@ def _generate_token(ctx: AppContext, aap_host: str) -> str | None:
     except (TypeError, json.JSONDecodeError):
         return None
     return token if isinstance(token, str) and token else None
+
+
+def _curl_config_value(value: str) -> str:
+    """Quote one value for curl's double-quoted config-file syntax."""
+    return json.dumps(value)
 
 
 def _configure_claude(ctx: AppContext, mcp_host: str, token: str) -> None:
