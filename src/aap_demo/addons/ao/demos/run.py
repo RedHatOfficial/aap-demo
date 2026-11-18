@@ -80,10 +80,19 @@ def lookup(ctx: AppContext, ao: AoClient) -> Ids:
                 f"/integrations/{ids.agent_integration}/models?limit=50", model_id=settings.model
             )
             ids.agent_model = str(found.get("id")) if found else ""
-        if (ids.agent_credential or ids.agent_integration) and not ids.agent_ready:
+        missing = [
+            what
+            for what, value in (
+                (f"credential {settings.integration!r}", ids.agent_credential),
+                (f"integration {settings.integration!r}", ids.agent_integration),
+                (f"model {settings.model!r}", ids.agent_model),
+            )
+            if not value
+        ]
+        if missing:
             ctx.console.warn(
-                "AO LLM credential, integration, or model is incomplete; "
-                "skipping agent binding for the demo workflows"
+                "AO has no LLM " + ", ".join(missing) + "; skipping agent binding for the demo "
+                "workflows"
             )
     return ids
 
