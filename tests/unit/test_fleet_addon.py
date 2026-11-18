@@ -380,6 +380,7 @@ def test_registry_lists_fleet_and_product_demos() -> None:
         "fleet",
         "mcp-server",
         "ollama",
+        "opa",
         "product-demo-satellite",
         "product-demos",
     ]
@@ -910,6 +911,7 @@ def test_enable_without_a_name_json_lists_addons(app_ctx) -> None:
         "fleet",
         "mcp-server",
         "ollama",
+        "opa",
         "product-demo-satellite",
         "product-demos",
     ]

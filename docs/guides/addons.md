@@ -12,6 +12,23 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 Add-ons are optional extras on top of AAP: a self-service portal, demo job templates, a local model, and practice machines.
 
+## OPA Policy as Code
+
+The Python v2 command can install Open Policy Agent and configure AAP Policy as Code:
+
+```bash
+aap-demo enable opa
+aap-demo disable opa
+```
+
+Enable creates the OPA Deployment, Service, and Route, configures AAP's policy settings, and creates these job
+templates: **OPA | Load Example Policies**, **OPA | Test Policies**, **OPA | Clear Policies**, and
+**OPA | Demo Policy**. Launch **OPA | Load Example Policies** in AAP to load the upstream example policies.
+
+The native command continues to accept `OPA_VERSION`, `OPA_REPO`, and `OPA_MANIFEST_REF`. It records the addon in
+the Python `addons.enabled` setting only after enable finishes. To use the older shell implementation explicitly,
+run `aap-demo-v1 enable opa`.
+
 `aap-demo status` reports MCP Server as enabled when it is recorded in settings or when
 its custom resource or deployment is detected in the AAP namespace. The label identifies
 the source; it does not indicate readiness. Check the namespace's pod counts or run

@@ -77,6 +77,7 @@ packages = ["src/aap_demo"]
 "addons/ao" = "aap_demo/bundled/addons/ao"
 "addons/mcp-server" = "aap_demo/bundled/addons/mcp-server"
 "addons/ollama" = "aap_demo/bundled/addons/ollama"
+"addons/opa" = "aap_demo/bundled/addons/opa"
 "addons/subscription-attach" = "aap_demo/bundled/addons/subscription-attach"
 "includes" = "aap_demo/bundled/includes"
 "config/olm" = "aap_demo/bundled/config/olm"
