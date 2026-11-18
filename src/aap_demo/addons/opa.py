@@ -59,7 +59,14 @@ class OpaAddon:
             _run_bootstrap(ctx, options, "present")
         except Exception:
             if applied and not was_enabled:
-                _delete_resources(ctx)
+                try:
+                    _run_bootstrap(ctx, options, "absent")
+                except Exception:
+                    pass
+                try:
+                    _delete_resources(ctx)
+                except Exception:
+                    pass
             raise
         save_options_for(ctx, self.name, options)
         _remember_enabled(ctx)

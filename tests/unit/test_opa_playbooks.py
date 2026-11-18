@@ -43,6 +43,8 @@ def test_bootstrap_uses_uri_and_has_both_states() -> None:
         assert name in text
     assert "survey_enabled: true" in text
     assert "Attach AAP credential to demo policy template" in text
+    assert "Read demo policy template credentials" in text
+    assert "status_code: [200, 201, 204, 400]" not in text
     assert "Delete OPA credentials" in text
     assert "lookup('ansible.builtin.url'" not in text
     assert "aap_password" not in text.split("debug", 1)[-1]

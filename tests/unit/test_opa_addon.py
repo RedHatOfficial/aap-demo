@@ -59,6 +59,20 @@ def test_bootstrap_failure_keeps_state_disabled(app_ctx, monkeypatch) -> None:
     assert app_ctx.config.get("addons.enabled") == []
 
 
+def test_bootstrap_failure_attempts_aap_cleanup(app_ctx, monkeypatch) -> None:
+    states = []
+
+    def fail_present(_ctx, _options, state):
+        states.append(state)
+        if state == "present":
+            raise AddonError("bootstrap failed", hint="job log")
+
+    _stub_flow(monkeypatch, bootstrap=fail_present)
+    with pytest.raises(AddonError, match="bootstrap failed"):
+        get("opa").enable(app_ctx, _args())
+    assert states == ["present", "absent"]
+
+
 def test_disable_refuses_unowned_service(app_ctx, monkeypatch) -> None:
     monkeypatch.setattr("aap_demo.addons.opa._route_host", lambda ctx: "opa.apps.example.test")
     app_ctx.runner.ok(

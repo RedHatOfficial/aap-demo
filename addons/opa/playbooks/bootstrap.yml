@@ -330,6 +330,21 @@
           register: survey_templates
           no_log: true
 
+        - name: Read demo policy template credentials
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/credentials/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+          when: demo_template.id is defined
+          register: demo_template_credentials
+          no_log: true
+
         - name: Attach AAP credential to demo policy template
           ansible.builtin.uri:
             url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/credentials/"
@@ -341,10 +356,13 @@
             body_format: json
             body:
               id: "{{ credential_id }}"
-            status_code: [200, 201, 204, 400]
+            status_code: [200, 201, 204]
           vars:
             demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
-          when: demo_template.id is defined
+            demo_credentials: "{{ demo_template_credentials.json.results | default([]) }}"
+          when:
+            - demo_template.id is defined
+            - credential_id | int not in (demo_credentials | map(attribute='id') | map('int') | list)
           no_log: true
 
         - name: Enable demo policy survey
