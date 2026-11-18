@@ -55,6 +55,24 @@ grep -q 'chmod 600' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: credential permissions not enforced"
   exit 1
 }
+for username in aap-oidc-admin aap-oidc-operator aap-oidc-auditor aap-oidc-developer; do
+  grep -Fq "${username}-password" "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+    echo "FAIL: Keycloak password file must match username ${username}"
+    exit 1
+  }
+  grep -Fq "${username}-password" "$ROOT_DIR/addons/keycloak/README.md" || {
+    echo "FAIL: README must document the password file for ${username}"
+    exit 1
+  }
+done
+grep -q 'aap-user-password' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: legacy admin password file must be migrated"
+  exit 1
+}
+grep -q 'ao-user-password' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: legacy operator password file must be migrated"
+  exit 1
+}
 grep -q 'addon" != "keycloak"' "$ROOT_DIR/aap-demo.sh" || {
   echo "FAIL: keycloak must not trigger generic addon wiring"
   exit 1
