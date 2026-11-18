@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -96,8 +97,9 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
     assert call.argv[0].endswith("/ansible-playbook")
     assert "playbooks/deploy_apme_portal.yml" in call.argv[1]
     assert call.env["K8S_AUTH_KUBECONFIG"] == str(app_ctx.kubeconfig)
-    assert call.env["ANSIBLE_LOCAL_TEMP"].startswith("/tmp/")
-    assert call.env["ANSIBLE_REMOTE_TEMP"].startswith("/tmp/")
+    temp_root = tempfile.gettempdir()
+    assert call.env["ANSIBLE_LOCAL_TEMP"].startswith(temp_root)
+    assert call.env["ANSIBLE_REMOTE_TEMP"].startswith(temp_root)
     assert app_ctx.runner.index_of(["kubectl", "wait"]) < app_ctx.runner.index_of(
         ["~ansible-playbook$"]
     )

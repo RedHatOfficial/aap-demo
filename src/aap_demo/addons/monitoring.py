@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 from aap_demo.addons.base import AddonKind
 from aap_demo.addons.common import kube
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
+from aap_demo.cluster import pull_secret
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
@@ -366,9 +367,16 @@ class MonitoringAddon:
             password_path.write_text(password + "\n", encoding="utf-8")
             password_path.chmod(0o600)
         aap_password = _aap_password(ctx)
+        documents = _documents(password, aap_password, ctx.namespace)
+        kube.apply_or_raise(
+            ctx,
+            _manifest([documents[0]]),
+            message="could not create the monitoring namespace",
+        )
+        pull_secret.ensure(ctx, NAMESPACE)
         result = kube.apply_or_raise(
             ctx,
-            _manifest(_documents(password, aap_password, ctx.namespace)),
+            _manifest(documents),
             message="could not install monitoring addon",
         )
         del result
