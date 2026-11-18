@@ -12,10 +12,12 @@ from typing import Dict, Literal, Optional, overload
 from aap_demo.addons import ao_shell
 from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
+from aap_demo.addons.mcp_server import McpServerAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
 
 _FLEET = FleetAddon()
+_MCP_NATIVE = McpServerAddon()
 _EDA_PLAYGROUND = ShellAddon(
     "eda-playground",
     required_tools=("bash", "curl", "jq", "kubectl", "base64"),
@@ -55,7 +57,12 @@ _CUSTOM_SHELL = {a.name: a for a in (_EDA_PLAYGROUND, _AO, _MCP_SERVER, _OLLAMA)
 
 _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
-    **{name: _CUSTOM_SHELL.get(name) or ShellAddon(name) for name in BUNDLED_ADDON_DIRS},
+    _MCP_NATIVE.name: _MCP_NATIVE,
+    **{
+        name: _CUSTOM_SHELL.get(name) or ShellAddon(name)
+        for name in BUNDLED_ADDON_DIRS
+        if name != _MCP_NATIVE.name
+    },
 }
 
 #: How to run the bash command next to this one, for addons not ported yet.

@@ -1,8 +1,10 @@
-"""AO, mcp-server and ollama run their bundled bash installers (ADR-040)."""
+"""AO and ollama use bundled installers; MCP uses the native V2 addon."""
 
 from __future__ import annotations
 
 import argparse
+import base64
+import json
 import re
 from pathlib import Path
 
@@ -21,6 +23,16 @@ def _tools(monkeypatch, fake_runner) -> None:
     monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda name: f"/usr/bin/{name}")
     fake_runner.ok("kubectl get ansiblemcpservers.mcpserver.ansible.com")
     fake_runner.ok("kubectl get deployment aap-mcp-server")
+    fake_runner.ok("kubectl cluster-info")
+    fake_runner.ok("kubectl get route aap", stdout="aap-aap-operator.apps.example.test")
+    fake_runner.ok("kubectl get ingresses.config/cluster")
+    fake_runner.ok(
+        "kubectl get secret router-certs-default",
+        stdout=json.dumps({"data": {"tls.crt": base64.b64encode(b"chain").decode()}}),
+    )
+    fake_runner.ok("kubectl apply")
+    fake_runner.ok("kubectl rollout status")
+    fake_runner.ok("kubectl patch deployment")
 
 
 def _deploy(name: str) -> str:
@@ -40,13 +52,15 @@ def _enable(app_ctx, *args: str) -> int:
     return get("ao").enable(app_ctx, argparse.Namespace(addon="ao", addon_args=list(args)))
 
 
-def test_ao_mcp_server_and_ollama_are_public_legacy_addons() -> None:
-    for name in ("ao", "mcp-server", "ollama"):
+def test_ao_and_ollama_are_public_legacy_addons_and_mcp_is_native() -> None:
+    for name in ("ao", "ollama"):
         addon = get(name)
         assert addon.kind == "legacy"
         assert addon.public is True
         assert addon.needs_cluster is True
         assert name in names()
+    assert get("mcp-server").kind == "native"
+    assert get("mcp-server").public is True
 
 
 def test_enable_ao_enables_mcp_server_and_ollama_first(app_ctx, tmp_path) -> None:
@@ -58,7 +72,7 @@ def test_enable_ao_enables_mcp_server_and_ollama_first(app_ctx, tmp_path) -> Non
 
     assert _enable(app_ctx, "--force") == 0
 
-    assert _ran(app_ctx) == ["mcp-server", "ollama", "ao"]
+    assert _ran(app_ctx) == ["ollama", "ao"]
     ao = _call(app_ctx, "ao")
     assert ao.argv == ("bash", _deploy("ao"), "--force")
     assert ao.env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "1"
@@ -66,7 +80,6 @@ def test_enable_ao_enables_mcp_server_and_ollama_first(app_ctx, tmp_path) -> Non
     assert ao.env["PULL_SECRET_PATH"] == str(secret)
     assert ao.env["KUBECONFIG"] == str(app_ctx.kubeconfig)
     assert ao.env["AAP_DEMO_ENABLED_ADDONS"] == "mcp-server ollama"
-    assert _call(app_ctx, "mcp-server").env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "1"
     assert app_ctx.config.get("addons.enabled") == ["mcp-server", "ollama", "ao"]
     assert "No product demos are enabled" in app_ctx.console.stdout + app_ctx.console.stderr
 
@@ -121,7 +134,7 @@ def test_an_llm_provider_other_than_ollama_skips_ollama(app_ctx, provider) -> No
 
     assert _enable(app_ctx) == 0
 
-    assert _ran(app_ctx) == ["mcp-server", "ao"]
+    assert _ran(app_ctx) == ["ao"]
     assert _call(app_ctx, "ao").env["AO_LLM_PROVIDER"] == provider
 
 
@@ -133,10 +146,14 @@ def test_an_unknown_llm_provider_stops_before_any_install(app_ctx) -> None:
 
 
 def test_a_failed_dependency_stops_before_ao(app_ctx) -> None:
-    app_ctx.runner.fail(["bash", _deploy("mcp-server")])
-    with pytest.raises(AddonError, match="enable mcp-server failed"):
+    app_ctx.env["AO_LLM_PROVIDER"] = "none"
+    app_ctx.runner._rules.insert(
+        0,
+        (("kubectl", "cluster-info"), CompletedCommand(argv=(), returncode=1)),
+    )
+    with pytest.raises(AddonError, match="kubectl is not connected"):
         _enable(app_ctx)
-    assert _ran(app_ctx) == ["mcp-server"]
+    assert _ran(app_ctx) == []
     assert app_ctx.config.get("addons.enabled") in (None, [])
 
 
