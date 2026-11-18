@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Dict
 
 import aap_demo
-
 from aap_demo.core.errors import AddonError
 
 _NAMES = (
