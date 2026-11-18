@@ -17,10 +17,13 @@ aap-demo enable opa
 trap 'aap-demo disable opa >/dev/null 2>&1 || true' EXIT
 
 kubectl rollout status deployment/opa -n "$NAMESPACE" --timeout=180s
+OPA_ROUTE="$(kubectl get route opa -n "$NAMESPACE" -o jsonpath='{.spec.host}')"
+[ -n "$OPA_ROUTE" ] || fail "OPA route is missing"
+curl --fail --silent --insecure "https://${OPA_ROUTE}/health" >/dev/null \
+  || fail "OPA health check failed"
+
 AAP_ROUTE="$(kubectl get route aap -n "$NAMESPACE" -o jsonpath='{.spec.host}')"
 [ -n "$AAP_ROUTE" ] || fail "AAP route is missing"
-curl --fail --silent --insecure "https://${AAP_ROUTE}/health" >/dev/null \
-  || fail "OPA health check failed"
 
 AAP_PASSWORD="$(kubectl get secret -n "$NAMESPACE" aap-admin-password -o jsonpath='{.data.password}' | base64 -d)"
 [ -n "$AAP_PASSWORD" ] || fail "AAP admin password is missing"
