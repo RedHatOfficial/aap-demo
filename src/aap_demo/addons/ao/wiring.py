@@ -337,11 +337,11 @@ def ensure_integration(
 
 def enable_tools(ao: AoClient, integration: str, *, sleep: Sleep = time.sleep) -> None:
     path = f"/integrations/{integration}/tools?limit=100"
-    tools = [str(t.get("id")) for t in ao.get(path).items()]
+    tools = [str(t.get("id")) for t in ao.list_all(path)]
     if not tools:
         ao.call("POST", f"/integrations/{integration}/refresh", {})
         sleep(3)
-        tools = [str(t.get("id")) for t in ao.get(path).items()]
+        tools = [str(t.get("id")) for t in ao.list_all(path)]
     if not tools:
         return
     for start in range(0, len(tools), TOOL_CHUNK):

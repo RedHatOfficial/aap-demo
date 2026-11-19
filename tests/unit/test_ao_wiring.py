@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
 
-from aap_demo.addons.ao import instance, llm, wiring
+from aap_demo.addons.ao import api, instance, llm, wiring
 from aap_demo.addons.ao.api import AoClient, Http, Response
 from aap_demo.core.errors import AddonError, UsageError
 from aap_demo.exec.runner import FakeRunner
@@ -189,6 +189,27 @@ def test_tools_are_enabled_in_chunks() -> None:
     wiring.enable_tools(ao, "i1", sleep=lambda _s: None)
     sizes = [len(b["tool_ids"]) for b in http.sent("PATCH", "/integrations/i1/tools/bulk_update")]
     assert sizes == [50, 50, 20]
+
+
+def test_tools_on_later_pages_are_enabled_too() -> None:
+    first = {"resources": [{"id": str(n)} for n in range(100)], "next": "c/2"}
+    second = {"resources": [{"id": str(n)} for n in range(100, 144)], "next": None}
+    ao, http = _client(
+        {
+            "GET /integrations/i1/tools?limit=100&cursor=c%2F2": _reply(second),
+            "GET /integrations/i1/tools?limit=100": _reply(first),
+            "PATCH /integrations/i1/tools/bulk_update": _reply({}),
+        }
+    )
+    wiring.enable_tools(ao, "i1", sleep=lambda _s: None)
+    sent = http.sent("PATCH", "/integrations/i1/tools/bulk_update")
+    assert sum(len(b["tool_ids"]) for b in sent) == 144
+
+
+def test_a_cursor_that_never_ends_stops_at_the_page_limit() -> None:
+    ao, http = _client({"GET /things": _reply({"resources": [{"id": "x"}], "next": "again"})})
+    assert len(ao.list_all("/things?limit=1")) == api.MAX_PAGES
+    assert len(http.calls) == api.MAX_PAGES
 
 
 def test_rebind_updates_only_aap_demo_agentic_nodes(app_ctx) -> None:

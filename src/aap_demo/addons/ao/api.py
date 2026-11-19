@@ -69,6 +69,10 @@ class Response:
         return [as_dict(item) for item in found or [] if isinstance(item, dict)]
 
 
+# A list endpoint is read at most this many pages deep.
+MAX_PAGES = 50
+
+
 @dataclass
 class Http:
     context: Optional[ssl.SSLContext]
@@ -148,8 +152,22 @@ class AoClient:
     def get(self, path: str) -> Response:
         return self.call("GET", path)
 
+    def list_all(self, path: str) -> List[Dict[str, Any]]:
+        """Every item of a list endpoint, following AO's ``next`` cursor."""
+        items: List[Dict[str, Any]] = []
+        joiner = "&" if "?" in path else "?"
+        url = path
+        for _ in range(MAX_PAGES):
+            page = self.get(url)
+            items.extend(page.items())
+            cursor = as_dict(page.body).get("next")
+            if not cursor:
+                break
+            url = f"{path}{joiner}cursor={quote(str(cursor))}"
+        return items
+
     def find(self, path: str, **match: str) -> Optional[Dict[str, Any]]:
-        for item in self.get(path).items():
+        for item in self.list_all(path):
             if all(str(item.get(key)) == value for key, value in match.items()):
                 return item
         return None
