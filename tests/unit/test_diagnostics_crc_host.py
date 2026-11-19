@@ -63,13 +63,26 @@ def test_a_hung_crc_with_a_vm_is_reported_with_the_fix() -> None:
 
 
 def test_unknown_crc_status_with_a_vm_is_unresponsive_and_checks_ssh() -> None:
-    checks = _run(
-        _probe(status=lambda: {"crcStatus": "Unknown"}, port_open=lambda h, p: False)
-    )
+    checks = _run(_probe(status=lambda: {"crcStatus": "Unknown"}, port_open=lambda h, p: False))
     text = _text(checks)
     assert "a 'crc start' may be hung" in text
     assert "Nothing answers on 127.0.0.1:2222" in text
     assert crc_host.FIX_HINT in text
+
+
+def test_unknown_crc_status_during_start_or_stop_is_not_reported_as_hung() -> None:
+    checks = _run(
+        _probe(
+            status=lambda: {"crcStatus": "Unknown"},
+            active_operation=lambda: True,
+            port_open=lambda h, p: False,
+        )
+    )
+    text = _text(checks)
+    assert "crc start/stop is still running" in text
+    assert "a 'crc start' may be hung" not in text
+    assert "Nothing answers on 127.0.0.1:2222" not in text
+    assert crc_host.FIX_HINT not in text
 
 
 def test_a_daemon_from_another_crc_binary_fails() -> None:

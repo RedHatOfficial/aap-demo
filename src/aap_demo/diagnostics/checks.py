@@ -89,13 +89,19 @@ def _kubectl_lines(runner: Any, *args: str) -> List[str]:
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-def _check_cluster(runner: Any, rec: _Recorder, *, unresponsive: bool = False) -> bool:
+def _check_cluster(
+    runner: Any,
+    rec: _Recorder,
+    *,
+    unresponsive: bool = False,
+    crc_state: Optional[str] = None,
+) -> bool:
     """Returns whether the cluster is reachable."""
     rec.start("Cluster")
-    crc_state = infra_crc.get_state(runner)
-    if crc_state == infra_crc.STATE_RUNNING:
+    state = infra_crc.get_state(runner) if crc_state is None else crc_state
+    if state == infra_crc.STATE_RUNNING:
         rec.ok("OpenShift Local running")
-    elif crc_state == infra_crc.STATE_STOPPED:
+    elif state == infra_crc.STATE_STOPPED:
         rec.fail("OpenShift Local is stopped — run: crc start")
     elif unresponsive:
         rec.fail("OpenShift Local is not responding — see the host checks above")
@@ -346,11 +352,14 @@ def run(
     rec = _Recorder()
 
     unresponsive = False
+    crc_state: Optional[str] = None
     if host is not None:
-        unresponsive = crc_host.check(host, rec).unresponsive
+        findings = crc_host.check(host, rec)
+        unresponsive = findings.unresponsive
+        crc_state = findings.crc_state
         report.sections.append(rec.section)
 
-    reachable = _check_cluster(runner, rec, unresponsive=unresponsive)
+    reachable = _check_cluster(runner, rec, unresponsive=unresponsive, crc_state=crc_state)
     report.sections.append(rec.section)
     if not reachable:
         # Bash returns 1 immediately here — no further
