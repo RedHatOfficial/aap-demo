@@ -12,6 +12,7 @@ import hashlib
 import json
 import shutil
 import tarfile
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -117,11 +118,12 @@ class LocalCacheAddon:
                 key = _ssh_key(ctx)
                 result = _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(reference)}")
                 if result.ok:
+                    reference_text = str(reference)
                     render(
                         ctx.console,
-                        {"reference": reference},
+                        {"reference": reference_text},
                         output=ctx.output,
-                        text=lambda reference=reference: reference,
+                        text=partial(str, reference_text),
                     )
                     return 0
         raise AddonError("no usable cached operator catalog")
