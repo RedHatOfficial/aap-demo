@@ -22,8 +22,7 @@ rules:
     indent-sequences: true
 
   # Document start (---) not required for all files
-  document-start:
-    present: false
+  document-start: disable
 
   # Allow duplicate keys (sometimes needed in Kustomize overlays)
   key-duplicates:

@@ -33,6 +33,18 @@ ADRs should be created for decisions that:
 - **Update security model** (SCCs, Pod Security, authentication)
 - **Establish development patterns** (testing strategy, CI/CD approach)
 
+## Integrating Local Plans and Specs
+
+Before drafting an ADR for an architectural change, check `docs/superpowers/`
+for a related local plan or specification. Use it as working input and carry its
+relevant context, decision, consequences, alternatives, and references into the
+ADR. The ADR is the durable source of truth; do not add the local plan or spec to
+the pull request.
+
+New plans and specs in `docs/superpowers/` are ignored by Git. If an existing
+checkout still tracks one, remove it from the index while retaining the local
+file before committing the ADR or implementation changes.
+
 **Don't create ADRs for**:
 - Small bug fixes
 - Documentation updates
@@ -145,12 +157,12 @@ Answer these questions:
 ```markdown
 ## Context
 
-Currently, aap-demo lacks dedicated Claude Code skills to guide contributors 
-through common development workflows (issue creation, ADR authoring, addon 
+Currently, aap-demo lacks dedicated Claude Code skills to guide contributors
+through common development workflows (issue creation, ADR authoring, addon
 development). This leads to:
 
 - Inconsistent issue quality and missing required information
-- ADRs that don't follow the template or skip important sections  
+- ADRs that don't follow the template or skip important sections
 - Addons with incomplete deploy.sh scripts or missing documentation
 - New contributors struggling to understand project conventions
 
@@ -192,7 +204,7 @@ Be specific about:
 We will create three Claude Code skills in `.claude/skills/`:
 
 1. **aap-issue-creation** — Guide GitHub issue creation
-2. **aap-adr** — Assist ADR authoring  
+2. **aap-adr** — Assist ADR authoring
 3. **aap-addon-development** — Guide addon development
 
 Each skill will:
@@ -202,7 +214,7 @@ Each skill will:
 - Validate against project conventions
 - Integrate with GitHub MCP tools where available
 
-Skills activate automatically based on description triggers or via 
+Skills activate automatically based on description triggers or via
 explicit `/skill-name` invocation.
 
 This approach leverages Claude Code's skill system rather than:
@@ -269,14 +281,14 @@ For each alternative:
 
 Use only YAML form templates for issue creation.
 
-**Why not chosen**: No validation, no duplicate checking, no context gathering. 
+**Why not chosen**: No validation, no duplicate checking, no context gathering.
 Contributors still skip fields or provide incomplete info.
 
 ### 2. CLI Tooling (aap-demo issue, aap-demo adr, etc.)
 
 Build commands into aap-demo.sh for issue/ADR creation.
 
-**Why not chosen**: 
+**Why not chosen**:
 - Limited to aap-demo repository context
 - Can't leverage AI for content guidance
 - More code to maintain
@@ -428,7 +440,7 @@ When creating ADRs for new addons:
 
 **Decision**: Detail addon structure, dependencies, deploy/delete logic
 
-**Consequences**: 
+**Consequences**:
 - Positive: What capabilities it enables
 - Negative: Maintenance burden, resource usage
 - Neutral: What's unchanged

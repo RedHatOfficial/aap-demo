@@ -218,9 +218,16 @@ def build_parser(
     p.add_argument("addon", nargs="?", help="Show status for one native addon")
     add("watch", "Watch AAP deployment status").set_defaults(func=observe.watch)
 
-    add("diagnose", "Check environment health and identify common issues").set_defaults(
-        func=observe.diagnose
+    p = add("diagnose", "Check environment health and identify common issues")
+    p.add_argument(
+        "--ai",
+        action="store_true",
+        help=(
+            "Analyze issues with AI (Cursor Agent, Cursor CLI, or Claude CLI). "
+            "Override with AAP_DIAGNOSE_AI_BACKEND=embedded|cursor|claude|auto"
+        ),
     )
+    p.set_defaults(func=observe.diagnose)
 
     p = add("must-gather", "Collect AAP and cluster diagnostics")
     p.add_argument("dest", nargs="?", metavar="DIR", help="Output directory")
@@ -251,6 +258,9 @@ def build_parser(
     oc_parser.set_defaults(func=ops.oc)
     add("update", "Update aap-demo to the latest release").set_defaults(func=ops.update)
     add("version", "Show aap-demo version and build metadata").set_defaults(func=ops.version)
+    p = add("ocp-version-list", "List the OpenShift versions --ocp-version can build here")
+    p.add_argument("--all", action="store_true", help="Also list versions aap-demo doesn't support")
+    p.set_defaults(func=ops.ocp_version_list)
     add("redhat-status", "Check Red Hat registry status", aliases=["rh-status"]).set_defaults(
         func=ops.redhat_status
     )
@@ -258,7 +268,7 @@ def build_parser(
     _add_config_command(add, sub)
 
     # -- addons -------------------------------------------------------------
-    p = add("enable", "Enable an addon (fleet, product-demos, or EDA Playground)")
+    p = add("enable", "Enable an addon (fleet, product-demos, ao, EDA Playground, ...)")
     p.add_argument("addon", nargs="?", help="Addon name; omit to list available addons")
     p.add_argument("addon_args", nargs="*", metavar="ARGS", help="Addon-specific arguments")
     p.add_argument(
@@ -596,7 +606,7 @@ def run(
     environ: Dict[str, str] = dict(os.environ if env is None else env)
 
     paths = resolve_paths(environ)
-    console = Console(quiet=bool(environ.get("QUIET")), env=environ)
+    console = Console(quiet=config_mod.is_true(environ.get("QUIET")), env=environ)
     secrets = SecretStore()
 
     # The one-time legacy migration runs before config is read, and is cheap on

@@ -80,7 +80,7 @@ def test_resolve_ocp_version_falls_back_through_crc_then_cluster_then_default(ap
     runner.fail("crc status -o json")
     runner.fail("kubectl get clusterversion")
     app_ctx.runner = runner
-    assert cs.resolve_ocp_version(app_ctx) == cs.DEFAULT_OCP_VERSION
+    assert cs.resolve_ocp_version(app_ctx) == "4.22"
 
 
 # ---------------------------------------------------------------------------

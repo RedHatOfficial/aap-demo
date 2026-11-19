@@ -70,7 +70,7 @@ Additional addons invoked via `enable` but not in `AVAILABLE_ADDONS` list:
 | `olm` | operator-sdk (called from `aap-demo deploy`, not user-facing enable) |
 | `registry` | Namespace + Deployment |
 | `console` | OpenShift console (OpenShift preset or manifest) |
-| `devspaces` | CheCluster CR |
+| `devspaces` | Removed in 2026-11: unused |
 | `prometheus` | Monitoring stack |
 
 ### Design rules

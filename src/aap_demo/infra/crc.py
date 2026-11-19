@@ -10,13 +10,14 @@ import json
 import re
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from aap_demo.core.errors import AapDemoError
 
 STATE_RUNNING = "running"
 STATE_STOPPED = "stopped"
 STATE_NOT_CREATED = "not_created"
+STATE_UNKNOWN = "unknown"
 
 #: Bash defaults (aap-demo.sh). ``CRC_VERSION`` may be lowered; the warning
 #: still uses ``CRC_RECOMMENDED_VERSION``. Create and deploy both use this
@@ -100,6 +101,13 @@ def status_json(runner: Any) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def openshift_version(runner: Any) -> str:
+    """``4.22.13`` from ``crc status``. Empty when CRC is absent or doesn't say."""
+    reported = str(status_json(runner).get("openshiftVersion", "") or "")
+    match = re.match(r"\d+\.\d+(?:\.\d+)?", reported.strip())
+    return match.group(0) if match else ""
+
+
 def state_from_status(data: Dict[str, Any]) -> str:
     """The state for a ``crc status -o json`` answer (``{}`` when CRC did not answer)."""
     crc_status = data.get("crcStatus", "Unknown")
@@ -118,6 +126,22 @@ def get_state(runner: Any) -> str:
 def machine_exists(home: Path) -> bool:
     """True when CRC's machine directory holds a VM, whether or not CRC answers."""
     return (home / ".crc" / "machines" / "crc" / "config.json").is_file()
+
+
+_BUNDLE_VERSION_RE = re.compile(r"_(\d+\.\d+\.\d+)_")
+
+
+def machine_bundle_version(home: Path) -> Optional[str]:
+    """MicroShift version of the existing VM, from its bundle name. Works while stopped."""
+    config = home / ".crc" / "machines" / "crc" / "config.json"
+    try:
+        document = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    driver = document.get("Driver") if isinstance(document, dict) else None
+    name = str(driver.get("BundleName", "") or "") if isinstance(driver, dict) else ""
+    match = _BUNDLE_VERSION_RE.search(name)
+    return match.group(1) if match else None
 
 
 def has_instance(runner: Any, *, home: Optional[Path] = None) -> bool:
@@ -229,6 +253,18 @@ def requested_version(ctx: Any) -> str:
     return str(config.get("crc.version", "") or "").strip()
 
 
+def _ocp_minimum(ctx: Any) -> str:
+    """The profile minimum when ``--ocp-version`` is set, so 4.21 clusters pass."""
+    from aap_demo.infra import ocp_version
+
+    config = getattr(ctx, "config", None)
+    value = str(config.get("crc.ocp_version", "") or "").strip() if config is not None else ""
+    if not value:
+        return ""
+    profile = ocp_version.load_profiles().get(ocp_version.parse(value)[0])
+    return profile.minimum if profile is not None else ""
+
+
 def verify_version(ctx: Any) -> bool:
     """Ports ``_verify_crc_version`` (upstream #167).
 
@@ -251,7 +287,7 @@ def verify_version(ctx: Any) -> bool:
         return False
 
     recommended = _version_pair(ctx.env.get("CRC_RECOMMENDED_VERSION", ""), RECOMMENDED_VERSION)
-    minimum = _version_pair(requested_version(ctx), MINIMUM_VERSION)
+    minimum = _version_pair(requested_version(ctx) or _ocp_minimum(ctx), MINIMUM_VERSION)
     shown = _VERSION_RE.match(installed_text.strip())
     shown_text = shown.group(0) if shown else installed_text
 
@@ -424,20 +460,52 @@ def ensure_managed_crc(ctx: Any, *, which: Callable[[str], Optional[str]]) -> Tu
     return shown.strip(), True
 
 
-def _api_healthy(data: Dict[str, Any], runner: Any) -> bool:
+def health_failure_hint(env: Mapping[str, str], platform: str) -> str:
+    """Help collect CRC diagnostics without assuming a particular failure cause."""
+    hint = "Check CRC diagnostics: crc status --log-level debug."
+    if platform == "Darwin":
+        home = Path(env.get("HOME") or Path.home())
+        hint += f" VM serial log, if present: {home / '.crc/machines/crc/vfkit.log'}."
+    return (
+        hint
+        + " For an apparent CRC or vfkit failure, report it at https://github.com/crc-org/crc/issues."
+    )
+
+
+def _api_healthy(data: Dict[str, Any], runner: Any, kubeconfig: Path) -> bool:
     openshift = str(data.get("openshiftStatus", "") or "")
-    if openshift == "Running":
-        return True
-    if openshift != "Unreachable":
+    if openshift not in ("Running", "Unreachable"):
         return False
-    # CRC's status probe can lose the host alias while the API still answers.
-    result = runner.run(["kubectl", "get", "nodes", "--request-timeout=5s"])
-    return bool(getattr(result, "ok", False))
+    try:
+        result = runner.run(
+            [
+                "kubectl",
+                "--kubeconfig",
+                str(kubeconfig),
+                "get",
+                "nodes",
+                "-o",
+                "json",
+                "--request-timeout=5s",
+            ],
+            timeout=7,
+        )
+        if not result.ok:
+            return False
+        nodes = json.loads(result.stdout)["items"]
+        return any(
+            condition.get("type") == "Ready" and condition.get("status") == "True"
+            for node in nodes
+            for condition in node.get("status", {}).get("conditions", [])
+        )
+    except (AapDemoError, OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 
 def wait_until_stable(
     runner: Any,
     *,
+    kubeconfig: Path,
     samples: int = STABILITY_SAMPLES,
     attempts: Optional[int] = None,
     sleep_seconds: Optional[float] = None,
@@ -459,7 +527,7 @@ def wait_until_stable(
     healthy = 0
     for attempt in range(1, attempts + 1):
         data = status_json(runner)
-        if data.get("crcStatus") == "Running" and _api_healthy(data, runner):
+        if data.get("crcStatus") == "Running" and _api_healthy(data, runner, kubeconfig):
             healthy += 1
             if healthy >= samples:
                 return True

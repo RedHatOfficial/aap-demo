@@ -369,7 +369,8 @@ class Console:
         label = Text(text, style=style)
         if not task.timed or not task.started:
             return label
-        seconds = task.elapsed if task.state == "done" else time.monotonic() - task.started
+        finished = task.state in ("done", "failed")
+        seconds = task.elapsed if finished else time.monotonic() - task.started
         label.append(f"  {format_elapsed(seconds)}", style=ANSIBLE_TEAL)
         return label
 
@@ -383,7 +384,7 @@ class Console:
         if task.state == "failed":
             return (
                 Text(self.glyphs["fail"], style="red"),
-                Text(task.note or task.title, style="red"),
+                self._timed_label(task, task.note or task.title, style="red"),
             )
         if task.state == "active":
             return (
@@ -504,12 +505,12 @@ class Console:
         self._task_live.stop()
         self._task_live = None
 
-    def _complete_active(self, *, note: str = "") -> None:
+    def _complete_active(self, *, note: str = "", state: str = "done") -> None:
         if self._active is None:
             return
         task = self._tasks[self._active]
         if task.state == "active":
-            task.state = "done"
+            task.state = state
             task.note = note or task.title
             # The component list is only for the live wait. Checking the parent
             # off collapses it.
@@ -623,6 +624,17 @@ class Console:
             self._task_live.refresh()
             return
         self.out(f"{self.glyphs['ok']} {text}", color="teal")
+
+    def fail_step(self, text: str) -> None:
+        """Mark the active step failed and stop its timer. Later steps can still run."""
+        if self.quiet:
+            return
+        self._complete_active(note=text, state="failed")
+        self._refresh_tasks()
+        if self._task_live is not None:
+            self._task_live.refresh()
+            return
+        self.out(f"{self.glyphs['fail']} {text}", color="red")
 
     def cancel_step(self) -> None:
         """Drop the active step. Nothing finished, so it is not checked off."""

@@ -78,6 +78,9 @@ jobs:
       - name: Run AO InstallPlan approval tests
         run: bash test/test-ao-install-plan-approval.sh
 
+      - name: Run AO PostgreSQL TLS rotation tests
+        run: ./test/test-ao-postgres-tls.sh
+
       - name: Run Ollama addon tests
         run: ./test/test-ollama.sh
 
@@ -86,6 +89,9 @@ jobs:
 
       - name: Run Keycloak configure tests
         run: ./test/test-keycloak-configure.sh
+
+      - name: Run OPA addon test checks
+        run: bash ./test/test-opa-addon-script.sh
 
       - name: Run CRC version and local environment tests
         run: ./test/test-crc-version-check.sh
@@ -120,8 +126,11 @@ jobs:
       - name: Run AO importer tests
         run: python3 ./test/test-ao-import-demos.py
 
+      - name: Install pytest
+        run: python3 -m pip install pytest
+
       - name: Run AO provisioning tests
-        run: python3 ./test/test-provision-aap-demos.py
+        run: python3 -m pytest test/test-provision-aap-demos.py -q
 
       - name: Run plaibook EE CI configuration test
         run: bash ./test/test-plaibook-ee-ci.sh
@@ -131,6 +140,13 @@ jobs:
 
       - name: Run AO PR testing model configuration test
         run: bash ./test/test-ao-pr-testing-model.sh
+
+      - name: Run Fleet addon tests
+        run: |
+          ./test/test-fleet-prerequisites.sh
+          ./test/test-fleet-enable.sh
+          ./test/test-fleet-image.sh
+          ./test/test-cli-parsing.sh
 
   dry-run:
     name: Dry Run Test
@@ -183,3 +199,11 @@ jobs:
       - name: Run PowerShell 7 deploy tests
         shell: pwsh
         run: ./test/test-powershell-deploy-prerequisites.ps1
+
+      - name: Test AO storage with Windows PowerShell 5.1
+        shell: powershell
+        run: .\test\test-powershell-ao-storage.ps1
+
+      - name: Test AO storage with PowerShell 7
+        shell: pwsh
+        run: ./test/test-powershell-ao-storage.ps1

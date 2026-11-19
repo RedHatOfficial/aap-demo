@@ -1,9 +1,7 @@
 """``aap-demo status`` data gathering, ported from ``cmd_status``.
 
-The "Addons:" section here reads ``addons.enabled`` from config directly (the
-same list ``_addons_list`` read from the legacy ``ADDONS=`` config line) and
-falls back to bash's own ``ao``-namespace heuristic for the one addon whose
-enabled state is also independently observable on the cluster.
+The "Addons:" section reads ``addons.enabled`` from config, with cluster
+fallbacks for AO and MCP. MCP detection reports presence, not readiness.
 
 TLS status comes from ``cluster/ingress_ca.py``. On macOS that is
 ``security verify-cert`` against the saved ingress CA. The missing-file
@@ -18,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from aap_demo.addons.common import mcp
 from aap_demo.core import version as version_mod
 from aap_demo.core.context import AppContext
 from aap_demo.core.paths import display_path
@@ -107,10 +106,14 @@ class CredentialInfo:
 @dataclass
 class AddonStatus:
     name: str
-    enabled: bool
+    enabled: Optional[bool]
+    source: Optional[str] = None
 
     def as_dict(self) -> Dict[str, Any]:
-        return {"name": self.name, "enabled": self.enabled}
+        result = {"name": self.name, "enabled": self.enabled}
+        if self.source is not None:
+            result["source"] = self.source
+        return result
 
 
 @dataclass
@@ -354,14 +357,21 @@ def _ao_credentials(runner: Any, addons_enabled: List[str]) -> Optional[Credenti
     return CredentialInfo(namespace=ao_namespace, username="admin", password=password)
 
 
-def _addon_statuses(runner: Any, addons_enabled: List[str]) -> List[AddonStatus]:
+def _addon_statuses(ctx: AppContext, addons_enabled: List[str]) -> List[AddonStatus]:
     statuses = []
     for name in AVAILABLE_ADDONS:
-        enabled = name in addons_enabled
+        enabled: Optional[bool] = name in addons_enabled
+        source = None
+        if name == "mcp-server":
+            if enabled:
+                source = "configured"
+            else:
+                enabled = mcp.installed(ctx)
+                source = "detected" if enabled else ("unknown" if enabled is None else "absent")
         if not enabled and name == "ao":
-            result = runner.run(["kubectl", "get", "namespace", "automation-orchestrator"])
+            result = ctx.runner.run(["kubectl", "get", "namespace", "automation-orchestrator"])
             enabled = result.ok
-        statuses.append(AddonStatus(name=name, enabled=enabled))
+        statuses.append(AddonStatus(name=name, enabled=enabled, source=source))
     return statuses
 
 
@@ -374,7 +384,11 @@ def gather(ctx: AppContext) -> StatusReport:
         built=info.git_date,
     )
 
-    report.cluster_state = infra_crc.get_state(runner)
+    data = infra_crc.status_json(runner)
+    report.cluster_state = infra_crc.state_from_status(data)
+    home = Path(ctx.env.get("HOME") or Path.home())
+    if report.cluster_state == infra_crc.STATE_NOT_CREATED and infra_crc.machine_exists(home):
+        report.cluster_state = infra_crc.STATE_UNKNOWN
     if report.cluster_state != infra_crc.STATE_RUNNING:
         return report
 
@@ -432,7 +446,7 @@ def gather(ctx: AppContext) -> StatusReport:
     if ao_credential:
         report.credentials.append(ao_credential)
 
-    report.addons = _addon_statuses(runner, addons_enabled)
+    report.addons = _addon_statuses(ctx, addons_enabled)
 
     return report
 
@@ -466,6 +480,11 @@ def render_text(console: Any, report: StatusReport) -> None:
         console.out(f"Cluster:     {console.paint('stopped', 'yellow')}")
         console.out("")
         console.out("Start with: crc start")
+        return
+    elif report.cluster_state == infra_crc.STATE_UNKNOWN:
+        console.out(f"Cluster:     {console.paint('unknown (CRC not responding)', 'yellow')}")
+        console.out("")
+        console.out("Run 'aap-demo diagnose' and check 'crc status'")
         return
     else:
         console.out(f"Cluster:     {console.paint('not running', 'red')}")
@@ -542,7 +561,9 @@ def render_text(console: Any, report: StatusReport) -> None:
     console.out("Addons:")
     console.out("-------")
     for addon in report.addons:
-        console.out(f"  {addon.name:<15} {'enabled' if addon.enabled else 'disabled'}")
+        state = "unknown" if addon.enabled is None else ("enabled" if addon.enabled else "disabled")
+        suffix = f" ({addon.source})" if addon.source in ("configured", "detected") else ""
+        console.out(f"  {addon.name:<15} {state}{suffix}")
     console.out("")
 
 
