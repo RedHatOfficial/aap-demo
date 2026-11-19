@@ -216,6 +216,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_LLM_PROVIDER` | `ollama` | `ollama`, `external`, or `none`; external and none modes skip the Ollama dependency |
 | `AO_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint used by external mode |
 | `AO_LLM_MODEL` | `gpt-6-luna` | External model selected as AO's default after discovery |
+| `OLLAMA_MODEL` | `qwen2.5:3b` | Model the `ollama` addon pulls and AO uses in Ollama mode; `AO_LLM_MODEL` does not apply to Ollama |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
 | `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
 | `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |

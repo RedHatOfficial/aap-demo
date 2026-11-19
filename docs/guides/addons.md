@@ -157,6 +157,9 @@ The new command does not ask which model to use. Set `AO_LLM_PROVIDER` instead:
 For `external`, set `AO_LLM_BASE_URL` and `AO_LLM_MODEL`, and set `AO_LLM_API_KEY` once. The key is kept in
 the new command's state directory for later runs. A key or settings the older command saved are picked up.
 
+For `ollama`, set `OLLAMA_MODEL` to change the model. `AO_LLM_MODEL` applies only to `external`, so AO never
+selects a model the `ollama` add-on did not pull.
+
 To reinstall AO, run `aap-demo enable ao --force`. To remove it:
 
 ```bash
