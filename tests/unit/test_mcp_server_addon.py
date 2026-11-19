@@ -144,6 +144,59 @@ def test_reenable_does_not_duplicate_ingress_ca_configuration(app_ctx) -> None:
     assert not runner.called("kubectl patch deployment")
 
 
+def test_enable_recovers_when_ingress_ca_patch_races_with_operator(app_ctx) -> None:
+    runner = _runner(
+        app_ctx,
+        deployment_stdout=json.dumps({"spec": {"template": {"spec": {}}}}),
+    )
+    configured = json.dumps(
+        {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "volumes": [{"name": "ingress-ca"}],
+                        "containers": [
+                            {
+                                "volumeMounts": [{"name": "ingress-ca"}],
+                                "env": [{"name": "NODE_EXTRA_CA_CERTS"}],
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+    )
+    deployment_reads = iter(
+        (
+            "deployment.apps/aap-mcp-server",
+            json.dumps({"spec": {"template": {"spec": {}}}}),
+            configured,
+            configured,
+        )
+    )
+    for index, (prefix, _result) in enumerate(runner._rules):
+        if prefix == ("kubectl", "get", "deployment", "aap-mcp-server"):
+            runner._rules[index] = (
+                prefix,
+                lambda _argv: CompletedCommand((), 0, next(deployment_reads)),
+            )
+            break
+    else:
+        raise AssertionError("deployment read rule not found")
+    for index, (prefix, _result) in enumerate(runner._rules):
+        if prefix == ("kubectl", "patch", "deployment"):
+            runner._rules[index] = (
+                prefix,
+                CompletedCommand((), 1, stderr="Duplicate value: ingress-ca"),
+            )
+            break
+    else:
+        raise AssertionError("deployment patch rule not found")
+
+    assert get("mcp-server").enable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
+    assert runner.called("kubectl get deployment aap-mcp-server")
+
+
 def test_disable_preserves_unowned_ingress_ca_configmap(app_ctx) -> None:
     runner = _runner(app_ctx)
     runner._rules.insert(

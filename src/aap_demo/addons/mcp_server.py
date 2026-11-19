@@ -280,9 +280,22 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
             ]
         )
         if not patched.ok:
-            raise AddonError(
-                "could not configure MCP ingress CA", hint=patched.stderr.strip() or None
+            current = ctx.runner.run(
+                [
+                    "kubectl",
+                    "get",
+                    "deployment",
+                    "aap-mcp-server",
+                    "-n",
+                    ctx.namespace,
+                    "-o",
+                    "json",
+                ]
             )
+            if not current.ok or not _deployment_has_ingress_ca(current.stdout):
+                raise AddonError(
+                    "could not configure MCP ingress CA", hint=patched.stderr.strip() or None
+                )
         rollout = ctx.runner.run(
             [
                 "kubectl",
@@ -308,6 +321,19 @@ def _owned_configmap(payload: str) -> bool:
     return (
         labels.get("app.kubernetes.io/managed-by") == "aap-demo"
         and labels.get("app.kubernetes.io/name") == "mcp-server"
+    )
+
+
+def _deployment_has_ingress_ca(payload: str) -> bool:
+    try:
+        pod_spec = json.loads(payload)["spec"]["template"]["spec"]
+        container = (pod_spec.get("containers") or [{}])[0]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return False
+    return (
+        any(item.get("name") == "ingress-ca" for item in pod_spec.get("volumes", []))
+        and any(item.get("name") == "ingress-ca" for item in container.get("volumeMounts", []))
+        and any(item.get("name") == "NODE_EXTRA_CA_CERTS" for item in container.get("env", []))
     )
 
 
