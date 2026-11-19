@@ -14,6 +14,7 @@ import re
 import subprocess
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -66,6 +67,7 @@ class CommandRunner(Protocol):
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -93,6 +95,7 @@ class SubprocessRunner:
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -109,6 +112,7 @@ class SubprocessRunner:
                 timeout=timeout,
                 env=env,
                 capture=capture,
+                stdout_path=stdout_path,
                 cwd=cwd,
                 detach=detach,
             )
@@ -124,23 +128,31 @@ class SubprocessRunner:
         timeout: Optional[float],
         env: Optional[Mapping[str, str]],
         capture: bool,
+        stdout_path: Optional[Path],
         cwd: Optional[str],
         detach: bool = False,
     ) -> CompletedCommand:
         try:
             # A detached child must not read the terminal. Otherwise crc delete
             # waits for a second Enter and the checklist never appears.
-            proc = subprocess.run(  # noqa: S603 - argv list, never shell=True
-                args,
-                input=input,
-                stdin=subprocess.DEVNULL if detach and input is None else None,
-                capture_output=capture,
-                text=True,
-                timeout=timeout,
-                env=self._env_for(env),
-                cwd=cwd,
-                start_new_session=detach,
-            )
+            output = stdout_path.open("w", encoding="ascii") if stdout_path else None
+            try:
+                proc = subprocess.run(  # noqa: S603 - argv list, never shell=True
+                    args,
+                    input=input,
+                    stdin=subprocess.DEVNULL if detach and input is None else None,
+                    capture_output=capture and output is None,
+                    stdout=output,
+                    stderr=subprocess.PIPE if capture and output is not None else None,
+                    text=True,
+                    timeout=timeout,
+                    env=self._env_for(env),
+                    cwd=cwd,
+                    start_new_session=detach,
+                )
+            finally:
+                if output is not None:
+                    output.close()
         except FileNotFoundError as exc:
             raise PrerequisiteError(
                 f"required command not found: {args[0]}",
@@ -232,6 +244,7 @@ class EnvRunner:
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -246,6 +259,7 @@ class EnvRunner:
             env=merged,
             check=check,
             capture=capture,
+            stdout_path=stdout_path,
             cwd=cwd,
             sink=sink,
             detach=detach,
@@ -262,6 +276,7 @@ class Invocation:
     env: Optional[Dict[str, str]] = None
     cwd: Optional[str] = None
     timeout: Optional[float] = None
+    stdout_path: Optional[Path] = None
 
 
 @dataclass
@@ -313,6 +328,7 @@ class FakeRunner:
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -326,6 +342,7 @@ class FakeRunner:
                 env=dict(env) if env else None,
                 cwd=cwd,
                 timeout=timeout,
+                stdout_path=stdout_path,
             )
         )
         result = self._match(args)

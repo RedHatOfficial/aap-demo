@@ -161,9 +161,26 @@ AO_PURGE_DATA=1 aap-demo disable ao   # also remove its database and saved admin
 
 `disable ao` leaves `mcp-server` and `ollama` installed. Disable them by name.
 
+## Local image cache
+
+The native command can save and reload CRC's OCI image cache. Save and load need a running cluster;
+`validate`, `clear`, and `disable` are host-only and still work after the cluster is removed.
+
+```bash
+aap-demo enable local-cache          # save images from the running cluster
+aap-demo enable local-cache load     # load the cache into a fresh cluster
+aap-demo enable local-cache validate
+aap-demo enable local-cache clear   # one-shot clear; keeps the enabled setting
+aap-demo disable local-cache        # clear and remove the enabled setting
+```
+
+The cache is stored per configured CRC preset under `~/.aap-demo/local-cache/`. See the
+[local-cache README](../../addons/local-cache/README.md) and [ADR-021](../adr/021-local-cache-addon.md)
+for the cache format, catalog pinning, and rewrite behavior.
+
 ## Everything else
 
-Portal, a local cache of container images, and the other extras are not in the new command yet.
+Portal and the other extras are not in the new command yet.
 Asking the new command for one of them stops with a short error, and your cluster is left as it was.
 
 Use [the older command](older-command.md) for those. For example, after you have renamed it:

@@ -36,7 +36,7 @@ class LocalCacheAddon:
     def enable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         action = str((getattr(args, "addon_args", None) or ["save"])[0])
         if action in ("clear", "delete"):
-            return self._clear(ctx)
+            return self._clear(ctx, forget=False)
         if action == "validate":
             return self._validate(ctx)
         if action == "catalog-ref":
@@ -52,30 +52,43 @@ class LocalCacheAddon:
 
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
-        return self._clear(ctx)
+        return self._clear(ctx, forget=True)
 
-    def _clear(self, ctx: AppContext) -> int:
+    def _clear(self, ctx: AppContext, *, forget: bool) -> int:
         cache = _cache_dir(ctx)
         if cache.exists():
             shutil.rmtree(cache)
             _say(ctx, f"Cleared image cache for {_preset(ctx)}")
         else:
             _say(ctx, f"No image cache found for {_preset(ctx)}")
-        _forget_enabled(ctx)
+        if forget:
+            _forget_enabled(ctx)
         return 0
 
     def _validate(self, ctx: AppContext) -> int:
         cache = _cache_dir(ctx)
         if not cache.is_dir():
             raise AddonError(f"No image cache found for {_preset(ctx)}")
+        format_current = (cache / ".format-version").read_text(
+            encoding="utf-8"
+        ).strip() == CACHE_FORMAT_VERSION
         checked = 0
         failed = 0
         for archive in sorted(cache.glob("*.tar")):
             checked += 1
             stem = archive.with_suffix("")
+            ref_file = stem.with_suffix(".ref")
+            reference = ref_file.read_text(encoding="utf-8").strip() if ref_file.is_file() else ""
             valid = (
-                _valid_oci_archive(archive)
-                and (stem.with_suffix(".ref")).is_file()
+                format_current
+                and _valid_oci_archive(archive)
+                and ref_file.is_file()
+                and reference
+                and stem.name
+                in {
+                    hashlib.md5(reference.encode(), usedforsecurity=False).hexdigest(),
+                    hashlib.md5((reference + "\n").encode(), usedforsecurity=False).hexdigest(),
+                }
                 and (stem.with_suffix(".local-ref")).is_file()
             )
             if not valid:
@@ -100,10 +113,16 @@ class LocalCacheAddon:
                 and fields[0] == version
                 and (not wanted or fields[3] in ("", "all", wanted))
             ):
+                reference = fields[2]
                 key = _ssh_key(ctx)
-                result = _remote(ctx, key, f"crictl inspecti {shlex_quote(fields[2])}")
+                result = _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(reference)}")
                 if result.ok:
-                    ctx.console.out(fields[2])
+                    render(
+                        ctx.console,
+                        {"reference": reference},
+                        output=ctx.output,
+                        text=lambda reference=reference: reference,
+                    )
                     return 0
         raise AddonError("no usable cached operator catalog")
 
@@ -120,19 +139,28 @@ class LocalCacheAddon:
         refs = _image_refs(images)
         if not refs:
             raise AddonError("no registry images found in CRC")
+        catalog_versions = _catalog_versions(images)
+        format_current = (cache / ".format-version").read_text(
+            encoding="utf-8"
+        ).strip() == CACHE_FORMAT_VERSION
         saved = 0
         skipped = 0
+        failed = 0
         current_stems = set()
+        catalog_rows = []
         for ref in refs:
-            stem = cache / hashlib.md5(ref.encode(), usedforsecurity=False).hexdigest()
+            stem = _cache_stem(cache, ref)
             current_stems.add(stem.name)
             archive = stem.with_suffix(".tar")
             ref_file = stem.with_suffix(".ref")
             local_file = stem.with_suffix(".local-ref")
-            if _valid_oci_archive(archive) and ref_file.is_file() and local_file.is_file():
+            usable = format_current and _cache_entry_usable(stem, ref)
+            if usable:
                 skipped += 1
+                local_ref = local_file.read_text(encoding="utf-8").strip()
+                if ref in catalog_versions:
+                    catalog_rows.append(_catalog_row(catalog_versions[ref], ref, local_ref, ctx))
                 continue
-            _remove_entry(stem)
             command = (
                 f"rm -f {REMOTE_ARCHIVE} && "
                 f"sudo skopeo copy --quiet --remove-signatures "
@@ -141,39 +169,65 @@ class LocalCacheAddon:
                 f"sudo base64 -w0 {REMOTE_ARCHIVE}; status=$?; "
                 f"sudo rm -f {REMOTE_ARCHIVE}; exit $status"
             )
-            result = _remote(ctx, key, command, timeout=900)
+            encoded = cache / f".{stem.name}.b64.tmp"
+            result = _remote(ctx, key, command, output_path=encoded, timeout=900)
             if not result.ok:
+                encoded.unlink(missing_ok=True)
+                failed += 1
                 continue
+            temporary = cache / f".{stem.name}.tar.tmp"
             try:
-                archive.write_bytes(base64.b64decode(result.stdout, validate=True))
+                if encoded.is_file():
+                    _decode_base64_file(encoded, temporary)
+                else:
+                    temporary.write_bytes(base64.b64decode(result.stdout, validate=True))
             except (ValueError, UnicodeError):
-                archive.unlink(missing_ok=True)
+                encoded.unlink(missing_ok=True)
+                temporary.unlink(missing_ok=True)
+                failed += 1
                 continue
-            if not _valid_oci_archive(archive):
-                archive.unlink(missing_ok=True)
+            encoded.unlink(missing_ok=True)
+            if not _valid_oci_archive(temporary):
+                temporary.unlink(missing_ok=True)
+                failed += 1
                 continue
-            ref_file.write_text(ref, encoding="utf-8")
-            local_ref = _archive_digest(ctx, archive, ref)
+            local_ref = _archive_digest(ctx, temporary, ref)
             if not local_ref:
-                archive.unlink(missing_ok=True)
-                ref_file.unlink(missing_ok=True)
+                temporary.unlink(missing_ok=True)
+                failed += 1
                 continue
-            local_file.write_text(local_ref, encoding="utf-8")
+            ref_tmp = cache / f".{stem.name}.ref.tmp"
+            local_tmp = cache / f".{stem.name}.local-ref.tmp"
+            ref_tmp.write_text(ref + "\n", encoding="utf-8")
+            local_tmp.write_text(local_ref + "\n", encoding="utf-8")
+            temporary.replace(archive)
+            ref_tmp.replace(ref_file)
+            local_tmp.replace(local_file)
             saved += 1
+            if ref in catalog_versions:
+                catalog_rows.append(_catalog_row(catalog_versions[ref], ref, local_ref, ctx))
         for archive in cache.glob("*.tar"):
             stem = archive.with_suffix("")
-            if (
-                stem.name not in current_stems
-                or not _valid_oci_archive(archive)
-                or not stem.with_suffix(".ref").is_file()
-                or not stem.with_suffix(".local-ref").is_file()
+            if stem.name not in current_stems:
+                _remove_entry(stem)
+            elif not (
+                _valid_oci_archive(archive)
+                and stem.with_suffix(".ref").is_file()
+                and stem.with_suffix(".local-ref").is_file()
             ):
                 _remove_entry(stem)
-        if saved:
+        metadata = cache / "catalog-digests"
+        if catalog_rows:
+            temporary_metadata = cache / "catalog-digests.tmp"
+            temporary_metadata.write_text("".join(sorted(set(catalog_rows))), encoding="utf-8")
+            temporary_metadata.replace(metadata)
+        else:
+            metadata.unlink(missing_ok=True)
+        if saved or (format_current and (cache / ".format-version").is_file()):
             (cache / ".format-version").write_text(CACHE_FORMAT_VERSION, encoding="utf-8")
         if saved or skipped:
             _remember_enabled(ctx)
-        _say(ctx, f"Saved {saved} images, {skipped} already cached")
+        _say(ctx, f"Saved {saved} images, {skipped} already cached, {failed} failed")
         return 0 if saved or skipped else 1
 
     def _load(self, ctx: AppContext, key: Path) -> int:
@@ -189,30 +243,62 @@ class LocalCacheAddon:
                 failed += 1
                 continue
             local_ref = local_ref_file.read_text(encoding="utf-8").strip()
-            encoded = base64.b64encode(archive.read_bytes()).decode()
-            command = (
-                f"base64 -d > {REMOTE_ARCHIVE} && "
+            present = _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(local_ref)}")
+            if present.ok:
+                loaded += 1
+                continue
+            staged = _remote(ctx, key, f": > {REMOTE_ARCHIVE}")
+            if not staged.ok:
+                failed += 1
+                continue
+            transport_failed = False
+            with archive.open("rb") as source:
+                while chunk := source.read(256 * 1024):
+                    result = _remote(
+                        ctx,
+                        key,
+                        f"base64 -d >> {REMOTE_ARCHIVE}",
+                        input=base64.b64encode(chunk).decode(),
+                        timeout=900,
+                    )
+                    if not result.ok:
+                        transport_failed = True
+                        break
+            if transport_failed:
+                failed += 1
+                continue
+            result = _remote(
+                ctx,
+                key,
                 f"sudo skopeo copy --all --preserve-digests "
                 f"oci-archive:{REMOTE_ARCHIVE}:aap-demo-cache "
                 f"containers-storage:{shlex_quote(local_ref)}; "
-                f"status=$?; rm -f {REMOTE_ARCHIVE}; exit $status"
+                f"status=$?; rm -f {REMOTE_ARCHIVE}; exit $status",
+                timeout=900,
             )
-            result = _remote(ctx, key, command, input=encoded, timeout=900)
-            if result.ok and _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(local_ref)}").ok:
+            if not result.ok:
+                failed += 1
+                continue
+            if _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(local_ref)}").ok:
                 loaded += 1
             else:
                 failed += 1
-                archive.unlink(missing_ok=True)
-                ref_file.unlink(missing_ok=True)
-                local_ref_file.unlink(missing_ok=True)
+                _remove_entry(archive.with_suffix(""))
         _say(ctx, f"Loaded {loaded} images ({failed} failed)")
         return 0 if not failed else 1
 
     def _rewrite(self, ctx: AppContext, key: Path) -> int:
-        del key
         mappings = _mappings(_cache_dir(ctx))
         rewritten = 0
-        for resource in ("deployments", "statefulsets", "daemonsets", "jobs", "cronjobs"):
+        for resource in (
+            "deployments",
+            "statefulsets",
+            "daemonsets",
+            "jobs",
+            "cronjobs",
+            "csv",
+            "catalogsources",
+        ):
             result = ctx.runner.run(["kubectl", "get", resource, "-A", "-o", "json"])
             if not result.ok:
                 continue
@@ -222,10 +308,13 @@ class LocalCacheAddon:
                 continue
             for item in items:
                 for mapping in mappings:
+                    if not _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(mapping[1])}").ok:
+                        continue
                     patch = _image_patch(item, mapping[0], mapping[1])
                     if patch:
                         name = item.get("metadata", {}).get("name")
                         namespace = item.get("metadata", {}).get("namespace")
+                        kind = str(item.get("kind", resource.rstrip("s"))).lower()
                         if (
                             name
                             and namespace
@@ -233,7 +322,7 @@ class LocalCacheAddon:
                                 [
                                     "kubectl",
                                     "patch",
-                                    resource[:-1],
+                                    kind,
                                     name,
                                     "-n",
                                     namespace,
@@ -249,7 +338,7 @@ class LocalCacheAddon:
 
 
 def _preset(ctx: AppContext) -> str:
-    return str(ctx.env.get("CRC_PRESET") or "microshift")
+    return str(ctx.config.get("crc.preset", "microshift") or "microshift")
 
 
 def _cache_dir(ctx: AppContext) -> Path:
@@ -270,12 +359,27 @@ def _remote(
     *,
     input: Optional[str] = None,
     timeout: Optional[float] = None,
+    output_path: Optional[Path] = None,
 ):
     return ctx.runner.run(
         ssh_mod.remote_argv(key, "bash", "-c", command, sudo=False),
         input=input,
         timeout=timeout,
+        stdout_path=output_path,
     )
+
+
+def _decode_base64_file(source: Path, destination: Path) -> None:
+    carry = b""
+    with source.open("rb") as encoded, destination.open("wb") as decoded:
+        while chunk := encoded.read(256 * 1024):
+            data = carry + chunk
+            usable = len(data) - (len(data) % 4)
+            if usable:
+                decoded.write(base64.b64decode(data[:usable], validate=True))
+            carry = data[usable:]
+        if carry:
+            decoded.write(base64.b64decode(carry, validate=True))
 
 
 def _image_refs(images: Iterable[Dict[str, Any]]) -> List[str]:
@@ -287,13 +391,67 @@ def _image_refs(images: Iterable[Dict[str, Any]]) -> List[str]:
     return refs
 
 
+def _cache_stem(cache: Path, ref: str) -> Path:
+    """Use the V1 newline-hashed key when that entry already exists."""
+    current = cache / hashlib.md5(ref.encode(), usedforsecurity=False).hexdigest()
+    legacy = cache / hashlib.md5((ref + "\n").encode(), usedforsecurity=False).hexdigest()
+    if any(legacy.with_suffix(suffix).is_file() for suffix in (".tar", ".ref", ".local-ref")):
+        return legacy
+    return current
+
+
+def _cache_entry_usable(stem: Path, ref: str) -> bool:
+    ref_file = stem.with_suffix(".ref")
+    local_file = stem.with_suffix(".local-ref")
+    return (
+        _valid_oci_archive(stem.with_suffix(".tar"))
+        and ref_file.is_file()
+        and ref_file.read_text(encoding="utf-8").strip() == ref
+        and local_file.is_file()
+        and bool(local_file.read_text(encoding="utf-8").strip())
+    )
+
+
+def _catalog_versions(images: Iterable[Dict[str, Any]]) -> Dict[str, str]:
+    versions: Dict[str, str] = {}
+    for image in images:
+        digests = image.get("repoDigests", []) or []
+        for tag in image.get("repoTags", []) or []:
+            if not tag.startswith("registry.redhat.io/redhat/redhat-operator-index:v"):
+                continue
+            version = tag.rsplit(":v", 1)[1]
+            for digest in digests:
+                if digest.startswith("registry.redhat.io/redhat/redhat-operator-index@"):
+                    versions[digest] = version
+    return versions
+
+
+def _catalog_row(version: str, original: str, local: str, ctx: AppContext) -> str:
+    aap_version = str(ctx.env.get("AAP_VERSION") or "all")
+    return f"{version}\t{original}\t{local}\t{aap_version}\n"
+
+
 def _valid_oci_archive(path: Path) -> bool:
     if not path.is_file():
         return False
     try:
         with tarfile.open(path) as archive:
-            return "oci-layout" in archive.getnames()
+            names = set(archive.getnames())
+            if "oci-layout" not in names or "index.json" not in names:
+                return False
+            index = json.loads(archive.extractfile("index.json").read())  # type: ignore[union-attr]
+            manifests = index.get("manifests", [])
+            if not isinstance(manifests, list) or not manifests:
+                return False
+            return all(
+                isinstance(entry, dict)
+                and isinstance(entry.get("digest"), str)
+                and f"blobs/{entry['digest'].replace(':', '/', 1)}" in names
+                for entry in manifests
+            )
     except (OSError, tarfile.TarError):
+        return False
+    except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return False
 
 
@@ -325,26 +483,55 @@ def _mappings(cache: Path) -> List[tuple]:
 
 
 def _image_patch(item: Dict[str, Any], old: str, new: str) -> List[Dict[str, Any]]:
-    template = item.get("spec", {}).get("template", {}).get("spec", {})
     patch = []
-    for field in ("containers", "initContainers"):
-        for index, container in enumerate(template.get(field, []) or []):
-            if container.get("image") == old:
-                patch.append(
-                    {
-                        "op": "replace",
-                        "path": f"/spec/template/spec/{field}/{index}/image",
-                        "value": new,
-                    }
+    templates = []
+    kind = str(item.get("kind", "")).lower()
+    if kind == "catalogsource":
+        if item.get("spec", {}).get("image") == old:
+            return [{"op": "replace", "path": "/spec/image", "value": new}]
+        return []
+    if kind == "csv":
+        for index, deployment in enumerate(
+            item.get("spec", {}).get("install", {}).get("spec", {}).get("deployments", []) or []
+        ):
+            templates.append(
+                (
+                    deployment.get("spec", {}).get("template", {}).get("spec", {}),
+                    f"/spec/install/spec/deployments/{index}/spec/template/spec",
                 )
-            if container.get("imagePullPolicy") == "Always":
-                patch.append(
-                    {
-                        "op": "replace",
-                        "path": f"/spec/template/spec/{field}/{index}/imagePullPolicy",
-                        "value": "IfNotPresent",
-                    }
-                )
+            )
+    elif kind == "cronjob":
+        templates.append(
+            (
+                item.get("spec", {})
+                .get("jobTemplate", {})
+                .get("spec", {})
+                .get("template", {})
+                .get("spec", {}),
+                "/spec/jobTemplate/spec/template/spec",
+            )
+        )
+    else:
+        templates.append(
+            (item.get("spec", {}).get("template", {}).get("spec", {}), "/spec/template/spec")
+        )
+    for template, prefix in templates:
+        for field in ("containers", "initContainers"):
+            for index, container in enumerate(template.get(field, []) or []):
+                if container.get("image") not in (old, new):
+                    continue
+                if container.get("image") == old:
+                    patch.append(
+                        {"op": "replace", "path": f"{prefix}/{field}/{index}/image", "value": new}
+                    )
+                if container.get("imagePullPolicy") == "Always":
+                    patch.append(
+                        {
+                            "op": "replace",
+                            "path": f"{prefix}/{field}/{index}/imagePullPolicy",
+                            "value": "IfNotPresent",
+                        }
+                    )
     return patch
 
 
