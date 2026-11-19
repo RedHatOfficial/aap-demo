@@ -369,3 +369,18 @@ def test_a_failed_caller_patch_is_reported(app_ctx) -> None:
     )
     wiring.network_access(app_ctx, routes, "aap-operator", sleep=lambda _s: None)
     assert "allow-list on automation-orchestrator-worker" in app_ctx.console.stderr
+
+
+def test_an_unreadable_caller_is_not_treated_as_configured(app_ctx) -> None:
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    hosts = wiring.allowed_hosts(routes, "aap-operator")
+    app_ctx.runner = (
+        FakeRunner()
+        .fail("kubectl get deployment automation-orchestrator-worker")
+        .ok("kubectl get deployment", _deployment(hosts))
+        .ok("kubectl patch deployment")
+        .ok("kubectl rollout status")
+    )
+    wiring.network_access(app_ctx, routes, "aap-operator", sleep=lambda _s: None)
+    assert app_ctx.runner.called("kubectl patch deployment automation-orchestrator-backend")
+    assert "allow-list on automation-orchestrator-worker" in app_ctx.console.stderr

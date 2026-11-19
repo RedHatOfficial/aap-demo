@@ -143,9 +143,8 @@ def network_access(
         for e in backend.get("env") or []
     )
     if oidc and all(
-        _allowed(container) == sorted(hosts)
+        container is not None and _allowed(container) == sorted(hosts)
         for container in containers.values()
-        if container is not None
     ):
         ctx.console.success("AO integration allow-list already configured")
         return
@@ -155,6 +154,7 @@ def network_access(
     for deployment in CALLERS:
         found = _container_env(ctx, deployment)
         if found is None:
+            failed.append(deployment)
             continue
         env = [{"name": "APP_INTEGRATION_URL_ALLOWED_HOSTS", "value": json.dumps(hosts)}]
         if deployment == "automation-orchestrator-backend":
