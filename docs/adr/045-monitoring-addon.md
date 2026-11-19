@@ -29,19 +29,17 @@ Prometheus Operator or an equivalent controller; plain Prometheus scrape configu
 cannot satisfy that requirement by itself.
 
 The design must also respect the repository's AAP access rules: AAP automation data is
-accessed through the Gateway API, and the existing `aap-admin-password` secret is the
-supported local demo credential source. Credentials and generated cluster state must stay
-out of Git. Live validation on the current AAP deployment shows that the AAP Metrics Service
+accessed through the Gateway API, and monitoring requires a pre-provisioned least-privilege
+Gateway credential. Credentials and generated cluster state must stay out of Git. Live
+validation on the current AAP deployment shows that the AAP Metrics Service
 route is a JSON API rather than Prometheus text exposition, and its metrics API does not
 accept a Gateway token as a Prometheus scrape credential. A direct ServiceMonitor against
 that route would therefore produce no useful AAP time series.
 
-The validated Gateway-proxied controller API is reached through the in-cluster Kubernetes
-Service over HTTP. Kubernetes Services do not add TLS automatically; the AAP application
-would need to serve HTTPS on that Service for an HTTPS target to be valid. OpenShift Route
-TLS termination protects the external Grafana route, but does not change the protocol of
-the internal AAP Service. The implementation therefore keeps the internal HTTP target and
-records scoped Gateway credentials as a future security improvement.
+The monitoring addon accepts a pre-provisioned least-privilege Gateway credential and an
+HTTPS Gateway endpoint. It does not copy or expose the AAP admin credential. TLS verification
+is provided by the normal cluster trust store; an HTTP endpoint or a missing credential is a
+configuration error.
 
 ## Decision
 
@@ -60,7 +58,7 @@ and the AAP Metrics Service is not a Prometheus scrape endpoint:
   requests, retention, and storage.
 - Deploy an addon-owned JSON-to-Prometheus adapter using the pinned
   `prometheus-community/json-exporter` image. It queries Gateway-proxied AAP controller API
-  JSON with a password file mounted from an addon-owned Kubernetes Secret and exposes
+  JSON with a supplied read-only credential copied into an addon-owned Kubernetes Secret and exposes
   internal scrape metrics.
 - Use a static Prometheus scrape job for the adapter in the first release. Do not create
   inert ServiceMonitor resources when no operator is installed.
@@ -112,7 +110,7 @@ in a manifest file, or printed in normal command output.
 
 Demo-data population is a separate, idempotent helper exposed as
 `aap-demo monitoring populate` (or the equivalent addon-specific command selected during
-implementation). It uses the AAP Gateway API and `aap-admin-password`, creates resources
+implementation). It uses the supplied least-privilege Gateway credential, creates resources
 with an `aap-demo-monitoring-` prefix, and records no credential in source control.
 
 Population is not required for monitoring installation to succeed. It may be rerun without

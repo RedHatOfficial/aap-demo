@@ -11,8 +11,8 @@ if ($installer -match '(?s)Set-Content\s+-LiteralPath\s+\$WrapperTarget') {
 if ($installer -notmatch 'Remove-Item\s+-LiteralPath\s+\$WrapperTarget\s+-Force') {
   throw 'The installer must remove stale .ps1 launchers during installation'
 }
-if ($installer -notmatch '\$LegacyShim' -or $installer -notmatch 'bash .*aap-demo\.sh') {
-  throw 'The installer must preserve the legacy Bash compatibility launcher'
+if ($installer -notmatch '\$LegacyShim' -or $installer -notmatch 'powershell\.exe .*powershell\\aap-demo\.ps1') {
+  throw 'The installer must forward the legacy compatibility launcher through powershell/aap-demo.ps1'
 }
 
 Write-Output 'PowerShell installer launcher checks passed'

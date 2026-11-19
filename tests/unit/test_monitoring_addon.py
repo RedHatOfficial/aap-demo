@@ -16,6 +16,44 @@ from aap_demo.core.errors import AddonError
 from aap_demo.exec.runner import CompletedCommand
 
 
+def _configure_monitoring_credentials(app_ctx) -> None:
+    app_ctx.env.update(
+        {
+            "AAP_MONITORING_CREDENTIAL_SECRET": "monitoring-reader",  # pragma: allowlist secret
+            "AAP_MONITORING_GATEWAY_URL": "https://aap.example.test",
+        }
+    )
+    app_ctx.runner.ok(
+        ["kubectl", "get", "secret", "monitoring-reader"],
+        stdout=json.dumps(
+            {
+                "data": {
+                    "username": base64.b64encode(b"monitoring").decode(),
+                    "password": base64.b64encode(b"read-only-password").decode(),
+                }
+            }
+        ),
+    )
+
+
+def _register_ready_deployments(app_ctx) -> None:
+    app_ctx.runner.ok(
+        ["kubectl", "get", "deployment"],
+        stdout=json.dumps(
+            {
+                "metadata": {"generation": 1},
+                "spec": {"replicas": 1},
+                "status": {
+                    "observedGeneration": 1,
+                    "updatedReplicas": 1,
+                    "readyReplicas": 1,
+                    "availableReplicas": 1,
+                },
+            }
+        ),
+    )
+
+
 def test_monitoring_is_a_native_public_addon() -> None:
     addon = get("monitoring")
     assert addon.kind == "native"
@@ -25,6 +63,7 @@ def test_monitoring_is_a_native_public_addon() -> None:
 
 def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -> None:
     addon = get("monitoring")
+    _configure_monitoring_credentials(app_ctx)
     namespace_reads = iter(
         [
             CompletedCommand(
@@ -42,12 +81,9 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
     app_ctx.runner.register(
         ["kubectl", "get", "namespace", "aap-monitoring"], lambda _: next(namespace_reads)
     )
-    app_ctx.runner.ok(
-        ["kubectl", "get", "secret", "aap-admin-password"],
-        stdout=json.dumps({"data": {"password": base64.b64encode(b"aap-password").decode()}}),
-    )
     app_ctx.runner.ok(["kubectl", "apply"])
     app_ctx.runner.ok(["kubectl", "wait"])
+    _register_ready_deployments(app_ctx)
 
     assert addon.enable(app_ctx, argparse.Namespace(addon_args=[])) == 0
 
@@ -65,6 +101,18 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
     policies = [item for item in applied if item.get("kind") == "NetworkPolicy"]
     assert policies
     policy = policies[0]
+    assert {port["port"] for port in policy["spec"]["egress"][0]["ports"]} == {8000, 443}
+    dns_ports = [
+        port["port"]
+        for rule in policy["spec"]["egress"]
+        if rule["to"][0]
+        .get("namespaceSelector", {})
+        .get("matchLabels", {})
+        .get("kubernetes.io/metadata.name")
+        in {"kube-system", "openshift-dns"}
+        for port in rule["ports"]
+    ]
+    assert 5353 in dns_ports
     assert (
         policy["spec"]["ingress"][0]["from"][0]["podSelector"]["matchLabels"][
             "app.kubernetes.io/name"
@@ -95,7 +143,17 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
     assert app_ctx.config.get("addons.enabled") == ["monitoring"]
 
 
+def test_enable_requires_an_explicit_https_read_only_credential(app_ctx) -> None:
+    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
+    app_ctx.env["AAP_MONITORING_CREDENTIAL_SECRET"] = "reader"  # pragma: allowlist secret
+    app_ctx.env["AAP_MONITORING_GATEWAY_URL"] = "http://aap.example.test"
+
+    with pytest.raises(AddonError, match="HTTPS Gateway credential"):
+        get("monitoring").enable(app_ctx, argparse.Namespace(addon_args=[]))
+
+
 def test_enable_uses_configured_aap_namespace(app_ctx) -> None:
+    _configure_monitoring_credentials(app_ctx)
     app_ctx.config.set("core.namespace", "custom-aap")
     namespace_reads = iter(
         [
@@ -114,22 +172,18 @@ def test_enable_uses_configured_aap_namespace(app_ctx) -> None:
     app_ctx.runner.register(
         ["kubectl", "get", "namespace", "aap-monitoring"], lambda _: next(namespace_reads)
     )
-    app_ctx.runner.ok(
-        ["kubectl", "get", "secret", "aap-admin-password"],
-        stdout=json.dumps({"data": {"password": base64.b64encode(b"aap-password").decode()}}),
-    )
     app_ctx.runner.ok(["kubectl", "apply"])
     app_ctx.runner.ok(["kubectl", "wait"])
+    _register_ready_deployments(app_ctx)
 
     get("monitoring").enable(app_ctx, argparse.Namespace(addon_args=[]))
 
     apply_call = next(
         call
         for call in app_ctx.runner.calls
-        if call.argv[:2] == ("kubectl", "apply")
-        and "aap.custom-aap.svc.cluster.local" in call.input
+        if call.argv[:2] == ("kubectl", "apply") and "https://aap.example.test" in call.input
     )
-    assert "aap.custom-aap.svc.cluster.local" in apply_call.input
+    assert "https://aap.example.test" in apply_call.input
 
 
 def test_enable_refuses_unowned_namespace_before_writing_state(app_ctx) -> None:
@@ -146,6 +200,7 @@ def test_enable_refuses_unowned_namespace_before_writing_state(app_ctx) -> None:
 
 
 def test_enable_reuses_configured_pull_secret_for_monitoring_images(app_ctx, tmp_path) -> None:
+    _configure_monitoring_credentials(app_ctx)
     pull_secret = tmp_path / "pull-secret.json"
     pull_secret.write_text('{"auths":{"quay.io":{"auth":"fixture"}}}\n', encoding="utf-8")
     app_ctx.config.set("deploy.pull_secret_path", str(pull_secret))
@@ -166,16 +221,13 @@ def test_enable_reuses_configured_pull_secret_for_monitoring_images(app_ctx, tmp
     app_ctx.runner.register(
         ["kubectl", "get", "namespace", "aap-monitoring"], lambda _: next(namespace_reads)
     )
-    app_ctx.runner.ok(
-        ["kubectl", "get", "secret", "aap-admin-password"],
-        stdout=json.dumps({"data": {"password": base64.b64encode(b"aap-password").decode()}}),
-    )
     app_ctx.runner.ok(["kubectl", "delete", "secret"])
     app_ctx.runner.ok(["kubectl", "create", "secret"])
     app_ctx.runner.ok(["kubectl", "get", "serviceaccount"])
     app_ctx.runner.ok(["kubectl", "patch", "serviceaccount"])
     app_ctx.runner.ok(["kubectl", "apply"])
     app_ctx.runner.ok(["kubectl", "wait"])
+    _register_ready_deployments(app_ctx)
 
     get("monitoring").enable(app_ctx, argparse.Namespace(addon_args=[]))
 
@@ -215,10 +267,14 @@ def test_disable_deletes_only_owned_namespace(app_ctx) -> None:
             }
         ),
     )
-    app_ctx.runner.ok(["kubectl", "delete", "namespace", "aap-monitoring"])
+    app_ctx.runner.ok(["kubectl", "delete", "-f", "-"])
 
     assert addon.disable(app_ctx, argparse.Namespace()) == 0
-    assert app_ctx.runner.called(["kubectl", "delete", "namespace", "aap-monitoring"])
+    assert app_ctx.runner.called(["kubectl", "delete", "-f", "-"])
+    delete_call = next(
+        call for call in app_ctx.runner.calls if call.argv[:3] == ("kubectl", "delete", "-f")
+    )
+    assert '"uid": "monitoring-uid"' in delete_call.input
     assert app_ctx.config.get("addons.enabled") == []
 
 
@@ -231,12 +287,19 @@ def test_disable_refuses_unowned_namespace(app_ctx) -> None:
     with pytest.raises(AddonError, match="unowned namespace"):
         get("monitoring").disable(app_ctx, argparse.Namespace())
 
-    assert not app_ctx.runner.called(["kubectl", "delete", "namespace", "aap-monitoring"])
+    assert not app_ctx.runner.called(["kubectl", "delete", "-f", "-"])
 
 
 def test_monitoring_rejects_unknown_population_action(app_ctx) -> None:
     with pytest.raises(AddonError, match="unsupported monitoring action"):
         get("monitoring").enable(app_ctx, argparse.Namespace(addon_args=["unknown"]))
+
+
+def test_disable_is_safe_when_namespace_is_already_absent(app_ctx) -> None:
+    app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
+
+    assert get("monitoring").disable(app_ctx, argparse.Namespace()) == 0
+    assert not app_ctx.runner.called(["kubectl", "delete"])
 
 
 def test_status_command_can_target_monitoring(app_ctx) -> None:
@@ -246,9 +309,23 @@ def test_status_command_can_target_monitoring(app_ctx) -> None:
     )
     app_ctx.runner.ok(
         ["kubectl", "get", "deployment"],
-        stdout=json.dumps({"status": {"availableReplicas": 1}}),
+        stdout=json.dumps(
+            {
+                "metadata": {"generation": 1},
+                "spec": {"replicas": 1},
+                "status": {
+                    "observedGeneration": 1,
+                    "updatedReplicas": 1,
+                    "readyReplicas": 1,
+                    "availableReplicas": 1,
+                },
+            }
+        ),
     )
-    app_ctx.runner.ok(["kubectl", "get", "route", "grafana"], stdout="grafana.example.test\n")
+    app_ctx.runner.ok(
+        ["kubectl", "get", "route", "grafana"],
+        stdout=json.dumps({"status": {"ingress": [{"host": "grafana.example.test"}]}}),
+    )
 
     assert observe.status(app_ctx, argparse.Namespace(addon="monitoring")) == 0
     assert "Monitoring status" in app_ctx.console.stdout
@@ -258,7 +335,7 @@ def test_status_command_can_target_monitoring(app_ctx) -> None:
 
 def test_status_reports_not_ready_when_resources_are_missing(app_ctx) -> None:
     app_ctx.runner.fail(["kubectl", "get", "namespace", "aap-monitoring"], stderr="NotFound")
-    app_ctx.runner.ok(["kubectl", "get", "route", "grafana"], stdout="")
+    app_ctx.runner.fail(["kubectl", "get", "route", "grafana"], stderr="NotFound")
 
     assert observe.status(app_ctx, argparse.Namespace(addon="monitoring")) == 1
     assert "readiness: not-ready" in app_ctx.console.stdout

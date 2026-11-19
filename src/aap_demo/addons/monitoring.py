@@ -1,8 +1,8 @@
 """Native, low-resource AAP monitoring addon.
 
 The first release uses standalone Prometheus/Grafana and json-exporter. The exporter
-queries the AAP Gateway's controller API with the existing admin Secret; Prometheus
-never talks directly to the controller or Metrics Service.
+queries the AAP Gateway's controller API with a supplied least-privilege Secret;
+Prometheus never talks directly to the controller or Metrics Service.
 """
 
 from __future__ import annotations
@@ -92,7 +92,12 @@ def _dashboard() -> dict:
 
 
 def _documents(
-    password: str, aap_password: str, aap_namespace: str, ownership_token: str
+    password: str,
+    aap_password: str,
+    aap_username: str,
+    gateway_url: str,
+    aap_namespace: str,
+    ownership_token: str,
 ) -> List[dict]:
     ownership = {OWNERSHIP_LABEL: MANAGED_BY, OWNERSHIP_TOKEN_LABEL: ownership_token}
     prometheus_config = {
@@ -103,9 +108,7 @@ def _documents(
                 "metrics_path": "/probe",
                 "params": {
                     "module": ["aap_jobs"],
-                    "target": [
-                        f"http://aap.{aap_namespace}.svc.cluster.local/api/controller/v2/jobs/?page_size=1"
-                    ],
+                    "target": [f"{gateway_url.rstrip('/')}/api/controller/v2/jobs/?page_size=1"],
                 },
                 "static_configs": [
                     {"targets": ["json-exporter.aap-monitoring.svc.cluster.local:7979"]}
@@ -119,7 +122,7 @@ def _documents(
             "aap_jobs": {
                 "http_client_config": {
                     "basic_auth": {
-                        "username": "admin",
+                        "username": aap_username,
                         "password_file": "/etc/aap-monitoring/aap-password",
                     }
                 },
@@ -237,7 +240,7 @@ def _documents(
                             }
                         ],
                         "ports": [
-                            {"protocol": "TCP", "port": 80},
+                            {"protocol": "TCP", "port": 8000},
                             {"protocol": "TCP", "port": 443},
                         ],
                     },
@@ -253,6 +256,8 @@ def _documents(
                         "ports": [
                             {"protocol": "UDP", "port": 53},
                             {"protocol": "TCP", "port": 53},
+                            {"protocol": "UDP", "port": 5353},
+                            {"protocol": "TCP", "port": 5353},
                         ],
                     },
                     {
@@ -408,13 +413,40 @@ def _wait_for_readiness(ctx: AppContext) -> None:
             NAMESPACE,
         )
         if result.ok:
-            continue
+            deployment = kube.read_object(ctx, "deployment", name, namespace=NAMESPACE)
+            if deployment and _deployment_is_currently_ready(deployment):
+                continue
         diagnostics = kubectl.run(ctx.runner, "get", "pods", "-n", NAMESPACE, "-o", "wide")
         detail = diagnostics.stdout or diagnostics.stderr or ""
         raise AddonError(
             f"monitoring deployment {name!r} did not become ready",
             hint=detail.strip() or (result.stderr or result.stdout or "").strip() or None,
         )
+
+
+def _deployment_is_currently_ready(deployment: Dict[str, Any]) -> bool:
+    metadata = deployment.get("metadata", {})
+    spec = deployment.get("spec", {})
+    status = deployment.get("status", {})
+    generation = metadata.get("generation")
+    observed = status.get("observedGeneration")
+    replicas = int(spec.get("replicas", 1) or 1)
+    return (
+        generation is not None
+        and observed == generation
+        and int(status.get("updatedReplicas", 0) or 0) >= replicas
+        and int(status.get("readyReplicas", 0) or 0) >= replicas
+        and int(status.get("availableReplicas", 0) or 0) >= replicas
+    )
+
+
+def _route_host(route: Dict[str, Any] | None) -> str:
+    if not route:
+        return ""
+    ingress = route.get("status", {}).get("ingress") or []
+    if not ingress:
+        return ""
+    return str(ingress[0].get("host") or "")
 
 
 class MonitoringAddon:
@@ -453,18 +485,19 @@ class MonitoringAddon:
         if not password_path.exists():
             password_path.write_text(password + "\n", encoding="utf-8")
             password_path.chmod(0o600)
-        aap_password = _aap_password(ctx)
-        documents = _documents(password, aap_password, ctx.namespace, ownership_token)
+        aap_password, aap_username, gateway_url = _gateway_credential(ctx)
+        documents = _documents(
+            password,
+            aap_password,
+            aap_username,
+            gateway_url,
+            ctx.namespace,
+            ownership_token,
+        )
         kube.apply_or_raise(
             ctx,
             _manifest([documents[0]]),
             message="could not create the monitoring namespace",
-        )
-        pull_secret.ensure(ctx, NAMESPACE)
-        kube.apply_or_raise(
-            ctx,
-            _manifest(documents),
-            message="could not install monitoring addon",
         )
         if namespace is None:
             applied_namespace = kube.read_object(ctx, "namespace", NAMESPACE)
@@ -474,6 +507,12 @@ class MonitoringAddon:
                 raise AddonError("monitoring namespace has no stable UID after apply")
             namespace_uid_path.write_text(str(namespace_uid) + "\n", encoding="utf-8")
             namespace_uid_path.chmod(0o600)
+        pull_secret.ensure(ctx, NAMESPACE)
+        kube.apply_or_raise(
+            ctx,
+            _manifest(documents),
+            message="could not install monitoring addon",
+        )
         _wait_for_readiness(ctx)
         names = enabled_names(ctx)
         if NAME not in names:
@@ -485,24 +524,33 @@ class MonitoringAddon:
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
         namespace = kube.read_object(ctx, "namespace", NAMESPACE)
-        if namespace is not None:
-            state_dir = ctx.paths.addon_dir(NAME)
-            _verify_namespace_ownership(
-                namespace, state_dir / OWNERSHIP_TOKEN, state_dir / NAMESPACE_UID
-            )
-        result = kubectl.delete(ctx.runner, "namespace", NAMESPACE, "--ignore-not-found")
+        if namespace is None:
+            _remove_state(ctx)
+            set_enabled_names(ctx, [name for name in enabled_names(ctx) if name != NAME], save=True)
+            _say(ctx, "Monitoring disabled", namespace=NAMESPACE)
+            return 0
+        state_dir = ctx.paths.addon_dir(NAME)
+        _verify_namespace_ownership(
+            namespace, state_dir / OWNERSHIP_TOKEN, state_dir / NAMESPACE_UID
+        )
+        uid = namespace.get("metadata", {}).get("uid")
+        result = ctx.runner.run(
+            ["kubectl", "delete", "-f", "-", "--wait=false"],
+            input=json.dumps(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Namespace",
+                    "metadata": {"name": NAMESPACE, "uid": uid},
+                }
+            ),
+        )
         if not result.ok:
             raise AddonError(
                 "could not remove monitoring addon",
                 hint=(result.stderr or result.stdout or "").strip(),
             )
         set_enabled_names(ctx, [name for name in enabled_names(ctx) if name != NAME], save=True)
-        state_dir = ctx.paths.addon_dir(NAME)
-        if state_dir.exists():
-            for child in state_dir.iterdir():
-                if child.is_file():
-                    child.unlink()
-            state_dir.rmdir()
+        _remove_state(ctx)
         _say(ctx, "Monitoring disabled", namespace=NAMESPACE)
         return 0
 
@@ -513,12 +561,11 @@ class MonitoringAddon:
         if namespace:
             for name in ("prometheus", "json-exporter", "grafana"):
                 deployment = kube.read_object(ctx, "deployment", name, namespace=NAMESPACE)
-                status = deployment.get("status", {}) if deployment else {}
-                deployment_states[name] = bool(status.get("availableReplicas", 0) >= 1)
-        ready = bool(namespace) and all(deployment_states.values())
-        route = kubectl.jsonpath(
-            ctx.runner, "route", "grafana", "-n", NAMESPACE, path="{.spec.host}"
-        )
+                deployment_states[name] = bool(
+                    deployment and _deployment_is_currently_ready(deployment)
+                )
+        route = _route_host(kube.read_object(ctx, "route", "grafana", namespace=NAMESPACE))
+        ready = bool(namespace) and all(deployment_states.values()) and bool(route)
         _say(
             ctx,
             "Monitoring status",
@@ -571,28 +618,38 @@ def _verify_namespace_ownership(
         )
 
 
-def _aap_password(ctx: AppContext) -> str:
-    """Copy the existing AAP password into the addon namespace Secret."""
-    result = ctx.runner.run(
-        [
-            "kubectl",
-            "get",
-            "secret",
-            "aap-admin-password",
-            "-n",
-            ctx.namespace,
-            "-o",
-            "json",
-        ]
-    )
-    if not result.ok:
+def _remove_state(ctx: AppContext) -> None:
+    state_dir = ctx.paths.addon_dir(NAME)
+    if state_dir.exists():
+        for child in state_dir.iterdir():
+            if child.is_file():
+                child.unlink()
+        state_dir.rmdir()
+
+
+def _gateway_credential(ctx: AppContext) -> tuple[str, str, str]:
+    """Read an explicitly supplied least-privilege HTTPS Gateway credential."""
+    secret_name = str(ctx.env.get("AAP_MONITORING_CREDENTIAL_SECRET") or "")
+    gateway_url = str(ctx.env.get("AAP_MONITORING_GATEWAY_URL") or "")
+    if not secret_name or not gateway_url.startswith("https://"):
         raise AddonError(
-            "could not read the AAP admin password Secret",
-            hint=(result.stderr or result.stdout or "").strip() or None,
+            "monitoring needs a read-only HTTPS Gateway credential",
+            hint=(
+                "Set AAP_MONITORING_CREDENTIAL_SECRET to a Secret in the AAP namespace "
+                "and AAP_MONITORING_GATEWAY_URL to its HTTPS Gateway URL."
+            ),
         )
+    key = str(ctx.env.get("AAP_MONITORING_CREDENTIAL_KEY") or "password")
+    username_key = str(ctx.env.get("AAP_MONITORING_CREDENTIAL_USERNAME_KEY") or "username")
+    secret = kube.read_object(ctx, "secret", secret_name, namespace=ctx.namespace)
+    if secret is None:
+        raise AddonError(f"monitoring credential Secret {secret_name!r} was not found")
     try:
-        document = json.loads(result.stdout or "{}")
-        encoded = document["data"]["password"]
-        return base64.b64decode(encoded).decode("utf-8")
+        data = secret["data"]
+        password = base64.b64decode(data[key]).decode("utf-8")
+        username = base64.b64decode(data[username_key]).decode("utf-8")
+        return password, username, gateway_url
     except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
-        raise AddonError("AAP admin password Secret has no usable password") from exc
+        raise AddonError(
+            f"monitoring credential Secret has no usable {key!r} and {username_key!r} data"
+        ) from exc
