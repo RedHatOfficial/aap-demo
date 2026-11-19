@@ -76,7 +76,7 @@ if grep -q 'kubectl scale' "${REPO_ROOT}/addons/ao/deploy.sh"; then
 fi
 echo "PASS: AO replica source of truth remains the custom resource"
 
-fast_path_apply_line=$(awk '/^[[:space:]]+deploy_ao_instance$/ { print NR; exit }' \
+fast_path_apply_line=$(awk '/^[[:space:]]+(deploy_ao_instance|reconcile_existing_ao)$/ { line = NR } END { if (line) print line }' \
   "${REPO_ROOT}/addons/ao/deploy.sh")
 ingress_init_line=$(awk '/^INGRESS_HOST=/ { print NR; exit }' \
   "${REPO_ROOT}/addons/ao/deploy.sh")

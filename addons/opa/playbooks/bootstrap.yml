@@ -1,0 +1,576 @@
+---
+- name: Configure OPA Policy as Code in AAP
+  hosts: localhost
+  gather_facts: false
+  no_log: false
+  vars:
+    aap_api: "{{ gateway_url }}/api/controller/v2"
+    policy_org_name: "Policy as Code"
+    inventory_name: "OPA Localhost"
+    project_name: "Policy as Code - Playbooks"
+    credential_name: "Policy as Code - AAP Credential"
+    template_definitions:
+      - name: "OPA | Load Example Policies"
+        description: "Load OPA example policies from {{ opa_repo }}"
+        playbook: "load-policies.yml"
+        extra_vars:
+          opa_server: "{{ opa_server }}"
+          namespace: "{{ namespace }}"
+          opa_branch: "{{ opa_ref }}"
+          opa_repo: "{{ opa_repo }}"
+      - name: "OPA | Test Policies"
+        description: "List loaded policies in OPA server"
+        playbook: "test-policies.yml"
+        extra_vars:
+          opa_server: "{{ opa_server }}"
+          namespace: "{{ namespace }}"
+      - name: "OPA | Clear Policies"
+        description: "Remove all loaded OPA policies"
+        playbook: "clear-policies.yml"
+        extra_vars:
+          opa_server: "{{ opa_server }}"
+          namespace: "{{ namespace }}"
+      - name: "OPA | Demo Policy"
+        description: "Demonstrate OPA policy enforcement with interactive examples"
+        playbook: "demo-policy.yml"
+        extra_vars:
+          opa_server: "{{ opa_server }}"
+          namespace: "{{ namespace }}"
+
+  pre_tasks:
+    - name: Validate AAP bootstrap credentials
+      ansible.builtin.assert:
+        that:
+          - gateway_url | length > 0
+          - aap_username | length > 0
+          - aap_password | length > 0
+        fail_msg: "AAP gateway URL, username, and password are required"
+
+    - name: Look up Policy as Code organization
+      ansible.builtin.uri:
+        url: "{{ aap_api }}/organizations/?name={{ policy_org_name | urlencode }}"
+        method: GET
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200]
+      register: organization_lookup
+      no_log: true
+
+    - name: Create Policy as Code organization
+      ansible.builtin.uri:
+        url: "{{ aap_api }}/organizations/"
+        method: POST
+        user: "{{ aap_username }}"
+        password: "{{ aap_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          name: "{{ policy_org_name }}"
+          description: "Policy as Code using Open Policy Agent (OPA) for AAP"
+        status_code: [201]
+      register: organization_created
+      when:
+        - state == 'present'
+        - organization_lookup.json.results | length == 0
+      no_log: true
+
+    - name: Select Policy as Code organization
+      ansible.builtin.set_fact:
+        organization: >-
+          {{ organization_created.json if organization_created is defined and
+          organization_created.json is defined else organization_lookup.json.results[0] }}
+      when: state == 'present'
+
+    - name: Select existing organization for cleanup
+      ansible.builtin.set_fact:
+        organization: "{{ organization_lookup.json.results[0] }}"
+      when:
+        - state == 'absent'
+        - organization_lookup.json.results | length > 0
+
+  tasks:
+    - name: Configure Policy as Code resources
+      when: state == 'present'
+      block:
+        - name: Find existing project
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/projects/?name={{ project_name | urlencode }}"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: project_lookup
+          no_log: true
+
+        - name: Create or update project
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/projects/{{ project_lookup.json.results[0].id | default('') }}/"
+            method: "{{ 'PATCH' if project_lookup.json.results | length > 0 else 'POST' }}"
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              name: "{{ project_name }}"
+              description: "AAP Demo repository containing OPA playbooks"
+              scm_type: git
+              scm_url: "{{ aap_demo_repo }}"
+              scm_branch: "{{ aap_demo_branch }}"
+              scm_update_on_launch: false
+              organization: "{{ organization.id }}"
+            status_code: [200, 201]
+          register: project_configured
+          no_log: true
+
+        - name: Set project ID
+          ansible.builtin.set_fact:
+            project_id: "{{ project_configured.json.id }}"
+
+        - name: Request project sync
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/projects/{{ project_id }}/update/"
+            method: POST
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200, 202]
+          no_log: true
+
+        - name: Wait for project sync
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/projects/{{ project_id }}/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: project_status
+          until: project_status.json.status in ['successful', 'failed']
+          retries: 60
+          delay: 2
+          no_log: true
+
+        - name: Fail when project sync failed
+          ansible.builtin.fail:
+            msg: "OPA AAP project sync failed"
+          when: project_status.json.status != 'successful'
+
+        - name: Find existing localhost inventory
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/inventories/?name={{ inventory_name | urlencode }}"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: inventory_lookup
+          no_log: true
+
+        - name: Create or update localhost inventory
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/inventories/{{ inventory_lookup.json.results[0].id | default('') }}/"
+            method: "{{ 'PATCH' if inventory_lookup.json.results | length > 0 else 'POST' }}"
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              name: "{{ inventory_name }}"
+              organization: "{{ organization.id }}"
+            status_code: [200, 201]
+          register: inventory_configured
+          no_log: true
+
+        - name: Set inventory ID
+          ansible.builtin.set_fact:
+            inventory_id: "{{ inventory_configured.json.id }}"
+
+        - name: Create localhost host
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/inventories/{{ inventory_id }}/hosts/"
+            method: POST
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              name: localhost
+              variables: "ansible_connection: local"
+            status_code: [201, 400]
+          no_log: true
+
+        - name: Find AAP credential type
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/credential_types/?name=Red%20Hat%20Ansible%20Automation%20Platform"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: credential_type_lookup
+          no_log: true
+
+        - name: Find existing AAP credential
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/credentials/?name={{ credential_name | urlencode }}"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: credential_lookup
+          no_log: true
+
+        - name: Create or update AAP credential
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/credentials/{{ credential_lookup.json.results[0].id | default('') }}/"
+            method: "{{ 'PATCH' if credential_lookup.json.results | length > 0 else 'POST' }}"
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              name: "{{ credential_name }}"
+              description: "AAP credential for Policy as Code automation (least privilege)"
+              organization: "{{ organization.id }}"
+              credential_type: "{{ credential_type_lookup.json.results[0].id }}"
+              inputs:
+                host: "{{ gateway_url }}"
+                username: "{{ aap_username }}"
+                password: "{{ aap_password }}"
+                verify_ssl: false
+            status_code: [200, 201]
+          register: credential_configured
+          no_log: true
+
+        - name: Set credential ID
+          ansible.builtin.set_fact:
+            credential_id: "{{ credential_configured.json.id }}"
+
+        - name: Find existing OPA job templates
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/job_templates/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: template_lookup
+          no_log: true
+
+        - name: Create or update OPA job templates
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ existing.id | default('') }}/"
+            method: "{{ 'PATCH' if existing.id is defined else 'POST' }}"
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              name: "{{ item.name }}"
+              description: "{{ item.description }}"
+              job_type: run
+              inventory: "{{ inventory_id }}"
+              project: "{{ project_id }}"
+              playbook: "addons/opa/playbooks/{{ item.playbook }}"
+              organization: "{{ organization.id }}"
+              extra_vars: "{{ item.extra_vars | to_json }}"
+              ask_variables_on_launch: false
+            status_code: [200, 201]
+          vars:
+            existing: "{{ (template_lookup.json.results | selectattr('name', 'equalto', item.name) | list | first) | default({}) }}"
+          loop: "{{ template_definitions }}"
+          no_log: true
+
+        - name: Read upstream policy names for the demo survey
+          ansible.builtin.uri:
+            url: >-
+              https://api.github.com/repos/{{ opa_repo |
+              regex_replace('^https://github.com/', '') |
+              regex_replace('\\.git$', '') }}/contents/aap_policy_examples?ref={{ opa_ref }}
+            method: GET
+            headers:
+              Accept: application/vnd.github+json
+            validate_certs: false
+            status_code: [200, 404]
+          register: upstream_policy_files
+
+        - name: Build demo survey choices
+          ansible.builtin.set_fact:
+            policy_choices: >-
+              {{ (upstream_policy_files.json | default([]) |
+              selectattr('name', 'match', '.*[.]rego$') | map(attribute='name') |
+              map('regex_replace', '[.]rego$', '') | list) + ['REMOVE'] }}
+
+        - name: Refresh job templates for demo survey
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/job_templates/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: survey_templates
+          no_log: true
+
+        - name: Read demo policy template credentials
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/credentials/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+          when: demo_template.id is defined
+          register: demo_template_credentials
+          no_log: true
+
+        - name: Attach AAP credential to demo policy template
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/credentials/"
+            method: POST
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              id: "{{ credential_id }}"
+            status_code: [200, 201, 204]
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+            demo_credentials: "{{ demo_template_credentials.json.results | default([]) }}"
+          when:
+            - demo_template.id is defined
+            - credential_id | int not in (demo_credentials | map(attribute='id') | map('int') | list)
+          no_log: true
+
+        - name: Enable demo policy survey
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/"
+            method: PATCH
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              survey_enabled: true
+              ask_variables_on_launch: false
+            status_code: [200]
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+          when: demo_template.id is defined
+          no_log: true
+
+        - name: Set demo policy survey specification
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ demo_template.id }}/survey_spec/"
+            method: POST
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              name: Policy Demo Survey
+              description: Select a policy to apply
+              spec:
+                - question_name: Policy to Apply
+                  question_description: Select a policy or REMOVE to clear it.
+                  required: true
+                  type: multiplechoice
+                  variable: policy_name
+                  default: ""
+                  choices: "{{ policy_choices | join('\\n') }}"
+                - question_name: Target Organization
+                  question_description: Organization to test policy against.
+                  required: false
+                  type: text
+                  variable: organization_name
+                  default: Policy as Code
+                  max: 100
+                  choices: ""
+          vars:
+            demo_template: "{{ (survey_templates.json.results | selectattr('name', 'equalto', 'OPA | Demo Policy') | list | first) | default({}) }}"
+          when: demo_template.id is defined
+          no_log: true
+
+        - name: Configure OPA policy settings
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/settings/policyascode/"
+            method: PATCH
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body:
+              OPA_HOST: "opa.{{ namespace }}.svc.cluster.local"
+              OPA_PORT: 8181
+              OPA_SSL: false
+              OPA_AUTH_TYPE: None
+              OPA_AUTH_TOKEN: ""
+              OPA_AUTH_CLIENT_CERT: ""
+              OPA_AUTH_CLIENT_KEY: ""
+              OPA_AUTH_CA_CERT: ""
+              OPA_AUTH_CUSTOM_HEADERS: {}
+              OPA_REQUEST_TIMEOUT: 1.5
+              OPA_REQUEST_RETRIES: 2
+            status_code: [200]
+          no_log: true
+
+    - name: Remove Policy as Code resources
+      when:
+        - state == 'absent'
+        - organization is defined
+      block:
+        - name: Find organization job templates for cleanup
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/job_templates/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: cleanup_templates
+          no_log: true
+
+        - name: Delete OPA job templates
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/job_templates/{{ item.id }}/"
+            method: DELETE
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [202, 204, 404]
+          loop: "{{ cleanup_templates.json.results | selectattr('name', 'match', '^OPA \\| ') | list }}"
+          no_log: true
+
+        - name: Find OPA projects for cleanup
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/projects/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: cleanup_projects
+          no_log: true
+
+        - name: Delete OPA projects
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/projects/{{ item.id }}/"
+            method: DELETE
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [202, 204, 404]
+          loop: "{{ cleanup_projects.json.results }}"
+          when: item.name == project_name
+          no_log: true
+
+        - name: Find OPA inventories for cleanup
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/inventories/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: cleanup_inventories
+          no_log: true
+
+        - name: Delete OPA inventories
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/inventories/{{ item.id }}/"
+            method: DELETE
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [202, 204, 404]
+          loop: "{{ cleanup_inventories.json.results }}"
+          when: item.name == inventory_name
+          no_log: true
+
+        - name: Find OPA credentials for cleanup
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/credentials/"
+            method: GET
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [200]
+          register: cleanup_credentials
+          no_log: true
+
+        - name: Delete OPA credentials
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/credentials/{{ item.id }}/"
+            method: DELETE
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [202, 204, 404]
+          loop: "{{ cleanup_credentials.json.results }}"
+          when: item.name == credential_name
+          no_log: true
+
+        - name: Clear OPA policy settings
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/settings/policyascode/"
+            method: PATCH
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            body_format: json
+            body: {OPA_HOST: ""}
+            status_code: [200]
+          no_log: true
+
+        - name: Delete Policy as Code organization
+          ansible.builtin.uri:
+            url: "{{ aap_api }}/organizations/{{ organization.id }}/"
+            method: DELETE
+            user: "{{ aap_username }}"
+            password: "{{ aap_password }}"
+            force_basic_auth: true
+            validate_certs: false
+            status_code: [202, 204, 404]
+          no_log: true
+
+    - name: Report no organization to clean
+      ansible.builtin.debug:
+        msg: "No Policy as Code organization found"
+      when:
+        - state == 'absent'
+        - organization is not defined

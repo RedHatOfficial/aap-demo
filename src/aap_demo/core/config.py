@@ -35,6 +35,11 @@ _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
 
 
+def is_true(value: Optional[str]) -> bool:
+    """A boolean environment variable: QUIET=false is off, not a non-empty string."""
+    return value is not None and value.strip().lower() in _TRUE
+
+
 def _coerce(value: str, prop: Mapping[str, Any]) -> Any:
     prop_type = prop.get("type")
     if prop_type == "boolean":
@@ -114,9 +119,18 @@ def env_overlay(env: Optional[Mapping[str, str]] = None) -> Dict[str, Dict[str, 
 class Config:
     """A resolved, validated configuration plus the file it came from."""
 
-    def __init__(self, data: Dict[str, Any], *, path: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        data: Dict[str, Any],
+        *,
+        path: Optional[Path] = None,
+        stored: Optional[Dict[str, Any]] = None,
+    ) -> None:
         self.data = data
         self.path = path
+        # Defaults and file values only. Environment variables and flags apply
+        # to one run, so save() must not write them (issue #375).
+        self._stored = copy.deepcopy(data if stored is None else stored)
 
     # -- access -------------------------------------------------------------
 
@@ -135,14 +149,9 @@ class Config:
             prop = schema.section(section_name)["properties"][key]
             if isinstance(value, str):
                 value = _coerce(value, prop)
-        parts = dotted.split(".")
-        node = self.data
-        for part in parts[:-1]:
-            node = node.setdefault(part, {})
-            if not isinstance(node, dict):
-                raise ConfigError(f"{dotted}: cannot set a key under a scalar value")
-        node[parts[-1]] = value
+        _assign(self.data, dotted, value)
         self.validate()
+        _assign(self._stored, dotted, copy.deepcopy(value))
 
     def section(self, name: str) -> Dict[str, Any]:
         value = self.data.get(name, {})
@@ -154,15 +163,29 @@ class Config:
     def as_dict(self) -> Dict[str, Any]:
         return copy.deepcopy(self.data)
 
+    def stored_dict(self) -> Dict[str, Any]:
+        """What save() writes: defaults, file values and set() calls, no env or flags."""
+        return copy.deepcopy(self._stored)
+
     # -- persistence --------------------------------------------------------
 
     def save(self, path: Optional[Path] = None, *, version: Optional[str] = None) -> Path:
         target = path or self.path
         if target is None:
             raise ConfigError("no config path to save to")
-        write(target, self.data, version=version)
+        write(target, self._stored, version=version)
         self.path = target
         return target
+
+
+def _assign(data: Dict[str, Any], dotted: str, value: Any) -> None:
+    parts = dotted.split(".")
+    node = data
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+        if not isinstance(node, dict):
+            raise ConfigError(f"{dotted}: cannot set a key under a scalar value")
+    node[parts[-1]] = value
 
 
 def _ordered(data: Mapping[str, Any]) -> Dict[str, Any]:
@@ -210,13 +233,21 @@ def resolve(
     One validator call over the merged result is what makes a bad value read the
     same whether it arrived from a flag, an env var, the file, or the API.
     """
-    data = schema.defaults()
-    data["schema_version"] = SCHEMA_VERSION
+    stored = schema.defaults()
+    stored["schema_version"] = SCHEMA_VERSION
     if file_data:
-        data = _deep_merge(data, _without_generated_text_output(file_data))
-    data = _deep_merge(data, env_overlay(env))
+        stored = _deep_merge(stored, _without_generated_text_output(file_data))
+    _drop_retired(stored)
+    data = _deep_merge(stored, env_overlay(env))
     if overrides:
         data = _deep_merge(data, overrides)
+    _drop_retired(data)
+    config = Config(data, path=path, stored=stored)
+    config.validate()
+    return config
+
+
+def _drop_retired(data: Dict[str, Any]) -> None:
     # Older config files saved trust.mkcert. That setting is gone, and a
     # leftover key would fail validation because the trust section rejects
     # unknown properties.
@@ -226,9 +257,6 @@ def resolve(
     core = data.get("core")
     if isinstance(core, dict) and core.get("output") == "text":
         core["output"] = "basic"
-    config = Config(data, path=path)
-    config.validate()
-    return config
 
 
 def _without_generated_text_output(file_data: Mapping[str, Any]) -> Dict[str, Any]:

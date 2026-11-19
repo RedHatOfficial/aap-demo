@@ -238,19 +238,123 @@ function Restart-AapAoPostgresClients {
   }
 }
 
+function Test-AapAoCnpgClusterPresent {
+  param([Parameter(Mandatory)][string]$Namespace)
+  $crd = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', 'crd', 'clusters.postgresql.cnpg.io', '--ignore-not-found', '-o', 'name'
+  )
+  if (-not $crd.Success) { throw 'Could not check for CloudNativePG; refusing to change AO PostgreSQL' }
+  if (-not ([string]$crd.Stdout).Trim()) { return $false }
+  $cluster = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace, '--ignore-not-found', '-o', 'name'
+  )
+  if (-not $cluster.Success) { throw 'Could not check the CloudNativePG cluster; refusing to change AO PostgreSQL' }
+  return [bool]([string]$cluster.Stdout).Trim()
+}
+
+function Remove-AapAoCnpgStorage {
+  param([Parameter(Mandatory)][string]$Namespace)
+  $deleted = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'delete', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace,
+    '--ignore-not-found', '--wait=true', '--timeout=180s'
+  )
+  if (-not $deleted.Success) { throw 'Could not delete the CloudNativePG cluster; refusing to replace PostgreSQL' }
+  if (Test-AapAoCnpgClusterPresent -Namespace $Namespace) {
+    throw 'CloudNativePG cluster still exists; refusing to replace PostgreSQL'
+  }
+  $crd = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', 'crd', 'databases.postgresql.cnpg.io', '--ignore-not-found', '-o', 'name'
+  )
+  if (-not $crd.Success) { throw 'Could not check CloudNativePG databases; refusing to replace PostgreSQL' }
+  if (([string]$crd.Stdout).Trim()) {
+    foreach ($database in @('orchestrator', 'temporal', 'temporal-visibility')) {
+      $databaseCluster = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+        'get', 'database', $database, '-n', $Namespace, '--ignore-not-found', '-o', 'jsonpath={.spec.cluster.name}'
+      )
+      if (-not $databaseCluster.Success) {
+        throw "Could not check CloudNativePG database $database; refusing to replace PostgreSQL"
+      }
+      $databaseClusterName = ([string]$databaseCluster.Stdout).Trim()
+      if (-not $databaseClusterName) { continue }
+      if ($databaseClusterName -ne 'orchestrator-postgres') {
+        throw "CloudNativePG database $database belongs to $databaseClusterName; refusing to replace PostgreSQL"
+      }
+      $databaseDelete = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+        'delete', 'database', $database, '-n', $Namespace, '--wait=true', '--timeout=180s'
+      )
+      if (-not $databaseDelete.Success) {
+        throw "Could not delete CloudNativePG database $database; refusing to replace PostgreSQL"
+      }
+    }
+  }
+  $pvc = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'delete', 'pvc', 'orchestrator-postgres-1', '-n', $Namespace,
+    '--ignore-not-found', '--wait=true', '--timeout=180s'
+  )
+  if (-not $pvc.Success) { throw 'Could not delete the CloudNativePG PVC; refusing to replace PostgreSQL' }
+}
+
+function Assert-AapAoPostgresStorageSize {
+  param([Parameter(Mandatory)][string]$Size)
+  if ($Size -cnotmatch '\A[0-9]+([.][0-9]+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?\z' -or
+      $Size -cmatch '\A0+([.]0+)?([EPTGMK]i|[EPTGMkmun]|[eE][+-]?[0-9]+)?\z') {
+    throw "PostgreSQL storage size '$Size' is not a supported Kubernetes quantity"
+  }
+}
+
+function Get-AapAoPostgresStorageSize {
+  param([Parameter(Mandatory)][string]$Namespace)
+
+  $requested = Get-AapAoSetting -Name 'AO_STORAGE_SIZE' -Default '3Gi'
+  $size = $null
+  $set = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+    'get', 'statefulset', 'orchestrator-postgres', '-n', $Namespace, '--ignore-not-found', '-o', 'json'
+  )
+  if (-not $set.Success) { throw 'Could not read the PostgreSQL StatefulSet; refusing to apply the manifest' }
+  if (([string]$set.Stdout).Trim()) {
+    try { $object = $set.Stdout | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'Could not parse the PostgreSQL StatefulSet; refusing to apply the manifest' }
+    $claims = @($object.spec.volumeClaimTemplates | Where-Object { $_.metadata.name -eq 'data' })
+    if ($claims.Count -ne 1 -or -not $claims[0].spec.resources.requests.storage) {
+      throw 'Could not read the PostgreSQL StatefulSet claim size; refusing to apply the manifest'
+    }
+    $size = [string]$claims[0].spec.resources.requests.storage
+  } else {
+    $pvc = Invoke-AapKubectlNative -AllowFailure -Arguments @(
+      'get', 'pvc', 'data-orchestrator-postgres-0', '-n', $Namespace, '--ignore-not-found', '-o', 'json'
+    )
+    if (-not $pvc.Success) { throw 'Could not read the retained PostgreSQL PVC; refusing to apply the manifest' }
+    if (([string]$pvc.Stdout).Trim()) {
+      try { $object = $pvc.Stdout | ConvertFrom-Json -ErrorAction Stop }
+      catch { throw 'Could not parse the retained PostgreSQL PVC; refusing to apply the manifest' }
+      $size = [string]$object.spec.resources.requests.storage
+      if (-not $size) { throw 'Could not read the retained PostgreSQL PVC size; refusing to apply the manifest' }
+    }
+  }
+  if (-not $size) { $size = $requested }
+  Assert-AapAoPostgresStorageSize -Size $size
+  if ($size -ne $requested) { Write-Host "  Preserving PostgreSQL claim size in manifest: $size (requested: $requested)" }
+  return $size
+}
+
 function Ensure-AapAoPostgres {
   param([Parameter(Mandatory)][string]$Namespace, [switch]$Reset)
 
-  if ($Reset) { Reset-AapAoPostgresStorage -Namespace $Namespace }
+  if ($Reset) {
+    Assert-AapAoPostgresStorageSize -Size (Get-AapAoSetting -Name 'AO_STORAGE_SIZE' -Default '3Gi')
+    Reset-AapAoPostgresStorage -Namespace $Namespace
+  }
 
   # Both values go into the YAML, so allow only image and name characters.
   $image = Get-AapAoPostgresImage
   if ($image -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9._/:@-]*\z') { throw "PostgreSQL image '$image' is not a valid image reference" }
   $storageClass = Get-AapAoPostgresStorageClass
   if ($storageClass -cnotmatch '\A[a-z0-9]([a-z0-9.-]*[a-z0-9])?\z') { throw "StorageClass '$storageClass' is not a valid name" }
+  $storageSize = Get-AapAoPostgresStorageSize -Namespace $Namespace
   $postgres = New-AapAoManifestFile -Name 'postgres.yaml' -Replacements @{
     '__NAMESPACE__' = $Namespace
     '__STORAGE_CLASS__' = $storageClass
+    '__STORAGE_SIZE__' = $storageSize
     '__POSTGRES_IMAGE__' = $image
   }
   try { Invoke-AapKubectlNative -Arguments @('apply', '-f', $postgres) | Out-Null }
@@ -457,9 +561,8 @@ function Invoke-AapAoAddonNative {
   # An install from before ADR-043 keeps AO's database in CloudNativePG. Stop
   # before any change unless a forced reinstall was asked for.
   $force = [bool](($ScriptArgs -contains '--force') -or (Get-AapAoSetting -Name 'FORCE'))
-  $cnpg = (Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'get', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace
-    )).Success
+  if ($force) { Assert-AapAoPostgresStorageSize -Size (Get-AapAoSetting -Name 'AO_STORAGE_SIZE' -Default '3Gi') }
+  $cnpg = Test-AapAoCnpgClusterPresent -Namespace $Namespace
   if ($cnpg) {
     if (-not $force) {
       # As on macOS and Linux, a running CNPG-backed AO is left alone, with a note.
@@ -481,15 +584,7 @@ function Invoke-AapAoAddonNative {
       throw "Run aap-demo enable ao --force to move it to the new PostgreSQL. That deletes AO's data."
     }
     Write-Host 'Removing the CloudNativePG database from an older AO install...'
-    Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'clusters.postgresql.cnpg.io', 'orchestrator-postgres', '-n', $Namespace, '--wait=true', '--timeout=180s'
-    ) | Out-Null
-    Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'databases.postgresql.cnpg.io', '--all', '-n', $Namespace, '--wait=false'
-    ) | Out-Null
-    Invoke-AapKubectlNative -AllowFailure -Arguments @(
-      'delete', 'pvc', 'orchestrator-postgres-1', '-n', $Namespace, '--wait=false'
-    ) | Out-Null
+    Remove-AapAoCnpgStorage -Namespace $Namespace
   }
 
   Write-Host 'Deploying Automation Orchestrator natively...'

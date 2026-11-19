@@ -90,6 +90,9 @@ jobs:
       - name: Run Keycloak configure tests
         run: ./test/test-keycloak-configure.sh
 
+      - name: Run OPA addon test checks
+        run: bash ./test/test-opa-addon-script.sh
+
       - name: Run CRC version and local environment tests
         run: ./test/test-crc-version-check.sh
 
@@ -196,3 +199,11 @@ jobs:
       - name: Run PowerShell 7 deploy tests
         shell: pwsh
         run: ./test/test-powershell-deploy-prerequisites.ps1
+
+      - name: Test AO storage with Windows PowerShell 5.1
+        shell: powershell
+        run: .\test\test-powershell-ao-storage.ps1
+
+      - name: Test AO storage with PowerShell 7
+        shell: pwsh
+        run: ./test/test-powershell-ao-storage.ps1
