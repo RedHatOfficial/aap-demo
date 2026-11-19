@@ -163,6 +163,19 @@ exit 0
 EOF
 chmod +x "$SCRIPT_DIR/mocks/crc"
 
+cat >"$SCRIPT_DIR/mocks/kubectl" <<'EOF'
+#!/bin/bash
+case "$*" in
+  *"config get-contexts"*) echo "aap-demo" ;;
+  *"cluster-info" | *"wait --for=condition=Ready node"*) exit 0 ;;
+  *"get namespace openshift-ovn-kubernetes"*) exit 0 ;;
+  *"ovnkube-node"*"desiredNumberScheduled"* | *"ovnkube-node"*"numberReady"*) echo "1" ;;
+  *"ovnkube-master"*"desiredNumberScheduled"* | *"ovnkube-master"*"numberReady"*) echo "1" ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$SCRIPT_DIR/mocks/kubectl"
+
 if output=$(QUIET=true "$AAP_DEMO_SH" stop 2>&1); then
   if echo "$output" | grep -q "MOCK: crc stop"; then
     _pass "stop_calls_crc"
