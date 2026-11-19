@@ -160,6 +160,8 @@ def _cnpg_runner(owner: str) -> Tuple[FakeRunner, List[str]]:
         .register("kubectl delete clusters.postgresql.cnpg.io", delete_cluster)
         .ok("kubectl get databases.postgresql.cnpg.io", owner)
         .register("kubectl delete databases.postgresql.cnpg.io", delete_db)
+        .ok("kubectl delete pods")
+        .ok("kubectl get pods", "")
         .ok(f"kubectl delete pvc {postgres.CNPG_PVC}")
     )
     return runner, deleted
@@ -321,3 +323,33 @@ def test_a_kept_database_without_its_secret_is_not_given_a_new_password(app_ctx)
     with pytest.raises(AddonError, match="password Secret is missing"):
         postgres.ensure_database_secrets(app_ctx)
     assert not app_ctx.runner.called("kubectl apply -f -")
+
+
+def test_a_cnpg_pod_stuck_terminating_is_force_removed(app_ctx) -> None:
+    app_ctx.runner = (
+        FakeRunner()
+        .ok("kubectl delete pods", "")
+        .ok("kubectl get pods", "pod/orchestrator-postgres-1")
+    )
+    postgres._remove_cnpg_pods(app_ctx)
+    forced = [c for c in app_ctx.runner.commands if "--force" in c]
+    assert len(forced) == 1 and "cnpg.io/cluster=orchestrator-postgres" in forced[0]
+
+
+def test_cnpg_pods_gone_after_a_normal_delete_are_not_forced(app_ctx) -> None:
+    app_ctx.runner = FakeRunner().ok("kubectl delete pods", "").ok("kubectl get pods", "")
+    postgres._remove_cnpg_pods(app_ctx)
+    assert not any("--force" in c for c in app_ctx.runner.commands)
+
+
+def test_a_failed_cnpg_pod_force_removal_stops_the_reset(app_ctx) -> None:
+    def delete(args):
+        return _fail() if "--force" in args else _ok()
+
+    app_ctx.runner = (
+        FakeRunner()
+        .register("kubectl delete pods", delete)
+        .ok("kubectl get pods", "pod/orchestrator-postgres-1")
+    )
+    with pytest.raises(AddonError, match="old CloudNativePG pod"):
+        postgres._remove_cnpg_pods(app_ctx)

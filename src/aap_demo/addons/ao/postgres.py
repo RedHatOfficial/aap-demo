@@ -286,6 +286,7 @@ def remove_cnpg(ctx: AppContext, *, expected: bool) -> None:
                     "refusing to replace PostgreSQL.",
                     hint=output_of(deleted) or None,
                 )
+    _remove_cnpg_pods(ctx)
     deleted = _kubectl(
         ctx,
         "delete",
@@ -301,6 +302,30 @@ def remove_cnpg(ctx: AppContext, *, expected: bool) -> None:
         raise AddonError(
             "Could not delete the CloudNativePG PVC; refusing to replace PostgreSQL.",
             hint=output_of(deleted) or None,
+        )
+
+
+def _remove_cnpg_pods(ctx: AppContext) -> None:
+    """Remove the old CNPG pods so their PVC can be released.
+
+    After its cluster is deleted, a CNPG primary waits for AO's open connections
+    before it stops and can stay Terminating for many minutes. ``--force`` is
+    deleting this data anyway, so a pod still there after a minute is
+    force-removed, as the Bash installer did.
+    """
+    selector = f"cnpg.io/cluster={CNPG_CLUSTER}"
+    _kubectl(ctx, "delete", "pods", "-l", selector, "-n", NAMESPACE, "--wait=true", "--timeout=60s")
+    left = _kubectl(ctx, "get", "pods", "-l", selector, "-n", NAMESPACE, "-o", "name")
+    if left.ok and not (left.stdout or "").strip():
+        return
+    ctx.console.info("Force-removing the old CloudNativePG pod...")
+    forced = _kubectl(
+        ctx, "delete", "pods", "-l", selector, "-n", NAMESPACE, "--grace-period=0", "--force"
+    )
+    if not forced.ok:
+        raise AddonError(
+            "Could not remove the old CloudNativePG pod; refusing to replace PostgreSQL.",
+            hint=output_of(forced) or None,
         )
 
 
