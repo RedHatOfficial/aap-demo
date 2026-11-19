@@ -2466,6 +2466,13 @@ _wait_for_start_ready() {
   return 1
 }
 
+_restart_crc_after_failed_start() {
+  echo "CRC did not become ready; restarting CRC to recover its VM state..." >&2
+  crc stop >/dev/null 2>&1 || true
+  _crc_wait_for_stopped 60 || true
+  crc start
+}
+
 cmd_start() {
   echo ""
   printf "\033[1maap-demo start\033[0m - Starting CRC cluster...\n"
@@ -2473,6 +2480,16 @@ cmd_start() {
   setup_kubeconfig
 
   if ! _wait_for_start_ready; then
+    if ! _restart_crc_after_failed_start; then
+      return 1
+    fi
+    setup_kubeconfig
+    if ! _wait_for_start_ready; then
+      return 1
+    fi
+  fi
+
+  if ! _wait_for_ovn_ready; then
     return 1
   fi
 
