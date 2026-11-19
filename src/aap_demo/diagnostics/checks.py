@@ -95,11 +95,14 @@ def _check_cluster(
     *,
     unresponsive: bool = False,
     crc_state: Optional[str] = None,
+    crc_status: Optional[str] = None,
 ) -> bool:
     """Returns whether the cluster is reachable."""
     rec.start("Cluster")
     state = infra_crc.get_state(runner) if crc_state is None else crc_state
-    if state == infra_crc.STATE_RUNNING:
+    if crc_status in {"Starting", "Stopping"}:
+        rec.info(f"OpenShift Local is {crc_status.lower()} — wait for the transition to finish")
+    elif state == infra_crc.STATE_RUNNING:
         rec.ok("OpenShift Local running")
     elif state == infra_crc.STATE_STOPPED:
         rec.fail("OpenShift Local is stopped — run: crc start")
@@ -353,13 +356,21 @@ def run(
 
     unresponsive = False
     crc_state: Optional[str] = None
+    crc_status: Optional[str] = None
     if host is not None:
         findings = crc_host.check(host, rec)
         unresponsive = findings.unresponsive
         crc_state = findings.crc_state
+        crc_status = findings.crc_status
         report.sections.append(rec.section)
 
-    reachable = _check_cluster(runner, rec, unresponsive=unresponsive, crc_state=crc_state)
+    reachable = _check_cluster(
+        runner,
+        rec,
+        unresponsive=unresponsive,
+        crc_state=crc_state,
+        crc_status=crc_status,
+    )
     report.sections.append(rec.section)
     if not reachable:
         # Bash returns 1 immediately here — no further

@@ -117,6 +117,7 @@ class HostFindings:
 
     unresponsive: bool = False
     crc_state: str = infra_crc.STATE_NOT_CREATED
+    crc_status: str = "Unknown"
 
 
 def check(probe: HostProbe, rec: Any) -> HostFindings:
@@ -133,9 +134,13 @@ def check(probe: HostProbe, rec: Any) -> HostFindings:
     data = probe.status()
     exists = probe.machine_exists()
     failed = False
+    crc_status = str(data.get("crcStatus", "Unknown"))
+    findings.crc_status = crc_status
     state = infra_crc.state_from_status(data)
     findings.crc_state = state
-    if exists and state == infra_crc.STATE_NOT_CREATED and not probe.active_operation():
+    if exists and crc_status in {"Starting", "Stopping"}:
+        rec.info(f"CRC is {crc_status.lower()}; wait for the transition to finish")
+    elif exists and state == infra_crc.STATE_NOT_CREATED and not probe.active_operation():
         findings.unresponsive = True
         failed = True
         rec.fail("CRC does not answer 'crc status', but a VM exists — a 'crc start' may be hung")
