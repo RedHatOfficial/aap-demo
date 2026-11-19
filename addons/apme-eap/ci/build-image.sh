@@ -103,7 +103,8 @@ if [[ -n "${REGISTRY_REDHAT_USERNAME:-}${REGISTRY_REDHAT_PASSWORD:-}" ]]; then
   [[ -n "${REGISTRY_REDHAT_USERNAME:-}" && -n "${REGISTRY_REDHAT_PASSWORD:-}" ]] || die 'provide both Red Hat registry credentials'
 fi
 build_recipe_sha256="$(sha256sum "$build_recipe" | awk '{print $1}')"
-build_input_sha256="${APME_BUILD_INPUT_SHA256:-$(printf '%s:%s' "$base_image" "$build_recipe_sha256" | sha256sum | awk '{print $1}')}"
+extractor_sha256="$(sha256sum "$script_dir/extract-plugin-pack.py" | awk '{print $1}')"
+build_input_sha256="${APME_BUILD_INPUT_SHA256:-$(printf '%s:%s:%s' "$base_image" "$build_recipe_sha256" "$extractor_sha256" | sha256sum | awk '{print $1}')}"
 build_input_tag="${build_input_sha256:0:12}"
 for tool in podman jq; do
   command -v "$tool" >/dev/null 2>&1 || die "required command unavailable: $tool"
@@ -237,6 +238,7 @@ fi
   --label "io.apme.pack.sha256=$APME_PACK_SHA256" \
   --label "io.apme.base.image=$base_image" \
   --label "io.apme.build.recipe.sha256=$build_recipe_sha256" \
+  --label "io.apme.extractor.sha256=$extractor_sha256" \
   --tag "$image" "$context"
 local_digest="$(podman image inspect --format '{{.Id}}' "$image")"
 # Podman versions can expose .Id as either bare hex or a prefixed digest.

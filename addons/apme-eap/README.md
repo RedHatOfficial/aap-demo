@@ -73,8 +73,21 @@ See [collection authentication](../../docs/collection-authentication.md).
 
 ### Deploy
 
+The supported launcher for this addon is the v1 command:
+
 ```bash
-aap-demo enable apme-eap
+aap-demo-v1 enable apme-eap
+```
+
+The default uses the verified preloaded portal image from Quay and requires
+read-only pull credentials. Set `APME_QUAY_USERNAME` and
+`APME_QUAY_PULL_TOKEN`, or provide `APME_PRELOADED_IMAGE_AUTH_FILE`.
+
+To build the portal image locally from the verified artifact instead, clear the
+image reference before running the launcher:
+
+```bash
+APME_PRELOADED_IMAGE_REF="" aap-demo-v1 enable apme-eap
 ```
 
 This will:
@@ -84,7 +97,7 @@ This will:
 3. Auto-discover your aap-demo environment (KUBECONFIG, cluster domain, AAP route/credentials)
 4. Run **setup-pah** when `~/.aap-demo/galaxy-token` or `pah-config.yml` exists (configures AAP hub remotes)
 5. Generate playbook vars at `~/.aap-demo/apme-eap-vars.yml`
-6. Build the portal image with the verified APME plugins and run the portal Helm chart
+6. Validate the selected portal image, or build it locally with the verified APME plugins, and run the portal Helm chart
 7. Seed APME galaxy servers from AAP (+ external PAH when configured) and enable PAH catalog sync
 
 **Authentication:** The playbooks use KUBECONFIG (client certificate auth) to interact with

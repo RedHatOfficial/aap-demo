@@ -16,7 +16,7 @@
     apme_preloaded_repository: >-
       {{ apme_preloaded_image_ref.split('/', 1)[1] | regex_replace('(:[^/]+|@sha256:[0-9a-f]+)$', '') }}
     apme_preloaded_tag: >-
-      {{ apme_preloaded_image_ref.rsplit(':', 1)[1] if '@' not in apme_preloaded_image_ref else '' }}
+      {{ apme_preloaded_image_ref.rsplit(':', 1)[1] if '@' not in apme_preloaded_image_ref else 'latest' }}
     apme_preloaded_digest: "{{ apme_preloaded_image_ref.split('@')[1] if '@' in apme_preloaded_image_ref else '' }}"
     apme_preloaded_image_validated: false
 
@@ -25,6 +25,8 @@
     argv:
       - "{{ apme_preloaded_image_skopeo_binary }}"
       - inspect
+      - --override-os
+      - linux
       - "docker://{{ apme_preloaded_image_ref }}"
   environment: >-
     {{ {'REGISTRY_AUTH_FILE': apme_preloaded_image_auth_file}
@@ -68,8 +70,6 @@
     {{ {'REGISTRY_AUTH_FILE': apme_preloaded_image_auth_file}
        if apme_preloaded_image_auth_file | length > 0 else {} }}
   changed_when: false
-  when:
-    - apme_preloaded_image_verify | bool
 
 - name: Record successful six-plugin validation
   ansible.builtin.set_fact:

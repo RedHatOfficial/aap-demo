@@ -813,14 +813,37 @@ prompt_github_token() {
 }
 
 prompt_apme_quay_token() {
-  local preloaded_auth username token
+  local preloaded_auth username token image_ref image_registry
 
   apme_preloaded_image_selected_or_default || return 0
+
+  image_ref="${APME_PRELOADED_IMAGE_REF:-}"
+  if [ -z "$image_ref" ] && [ -f "$VARS_FILE" ]; then
+    image_ref=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_ref '""')
+    image_ref="${image_ref#\"}"
+    image_ref="${image_ref%\"}"
+  fi
+  if [ -z "$image_ref" ]; then
+    image_ref=$(sed -n 's/^apme_preloaded_image_ref:[[:space:]]*//p' "${SCRIPT_DIR}/defaults.yml" | head -1 | tr -d '"')
+  fi
+  image_registry="${image_ref%%/*}"
+
+  if [ -n "${APME_PRELOADED_IMAGE_AUTH_FILE:-}" ] && [ -f "$APME_PRELOADED_IMAGE_AUTH_FILE" ]; then
+    info "Using registry credentials from $APME_PRELOADED_IMAGE_AUTH_FILE"
+    export APME_PRELOADED_IMAGE_AUTH_FILE
+    return 0
+  fi
+
+  # Credentials for mirrors are supplied by the caller. Never replace a
+  # caller-selected auth file or ask for a Quay token for another registry.
+  [ "$image_registry" = quay.io ] || return 0
 
   preloaded_auth=$(apme_saved_yaml_value "$VARS_FILE" apme_preloaded_image_auth_file '""')
   preloaded_auth="${preloaded_auth#\"}"
   preloaded_auth="${preloaded_auth%\"}"
   if [ -n "$preloaded_auth" ] && [ -f "$preloaded_auth" ]; then
+    APME_PRELOADED_IMAGE_AUTH_FILE="$preloaded_auth"
+    export APME_PRELOADED_IMAGE_AUTH_FILE
     info "Reusing Quay pull credentials from $preloaded_auth"
     return 0
   fi

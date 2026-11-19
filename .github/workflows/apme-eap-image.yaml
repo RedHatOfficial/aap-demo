@@ -60,6 +60,8 @@ jobs:
       pack_format: ${{ steps.resolve.outputs.pack_format }}
       pack_sha256: ${{ steps.resolve.outputs.pack_sha256 }}
       build_input_sha256: ${{ steps.resolve.outputs.build_input_sha256 }}
+      amd64_base: ${{ steps.resolve.outputs.amd64_base }}
+      arm64_base: ${{ steps.resolve.outputs.arm64_base }}
     steps:
       - name: Require validation before latest
         env:
@@ -82,6 +84,8 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.APME_ARTIFACT_TOKEN }}
+          REGISTRY_REDHAT_USERNAME: ${{ secrets.REGISTRY_REDHAT_USERNAME }}
+          REGISTRY_REDHAT_PASSWORD: ${{ secrets.REGISTRY_REDHAT_PASSWORD }}
           APME_SOURCE_REF: ${{ inputs.source_ref || 'latest' }}
           APME_SOURCE_REPO: ansible/ansible-rhdh-plugins
           APME_PACK_FORMAT: ${{ inputs.pack_format || 'oci' }}
@@ -102,9 +106,18 @@ jobs:
             --archive "$RUNNER_TEMP/resolved/plugin-pack.tar.gz" --dest "$RUNNER_TEMP/verified-plugins"
           pack_hex="${APME_PACK_SHA256#sha256:}"
           recipe_sha256="$(sha256sum addons/apme-eap/Containerfile.ci | awk '{print $1}')"
+          extractor_sha256="$(sha256sum addons/apme-eap/ci/extract-plugin-pack.py | awk '{print $1}')"
+          amd64_base_ref='registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10'
+          arm64_base_ref='quay.io/rhdh-community/rhdh:1.10'
+          amd64_base_digest="$(skopeo inspect --override-os linux --override-arch amd64 \
+            --creds "$REGISTRY_REDHAT_USERNAME:$REGISTRY_REDHAT_PASSWORD" \
+            "docker://$amd64_base_ref" | jq -er '.Digest | strings | select(test("^sha256:[0-9a-f]{64}$"))')"
+          arm64_base_digest="$(skopeo inspect --override-os linux --override-arch arm64 \
+            "docker://$arm64_base_ref" | jq -er '.Digest | strings | select(test("^sha256:[0-9a-f]{64}$"))')"
+          amd64_base="${amd64_base_ref%@*}@$amd64_base_digest"
+          arm64_base="${arm64_base_ref%@*}@$arm64_base_digest"
           build_input_sha256="$(printf '%s:%s:%s' \
-            'amd64=registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10' \
-            'arm64=quay.io/rhdh-community/rhdh:1.10' "$recipe_sha256" \
+            "amd64=$amd64_base" "arm64=$arm64_base" "$recipe_sha256:$extractor_sha256" \
             | sha256sum | awk '{print $1}')"
           {
             printf 'immutable_tag=apme-%s-%s-%s\n' "$APME_SOURCE_SHA" "${pack_hex:0:12}" "${build_input_sha256:0:12}"
@@ -112,6 +125,7 @@ jobs:
             printf 'run_id=%s\nartifact_id=%s\n' "$APME_RUN_ID" "$APME_ARTIFACT_ID"
             printf 'pack_format=%s\npack_sha256=%s\n' "$APME_PACK_FORMAT" "$APME_PACK_SHA256"
             printf 'build_input_sha256=%s\n' "$build_input_sha256"
+            printf 'amd64_base=%s\narm64_base=%s\n' "$amd64_base" "$arm64_base"
           } >> "$GITHUB_OUTPUT"
       - name: Retain verified pack for this run
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -152,7 +166,7 @@ jobs:
       - name: Build and publish architecture image
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
-          BASE_IMAGE: ${{ matrix.base_image }}
+          BASE_IMAGE: ${{ matrix.architecture == 'amd64' && needs.resolve.outputs.amd64_base || needs.resolve.outputs.arm64_base }}
           APME_PACK_SHA256: ${{ needs.resolve.outputs.pack_sha256 }}
           APME_BUILD_INPUT_SHA256: ${{ needs.resolve.outputs.build_input_sha256 }}
           QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}

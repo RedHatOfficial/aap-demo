@@ -29,26 +29,56 @@
   ansible.builtin.set_fact:
     apme_image_build_recipe_sha256: >-
       {{ lookup('ansible.builtin.file', collection_root ~ '/Containerfile.ci') | hash('sha256') }}
+    apme_image_build_extractor_sha256: >-
+      {{ lookup('ansible.builtin.file', collection_root ~ '/ci/extract-plugin-pack.py') | hash('sha256') }}
     apme_image_build_base: >-
       {{ apme_image_build_base_arm if ansible_architecture in ['aarch64', 'arm64'] else apme_image_build_base_x86 }}
+
+- name: Resolve the selected base image digest
+  ansible.builtin.command:
+    argv:
+      - "{{ apme_image_build_skopeo_binary }}"
+      - inspect
+      - --override-os
+      - linux
+      - --override-arch
+      - "{{ 'arm64' if ansible_architecture in ['aarch64', 'arm64'] else 'amd64' }}"
+      - "docker://{{ apme_image_build_base }}"
+  register: apme_image_build_base_inspect
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Require a resolvable immutable base image
+  ansible.builtin.assert:
+    that:
+      - apme_image_build_base_inspect.rc == 0
+      - (apme_image_build_base_inspect.stdout | from_json).Digest is match('^sha256:[0-9a-f]{64}$')
+    fail_msg: "Cannot resolve the Linux base image digest for {{ apme_image_build_base }}"
+  when: not ansible_check_mode
+
+- name: Bind the build to the resolved base image digest
+  ansible.builtin.set_fact:
+    apme_image_build_base: >-
+      {{ apme_image_build_base.split('@')[0] }}@{{ (apme_image_build_base_inspect.stdout | from_json).Digest }}
+  when: not ansible_check_mode
 
 - name: Resolve local build references with all build inputs
   ansible.builtin.set_fact:
     apme_image_build_input_sha256: >-
-      {{ (apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256') }}
+      {{ (apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256 ~ ':' ~ apme_image_build_extractor_sha256) | hash('sha256') }}
     apme_image_build_tag: >-
       {{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
-         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256'))[:12] }}
+         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256 ~ ':' ~ apme_image_build_extractor_sha256) | hash('sha256'))[:12] }}
     apme_image_build_target: >-
       {{ apme_image_build_repository }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
-         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256'))[:12] }}
+         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256 ~ ':' ~ apme_image_build_extractor_sha256) | hash('sha256'))[:12] }}
     apme_image_build_push_target: >-
       {{ (apme_image_build_push_registry | default(oci_registry, true) | regex_replace('/$', ''))
          }}/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
-         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256) | hash('sha256'))[:12] }}
+         ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256 ~ ':' ~ apme_image_build_extractor_sha256) | hash('sha256'))[:12] }}
     apme_image_build_local: >-
       localhost/{{ apme_image_build_name }}:{{ plugin_sha }}-{{ apme_image_build_pack_tag }}-{{
-      ((apme_image_build_base ~ '\n' ~ apme_image_build_recipe_sha256 ~ '\n') | hash('sha256'))[:12] }}
+      ((apme_image_build_base ~ ':' ~ apme_image_build_recipe_sha256 ~ ':' ~ apme_image_build_extractor_sha256) | hash('sha256'))[:12] }}
     apme_image_build_digest: ""
 
 - name: Normalize the local build reference with all build inputs

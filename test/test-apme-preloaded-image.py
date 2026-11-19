@@ -95,7 +95,8 @@ class DeploymentImageTests(unittest.TestCase):
     @staticmethod
     def build_input_tag(base="registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10"):
         recipe_sha = hashlib.sha256((ADDON / "Containerfile.ci").read_text().rstrip("\n").encode()).hexdigest()
-        return hashlib.sha256(f"{base}:{recipe_sha}".encode()).hexdigest()[:12]
+        extractor_sha = hashlib.sha256((ADDON / "ci/extract-plugin-pack.py").read_bytes()).hexdigest()
+        return hashlib.sha256(f"{base}@{DIGEST}:{recipe_sha}:{extractor_sha}".encode()).hexdigest()[:12]
 
     def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0,
                   inspect_exit=0, build_exit=0, installed_plugins=None, pushed_digest=PUSH_DIGEST,
@@ -205,7 +206,7 @@ class DeploymentImageTests(unittest.TestCase):
                 "apme_preloaded_registry == 'registry.example.test:5000'",
                 "apme_preloaded_repository == 'team/apme'",
                 "apme_preloaded_digest == '" + DIGEST + "'",
-                "apme_preloaded_tag == ''",
+                "apme_preloaded_tag == 'latest'",
                 "not apme_preloaded_image_validated",
             ]}}],
         )
@@ -318,8 +319,8 @@ class DeploymentImageTests(unittest.TestCase):
         self.assertEqual(image["repository"], "apme/rhdh-apme-preloaded")
         self.assertEqual(image["digest"], DIGEST)
         self.assertEqual(image["tag"], "8593383-" + DIGEST[7:19] + "-" + self.build_input_tag())
-        self.assertEqual([c[0] for c in commands], ["inspect", "run"])
-        validation = commands[1]
+        self.assertEqual([c[0] for c in commands], ["inspect", "inspect", "run"])
+        validation = commands[2]
         self.assertIn("registry.example.test/apme/rhdh-apme-preloaded@" + DIGEST, validation)
         self.assertIn("--pull=always", validation)
         self.assertIn("--tls-verify=false", validation)
@@ -353,7 +354,7 @@ class DeploymentImageTests(unittest.TestCase):
                 self.assertEqual(rc, 0, output)
                 self.assertIsNotNone(values)
                 self.assertEqual(values["redhat-developer-hub"]["upstream"]["backstage"]["image"]["digest"], PUSH_DIGEST)
-                self.assertEqual([c[0] for c in commands], ["inspect", "run", "build", "push", "rmi"])
+                self.assertEqual([c[0] for c in commands], ["inspect", "inspect", "run", "build", "push", "rmi"])
 
     def test_malformed_cached_or_pushed_digest_blocks_rendering(self):
         for variables, kwargs in (
@@ -375,7 +376,7 @@ class DeploymentImageTests(unittest.TestCase):
         )
         self.assertNotEqual(rc, 0, output)
         self.assertIsNone(values)
-        self.assertEqual([c[0] for c in commands], ["inspect", "run", "build"])
+        self.assertEqual([c[0] for c in commands], ["inspect", "inspect", "run", "build"])
         self.assertNotIn("Copy portal Helm values template", output)
 
     def test_missing_cached_image_builds_without_running_cache_validation(self):
@@ -383,7 +384,7 @@ class DeploymentImageTests(unittest.TestCase):
             self.local_image_variables(), ["apme_image_build"], inspect_exit=1,
         )
         self.assertEqual(rc, 0, output)
-        self.assertEqual([c[0] for c in commands], ["inspect", "build", "push", "rmi"])
+        self.assertEqual([c[0] for c in commands], ["inspect", "inspect", "build", "push", "rmi"])
 
     def test_local_build_check_mode_never_inspects_validates_builds_or_pushes(self):
         for force in (False, True):

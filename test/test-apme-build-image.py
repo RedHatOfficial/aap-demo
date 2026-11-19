@@ -30,7 +30,8 @@ class BuildImageTests(unittest.TestCase):
     @staticmethod
     def build_input_tag(base="registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10"):
         recipe_sha = hashlib.sha256((ROOT / "addons/apme-eap/Containerfile.ci").read_bytes()).hexdigest()
-        return hashlib.sha256(f"{base}:{recipe_sha}".encode()).hexdigest()[:12]
+        extractor_sha = hashlib.sha256((ROOT / "addons/apme-eap/ci/extract-plugin-pack.py").read_bytes()).hexdigest()
+        return hashlib.sha256(f"{base}:{recipe_sha}:{extractor_sha}".encode()).hexdigest()[:12]
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="apme build test ")
