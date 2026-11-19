@@ -48,6 +48,13 @@
     regexp: "repository: {{ rhdh_image_repository }}\n        tag: \"1\\.9\""
     replace: "repository: {{ rhdh_image_repository }}\n        tag: \"{{ rhdh_image_tag }}\""
 
+- name: Configure the Red Hat registry pull secret
+  ansible.builtin.replace:
+    path: "{{ apme_portal_helm_values_path }}"
+    regexp: '(?m)^([ \\t]*)pullSecrets: \[\]$'
+    replace: '\1pullSecrets:\n\1  - name: {{ apme_image_pull_secret }}'
+  when: apme_image_pull_secret | default('') | length > 0
+
 - name: Substitute portal Helm value placeholders  # noqa: var-naming[no-role-prefix]
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
@@ -224,7 +231,7 @@
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(      - emptyDir: \{\}\n        name: apme-data\n)      hostAliases: \[\]'
-    replace: '\1      hostAliases:\n      - ip: "{{ microshift_host_alias_ip }}"\n        hostnames:\n        - "{{ aap_hostname }}"\n        - "registry.{{ openshift_cluster_domain }}"'  # yamllint disable-line rule:line-length
+    replace: '\1      hostAliases:\n      - ip: "{{ microshift_host_alias_ip }}"\n        hostnames:\n        - "{{ aap_hostname }}"\n        - "{{ oci_registry.split("/")[0] }}"'  # yamllint disable-line rule:line-length
   when:
     - is_nip_io_domain
     - microshift_host_alias_ip is defined and microshift_host_alias_ip | length > 0

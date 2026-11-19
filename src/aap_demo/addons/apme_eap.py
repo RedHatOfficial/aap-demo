@@ -19,6 +19,7 @@ import aap_demo
 from aap_demo.addons.base import AddonKind
 from aap_demo.addons.common import kube
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
+from aap_demo.cluster import pull_secret
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
@@ -240,7 +241,11 @@ def _discover_vars(ctx: AppContext) -> Dict[str, Any]:
         "aap_host_url": _portal_host_url(aap_route, domain),
         "aap_username": "admin",
         "aap_password": password,
-        "oci_registry": f"registry.{domain}/apme",
+        "oci_registry": (
+            str(ctx.env.get("APME_EAP_REGISTRY_HOST") or "").strip()
+            or f"registry-aap-demo-registry.{domain}"
+        )
+        + "/apme",
         "oci_registry_internal": "registry.aap-demo-registry.svc.cluster.local:5000/apme",
     }
 
@@ -370,8 +375,25 @@ class ApmeEapAddon:
         _ensure_registry(ctx, root)
         namespace_existed = kube.read_object(ctx, "namespace", NAMESPACE) is not None
         _claim_namespace(ctx)
+        if not namespace_existed:
+            kube.apply_or_raise(
+                ctx,
+                json.dumps(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "Namespace",
+                        "metadata": {"name": NAMESPACE},
+                    }
+                ),
+                message="could not create the APME namespace",
+            )
         ansible_python = _ensure_venv(ctx, root)
-        vars_path = _write_run_vars(ctx, _discover_vars(ctx))
+        registry_pull_secret = pull_secret.ensure(ctx, NAMESPACE)
+        generated_vars = _discover_vars(ctx)
+        generated_vars["apme_image_pull_secret"] = (
+            pull_secret.SECRET_NAME if registry_pull_secret is not None else ""
+        )
+        vars_path = _write_run_vars(ctx, generated_vars)
         env = ctx.kube_env()
         env["K8S_AUTH_KUBECONFIG"] = str(ctx.kubeconfig)
         # Ansible defaults to ~/.ansible/tmp, which may not be writable in a

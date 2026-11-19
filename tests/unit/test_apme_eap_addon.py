@@ -44,6 +44,14 @@ def _namespace_missing(app_ctx) -> None:
     app_ctx.runner.fail(["kubectl", "get", "namespace", "apme"], stderr="NotFound")
 
 
+def _registry_pull_secret_ready(app_ctx) -> None:
+    app_ctx.runner.ok(["kubectl", "apply", "-f", "-"])
+    app_ctx.runner.ok(["kubectl", "delete", "secret", "redhat-operators-pull-secret", "-n", "apme"])
+    app_ctx.runner.ok(["kubectl", "create", "secret", "generic"])
+    app_ctx.runner.ok(["kubectl", "get", "serviceaccount", "default", "-n", "apme"], stdout="")
+    app_ctx.runner.ok(["kubectl", "patch", "serviceaccount", "default", "-n", "apme"])
+
+
 def _registry_ready(app_ctx) -> None:
     app_ctx.runner.ok(["kubectl", "get", "deployment", "registry"])
     app_ctx.runner.ok(["kubectl", "wait", "--for=condition=available", "deployment/registry"])
@@ -88,6 +96,7 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
     _cached_venv(app_ctx)
     _registry_ready(app_ctx)
     _namespace_missing(app_ctx)
+    _registry_pull_secret_ready(app_ctx)
     app_ctx.runner.ok(["~ansible-playbook$"], stdout="completed\n")
     app_ctx.runner.ok(["kubectl", "label", "namespace", "apme"])
 
@@ -118,6 +127,7 @@ def test_failed_enable_does_not_record_state(app_ctx, monkeypatch) -> None:
     _cached_venv(app_ctx)
     _registry_ready(app_ctx)
     _namespace_missing(app_ctx)
+    _registry_pull_secret_ready(app_ctx)
     app_ctx.runner.fail(["~ansible-playbook$"], stderr="playbook failed")
     app_ctx.runner.ok(["kubectl", "delete", "namespace", "apme"])
 
@@ -136,6 +146,7 @@ def test_failed_first_enable_removes_partial_namespace(app_ctx, monkeypatch) -> 
     _cached_venv(app_ctx)
     _registry_ready(app_ctx)
     _namespace_missing(app_ctx)
+    _registry_pull_secret_ready(app_ctx)
     app_ctx.runner.fail(["~ansible-playbook$"], stderr="playbook failed")
     app_ctx.runner.ok(["kubectl", "delete", "namespace", "apme"])
 
@@ -209,6 +220,7 @@ def test_crc_portal_url_and_custom_aap_secret_are_discovered(app_ctx) -> None:
     assert values["aap_host_url"] == "http://aap.apps.crc.testing"
     assert values["aap_password"] == "secret"  # pragma: allowlist secret
     assert values["openshift_validate_certs"] is True
+    assert values["oci_registry"] == "registry-aap-demo-registry.crc.testing/apme"
 
 
 def test_cluster_domain_falls_back_to_aap_route_on_microshift(app_ctx) -> None:
@@ -225,6 +237,7 @@ def test_cluster_domain_falls_back_to_aap_route_on_microshift(app_ctx) -> None:
     values = apme_eap._discover_vars(app_ctx)
 
     assert values["openshift_cluster_domain"] == "apps.example.test"
+    assert values["oci_registry"] == "registry-aap-demo-registry.apps.example.test/apme"
 
 
 def test_user_overrides_survive_and_run_vars_are_ephemeral(app_ctx) -> None:

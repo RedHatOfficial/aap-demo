@@ -239,7 +239,7 @@ The publisher follows those redirects automatically.
 The archive is stored under the repository path expected by the portal's runtime installer:
 
 ```text
-registry.apps.127.0.0.1.nip.io/apme/apme-prototype-plugins:<version>
+registry-aap-demo-registry.<cluster-domain>/apme/apme-prototype-plugins:<version>
 ```
 
 This path is part of the deployment contract. If the archive is pushed to only `apme:<version>`,
