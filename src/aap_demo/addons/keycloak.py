@@ -328,6 +328,19 @@ def _manifest(credentials: Dict[str, str], host: str, aap_redirect: str, ao_redi
                                     {"name": "KC_HOSTNAME", "value": f"https://{host}"},
                                 ],
                                 "ports": [{"name": "http", "containerPort": 8080}],
+                                # Deployment readiness must include the imported realm. The
+                                # management health endpoint can be ready while discovery still
+                                # returns 404 during Keycloak startup.
+                                "readinessProbe": {
+                                    "httpGet": {
+                                        "path": f"/realms/{REALM}/.well-known/openid-configuration",
+                                        "port": "http",
+                                    },
+                                    "initialDelaySeconds": 10,
+                                    "periodSeconds": 5,
+                                    "timeoutSeconds": 5,
+                                    "failureThreshold": 24,
+                                },
                                 "securityContext": {
                                     "allowPrivilegeEscalation": False,
                                     "capabilities": {"drop": ["ALL"]},
