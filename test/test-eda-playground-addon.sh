@@ -27,6 +27,12 @@ for file in README.md deploy.sh namespace.yaml configmap.yaml service.yaml deplo
 done
 
 README="$ADDON_DIR/README.md"
+DEPLOY="$ADDON_DIR/deploy.sh"
+grep -Fq 'EDA_PLAYGROUND_IMAGE:-}' "$DEPLOY" || fail "deployment must require an explicit image"
+grep -Fq 'EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE' "$DEPLOY" || fail "deployment must make unpinned images explicit"
+grep -Fq -- '--insecure' "$DEPLOY" || fail "deployment must make insecure TLS explicit"
+grep -Fq 'existing OAuth application is not owned' "$DEPLOY" \
+  || fail "deployment must reject unowned OAuth applications"
 for required in \
   'aap-demo enable eda-playground' \
   'aap-demo disable eda-playground' \
@@ -130,6 +136,7 @@ printf '%s\n' 'fixture-kubeconfig' >"$MOCK_BIN/live/kubeconfig"
 set +e
 LIVE_LOG="$MOCK_BIN/live/failure-kubectl" LIVE_FAIL_LOG="$MOCK_BIN/live/failure-cli" \
   AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  EDA_PLAYGROUND_IMAGE='ghcr.io/example/eda-playground@sha256:fixture' \
   KUBECONFIG="$MOCK_BIN/live/kubeconfig" PATH="$MOCK_BIN/live:$PATH" \
   bash "$LIVE" >"$MOCK_BIN/live/failure-output" 2>&1
 LIVE_FAILURE_STATUS=$?
@@ -155,6 +162,7 @@ MOCK_LIVE_KUBECTL
 chmod +x "$MOCK_BIN/live/aap-demo" "$MOCK_BIN/live/kubectl"
 printf '\n' | LIVE_LOG="$MOCK_BIN/live/commands" \
   AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  EDA_PLAYGROUND_IMAGE='ghcr.io/example/eda-playground@sha256:fixture' \
   KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
   PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/output" 2>&1 \
   || fail "enabled live harness failed with controlled commands"
@@ -164,6 +172,7 @@ grep -Fq 'Open https://eda.example.test and complete AAP Gateway OAuth login' "$
   || fail "default live run must wait for browser verification"
 LIVE_LOG="$MOCK_BIN/live/noninteractive-commands" \
   AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  EDA_PLAYGROUND_IMAGE='ghcr.io/example/eda-playground@sha256:fixture' \
   AAP_DEMO_LIVE_NONINTERACTIVE=true KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
   PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/noninteractive-output" 2>&1 \
   || fail "noninteractive live override failed with controlled commands"
@@ -171,6 +180,7 @@ grep -Fq 'Browser OAuth verification remains manual and is unverified' \
   "$MOCK_BIN/live/noninteractive-output" || fail "noninteractive live run did not report unverified OAuth"
 printf '\n' | LIVE_LOG="$MOCK_BIN/live/interactive-commands" \
   AAP_DEMO_CLI="$MOCK_BIN/live/aap-demo" AAP_DEMO_RUN_LIVE_TESTS=true \
+  EDA_PLAYGROUND_IMAGE='ghcr.io/example/eda-playground@sha256:fixture' \
   KUBECONFIG="$MOCK_BIN/live/kubeconfig" \
   PATH="$MOCK_BIN/live:$PATH" bash "$LIVE" >"$MOCK_BIN/live/interactive-output" 2>&1 \
   || fail "interactive live checkpoint failed with controlled commands"
@@ -182,6 +192,7 @@ sed "s|$MOCK_BIN/live/kubeconfig|LIVE_KUBECONFIG|g" "$MOCK_BIN/live/commands" >"
 cat >"$MOCK_BIN/live/expected" <<'EXPECTED_LIVE'
 kubectl config current-context
 kubectl config view --minify -o jsonpath={.clusters[0].cluster.server}
+kubectl get namespace eda-playground --ignore-not-found -o name
 cli --kubeconfig LIVE_KUBECONFIG enable eda-playground
 kubectl wait --for=condition=available deployment/eda-playground -n eda-playground --timeout=180s
 kubectl get route eda-playground -n eda-playground -o jsonpath={.spec.host}

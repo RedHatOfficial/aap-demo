@@ -44,6 +44,45 @@ def test_enable_uses_python_state_and_does_not_run_product_demo_wiring(
     assert len(app_ctx.runner.calls) == 1
 
 
+def test_enable_loads_safe_values_from_legacy_config(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "aap_demo.addons.shell.shutil.which",
+        lambda name: f"/usr/bin/{name}",
+    )
+    app_ctx.paths.legacy_config_file.parent.mkdir(parents=True, exist_ok=True)
+    app_ctx.paths.legacy_config_file.write_text(
+        "EDA_PLAYGROUND_IMAGE=ghcr.io/example/eda@sha256:abc\n"
+        "EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true\n"
+        "EDA_PLAYGROUND_TOKEN=do-not-pass\n",
+        encoding="utf-8",
+    )
+    app_ctx.runner.ok(["bash", _deploy()], stdout="installed\n")
+
+    get("eda-playground").enable(app_ctx, argparse.Namespace(addon="eda-playground"))
+
+    env = app_ctx.runner.calls[0].env
+    assert env["EDA_PLAYGROUND_IMAGE"] == "ghcr.io/example/eda@sha256:abc"
+    assert env["EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE"] == "true"
+    assert "EDA_PLAYGROUND_TOKEN" not in env
+
+
+def test_process_environment_overrides_legacy_config(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "aap_demo.addons.shell.shutil.which",
+        lambda name: f"/usr/bin/{name}",
+    )
+    app_ctx.paths.legacy_config_file.parent.mkdir(parents=True, exist_ok=True)
+    app_ctx.paths.legacy_config_file.write_text(
+        "EDA_PLAYGROUND_IMAGE=from-file\n", encoding="utf-8"
+    )
+    app_ctx.env = {"EDA_PLAYGROUND_IMAGE": "from-environment"}
+    app_ctx.runner.ok(["bash", _deploy()], stdout="installed\n")
+
+    get("eda-playground").enable(app_ctx, argparse.Namespace(addon="eda-playground"))
+
+    assert app_ctx.runner.calls[0].env["EDA_PLAYGROUND_IMAGE"] == "from-environment"
+
+
 def test_eda_playground_scripts_are_bundled() -> None:
     root = Path(__file__).resolve().parents[2]
     assert (root / "addons/eda-playground/deploy.sh").is_file()

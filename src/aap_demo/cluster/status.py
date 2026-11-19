@@ -35,6 +35,7 @@ AVAILABLE_ADDONS = (
     "local-cache",
     "product-demos",
     "product-demo-satellite",
+    "eda-playground",
 )
 
 #: Ports the secret-name fallback chain in ``cmd_status``.
