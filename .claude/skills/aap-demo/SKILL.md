@@ -94,6 +94,25 @@ GA install via checked-in GitOps manifests (`aap-demo enable ao`):
 Before any command, run `aap-demo status` to understand current state. The standard
 lifecycle is: `create` -> `deploy` -> use -> `idle`/`clean` -> `destroy`.
 
+For CRC/MicroShift lifecycle operations, use the repository command path (`aap-demo create`
+or `aap-demo start`) rather than invoking `crc start` directly. The command path keeps CRC's
+vfkit process in a persistent session and refreshes the guest-issued kubeconfig. If a raw CRC
+operation is unavoidable, run it from a persistent `tmux`, `screen`, or equivalent daemonized
+session; never let a transient agent command runner own `vfkit` and then exit.
+
+After `aap-demo create` or `aap-demo start`, validate with:
+
+```bash
+export KUBECONFIG="$HOME/.aap-demo/kubeconfig.microshift"
+kubectl get --raw=/readyz
+kubectl get nodes
+```
+
+If CRC says `Running` but Kubernetes reports an unknown authority for
+`kube-apiserver-external-signer`, refresh the guest kubeconfig through the `aap-demo` command
+path before considering a VM reset. Do not use `$HOME/.crc/machines/crc/kubeconfig` as the
+authoritative kubeconfig after a reset or MicroShift restart.
+
 - Deploy auto-creates the cluster if needed — no need to run create first
 - After deploy completes, run `aap-demo status` to show routes and credentials
 - **Destructive operations** (clean, destroy, redeploy-all): always confirm with the user first
@@ -105,7 +124,8 @@ Before suggesting commands, check the user's environment:
 
 1. Read `~/.aap-demo/config` to determine INFRA type (crc, minc, lab)
 2. Check `KUBECONFIG`:
-   - CRC: `~/.crc/machines/crc/kubeconfig`
+   - CRC/MicroShift through `aap-demo`: `~/.aap-demo/kubeconfig.microshift`
+   - Raw CRC diagnostics only: `~/.crc/machines/crc/kubeconfig` (may be stale)
    - MINC: `~/.aap-demo/kubeconfig.microshift`
    - Lab: user's own kubeconfig
 3. Run `aap-demo status` to see running deployments, namespaces, and pod counts

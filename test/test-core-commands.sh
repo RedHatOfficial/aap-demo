@@ -175,7 +175,7 @@ fi
 
 # Test 4: start command - verify it calls crc start
 echo "Test 4: start command logic"
-if output=$(QUIET=true "$AAP_DEMO_SH" start 2>&1); then
+if output=$(QUIET=true AAP_DEMO_DISABLE_PERSISTENT_CRC_START=true "$AAP_DEMO_SH" start 2>&1); then
   if echo "$output" | grep -q "MOCK: crc start"; then
     _pass "start_calls_crc"
   else
@@ -183,6 +183,16 @@ if output=$(QUIET=true "$AAP_DEMO_SH" start 2>&1); then
   fi
 else
   _fail "start_calls_crc - command failed"
+fi
+
+# Test 4a: start command keeps vfkit outside transient agent sessions
+echo "Test 4a: start command uses a persistent CRC startup session"
+if grep -q '_crc_start_persistent' "$AAP_DEMO_SH" \
+  && grep -q 'tmux new-session' "$AAP_DEMO_SH" \
+  && grep -q 'tmux kill-session' "$AAP_DEMO_SH"; then
+  _pass "start_uses_persistent_crc_session"
+else
+  _fail "start_uses_persistent_crc_session - CRC startup must survive agent session cleanup"
 fi
 
 # Test 5: destroy command - verify confirmation prompt in interactive mode
