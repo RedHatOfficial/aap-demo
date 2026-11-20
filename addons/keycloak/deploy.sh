@@ -8,7 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-aap-demo-keycloak}"
 KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244}"
 KEYCLOAK_REALM="${KEYCLOAK_REALM:-aap-lab}"
-STATE_DIR="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+AAP_DEMO_STATE_ROOT="${AAP_DEMO_STATE_DIR:-${AAP_DEMO_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/aap-demo}}"
+STATE_DIR="${KEYCLOAK_STATE_DIR:-${AAP_DEMO_STATE_ROOT}/addons/keycloak}"
+# Keep credentials created by the v1 addon usable when the v2 state directory
+# has not been created yet. Once native state exists, it is authoritative.
+if [ -z "${KEYCLOAK_STATE_DIR:-}" ] && [ ! -d "$STATE_DIR" ] && [ -d "${HOME}/.aap-demo/keycloak" ]; then
+  STATE_DIR="${HOME}/.aap-demo/keycloak"
+fi
 ACTION="${1:-deploy}"
 
 require_cmd() {
@@ -139,7 +145,17 @@ KEYCLOAK_INSECURE_TLS="${KEYCLOAK_INSECURE_TLS:-false}"
 case "$KEYCLOAK_INSECURE_TLS" in
   true) CURL_TLS_ARGS=(-k) ;;
   false)
-    KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-${HOME}/.aap-demo/crc-ingress-ca.crt}"
+    KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-}"
+    if [ -z "$KEYCLOAK_CA_FILE" ]; then
+      for _candidate_ca in \
+        "${AAP_DEMO_STATE_ROOT}/certs/crc-ingress-ca.crt" \
+        "${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"; do
+        if [ -s "$_candidate_ca" ]; then
+          KEYCLOAK_CA_FILE="$_candidate_ca"
+          break
+        fi
+      done
+    fi
     CURL_TLS_ARGS=()
     [ -s "$KEYCLOAK_CA_FILE" ] && CURL_TLS_ARGS+=(--cacert "$KEYCLOAK_CA_FILE")
     ;;
@@ -152,11 +168,15 @@ curl_local() { curl "${CURL_TLS_ARGS[@]}" "$@"; }
 AAP_REDIRECT_OVERRIDE="${KEYCLOAK_AAP_REDIRECT_URI:-}"
 KEYCLOAK_AAP_REDIRECT_URI="${KEYCLOAK_AAP_REDIRECT_URI:-https://${AAP_HOST}/}"
 KEYCLOAK_AO_REDIRECT_URI="${KEYCLOAK_AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback}"
-case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in
-  *\**)
-    echo "ERROR: Keycloak redirect URIs must be exact URLs, not wildcards" >&2
-    exit 1
-    ;;
+case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in *\** | *\?* | *\#* | *@*)
+  echo "ERROR: Keycloak redirect URIs must not contain wildcards, queries, fragments, or credentials" >&2
+  exit 1
+  ;;
+esac
+case "$KEYCLOAK_AAP_REDIRECT_URI:$KEYCLOAK_AO_REDIRECT_URI" in https://*/*:https://*/*) ;; *)
+  echo "ERROR: Keycloak redirect URIs must be absolute HTTPS URLs" >&2
+  exit 1
+  ;;
 esac
 printf '%s' "$KEYCLOAK_AO_REDIRECT_URI" >"$STATE_DIR/ao-redirect-uri"
 chmod 600 "$STATE_DIR/ao-redirect-uri"
@@ -335,6 +355,7 @@ fi
 sed \
   -e "s|__KEYCLOAK_IMAGE__|${KEYCLOAK_IMAGE}|g" \
   -e "s|__KEYCLOAK_HOST__|${KEYCLOAK_HOST}|g" \
+  -e "s|__KEYCLOAK_REALM__|${KEYCLOAK_REALM}|g" \
   -e "s|__REALM_REVISION__|${realm_revision}|g" \
   -e "s|__ADMIN_REVISION__|${admin_revision}|g" \
   -e "s|aap-demo-keycloak|${KEYCLOAK_NAMESPACE}|g" \

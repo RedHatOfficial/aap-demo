@@ -89,7 +89,8 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [045](045-monitoring-addon.md) | AAP-Focused Monitoring Addon | Proposed |
 | [046](046-native-v2-addon-migrations.md) | Native V2 Migration of Non-AO Bash Addons | Proposed |
 | [043](043-ao-postgres-statefulset.md) | One PostgreSQL StatefulSet for Automation Orchestrator | Accepted |
-| [045](045-ao-on-python-command.md) | Automation Orchestrator on the Python Command | Proposed |
+| [045](045-ao-on-python-command.md) | Automation Orchestrator on the Python Command | Accepted |
+| [046](046-ao-host-ollama.md) | AO Uses the Host's Ollama | Proposed |
 
 ## Creating a New ADR
 
