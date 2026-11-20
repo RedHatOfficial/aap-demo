@@ -6,7 +6,13 @@ set -euo pipefail
 
 KEYCLOAK_NAMESPACE="${KEYCLOAK_NAMESPACE:-aap-demo-keycloak}"
 KEYCLOAK_REALM="${KEYCLOAK_REALM:-aap-lab}"
-STATE_DIR="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+AAP_DEMO_STATE_ROOT="${AAP_DEMO_STATE_DIR:-${AAP_DEMO_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/aap-demo}}"
+STATE_DIR="${KEYCLOAK_STATE_DIR:-${AAP_DEMO_STATE_ROOT}/addons/keycloak}"
+# Keep credentials created by the v1 addon usable when the v2 state directory
+# has not been created yet. Once native state exists, it is authoritative.
+if [ -z "${KEYCLOAK_STATE_DIR:-}" ] && [ ! -d "$STATE_DIR" ] && [ -d "${HOME}/.aap-demo/keycloak" ]; then
+  STATE_DIR="${HOME}/.aap-demo/keycloak"
+fi
 NAMESPACE="${NAMESPACE:-aap-operator}"
 TARGET="all"
 APPLY=false
@@ -83,8 +89,8 @@ KEYCLOAK_INSECURE_TLS="${KEYCLOAK_INSECURE_TLS:-false}"
 KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-}"
 if [ -z "$KEYCLOAK_CA_FILE" ]; then
   for _candidate_ca in \
-    "${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt" \
-    "${HOME}/.local/state/aap-demo/certs/crc-ingress-ca.crt"; do
+    "${AAP_DEMO_STATE_ROOT}/certs/crc-ingress-ca.crt" \
+    "${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"; do
     if [ -s "$_candidate_ca" ]; then
       KEYCLOAK_CA_FILE="$_candidate_ca"
       break
@@ -184,6 +190,16 @@ if [ -z "$AO_REDIRECT_URI" ] && [ -s "$STATE_DIR/ao-redirect-uri" ]; then
   AO_REDIRECT_URI="$(read_secret "$STATE_DIR/ao-redirect-uri")"
 fi
 AO_REDIRECT_URI="${AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback}"
+case "$AO_REDIRECT_URI" in https://*/*) ;; *)
+  echo "ERROR: AO redirect URI must be an absolute HTTPS URL" >&2
+  exit 1
+  ;;
+esac
+case "$AO_REDIRECT_URI" in *\** | *\?* | *\#* | *@*)
+  echo "ERROR: AO redirect URI must not contain wildcards, queries, fragments, or credentials" >&2
+  exit 1
+  ;;
+esac
 
 AAP_PAYLOAD="$(jq -nc \
   --arg name "$AAP_NAME" --arg issuer "$ISSUER" --arg key "$AAP_SECRET" --arg public_key "$PUBLIC_KEY" \

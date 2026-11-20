@@ -28,6 +28,10 @@ The [project home page](../README.md) is the short start. These pages are the re
 - [What aap-demo is](concepts/what-aap-demo-is.md) - A local demo tool, and what the 2.0.0 release candidate is.
 - [Two ways to run it](concepts/two-ways-to-run.md) - The new command and the older one, and why both still matter.
 
+## Architecture decisions
+
+- [Architecture Decision Records](adr/README.md) - Accepted and proposed architecture decisions for the project.
+
 ## Reference
 
 - [Changelog](CHANGELOG.md) - Notable changes to add-ons and documentation.

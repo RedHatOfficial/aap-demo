@@ -87,8 +87,9 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [042](042-eda-playground-on-python-command.md) | EDA Playground on the Python Command | Accepted |
 | [038](038-fleet-cloud-image-download.md) | Fleet Cloud Image Download | Accepted |
 | [043](043-ao-postgres-statefulset.md) | One PostgreSQL StatefulSet for Automation Orchestrator | Accepted |
-| [045](045-ao-on-python-command.md) | Automation Orchestrator on the Python Command | Proposed |
+| [045](045-ao-on-python-command.md) | Automation Orchestrator on the Python Command | Accepted |
 | [046](046-python-cli-windows-default.md) | Python CLI as the Windows Default | Accepted |
+| [046](046-ao-host-ollama.md) | AO Uses the Host's Ollama | Proposed |
 
 ## Creating a New ADR
 
