@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import (
     Any,
     Callable,
@@ -79,10 +80,12 @@ class CommandRunner(Protocol):
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -106,10 +109,12 @@ class SubprocessRunner:
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -123,9 +128,11 @@ class SubprocessRunner:
             result = self._run_captured(
                 args,
                 input=input,
+                stdin_path=stdin_path,
                 timeout=timeout,
                 env=env,
                 capture=capture,
+                stdout_path=stdout_path,
                 cwd=cwd,
                 detach=detach,
             )
@@ -138,9 +145,11 @@ class SubprocessRunner:
         args: List[str],
         *,
         input: Optional[str],
+        stdin_path: Optional[Path],
         timeout: Optional[float],
         env: Optional[Mapping[str, str]],
         capture: bool,
+        stdout_path: Optional[Path],
         cwd: Optional[str],
         detach: bool = False,
     ) -> CompletedCommand:
@@ -148,17 +157,27 @@ class SubprocessRunner:
         try:
             # A detached child must not read the terminal. Otherwise crc delete
             # waits for a second Enter and the checklist never appears.
-            proc = subprocess.run(  # noqa: S603 - argv list, never shell=True
-                command,
-                input=input,
-                stdin=subprocess.DEVNULL if detach and input is None else None,
-                capture_output=capture,
-                text=True,
-                timeout=timeout,
-                env=self._env_for(env),
-                cwd=cwd,
-                start_new_session=detach,
-            )
+            output = stdout_path.open("wb") if stdout_path else None
+            source = stdin_path.open("rb") if stdin_path else None
+            try:
+                proc = subprocess.run(  # noqa: S603 - argv list, never shell=True
+                    command,
+                    input=input if source is None else None,
+                    stdin=source or (subprocess.DEVNULL if detach and input is None else None),
+                    capture_output=capture and output is None,
+                    stdout=output,
+                    stderr=subprocess.PIPE if capture and output is not None else None,
+                    text=output is None,
+                    timeout=timeout,
+                    env=self._env_for(env),
+                    cwd=cwd,
+                    start_new_session=detach,
+                )
+            finally:
+                if output is not None:
+                    output.close()
+                if source is not None:
+                    source.close()
         except FileNotFoundError as exc:
             raise PrerequisiteError(
                 f"required command not found: {command[0]}",
@@ -169,8 +188,18 @@ class SubprocessRunner:
         return CompletedCommand(
             argv=tuple(command),
             returncode=proc.returncode,
-            stdout=proc.stdout or "",
-            stderr=proc.stderr or "",
+            stdout=(
+                proc.stdout.decode(errors="replace")
+                if isinstance(proc.stdout, bytes)
+                else proc.stdout
+            )
+            or "",
+            stderr=(
+                proc.stderr.decode(errors="replace")
+                if isinstance(proc.stderr, bytes)
+                else proc.stderr
+            )
+            or "",
         )
 
     def _run_streaming(
@@ -247,10 +276,12 @@ class EnvRunner:
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -261,10 +292,12 @@ class EnvRunner:
         return self.inner.run(
             argv,
             input=input,
+            stdin_path=stdin_path,
             timeout=timeout,
             env=merged,
             check=check,
             capture=capture,
+            stdout_path=stdout_path,
             cwd=cwd,
             sink=sink,
             detach=detach,
@@ -278,9 +311,11 @@ Result = Union[CompletedCommand, Callable[..., CompletedCommand], BaseException]
 class Invocation:
     argv: Tuple[str, ...]
     input: Optional[str] = None
+    stdin_path: Optional[Path] = None
     env: Optional[Dict[str, str]] = None
     cwd: Optional[str] = None
     timeout: Optional[float] = None
+    stdout_path: Optional[Path] = None
 
 
 @dataclass
@@ -328,10 +363,12 @@ class FakeRunner:
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
         capture: bool = True,
+        stdout_path: Optional[Path] = None,
         cwd: Optional[str] = None,
         sink: Optional[Any] = None,
         detach: bool = False,
@@ -342,9 +379,11 @@ class FakeRunner:
             Invocation(
                 argv=args,
                 input=input,
+                stdin_path=stdin_path,
                 env=dict(env) if env else None,
                 cwd=cwd,
                 timeout=timeout,
+                stdout_path=stdout_path,
             )
         )
         result = self._match(args)

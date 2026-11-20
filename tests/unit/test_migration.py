@@ -69,8 +69,8 @@ def test_parse_matches_bash_permissiveness() -> None:
 
 def test_addons_are_alias_normalized_and_deduped() -> None:
     kept, retired = migration._split_addons("mcp-server, ao-eap, ao, registry, local-cache")
-    assert kept == ["mcp-server", "ao"]
-    assert retired == ["registry", "local-cache"]
+    assert kept == ["mcp-server", "ao", "local-cache"]
+    assert retired == ["registry"]
 
 
 # -- per-fixture behavior ---------------------------------------------------
@@ -130,10 +130,10 @@ def test_retired_addons_are_dropped_loudly(legacy) -> None:
     migration.apply(paths, plan, secret_store=InMemorySecretStore())
     config = config_mod.load(paths.config_file, env={})
 
-    assert config.get("addons.enabled") == ["mcp-server"]
+    assert config.get("addons.enabled") == ["local-cache", "mcp-server"]
     warnings = " ".join(plan.warnings)
     assert "registry" in warnings and "registry-mirror" in warnings
-    assert "local-cache" in warnings and "image-store" in warnings
+    assert "local-cache" not in warnings and "image-store" not in warnings
 
 
 def test_no_config_writes_a_fresh_file(legacy) -> None:

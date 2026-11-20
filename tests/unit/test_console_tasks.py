@@ -30,6 +30,14 @@ def test_plain_console_escapes_characters_unsupported_by_stream_encoding() -> No
     )
 
 
+def test_verbose_log_sink_preserves_raw_subprocess_output() -> None:
+    console = RecordingConsole()
+
+    console.log_sink(verbose=True).log('level=info msg="installer detail"')
+
+    assert 'level=info msg="installer detail"' in console.stdout
+
+
 def test_steps_check_off_in_order() -> None:
     console = RecordingConsole()
     console.tasks(["Starting CRC", "Waiting for CRC SSH", "Checking the CRI-O pull secret"])

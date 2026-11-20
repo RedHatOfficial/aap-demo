@@ -9,6 +9,7 @@ the result in ``addons.enabled``. A wheel carries them under
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -23,6 +24,17 @@ from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
 from aap_demo.core.platform_tools import find_bash, find_bash_tool
+
+_LEGACY_ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
+_LEGACY_SENSITIVE_PARTS = (
+    "API_KEY",
+    "ACCESS_KEY",
+    "PRIVATE_KEY",
+    "TOKEN",
+    "PASSWORD",
+    "SECRET",
+    "CREDENTIAL",
+)
 
 #: ``addons/product-demos/deploy.sh`` writes ``partial <domains>`` to the file
 #: named by ``AAP_DEMO_RESULT_FILE`` when the base installed and some domains
@@ -194,7 +206,8 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
         raise AddonError(f"addon {name!r} has no deploy.sh")
 
     extra_env = addon.prepare(ctx) if addon.prepare is not None and not delete else {}
-    env = ctx.kube_env()
+    env = _legacy_environment(ctx)
+    env.update(ctx.kube_env())
     env.update(extra_env)
     if name == "product-demos" and not delete:
         try:
@@ -236,7 +249,7 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
         if use_oc_for_kubectl(which=shutil.which):
             compat_file = _kubectl_compat_file()
             env["BASH_ENV"] = str(compat_file).replace("\\", "/")
-        result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink())
+        result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink(verbose=ctx.verbose))
         failed_domains = _partial_domains(result_file) if not result.ok else None
     finally:
         try:
@@ -292,6 +305,37 @@ def use_oc_for_kubectl(
     is_windows = os.name == "nt" if windows is None else windows
     finder = shutil.which if which is None else which
     return is_windows and finder("kubectl") is None and finder("oc") is not None
+
+
+def _legacy_environment(ctx: AppContext) -> Dict[str, str]:
+    """Load safe variables from the legacy config for bundled shell addons.
+
+    The Bash command has always inherited these settings. Keep that behavior
+    for the Python command while preserving the process environment's higher
+    precedence and never importing credentials from a broadly readable file.
+    """
+    from aap_demo.core.migration import parse_legacy_config
+
+    configured = ctx.env.get("AAP_DEMO_CONFIG")
+    path = Path(configured).expanduser() if configured else ctx.paths.legacy_config_file
+    try:
+        if not path.is_file():
+            return {}
+        values = parse_legacy_config(path.read_text(encoding="utf-8"))
+    except OSError:
+        return {}
+
+    loaded: Dict[str, str] = {}
+    for key, value in values.items():
+        upper = key.upper()
+        if not _LEGACY_ENV_KEY.fullmatch(key):
+            continue
+        if not upper.endswith(("_FILE", "_PATH")) and any(
+            part in upper for part in _LEGACY_SENSITIVE_PARTS
+        ):
+            continue
+        loaded[key] = value
+    return loaded
 
 
 def _result_file(ctx: AppContext) -> Optional[Path]:
@@ -370,7 +414,7 @@ def _wire(ctx: AppContext, env: Dict[str, str]) -> None:
         result = ctx.runner.run(
             [bash, str(script), str(library)],
             env=wire_env,
-            sink=ctx.console.log_sink(),
+            sink=ctx.console.log_sink(verbose=ctx.verbose),
         )
     finally:
         try:

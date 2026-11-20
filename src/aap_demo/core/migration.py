@@ -36,7 +36,6 @@ from aap_demo.core.paths import Paths
 #: playbooks. Dropping them silently would look like data loss.
 RETIRED_ADDONS = {
     "registry": "playbooks run registry-mirror",
-    "local-cache": "playbooks run image-store",
 }
 
 #: Legacy addon aliases collapsed by the registry.

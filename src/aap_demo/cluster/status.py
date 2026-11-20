@@ -27,6 +27,7 @@ from aap_demo.infra import crc as infra_crc
 #: ``ao`` in the rewrite and product-demo domain addons other
 #: than ``product-demo-satellite`` are hidden from status, same as bash.
 AVAILABLE_ADDONS = (
+    "monitoring",
     "mcp-server",
     "portal",
     "setup-pah",
@@ -35,6 +36,7 @@ AVAILABLE_ADDONS = (
     "local-cache",
     "product-demos",
     "product-demo-satellite",
+    "eda-playground",
 )
 
 #: Ports the secret-name fallback chain in ``cmd_status``.
