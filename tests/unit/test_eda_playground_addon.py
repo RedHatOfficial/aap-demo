@@ -51,7 +51,7 @@ def test_enable_loads_safe_values_from_legacy_config(app_ctx, monkeypatch) -> No
     )
     app_ctx.paths.legacy_config_file.parent.mkdir(parents=True, exist_ok=True)
     app_ctx.paths.legacy_config_file.write_text(
-        "EDA_PLAYGROUND_IMAGE=ghcr.io/example/eda@sha256:abc\n"
+        "EDA_PLAYGROUND_IMAGE=ghcr.io/example/eda:latest\n"
         "EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true\n"
         "EDA_PLAYGROUND_TOKEN=do-not-pass\n",
         encoding="utf-8",
@@ -61,7 +61,7 @@ def test_enable_loads_safe_values_from_legacy_config(app_ctx, monkeypatch) -> No
     get("eda-playground").enable(app_ctx, argparse.Namespace(addon="eda-playground"))
 
     env = app_ctx.runner.calls[0].env
-    assert env["EDA_PLAYGROUND_IMAGE"] == "ghcr.io/example/eda@sha256:abc"
+    assert env["EDA_PLAYGROUND_IMAGE"] == "ghcr.io/example/eda:latest"
     assert env["EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE"] == "true"
     assert "EDA_PLAYGROUND_TOKEN" not in env
 
