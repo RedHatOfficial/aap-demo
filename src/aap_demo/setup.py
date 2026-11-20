@@ -19,7 +19,9 @@ from typing import Any, Callable, List, Optional, Sequence, cast
 
 PACKAGE = "aap-demo"
 OC_PACKAGE_ID = "RedHat.OpenShift-Client"
-PULL_SECRET_URL = "https://console.redhat.com/openshift/install/pull-secret"
+PULL_SECRET_URL = (
+    "https://console.redhat.com/openshift/install/pull-secret"  # pragma: allowlist secret
+)
 MINIMUM_PYTHON = (3, 11)
 
 
@@ -431,7 +433,7 @@ class SetupManager:
                 self._info(f"Pull secret found: {path}")
                 return
         if not self.quiet:
-            print("No pull secret found. Download one from:")  # pragma: allowlist secret
+            print("No pull secret found. Download one from:")
             print(f"  {PULL_SECRET_URL}")
             print(f"Save it under {self.config_dir}\\pull-secret.txt")
 
