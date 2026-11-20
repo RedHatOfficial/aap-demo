@@ -7,10 +7,15 @@ import hashlib
 import io
 import json
 import tarfile
+from pathlib import Path
+
+import pytest
 
 from aap_demo.addons import get
 from aap_demo.addons.local_cache import _image_patch
 from aap_demo.cli.main import _addon_needs_cluster
+from aap_demo.core.errors import AddonError
+from aap_demo.exec.runner import CompletedCommand
 
 
 def _args(*values: str) -> argparse.Namespace:
@@ -50,6 +55,7 @@ def _valid_archive(path) -> None:
         info = tarfile.TarInfo(f"blobs/sha256/{digest}")
         info.size = len(manifest)
         archive.addfile(info, io.BytesIO(manifest))
+    return digest
 
 
 def test_local_cache_is_registered_as_native_addon() -> None:
@@ -71,10 +77,12 @@ def test_validate_accepts_a_complete_archive(app_ctx) -> None:
     cache.mkdir(parents=True)
     reference = "registry.example/aap@sha256:abc"
     archive = cache / f"{hashlib.md5(reference.encode(), usedforsecurity=False).hexdigest()}.tar"
-    _valid_archive(archive)
+    manifest_digest = _valid_archive(archive)
     stem = archive.with_suffix("")
     stem.with_suffix(".ref").write_text(reference, encoding="utf-8")
-    stem.with_suffix(".local-ref").write_text("registry.example/aap@sha256:def", encoding="utf-8")
+    stem.with_suffix(".local-ref").write_text(
+        f"registry.example/aap@sha256:{manifest_digest}", encoding="utf-8"
+    )
     (cache / ".format-version").write_text("4", encoding="utf-8")
 
     assert get("local-cache").enable(app_ctx, _args("validate")) == 0
@@ -149,3 +157,52 @@ def test_valid_archive_requires_an_oci_manifest(tmp_path) -> None:
         tar.addfile(info, io.BytesIO(payload))
 
     assert not _valid_oci_archive(archive)
+
+
+def test_validate_rejects_a_digest_sidecar_for_another_manifest(app_ctx) -> None:
+    cache = app_ctx.paths.legacy_dir / "local-cache" / "microshift"
+    cache.mkdir(parents=True)
+    reference = "registry.example/aap@sha256:abc"
+    archive = cache / f"{hashlib.md5(reference.encode(), usedforsecurity=False).hexdigest()}.tar"
+    _valid_archive(archive)
+    stem = archive.with_suffix("")
+    stem.with_suffix(".ref").write_text(reference, encoding="utf-8")
+    stem.with_suffix(".local-ref").write_text(
+        "registry.example/aap@sha256:" + "0" * 64, encoding="utf-8"
+    )
+    (cache / ".format-version").write_text("4", encoding="utf-8")
+
+    with pytest.raises(AddonError, match="Cache validation failed"):
+        get("local-cache").enable(app_ctx, _args("validate"))
+
+
+def test_save_recovers_missing_digest_sidecar_before_pruning(app_ctx) -> None:
+    cache = app_ctx.paths.legacy_dir / "local-cache" / "microshift"
+    cache.mkdir(parents=True)
+    reference = "registry.redhat.io/aap@sha256:abc"
+    archive = (
+        cache
+        / f"{hashlib.md5((reference + chr(10)).encode(), usedforsecurity=False).hexdigest()}.tar"
+    )
+    _valid_archive(archive)
+    archive.with_suffix(".ref").write_text(reference, encoding="utf-8")
+    (cache / ".format-version").write_text("4", encoding="utf-8")
+
+    image_json = json.dumps({"images": [{"repoDigests": [reference]}]})
+
+    def ssh_result(argv):
+        if "skopeo copy" in " ".join(argv):
+            return CompletedCommand(argv=tuple(argv), returncode=1, stderr="export failed")
+        return CompletedCommand(argv=tuple(argv), returncode=0, stdout=image_json)
+
+    app_ctx.runner.register("ssh", ssh_result)
+    with tarfile.open(archive) as tar:
+        index = json.loads(tar.extractfile("index.json").read())
+        digest = index["manifests"][0]["digest"]
+        raw_manifest = tar.extractfile(f"blobs/{digest.replace(':', '/', 1)}").read().decode()
+    app_ctx.runner.ok("skopeo inspect", stdout=raw_manifest)
+
+    assert get("local-cache")._save(app_ctx, Path("/tmp/key")) == 0
+    assert archive.is_file()
+    assert archive.with_suffix(".ref").is_file()
+    assert archive.with_suffix(".local-ref").is_file()

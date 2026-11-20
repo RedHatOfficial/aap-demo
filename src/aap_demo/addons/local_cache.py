@@ -94,6 +94,7 @@ class LocalCacheAddon:
                 }
                 and local_reference
                 and "@sha256:" in local_reference
+                and _local_ref_matches_archive(archive, local_reference)
             )
             if not valid:
                 failed += 1
@@ -157,6 +158,15 @@ class LocalCacheAddon:
             archive = stem.with_suffix(".tar")
             ref_file = stem.with_suffix(".ref")
             local_file = stem.with_suffix(".local-ref")
+            if (
+                archive.is_file()
+                and ref_file.is_file()
+                and not local_file.is_file()
+                and _valid_oci_archive(archive)
+            ):
+                recovered = _archive_digest(ctx, archive, ref)
+                if recovered:
+                    local_file.write_text(recovered + "\n", encoding="utf-8")
             usable = format_current and _cache_entry_usable(stem, ref)
             if usable:
                 skipped += 1
@@ -201,10 +211,12 @@ class LocalCacheAddon:
             stem = archive.with_suffix("")
             if stem.name not in current_stems:
                 _remove_entry(stem)
-            elif not (
-                _valid_oci_archive(archive)
-                and stem.with_suffix(".ref").is_file()
-                and stem.with_suffix(".local-ref").is_file()
+            elif not _valid_oci_archive(archive) or not stem.with_suffix(".ref").is_file():
+                _remove_entry(stem)
+            elif not stem.with_suffix(".local-ref").is_file():
+                continue
+            elif not _local_ref_matches_archive(
+                archive, stem.with_suffix(".local-ref").read_text(encoding="utf-8").strip()
             ):
                 _remove_entry(stem)
         metadata = cache / "catalog-digests"
@@ -391,7 +403,9 @@ def _cache_entry_usable(stem: Path, ref: str) -> bool:
         and ref_file.is_file()
         and ref_file.read_text(encoding="utf-8").strip() == ref
         and local_file.is_file()
-        and bool(local_file.read_text(encoding="utf-8").strip())
+        and _local_ref_matches_archive(
+            stem.with_suffix(".tar"), local_file.read_text(encoding="utf-8").strip()
+        )
     )
 
 
@@ -476,6 +490,56 @@ def _valid_oci_archive(path: Path) -> bool:
         return False
     except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return False
+
+
+def _archive_manifest_digests(path: Path) -> set[str]:
+    if not _valid_oci_archive(path):
+        return set()
+    try:
+        with tarfile.open(path) as archive:
+            index_member = archive.extractfile("index.json")
+            if index_member is None:
+                return set()
+            index = json.loads(index_member.read())
+            digests: set[str] = set()
+
+            def visit(descriptor: Dict[str, Any]) -> None:
+                digest = descriptor.get("digest")
+                if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                    return
+                member = archive.extractfile(f"blobs/{digest.replace(':', '/', 1)}")
+                if member is None:
+                    return
+                document = json.loads(member.read())
+                if isinstance(document.get("manifests"), list):
+                    for child in document["manifests"]:
+                        if isinstance(child, dict):
+                            visit(child)
+                elif isinstance(document.get("config"), dict) and isinstance(
+                    document.get("layers"), list
+                ):
+                    digests.add(digest.split(":", 1)[1])
+
+            for descriptor in index.get("manifests", []):
+                if isinstance(descriptor, dict):
+                    visit(descriptor)
+            return digests
+    except (
+        AttributeError,
+        KeyError,
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        tarfile.TarError,
+    ):
+        return set()
+
+
+def _local_ref_matches_archive(archive: Path, local_reference: str) -> bool:
+    if "@sha256:" not in local_reference:
+        return False
+    return local_reference.rsplit("@sha256:", 1)[1] in _archive_manifest_digests(archive)
 
 
 def _remove_entry(stem: Path) -> None:
