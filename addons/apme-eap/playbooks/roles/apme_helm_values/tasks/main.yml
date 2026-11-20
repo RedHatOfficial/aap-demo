@@ -52,7 +52,7 @@
   ansible.builtin.replace:
     path: "{{ apme_portal_helm_values_path }}"
     regexp: '(?m)^([ \\t]*)pullSecrets: \[\]$'
-    replace: '\1pullSecrets:\n\1  - name: {{ apme_image_pull_secret }}'
+    replace: '\1pullSecrets:\n\1  - {{ apme_image_pull_secret }}'
   when: apme_image_pull_secret | default('') | length > 0
 
 - name: Substitute portal Helm value placeholders  # noqa: var-naming[no-role-prefix]

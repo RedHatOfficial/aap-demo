@@ -387,6 +387,7 @@ class ApmeEapAddon:
                 ),
                 message="could not create the APME namespace",
             )
+        _label_namespace(ctx)
         ansible_python = _ensure_venv(ctx, root)
         registry_pull_secret = pull_secret.ensure(ctx, NAMESPACE)
         generated_vars = _discover_vars(ctx)
@@ -427,7 +428,6 @@ class ApmeEapAddon:
                 "enable apme-eap failed",
                 hint=(result.stderr or result.stdout).strip() or None,
             )
-        _label_namespace(ctx)
         names = enabled_names(ctx)
         if NAME not in names:
             names.append(NAME)

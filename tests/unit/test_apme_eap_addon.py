@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -42,6 +43,7 @@ def _cached_venv(app_ctx) -> None:
 
 def _namespace_missing(app_ctx) -> None:
     app_ctx.runner.fail(["kubectl", "get", "namespace", "apme"], stderr="NotFound")
+    app_ctx.runner.ok(["kubectl", "label", "namespace", "apme"])
 
 
 def _registry_pull_secret_ready(app_ctx) -> None:
@@ -112,6 +114,9 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
     assert app_ctx.runner.index_of(["kubectl", "wait"]) < app_ctx.runner.index_of(
         ["~ansible-playbook$"]
     )
+    assert app_ctx.runner.index_of(
+        ["kubectl", "label", "namespace", "apme"]
+    ) < app_ctx.runner.index_of(["~ansible-playbook$"])
     assert call.cwd.endswith("addons/apme-eap")
     assert app_ctx.config.get("addons.enabled") == ["apme-eap"]
     assert not (app_ctx.paths.addon_dir("apme-eap") / "vars.yml").exists()
@@ -197,6 +202,57 @@ def test_apme_helm_bootstrap_selects_architecture_specific_client() -> None:
     assert "apme_helm_bootstrap_platform ~ '-' ~ apme_helm_bootstrap_arch" in defaults
     assert "aarch64" in defaults
     assert "linux-amd64.tar.gz" not in defaults
+
+
+def test_apme_helm_values_render_pull_secrets_as_chart_names() -> None:
+    root = Path(__file__).resolve().parents[2]
+    tasks = yaml.safe_load(
+        (
+            root
+            / "addons"
+            / "apme-eap"
+            / "playbooks"
+            / "roles"
+            / "apme_helm_values"
+            / "tasks"
+            / "main.yml"
+        ).read_text(encoding="utf-8")
+    )
+    configure_secret = next(
+        task for task in tasks if task.get("name") == "Configure the Red Hat registry pull secret"
+    )
+    rendered = re.sub(
+        configure_secret["ansible.builtin.replace"]["regexp"],
+        configure_secret["ansible.builtin.replace"]["replace"].replace(
+            "{{ apme_image_pull_secret }}", "redhat-operators-pull-secret"
+        ),
+        "        pullSecrets: []\n",
+    )
+
+    values = yaml.safe_load(rendered)
+    assert values["pullSecrets"] == ["redhat-operators-pull-secret"]
+
+
+def test_apme_pah_seed_conditions_are_strict_boolean_expressions() -> None:
+    root = Path(__file__).resolve().parents[2]
+    task_text = (
+        root
+        / "addons"
+        / "apme-eap"
+        / "playbooks"
+        / "roles"
+        / "apme_pah_integration"
+        / "tasks"
+        / "seed_apme_galaxy_servers.yml"
+    ).read_text(encoding="utf-8")
+
+    seed_lines = [
+        line
+        for line in task_text.splitlines()
+        if "apme_pah_seed_apme_galaxy_servers | bool" in line
+    ]
+    assert seed_lines
+    assert all("is true" in line for line in seed_lines)
 
 
 def test_crc_portal_url_and_custom_aap_secret_are_discovered(app_ctx) -> None:
