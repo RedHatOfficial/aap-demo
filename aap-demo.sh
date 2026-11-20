@@ -2443,6 +2443,7 @@ _crc_stop_if_needed() {
 _crc_delete_cluster() {
   local output
   _crc_stop_if_needed
+  _crc_release_persistent_start_session
 
   if output=$(crc delete -f 2>&1); then
     return 0
@@ -2532,6 +2533,7 @@ cmd_stop() {
   fi
 
   crc stop || true
+  _crc_release_persistent_start_session
   echo "✓ CRC cluster stopped"
   echo "To restart: aap-demo start"
 }
@@ -2559,7 +2561,55 @@ _restart_crc_after_failed_start() {
   echo "CRC did not become ready; restarting CRC to recover its VM state..." >&2
   crc stop >/dev/null 2>&1 || true
   _crc_wait_for_stopped 60 || true
-  crc start
+  _crc_start_persistent
+}
+
+_crc_persistent_start_session="aap-demo-crc-start"
+_crc_persistent_start_marker="${TMPDIR:-/tmp}/aap-demo-crc-start.keepalive"
+_crc_persistent_start_log="${TMPDIR:-/tmp}/aap-demo-crc-start.log"
+
+_crc_release_persistent_start_session() {
+  rm -f "$_crc_persistent_start_marker"
+  if command -v tmux >/dev/null 2>&1; then
+    tmux kill-session -t "$_crc_persistent_start_session" >/dev/null 2>&1 || true
+  fi
+}
+
+_crc_start_persistent() {
+  if [ "${AAP_DEMO_DISABLE_PERSISTENT_CRC_START:-false}" = "true" ] \
+    || ! command -v tmux >/dev/null 2>&1; then
+    crc start
+    return $?
+  fi
+
+  _crc_release_persistent_start_session
+  : >"$_crc_persistent_start_log"
+  : >"$_crc_persistent_start_marker"
+  tmux new-session -d -s "$_crc_persistent_start_session" \
+    "crc start >'$_crc_persistent_start_log' 2>&1; _crc_rc=\$?; printf 'CRC_START_RC=%s\\n' \"\$_crc_rc\" >>'$_crc_persistent_start_log'; while [ -e '$_crc_persistent_start_marker' ]; do sleep 1; done; exit \"\$_crc_rc\""
+
+  for _crc_start_try in $(seq 1 180); do
+    if [ -f "$_crc_persistent_start_log" ] \
+      && grep -q '^CRC_START_RC=' "$_crc_persistent_start_log"; then
+      _crc_start_rc=$(sed -n 's/^CRC_START_RC=//p' "$_crc_persistent_start_log" | tail -1)
+      if [ "$_crc_start_rc" != "0" ]; then
+        cat "$_crc_persistent_start_log"
+        _crc_release_persistent_start_session
+        return 1
+      fi
+    fi
+
+    _crc_start_status=$(crc status --output json 2>/dev/null || true)
+    if printf '%s' "$_crc_start_status" | grep -q '"crcStatus"[[:space:]]*:[[:space:]]*"Running"'; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "CRC did not become Running within 180 seconds"
+  cat "$_crc_persistent_start_log" 2>/dev/null || true
+  _crc_release_persistent_start_session
+  return 1
 }
 
 cmd_start() {
@@ -2601,7 +2651,7 @@ cmd_start() {
 }
 
 _start_crc_cluster() {
-  crc start || true
+  _crc_start_persistent || return 1
   persistent_crio_store_prepare_or_fallback
   if [ -f /etc/resolver/testing ]; then
     sudo rm -f /etc/resolver/testing
