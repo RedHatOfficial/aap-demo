@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from aap_demo.addons import get
-from aap_demo.addons.mcp_server import _generate_token
+from aap_demo.addons.mcp_server import _apply_ingress_ca, _generate_token
 from aap_demo.core.errors import AddonError
 from aap_demo.exec.runner import CompletedCommand
 
@@ -28,6 +28,7 @@ def _runner(app_ctx, *, deployment_stdout=None):
         stdout=json.dumps({"data": {"tls.crt": base64.b64encode(_CERT.encode()).decode()}}),
     )
     app_ctx.runner.ok("kubectl create configmap", stdout="configured")
+    app_ctx.runner.ok("kubectl create -f -", stdout="created")
     app_ctx.runner.ok("kubectl patch deployment")
     app_ctx.runner.ok(
         "kubectl get deployment aap-mcp-server",
@@ -66,6 +67,7 @@ def _runner(app_ctx, *, deployment_stdout=None):
     app_ctx.runner.fail("kubectl get secret aap-admin-password")
     app_ctx.runner.ok("kubectl delete ansiblemcpserver")
     app_ctx.runner.ok("kubectl delete configmap")
+    app_ctx.runner.fail("kubectl get deployment automation-orchestrator-backend")
     return app_ctx.runner
 
 
@@ -214,6 +216,59 @@ def test_disable_preserves_unowned_ingress_ca_configmap(app_ctx) -> None:
     )
     assert get("mcp-server").disable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
     assert not runner.called("kubectl delete configmap")
+
+
+def test_enable_does_not_overwrite_unowned_ingress_ca_configmap(app_ctx) -> None:
+    runner = _runner(app_ctx)
+    runner._rules.insert(
+        0,
+        (
+            ("kubectl", "get", "configmap", "aap-ingress-ca"),
+            CompletedCommand(
+                argv=("kubectl", "get", "configmap", "aap-ingress-ca"),
+                returncode=0,
+                stdout=json.dumps(
+                    {"metadata": {"labels": {"app.kubernetes.io/managed-by": "other"}}}
+                ),
+            ),
+        ),
+    )
+
+    with pytest.raises(AddonError, match="already exists and is not managed by mcp-server"):
+        _apply_ingress_ca(app_ctx)
+
+    assert not runner.called("kubectl apply -f -")
+
+
+def test_enable_creates_ingress_ca_configmap_when_absent(app_ctx) -> None:
+    runner = _runner(app_ctx)
+    runner._rules.insert(
+        0,
+        (
+            ("kubectl", "get", "configmap", "aap-ingress-ca"),
+            CompletedCommand(
+                argv=("kubectl", "get", "configmap", "aap-ingress-ca"),
+                returncode=1,
+                stderr='Error from server (NotFound): configmaps "aap-ingress-ca" not found',
+            ),
+        ),
+    )
+
+    _apply_ingress_ca(app_ctx)
+
+    assert runner.called("kubectl create -f -")
+
+
+def test_enabling_mcp_runs_ao_wiring_when_ao_is_already_installed(app_ctx, monkeypatch) -> None:
+    _runner(app_ctx)
+    calls = []
+    monkeypatch.setattr(
+        "aap_demo.addons.ao.wiring.wire", lambda ctx, namespace: calls.append(namespace)
+    )
+
+    assert get("mcp-server").enable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
+
+    assert calls == [app_ctx.namespace]
 
 
 def test_token_request_quotes_curl_config_values_and_parses_response(app_ctx) -> None:

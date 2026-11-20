@@ -25,7 +25,8 @@ def _tools(monkeypatch, fake_runner) -> None:
     monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda name: f"/usr/bin/{name}")
     fake_runner.ok("kubectl get ansiblemcpservers.mcpserver.ansible.com")
     fake_runner.ok(
-        "kubectl get ansiblemcpservers.mcpserver.ansible.com aap-mcp-server -n aap-operator --ignore-not-found -o name"
+        "kubectl get ansiblemcpservers.mcpserver.ansible.com aap-mcp-server "
+        "-n aap-operator --ignore-not-found -o name"
     )
     fake_runner.ok(
         "kubectl get deployment aap-mcp-server -n aap-operator --ignore-not-found -o name"
@@ -58,11 +59,27 @@ def _tools(monkeypatch, fake_runner) -> None:
     fake_runner.ok("kubectl get ingresses.config/cluster")
     fake_runner.ok(
         "kubectl get secret router-certs-default",
-        stdout=json.dumps({"data": {"tls.crt": base64.b64encode(_CERT.encode()).decode()}},),
+        stdout=json.dumps(
+            {"data": {"tls.crt": base64.b64encode(_CERT.encode()).decode()}},
+        ),
+    )
+    fake_runner.ok(
+        "kubectl get configmap aap-ingress-ca",
+        stdout=json.dumps(
+            {
+                "metadata": {
+                    "labels": {
+                        "app.kubernetes.io/managed-by": "aap-demo",
+                        "app.kubernetes.io/name": "mcp-server",
+                    }
+                }
+            }
+        ),
     )
     fake_runner.ok("kubectl apply")
     fake_runner.ok("kubectl rollout status")
     fake_runner.ok("kubectl patch deployment")
+    fake_runner.fail("kubectl get deployment automation-orchestrator-backend")
     fake_runner.fail("kubectl get secret aap-admin-password")
 
 

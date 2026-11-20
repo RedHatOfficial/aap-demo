@@ -65,6 +65,12 @@ class McpServerAddon:
         if token:
             _configure_claude(ctx, mcp_host, token)
         _remember(ctx)
+        try:
+            from aap_demo.addons.ao import wiring
+
+            wiring.wire(ctx, ctx.namespace)
+        except AddonError as exc:
+            ctx.console.warn(f"AO integration wiring failed: {exc.message}")
         _say(ctx, "MCP Server deployed", endpoint=f"https://{mcp_host}/mcp")
         return 0
 
@@ -219,7 +225,21 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
         },
         sort_keys=False,
     )
-    applied = ctx.runner.run(["kubectl", "apply", "-f", "-"], input=manifest)
+    existing = ctx.runner.run(
+        ["kubectl", "get", "configmap", "aap-ingress-ca", "-n", ctx.namespace, "-o", "json"]
+    )
+    if existing.ok:
+        if not _owned_configmap(existing.stdout):
+            raise AddonError("aap-ingress-ca already exists and is not managed by mcp-server")
+        command = "apply"
+    elif "not found" in existing.stderr.lower():
+        command = "create"
+    else:
+        raise AddonError(
+            "could not inspect existing ingress CA ConfigMap",
+            hint=existing.stderr.strip() or None,
+        )
+    applied = ctx.runner.run(["kubectl", command, "-f", "-"], input=manifest)
     if not applied.ok:
         raise AddonError(
             "could not apply the ingress CA ConfigMap", hint=applied.stderr.strip() or None
