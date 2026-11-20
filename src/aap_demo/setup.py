@@ -389,9 +389,9 @@ class SetupManager:
                 (git_path.parent / "bash.exe", git_path.parent.parent / "bin" / "bash.exe")
             )
         for name in ("bash.exe", "bash"):
-            candidate = self.which(name)
-            if candidate:
-                candidates.append(Path(candidate))
+            found = self.which(name)
+            if found:
+                candidates.append(Path(found))
         for candidate in candidates:
             if not candidate:
                 continue
