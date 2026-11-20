@@ -107,9 +107,16 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
 
     assert get("apme-eap").enable(app_ctx, argparse.Namespace(addon="apme-eap")) == 0
 
-    call = next(call for call in app_ctx.runner.calls if call.argv[0].endswith("/ansible-playbook"))
-    assert call.argv[0].endswith("/ansible-playbook")
-    assert "playbooks/deploy_apme_portal.yml" in call.argv[1]
+    def normalized(path: str) -> str:
+        return path.replace("\\", "/").removesuffix(".exe")
+
+    call = next(
+        call
+        for call in app_ctx.runner.calls
+        if normalized(call.argv[0]).endswith("/ansible-playbook")
+    )
+    assert normalized(call.argv[0]).endswith("/ansible-playbook")
+    assert "playbooks/deploy_apme_portal.yml" in normalized(call.argv[1])
     assert call.env["K8S_AUTH_KUBECONFIG"] == str(app_ctx.kubeconfig)
     temp_root = tempfile.gettempdir()
     assert call.env["ANSIBLE_LOCAL_TEMP"].startswith(temp_root)
@@ -120,7 +127,7 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
     assert app_ctx.runner.index_of(
         ["kubectl", "label", "namespace", "apme"]
     ) < app_ctx.runner.index_of(["~ansible-playbook$"])
-    assert call.cwd.endswith("addons/apme-eap")
+    assert normalized(call.cwd).endswith("addons/apme-eap")
     assert app_ctx.config.get("addons.enabled") == ["apme-eap"]
     assert not (app_ctx.paths.addon_dir("apme-eap") / "vars.yml").exists()
     assert "redacted-password" not in app_ctx.console.stdout
