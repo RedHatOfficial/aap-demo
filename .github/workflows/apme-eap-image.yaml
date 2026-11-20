@@ -166,7 +166,9 @@ jobs:
       - name: Build and publish architecture image
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
-          BASE_IMAGE: ${{ matrix.architecture == 'amd64' && needs.resolve.outputs.amd64_base || needs.resolve.outputs.arm64_base }}
+          BASE_IMAGE: >-
+            ${{ matrix.architecture == 'amd64' && needs.resolve.outputs.amd64_base
+            || needs.resolve.outputs.arm64_base }}
           APME_PACK_SHA256: ${{ needs.resolve.outputs.pack_sha256 }}
           APME_BUILD_INPUT_SHA256: ${{ needs.resolve.outputs.build_input_sha256 }}
           QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}

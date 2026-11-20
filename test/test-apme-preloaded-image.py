@@ -95,11 +95,11 @@ class DeploymentImageTests(unittest.TestCase):
     @staticmethod
     def build_input_tag(base="registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10"):
         recipe_sha = hashlib.sha256((ADDON / "Containerfile.ci").read_text().rstrip("\n").encode()).hexdigest()
-        extractor_sha = hashlib.sha256((ADDON / "ci/extract-plugin-pack.py").read_bytes()).hexdigest()
+        extractor_sha = hashlib.sha256((ADDON / "ci/extract-plugin-pack.py").read_text().rstrip("\n").encode()).hexdigest()
         return hashlib.sha256(f"{base}@{DIGEST}:{recipe_sha}:{extractor_sha}".encode()).hexdigest()[:12]
 
     def run_roles(self, variables, roles, check=False, tasks=None, prepare=None, run_exit=0,
-                  inspect_exit=0, build_exit=0, installed_plugins=None, pushed_digest=PUSH_DIGEST,
+                  inspect_exit=0, base_inspect_exit=0, build_exit=0, installed_plugins=None, pushed_digest=PUSH_DIGEST,
                   inspected_digest=DIGEST):
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
@@ -132,7 +132,11 @@ class DeploymentImageTests(unittest.TestCase):
                 "                   if value == '/opt/app-root/src/dynamic-plugins/dist' else real_path(value)):\n"
                 "            exec(sys.argv[-1], {'__name__': '__main__'})\n"
                 f"    sys.exit({run_exit})\n"
-                f"if command == 'inspect' and {inspect_exit}: sys.exit({inspect_exit})\n"
+                "if command == 'inspect':\n"
+                "    is_base = ('rhdh-hub-rhel9:1.10' in sys.argv[-1]\n"
+                "               or 'rhdh-community/rhdh:1.10' in sys.argv[-1])\n"
+                f"    if is_base and {base_inspect_exit}: sys.exit({base_inspect_exit})\n"
+                f"    if not is_base and {inspect_exit}: sys.exit({inspect_exit})\n"
                 f"if command == 'build' and {build_exit}: sys.exit({build_exit})\n"
                 "if command == 'push' and '--digestfile' in sys.argv:\n"
                 f"    Path(sys.argv[sys.argv.index('--digestfile') + 1]).write_text({pushed_digest!r})\n"
@@ -235,7 +239,7 @@ class DeploymentImageTests(unittest.TestCase):
                     tasks=[{"name": "Check parsed image", "ansible.builtin.assert": {"that": [
                         "apme_preloaded_registry == '" + registry + "'",
                         "apme_preloaded_repository == '" + repository + "'",
-                        "apme_preloaded_tag == '" + tag + "'",
+                        "apme_preloaded_tag == '" + (tag or "latest") + "'",
                         "apme_preloaded_digest == '" + digest + "'",
                         "not apme_preloaded_image_validated",
                     ]}}],
