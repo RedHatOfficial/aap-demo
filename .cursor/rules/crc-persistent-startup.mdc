@@ -1,0 +1,13 @@
+---
+description: Reliable CRC/MicroShift startup and kubeconfig handling for aap-demo
+alwaysApply: true
+---
+
+# CRC/MicroShift local environment
+
+- When starting CRC from an agent, launch it from a persistent session (`tmux`, `screen`, or an equivalent daemonized process). Do not start `crc start` as a child of a transient command runner and allow that runner to exit while `vfkit` is attached.
+- For this repository, use `aap-demo create` or `aap-demo start` for CRC lifecycle operations; those command paths own the persistent startup session and kubeconfig refresh. Prefer the existing `includes/crc-create.sh` flow when available. Keep CRC resource settings unchanged unless diagnosing a resource-specific failure.
+- After CRC starts, refresh the repository kubeconfig from the guest before testing the API:
+  `ssh -p 2222 core@127.0.0.1 'sudo cat /var/lib/microshift/resources/kubeadmin/kubeconfig' > "$HOME/.aap-demo/kubeconfig.microshift"`
+- Set `KUBECONFIG` to `$HOME/.aap-demo/kubeconfig.microshift` for aap-demo validation. Do not assume `$HOME/.crc/machines/crc/kubeconfig` is current; it can retain stale external-signer CA data after a reset or MicroShift restart.
+- Verify both `kubectl get --raw=/readyz` and `kubectl get nodes` before declaring the cluster healthy. If CRC reports `Running` but the API reports an unknown authority, refresh the guest kubeconfig first; do not reset the VM as the first response.
