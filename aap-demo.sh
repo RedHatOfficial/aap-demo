@@ -490,6 +490,12 @@ setup_kubeconfig() {
           mv "${AAP_DEMO_KUBECONFIG}.tmp" "$AAP_DEMO_KUBECONFIG"
           chmod 600 "$AAP_DEMO_KUBECONFIG"
           export KUBECONFIG="$AAP_DEMO_KUBECONFIG"
+          # The VM kubeconfig can be valid while leaving current-context
+          # empty. Select the local context explicitly so kubectl does not
+          # silently fall back to localhost:8080.
+          if kubectl config get-contexts -o name 2>/dev/null | grep -Fxq "aap-demo"; then
+            kubectl config use-context "aap-demo" >/dev/null 2>&1 || true
+          fi
           if ! aap_demo_reject_remote_kubeconfig; then
             exit 1
           fi
@@ -498,6 +504,13 @@ setup_kubeconfig() {
         fi
       fi
     fi
+  fi
+
+  # A kubeconfig supplied by the VM may already be reachable but still have
+  # no selected context. Repair that state on every default local invocation.
+  if [ -z "$KUBECTL_KUBECONFIG" ] \
+    && kubectl config get-contexts -o name 2>/dev/null | grep -Fxq "aap-demo"; then
+    kubectl config use-context "aap-demo" >/dev/null 2>&1 || true
   fi
 
   if [ -z "$KUBECTL_KUBECONFIG" ]; then
@@ -2523,11 +2536,51 @@ cmd_stop() {
   echo "To restart: aap-demo start"
 }
 
+_wait_for_start_ready() {
+  local timeout="${AAP_DEMO_START_TIMEOUT:-180}"
+  local interval=5
+  local elapsed=0
+
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if kubectl cluster-info --request-timeout=5s >/dev/null 2>&1 \
+      && kubectl wait --for=condition=Ready node --all --timeout=5s >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
+
+  echo "ERROR: Kubernetes was not ready after ${timeout}s" >&2
+  echo "  Check: aap-demo diagnose" >&2
+  return 1
+}
+
+_restart_crc_after_failed_start() {
+  echo "CRC did not become ready; restarting CRC to recover its VM state..." >&2
+  crc stop >/dev/null 2>&1 || true
+  _crc_wait_for_stopped 60 || true
+  crc start
+}
+
 cmd_start() {
   echo ""
   printf "\033[1maap-demo start\033[0m - Starting CRC cluster...\n"
   _start_crc_cluster
   setup_kubeconfig
+
+  if ! _wait_for_start_ready; then
+    if ! _restart_crc_after_failed_start; then
+      return 1
+    fi
+    setup_kubeconfig
+    if ! _wait_for_start_ready; then
+      return 1
+    fi
+  fi
+
+  if ! _wait_for_ovn_ready; then
+    return 1
+  fi
 
   # Re-apply CoreDNS config (fixes DNS after restarts)
   if [ -f "${SCRIPT_DIR}/includes/crc-create.sh" ]; then
@@ -2535,7 +2588,11 @@ cmd_start() {
       AAP_DEMO_CONFIGURE_COREDNS_ONLY=1
       source '${SCRIPT_DIR}/includes/crc-create.sh'
       configure_coredns
-    " || true
+    " || return 1
+  fi
+
+  if ! _wait_for_start_ready; then
+    return 1
   fi
 
   echo "✓ CRC cluster started"
