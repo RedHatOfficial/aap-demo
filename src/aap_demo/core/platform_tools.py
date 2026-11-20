@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 
 def find_bash(
@@ -18,7 +18,7 @@ def find_bash(
     if not is_windows:
         return which("bash")
 
-    candidates = []
+    candidates: List[Path] = []
     for root in (
         os.environ.get("ProgramFiles"),
         os.environ.get("ProgramFiles(x86)"),

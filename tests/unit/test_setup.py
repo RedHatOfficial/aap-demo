@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -29,16 +31,17 @@ def _manager(
     home.mkdir()
     repo.mkdir()
     (repo / "aap-demo.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-    return setup.SetupManager(
-        repo_root=repo,
-        home=home,
-        python="python.exe",
-        run=run,
-        which=which,
-        get_user_path=lambda: user_path,
-        set_user_path=set_user_path or (lambda _value: None),
-        pipx_scripts_dir=pipx_scripts_dir,
-    )
+    with patch.dict(os.environ, {"PIPX_BIN_DIR": str(home / ".local" / "bin")}):
+        return setup.SetupManager(
+            repo_root=repo,
+            home=home,
+            python="python.exe",
+            run=run,
+            which=which,
+            get_user_path=lambda: user_path,
+            set_user_path=set_user_path or (lambda _value: None),
+            pipx_scripts_dir=pipx_scripts_dir,
+        )
 
 
 def test_install_uses_pipx_for_aap_demo_and_registers_v1(tmp_path: Path) -> None:
@@ -232,7 +235,8 @@ def test_uninstall_is_idempotent_when_pipx_has_no_app(tmp_path: Path) -> None:
 
     def run(argv, **_kwargs):
         calls.append(list(argv))
-        return SimpleNamespace(returncode=0, stdout='{"venvs":{}}', stderr="")
+        output = '{"venvs":{}}' if argv[-2:] == ["list", "--json"] else ""
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
 
     manager = _manager(
         tmp_path,

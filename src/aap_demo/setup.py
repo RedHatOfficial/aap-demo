@@ -15,7 +15,7 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence, cast
 
 PACKAGE = "aap-demo"
 OC_PACKAGE_ID = "RedHat.OpenShift-Client"
@@ -169,17 +169,18 @@ class SetupManager:
             return
         import winreg
 
+        registry: Any = winreg
         registered_paths = []
         for hive, key_name in (
             (
-                winreg.HKEY_LOCAL_MACHINE,
+                registry.HKEY_LOCAL_MACHINE,
                 r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
             ),
-            (winreg.HKEY_CURRENT_USER, "Environment"),
+            (registry.HKEY_CURRENT_USER, "Environment"),
         ):
             try:
-                with winreg.OpenKey(hive, key_name) as key:
-                    value, _kind = winreg.QueryValueEx(key, "Path")
+                with registry.OpenKey(hive, key_name) as key:
+                    value, _kind = registry.QueryValueEx(key, "Path")
             except OSError:
                 continue
             if isinstance(value, str):
@@ -367,7 +368,7 @@ class SetupManager:
         is_windows = os.name == "nt" if windows is None else windows
         if not is_windows:
             return self.which("bash")
-        candidates = []
+        candidates: List[Path] = []
         for root in (
             os.environ.get("ProgramFiles"),
             os.environ.get("ProgramFiles(x86)"),
@@ -427,7 +428,7 @@ class SetupManager:
                 self._info(f"Pull secret found: {path}")
                 return
         if not self.quiet:
-            print("No pull secret found. Download one from:")
+            print("No pull secret found. Download one from:")  # pragma: allowlist secret
             print(f"  {PULL_SECRET_URL}")
             print(f"Save it under {self.config_dir}\\pull-secret.txt")
 
@@ -450,9 +451,10 @@ def _get_user_path() -> str:
         return os.environ.get("PATH", "")
     import winreg
 
+    registry: Any = winreg
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-            value, _kind = winreg.QueryValueEx(key, "Path")
+        with registry.OpenKey(registry.HKEY_CURRENT_USER, "Environment") as key:
+            value, _kind = registry.QueryValueEx(key, "Path")
             return str(value)
     except FileNotFoundError:
         return ""
@@ -463,18 +465,20 @@ def _set_user_path(value: str) -> None:
         raise SetupError("Changing the user PATH is supported only on Windows")
     import winreg
 
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+    registry: Any = winreg
+    with registry.CreateKey(registry.HKEY_CURRENT_USER, "Environment") as key:
         try:
-            _existing, kind = winreg.QueryValueEx(key, "Path")
+            _existing, kind = registry.QueryValueEx(key, "Path")
         except FileNotFoundError:
-            kind = winreg.REG_EXPAND_SZ
-        winreg.SetValueEx(key, "Path", 0, kind, value)
+            kind = registry.REG_EXPAND_SZ
+        registry.SetValueEx(key, "Path", 0, kind, value)
     try:
         # Refresh Explorer and other applications that cache the user PATH.
         HWND_BROADCAST = 0xFFFF
         WM_SETTINGCHANGE = 0x001A
         SMTO_ABORTIFHUNG = 0x0002
-        send_message = ctypes.windll.user32.SendMessageTimeoutW
+        user32: Any = cast(Any, ctypes).windll.user32
+        send_message = user32.SendMessageTimeoutW
         send_message.argtypes = (
             ctypes.c_void_p,
             ctypes.c_uint,
