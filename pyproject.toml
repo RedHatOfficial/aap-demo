@@ -81,6 +81,7 @@ packages = ["src/aap_demo"]
 "addons/subscription-attach" = "aap_demo/bundled/addons/subscription-attach"
 "includes" = "aap_demo/bundled/includes"
 "config/olm" = "aap_demo/bundled/config/olm"
+"addons/apme-eap" = "aap_demo/bundled/addons/apme-eap"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

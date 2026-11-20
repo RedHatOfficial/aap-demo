@@ -39,5 +39,10 @@
 
 - name: Set external and internal registry defaults
   ansible.builtin.set_fact:
-    oci_registry: "registry.{{ openshift_cluster_domain }}/apme"
     oci_registry_internal: "registry.aap-demo-registry.svc.cluster.local:5000/apme"
+  when: oci_registry is not defined or oci_registry | length == 0
+
+- name: Set the default external registry route
+  ansible.builtin.set_fact:
+    oci_registry: "registry-aap-demo-registry.{{ openshift_cluster_domain }}/apme"
+  when: oci_registry is not defined or oci_registry | length == 0

@@ -227,6 +227,7 @@ def test_pyproject_ships_the_opa_fallback_and_native_playbooks() -> None:
 def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
     assert names() == [
         "ao",
+        "apme-eap",
         "eda-playground",
         "fleet",
         "keycloak",
