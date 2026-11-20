@@ -34,6 +34,14 @@ def test_missing_kubectl_is_a_prerequisite_error(app_ctx: AppContext) -> None:
         preflight.setup_kubeconfig(app_ctx, which=lambda name: None)
 
 
+def test_windows_accepts_the_openshift_cli_as_kubectl() -> None:
+    def which(name: str) -> str | None:
+        return "C:/OpenShift/oc.exe" if name == "oc" else None
+
+    assert preflight.has_kubectl(which, windows=True)
+    assert not preflight.has_kubectl(which, windows=False)
+
+
 def test_explicit_kubeconfig_must_exist(app_ctx: AppContext, tmp_path: Path) -> None:
     app_ctx.kubeconfig_override = tmp_path / "nope.yaml"
     with pytest.raises(AapDemoError, match="Kubeconfig file not found"):
@@ -173,6 +181,7 @@ def test_cluster_state_warning(
 ) -> None:
     # No CRC machine directory, whatever the developer's own ~/.crc holds.
     monkeypatch.setenv("HOME", str(tmp_path))
+    app_ctx.env["HOME"] = str(tmp_path)
     fake_runner.ok("crc status -o json", stdout=status_json)
     preflight.warn_cluster_state(app_ctx)
     assert expected in app_ctx.console.stdout
@@ -262,7 +271,7 @@ def test_run_warns_when_no_cluster_exists_for_redhat_status(
 
     rc = main_mod.run(
         ["redhat-status"],
-        env={"AAP_DEMO_DIR": str(tmp_path / "home")},
+        env={"AAP_DEMO_DIR": str(tmp_path / "home"), "HOME": str(tmp_path)},
         runner=runner,
     )
 

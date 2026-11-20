@@ -22,6 +22,7 @@ from aap_demo.core import prompts
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.core.output import is_structured, render
+from aap_demo.core.platform_tools import find_bash, find_bash_tool
 
 #: ``addons/product-demos/deploy.sh`` writes ``partial <domains>`` to the file
 #: named by ``AAP_DEMO_RESULT_FILE`` when the base installed and some domains
@@ -119,7 +120,17 @@ def require_tools(
     *, delete: bool = False, tools: Optional[Sequence[str]] = None, name: str = ""
 ) -> None:
     tools = tuple(tools or (_DELETE_TOOLS if delete else _INSTALLER_TOOLS))
-    missing = [name for name in tools if shutil.which(name) is None]
+    missing = []
+    for tool in tools:
+        found = (
+            find_bash(shutil.which) if tool == "bash" and os.name == "nt" else shutil.which(tool)
+        )
+        if tool == "base64" and found is None and os.name == "nt":
+            found = find_bash_tool(tool, shutil.which)
+        if tool == "kubectl" and found is None and use_oc_for_kubectl(which=shutil.which):
+            continue
+        if found is None:
+            missing.append(tool)
     if not missing:
         return
     hint = "Install " + ", ".join(missing) + " and run the command again."
@@ -209,7 +220,10 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
     if addon.state_dir_env:
         env[addon.state_dir_env] = str(ctx.paths.state_dir / name)
 
-    argv = ["bash", str(deploy)]
+    bash = find_bash(shutil.which) if os.name == "nt" else "bash"
+    if not bash:
+        raise PrerequisiteError("Git Bash not found", hint="Install Git for Windows and retry.")
+    argv = [bash, str(deploy)]
     if delete:
         argv.append("--delete")
     argv.extend(extra)
@@ -217,12 +231,20 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
     result_file = None if delete else _result_file(ctx)
     if result_file is not None:
         env["AAP_DEMO_RESULT_FILE"] = str(result_file)
+    compat_file = None
     try:
+        if use_oc_for_kubectl(which=shutil.which):
+            compat_file = _kubectl_compat_file()
+            env["BASH_ENV"] = str(compat_file).replace("\\", "/")
         result = ctx.runner.run(argv, env=env, sink=ctx.console.log_sink())
         failed_domains = _partial_domains(result_file) if not result.ok else None
     finally:
-        if result_file is not None:
-            result_file.unlink(missing_ok=True)
+        try:
+            if compat_file is not None:
+                compat_file.unlink(missing_ok=True)
+        finally:
+            if result_file is not None:
+                result_file.unlink(missing_ok=True)
     if failed_domains is not None:
         # The base and some domains are in AAP. Record them so disable and a
         # retry see them, wire the credentials, then report the failure.
@@ -261,6 +283,17 @@ def _run(ctx: AppContext, addon: ShellAddon, *, delete: bool, extra: Sequence[st
     return 0
 
 
+def use_oc_for_kubectl(
+    *,
+    windows: Optional[bool] = None,
+    which: Optional[Callable[[str], Optional[str]]] = None,
+) -> bool:
+    """Use OpenShift's kubectl-compatible client when Windows lacks kubectl."""
+    is_windows = os.name == "nt" if windows is None else windows
+    finder = shutil.which if which is None else which
+    return is_windows and finder("kubectl") is None and finder("oc") is not None
+
+
 def _result_file(ctx: AppContext) -> Optional[Path]:
     """An empty file the installer can mark. None when the state dir is unusable."""
     try:
@@ -270,6 +303,29 @@ def _result_file(ctx: AppContext) -> Optional[Path]:
         return None
     os.close(fd)
     return Path(name)
+
+
+def _kubectl_compat_file() -> Path:
+    """Write and close the Bash compatibility function before handing it off."""
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".sh",
+            prefix="aap-demo-bash-env-",
+            delete=False,
+        ) as handle:
+            path = Path(handle.name)
+            handle.write('kubectl() { command oc "$@"; }\n')
+    except BaseException:
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    return path
 
 
 def _partial_domains(path: Optional[Path]) -> Optional[List[str]]:
@@ -303,15 +359,26 @@ def _wire(ctx: AppContext, env: Dict[str, str]) -> None:
     wire_env["AAP_DEMO_ENABLED_ADDONS"] = " ".join(_enabled(ctx))
     if token_path is not None:
         wire_env["GALAXY_TOKEN_FILE"] = str(token_path)
+    compat_file = None
     try:
+        bash = find_bash(shutil.which) if os.name == "nt" else "bash"
+        if not bash:
+            raise PrerequisiteError("Git Bash not found", hint="Install Git for Windows and retry.")
+        if use_oc_for_kubectl(which=shutil.which):
+            compat_file = _kubectl_compat_file()
+            wire_env["BASH_ENV"] = str(compat_file).replace("\\", "/")
         result = ctx.runner.run(
-            ["bash", str(script), str(library)],
+            [bash, str(script), str(library)],
             env=wire_env,
             sink=ctx.console.log_sink(),
         )
     finally:
-        if token_path is not None:
-            token_path.unlink(missing_ok=True)
+        try:
+            if compat_file is not None:
+                compat_file.unlink(missing_ok=True)
+        finally:
+            if token_path is not None:
+                token_path.unlink(missing_ok=True)
     if not result.ok:
         ctx.console.warn(
             "Product demos are installed, and credential wiring did not finish. "

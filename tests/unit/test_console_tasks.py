@@ -15,6 +15,21 @@ def test_structured_output_does_not_print_progress() -> None:
     assert stdout.getvalue() == ""
 
 
+def test_plain_console_escapes_characters_unsupported_by_stream_encoding() -> None:
+    output = io.BytesIO()
+    stdout = io.TextIOWrapper(output, encoding="cp1252")
+    console = Console(stdout=stdout, style="basic", color=False)
+
+    console.checkpoint("CoreDNS configured: example → router service")
+    stdout.flush()
+
+    assert (
+        output.getvalue()
+        .decode("cp1252")
+        .startswith(r"[ok] CoreDNS configured: example \u2192 router service")
+    )
+
+
 def test_steps_check_off_in_order() -> None:
     console = RecordingConsole()
     console.tasks(["Starting CRC", "Waiting for CRC SSH", "Checking the CRI-O pull secret"])

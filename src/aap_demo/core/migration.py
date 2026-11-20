@@ -51,8 +51,8 @@ STATE_MOVES: Tuple[Tuple[str, str], ...] = (
     ("ca-bundle.crt", "certs/ca-bundle.crt"),
 )
 
-#: Credential files imported into the keyring and then deleted. Deleting is the
-#: point: a migration that leaves the plaintext behind has made a second copy.
+#: Credential files imported into the keyring. Windows may keep a source copy
+#: while the explicit Bash v1 compatibility command remains available.
 CREDENTIAL_IMPORTS: Tuple[Tuple[str, str], ...] = (
     ("galaxy-token", "galaxy-token"),
     ("pah-token", "pah-token"),
@@ -70,8 +70,8 @@ State (kubeconfig, certificates, addon state):
 Cache (image store, playbooks checkout):
   {cache_dir}
 
-Files left here on purpose: hand-placed pull secrets and the local image
-cache. Nothing in this directory was deleted.
+The legacy directory is retained. User-placed pull secrets and the local image
+cache remain here. Migration actions are reported by the command that ran them.
 """
 
 
@@ -168,7 +168,12 @@ class Plan:
         return self.reason != "already-migrated"
 
 
-def plan(paths: Paths, *, secrets_available: bool = True) -> Plan:
+def plan(
+    paths: Paths,
+    *,
+    secrets_available: bool = True,
+    preserve_legacy: bool = False,
+) -> Plan:
     if paths.config_file.is_file():
         return Plan(reason="already-migrated")
 
@@ -208,7 +213,7 @@ def plan(paths: Paths, *, secrets_available: bool = True) -> Plan:
             if source.is_file():
                 result.actions.append(
                     Action(
-                        "move",
+                        "copy" if preserve_legacy else "move",
                         f"move {source} -> {paths.state_dir / dest_rel}",
                         source=source,
                         dest=paths.state_dir / dest_rel,
@@ -216,10 +221,11 @@ def plan(paths: Paths, *, secrets_available: bool = True) -> Plan:
                 )
         legacy_addons = paths.legacy_dir / "portal"
         if legacy_addons.is_dir():
+            action = "copy" if preserve_legacy else "move"
             result.actions.append(
                 Action(
-                    "move",
-                    f"move {legacy_addons} -> {paths.addon_dir('portal')}",
+                    action,
+                    f"{action} {legacy_addons} -> {paths.addon_dir('portal')}",
                     source=legacy_addons,
                     dest=paths.addon_dir("portal"),
                 )
@@ -234,7 +240,11 @@ def plan(paths: Paths, *, secrets_available: bool = True) -> Plan:
         if secrets_available:
             for source in credential_sources:
                 result.actions.append(
-                    Action("import-secret", f"import and delete {source}", source=source)
+                    Action(
+                        "import-secret-preserve" if preserve_legacy else "import-secret",
+                        f"import {source} into the credential store",
+                        source=source,
+                    )
                 )
         else:
             result.warnings.append(
@@ -295,8 +305,15 @@ def apply(
             config_mod.write(paths.config_file, migration_plan.config_data)
         elif action.kind == "move":
             _move(action.source, action.dest)
-        elif action.kind == "import-secret":
-            import_secret(action.source, secret_store, log)
+        elif action.kind == "copy":
+            _copy(action.source, action.dest)
+        elif action.kind in {"import-secret", "import-secret-preserve"}:
+            import_secret(
+                action.source,
+                secret_store,
+                log,
+                delete_source=action.kind == "import-secret",
+            )
             continue
         elif action.kind == "marker":
             _write_marker(paths)
@@ -316,6 +333,23 @@ def _move(source: Optional[Path], dest: Optional[Path]) -> None:
     shutil.move(str(source), str(dest))
 
 
+def _copy(source: Optional[Path], dest: Optional[Path]) -> None:
+    if source is None or dest is None or not source.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        shutil.copytree(source, dest, dirs_exist_ok=True, copy_function=_copy_missing)
+    elif not dest.exists():
+        shutil.copy2(source, dest)
+
+
+def _copy_missing(source: str, dest: str) -> str:
+    """Copy legacy data without replacing anything already in the v2 layout."""
+    if Path(dest).exists():
+        return dest
+    return shutil.copy2(source, dest)
+
+
 def _secret_name_for(source: Path) -> str:
     for name, secret in CREDENTIAL_IMPORTS:
         if source.name == name:
@@ -323,7 +357,13 @@ def _secret_name_for(source: Path) -> str:
     return source.name
 
 
-def import_secret(source: Optional[Path], secret_store: Any, log: List[str]) -> None:
+def import_secret(
+    source: Optional[Path],
+    secret_store: Any,
+    log: List[str],
+    *,
+    delete_source: bool = True,
+) -> None:
     if source is None or secret_store is None or not source.is_file():
         return
     value = source.read_text(encoding="utf-8").strip()
@@ -338,8 +378,11 @@ def import_secret(source: Optional[Path], secret_store: Any, log: List[str]) -> 
             f"Could not import {source} into the credential store",
             hint="The file was left in place, and the migration will try again.",
         ) from None
-    source.unlink()
-    log.append(f"imported {source} into the credential store and deleted the file")
+    if delete_source:
+        source.unlink()
+        log.append(f"imported {source} into the credential store and deleted the file")
+    else:
+        log.append(f"imported {source} into the credential store and kept the legacy copy")
 
 
 def _write_marker(paths: Paths) -> None:
@@ -372,7 +415,11 @@ def migrate_if_needed(
         return Plan(reason="already-migrated"), []
 
     secrets_available = bool(secret_store) and secret_store.available()
-    migration_plan = plan(paths, secrets_available=secrets_available)
+    migration_plan = plan(
+        paths,
+        secrets_available=secrets_available,
+        preserve_legacy=os.name == "nt",
+    )
     if not migration_plan.needed:
         return migration_plan, []
     log = apply(paths, migration_plan, secret_store=secret_store)

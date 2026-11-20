@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+import pytest
 
 from aap_demo.addons import get, names, needs_cluster
 from aap_demo.addons.shell import scripts_root
@@ -31,6 +34,7 @@ def test_enable_uses_python_state_and_does_not_run_product_demo_wiring(
         "aap_demo.addons.shell.shutil.which",
         lambda name: f"/usr/bin/{name}",
     )
+    monkeypatch.setattr("aap_demo.addons.shell.find_bash", lambda _which=None: "bash")
     app_ctx.runner.ok(["bash", _deploy()], stdout="installed\n")
 
     assert get("eda-playground").enable(app_ctx, argparse.Namespace(addon="eda-playground")) == 0
@@ -42,6 +46,35 @@ def test_enable_uses_python_state_and_does_not_run_product_demo_wiring(
     assert call.env["EDA_PLAYGROUND_STATE_DIR"] == str(app_ctx.paths.state_dir / "eda-playground")
     assert app_ctx.config.get("addons.enabled") == ["eda-playground"]
     assert len(app_ctx.runner.calls) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Git Bash utilities are Windows-specific")
+def test_windows_eda_accepts_base64_from_git_bash(monkeypatch, tmp_path: Path) -> None:
+    import aap_demo.addons.shell as shell
+    import aap_demo.core.platform_tools as platform_tools
+
+    git_root = tmp_path / "Git"
+    bash = git_root / "bin" / "bash.exe"
+    base64 = git_root / "usr" / "bin" / "base64.exe"
+    bash.parent.mkdir(parents=True)
+    base64.parent.mkdir(parents=True)
+    bash.touch()
+    base64.touch()
+    monkeypatch.setattr(shell, "find_bash", lambda _which=None: str(bash))
+    monkeypatch.setattr(
+        platform_tools,
+        "find_bash",
+        lambda _which=None, *, windows=None: str(bash),
+    )
+    monkeypatch.setattr(
+        shell.shutil,
+        "which",
+        lambda tool: {"curl": "C:/curl.exe", "jq": "C:/jq.exe"}.get(tool),
+    )
+    monkeypatch.setattr(shell, "use_oc_for_kubectl", lambda **_kwargs: True)
+
+    assert shell.find_bash_tool("base64", shell.shutil.which) == str(base64.resolve())
+    shell.require_tools(name="eda-playground", tools=("bash", "curl", "jq", "kubectl", "base64"))
 
 
 def test_eda_playground_scripts_are_bundled() -> None:

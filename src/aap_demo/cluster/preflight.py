@@ -22,6 +22,7 @@ script.
 from __future__ import annotations
 
 import ipaddress
+import os
 import shlex
 import shutil
 from pathlib import Path
@@ -55,6 +56,17 @@ def _export(ctx: AppContext, path: Path) -> None:
     inner = ctx.runner.inner if isinstance(ctx.runner, EnvRunner) else ctx.runner
     ctx.env = {**ctx.env, "KUBECONFIG": str(path)}
     ctx.runner = EnvRunner(inner, ctx.kube_env())
+
+
+def has_kubectl(
+    which: Optional[Callable[[str], Optional[str]]] = None,
+    *,
+    windows: Optional[bool] = None,
+) -> bool:
+    """OpenShift's ``oc`` client also supplies the kubectl commands used here."""
+    finder = shutil.which if which is None else which
+    is_windows = os.name == "nt" if windows is None else windows
+    return finder("kubectl") is not None or (is_windows and finder("oc") is not None)
 
 
 def _refresh_from_vm(ctx: AppContext, path: Path) -> bool:
@@ -243,10 +255,10 @@ def setup_kubeconfig(
     later on PATH — would never be seen.
     """
     finder = shutil.which if which is None else which
-    if finder("kubectl") is None:
+    if not has_kubectl(finder):
         raise PrerequisiteError(
             "kubectl not found",
-            hint="Install kubectl and make sure it is on PATH: "
+            hint="Install kubectl (or the OpenShift CLI on Windows) and make sure it is on PATH: "
             "https://kubernetes.io/docs/tasks/tools/",
         )
 

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import shlex
+import ssl
 import subprocess
 from pathlib import Path
 
@@ -127,6 +129,128 @@ def _router_secret(runner: FakeRunner, ca: str) -> None:
         ],
         stdout='{"data":{"tls.crt":"' + encoded + '"}}',
     )
+
+
+def test_windows_ingress_import_uses_python_store_api(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
+) -> None:
+    ca = _cert(tmp_path, "ingress-ca")
+    thumbprint = ingress_ca._windows_thumbprint(ca)
+    trusted = set()
+    imported = []
+
+    def add_certificate(path: Path) -> bool:
+        imported.append(path)
+        trusted.add(thumbprint)
+        return True
+
+    runner = FakeRunner()
+    _router_secret(runner, ca)
+    app_ctx.runner = runner
+    monkeypatch.setattr(
+        ingress_ca,
+        "_windows_store_contains",
+        lambda _ctx, candidate: candidate in trusted,
+    )
+    monkeypatch.setattr(ingress_ca, "_windows_add_certificate", add_certificate)
+
+    assert ingress_ca.install(app_ctx, system="Windows") is True
+    assert imported == [app_ctx.paths.ingress_ca]
+    assert runner.commands == [
+        "kubectl get secret router-certs-default -n openshift-ingress -o json"
+    ]
+
+
+def test_windows_store_lookup_reads_current_user_root(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
+) -> None:
+    ca = _cert(tmp_path, "ingress-ca")
+    der = base64.b64decode(
+        "".join(
+            ca.replace("-----BEGIN CERTIFICATE-----", "")
+            .replace("-----END CERTIFICATE-----", "")
+            .split()
+        )
+    )
+    monkeypatch.setattr(
+        ssl,
+        "enum_certificates",
+        lambda store: [(der, "x509_asn", [ingress_ca.SERVER_AUTH_OID])],
+        raising=False,
+    )
+
+    assert ingress_ca._windows_store_contains(app_ctx, ingress_ca._windows_thumbprint(ca)) is True
+
+
+def test_windows_store_lookup_rejects_a_cert_without_server_auth(
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
+) -> None:
+    ca = _cert(tmp_path, "ingress-ca")
+    der = base64.b64decode(
+        "".join(
+            ca.replace("-----BEGIN CERTIFICATE-----", "")
+            .replace("-----END CERTIFICATE-----", "")
+            .split()
+        )
+    )
+    monkeypatch.setattr(
+        ssl,
+        "enum_certificates",
+        lambda store: [(der, "x509_asn", ["1.3.6.1.5.5.7.3.2"])],
+        raising=False,
+    )
+
+    assert ingress_ca._windows_store_contains(app_ctx, ingress_ca._windows_thumbprint(ca)) is False
+
+
+def test_windows_add_certificate_uses_cryptoapi(tmp_path: Path, monkeypatch) -> None:
+    ca = _cert(tmp_path, "ingress-ca")
+    path = tmp_path / "ingress-ca.crt"
+    der = base64.b64decode(
+        "".join(
+            ca.replace("-----BEGIN CERTIFICATE-----", "")
+            .replace("-----END CERTIFICATE-----", "")
+            .split()
+        )
+    )
+    path.write_text(ca, encoding="utf-8")
+    seen = {}
+
+    class ApiFunction:
+        def __init__(self, result):
+            self.result = result
+
+        def __call__(self, *args):
+            self.args = args
+            if self.result == "capture":
+                seen["certificate"] = ctypes.string_at(args[2], args[3])
+                return True
+            return self.result
+
+    class Crypt32:
+        CertOpenStore = ApiFunction(1)
+        CertAddEncodedCertificateToStore = ApiFunction("capture")
+        CertCloseStore = ApiFunction(True)
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_args, **_kwargs: Crypt32, raising=False)
+
+    assert ingress_ca._windows_add_certificate_in_process(path) is True
+    assert seen["certificate"] == der
+    assert Crypt32.CertCloseStore.args[0] == 1
+
+
+def test_windows_add_certificate_worker_is_bounded(tmp_path: Path, monkeypatch) -> None:
+    calls = []
+
+    def timed_out(argv, **kwargs):
+        calls.append((argv, kwargs))
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", timed_out)
+
+    assert ingress_ca._windows_add_certificate(tmp_path / "ingress-ca.crt") is False
+    assert calls[0][1]["timeout"] == 10
+    assert calls[0][1]["stdin"] is subprocess.DEVNULL
 
 
 def test_install_never_prompts_when_sudo_needs_a_password(

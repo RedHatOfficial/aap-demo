@@ -200,6 +200,7 @@ def build_parser(
     )
     add("repair", "Repair cluster after crash").set_defaults(func=lifecycle.repair)
     add("setup", "Run setup only (storage, coredns)").set_defaults(func=lifecycle.setup)
+    add("trust-ca", "Trust the current cluster ingress CA").set_defaults(func=lifecycle.trust_ca)
     add("redeploy-all", "Destroy cluster and redeploy fresh").set_defaults(
         func=lifecycle.redeploy_all
     )
@@ -524,6 +525,7 @@ CLUSTER_COMMANDS = frozenset(
         "repair",
         "watch",
         "must-gather",
+        "trust-ca",
     }
 )
 
