@@ -148,7 +148,7 @@ case "$KEYCLOAK_INSECURE_TLS" in
     KEYCLOAK_CA_FILE="${KEYCLOAK_CA_FILE:-}"
     if [ -z "$KEYCLOAK_CA_FILE" ]; then
       for _candidate_ca in \
-        "${AAP_DEMO_STATE_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/aap-demo}/certs/crc-ingress-ca.crt" \
+        "${AAP_DEMO_STATE_ROOT}/certs/crc-ingress-ca.crt" \
         "${AAP_DEMO_CONFIG_DIR:-${HOME}/.aap-demo}/crc-ingress-ca.crt"; do
         if [ -s "$_candidate_ca" ]; then
           KEYCLOAK_CA_FILE="$_candidate_ca"

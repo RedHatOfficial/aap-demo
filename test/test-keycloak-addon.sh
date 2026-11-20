@@ -145,12 +145,12 @@ grep -q 'STATE_DIR=.*addons/keycloak' "$ROOT_DIR/addons/keycloak/configure.sh" |
   echo "FAIL: configure must use the native addon state directory"
   exit 1
 }
-grep -q 'AAP_DEMO_STATE_DIR.*XDG_STATE_HOME' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
-  echo "FAIL: deploy must prefer the native state CA"
+grep -Fq '"${AAP_DEMO_STATE_ROOT}/certs/crc-ingress-ca.crt"' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: deploy must find the ingress CA under the resolved state root"
   exit 1
 }
-grep -q 'AAP_DEMO_STATE_DIR.*XDG_STATE_HOME' "$ROOT_DIR/addons/keycloak/configure.sh" || {
-  echo "FAIL: configure must prefer the native state CA"
+grep -Fq '"${AAP_DEMO_STATE_ROOT}/certs/crc-ingress-ca.crt"' "$ROOT_DIR/addons/keycloak/configure.sh" || {
+  echo "FAIL: configure must find the ingress CA under the resolved state root"
   exit 1
 }
 grep -q 'automountServiceAccountToken: false' "$ROOT_DIR/addons/keycloak/keycloak.yaml" || {
