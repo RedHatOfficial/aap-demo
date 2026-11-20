@@ -149,12 +149,52 @@ def test_no_config_writes_a_fresh_file(legacy) -> None:
 
 def test_state_files_are_moved_not_copied(legacy) -> None:
     paths = legacy("full")
+    portal_source = paths.legacy_dir / "portal"
+    portal_source.mkdir()
+    (portal_source / "oauth.json").write_text("legacy portal state", encoding="utf-8")
     migration.apply(paths, migration.plan(paths), secret_store=InMemorySecretStore())
 
     assert paths.kubeconfig.read_text() == "kubeconfig-contents\n"
     assert not (paths.legacy_dir / "kubeconfig.microshift").exists()
     assert paths.ingress_ca.is_file()
     assert not (paths.legacy_dir / "crc-ingress-ca.crt").exists()
+    assert not portal_source.exists()
+    assert (paths.addon_dir("portal") / "oauth.json").read_text(encoding="utf-8") == (
+        "legacy portal state"
+    )
+
+
+def test_windows_transition_keeps_legacy_state_and_credentials(legacy) -> None:
+    paths = legacy("full")
+    store = InMemorySecretStore()
+    portal_source = paths.legacy_dir / "portal"
+    portal_source.mkdir()
+    (portal_source / "oauth.json").write_text("legacy portal state", encoding="utf-8")
+    portal_dest = paths.addon_dir("portal")
+    portal_dest.mkdir(parents=True)
+    (portal_dest / "existing.json").write_text("newer state", encoding="utf-8")
+    paths.kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+    paths.kubeconfig.write_text("newer kubeconfig", encoding="utf-8")
+
+    migration.apply(
+        paths,
+        migration.plan(paths, preserve_legacy=True),
+        secret_store=store,
+    )
+
+    for name in ("kubeconfig.microshift", "crc-ingress-ca.crt"):
+        assert (paths.legacy_dir / name).is_file()
+    assert (paths.state_dir / "kubeconfig.microshift").is_file()
+    assert paths.kubeconfig.read_text(encoding="utf-8") == "newer kubeconfig"
+    assert (paths.state_dir / "certs" / "crc-ingress-ca.crt").is_file()
+    assert (paths.legacy_dir / "galaxy-token").is_file()
+    assert (paths.legacy_dir / "pah-token").is_file()
+    assert (portal_source / "oauth.json").is_file()
+    assert (portal_dest / "oauth.json").read_text(encoding="utf-8") == "legacy portal state"
+    assert (portal_dest / "existing.json").read_text(encoding="utf-8") == "newer state"
+    assert store.get("galaxy-token") == "glxy-token-value"
+    assert store.get("pah-token") == "pah-token-value"
+    assert paths.ingress_ca.is_file()
 
 
 def test_image_cache_is_left_in_place_and_reported(legacy) -> None:

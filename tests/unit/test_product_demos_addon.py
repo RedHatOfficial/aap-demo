@@ -157,6 +157,7 @@ def _present_tools(monkeypatch: pytest.MonkeyPatch) -> None:
         "aap_demo.addons.shell.shutil.which",
         lambda name: f"/usr/bin/{name}",
     )
+    monkeypatch.setattr("aap_demo.addons.shell.find_bash", lambda _which=None: "bash")
 
 
 def _deploy(name: str) -> str:
@@ -324,6 +325,62 @@ def test_enable_passes_domain_selection_and_a_galaxy_token(app_ctx, monkeypatch)
     assert _token_files(app_ctx) == []
 
 
+def test_wire_removes_token_when_compatibility_file_setup_fails(app_ctx, monkeypatch) -> None:
+    import aap_demo.addons.shell as shell
+
+    app_ctx.secrets.set("galaxy-token", "offline-token")
+    monkeypatch.setattr(shell, "find_bash", lambda _which=None: "bash")
+    monkeypatch.setattr(shell, "use_oc_for_kubectl", lambda **_kwargs: True)
+
+    def fail_named_temporary_file(**_kwargs):
+        raise OSError("temp file unavailable")
+
+    monkeypatch.setattr(shell.tempfile, "NamedTemporaryFile", fail_named_temporary_file)
+
+    with pytest.raises(OSError, match="temp file unavailable"):
+        shell._wire(app_ctx, {})
+
+    assert _token_files(app_ctx) == []
+
+
+def test_wire_closes_compatibility_file_before_removing_token(app_ctx, monkeypatch) -> None:
+    import aap_demo.addons.shell as shell
+
+    app_ctx.secrets.set("galaxy-token", "offline-token")
+    monkeypatch.setattr(shell, "find_bash", lambda _which=None: "bash")
+    monkeypatch.setattr(shell, "use_oc_for_kubectl", lambda **_kwargs: True)
+    real_named_temporary_file = shell.tempfile.NamedTemporaryFile
+    open_files = []
+
+    class FailingWrite:
+        def __init__(self, **kwargs):
+            self.handle = real_named_temporary_file(**kwargs)
+            self.name = self.handle.name
+            open_files.append(self)
+
+        def write(self, _value):
+            raise OSError("compatibility file write failed")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+        def close(self):
+            self.handle.close()
+
+    monkeypatch.setattr(shell.tempfile, "NamedTemporaryFile", FailingWrite)
+
+    try:
+        with pytest.raises(OSError):
+            shell._wire(app_ctx, {})
+        assert _token_files(app_ctx) == []
+    finally:
+        for handle in open_files:
+            handle.close()
+
+
 def test_locked_keyring_does_not_fail_a_finished_install(app_ctx, monkeypatch) -> None:
     import keyring.errors
 
@@ -391,6 +448,7 @@ def test_disable_needs_only_bash(app_ctx, monkeypatch, name) -> None:
         "aap_demo.addons.shell.shutil.which",
         lambda tool: "/bin/bash" if tool == "bash" else None,
     )
+    monkeypatch.setattr("aap_demo.addons.shell.find_bash", lambda _which=None: "bash")
     app_ctx.runner.ok(["bash", _deploy(name), "--delete"])
 
     assert get(name).disable(app_ctx, argparse.Namespace()) == 0
@@ -399,6 +457,7 @@ def test_disable_needs_only_bash(app_ctx, monkeypatch, name) -> None:
 
 def test_disable_without_bash_names_only_bash(app_ctx, monkeypatch) -> None:
     monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda tool: None)
+    monkeypatch.setattr("aap_demo.addons.shell.find_bash", lambda _which=None: None)
 
     with pytest.raises(PrerequisiteError, match="need bash$"):
         get("product-demos").disable(app_ctx, argparse.Namespace())

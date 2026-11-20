@@ -36,6 +36,7 @@ sets ``spec.channel`` to the requested channel unconditionally.
 
 from __future__ import annotations
 
+import platform
 import re
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -54,6 +55,9 @@ OLM_INSTALL_RETRY_SECONDS = 15
 SUBSCRIPTION_CRD = "subscriptions.operators.coreos.com"
 OLM_NAMESPACE = "olm"
 OPERATORS_NAMESPACE = "operators"
+OLM_RELEASE_URL = (
+    "https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download"
+)
 #: Ships with upstream OLM and cannot start on MicroShift, so bash removes it.
 OPERATORHUB_CATALOG = "operatorhubio-catalog"
 
@@ -121,8 +125,62 @@ def is_installed(ctx: AppContext) -> bool:
     return kubectl.exists(ctx.runner, "crd", SUBSCRIPTION_CRD)
 
 
+def _manifest_install_is_ready(ctx: AppContext) -> bool:
+    """Check the CRD and both OLM controllers for the Windows manifest path."""
+    if not is_installed(ctx):
+        return False
+    return _wait_for_manifest_controllers(ctx).ok
+
+
+def _wait_for_manifest_controllers(ctx: AppContext) -> Any:
+    result = None
+    for deployment in ("catalog-operator", "olm-operator"):
+        result = ctx.runner.run(
+            [
+                "kubectl",
+                "rollout",
+                "status",
+                f"deployment/{deployment}",
+                "-n",
+                OLM_NAMESPACE,
+                "--timeout=120s",
+            ]
+        )
+        if not result.ok:
+            return result
+    return result
+
+
 def _delete_operatorhub_catalog(ctx: AppContext) -> None:
     kubectl.delete(ctx.runner, "catsrc", OPERATORHUB_CATALOG, "-n", OLM_NAMESPACE)
+
+
+def _install_from_manifests(ctx: AppContext) -> Any:
+    """Install OLM through kubectl when operator-sdk has no Windows binary.
+
+    ``apply`` keeps retries safe after the CRD manifest has succeeded but the
+    controller manifest failed.
+    """
+    crds_url = f"{OLM_RELEASE_URL}/crds.yaml"
+    olm_url = f"{OLM_RELEASE_URL}/olm.yaml"
+    installed_crds = ctx.runner.run(["kubectl", "apply", "-f", crds_url])
+    if not installed_crds.ok:
+        return installed_crds
+    established = ctx.runner.run(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=Established",
+            "--timeout=120s",
+            f"crd/{SUBSCRIPTION_CRD}",
+        ]
+    )
+    if not established.ok:
+        return established
+    applied_olm = ctx.runner.run(["kubectl", "apply", "-f", olm_url])
+    if not applied_olm.ok:
+        return applied_olm
+    return _wait_for_manifest_controllers(ctx)
 
 
 def ensure_installed(
@@ -136,8 +194,9 @@ def ensure_installed(
     The odd-looking "install failed, but check the CRDs anyway" branch is
     bash's and is kept: ``operator-sdk olm install`` has an aggressive
     internal timeout and reports failure for installs that in fact completed.
-    Only a genuinely partial install — no Subscription CRD — is cleaned up and
-    treated as fatal.
+    The native operator-sdk path keeps Bash's Subscription-CRD timeout
+    tolerance. The Windows manifest path also requires both OLM controllers to
+    complete their rollout before an existing CRD counts as installed.
     """
     import shutil
 
@@ -149,25 +208,30 @@ def ensure_installed(
             hint="Make sure your cluster is running: crc start",
         )
 
-    sdk.ensure_available(ctx, which=resolve)
+    use_manifests = platform.system() == "Windows" and resolve("operator-sdk") is None
+    if not use_manifests:
+        sdk.ensure_available(ctx, which=resolve)
 
-    if is_installed(ctx):
+    already_installed = _manifest_install_is_ready(ctx) if use_manifests else is_installed(ctx)
+    if already_installed:
         ctx.console.checkpoint("OLM is already installed")
-        status = sdk.olm_status(ctx)
-        for line in (status.stdout or "").splitlines()[:5]:
-            if line.startswith("  "):
-                ctx.console.note(line.strip())
+        if not use_manifests:
+            status = sdk.olm_status(ctx)
+            for line in (status.stdout or "").splitlines()[:5]:
+                if line.startswith("  "):
+                    ctx.console.note(line.strip())
         return True
 
     # operator-sdk looks up the OLM release on GitHub, so a brief network problem
     # fails it within seconds.
-    installed = sdk.olm_install(ctx)
+    install = _install_from_manifests if use_manifests else sdk.olm_install
+    installed = install(ctx)
     for _attempt in range(OLM_INSTALL_RETRIES):
-        if installed.ok or is_installed(ctx):
+        if installed.ok or (not use_manifests and is_installed(ctx)):
             break
         ctx.console.progress("OLM install failed. Trying again")
         sleep(OLM_INSTALL_RETRY_SECONDS)
-        installed = sdk.olm_install(ctx)
+        installed = install(ctx)
 
     if installed.ok:
         _delete_operatorhub_catalog(ctx)
@@ -175,14 +239,20 @@ def ensure_installed(
 
     ctx.console.warn("OLM install may have issues")
     ctx.console.out("Check: operator-sdk olm status")
-    if is_installed(ctx):
+    if not use_manifests and is_installed(ctx):
         _delete_operatorhub_catalog(ctx)
         ctx.console.out("OLM CRDs are present — installation likely succeeded despite timeout.")
         return True
 
-    ctx.console.out("ERROR: OLM installation incomplete. Cleaning up...")
-    kubectl.delete(ctx.runner, "namespace", OLM_NAMESPACE)
-    kubectl.delete(ctx.runner, "namespace", OPERATORS_NAMESPACE)
+    ctx.console.out("ERROR: OLM installation incomplete.")
+    if use_manifests:
+        ctx.console.out(
+            "Leaving OLM namespaces intact so a later run can safely retry the manifests."
+        )
+    else:
+        ctx.console.out("Cleaning up OLM namespaces...")
+        kubectl.delete(ctx.runner, "namespace", OLM_NAMESPACE)
+        kubectl.delete(ctx.runner, "namespace", OPERATORS_NAMESPACE)
     raise AapDemoError(
         "OLM installation failed",
         hint=(

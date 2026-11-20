@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -29,6 +30,22 @@ from typing import (
 )
 
 from aap_demo.core.errors import AapDemoError, PrerequisiteError
+
+
+def command_argv_for_platform(
+    argv: Sequence[str],
+    *,
+    windows: Optional[bool] = None,
+    which: Callable[[str], Optional[str]] = shutil.which,
+) -> List[str]:
+    """Run kubectl through ``oc`` on Windows when only the OpenShift CLI exists."""
+    command = [str(arg) for arg in argv]
+    is_windows = os.name == "nt" if windows is None else windows
+    if command and is_windows and command[0].lower() == "kubectl" and which("kubectl") is None:
+        oc = which("oc")
+        if oc:
+            command[0] = oc
+    return command
 
 
 @dataclass(frozen=True)
@@ -136,6 +153,7 @@ class SubprocessRunner:
         cwd: Optional[str],
         detach: bool = False,
     ) -> CompletedCommand:
+        command = command_argv_for_platform(args)
         try:
             # A detached child must not read the terminal. Otherwise crc delete
             # waits for a second Enter and the checklist never appears.
@@ -143,7 +161,7 @@ class SubprocessRunner:
             source = stdin_path.open("rb") if stdin_path else None
             try:
                 proc = subprocess.run(  # noqa: S603 - argv list, never shell=True
-                    args,
+                    command,
                     input=input if source is None else None,
                     stdin=source or (subprocess.DEVNULL if detach and input is None else None),
                     capture_output=capture and output is None,
@@ -162,13 +180,13 @@ class SubprocessRunner:
                     source.close()
         except FileNotFoundError as exc:
             raise PrerequisiteError(
-                f"required command not found: {args[0]}",
-                hint=f"Install {args[0]} and make sure it is on PATH.",
+                f"required command not found: {command[0]}",
+                hint=f"Install {command[0]} and make sure it is on PATH.",
             ) from exc
         except subprocess.TimeoutExpired as exc:
-            raise AapDemoError(f"command timed out after {timeout}s: {' '.join(args)}") from exc
+            raise AapDemoError(f"command timed out after {timeout}s: {' '.join(command)}") from exc
         return CompletedCommand(
-            argv=tuple(args),
+            argv=tuple(command),
             returncode=proc.returncode,
             stdout=(
                 proc.stdout.decode(errors="replace")
@@ -196,9 +214,10 @@ class SubprocessRunner:
     ) -> CompletedCommand:
         """Line-by-line stdout/stderr as ``kind="log"`` events."""
         lines: List[str] = []
+        command = command_argv_for_platform(args)
         try:
             proc = subprocess.Popen(  # noqa: S603 - argv list, never shell=True
-                args,
+                command,
                 stdin=subprocess.DEVNULL if detach else None,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -210,8 +229,8 @@ class SubprocessRunner:
             )
         except FileNotFoundError as exc:
             raise PrerequisiteError(
-                f"required command not found: {args[0]}",
-                hint=f"Install {args[0]} and make sure it is on PATH.",
+                f"required command not found: {command[0]}",
+                hint=f"Install {command[0]} and make sure it is on PATH.",
             ) from exc
 
         assert proc.stdout is not None
@@ -231,10 +250,10 @@ class SubprocessRunner:
         except subprocess.TimeoutExpired as exc:
             proc.kill()
             proc.wait()
-            raise AapDemoError(f"command timed out after {timeout}s: {' '.join(args)}") from exc
+            raise AapDemoError(f"command timed out after {timeout}s: {' '.join(command)}") from exc
 
         return CompletedCommand(
-            argv=tuple(args), returncode=proc.returncode, stdout="\n".join(lines)
+            argv=tuple(command), returncode=proc.returncode, stdout="\n".join(lines)
         )
 
 

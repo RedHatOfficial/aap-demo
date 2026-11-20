@@ -39,6 +39,7 @@ The [project home page](../README.md) is the short start. These pages are the re
 - [Changelog](CHANGELOG.md) - Notable changes to add-ons and documentation.
 - [Commands](reference/commands.md) - What each command does.
 - [Settings](reference/settings.md) - Memory, disk, channels, and file locations.
+- [Windows Python migration](reference/windows-python-migration.md) - Current transition and the Python-only Windows target.
 
 ## Examples
 

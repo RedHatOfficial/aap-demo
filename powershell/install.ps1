@@ -1,322 +1,94 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Install aap-demo on Windows.
-
-.DESCRIPTION
-  Checks prerequisites, installs the Python aap-demo package from PyPI with
-  pipx, preserves the repository Bash implementation as aap-demo-v1, adds
-  the launcher directory to the user PATH, and installs oc when missing.
+  Bootstrap Python and delegate aap-demo setup to Python.
 
 .EXAMPLE
   .\powershell\install.ps1
 
 .EXAMPLE
   .\powershell\install.ps1 -Uninstall
+
+.EXAMPLE
+  .\powershell\install.ps1 -RollbackToV1
 #>
 [CmdletBinding()]
 param(
   [switch]$Uninstall,
+  [switch]$RollbackToV1,
   [switch]$Quiet
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if ($Uninstall -and $RollbackToV1) {
+  throw 'Choose either -Uninstall or -RollbackToV1, not both.'
+}
+
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$ConfigDir = Join-Path $env:USERPROFILE '.aap-demo'
-$BinDir = Join-Path $env:USERPROFILE '.local\bin'
-$RepoMarker = Join-Path $ConfigDir 'repo-path'
-$PipxOwnedMarker = Join-Path $ConfigDir 'pipx-owned'
-$WrapperTarget = Join-Path $BinDir 'aap-demo.ps1'
-$CmdShim = Join-Path $BinDir 'aap-demo.cmd'
-$LegacyShim = Join-Path $BinDir 'aap-demo-v1.cmd'
-
-function Write-Info([string]$Message) { Write-Host "  $Message" }
-function Write-Ok([string]$Message) { Write-Host "  OK $Message" -ForegroundColor Green }
-function Write-Warn([string]$Message) { Write-Host "  WARN $Message" -ForegroundColor Yellow }
-function Write-Err([string]$Message) { Write-Host "  ERROR $Message" -ForegroundColor Red }
-
-function Test-CommandExists {
-  param([string]$Name)
-  return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+$SetupScript = Join-Path $RepoRoot 'src\aap_demo\setup.py'
+if (-not (Test-Path -LiteralPath $SetupScript -PathType Leaf)) {
+  throw "Python setup module was not found: $SetupScript"
 }
 
 function Get-PythonCommand {
   foreach ($name in @('python', 'py')) {
     $command = Get-Command $name -ErrorAction SilentlyContinue
-    if ($null -ne $command) { return $command.Source }
+    if ($null -eq $command) { continue }
+
+    $version = & $command.Source --version 2>$null
+    if ($LASTEXITCODE -eq 0 -and $version -match '^Python (\d+)\.(\d+)') {
+      $major = [int]$Matches[1]
+      $minor = [int]$Matches[2]
+      if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
+        return $command.Source
+      }
+    }
   }
   return $null
 }
 
-function Test-PipxAapDemoInstalled {
-  $python = Get-PythonCommand
-  if ($null -eq $python) { return $false }
-  try {
-    $json = & $python -m pipx list --json 2>$null
-    if ($LASTEXITCODE -ne 0) { return $false }
-    $items = $json | ConvertFrom-Json
-    return $null -ne $items.venvs.'aap-demo'
-  } catch {
-    return $false
-  }
-}
-
-function Install-PythonCli {
-  $python = Get-PythonCommand
-  if ($null -eq $python) {
-    throw 'Python 3 is required. Install it with: winget install --id Python.Python.3.12 -e --source winget'
-  }
-
-  $hadPipxAapDemo = Test-PipxAapDemoInstalled
-  Write-Info 'Installing the Python aap-demo CLI from PyPI with pipx...'
-  & $python -m pip install --user pipx --disable-pip-version-check
-  if ($LASTEXITCODE -ne 0) { throw "Could not install pipx (exit $LASTEXITCODE)" }
-  & $python -m pipx ensurepath --force | Out-Host
-  if ($hadPipxAapDemo) {
-    Write-Info 'Keeping the existing user-managed pipx aap-demo installation'
-  } else {
-    & $python -m pipx install aap-demo
-    if ($LASTEXITCODE -ne 0) { throw "Could not install aap-demo from PyPI (exit $LASTEXITCODE)" }
-    New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
-    Set-Content -LiteralPath $PipxOwnedMarker -Value 'aap-demo' -NoNewline -Encoding ascii
-  }
-  Write-Ok 'Python aap-demo installed from PyPI'
-}
-
-function Install-Oc {
-  if (Test-CommandExists 'oc') {
-    Write-Ok 'oc already on PATH'
-    return
-  }
-
-  if (-not (Test-CommandExists 'winget')) {
-    Write-Warn 'oc not found and winget is unavailable'
-    return
-  }
-
-  Write-Info 'Installing oc via winget (RedHat.OpenShift-Client)...'
-  $wingetArgs = @(
-    'install', '--id', 'RedHat.OpenShift-Client', '-e', '--source', 'winget',
-    '--accept-package-agreements', '--accept-source-agreements'
-  )
-  if ($Quiet) { $wingetArgs += '--disable-interactivity' }
-
-  try {
-    & winget @wingetArgs
-    if ($LASTEXITCODE -ne 0) {
-      Write-Warn "winget install RedHat.OpenShift-Client failed (exit $LASTEXITCODE)"
-      return
-    }
-  } catch {
-    Write-Warn "Could not install oc via winget: $($_.Exception.Message)"
-    return
-  }
-
+function Refresh-UserPath {
   $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
   $env:Path = @($machinePath, $userPath) -join ';'
-
-  if (Test-CommandExists 'oc') {
-    Write-Ok 'oc installed via winget'
-  } else {
-    Write-Warn 'OpenShift Client installed but oc is not on PATH yet — open a new PowerShell window'
-  }
 }
 
-function Install-OperatorSdk {
-  if (Test-CommandExists 'operator-sdk') {
-    Write-Ok 'operator-sdk already on PATH'
-    return
+function Get-OrBootstrapPython {
+  $python = Get-PythonCommand
+  if ($null -ne $python) { return $python }
+
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if ($null -eq $winget) {
+    throw 'Python 3.11+ is required for pipx. Install Python or install winget, then rerun this bootstrap.'
   }
 
-  Write-Ok 'operator-sdk not installed on Windows host (no official Windows binary)'
-  Write-Info 'OLM is installed on the CRC Linux VM automatically during aap-demo create'
-}
-
-function Get-UserPathEntries {
-  $raw = [Environment]::GetEnvironmentVariable('Path', 'User')
-  if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
-  return $raw -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-}
-
-function Add-UserPathEntry {
-  param([Parameter(Mandatory)][string]$Directory)
-
-  $entries = Get-UserPathEntries
-  $normalized = [System.IO.Path]::GetFullPath($Directory)
-  if ($entries -contains $normalized) { return $false }
-
-  $newPath = if ($entries.Count -eq 0) { $normalized } else { ($entries + $normalized) -join ';' }
-  [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-  $env:Path = "$normalized;$env:Path"
-  return $true
-}
-
-function Remove-UserPathEntry {
-  param([Parameter(Mandatory)][string]$Directory)
-
-  $normalized = [System.IO.Path]::GetFullPath($Directory)
-  $entries = Get-UserPathEntries | Where-Object { $_ -ne $normalized }
-  [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
-}
-
-function Test-Prerequisites {
-  $missing = [System.Collections.Generic.List[string]]::new()
-  $warnings = [System.Collections.Generic.List[string]]::new()
-
-  foreach ($tool in @('crc', 'oc')) {
-    if (-not (Test-CommandExists $tool)) {
-      $missing.Add($tool)
-    }
-  }
-
-  foreach ($tool in @('jq', 'python', 'python3')) {
-    if (-not (Test-CommandExists $tool)) {
-      $warnings.Add($tool)
-    }
-  }
-
-  if (-not (Test-CommandExists 'operator-sdk')) {
-    $warnings.Add('operator-sdk (not required on Windows; OLM installs via CRC VM during create)')
-  }
-
-  return [PSCustomObject]@{
-    Missing  = $missing
-    Warnings = $warnings
-  }
-}
-
-function Ensure-PullSecretHint {
-  $secretPaths = @(
-    (Join-Path $ConfigDir 'pull-secret.txt'),
-    (Join-Path $ConfigDir 'pull-secret.json'),
-    (Join-Path $ConfigDir 'pull-secret')
+  Write-Host 'Bootstrapping Python 3.12 with winget...'
+  $arguments = @(
+    'install', '--id', 'Python.Python.3.12', '-e', '--source', 'winget',
+    '--accept-package-agreements', '--accept-source-agreements'
   )
-
-  foreach ($path in $secretPaths) {
-    if (Test-Path -LiteralPath $path) {
-      Write-Ok "Pull secret found: $path"
-      return
-    }
+  if ($Quiet) { $arguments += '--disable-interactivity' }
+  & $winget.Source @arguments | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw "Python bootstrap failed (winget exit $LASTEXITCODE)"
   }
 
-  Write-Warn 'No pull secret in %USERPROFILE%\.aap-demo\'
-  Write-Info 'Download from https://console.redhat.com/openshift/install/pull-secret'
-  Write-Info "Save as: $((Join-Path $ConfigDir 'pull-secret.txt'))"
+  Refresh-UserPath
+  $python = Get-PythonCommand
+  if ($null -eq $python) {
+    throw 'Python installation finished, but Python 3.11+ was not found. Open a new PowerShell window and rerun.'
+  }
+  return $python
 }
 
-function Install-AapDemo {
-  Write-Host ''
-  Write-Host 'Installing aap-demo for Windows...' -ForegroundColor Cyan
-  Write-Host ''
+$python = Get-OrBootstrapPython
+$action = if ($RollbackToV1) { 'rollback-to-v1' } elseif ($Uninstall) { 'uninstall' } else { 'install' }
+$arguments = @($SetupScript, $action, '--repo-root', $RepoRoot)
+if ($Quiet) { $arguments += '--quiet' }
 
-  if (-not (Test-Path -LiteralPath (Join-Path $RepoRoot 'aap-demo.sh'))) {
-    throw "Run install.ps1 from the aap-demo repo (expected aap-demo.sh in $RepoRoot)"
-  }
-
-  Install-Oc
-
-  $checks = Test-Prerequisites
-  if ($checks.Missing.Count -gt 0) {
-    Write-Err 'Missing required tools:'
-    foreach ($item in $checks.Missing) { Write-Info "- $item" }
-    Write-Host ''
-    Write-Info 'OpenShift Local (crc): https://console.redhat.com/openshift/create/local'
-    Write-Info 'oc: winget install --id RedHat.OpenShift-Client -e --source winget'
-    throw 'Install missing prerequisites and re-run install.ps1'
-  }
-
-  Write-Ok 'Required tools: crc, oc'
-
-  Install-PythonCli
-
-  if ($checks.Warnings.Count -gt 0 -and -not $Quiet) {
-    Write-Warn 'Optional tools not found (deploy may still work):'
-    foreach ($item in $checks.Warnings) { Write-Info "- $item" }
-  }
-
-  New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
-  New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-
-  Set-Content -LiteralPath $RepoMarker -Value $RepoRoot -NoNewline -Encoding ascii
-  Write-Ok "Repo registered: $RepoRoot"
-
-  # The Python console script owns `aap-demo`. Remove the old repository
-  # wrapper so PowerShell cannot select it before the PyPI command.
-  Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $CmdShim -Force -ErrorAction SilentlyContinue
-
-@"
-@echo off
-setlocal
-set "AAP_DEMO_REPO="
-for /f "usebackq delims=" %%R in ("%USERPROFILE%\.aap-demo\repo-path") do set "AAP_DEMO_REPO=%%R"
-if not defined AAP_DEMO_REPO (
-  echo aap-demo-v1 is not installed: missing %USERPROFILE%\.aap-demo\repo-path 1>&2
-  exit /b 1
-)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%AAP_DEMO_REPO%\powershell\aap-demo.ps1" %*
-exit /b %ERRORLEVEL%
-"@ | Set-Content -LiteralPath $LegacyShim -Encoding ascii
-  Write-Ok "Legacy Bash launcher installed: $LegacyShim"
-
-  if (Add-UserPathEntry -Directory $BinDir) {
-    Write-Ok 'Added %USERPROFILE%\.local\bin to user PATH'
-  } else {
-    Write-Ok 'PATH already contains %USERPROFILE%\.local\bin'
-  }
-
-  Install-OperatorSdk
-  Ensure-PullSecretHint
-
-  Write-Host ''
-  Write-Host 'Done.' -ForegroundColor Green
-  Write-Host ''
-  Write-Info 'Open a new PowerShell window, then:'
-  Write-Info '  aap-demo --help'
-  Write-Info '  aap-demo status'
-  Write-Info '  aap-demo-v1 status  # legacy Bash compatibility path'
-  Write-Host ''
-  Write-Info 'Notes:'
-  Write-Info '- aap-demo is the Python package installed from PyPI.'
-  Write-Info '- aap-demo-v1 is the legacy Bash compatibility command.'
-  Write-Info '- OpenShift Local on Windows needs Hyper-V enabled.'
-  Write-Info '- Kubeconfig default: %USERPROFILE%\.crc\machines\crc\kubeconfig'
-  Write-Host ''
-}
-
-function Uninstall-AapDemo {
-  Write-Host ''
-  Write-Host 'Uninstalling aap-demo...' -ForegroundColor Cyan
-  Write-Host ''
-
-  Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $CmdShim -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $LegacyShim -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $RepoMarker -Force -ErrorAction SilentlyContinue
-
-  if (Test-Path -LiteralPath $PipxOwnedMarker) {
-    $python = Get-PythonCommand
-    if ($null -eq $python) {
-      throw 'Cannot remove the installer-owned pipx aap-demo package because Python is not on PATH. Restore Python, run pipx uninstall aap-demo, then rerun uninstall.'
-    }
-    & $python -m pipx uninstall aap-demo
-    if ($LASTEXITCODE -ne 0) { throw "Could not uninstall the aap-demo pipx package (exit $LASTEXITCODE)" }
-    Remove-Item -LiteralPath $PipxOwnedMarker -Force -ErrorAction SilentlyContinue
-    Write-Ok 'Removed the pipx aap-demo package installed by this script'
-  } else {
-    Write-Info 'Left the separately managed pipx aap-demo package installed'
-  }
-
-  Write-Ok 'Removed wrapper, shim, and repo marker'
-  Write-Info 'VM data under %USERPROFILE%\.aap-demo\ and %USERPROFILE%\.crc\ was NOT removed'
-  Write-Host ''
-}
-
-if ($Uninstall) {
-  Uninstall-AapDemo
-} else {
-  Install-AapDemo
+& $python @arguments
+if ($LASTEXITCODE -ne 0) {
+  exit $LASTEXITCODE
 }

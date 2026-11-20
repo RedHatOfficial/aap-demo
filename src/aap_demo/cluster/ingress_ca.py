@@ -12,12 +12,16 @@ store, so Linux needs both. System trust needs sudo. NSS trust does not.
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import json
 import platform
 import re
 import shlex
 import shutil
+import ssl
+import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional
 
@@ -27,6 +31,7 @@ from aap_demo.exec import ssh as ssh_mod
 ROUTER_SECRET = "router-certs-default"
 ROUTER_NAMESPACE = "openshift-ingress"
 CA_COMMON_NAME = "ingress-ca"
+SERVER_AUTH_OID = "1.3.6.1.5.5.7.3.1"
 SYSTEM_KEYCHAIN = "/Library/Keychains/System.keychain"
 RHEL_ANCHOR = Path("/etc/pki/ca-trust/source/anchors/crc-ingress-ca.crt")
 DEBIAN_ANCHOR = Path("/usr/local/share/ca-certificates/crc-ingress-ca.crt")
@@ -111,6 +116,12 @@ def system_trusts(ctx: AppContext, path: Path, *, system: Optional[str] = None) 
     if kind == "Darwin":
         result = ctx.runner.run(["security", "verify-cert", "-p", "ssl", "-c", str(path)])
         return bool(result.ok)
+    if kind == "Windows":
+        try:
+            pem = path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        return _windows_store_contains(ctx, _windows_thumbprint(pem))
     for candidate in (RHEL_ANCHOR, DEBIAN_ANCHOR):
         if not candidate.is_file():
             continue
@@ -126,6 +137,112 @@ def system_trusts(ctx: AppContext, path: Path, *, system: Optional[str] = None) 
 def _certutil_available(system: str) -> bool:
     """Windows ships an unrelated ``certutil``, so only Linux counts."""
     return system == "Linux" and shutil.which("certutil") is not None
+
+
+def _windows_thumbprint(pem: str) -> str:
+    """Windows certificate stores identify certificates by their SHA-1 thumbprint."""
+    body = pem.replace("-----BEGIN CERTIFICATE-----", "")
+    body = body.replace("-----END CERTIFICATE-----", "")
+    der = base64.b64decode("".join(body.split()))
+    # SHA-1 is used only for the Windows store's certificate identifier.
+    return hashlib.sha1(der).hexdigest().upper()
+
+
+def _windows_store_contains(_ctx: AppContext, thumbprint: str) -> bool:
+    """Check the Current User Root store using Python's Windows SSL bindings."""
+    enum_certificates = getattr(ssl, "enum_certificates", None)
+    if enum_certificates is None:
+        return False
+    try:
+        certificates = enum_certificates("ROOT")
+    except (OSError, ValueError):
+        return False
+    return any(
+        encoding == "x509_asn"
+        and hashlib.sha1(der).hexdigest().upper() == thumbprint
+        and (trust is True or SERVER_AUTH_OID in trust)
+        for der, encoding, trust in certificates
+    )
+
+
+def _windows_add_certificate(path: Path) -> bool:
+    """Use a bounded Python worker to add a certificate through CryptoAPI."""
+    worker = (
+        "from pathlib import Path; import sys; "
+        "from aap_demo.cluster.ingress_ca import _windows_add_certificate_in_process; "
+        "sys.exit(0 if _windows_add_certificate_in_process(Path(sys.argv[1])) else 1)"
+    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", worker, str(path)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _windows_add_certificate_in_process(path: Path) -> bool:
+    """Add a DER-encoded certificate to Current User Root through CryptoAPI."""
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        return False
+    try:
+        pem = path.read_text(encoding="utf-8")
+        body = pem.replace("-----BEGIN CERTIFICATE-----", "")
+        body = body.replace("-----END CERTIFICATE-----", "")
+        der = base64.b64decode("".join(body.split()), validate=True)
+        crypt32 = win_dll("crypt32", use_last_error=True)
+        open_store = crypt32.CertOpenStore
+        open_store.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+        ]
+        open_store.restype = ctypes.c_void_p
+        store = open_store(
+            ctypes.c_void_p(10),
+            0x00010001,
+            None,
+            0x00010000,
+            ctypes.cast(ctypes.c_wchar_p("ROOT"), ctypes.c_void_p),
+        )
+        if not store:
+            return False
+        try:
+            add_certificate = crypt32.CertAddEncodedCertificateToStore
+            add_certificate.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_ubyte),
+                ctypes.c_uint32,
+                ctypes.c_uint32,
+                ctypes.c_void_p,
+            ]
+            add_certificate.restype = ctypes.c_int
+            encoded = ctypes.create_string_buffer(der)
+            return bool(
+                add_certificate(
+                    store,
+                    0x00010001,
+                    ctypes.cast(encoded, ctypes.POINTER(ctypes.c_ubyte)),
+                    len(der),
+                    3,
+                    None,
+                )
+            )
+        finally:
+            close_store = crypt32.CertCloseStore
+            close_store.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            close_store.restype = ctypes.c_int
+            close_store(store, 0)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
 
 
 def _default_nss_database(ctx: AppContext) -> Path:
@@ -167,6 +284,12 @@ def _nss_holds(ctx: AppContext, database: Path, expected: str) -> bool:
 
 def _browser_trust(ctx: AppContext, path: Path, *, system: str) -> str:
     """Status wording. Trust is reported only after every database was read."""
+    if system == "Windows":
+        return (
+            "trusted (Windows Current User Root)"
+            if system_trusts(ctx, path, system=system)
+            else "not trusted"
+        )
     databases = _nss_databases(ctx)
     if not _certutil_available(system):
         return "unknown (install nss-tools to check Chrome and Firefox)"
@@ -231,11 +354,23 @@ def install(ctx: AppContext, *, system: Optional[str] = None) -> bool:
 def _trust_complete(ctx: AppContext, path: Path, *, system: str) -> bool:
     if system == "Darwin":
         return system_trusts(ctx, path, system=system)
+    if system == "Windows":
+        return system_trusts(ctx, path, system=system)
     return _linux_trust_complete(ctx, path, system=system)
 
 
 def _import(ctx: AppContext, path: Path, *, system: str) -> List[str]:
     """Import the CA and return what still needs the user. Empty means trusted."""
+    if system == "Windows":
+        thumbprint = _windows_thumbprint(path.read_text(encoding="utf-8"))
+        if _windows_store_contains(ctx, thumbprint):
+            return []
+        if _windows_add_certificate(path) and _windows_store_contains(ctx, thumbprint):
+            return []
+        return [
+            "Could not add the CA to the Current User certificate store. "
+            "Re-run 'aap-demo trust-ca' from an interactive Windows user session."
+        ]
     if system == "Darwin":
         if _import_macos(ctx, path):
             return []
@@ -361,6 +496,8 @@ def describe(ctx: AppContext, *, system: Optional[str] = None) -> dict:
         trusted = False
     if kind == "Darwin":
         browser = "trusted (macOS keychain)" if trusted else "not trusted"
+    elif kind == "Windows":
+        browser = "trusted (Windows Current User Root)" if trusted else "not trusted"
     else:
         try:
             browser = _browser_trust(ctx, path, system=kind)

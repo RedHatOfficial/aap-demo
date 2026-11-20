@@ -129,6 +129,115 @@ def test_unreachable_cluster_fails_before_touching_operator_sdk(app_ctx) -> None
     assert not runner.called("operator-sdk")
 
 
+def test_windows_installs_olm_from_manifests_without_operator_sdk(app_ctx) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows OLM install path")
+    runner = FakeRunner()
+    runner.ok("kubectl cluster-info")
+    runner.fail(["kubectl", "get", "crd", olm.SUBSCRIPTION_CRD])
+    runner.ok(
+        [
+            "kubectl",
+            "apply",
+            "-f",
+            "https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/crds.yaml",
+        ]
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=Established",
+            "--timeout=120s",
+            f"crd/{olm.SUBSCRIPTION_CRD}",
+        ]
+    )
+    runner.ok(
+        [
+            "kubectl",
+            "apply",
+            "-f",
+            "https://github.com/operator-framework/operator-lifecycle-manager/releases/latest/download/olm.yaml",
+        ]
+    )
+    runner.ok("kubectl rollout status")
+    runner.ok("kubectl delete catsrc")
+    app_ctx.runner = runner
+
+    assert olm.ensure_installed(app_ctx, which=_which("kubectl")) is True
+    assert not runner.called("operator-sdk")
+
+
+def test_windows_existing_crd_with_missing_controller_retries_manifests(
+    app_ctx, monkeypatch
+) -> None:
+    monkeypatch.setattr(olm.platform, "system", lambda: "Windows")
+    crds_url = f"{olm.OLM_RELEASE_URL}/crds.yaml"
+    olm_url = f"{olm.OLM_RELEASE_URL}/olm.yaml"
+    catalog_statuses = iter(
+        [
+            CompletedCommand(argv=(), returncode=1),
+            CompletedCommand(argv=(), returncode=0),
+        ]
+    )
+    runner = FakeRunner()
+    runner.ok("kubectl cluster-info")
+    runner.ok(["kubectl", "get", "crd", olm.SUBSCRIPTION_CRD])
+    runner.register(
+        ["kubectl", "rollout", "status", "deployment/catalog-operator"],
+        lambda _argv: next(catalog_statuses),
+    )
+    runner.ok("kubectl rollout status deployment/olm-operator")
+    runner.ok(["kubectl", "apply", "-f", crds_url])
+    runner.ok(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=Established",
+            "--timeout=120s",
+            f"crd/{olm.SUBSCRIPTION_CRD}",
+        ]
+    )
+    runner.ok(["kubectl", "apply", "-f", olm_url])
+    runner.ok("kubectl delete catsrc")
+    app_ctx.runner = runner
+
+    assert olm.ensure_installed(app_ctx, which=_which("kubectl")) is True
+    assert runner.called(["kubectl", "apply", "-f", crds_url])
+    assert runner.called(["kubectl", "apply", "-f", olm_url])
+
+
+def test_windows_manifest_failure_after_crd_does_not_report_success(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(olm.platform, "system", lambda: "Windows")
+    crds_url = f"{olm.OLM_RELEASE_URL}/crds.yaml"
+    olm_url = f"{olm.OLM_RELEASE_URL}/olm.yaml"
+    runner = FakeRunner()
+    runner.ok("kubectl cluster-info")
+    runner.fail(["kubectl", "get", "crd", olm.SUBSCRIPTION_CRD])
+    runner.ok(["kubectl", "apply", "-f", crds_url])
+    runner.ok(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=Established",
+            "--timeout=120s",
+            f"crd/{olm.SUBSCRIPTION_CRD}",
+        ]
+    )
+    runner.fail(["kubectl", "apply", "-f", olm_url], stderr="controller manifest rejected")
+    app_ctx.runner = runner
+
+    with pytest.raises(AapDemoError, match="OLM installation failed"):
+        olm.ensure_installed(app_ctx, which=_which("kubectl"), sleep=lambda _seconds: None)
+
+    assert len([call for call in runner.calls if call.argv[:3] == ("kubectl", "apply", "-f")]) == (
+        2 * (olm.OLM_INSTALL_RETRIES + 1)
+    )
+    assert not runner.called(["kubectl", "delete", "namespace", olm.OLM_NAMESPACE])
+    assert not runner.called(["kubectl", "delete", "namespace", olm.OPERATORS_NAMESPACE])
+    assert "Leaving OLM namespaces intact" in app_ctx.console.stdout
+
+
 # ---------------------------------------------------------------------------
 # operator-sdk auto-install
 # ---------------------------------------------------------------------------

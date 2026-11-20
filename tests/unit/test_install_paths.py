@@ -24,6 +24,19 @@ def test_pipx_installs_the_aap_demo_console_script() -> None:
     assert "pipx install aap-demo" in (ROOT / "docs/guides/install.md").read_text(encoding="utf-8")
 
 
+def test_windows_installer_only_bootstraps_python_and_invokes_setup() -> None:
+    installer = (ROOT / "powershell/install.ps1").read_text(encoding="utf-8")
+
+    assert "src\\aap_demo\\setup.py" in installer
+    assert "rollback-to-v1" in installer
+    assert "uninstall" in installer
+    assert "Python.Python.3.12" in installer
+    assert "Python 3.11+" in installer
+    assert "pipx install" not in installer
+    assert "RedHat.OpenShift-Client" not in installer
+    assert "function Install-AapDemo" not in installer
+
+
 def test_bash_v1_launcher_collides_and_renames_to_aap_demo_v1(tmp_path: Path) -> None:
     script = tmp_path / "aap-demo.sh"
     script.write_text("#!/usr/bin/env bash\n# aap-demo v1\n", encoding="utf-8")
