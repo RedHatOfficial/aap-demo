@@ -36,7 +36,10 @@ def find_bash(
         candidates.extend(
             (git_path.parent / "bash.exe", git_path.parent.parent / "bin" / "bash.exe")
         )
-    candidates.extend((which("bash.exe"), which("bash")))
+    for name in ("bash.exe", "bash"):
+        candidate = which(name)
+        if candidate:
+            candidates.append(Path(candidate))
 
     for candidate in candidates:
         if not candidate:
