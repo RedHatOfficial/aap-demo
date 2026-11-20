@@ -70,8 +70,9 @@ a model, pulls it and accepts its license.
      the list and how to set one.
    - If it has none, stop with the `ollama pull` instruction.
    - If the chosen model is not on the host, stop. Do not pull it.
-3. Check that the model reports the `tools` capability in `/api/tags`, and warn if
-   not, since AO's agents call tools.
+3. Check the model's `capabilities` from `/api/show` and warn if `tools` is missing,
+   since AO's agents call tools. Older Ollama releases do not report capabilities; in
+   that case warn that the check was skipped.
 4. Check from a short-lived pod that the cluster reaches the host's Ollama before
    wiring AO, and stop with the cause if it does not.
 5. Wire AO's LLM integration to `http://192.168.127.254:11434/v1`, an IP rather than
@@ -80,6 +81,10 @@ a model, pulls it and accepts its license.
 6. Add the LLM URL's host to AO's integration allow-list
    (`APP_INTEGRATION_URL_ALLOWED_HOSTS`), and set the integration's `allow_http` from
    the URL's scheme. Both apply to `external` too, which today allows neither.
+7. Limit AO's egress to the host. AO's allow-list matches host names, not ports, so
+   aap-demo applies a NetworkPolicy in the `automation-orchestrator` namespace that
+   allows `192.168.127.254` only on the Ollama port (11434, or the port in
+   `AO_LLM_BASE_URL`) and allows all other egress as before.
 
 ### CRC host network access
 
@@ -135,6 +140,12 @@ only, and explains how to pull one.
   provider must move to `external`.
 - **Linux and Windows are not yet tested** for host access.
 - **Host memory.** A large model uses host memory instead of VM memory.
+- **Host services are reachable from the VM.** `host-network-access` lets every pod
+  in the VM, including AAP job pods that run playbooks, connect to any service on the
+  host's `127.0.0.1`, not just Ollama. The AO NetworkPolicy limits AO only. aap-demo
+  is a local development tool, and the user's own playbooks already run with their
+  credentials, but users who run other local services should know. `aap-demo create`
+  and the AO guide say so.
 
 ### Neutral
 
@@ -181,4 +192,4 @@ Ollama to the local network.
 - [#204](https://github.com/RedHatOfficial/aap-demo/issues/204) — Ollama CPU request kept the pod Pending beside AAP
 - [#144](https://github.com/RedHatOfficial/aap-demo/issues/144) — Ollama rollout ProgressDeadlineExceeded
 - [Qwen2.5-3B license](https://huggingface.co/Qwen/Qwen2.5-3B/commits/main/LICENSE) — Qwen Research License
-- [Ollama API](https://github.com/ollama/ollama/blob/main/docs/api.md) — `/api/version`, `/api/tags`
+- [Ollama API](https://github.com/ollama/ollama/blob/main/docs/api.md) — `/api/version`, `/api/tags`, `/api/show`
