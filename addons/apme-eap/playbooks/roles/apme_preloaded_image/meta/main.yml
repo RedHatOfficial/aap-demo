@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: apme_preloaded_image
+  author: aap-demo contributors
+  license: Apache-2.0
+  description: Validate a fully qualified portal image and configure optional pull credentials.
+  min_ansible_version: "2.14"
+dependencies: []

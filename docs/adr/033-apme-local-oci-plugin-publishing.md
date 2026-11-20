@@ -1,6 +1,6 @@
-# ADR-033: APME Local OCI Plugin Publishing
+# ADR-033: APME Local OCI Plugin Publishing (Superseded)
 
-**Status**: Accepted
+**Status**: Superseded by [ADR-022](022-apme-prebuilt-portal-hub.md)
 
 **Date**: 2026-10-07
 
@@ -23,7 +23,10 @@ boolean evaluation in standalone `when` expressions, requiring explicit `== true
 comparisons. The `kubernetes.core.k8s_exec` module is also not usable in the APME execution
 environment used by this addon.
 
-## Decision
+## Historical Decision
+
+This ADR documents the previous runtime archive-publishing design. It is retained as history;
+the current addon does not ship or execute the publisher described below.
 
 The APME OCI publisher will:
 

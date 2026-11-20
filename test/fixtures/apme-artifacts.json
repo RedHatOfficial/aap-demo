@@ -1,0 +1,15 @@
+{
+  "total_count": 10,
+  "artifacts": [
+    {"id": 303, "name": "apme-expired", "expired": true, "created_at": "2026-10-21T10:30:00Z", "digest": null},
+    {"id": 302, "name": "coverage", "expired": false, "created_at": "2026-10-21T10:00:00Z", "digest": null},
+    {"id": 301, "name": "early-access-plugins-feat-apme-eap-next-ui-workflow-e3c16bd-20260924111654.oci.tar.gz", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null},
+    {"id": 304, "name": "plugin-expiry-unknown", "created_at": "2026-10-21T11:00:00Z", "digest": null},
+    {"id": 306, "name": "early-access-plugins-feat-apme-eap-next-ui-workflow-e3c16bd-20260924111654.tar.gz", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null},
+    {"id": 307, "name": "ansible~ansible-rhdh-plugins~T5I9SR.dockerbuild", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null},
+    {"id": 308, "name": "apme-plugins-oci-image", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null},
+    {"id": 309, "name": "apme-plugins-oci-build-record", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null},
+    {"id": 310, "name": "apme-plugins-oci.dockerbuild", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null},
+    {"id": 311, "name": "apme-plugins-npm-build-record", "expired": false, "created_at": "2026-10-21T09:00:00Z", "digest": null}
+  ]
+}
