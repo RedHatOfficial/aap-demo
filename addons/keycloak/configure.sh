@@ -184,6 +184,16 @@ if [ -z "$AO_REDIRECT_URI" ] && [ -s "$STATE_DIR/ao-redirect-uri" ]; then
   AO_REDIRECT_URI="$(read_secret "$STATE_DIR/ao-redirect-uri")"
 fi
 AO_REDIRECT_URI="${AO_REDIRECT_URI:-https://${AO_HOST}/api/v1/auth/oidc/callback}"
+case "$AO_REDIRECT_URI" in https://*/*) ;; *)
+  echo "ERROR: AO redirect URI must be an absolute HTTPS URL" >&2
+  exit 1
+  ;;
+esac
+case "$AO_REDIRECT_URI" in *\** | *\?* | *\#* | *@*)
+  echo "ERROR: AO redirect URI must not contain wildcards, queries, fragments, or credentials" >&2
+  exit 1
+  ;;
+esac
 
 AAP_PAYLOAD="$(jq -nc \
   --arg name "$AAP_NAME" --arg issuer "$ISSUER" --arg key "$AAP_SECRET" --arg public_key "$PUBLIC_KEY" \

@@ -42,7 +42,6 @@ class HostProbe:
     daemons: Callable[[], Optional[List[str]]]
     port_open: Callable[[str, int], bool]
     resolve: Callable[[str], str] = os.path.realpath
-    active_operation: Callable[[], bool] = lambda: False
 
     @classmethod
     def live(cls, runner: Any, home: Path) -> "HostProbe":
@@ -64,17 +63,6 @@ class HostProbe:
                 return None
             return daemon_lines(result.stdout)
 
-        def active_operation() -> bool:
-            if shutil.which("ps") is None:
-                return False
-            try:
-                result = runner.run(["ps", "-axo", "command="], timeout=PROBE_TIMEOUT_SECONDS)
-            except Exception:  # noqa: BLE001 - a hung ps must not hang diagnose
-                return False
-            if not result.ok:
-                return False
-            return any(_is_crc_operation(line) for line in result.stdout.splitlines())
-
         return cls(
             system=platform.system(),
             which_crc=lambda: shutil.which("crc"),
@@ -83,7 +71,6 @@ class HostProbe:
             machine_exists=lambda: infra_crc.machine_exists(home),
             daemons=daemons,
             port_open=_port_open,
-            active_operation=active_operation,
         )
 
 
@@ -95,12 +82,6 @@ def daemon_lines(ps_output: str) -> List[str]:
         if len(parts) >= 2 and os.path.basename(parts[0]) == "crc" and parts[1] == "daemon":
             found.append(line.strip())
     return found
-
-
-def _is_crc_operation(line: str) -> bool:
-    """Whether a process line is an in-progress ``crc start`` or ``stop``."""
-    parts = line.split()
-    return len(parts) >= 2 and os.path.basename(parts[0]) == "crc" and parts[1] in {"start", "stop"}
 
 
 def _port_open(host: str, port: int) -> bool:
@@ -116,8 +97,6 @@ class HostFindings:
     """What the cluster section needs to word its own result."""
 
     unresponsive: bool = False
-    crc_state: str = infra_crc.STATE_NOT_CREATED
-    crc_status: str = "Unknown"
 
 
 def check(probe: HostProbe, rec: Any) -> HostFindings:
@@ -134,18 +113,10 @@ def check(probe: HostProbe, rec: Any) -> HostFindings:
     data = probe.status()
     exists = probe.machine_exists()
     failed = False
-    crc_status = str(data.get("crcStatus", "Unknown"))
-    findings.crc_status = crc_status
-    state = infra_crc.state_from_status(data)
-    findings.crc_state = state
-    if exists and crc_status in {"Starting", "Stopping"}:
-        rec.info(f"CRC is {crc_status.lower()}; wait for the transition to finish")
-    elif exists and state == infra_crc.STATE_NOT_CREATED and not probe.active_operation():
+    if not data and exists:
         findings.unresponsive = True
         failed = True
         rec.fail("CRC does not answer 'crc status', but a VM exists — a 'crc start' may be hung")
-    elif exists and state == infra_crc.STATE_NOT_CREATED:
-        rec.info("crc start/stop is still running; CRC status may be temporarily unknown")
 
     lines = probe.daemons()
     if lines is None:
@@ -171,7 +142,7 @@ def check(probe: HostProbe, rec: Any) -> HostFindings:
         else:
             rec.ok("crc daemon running")
 
-    running = state == infra_crc.STATE_RUNNING
+    running = infra_crc.state_from_status(data) == infra_crc.STATE_RUNNING
     if probe.system == "Darwin" and (running or findings.unresponsive):
         host, port = SSH_FORWARD
         if probe.port_open(host, port):

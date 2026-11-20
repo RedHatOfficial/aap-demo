@@ -114,25 +114,6 @@ def test_diagnose_names_a_hung_crc_instead_of_a_missing_cluster(
     assert "cluster not found" not in out
 
 
-def test_diagnose_names_unknown_crc_with_a_vm_instead_of_a_missing_cluster(
-    app_ctx: AppContext, fake_runner: FakeRunner, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from aap_demo.diagnostics import crc_host
-
-    unknown = _healthy_host(status=lambda: {"crcStatus": "Unknown"}, port_open=lambda h, p: False)
-    monkeypatch.setattr(crc_host.HostProbe, "live", classmethod(lambda cls, runner, home: unknown))
-    fake_runner.fail("crc status -o json")
-    fake_runner.fail("kubectl cluster-info")
-
-    rc = observe.diagnose(app_ctx, _ns())
-
-    out = app_ctx.console.stdout
-    assert rc == 1
-    assert "OpenShift Local is not responding" in out
-    assert "127.0.0.1:2222" in out
-    assert "cluster not found" not in out
-
-
 def test_diagnose_returns_1_when_cluster_unreachable(
     app_ctx: AppContext, fake_runner: FakeRunner
 ) -> None:

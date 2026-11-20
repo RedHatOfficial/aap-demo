@@ -604,7 +604,7 @@ def run(
     environ: Dict[str, str] = dict(os.environ if env is None else env)
 
     paths = resolve_paths(environ)
-    console = Console(quiet=config_mod.is_true(environ.get("QUIET")), env=environ)
+    console = Console(quiet=bool(environ.get("QUIET")), env=environ)
     secrets = SecretStore()
 
     # The one-time legacy migration runs before config is read, and is cheap on

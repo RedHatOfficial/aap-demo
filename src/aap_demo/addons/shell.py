@@ -92,27 +92,34 @@ def wire_script() -> Path:
     return Path(__file__).resolve().with_name("product_demos_wire.sh")
 
 
+def ao_script() -> Path:
+    """Find AO's installer in a checkout or in the bundled shell runtime."""
+    return scripts_root() / "ao" / "deploy.sh"
+
+
 def _enable_ao(ctx: AppContext, env: Dict[str, str]) -> None:
-    """Product demos with a Fleet host also set up AO's Fleet workflows (ADR-045).
+    from aap_demo.core.migration import parse_legacy_config
 
-    Without a configured LLM provider this uses ``none``, as the Bash path did,
-    so product demos do not pull in Ollama.
-    """
-    import argparse
-    import dataclasses
-
-    from aap_demo.addons import get
-    from aap_demo.addons.ao import llm
-
-    ao_ctx = ctx
-    if not llm.configured_provider(ctx):
-        ao_ctx = dataclasses.replace(ctx, env={**ctx.env, "AO_LLM_PROVIDER": "none"})
-    get("ao").enable(
-        ao_ctx,
-        argparse.Namespace(
-            addon="ao", addon_args=[], fleet_host=env.get("AAP_DEMO_FLEET_HOST", "")
-        ),
-    )
+    script = ao_script()
+    if not script.is_file():
+        raise AddonError("Automation Orchestrator installer is not included in this installation")
+    ao_env = dict(env)
+    legacy = ctx.paths.legacy_config_file
+    try:
+        saved = parse_legacy_config(legacy.read_text(encoding="utf-8")) if legacy.is_file() else {}
+    except OSError as exc:
+        raise AddonError("could not read existing AO configuration", hint=str(exc)) from exc
+    for key in ("AO_LLM_PROVIDER", "AO_LLM_BASE_URL", "AO_LLM_MODEL"):
+        if not ao_env.get(key) and saved.get(key):
+            ao_env[key] = saved[key]
+    ao_env.setdefault("AO_LLM_PROVIDER", "none")
+    ao_env["AAP_DEMO_NAMESPACE"] = ctx.namespace
+    ao_env["AAP_DEMO_WIRE_AFTER_DEPLOY"] = "1"
+    result = ctx.runner.run(["bash", str(script)], env=ao_env, sink=ctx.console.log_sink())
+    if not result.ok:
+        raise AddonError(
+            "Automation Orchestrator setup failed", hint="Review the installer log and retry."
+        )
 
 
 def require_tools(

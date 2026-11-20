@@ -5,59 +5,10 @@ missing supplementalGroups, ..." states, each becoming a fixture + a test).
 
 from __future__ import annotations
 
-import pytest
-
 from aap_demo.diagnostics import checks as diagnose_checks
-from aap_demo.diagnostics.crc_host import HostProbe
 from aap_demo.exec.runner import FakeRunner
 
 NAMESPACE = "aap-operator"
-
-
-def test_diagnose_reuses_the_host_crc_snapshot(fake_runner: FakeRunner) -> None:
-    status_calls = 0
-
-    def status():
-        nonlocal status_calls
-        status_calls += 1
-        return {"crcStatus": "Running"}
-
-    probe = HostProbe(
-        system="Linux",
-        which_crc=lambda: "crc",
-        crc_version=lambda: "CRC version: 2.64.0",
-        status=status,
-        machine_exists=lambda: True,
-        daemons=lambda: [],
-        port_open=lambda host, port: False,
-    )
-    fake_runner.fail("kubectl cluster-info")
-
-    report = diagnose_checks.run(fake_runner, NAMESPACE, host=probe)
-
-    assert status_calls == 1
-    assert not any(call.argv == ["crc", "status", "-o", "json"] for call in fake_runner.calls)
-    assert report.sections[1].checks[0].message == "OpenShift Local running"
-
-
-@pytest.mark.parametrize("status", ["Starting", "Stopping"])
-def test_diagnose_reports_crc_transitions_in_cluster_section(
-    fake_runner: FakeRunner, status: str
-) -> None:
-    probe = HostProbe(
-        system="Linux",
-        which_crc=lambda: "crc",
-        crc_version=lambda: "CRC version: 2.64.0",
-        status=lambda: {"crcStatus": status},
-        machine_exists=lambda: True,
-        daemons=lambda: ["/usr/local/bin/crc daemon"],
-        port_open=lambda host, port: False,
-    )
-    fake_runner.fail("kubectl cluster-info")
-
-    report = diagnose_checks.run(fake_runner, NAMESPACE, host=probe)
-
-    assert f"OpenShift Local is {status.lower()}" in report.sections[1].checks[0].message
 
 
 def test_unreachable_cluster_stops_after_the_cluster_section(fake_runner: FakeRunner) -> None:

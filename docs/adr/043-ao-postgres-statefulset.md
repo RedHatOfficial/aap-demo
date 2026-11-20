@@ -1,6 +1,6 @@
 # ADR-043: One PostgreSQL StatefulSet for Automation Orchestrator
 
-**Status**: Accepted
+**Status**: Proposed
 
 **Date**: 2026-11-12
 

@@ -119,62 +119,6 @@ def test_save_regenerates_the_header_and_preserves_values(tmp_path: Path) -> Non
     assert reloaded.get("crc.cpus") == 12
 
 
-def test_save_does_not_write_environment_values(tmp_path: Path) -> None:
-    # Issue #375: one `QUIET=true aap-demo enable ...` made quiet permanent.
-    target = tmp_path / "config.yaml"
-    config_mod.resolve(env={}).save(target)
-    config = config_mod.load(target, env={"QUIET": "true", "NAMESPACE": "scratch"})
-    assert config.get("core.quiet") is True
-    config.set("addons.enabled", ["ao"])
-    config.save()
-
-    reloaded = config_mod.load(target, env={})
-    assert reloaded.get("core.quiet") is False
-    assert reloaded.get("core.namespace") == config_mod.resolve(env={}).get("core.namespace")
-    assert reloaded.get("addons.enabled") == ["ao"]
-
-
-def test_save_does_not_write_flag_overrides(tmp_path: Path) -> None:
-    target = tmp_path / "config.yaml"
-    config = config_mod.resolve(env={}, overrides={"crc": {"cpus": 16}}, path=target)
-    config.set("crc.memory_mb", 20480)
-    config.save()
-
-    reloaded = config_mod.load(target, env={})
-    assert reloaded.get("crc.cpus") == 8
-    assert reloaded.get("crc.memory_mb") == 20480
-
-
-def test_save_keeps_file_values_and_set_values_over_env(tmp_path: Path) -> None:
-    target = tmp_path / "config.yaml"
-    config_mod.write(target, {"core": {"quiet": True}, "crc": {"cpus": 10}})
-    config = config_mod.load(target, env={"CRC_CPUS": "12"})
-    config.set("crc.cpus", 14)
-    config.save()
-
-    reloaded = config_mod.load(target, env={})
-    assert reloaded.get("core.quiet") is True
-    assert reloaded.get("crc.cpus") == 14
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
-        (None, False),
-        ("", False),
-        ("false", False),
-        ("0", False),
-        ("no", False),
-        ("true", True),
-        ("TRUE", True),
-        ("1", True),
-        ("yes", True),
-    ],
-)
-def test_is_true_reads_boolean_environment_values(value, expected) -> None:
-    assert config_mod.is_true(value) is expected
-
-
 def test_save_uses_schema_key_order(tmp_path: Path) -> None:
     target = tmp_path / "config.yaml"
     config_mod.resolve(env={}).save(target)

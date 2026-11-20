@@ -130,7 +130,7 @@ def config(ctx: AppContext, args: argparse.Namespace) -> int:
                 hint=f"Set $EDITOR or $VISUAL, or edit {config_file} directly.",
             )
         if not config_file.is_file():
-            config_mod.write(config_file, ctx.config.stored_dict())
+            config_mod.write(config_file, ctx.config.as_dict())
         # Through the runner seam like every other subprocess, with
         # capture off so the editor inherits the terminal.
         return ctx.runner.run([editor, str(config_file)], capture=False).returncode

@@ -163,25 +163,6 @@ exit 0
 EOF
 chmod +x "$SCRIPT_DIR/mocks/crc"
 
-# The start command refreshes CoreDNS after CRC is ready. Provide the key
-# location that CRC would create so this command test remains self-contained.
-mkdir -p "$HOME/.crc/machines/crc"
-touch "$HOME/.crc/machines/crc/id_ed25519"
-
-cat >"$SCRIPT_DIR/mocks/kubectl" <<'EOF'
-#!/bin/bash
-case "$*" in
-  *"config get-contexts"*) echo "aap-demo" ;;
-  *"cluster-info" | *"wait --for=condition=Ready node"*) exit 0 ;;
-  *"get namespace openshift-ovn-kubernetes"*) exit 0 ;;
-  *"get configmap dns-default"*) echo "router-internal-default" ;;
-  *"ovnkube-node"*"desiredNumberScheduled"* | *"ovnkube-node"*"numberReady"*) echo "1" ;;
-  *"ovnkube-master"*"desiredNumberScheduled"* | *"ovnkube-master"*"numberReady"*) echo "1" ;;
-  *) exit 0 ;;
-esac
-EOF
-chmod +x "$SCRIPT_DIR/mocks/kubectl"
-
 if output=$(QUIET=true "$AAP_DEMO_SH" stop 2>&1); then
   if echo "$output" | grep -q "MOCK: crc stop"; then
     _pass "stop_calls_crc"

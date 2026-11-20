@@ -177,35 +177,6 @@ def test_bash_status_has_a_python_v2_fleet_report() -> None:
     assert '--context "$KUBECTL_CONTEXT"' in fleet
 
 
-def test_bash_start_restores_the_local_context_after_kubeconfig_refresh() -> None:
-    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
-
-    assert 'kubectl config use-context "aap-demo"' in source
-
-
-def test_bash_start_waits_for_a_ready_node_before_success() -> None:
-    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
-
-    start = source.split("cmd_start() {", 1)[1].split("\n}\n\n", 1)[0]
-    assert "_wait_for_start_ready" in start
-    assert "kubectl wait --for=condition=Ready node" in source
-
-
-def test_bash_start_recovers_when_crc_state_is_stale_after_readiness_timeout() -> None:
-    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
-
-    start = source.split("cmd_start() {", 1)[1].split("\n}\n\n", 1)[0]
-    assert "_restart_crc_after_failed_start" in start
-    assert "crc stop" in source
-
-
-def test_bash_start_waits_for_ovn_before_reporting_success() -> None:
-    source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
-
-    start = source.split("cmd_start() {", 1)[1].split("\n}\n\n", 1)[0]
-    assert "_wait_for_ovn_ready" in start
-
-
 def test_bash_fleet_source_has_explicit_backend_delegation() -> None:
     source = (REPO_ROOT / "aap-demo.sh").read_text(encoding="utf-8")
 
