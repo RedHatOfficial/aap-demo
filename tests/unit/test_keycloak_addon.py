@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from aap_demo.addons import get
+from aap_demo.addons.keycloak import _realm
 from aap_demo.core.errors import AddonError
 
 
@@ -46,6 +47,28 @@ def test_keycloak_is_registered_as_a_public_native_addon() -> None:
     assert addon.kind == "native"
     assert addon.public is True
     assert addon.needs_cluster is True
+
+
+def test_realm_clients_include_audience_and_profile_mappers() -> None:
+    realm = _realm(
+        {
+            "aap-client-secret": "aap-secret",  # pragma: allowlist secret
+            "ao-client-secret": "ao-secret",  # pragma: allowlist secret
+            "aap-oidc-admin-password": "password",  # pragma: allowlist secret
+            "aap-oidc-operator-password": "password",  # pragma: allowlist secret
+            "aap-oidc-auditor-password": "password",  # pragma: allowlist secret
+            "aap-oidc-developer-password": "password",  # pragma: allowlist secret
+        },
+        "https://aap.example.test/",
+        "https://ao.example.test/callback",
+    )
+
+    for client in realm["clients"]:
+        mapper_configs = {
+            mapper["config"].get("claim.name", mapper["config"].get("included.client.audience"))
+            for mapper in client["protocolMappers"]
+        }
+        assert mapper_configs >= {client["clientId"], "preferred_username", "email"}
 
 
 def test_enable_is_idempotent_and_redacts_credentials(app_ctx) -> None:
