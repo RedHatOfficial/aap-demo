@@ -74,9 +74,11 @@ function Install-PythonCli {
   & $python -m pip install --user pipx --disable-pip-version-check
   if ($LASTEXITCODE -ne 0) { throw "Could not install pipx (exit $LASTEXITCODE)" }
   & $python -m pipx ensurepath --force | Out-Host
-  & $python -m pipx install --force aap-demo
-  if ($LASTEXITCODE -ne 0) { throw "Could not install aap-demo from PyPI (exit $LASTEXITCODE)" }
-  if (-not $hadPipxAapDemo) {
+  if ($hadPipxAapDemo) {
+    Write-Info 'Keeping the existing user-managed pipx aap-demo installation'
+  } else {
+    & $python -m pipx install aap-demo
+    if ($LASTEXITCODE -ne 0) { throw "Could not install aap-demo from PyPI (exit $LASTEXITCODE)" }
     New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
     Set-Content -LiteralPath $PipxOwnedMarker -Value 'aap-demo' -NoNewline -Encoding ascii
   }
@@ -297,10 +299,11 @@ function Uninstall-AapDemo {
 
   if (Test-Path -LiteralPath $PipxOwnedMarker) {
     $python = Get-PythonCommand
-    if ($null -ne $python) {
-      & $python -m pipx uninstall aap-demo
-      if ($LASTEXITCODE -ne 0) { throw "Could not uninstall the aap-demo pipx package (exit $LASTEXITCODE)" }
+    if ($null -eq $python) {
+      throw 'Cannot remove the installer-owned pipx aap-demo package because Python is not on PATH. Restore Python, run pipx uninstall aap-demo, then rerun uninstall.'
     }
+    & $python -m pipx uninstall aap-demo
+    if ($LASTEXITCODE -ne 0) { throw "Could not uninstall the aap-demo pipx package (exit $LASTEXITCODE)" }
     Remove-Item -LiteralPath $PipxOwnedMarker -Force -ErrorAction SilentlyContinue
     Write-Ok 'Removed the pipx aap-demo package installed by this script'
   } else {

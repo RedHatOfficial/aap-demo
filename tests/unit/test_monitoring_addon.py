@@ -34,6 +34,10 @@ def _configure_monitoring_credentials(app_ctx) -> None:
             }
         ),
     )
+    app_ctx.runner.ok(
+        ["kubectl", "get", "secret", "router-ca"],
+        stdout=json.dumps({"data": {"tls.crt": base64.b64encode(b"route-ca").decode()}}),
+    )
 
 
 def _register_ready_deployments(app_ctx) -> None:
@@ -44,6 +48,7 @@ def _register_ready_deployments(app_ctx) -> None:
                 "metadata": {"generation": 1},
                 "spec": {"replicas": 1},
                 "status": {
+                    "replicas": 1,
                     "observedGeneration": 1,
                     "updatedReplicas": 1,
                     "readyReplicas": 1,
@@ -81,8 +86,26 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
     app_ctx.runner.register(
         ["kubectl", "get", "namespace", "aap-monitoring"], lambda _: next(namespace_reads)
     )
+    app_ctx.runner.ok(["kubectl", "create", "-f", "-"])
     app_ctx.runner.ok(["kubectl", "apply"])
+    app_ctx.runner.ok(["kubectl", "rollout", "restart"])
+    app_ctx.runner.ok(["kubectl", "rollout", "status"])
     app_ctx.runner.ok(["kubectl", "wait"])
+    app_ctx.runner.ok(
+        ["kubectl", "get", "route", "grafana"],
+        stdout=json.dumps(
+            {
+                "status": {
+                    "ingress": [
+                        {
+                            "host": "grafana.example.test",
+                            "conditions": [{"type": "Admitted", "status": "True"}],
+                        }
+                    ]
+                }
+            }
+        ),
+    )
     _register_ready_deployments(app_ctx)
 
     assert addon.enable(app_ctx, argparse.Namespace(addon_args=[])) == 0
@@ -94,7 +117,11 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
         for document in call.input.split("---")
         if document.strip().startswith("{")
     ]
-    assert any(item.get("metadata", {}).get("name") == "aap-monitoring" for item in applied)
+    assert any(
+        '"name": "aap-monitoring"' in (call.input or "")
+        for call in app_ctx.runner.calls
+        if call.argv[:3] == ("kubectl", "create", "-f")
+    )
     assert any(
         item.get("kind") == "Deployment" and item.get("apiVersion") == "apps/v1" for item in applied
     )
@@ -172,8 +199,26 @@ def test_enable_uses_configured_aap_namespace(app_ctx) -> None:
     app_ctx.runner.register(
         ["kubectl", "get", "namespace", "aap-monitoring"], lambda _: next(namespace_reads)
     )
+    app_ctx.runner.ok(["kubectl", "create", "-f", "-"])
     app_ctx.runner.ok(["kubectl", "apply"])
+    app_ctx.runner.ok(["kubectl", "rollout", "restart"])
+    app_ctx.runner.ok(["kubectl", "rollout", "status"])
     app_ctx.runner.ok(["kubectl", "wait"])
+    app_ctx.runner.ok(
+        ["kubectl", "get", "route", "grafana"],
+        stdout=json.dumps(
+            {
+                "status": {
+                    "ingress": [
+                        {
+                            "host": "grafana.example.test",
+                            "conditions": [{"type": "Admitted", "status": "True"}],
+                        }
+                    ]
+                }
+            }
+        ),
+    )
     _register_ready_deployments(app_ctx)
 
     get("monitoring").enable(app_ctx, argparse.Namespace(addon_args=[]))
@@ -225,8 +270,26 @@ def test_enable_reuses_configured_pull_secret_for_monitoring_images(app_ctx, tmp
     app_ctx.runner.ok(["kubectl", "create", "secret"])
     app_ctx.runner.ok(["kubectl", "get", "serviceaccount"])
     app_ctx.runner.ok(["kubectl", "patch", "serviceaccount"])
+    app_ctx.runner.ok(["kubectl", "create", "-f", "-"])
     app_ctx.runner.ok(["kubectl", "apply"])
+    app_ctx.runner.ok(["kubectl", "rollout", "restart"])
+    app_ctx.runner.ok(["kubectl", "rollout", "status"])
     app_ctx.runner.ok(["kubectl", "wait"])
+    app_ctx.runner.ok(
+        ["kubectl", "get", "route", "grafana"],
+        stdout=json.dumps(
+            {
+                "status": {
+                    "ingress": [
+                        {
+                            "host": "grafana.example.test",
+                            "conditions": [{"type": "Admitted", "status": "True"}],
+                        }
+                    ]
+                }
+            }
+        ),
+    )
     _register_ready_deployments(app_ctx)
 
     get("monitoring").enable(app_ctx, argparse.Namespace(addon_args=[]))
@@ -267,12 +330,12 @@ def test_disable_deletes_only_owned_namespace(app_ctx) -> None:
             }
         ),
     )
-    app_ctx.runner.ok(["kubectl", "delete", "-f", "-"])
+    app_ctx.runner.ok(["kubectl", "delete", "--raw"])
 
     assert addon.disable(app_ctx, argparse.Namespace()) == 0
-    assert app_ctx.runner.called(["kubectl", "delete", "-f", "-"])
+    assert app_ctx.runner.called(["kubectl", "delete", "--raw"])
     delete_call = next(
-        call for call in app_ctx.runner.calls if call.argv[:3] == ("kubectl", "delete", "-f")
+        call for call in app_ctx.runner.calls if call.argv[:3] == ("kubectl", "delete", "--raw")
     )
     assert '"uid": "monitoring-uid"' in delete_call.input
     assert app_ctx.config.get("addons.enabled") == []
@@ -287,7 +350,7 @@ def test_disable_refuses_unowned_namespace(app_ctx) -> None:
     with pytest.raises(AddonError, match="unowned namespace"):
         get("monitoring").disable(app_ctx, argparse.Namespace())
 
-    assert not app_ctx.runner.called(["kubectl", "delete", "-f", "-"])
+    assert not app_ctx.runner.called(["kubectl", "delete", "--raw"])
 
 
 def test_monitoring_rejects_unknown_population_action(app_ctx) -> None:
@@ -314,6 +377,7 @@ def test_status_command_can_target_monitoring(app_ctx) -> None:
                 "metadata": {"generation": 1},
                 "spec": {"replicas": 1},
                 "status": {
+                    "replicas": 1,
                     "observedGeneration": 1,
                     "updatedReplicas": 1,
                     "readyReplicas": 1,
@@ -324,7 +388,18 @@ def test_status_command_can_target_monitoring(app_ctx) -> None:
     )
     app_ctx.runner.ok(
         ["kubectl", "get", "route", "grafana"],
-        stdout=json.dumps({"status": {"ingress": [{"host": "grafana.example.test"}]}}),
+        stdout=json.dumps(
+            {
+                "status": {
+                    "ingress": [
+                        {
+                            "host": "grafana.example.test",
+                            "conditions": [{"type": "Admitted", "status": "True"}],
+                        }
+                    ]
+                }
+            }
+        ),
     )
 
     assert observe.status(app_ctx, argparse.Namespace(addon="monitoring")) == 0
