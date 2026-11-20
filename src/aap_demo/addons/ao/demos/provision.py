@@ -21,6 +21,15 @@ CONTROL_PROJECT_URL = "https://github.com/RedHatOfficial/aap-demo.git"
 CONTROL_TEMPLATE_NAME = "Sync AO Workflows from TMM"
 CONTROL_PLAYBOOK = "addons/ao/playbooks/sync-ao-demos.yml"
 CONTROL_FORKS = 10
+AO_CREDENTIAL_TYPE_NAME = "aap-demo AO API"
+AO_CREDENTIAL_NAME = "aap-demo AO API token"
+AO_CREDENTIAL_TYPE_INPUTS: dict[str, Any] = {
+    "fields": [{"id": "token", "label": "AO API token", "type": "string", "secret": True}],
+    "required": ["token"],
+}
+# The token reaches the playbook through the credential, so it is not stored in
+# the job's launch data the way extra variables are.
+AO_CREDENTIAL_TYPE_INJECTORS: dict[str, Any] = {"extra_vars": {"ao_api_token": "{{ token }}"}}
 EXIT_LICENSE_REQUIRED = 2
 FLEET_INVENTORY = "aap-demo-fleet"
 FLEET_CREDENTIAL = "aap-demo-fleet-ssh"
@@ -67,7 +76,6 @@ def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
     return {
         "ao_api_url": args.ao_api_url,
         "ao_api_host": args.ao_api_host,
-        "ao_api_token": args.ao_token,
         "ao_demo_ref": args.ao_demo_ref,
         "ao_demo_repository": getattr(args, "ao_demo_repository", PROJECT_URL)
         .rstrip("/")
@@ -78,6 +86,52 @@ def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
         "ao_agent_integration_id": args.ao_agent_integration_id,
         "ao_agent_model_id": args.ao_agent_model_id,
     }
+
+
+def ensure_ao_token_credential(api: Any, organization_id: int, token: str) -> int:
+    """Store the AO token in an AAP credential and return the credential id."""
+    kind = api.find("credential_types", AO_CREDENTIAL_TYPE_NAME)
+    if kind is None:
+        kind = api.request(
+            "/credential_types/",
+            "POST",
+            {
+                "name": AO_CREDENTIAL_TYPE_NAME,
+                "description": "AO API token for the aap-demo AO sync job",
+                "kind": "cloud",
+                "inputs": AO_CREDENTIAL_TYPE_INPUTS,
+                "injectors": AO_CREDENTIAL_TYPE_INJECTORS,
+            },
+        )
+    elif kind.get("injectors") != AO_CREDENTIAL_TYPE_INJECTORS:
+        raise RuntimeError(
+            f"AAP credential type {AO_CREDENTIAL_TYPE_NAME!r} does not inject ao_api_token; "
+            "delete it or rename it, then retry"
+        )
+    payload = {
+        "name": AO_CREDENTIAL_NAME,
+        "description": "AO API token used by the AO sync job. aap-demo replaces it on each run.",
+        "organization": organization_id,
+        "credential_type": kind["id"],
+        "inputs": {"token": token},
+    }
+    query = urllib.parse.urlencode({"name": AO_CREDENTIAL_NAME, "credential_type": kind["id"]})
+    found = api.request(f"/credentials/?{query}").get("results", [])
+    if found:
+        credential_id = int(found[0]["id"])
+        api.request(f"/credentials/{credential_id}/", "PATCH", payload)
+    else:
+        credential_id = int(api.request("/credentials/", "POST", payload)["id"])
+    return credential_id
+
+
+def attach_credential(api: Any, template_id: int, credential_id: int, label: str) -> None:
+    path = f"/job_templates/{template_id}/credentials/"
+    attached = api.request(path)
+    if attached.get("next"):
+        raise RuntimeError(f"too many credentials attached to {label}")
+    if not any(item.get("id") == credential_id for item in attached.get("results", [])):
+        api.request(path, "POST", {"id": credential_id})
 
 
 def report_missing_license(route: str) -> None:
@@ -189,12 +243,7 @@ def ensure_owned_template(
         template_id = current["id"]
     else:
         template_id = api.request("/job_templates/", "POST", payload)["id"]
-    credentials_path = f"/job_templates/{template_id}/credentials/"
-    credentials = api.request(credentials_path)
-    if credentials.get("next"):
-        raise RuntimeError(f"too many credentials attached to Fleet template {name!r}")
-    if not any(item.get("id") == credential_id for item in credentials.get("results", [])):
-        api.request(credentials_path, "POST", {"id": credential_id})
+    attach_credential(api, template_id, credential_id, f"Fleet template {name!r}")
 
 
 def provision_service_template(
@@ -591,6 +640,11 @@ def main(argv: "list[str] | None" = None, *, context: "ssl.SSLContext | None" = 
                 "id"
             ]
             print(f"  ✓ AAP control job template created: {CONTROL_TEMPLATE_NAME}")
+        token_credential_id = ensure_ao_token_credential(api, organization["id"], args.ao_token)
+        attach_credential(
+            api, control_template_id, token_credential_id, f"template {CONTROL_TEMPLATE_NAME!r}"
+        )
+        print(f"  ✓ AAP credential attached: {AO_CREDENTIAL_NAME}")
 
         try:
             launch = api.request(
