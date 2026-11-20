@@ -37,6 +37,7 @@ def test_kinds_and_listed_names() -> None:
         "eda-playground",
         "fleet",
         "keycloak",
+        "local-cache",
         "mcp-server",
         "monitoring",
         "ollama",

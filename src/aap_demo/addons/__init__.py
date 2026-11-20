@@ -14,6 +14,7 @@ from aap_demo.addons.ao import AoAddon
 from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
 from aap_demo.addons.keycloak import KeycloakAddon
+from aap_demo.addons.local_cache import LocalCacheAddon
 from aap_demo.addons.monitoring import MonitoringAddon
 from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
@@ -22,6 +23,7 @@ from aap_demo.core.errors import AddonError
 _FLEET = FleetAddon()
 _MONITORING = MonitoringAddon()
 _OPA = OpaAddon()
+_LOCAL_CACHE = LocalCacheAddon()
 _KEYCLOAK = KeycloakAddon()
 _EDA_PLAYGROUND = ShellAddon(
     "eda-playground",
@@ -56,6 +58,7 @@ _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
     _MONITORING.name: _MONITORING,
     _OPA.name: _OPA,
+    _LOCAL_CACHE.name: _LOCAL_CACHE,
     _KEYCLOAK.name: _KEYCLOAK,
     **{
         name: _CUSTOM_SHELL.get(name) or ShellAddon(name)

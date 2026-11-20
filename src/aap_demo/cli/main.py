@@ -592,6 +592,11 @@ def _addon_needs_cluster(command: str, args: argparse.Namespace) -> bool:
     if command == "fleet":
         return True
     if command in {"enable", "disable"}:
+        if getattr(args, "addon", None) == "local-cache":
+            if command == "disable":
+                return False
+            action = str((getattr(args, "addon_args", None) or ["save"])[0])
+            return action not in {"clear", "delete", "validate"}
         return needs_cluster(getattr(args, "addon", None))
     return False
 
