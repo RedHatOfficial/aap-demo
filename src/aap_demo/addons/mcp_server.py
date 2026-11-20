@@ -286,7 +286,7 @@ def _apply_ingress_ca(ctx: AppContext, *, rollout_timeout: str = "") -> None:
     if not isinstance(containers, list) or not containers:
         raise AddonError("could not configure MCP ingress CA: deployment has no containers")
     container = containers[0]
-    operations = []
+    operations: list[dict[str, object]] = []
     _append_named_item(
         operations,
         pod_spec,
@@ -388,7 +388,7 @@ def _deployment_has_ingress_ca(payload: str) -> bool:
 
 
 def _append_named_item(
-    operations: list,
+    operations: list[dict[str, object]],
     owner: dict,
     field: str,
     name: str,
