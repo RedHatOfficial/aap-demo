@@ -23,6 +23,9 @@ from aap_demo.exec import kubectl
 NAME = "ao"
 NAMESPACE = postgres.NAMESPACE
 CATALOG_ACCOUNT = "redhat-operators"
+# PostgreSQL and OLM's bundle unpack jobs run as default; a catalog pod, when
+# one runs here, as the CatalogSource's own account.
+SCC_ACCOUNTS = ("default", CATALOG_ACCOUNT)
 DELETE_ATTEMPTS = 60
 DELETE_INTERVAL = 5
 LEGACY_MESSAGE = (
@@ -75,6 +78,7 @@ class AoAddon:
 
     def _adopt(self, ctx: AppContext, aap_ns: str, *, host: str, cnpg: str, running: tuple) -> None:
         """An AO that is already up: refresh its config, keep its data."""
+        catalog.grant_sccs(ctx, SCC_ACCOUNTS, NAMESPACE)
         requested = olm.requested_approval(ctx)
         if requested:
             olm.set_approval(ctx, requested)
@@ -105,9 +109,7 @@ class AoAddon:
         # OLM runs the local catalog pod as a ServiceAccount named after the
         # CatalogSource; the namespace default account does not cover it.
         kubectl.run(ctx.runner, "create", "serviceaccount", CATALOG_ACCOUNT, "-n", NAMESPACE)
-        for account in ("default", CATALOG_ACCOUNT):
-            for scc in ("anyuid", "privileged"):
-                catalog.grant_scc(ctx, scc, account, NAMESPACE)
+        catalog.grant_sccs(ctx, SCC_ACCOUNTS, NAMESPACE)
         if not force:
             admin.ensure(ctx)
         ctx.console.success("Namespace ready")
@@ -203,6 +205,7 @@ class AoAddon:
         olm.cleanup(ctx, aap_ns)
         catalog.remove(ctx)
         olm.cleanup_early_access(ctx)
+        catalog.remove_sccs(ctx, SCC_ACCOUNTS, NAMESPACE)
         kubectl.run(ctx.runner, "delete", "namespace", NAMESPACE, "--wait=false")
         ctx.console.info("Waiting for namespace to terminate...")
         for attempt in range(DELETE_ATTEMPTS):
