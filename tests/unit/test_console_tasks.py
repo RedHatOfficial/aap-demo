@@ -15,6 +15,14 @@ def test_structured_output_does_not_print_progress() -> None:
     assert stdout.getvalue() == ""
 
 
+def test_verbose_log_sink_preserves_raw_subprocess_output() -> None:
+    console = RecordingConsole()
+
+    console.log_sink(verbose=True).log('level=info msg="installer detail"')
+
+    assert 'level=info msg="installer detail"' in console.stdout
+
+
 def test_steps_check_off_in_order() -> None:
     console = RecordingConsole()
     console.tasks(["Starting CRC", "Waiting for CRC SSH", "Checking the CRI-O pull secret"])
