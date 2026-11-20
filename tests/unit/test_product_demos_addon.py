@@ -229,6 +229,7 @@ def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
         "ao",
         "eda-playground",
         "fleet",
+        "keycloak",
         "mcp-server",
         "ollama",
         "opa",

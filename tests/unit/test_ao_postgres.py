@@ -7,8 +7,9 @@ import json
 from typing import Dict, List, Tuple
 
 import pytest
+import yaml
 
-from aap_demo.addons.ao import postgres
+from aap_demo.addons.ao import manifests, postgres
 from aap_demo.core.errors import AddonError
 from aap_demo.exec.runner import CompletedCommand, FakeRunner
 
@@ -353,3 +354,15 @@ def test_a_failed_cnpg_pod_force_removal_stops_the_reset(app_ctx) -> None:
     )
     with pytest.raises(AddonError, match="old CloudNativePG pod"):
         postgres._remove_cnpg_pods(app_ctx)
+
+
+def test_postgres_runs_as_uid_26_under_nonroot() -> None:
+    # Existing data is owned by UID 26; a random restricted-v2 UID cannot open it.
+    documents = yaml.safe_load_all((manifests.directory() / "postgres.yaml").read_text())
+    statefulset = next(d for d in documents if d and d.get("kind") == "StatefulSet")
+    pod = statefulset["spec"]["template"]["spec"]
+    assert pod["securityContext"]["runAsUser"] == 26
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    container = pod["containers"][0]["securityContext"]
+    assert container["allowPrivilegeEscalation"] is False
+    assert container["capabilities"]["drop"] == ["ALL"]

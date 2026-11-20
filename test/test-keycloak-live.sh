@@ -28,7 +28,13 @@ host="$(kubectl get route keycloak -n "$NAMESPACE" -o jsonpath='{.spec.host}')"
   exit 1
 }
 
-state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+if [ -n "${KEYCLOAK_STATE_DIR:-}" ]; then
+  state_dir="$KEYCLOAK_STATE_DIR"
+elif [ -n "${AAP_DEMO_DIR:-}" ]; then
+  state_dir="$AAP_DEMO_DIR/addons/keycloak"
+else
+  state_dir="${XDG_STATE_HOME:-${HOME}/.local/state}/aap-demo/addons/keycloak"
+fi
 admin_password_file="$state_dir/admin-password"
 test -s "$admin_password_file" || {
   echo "FAIL: Keycloak admin password file is missing"

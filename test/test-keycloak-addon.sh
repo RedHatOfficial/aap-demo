@@ -51,6 +51,10 @@ grep -q 'KC_BOOTSTRAP_ADMIN_PASSWORD' "$ROOT_DIR/addons/keycloak/keycloak.yaml" 
   echo "FAIL: admin secret not wired"
   exit 1
 }
+grep -q '/realms/__KEYCLOAK_REALM__/.well-known/openid-configuration' "$ROOT_DIR/addons/keycloak/keycloak.yaml" || {
+  echo "FAIL: readiness must wait for realm discovery"
+  exit 1
+}
 grep -q 'chmod 600' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: credential permissions not enforced"
   exit 1
@@ -131,6 +135,22 @@ if grep -Eq 'redirectUris:.*\\/\\*|post.logout.redirect.uris.*\\/\\*' "$ROOT_DIR
 fi
 grep -q 'KEYCLOAK_AAP_REDIRECT_URI' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: AAP redirect URI must be configurable"
+  exit 1
+}
+grep -q 'STATE_DIR=.*addons/keycloak' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: deploy must use the native addon state directory"
+  exit 1
+}
+grep -q 'STATE_DIR=.*addons/keycloak' "$ROOT_DIR/addons/keycloak/configure.sh" || {
+  echo "FAIL: configure must use the native addon state directory"
+  exit 1
+}
+grep -Fq '"${AAP_DEMO_STATE_ROOT}/certs/crc-ingress-ca.crt"' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: deploy must find the ingress CA under the resolved state root"
+  exit 1
+}
+grep -Fq '"${AAP_DEMO_STATE_ROOT}/certs/crc-ingress-ca.crt"' "$ROOT_DIR/addons/keycloak/configure.sh" || {
+  echo "FAIL: configure must find the ingress CA under the resolved state root"
   exit 1
 }
 grep -q 'automountServiceAccountToken: false' "$ROOT_DIR/addons/keycloak/keycloak.yaml" || {
