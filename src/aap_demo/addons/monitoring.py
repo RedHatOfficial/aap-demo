@@ -19,6 +19,7 @@ from aap_demo.addons.base import AddonKind
 from aap_demo.addons.common import kube
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
 from aap_demo.cluster import pull_secret
+from aap_demo.cluster.ingress_ca import fetch_cluster_ca
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
@@ -443,6 +444,7 @@ def _deployment(name: str, image: str, command: List[str], *, gateway_ca: bool =
         spec={
             "replicas": 1,
             "selector": {"matchLabels": _labels(name)},
+            **({"strategy": {"type": "Recreate"}} if name == "prometheus" else {}),
             "template": {
                 "metadata": {"labels": _labels(name)},
                 "spec": {
@@ -523,7 +525,7 @@ def _gateway_ca(ctx: AppContext) -> str:
     secret_name = str(ctx.env.get("AAP_MONITORING_GATEWAY_CA_SECRET") or "router-ca")
     secret = kube.read_object(ctx, "secret", secret_name, namespace="openshift-ingress-operator")
     if secret is None:
-        return ""
+        return fetch_cluster_ca(ctx) or ""
     data = secret.get("data", {})
     for key in ("tls.crt", "ca.crt"):
         encoded = data.get(key)
@@ -664,7 +666,7 @@ class MonitoringAddon:
         )
         uid = namespace.get("metadata", {}).get("uid")
         result = ctx.runner.run(
-            ["kubectl", "delete", "--raw", f"/api/v1/namespaces/{NAMESPACE}"],
+            ["kubectl", "delete", "--raw", f"/api/v1/namespaces/{NAMESPACE}", "-f", "-"],
             input=json.dumps(
                 {
                     "apiVersion": "v1",

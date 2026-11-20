@@ -10,7 +10,12 @@ import os
 import pytest
 
 from aap_demo.addons import get
-from aap_demo.addons.monitoring import NAMESPACE_UID, OWNERSHIP_TOKEN, OWNERSHIP_TOKEN_LABEL
+from aap_demo.addons.monitoring import (
+    NAMESPACE_UID,
+    OWNERSHIP_TOKEN,
+    OWNERSHIP_TOKEN_LABEL,
+    _gateway_ca,
+)
 from aap_demo.cli import observe
 from aap_demo.core.errors import AddonError
 from aap_demo.exec.runner import CompletedCommand
@@ -125,6 +130,12 @@ def test_enable_applies_owned_monitoring_resources_and_saves_password(app_ctx) -
     assert any(
         item.get("kind") == "Deployment" and item.get("apiVersion") == "apps/v1" for item in applied
     )
+    prometheus = next(
+        item
+        for item in applied
+        if item.get("kind") == "Deployment" and item["metadata"]["name"] == "prometheus"
+    )
+    assert prometheus["spec"]["strategy"] == {"type": "Recreate"}
     policies = [item for item in applied if item.get("kind") == "NetworkPolicy"]
     assert policies
     policy = policies[0]
@@ -337,6 +348,7 @@ def test_disable_deletes_only_owned_namespace(app_ctx) -> None:
     delete_call = next(
         call for call in app_ctx.runner.calls if call.argv[:3] == ("kubectl", "delete", "--raw")
     )
+    assert delete_call.argv[-2:] == ("-f", "-")
     assert '"uid": "monitoring-uid"' in delete_call.input
     assert app_ctx.config.get("addons.enabled") == []
 
@@ -363,6 +375,17 @@ def test_disable_is_safe_when_namespace_is_already_absent(app_ctx) -> None:
 
     assert get("monitoring").disable(app_ctx, argparse.Namespace()) == 0
     assert not app_ctx.runner.called(["kubectl", "delete"])
+
+
+def test_gateway_ca_falls_back_to_microshift_router_secret(app_ctx) -> None:
+    ca = "-----BEGIN CERTIFICATE-----\nY2E=\n-----END CERTIFICATE-----\n"
+    app_ctx.runner.fail(["kubectl", "get", "secret", "router-ca"], stderr="NotFound")
+    app_ctx.runner.ok(
+        ["kubectl", "get", "secret", "router-certs-default", "-n", "openshift-ingress"],
+        stdout=json.dumps({"data": {"tls.crt": base64.b64encode(ca.encode()).decode()}}),
+    )
+
+    assert _gateway_ca(app_ctx) == ca
 
 
 def test_status_command_can_target_monitoring(app_ctx) -> None:
