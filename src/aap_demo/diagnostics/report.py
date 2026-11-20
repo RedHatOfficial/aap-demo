@@ -40,9 +40,12 @@ def render_text(console: Any, report: DiagnoseReport) -> None:
         console.out("Cannot proceed without cluster connectivity.")
         return
 
-    console.out("─────────────────────────────────────")
+    # CP1252 is still the default encoding for some Windows PowerShell and
+    # SSH streams. Keep the section rule ASCII-safe so diagnose never crashes
+    # after completing its checks merely while rendering the summary.
+    console.out("=" * 37)
     if report.issues == 0 and report.warnings == 0:
-        console.report("All checks passed — environment is healthy", status="ok")
+        console.report("All checks passed - environment is healthy", status="ok")
     elif report.issues == 0:
         console.report(f"{report.warnings} warning(s), no critical issues", status="warn")
     else:

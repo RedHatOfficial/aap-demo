@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+export EDA_PLAYGROUND_IMAGE='ghcr.io/test/eda-playground@sha256:fixture'
 mkdir -p "$TMP/bin"
 REAL_BASE64="$(command -v base64)"
 cat >"$TMP/bin/kubectl" <<'STUB'
@@ -278,8 +279,8 @@ assert_log 'kubectl delete namespace eda-playground' 'owned namespace not delete
 MOCK_AAP=absent MOCK_NS=absent MOCK_SCC=absent PATH="$TMP/bin:$PATH" "$ROOT/addons/eda-playground/deploy.sh" --delete >"$TMP/repeat.out" 2>&1 || fail 'repeated cleanup failed'
 [ ! -e "$EDA_PLAYGROUND_STATE_DIR/oauth_credentials.json" ] || fail 'repeated cleanup restored OAuth state'
 run_case fallback delete
-assert_log '-X DELETE https://aap.example.test/api/gateway/v1/applications/42/' 'exact-name fallback not deleted'
-[ "$(cat "$EDA_PLAYGROUND_STATE_DIR/oauth_app_id")" = 42 ] || fail 'fallback ownership marker missing'
+reject_log '-X DELETE https://aap.example.test/api/gateway/v1/applications/42/' 'unowned exact-name application deleted'
+[ ! -e "$EDA_PLAYGROUND_STATE_DIR/oauth_app_id" ] || fail 'unowned application ownership marker created'
 run_case wrong_id
 reject_log '-X DELETE' 'mismatched saved ID deleted'
 [ "$(cat "$EDA_PLAYGROUND_STATE_DIR/oauth_app_id")" = 41 ] || fail 'wrong ID ownership tombstone missing'

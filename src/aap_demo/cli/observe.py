@@ -9,6 +9,7 @@ from aap_demo.cluster import runtime as runtime_mod
 from aap_demo.cluster import status as status_mod
 from aap_demo.core import output
 from aap_demo.core.context import AppContext
+from aap_demo.core.errors import AddonError
 from aap_demo.core.output import is_structured
 from aap_demo.diagnostics import checks as diagnose_checks
 from aap_demo.diagnostics import crc_host as diagnose_crc_host
@@ -22,6 +23,16 @@ def status(ctx: AppContext, args: argparse.Namespace) -> int:
     That is deliberately not ported. The ``git fetch``-and-prompt mechanism is
     meant to be replaced by a release-manifest check, not carried over.
     """
+    addon_name = getattr(args, "addon", None)
+    if addon_name:
+        from aap_demo.addons import get
+
+        addon = get(addon_name)
+        handler = getattr(addon, "status", None)
+        if handler is None:
+            raise AddonError(f"addon {addon.name!r} has no status command")
+        return int(handler(ctx, args) or 0)
+
     report = status_mod.gather(ctx)
     if not is_structured(ctx.output):
         # status_mod.render_text writes through the console directly, since it

@@ -10,7 +10,22 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 # Add-ons
 
-Add-ons are optional extras on top of AAP: a self-service portal, demo job templates, a local model, and practice machines.
+Add-ons are optional extras on top of AAP: monitoring, a self-service portal, demo job
+templates, a local model, and practice machines.
+
+## Monitoring
+
+The Python command can install a small, AAP-focused Prometheus and Grafana stack:
+
+```bash
+aap-demo enable monitoring
+aap-demo status monitoring
+aap-demo disable monitoring
+```
+
+See the [monitoring guide](../monitoring.md) for dashboards, resource cost, and the
+credential-file location. `prometheus` is accepted as an alias for `monitoring` by the
+Python command.
 
 ## OPA Policy as Code
 
@@ -110,9 +125,10 @@ aap-demo enable eda-playground
 kubectl get route eda-playground -n eda-playground
 ```
 
-Open the Route and finish AAP OAuth login manually. The default image is an
-experimental maintainer-hosted image; set `EDA_PLAYGROUND_IMAGE` to a reviewed
-tag or digest when appropriate. This addon is not supported for production use.
+Open the Route and finish AAP OAuth login manually. Set
+`EDA_PLAYGROUND_IMAGE` to a reviewed immutable digest before enabling the addon;
+mutable tags require the explicit `EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true`
+override for disposable testing. This addon is not supported for production use.
 The live smoke test waits for the browser check by default; use
 `AAP_DEMO_LIVE_NONINTERACTIVE=true` for unattended validation, which reports
 OAuth as unverified.
@@ -169,9 +185,26 @@ AO_PURGE_DATA=1 aap-demo disable ao   # also remove its database and saved admin
 
 `disable ao` leaves `mcp-server` and `ollama` installed. Disable them by name.
 
+## Local image cache
+
+The native command can save and reload CRC's OCI image cache. Save and load need a running cluster;
+`validate`, `clear`, and `disable` are host-only and still work after the cluster is removed.
+
+```bash
+aap-demo enable local-cache          # save images from the running cluster
+aap-demo enable local-cache load     # load the cache into a fresh cluster
+aap-demo enable local-cache validate
+aap-demo enable local-cache clear   # one-shot clear; keeps the enabled setting
+aap-demo disable local-cache        # clear and remove the enabled setting
+```
+
+The cache is stored per configured CRC preset under `~/.aap-demo/local-cache/`. See the
+[local-cache README](../../addons/local-cache/README.md) and [ADR-021](../adr/021-local-cache-addon.md)
+for the cache format, catalog pinning, and rewrite behavior.
+
 ## Everything else
 
-Portal, a local cache of container images, and the other extras are not in the new command yet.
+Portal and the other extras are not in the new command yet.
 Asking the new command for one of them stops with a short error, and your cluster is left as it was.
 
 Use [the older command](older-command.md) for those. For example, after you have renamed it:
@@ -215,8 +248,9 @@ The addon creates the Gateway OAuth application and removes its owned
 application and namespace during cleanup. Retry disable if cleanup reports an
 error.
 
-The default image is an experimental image in a maintainer's personal GHCR
-namespace. Review it or set `EDA_PLAYGROUND_IMAGE` to a reviewed tag or digest.
-This addon is not supported for production use. See the
+The image is experimental and hosted in a maintainer's personal GHCR namespace.
+Set `EDA_PLAYGROUND_IMAGE` to a reviewed immutable digest; mutable tags require
+the explicit `EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE=true` override for disposable
+testing. This addon is not supported for production use. See the
 [addon README](../../addons/eda-playground/README.md) for configuration and
 limitations.

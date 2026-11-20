@@ -896,8 +896,8 @@ class Console:
             return
         self.out(message, color="dim")
 
-    def log_sink(self) -> "_LogSink":
-        return _LogSink(self)
+    def log_sink(self, *, verbose: bool = False) -> "_LogSink":
+        return _LogSink(self, verbose=verbose)
 
     def notice(self, text: str) -> None:
         """The disclaimer banner — suppressed by QUIET (bash ``show_welcome``)."""
@@ -915,11 +915,15 @@ class Console:
 class _LogSink:
     """Adapter so ``CommandRunner`` streaming can call ``sink.log``."""
 
-    def __init__(self, console: Console) -> None:
+    def __init__(self, console: Console, *, verbose: bool = False) -> None:
         self._console = console
+        self._verbose = verbose
 
     def log(self, text: str) -> None:
-        self._console.subprocess_line(text)
+        if self._verbose:
+            self._console.out(text)
+        else:
+            self._console.subprocess_line(text)
 
 
 class RecordingConsole(Console):

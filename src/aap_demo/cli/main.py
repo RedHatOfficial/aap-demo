@@ -213,7 +213,9 @@ def build_parser(
     add("redeploy", "Clean AAP and redeploy").set_defaults(func=lifecycle.redeploy)
 
     # -- observation --------------------------------------------------------
-    add("status", "Show cluster and AAP status").set_defaults(func=observe.status)
+    p = add("status", "Show cluster and AAP status")
+    p.set_defaults(func=observe.status)
+    p.add_argument("addon", nargs="?", help="Show status for one native addon")
     add("watch", "Watch AAP deployment status").set_defaults(func=observe.watch)
 
     p = add("diagnose", "Check environment health and identify common issues")
@@ -266,7 +268,7 @@ def build_parser(
     _add_config_command(add, sub)
 
     # -- addons -------------------------------------------------------------
-    p = add("enable", "Enable an addon (fleet, product-demos, ao, EDA Playground, ...)")
+    p = add("enable", "Enable an addon (fleet, monitoring, product-demos, ao, ...)")
     p.add_argument("addon", nargs="?", help="Addon name; omit to list available addons")
     p.add_argument("addon_args", nargs="*", metavar="ARGS", help="Addon-specific arguments")
     p.add_argument(
@@ -590,6 +592,11 @@ def _addon_needs_cluster(command: str, args: argparse.Namespace) -> bool:
     if command == "fleet":
         return True
     if command in {"enable", "disable"}:
+        if getattr(args, "addon", None) == "local-cache":
+            if command == "disable":
+                return False
+            action = str((getattr(args, "addon_args", None) or ["save"])[0])
+            return action not in {"clear", "delete", "validate"}
         return needs_cluster(getattr(args, "addon", None))
     return False
 
