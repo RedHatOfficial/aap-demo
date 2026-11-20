@@ -103,10 +103,13 @@ def ensure_ao_token_credential(api: Any, organization_id: int, token: str) -> in
                 "injectors": AO_CREDENTIAL_TYPE_INJECTORS,
             },
         )
-    elif kind.get("injectors") != AO_CREDENTIAL_TYPE_INJECTORS:
+    elif (
+        kind.get("inputs") != AO_CREDENTIAL_TYPE_INPUTS
+        or kind.get("injectors") != AO_CREDENTIAL_TYPE_INJECTORS
+    ):
         raise RuntimeError(
-            f"AAP credential type {AO_CREDENTIAL_TYPE_NAME!r} does not inject ao_api_token; "
-            "delete it or rename it, then retry"
+            f"AAP credential type {AO_CREDENTIAL_TYPE_NAME!r} is not the one aap-demo creates "
+            "(a secret token injected as ao_api_token); delete it or rename it, then retry"
         )
     payload = {
         "name": AO_CREDENTIAL_NAME,
@@ -115,7 +118,13 @@ def ensure_ao_token_credential(api: Any, organization_id: int, token: str) -> in
         "credential_type": kind["id"],
         "inputs": {"token": token},
     }
-    query = urllib.parse.urlencode({"name": AO_CREDENTIAL_NAME, "credential_type": kind["id"]})
+    query = urllib.parse.urlencode(
+        {
+            "name": AO_CREDENTIAL_NAME,
+            "credential_type": kind["id"],
+            "organization": organization_id,
+        }
+    )
     found = api.request(f"/credentials/?{query}").get("results", [])
     if found:
         credential_id = int(found[0]["id"])

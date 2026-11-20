@@ -62,6 +62,7 @@ class FakeAAP:
                     for c in self.credentials
                     if c["name"] == query["name"]
                     and str(c["credential_type"]) == query["credential_type"]
+                    and str(c["organization"]) == query["organization"]
                 ]
             }
         found = re.fullmatch(r"/credentials/(\d+)/", route)
@@ -181,19 +182,42 @@ def test_a_rerun_updates_the_token_and_reuses_the_credential(monkeypatch):
     assert fake.attached[control_template(fake)["id"]] == [credential["id"]]
 
 
-def test_a_same_named_type_that_injects_something_else_stops(monkeypatch):
+@pytest.mark.parametrize(
+    "inputs, injectors",
+    [
+        (provision.AO_CREDENTIAL_TYPE_INPUTS, {"env": {"AO_TOKEN": "{{ token }}"}}),
+        (
+            {"fields": [{"id": "token", "label": "AO API token", "type": "string"}]},
+            provision.AO_CREDENTIAL_TYPE_INJECTORS,
+        ),
+    ],
+    ids=["other-injector", "token-not-secret"],
+)
+def test_a_same_named_type_aap_demo_did_not_create_stops(monkeypatch, inputs, injectors):
     fake = FakeAAP()
     fake.credential_types.append(
         {
             "id": 50,
             "name": provision.AO_CREDENTIAL_TYPE_NAME,
-            "injectors": {"env": {"AO_TOKEN": "{{ token }}"}},
+            "inputs": inputs,
+            "injectors": injectors,
         }
     )
-    with pytest.raises(RuntimeError, match="does not inject ao_api_token"):
+    with pytest.raises(RuntimeError, match="is not the one aap-demo creates"):
         run_main(fake, monkeypatch)
     assert not fake.credentials
     assert not launches(fake)
+
+
+def test_a_same_named_credential_in_another_organization_is_left_alone(monkeypatch):
+    fake = FakeAAP()
+    run_main(fake, monkeypatch)
+    (ours,) = fake.credentials
+    other = {**ours, "id": 900, "organization": 2, "inputs": {"token": "theirs"}}
+    fake.credentials.insert(0, other)
+    run_main(fake, monkeypatch, token="rotated-token")
+    assert other["inputs"] == {"token": "theirs"} and other["organization"] == 2
+    assert ours["inputs"] == {"token": "rotated-token"}
 
 
 def test_the_playbook_still_reads_ao_api_token():
