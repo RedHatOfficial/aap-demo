@@ -115,20 +115,9 @@ spec:
       labels:
         app.kubernetes.io/name: orchestrator-postgres
     spec:
-      # Run as the image's postgres user (UID 26), which owns existing data.
-      # A pinned non-root UID is admitted under nonroot-v2 (ADR-045).
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 26
-        seccompProfile:
-          type: RuntimeDefault
       containers:
         - name: postgres
           image: __POSTGRES_IMAGE__
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           env:
             - name: POSTGRESQL_USER
               valueFrom:

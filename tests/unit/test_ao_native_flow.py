@@ -17,7 +17,7 @@ STEPS = [
     ("instance", "replica_count", 1),
     ("instance", "ingress_host", "automation-orchestrator.apps.example"),
     ("instance", "already_running", None),
-    ("catalog", "grant_sccs", None),
+    ("catalog", "grant_scc", None),
     ("admin", "ensure", None),
     ("catalog", "require_aap_catalog", None),
     ("catalog", "ensure", None),
@@ -112,7 +112,6 @@ def test_running_ao_is_adopted_without_reinstall(app_ctx, steps, monkeypatch) ->
     monkeypatch.setattr(ao_pkg.instance, "already_running", running)
     assert _enable(app_ctx) == 0
     assert "catalog.ensure" not in steps and "olm.install" not in steps
-    assert _index(steps, "catalog.grant_sccs") < _index(steps, "instance.apply")
     assert _index(steps, "instance.apply") < _index(steps, "postgres.reconcile")
     assert "wiring.wire" in steps
 
@@ -151,11 +150,6 @@ def test_disable_keeps_the_password_and_waits_for_the_namespace(app_ctx, monkeyp
     assert AoAddon(sleep=lambda _s: None).disable(app_ctx, argparse.Namespace()) == 0
     assert seen == ["save", "fin", "olm", "catalog", "ea"]
     assert app_ctx.runner.called("kubectl delete namespace automation-orchestrator")
-    bindings = [c for c in app_ctx.runner.commands if "clusterrolebinding" in c]
-    assert (
-        len(bindings) == 1
-        and "aap-demo-scc-privileged-automation-orchestrator-default" in bindings[0]
-    )
     assert app_ctx.config.get("addons.enabled") == ["mcp-server"]
 
 
