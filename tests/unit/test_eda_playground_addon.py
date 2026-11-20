@@ -89,5 +89,5 @@ def test_eda_playground_scripts_are_bundled() -> None:
     assert (root / "addons/eda-playground/deploy.sh").is_file()
     text = (root / "pyproject.toml").read_text(encoding="utf-8")
     assert (  # pragma: allowlist secret
-        '"addons/eda-playground" = "aap_demo/bundled/addons/' + "eda-playground\"" in text
+        '"addons/eda-playground" = "aap_demo/bundled/addons/' + 'eda-playground"' in text
     )
