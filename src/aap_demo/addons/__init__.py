@@ -1,7 +1,7 @@
 """Addon registry: one table of every addon the Python command can enable.
 
-``fleet``, ``monitoring``, ``opa`` and ``ao`` are native Python. Product demos,
-EDA Playground, mcp-server and ollama run their bundled bash installers
+``fleet``, ``monitoring``, ``opa``, ``ao`` and ``mcp-server`` are native Python.
+Product demos, EDA Playground and ollama run their bundled bash installers
 (``kind == "legacy"``). Any other name is an error that points at the older
 command. See ADR-040.
 """
@@ -15,12 +15,14 @@ from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
 from aap_demo.addons.keycloak import KeycloakAddon
 from aap_demo.addons.local_cache import LocalCacheAddon
+from aap_demo.addons.mcp_server import McpServerAddon
 from aap_demo.addons.monitoring import MonitoringAddon
 from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
 
 _FLEET = FleetAddon()
+_MCP_NATIVE = McpServerAddon()
 _MONITORING = MonitoringAddon()
 _OPA = OpaAddon()
 _LOCAL_CACHE = LocalCacheAddon()
@@ -56,6 +58,7 @@ _CUSTOM_SHELL = {a.name: a for a in (_EDA_PLAYGROUND, _MCP_SERVER, _OLLAMA)}
 
 _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
+    _MCP_NATIVE.name: _MCP_NATIVE,
     _MONITORING.name: _MONITORING,
     _OPA.name: _OPA,
     _LOCAL_CACHE.name: _LOCAL_CACHE,
@@ -63,7 +66,7 @@ _REGISTRY: Dict[str, Addon] = {
     **{
         name: _CUSTOM_SHELL.get(name) or ShellAddon(name)
         for name in BUNDLED_ADDON_DIRS
-        if name != _AO.name
+        if name not in {_AO.name, _MCP_NATIVE.name}
     },
     _AO.name: _AO,
 }
