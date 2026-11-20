@@ -9,8 +9,8 @@ import json
 import pytest
 import yaml
 
-from aap_demo.addons import get
-from aap_demo.addons.mcp_server import _apply_ingress_ca, _generate_token
+from aap_demo.addons import get, mcp_server
+from aap_demo.addons.mcp_server import _apply_ingress_ca, _configure_claude, _generate_token
 from aap_demo.core.errors import AddonError
 from aap_demo.exec.runner import CompletedCommand
 
@@ -18,6 +18,8 @@ _CERT = "-----BEGIN CERTIFICATE-----\nZm9v\n-----END CERTIFICATE-----"
 
 
 def _runner(app_ctx, *, deployment_stdout=None):
+    if not app_ctx.env.get("HOME"):
+        app_ctx.env = {"HOME": str(app_ctx.paths.legacy_dir.parent)}
     app_ctx.runner.ok("kubectl cluster-info")
     app_ctx.runner.ok("kubectl get route aap", stdout="aap-aap-operator.apps.example.test")
     app_ctx.runner.ok("kubectl get ingresses.config/cluster", stdout="")
@@ -100,9 +102,40 @@ def test_disable_removes_only_mcp_resources(app_ctx) -> None:
 
 
 def test_enable_waits_for_rollout_after_ingress_ca_patch(app_ctx) -> None:
-    runner = _runner(app_ctx, deployment_stdout=json.dumps({"spec": {"template": {"spec": {}}}}))
+    runner = _runner(
+        app_ctx,
+        deployment_stdout=json.dumps(
+            {"spec": {"template": {"spec": {"containers": [{"name": "mcp"}]}}}}
+        ),
+    )
+    deployment = {"spec": {"template": {"spec": {"containers": [{"name": "mcp"}]}}}}
+    patch_results = []
+
+    def apply_patch(argv):
+        operations = json.loads(argv[argv.index("-p") + 1])
+        patched = json.loads(json.dumps(deployment))
+        for operation in operations:
+            tokens = operation["path"].strip("/").split("/")
+            parent = patched
+            for token in tokens[:-1]:
+                parent = parent[int(token)] if isinstance(parent, list) else parent[token]
+            key = tokens[-1]
+            if isinstance(parent, list):
+                assert key == "-"
+                parent.append(operation["value"])
+            else:
+                assert key not in parent
+                parent[key] = operation["value"]
+        patch_results.append(patched)
+        return CompletedCommand(tuple(argv), 0)
+
+    runner._rules.insert(0, (("kubectl", "patch", "deployment"), apply_patch))
     assert get("mcp-server").enable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
     assert sum(call.argv[:3] == ("kubectl", "rollout", "status") for call in runner.calls) == 2
+    patched_spec = patch_results[0]["spec"]["template"]["spec"]
+    assert patched_spec["volumes"]
+    assert patched_spec["containers"][0]["env"]
+    assert patched_spec["containers"][0]["volumeMounts"]
 
 
 def test_malformed_ingress_certificate_is_reported_as_addon_error(app_ctx) -> None:
@@ -171,7 +204,7 @@ def test_enable_recovers_when_ingress_ca_patch_races_with_operator(app_ctx) -> N
     deployment_reads = iter(
         (
             "deployment.apps/aap-mcp-server",
-            json.dumps({"spec": {"template": {"spec": {}}}}),
+            json.dumps({"spec": {"template": {"spec": {"containers": [{"name": "mcp"}]}}}}),
             configured,
             configured,
         )
@@ -257,6 +290,144 @@ def test_enable_creates_ingress_ca_configmap_when_absent(app_ctx) -> None:
     _apply_ingress_ca(app_ctx)
 
     assert runner.called("kubectl create -f -")
+
+
+def test_enable_skips_token_request_when_claude_is_unavailable(app_ctx, monkeypatch) -> None:
+    runner = _runner(app_ctx)
+    monkeypatch.setattr(mcp_server.shutil, "which", lambda _name: None)
+    runner.ok(
+        "kubectl get secret aap-admin-password",
+        stdout=base64.b64encode(b"password").decode(),
+    )
+    runner.ok("curl --silent --show-error --fail", stdout=json.dumps({"token": "unused"}))
+
+    assert get("mcp-server").enable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
+
+    assert not runner.called("curl")
+    assert "Claude CLI was not found" in app_ctx.console.stdout + app_ctx.console.stderr
+
+
+def test_failed_token_generation_reports_credential_free_recovery(app_ctx, monkeypatch) -> None:
+    runner = _runner(app_ctx)
+    monkeypatch.setattr(mcp_server.shutil, "which", lambda _name: "/usr/bin/claude")
+    runner.fail("kubectl get secret aap-admin-password", stderr="not ready")
+
+    assert get("mcp-server").enable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
+
+    output = app_ctx.console.stderr
+    assert "Claude Code setup was skipped" in output
+    assert "rerun aap-demo enable mcp-server" in output
+    assert "password" not in output.lower()
+
+
+def test_failed_claude_replacement_restores_previous_entry(app_ctx, tmp_path, monkeypatch) -> None:
+    app_ctx.env = {"HOME": str(tmp_path)}
+    config_path = tmp_path / ".claude.json"
+    previous = {"type": "http", "url": "https://old.example/mcp", "headers": {"X-Old": "x"}}
+    config_path.write_text(json.dumps({"mcpServers": {"aap-demo": previous}}), encoding="utf-8")
+    monkeypatch.setattr(mcp_server.shutil, "which", lambda _name: "/usr/bin/claude")
+    runner = _runner(app_ctx)
+    runner.ok(["claude", "mcp", "remove", "aap-demo", "--scope", "user"])
+    runner.fail("claude mcp add aap-demo", stderr="write failed")
+    runner.ok(["claude", "mcp", "remove", "aap-demo", "--scope", "user"])
+    runner.ok("claude mcp add-json aap-demo")
+
+    assert not _configure_claude(app_ctx, "mcp.apps.example.test", "temporary-secret")
+
+    restore = next(call for call in runner.calls if call.argv[:3] == ("claude", "mcp", "add-json"))
+    assert json.loads(restore.argv[4]) == previous
+    assert "temporary-secret" not in app_ctx.console.stderr
+    assert "previous Claude MCP entry was restored" in app_ctx.console.stderr
+
+
+def test_claude_connection_failure_includes_host_dns_guidance(
+    app_ctx, tmp_path, monkeypatch
+) -> None:
+    app_ctx.env = {"HOME": str(tmp_path)}
+    monkeypatch.setattr(mcp_server.shutil, "which", lambda _name: "/usr/bin/claude")
+    app_ctx.paths.ingress_ca.parent.mkdir(parents=True)
+    app_ctx.paths.ingress_ca.write_text("test CA", encoding="utf-8")
+    runner = _runner(app_ctx)
+    runner.ok("claude mcp add aap-demo")
+    runner.ok("claude mcp get aap-demo", stdout="✗ Failed to connect")
+
+    assert _configure_claude(app_ctx, "mcp.apps.example.test", "temporary-secret")
+
+    output = app_ctx.console.stdout + app_ctx.console.stderr
+    assert str(app_ctx.paths.ingress_ca) in output
+    assert "NODE_EXTRA_CA_CERTS" in output
+    assert "mcp.apps.example.test" in output
+    assert "aap-demo start" in output
+    assert (
+        next(call for call in runner.calls if call.argv[:3] == ("claude", "mcp", "add")).env is None
+    )
+
+
+def test_disable_keeps_state_when_configmap_inspection_is_forbidden(app_ctx) -> None:
+    runner = _runner(app_ctx)
+    app_ctx.config.set("addons.enabled", ["mcp-server", "ao"])
+    runner._rules.insert(
+        0,
+        (
+            ("kubectl", "get", "configmap", "aap-ingress-ca"),
+            CompletedCommand((), 1, stderr="Error from server (Forbidden): denied"),
+        ),
+    )
+
+    with pytest.raises(AddonError, match="could not read configmap aap-ingress-ca"):
+        get("mcp-server").disable(app_ctx, argparse.Namespace(addon="mcp-server"))
+
+    assert app_ctx.config.get("addons.enabled") == ["mcp-server", "ao"]
+    assert "MCP Server removed" not in app_ctx.console.stdout
+
+
+def test_both_mcp_rollouts_use_configured_timeout(app_ctx, monkeypatch) -> None:
+    runner = _runner(
+        app_ctx,
+        deployment_stdout=json.dumps(
+            {"spec": {"template": {"spec": {"containers": [{"name": "mcp"}]}}}}
+        ),
+    )
+    monkeypatch.setattr(mcp_server.shutil, "which", lambda _name: None)
+    app_ctx.env = {"HOME": str(app_ctx.paths.legacy_dir.parent), "MCP_ROLLOUT_TIMEOUT": "20m"}
+
+    assert get("mcp-server").enable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
+
+    rollouts = [
+        call.argv for call in runner.calls if call.argv[:3] == ("kubectl", "rollout", "status")
+    ]
+    assert len(rollouts) == 2
+    assert all("--timeout=20m" in argv for argv in rollouts)
+
+
+@pytest.mark.parametrize(("output", "load"), [("json", json.loads), ("yaml", yaml.safe_load)])
+def test_structured_enable_includes_addon_and_enabled_fields(
+    app_ctx, monkeypatch, output, load
+) -> None:
+    _runner(app_ctx)
+    monkeypatch.setattr(mcp_server.shutil, "which", lambda _name: None)
+    app_ctx.output = output
+    app_ctx.console.structured = True
+
+    assert get("mcp-server").enable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
+
+    payload = load(app_ctx.console.stdout)
+    assert payload["addon"] == "mcp-server"
+    assert payload["enabled"] is True
+
+
+@pytest.mark.parametrize(("output", "load"), [("json", json.loads), ("yaml", yaml.safe_load)])
+def test_structured_disable_includes_addon_and_enabled_fields(app_ctx, output, load) -> None:
+    _runner(app_ctx)
+    app_ctx.output = output
+    app_ctx.console.structured = True
+    app_ctx.config.set("addons.enabled", ["mcp-server"])
+
+    assert get("mcp-server").disable(app_ctx, argparse.Namespace(addon="mcp-server")) == 0
+
+    payload = load(app_ctx.console.stdout)
+    assert payload["addon"] == "mcp-server"
+    assert payload["enabled"] is False
 
 
 def test_enabling_mcp_runs_ao_wiring_when_ao_is_already_installed(app_ctx, monkeypatch) -> None:

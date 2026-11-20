@@ -6,12 +6,14 @@ import argparse
 import base64
 import binascii
 import json
+import shutil
 import time
 from pathlib import Path
 
 import yaml
 
 from aap_demo.addons.base import AddonKind
+from aap_demo.addons.common import kube
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
@@ -27,6 +29,7 @@ class McpServerAddon:
     def enable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
         _cluster(ctx)
+        rollout_timeout = _rollout_timeout(ctx)
         aap_host = _route(ctx, "aap") or f"aap-{ctx.namespace}.apps.127.0.0.1.nip.io"
         domain = aap_host.split(".", 1)[1] if "." in aap_host else "apps.127.0.0.1.nip.io"
         mcp_host = f"aap-mcp-{ctx.namespace}.{domain}"
@@ -53,17 +56,22 @@ class McpServerAddon:
                 "deployment/aap-mcp-server",
                 "-n",
                 ctx.namespace,
-                "--timeout=600s",
+                f"--timeout={rollout_timeout}",
             ]
         )
         if not rollout.ok:
             raise AddonError(
                 "MCP server rollout did not complete", hint=rollout.stderr.strip() or None
             )
-        _apply_ingress_ca(ctx)
-        token = _generate_token(ctx, aap_host)
-        if token:
-            _configure_claude(ctx, mcp_host, token)
+        _apply_ingress_ca(ctx, rollout_timeout=rollout_timeout)
+        if shutil.which("claude") is None:
+            ctx.console.note("Claude CLI was not found; skipping automatic Claude Code setup.")
+        else:
+            token = _generate_token(ctx, aap_host)
+            if token is None:
+                _claude_setup_warning(ctx, mcp_host)
+            elif not _configure_claude(ctx, mcp_host, token):
+                _claude_setup_warning(ctx, mcp_host)
         _remember(ctx)
         try:
             from aap_demo.addons.ao import wiring
@@ -71,7 +79,13 @@ class McpServerAddon:
             wiring.wire(ctx, ctx.namespace)
         except AddonError as exc:
             ctx.console.warn(f"AO integration wiring failed: {exc.message}")
-        _say(ctx, "MCP Server deployed", endpoint=f"https://{mcp_host}/mcp")
+        _say(
+            ctx,
+            "MCP Server deployed",
+            addon=self.name,
+            enabled=True,
+            endpoint=f"https://{mcp_host}/mcp",
+        )
         return 0
 
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
@@ -91,10 +105,8 @@ class McpServerAddon:
             raise AddonError(
                 "could not remove MCP server resources", hint=result.stderr.strip() or None
             )
-        owned = ctx.runner.run(
-            ["kubectl", "get", "configmap", "aap-ingress-ca", "-n", ctx.namespace, "-o", "json"]
-        )
-        if owned.ok and _owned_configmap(owned.stdout):
+        configmap = kube.read_object(ctx, "configmap", "aap-ingress-ca", namespace=ctx.namespace)
+        if configmap is not None and _owned_configmap(json.dumps(configmap)):
             result = ctx.runner.run(
                 [
                     "kubectl",
@@ -111,8 +123,23 @@ class McpServerAddon:
                     "could not remove MCP server resources", hint=result.stderr.strip() or None
                 )
         _forget(ctx)
-        _say(ctx, "MCP Server removed")
+        _say(ctx, "MCP Server removed", addon=self.name, enabled=False)
         return 0
+
+
+def _rollout_timeout(ctx: AppContext) -> str:
+    return ctx.env.get("MCP_ROLLOUT_TIMEOUT", "").strip() or "600s"
+
+
+def _claude_setup_warning(ctx: AppContext, mcp_host: str) -> None:
+    ctx.console.warn(
+        "Claude Code setup was skipped or failed. The MCP service remains deployed without "
+        "exposing credentials. Once AAP is healthy, rerun aap-demo enable mcp-server to retry."
+    )
+    ctx.console.note(
+        f"If Claude Code reports a connection failure, verify {mcp_host} resolves on this host; "
+        "on CRC, run aap-demo start to restore route DNS wiring, then retry."
+    )
 
 
 def _cluster(ctx: AppContext) -> None:
@@ -180,7 +207,7 @@ def _manifest(namespace: str, aap_host: str, mcp_host: str, public_base: str) ->
     return yaml.safe_dump(document, sort_keys=False)
 
 
-def _apply_ingress_ca(ctx: AppContext) -> None:
+def _apply_ingress_ca(ctx: AppContext, *, rollout_timeout: str = "") -> None:
     result = ctx.runner.run(
         [
             "kubectl",
@@ -255,36 +282,39 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
         pod_spec = json.loads(deployment.stdout)["spec"]["template"]["spec"]
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise AddonError("could not inspect MCP server deployment") from exc
+    containers = pod_spec.get("containers")
+    if not isinstance(containers, list) or not containers:
+        raise AddonError("could not configure MCP ingress CA: deployment has no containers")
+    container = containers[0]
     operations = []
-    if not any(item.get("name") == "ingress-ca" for item in pod_spec.get("volumes", [])):
-        operations.append(
-            {
-                "op": "add",
-                "path": "/spec/template/spec/volumes/-",
-                "value": {"name": "ingress-ca", "configMap": {"name": "aap-ingress-ca"}},
-            }
-        )
-    container = (pod_spec.get("containers") or [{}])[0]
-    if not any(item.get("name") == "ingress-ca" for item in container.get("volumeMounts", [])):
-        operations.append(
-            {
-                "op": "add",
-                "path": "/spec/template/spec/containers/0/volumeMounts/-",
-                "value": {
-                    "name": "ingress-ca",
-                    "mountPath": "/etc/ssl/ingress-ca",
-                    "readOnly": True,
-                },
-            }
-        )
-    if not any(item.get("name") == "NODE_EXTRA_CA_CERTS" for item in container.get("env", [])):
-        operations.append(
-            {
-                "op": "add",
-                "path": "/spec/template/spec/containers/0/env/-",
-                "value": {"name": "NODE_EXTRA_CA_CERTS", "value": "/etc/ssl/ingress-ca/ca.crt"},
-            }
-        )
+    _append_named_item(
+        operations,
+        pod_spec,
+        "volumes",
+        "ingress-ca",
+        {"name": "ingress-ca", "configMap": {"name": "aap-ingress-ca"}},
+        "/spec/template/spec",
+    )
+    _append_named_item(
+        operations,
+        container,
+        "volumeMounts",
+        "ingress-ca",
+        {
+            "name": "ingress-ca",
+            "mountPath": "/etc/ssl/ingress-ca",
+            "readOnly": True,
+        },
+        "/spec/template/spec/containers/0",
+    )
+    _append_named_item(
+        operations,
+        container,
+        "env",
+        "NODE_EXTRA_CA_CERTS",
+        {"name": "NODE_EXTRA_CA_CERTS", "value": "/etc/ssl/ingress-ca/ca.crt"},
+        "/spec/template/spec/containers/0",
+    )
     if operations:
         patched = ctx.runner.run(
             [
@@ -324,7 +354,7 @@ def _apply_ingress_ca(ctx: AppContext) -> None:
                 "deployment/aap-mcp-server",
                 "-n",
                 ctx.namespace,
-                "--timeout=600s",
+                f"--timeout={rollout_timeout or _rollout_timeout(ctx)}",
             ]
         )
         if not rollout.ok:
@@ -355,6 +385,24 @@ def _deployment_has_ingress_ca(payload: str) -> bool:
         and any(item.get("name") == "ingress-ca" for item in container.get("volumeMounts", []))
         and any(item.get("name") == "NODE_EXTRA_CA_CERTS" for item in container.get("env", []))
     )
+
+
+def _append_named_item(
+    operations: list,
+    owner: dict,
+    field: str,
+    name: str,
+    value: dict,
+    parent_path: str,
+) -> None:
+    current = owner.get(field)
+    if isinstance(current, list):
+        if not any(item.get("name") == name for item in current if isinstance(item, dict)):
+            operations.append({"op": "add", "path": f"{parent_path}/{field}/-", "value": value})
+    elif current is None:
+        operations.append({"op": "add", "path": f"{parent_path}/{field}", "value": [value]})
+    else:
+        raise AddonError(f"could not configure MCP ingress CA: deployment {field} is not an array")
 
 
 def _generate_token(ctx: AppContext, aap_host: str) -> str | None:
@@ -412,15 +460,23 @@ def _curl_config_value(value: str) -> str:
     return json.dumps(value)
 
 
-def _configure_claude(ctx: AppContext, mcp_host: str, token: str) -> None:
-    if not ctx.runner.run(["claude", "--version"]).ok:
-        return
-    ctx.runner.run(["claude", "mcp", "remove", "aap-demo", "--scope", "user"])
-    env = None
-    ca_path = ctx.paths.config_dir / "crc-ingress-ca.crt"
-    if isinstance(ca_path, Path) and ca_path.exists():
-        env = {"NODE_EXTRA_CA_CERTS": str(ca_path)}
-    ctx.runner.run(
+def _configure_claude(ctx: AppContext, mcp_host: str, token: str) -> bool:
+    previous = _existing_claude_entry(ctx)
+    if previous is _INVALID_CLAUDE_CONFIG:
+        ctx.console.warn(
+            "Could not inspect Claude Code user configuration; leaving the existing entry "
+            "unchanged."
+        )
+        return False
+    if previous is not None:
+        removed = ctx.runner.run(["claude", "mcp", "remove", "aap-demo", "--scope", "user"])
+        if not removed.ok:
+            ctx.console.warn(
+                "Could not update the existing Claude MCP entry; it was left unchanged."
+            )
+            return False
+
+    added = ctx.runner.run(
         [
             "claude",
             "mcp",
@@ -433,9 +489,65 @@ def _configure_claude(ctx: AppContext, mcp_host: str, token: str) -> None:
             "user",
             "--header",
             f"Authorization: Bearer {token}",
-        ],
-        env=env,
+        ]
     )
+    if not added.ok:
+        if previous is not None:
+            ctx.runner.run(["claude", "mcp", "remove", "aap-demo", "--scope", "user"])
+            restored = ctx.runner.run(
+                [
+                    "claude",
+                    "mcp",
+                    "add-json",
+                    "aap-demo",
+                    json.dumps(previous),
+                    "--scope",
+                    "user",
+                ]
+            )
+            if restored.ok:
+                ctx.console.warn(
+                    "Claude MCP setup failed; the previous Claude MCP entry was restored."
+                )
+            else:
+                ctx.console.warn(
+                    "Claude MCP setup failed and the previous entry could not be restored. "
+                    "Restore it from your Claude Code configuration."
+                )
+        return False
+
+    ca_path = ctx.paths.ingress_ca
+    if ca_path.is_file():
+        ctx.console.note(
+            "For future Claude Code sessions, set NODE_EXTRA_CA_CERTS to "
+            f"{ca_path} before launching Claude Code so Node trusts the CRC ingress CA."
+        )
+
+    status = ctx.runner.run(["claude", "mcp", "get", "aap-demo"])
+    status_text = f"{status.stdout}\n{status.stderr}".lower()
+    if not status.ok or "failed to connect" in status_text:
+        ctx.console.warn(
+            f"Claude Code could not connect to {mcp_host}. Verify the hostname resolves on this "
+            "host; on CRC, run aap-demo start to restore route DNS wiring, then retry."
+        )
+    return True
+
+
+_INVALID_CLAUDE_CONFIG = object()
+
+
+def _existing_claude_entry(ctx: AppContext):
+    home = Path(ctx.env.get("HOME") or Path.home())
+    path = home / ".claude.json"
+    if not path.exists():
+        return None
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return _INVALID_CLAUDE_CONFIG
+    servers = document.get("mcpServers", {}) if isinstance(document, dict) else {}
+    entry = servers.get("aap-demo") if isinstance(servers, dict) else None
+    return entry if isinstance(entry, dict) else None
 
 
 def _remember(ctx: AppContext) -> None:
