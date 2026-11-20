@@ -16,10 +16,10 @@ and separate confidential clients:
 
 | Client | Target | Secret file |
 |---|---|---|
-| `aap-demo-aap` | AAP 2.6 Gateway | `~/.aap-demo/keycloak/aap-client-secret` |
-| `aap-demo-ao` | Automation Orchestrator | `~/.aap-demo/keycloak/ao-client-secret` |
+| `aap-demo-aap` | AAP 2.6 Gateway | `~/.local/state/aap-demo/addons/keycloak/aap-client-secret` |
+| `aap-demo-ao` | Automation Orchestrator | `~/.local/state/aap-demo/addons/keycloak/ao-client-secret` |
 
-Generated admin and user passwords stay under `~/.aap-demo/keycloak` with mode `0600`.
+Generated admin and user passwords stay under `~/.local/state/aap-demo/addons/keycloak` with mode `0600`.
 They are never printed by the addon.
 
 Users and groups:
@@ -94,7 +94,7 @@ local-lab fallback to disable verification for the configure script and AAP's
 Keycloak token exchange through `ADDITIONAL_UNVERIFIED_ARGS.VERIFY_SSL`. It is
 not needed after Gateway trusts the ingress CA.
 The AO redirect URI used by `enable keycloak` is retained under
-`~/.aap-demo/keycloak/` so a later configure run continues to match the registered
+`~/.local/state/aap-demo/addons/keycloak/` so a later configure run continues to match the registered
 Keycloak client.
 
 `--map-groups` creates matching AO groups and explicit mappings, then creates

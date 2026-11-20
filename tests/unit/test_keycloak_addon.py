@@ -89,6 +89,12 @@ def test_enable_is_idempotent_and_redacts_credentials(app_ctx) -> None:
     assert "--server-side" in apply.argv
     documents = list(yaml.safe_load_all(apply.input or ""))
     realm = base64.b64decode(documents[1]["data"]["aap-lab-realm.json"]).decode()
+    deployment = documents[2]
+    readiness = deployment["spec"]["template"]["spec"]["containers"][0]["readinessProbe"]
+    assert readiness["httpGet"] == {
+        "path": "/realms/aap-lab/.well-known/openid-configuration",
+        "port": "http",
+    }
     assert "aap-demo-aap groups" in realm
     assert "aap-demo-aap audience" in realm
     assert not (app_ctx.paths.addon_dir("keycloak") / "aap-redirect-uri").exists()

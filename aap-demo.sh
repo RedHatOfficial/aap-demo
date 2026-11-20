@@ -2143,7 +2143,11 @@ cmd_status() {
 
   # Show the credential paths for the Keycloak OIDC lab addon without exposing
   # secret values in terminal output or CI logs.
-  local _keycloak_state_dir="${KEYCLOAK_STATE_DIR:-${HOME}/.aap-demo/keycloak}"
+  local _keycloak_state_root="${AAP_DEMO_STATE_DIR:-${AAP_DEMO_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/aap-demo}}"
+  local _keycloak_state_dir="${KEYCLOAK_STATE_DIR:-${_keycloak_state_root}/addons/keycloak}"
+  if [ -z "${KEYCLOAK_STATE_DIR:-}" ] && [ ! -d "$_keycloak_state_dir" ] && [ -d "${HOME}/.aap-demo/keycloak" ]; then
+    _keycloak_state_dir="${HOME}/.aap-demo/keycloak"
+  fi
   if [ -d "$_keycloak_state_dir" ]; then
     if [ -f "$_keycloak_state_dir/admin-password" ]; then
       if [ "$_cred_found" = "false" ]; then

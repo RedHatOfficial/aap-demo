@@ -62,12 +62,12 @@ spec:
               containerPort: 9000
           readinessProbe:
             httpGet:
-              path: /health/ready
-              port: management
-            initialDelaySeconds: 20
-            periodSeconds: 10
+              path: /realms/__KEYCLOAK_REALM__/.well-known/openid-configuration
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
             timeoutSeconds: 5
-            failureThreshold: 12
+            failureThreshold: 24
           livenessProbe:
             httpGet:
               path: /health/live
