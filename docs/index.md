@@ -20,6 +20,8 @@ The [project home page](../README.md) is the short start. These pages are the re
 - [Subscription](guides/subscription.md) - Get a manifest and apply it, or sign in through AAP.
 - [Daily use](guides/daily-use.md) - Start, stop, pause, and check the cluster.
 - [Add-ons](guides/addons.md) - Practice machines, product demos, and extras that still use the older command.
+- [Monitoring](monitoring.md) - Optional AAP-focused Prometheus and Grafana dashboards.
+- [OPA Policy as Code](../addons/opa/README.md) - Install Open Policy Agent and configure AAP policy job templates.
 - [OPA Policy as Code](../addons/opa/README.md) - Install Open Policy Agent and configure AAP policy job templates.
 - [The older command](guides/older-command.md) - Keep using the bash command for work that has not moved over.
 
@@ -27,6 +29,10 @@ The [project home page](../README.md) is the short start. These pages are the re
 
 - [What aap-demo is](concepts/what-aap-demo-is.md) - A local demo tool, and what the 2.0.0 release candidate is.
 - [Two ways to run it](concepts/two-ways-to-run.md) - The new command and the older one, and why both still matter.
+
+## Architecture decisions
+
+- [Architecture Decision Records](adr/README.md) - Accepted and proposed architecture decisions for the project.
 
 ## Reference
 

@@ -83,6 +83,7 @@ that will not load.
 | Apply a subscription to AAP | [Subscription](docs/guides/subscription.md) |
 | Start, stop, and check on it later | [Daily use](docs/guides/daily-use.md) |
 | Add demo machines or other extras | [Add-ons](docs/guides/addons.md) |
+| View AAP job and platform metrics | [Monitoring addon](docs/monitoring.md) |
 | Keep using a feature the new command does not have yet | [The older command](docs/guides/older-command.md) |
 
 ## Look something up

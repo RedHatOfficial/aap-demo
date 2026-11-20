@@ -10,7 +10,22 @@ resource: https://github.com/RedHatOfficial/aap-demo
 
 # Add-ons
 
-Add-ons are optional extras on top of AAP: a self-service portal, demo job templates, a local model, and practice machines.
+Add-ons are optional extras on top of AAP: monitoring, a self-service portal, demo job
+templates, a local model, and practice machines.
+
+## Monitoring
+
+The Python command can install a small, AAP-focused Prometheus and Grafana stack:
+
+```bash
+aap-demo enable monitoring
+aap-demo status monitoring
+aap-demo disable monitoring
+```
+
+See the [monitoring guide](../monitoring.md) for dashboards, resource cost, and the
+credential-file location. `prometheus` is accepted as an alias for `monitoring` by the
+Python command.
 
 ## OPA Policy as Code
 
