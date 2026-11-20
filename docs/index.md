@@ -21,6 +21,8 @@ The [project home page](../README.md) is the short start. These pages are the re
 - [Daily use](guides/daily-use.md) - Start, stop, pause, and check the cluster.
 - [Add-ons](guides/addons.md) - Practice machines, product demos, and extras that still use the older command.
 - [Monitoring](monitoring.md) - Optional AAP-focused Prometheus and Grafana dashboards.
+- [OPA Policy as Code](../addons/opa/README.md) - Install Open Policy Agent and configure AAP policy job templates.
+- [OPA Policy as Code](../addons/opa/README.md) - Install Open Policy Agent and configure AAP policy job templates.
 - [The older command](guides/older-command.md) - Keep using the bash command for work that has not moved over.
 
 ## Concepts

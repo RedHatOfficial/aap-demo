@@ -1,23 +1,26 @@
 """Addon registry: one table of every addon the Python command can enable.
 
-``fleet`` and ``monitoring`` are native Python. Product demos, EDA Playground, AO, mcp-server and
-ollama run their bundled bash installers (``kind == "legacy"``). Any other name
-is an error that points at the older command. See ADR-040.
+``fleet``, ``monitoring``, ``opa`` and ``ao`` are native Python. Product demos,
+EDA Playground, mcp-server and ollama run their bundled bash installers
+(``kind == "legacy"``). Any other name is an error that points at the older
+command. See ADR-040.
 """
 
 from __future__ import annotations
 
 from typing import Dict, Literal, Optional, overload
 
-from aap_demo.addons import ao_shell
+from aap_demo.addons.ao import AoAddon
 from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
 from aap_demo.addons.monitoring import MonitoringAddon
+from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
 
 _FLEET = FleetAddon()
 _MONITORING = MonitoringAddon()
+_OPA = OpaAddon()
 _EDA_PLAYGROUND = ShellAddon(
     "eda-playground",
     required_tools=("bash", "curl", "jq", "kubectl", "base64"),
@@ -28,15 +31,7 @@ _EDA_PLAYGROUND = ShellAddon(
 )
 
 _KUBE_TOOLS = ("bash", "curl", "jq", "kubectl")
-_AO = ShellAddon(
-    "ao",
-    required_tools=(*_KUBE_TOOLS, "base64", "python3"),
-    delete_tools=("bash", "jq", "kubectl"),
-    wire_after_enable=False,
-    dependencies=(),
-    self_wire=True,
-    prepare=ao_shell.prepare,
-)
+_AO = AoAddon()
 _MCP_SERVER = ShellAddon(
     "mcp-server",
     required_tools=_KUBE_TOOLS,
@@ -53,12 +48,18 @@ _OLLAMA = ShellAddon(
     dependencies=(),
     self_wire=True,
 )
-_CUSTOM_SHELL = {a.name: a for a in (_EDA_PLAYGROUND, _AO, _MCP_SERVER, _OLLAMA)}
+_CUSTOM_SHELL = {a.name: a for a in (_EDA_PLAYGROUND, _MCP_SERVER, _OLLAMA)}
 
 _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
     _MONITORING.name: _MONITORING,
-    **{name: _CUSTOM_SHELL.get(name) or ShellAddon(name) for name in BUNDLED_ADDON_DIRS},
+    _OPA.name: _OPA,
+    **{
+        name: _CUSTOM_SHELL.get(name) or ShellAddon(name)
+        for name in BUNDLED_ADDON_DIRS
+        if name != _AO.name
+    },
+    _AO.name: _AO,
 }
 
 _ALIASES = {"prometheus": _MONITORING.name}

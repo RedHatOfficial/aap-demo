@@ -10,7 +10,11 @@ Deploys **Automation Orchestrator (GA)** on aap-demo MicroShift clusters.
 
 The operator is installed with an OLM Subscription, the supported CLI method. The instance CR and a
 one-pod PostgreSQL (`rhel9/postgresql-15`, ADR-043) are checked in under [`manifests/`](manifests/).
-`deploy.sh` applies them with `kubectl`.
+
+`aap-demo enable ao` runs the native installer in `src/aap_demo/addons/ao/`
+([ADR-045](../../docs/adr/045-ao-on-python-command.md)). `deploy.sh` and `lib/` are frozen for
+`aap-demo-v1 enable ao` and will be removed in a later release. Both use the same manifests. The
+`./deploy.sh` examples below apply to `aap-demo-v1` only.
 
 ## Quick start
 
@@ -192,6 +196,7 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 |----------|---------|-------------|
 | `AO_STORAGE_CLASS` | auto-detected | StorageClass for AO's shared volumes |
 | `AO_POSTGRES_STORAGE_CLASS` | `topolvm-provisioner`, else the cluster default unless it is NFS | StorageClass for the PostgreSQL volume |
+| `AO_STORAGE_SIZE` | `3Gi` | PostgreSQL volume size for new installs; existing claim template or retained PVC size is preserved |
 | `AO_POSTGRES_IMAGE` | AAP's PostgreSQL image | PostgreSQL image; falls back to `registry.redhat.io/rhel9/postgresql-15` |
 | `AAP_DEMO_NAMESPACE` | `aap-operator` | Used to derive cluster ingress domain for the AO route |
 | `AO_LOW_RESOURCE` | unset | Unset/`1`/`true` selects one backend, UI, and worker replica; set to `0`/`false` for two replicas |
@@ -211,9 +216,15 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_LLM_PROVIDER` | `ollama` | `ollama`, `external`, or `none`; external and none modes skip the Ollama dependency |
 | `AO_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint used by external mode |
 | `AO_LLM_MODEL` | `gpt-6-luna` | External model selected as AO's default after discovery |
+| `OLLAMA_MODEL` | `qwen2.5:3b` | Model the `ollama` addon pulls and AO uses in Ollama mode; `AO_LLM_MODEL` does not apply to Ollama |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
 | `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
 | `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |
+
+`AO_STORAGE_SIZE` applies to a new PostgreSQL volume. Re-enabling AO does not resize an
+existing volume: the StatefulSet claim template is immutable, and an expanded PVC can be
+larger than that template. If the StatefulSet is absent but its PVC remains, the retained
+PVC's requested size is used. `--force` replaces the database and deletes its data.
 
 When AO and AAP are wired, the addon creates the `AAP Demo Control Plane` AAP project
 and `Sync AO Workflows from TMM` job template. The job downloads the pinned workflow

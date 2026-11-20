@@ -27,6 +27,23 @@ See the [monitoring guide](../monitoring.md) for dashboards, resource cost, and 
 credential-file location. `prometheus` is accepted as an alias for `monitoring` by the
 Python command.
 
+## OPA Policy as Code
+
+The Python v2 command can install Open Policy Agent and configure AAP Policy as Code:
+
+```bash
+aap-demo enable opa
+aap-demo disable opa
+```
+
+Enable creates the OPA Deployment, Service, and Route, configures AAP's policy settings, and creates these job
+templates: **OPA | Load Example Policies**, **OPA | Test Policies**, **OPA | Clear Policies**, and
+**OPA | Demo Policy**. Launch **OPA | Load Example Policies** in AAP to load the upstream example policies.
+
+The native command continues to accept `OPA_VERSION`, `OPA_REPO`, and `OPA_MANIFEST_REF`. It records the addon in
+the Python `addons.enabled` setting only after enable finishes. To use the older shell implementation explicitly,
+run `aap-demo-v1 enable opa`.
+
 `aap-demo status` reports MCP Server as enabled when it is recorded in settings or when
 its custom resource or deployment is detected in the AAP namespace. The label identifies
 the source; it does not indicate readiness. Check the namespace's pod counts or run
@@ -123,9 +140,13 @@ aap-demo disable eda-playground
 
 ## Automation Orchestrator
 
-`aap-demo enable ao` installs Automation Orchestrator next to AAP and wires the two together. It runs the
-same Bash installer as the older command, so it needs `bash`, `curl`, `jq`, `kubectl`, `base64`, and `python3`.
+`aap-demo enable ao` installs Automation Orchestrator next to AAP and wires the two together. It is part
+of the new command and needs only `kubectl`, so it does not need Bash ([ADR-045](../adr/045-ao-on-python-command.md)).
 AO is not in the OpenShift 5 catalog yet, so it needs the default OpenShift 4 cluster.
+
+An AO that the older command installed is adopted as it is, with its database and admin password. If its
+database is still in CloudNativePG, AO keeps running on it; moving it to the new PostgreSQL needs
+`aap-demo enable ao --force`, which deletes AO's data.
 
 ```bash
 aap-demo enable product-demos   # optional, before AO
@@ -148,7 +169,11 @@ The new command does not ask which model to use. Set `AO_LLM_PROVIDER` instead:
 | `external` | An OpenAI-compatible service (see below) |
 | `none` | No model. The agentic demos are unavailable |
 
-For `external`, set `AO_LLM_BASE_URL` and `AO_LLM_MODEL`, and put the API key in `~/.aap-demo/ao/llm-api-key`.
+For `external`, set `AO_LLM_BASE_URL` and `AO_LLM_MODEL`, and set `AO_LLM_API_KEY` once. The key is kept in
+the new command's state directory for later runs. A key or settings the older command saved are picked up.
+
+For `ollama`, set `OLLAMA_MODEL` to change the model. `AO_LLM_MODEL` applies only to `external`, so AO never
+selects a model the `ollama` add-on did not pull.
 
 To reinstall AO, run `aap-demo enable ao --force`. To remove it:
 

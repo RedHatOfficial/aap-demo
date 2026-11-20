@@ -1,7 +1,8 @@
 # OPA (Open Policy Agent) Addon for AAP Demo
 
 This addon enables **Policy as Code** functionality in Ansible Automation Platform (AAP) 2.5+ by deploying an
-Open Policy Agent (OPA) server and creating job templates for managing policy examples.
+Open Policy Agent (OPA) server and creating job templates for managing policy examples. The Python v2 command
+supports this addon natively; the existing Bash installer remains available through `aap-demo-v1` as a fallback.
 
 ## Overview
 
@@ -19,11 +20,12 @@ Example use cases include:
 
 - AAP 2.7+ deployed (`aap-demo deploy`)
 - OpenShift/MicroShift cluster running
-- `kubectl`, `curl`, `jq`, `base64` commands available
+- `kubectl` connected to the cluster
+- AAP's trusted execution environment available (the native command runs the bootstrap playbook in-cluster)
 
 ## Installation
 
-Enable the OPA addon:
+Enable the OPA addon with the Python v2 command:
 
 ```bash
 aap-demo enable opa
@@ -35,6 +37,9 @@ This will:
 2. ✅ Create Service and Route for OPA access
 3. ✅ Create job templates for policy management
 4. ✅ **Automatically configure OPA connection in AAP Settings**
+
+The command records `opa` in the Python configuration's `addons.enabled` list after the complete install succeeds.
+To use the older shell implementation explicitly, run `aap-demo-v1 enable opa`.
 
 ## Configuration
 

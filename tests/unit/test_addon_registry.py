@@ -39,6 +39,7 @@ def test_kinds_and_listed_names() -> None:
         "mcp-server",
         "monitoring",
         "ollama",
+        "opa",
         "product-demo-satellite",
         "product-demos",
     ]

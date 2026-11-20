@@ -26,10 +26,15 @@ Users and groups:
 
 | User | Group | Password file |
 |---|---|---|
-| `aap-oidc-admin` | `aap-admins` | `aap-user-password` |
-| `aap-oidc-operator` | `aap-operators` | `ao-user-password` |
-| `aap-oidc-auditor` | `aap-auditors` | `aap-auditor-password` |
-| `aap-oidc-developer` | `aap-developers` | `aap-developer-password` |
+| `aap-oidc-admin` | `aap-admins` | `aap-oidc-admin-password` |
+| `aap-oidc-operator` | `aap-operators` | `aap-oidc-operator-password` |
+| `aap-oidc-auditor` | `aap-auditors` | `aap-oidc-auditor-password` |
+| `aap-oidc-developer` | `aap-developers` | `aap-oidc-developer-password` |
+
+When upgrading from an earlier version, the addon renames the old user-password
+files to these username-based filenames and preserves their contents. If both a
+legacy and username-based file exist for the same user, deployment stops so you
+can resolve which password is active without overwriting either file.
 
 Map these groups to AAP organizations, teams, and roles, and to AO roles when
 configuring each OIDC client. Keycloak emits membership in the `groups` claim.
@@ -69,15 +74,28 @@ an unowned namespace.
 `keycloak configure` discovers local routes and configures both consumers through
 their APIs. It is dry-run by default; `--apply` is required for mutation. Use
 `--target aap` or `--target ao` to configure one consumer. AAP Gateway callback
-URL still must be copied into Keycloak when Gateway reports it. AO group claim
-extraction is configured as `groups[*]`; lab mode allows all authenticated users.
+URL is derived from the authenticator slug and applied to the Keycloak AAP client
+redirect URI. Set `KEYCLOAK_AAP_REDIRECT_URI` when enabling Keycloak or running
+configure only when you need to override that generated URL.
+AO group claim extraction is configured as `groups[*]`; lab mode allows all
+authenticated users.
 AO-to-AAP job execution must continue using a separate AAP API key/PAT.
 
-Configuration verifies TLS by default. On CRC/MicroShift installations using the
-local self-signed ingress certificate, set `KEYCLOAK_INSECURE_TLS=true` explicitly
-or provide `KEYCLOAK_CA_FILE=/path/to/ingress-ca.crt`. The AO redirect URI used by
-`enable keycloak` is retained under `~/.aap-demo/keycloak/` so a later configure
-run continues to match the registered Keycloak client.
+Configuration verifies TLS by default. Set `KEYCLOAK_CA_FILE` if the ingress CA
+is not at the default aap-demo path. When applying AAP configuration with a CA
+file available, the script merges it into the AAP `bundle-ca-secret`, links that
+secret through `spec.bundle_cacert_secret`, and waits for the Gateway rollout.
+This makes Gateway trust the local Keycloak route while keeping certificate
+verification enabled. The AAP CA bundle is shared across AAP services, so an
+existing bundle is preserved and extended.
+
+On CRC/MicroShift, `KEYCLOAK_INSECURE_TLS=true` remains available as an explicit
+local-lab fallback to disable verification for the configure script and AAP's
+Keycloak token exchange through `ADDITIONAL_UNVERIFIED_ARGS.VERIFY_SSL`. It is
+not needed after Gateway trusts the ingress CA.
+The AO redirect URI used by `enable keycloak` is retained under
+`~/.aap-demo/keycloak/` so a later configure run continues to match the registered
+Keycloak client.
 
 `--map-groups` creates matching AO groups and explicit mappings, then creates
 local AAP authenticator maps: `aap-admins` becomes AAP superuser,
@@ -90,5 +108,6 @@ Organization Admin/Member in `AAP Demo`. This role profile is for local testing.
 remain so a later reinstall can reproduce the same realm data. Remove that directory
 only when its test credentials are no longer needed.
 
-Realm import runs on first startup. To apply changed route or client data, disable
-then enable the addon so Keycloak starts with a fresh local realm.
+Realm import runs on first startup. Re-enabling the addon also reconciles the
+generated client claims and user profile fields in an existing realm; route and
+consumer configuration is applied by `keycloak configure --apply`.

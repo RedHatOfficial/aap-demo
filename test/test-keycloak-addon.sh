@@ -19,12 +19,58 @@ grep -q 'aap-demo-ao' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: AO client missing"
   exit 1
 }
+grep -q 'oidc-audience-mapper' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: OIDC audience mapper missing"
+  exit 1
+}
+grep -q 'included.client.audience' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: client audience mapper must target the client"
+  exit 1
+}
+grep -q 'oidc-usermodel-property-mapper' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: OIDC username/profile mappers missing"
+  exit 1
+}
+grep -q 'Reconciled Keycloak realm claims and user profiles' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: existing Keycloak realms must be migrated after import"
+  exit 1
+}
+grep -q 'protocolMappers=' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: existing Keycloak clients must receive protocol mappers"
+  exit 1
+}
+grep -q 'firstName=' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: existing Keycloak users must receive profile fields"
+  exit 1
+}
+grep -q 'preferred_username' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: preferred_username claim missing"
+  exit 1
+}
 grep -q 'KC_BOOTSTRAP_ADMIN_PASSWORD' "$ROOT_DIR/addons/keycloak/keycloak.yaml" || {
   echo "FAIL: admin secret not wired"
   exit 1
 }
 grep -q 'chmod 600' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
   echo "FAIL: credential permissions not enforced"
+  exit 1
+}
+for username in aap-oidc-admin aap-oidc-operator aap-oidc-auditor aap-oidc-developer; do
+  grep -Fq "${username}-password" "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+    echo "FAIL: Keycloak password file must match username ${username}"
+    exit 1
+  }
+  grep -Fq "${username}-password" "$ROOT_DIR/addons/keycloak/README.md" || {
+    echo "FAIL: README must document the password file for ${username}"
+    exit 1
+  }
+done
+grep -q 'aap-user-password' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: legacy admin password file must be migrated"
+  exit 1
+}
+grep -q 'ao-user-password' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: legacy operator password file must be migrated"
   exit 1
 }
 grep -q 'addon" != "keycloak"' "$ROOT_DIR/aap-demo.sh" || {
@@ -49,6 +95,14 @@ grep -q 'aap-oidc-auditor' "$ROOT_DIR/aap-demo.sh" || {
 }
 grep -q 'aap-oidc-developer' "$ROOT_DIR/aap-demo.sh" || {
   echo "FAIL: status developer missing"
+  exit 1
+}
+grep -q 'firstName: "AAP OIDC"' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: generated users must have profile first names"
+  exit 1
+}
+grep -q 'lastName: "Admin"' "$ROOT_DIR/addons/keycloak/deploy.sh" || {
+  echo "FAIL: generated users must have profile last names"
   exit 1
 }
 grep -q "tr -d '\\\\r\\\\n'" "$ROOT_DIR/addons/keycloak/deploy.sh" || {
@@ -109,6 +163,14 @@ grep -q 'authenticator_plugins.keycloak' "$ROOT_DIR/addons/keycloak/configure.sh
 }
 grep -q 'group_mapping_entries' "$ROOT_DIR/addons/keycloak/configure.sh" || {
   echo "FAIL: AO explicit group mappings missing"
+  exit 1
+}
+grep -q '/admin/realms/' "$ROOT_DIR/test/test-keycloak-live.sh" || {
+  echo "FAIL: live Keycloak test must inspect active realm configuration"
+  exit 1
+}
+grep -q 'Authorization: Bearer' "$ROOT_DIR/test/test-keycloak-live.sh" || {
+  echo "FAIL: live Keycloak test must authenticate to the admin API"
   exit 1
 }
 grep -q 'is_superuser' "$ROOT_DIR/addons/keycloak/configure.sh" || {
