@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 from typing import Callable, List, Mapping, Optional, Sequence, TextIO
 
+from aap_demo.core import config as config_mod
+
 COMPLETION_RELATIVE = (
     (".zsh", "completions", "_aap-demo"),
     (".local", "share", "bash-completion", "completions", "aap-demo"),
@@ -133,7 +135,7 @@ def maybe_offer(
     input_func: Callable[[str], str] = input,
 ) -> None:
     """Prompt on an interactive terminal. Quiet and non-tty runs do nothing."""
-    if env.get("QUIET") or env.get("AAP_DEMO_KEEP_BASH"):
+    if config_mod.is_true(env.get("QUIET")) or env.get("AAP_DEMO_KEEP_BASH"):
         return
     if keep_marker(env).is_file():
         return

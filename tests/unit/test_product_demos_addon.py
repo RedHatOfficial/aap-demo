@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 
 from aap_demo.addons import OLDER_COMMAND_GUIDE, get, names, needs_cluster
+from aap_demo.addons.ao import llm
 from aap_demo.addons.shell import (
     BUNDLED_ADDON_DIRS,
     GALAXY_TOKEN_PREFIX,
     PARTIAL_MARKER,
-    ao_script,
     scripts_root,
     wire_script,
 )
@@ -30,7 +30,23 @@ def _fleet_preflight(monkeypatch: pytest.MonkeyPatch, app_ctx) -> None:
     monkeypatch.setattr(
         "aap_demo.addons.shell.discover_fleet_host", lambda ctx: "fleet-ubi9", raising=False
     )
-    app_ctx.runner.ok(["bash", _deploy("ao")])
+    AO_CALLS.clear()
+
+    def record(self, ctx, args):
+        AO_CALLS.append(
+            {
+                "fleet_host": args.fleet_host,
+                "provider": llm.settings(ctx).provider,
+                "model": llm.settings(ctx).model,
+            }
+        )
+        return 0
+
+    monkeypatch.setattr("aap_demo.addons.ao.AoAddon.enable", record)
+
+
+#: Native AO enables started by product-demos (ADR-045).
+AO_CALLS: list = []
 
 
 def test_missing_fleet_warns_and_continues_when_confirmed(app_ctx, monkeypatch) -> None:
@@ -47,7 +63,7 @@ def test_missing_fleet_warns_and_continues_when_confirmed(app_ctx, monkeypatch) 
     app_ctx.runner.ok(["bash", str(wire_script())])
     get("product-demos").enable(app_ctx, argparse.Namespace())
     assert "AAP_DEMO_FLEET_HOST" not in app_ctx.runner.calls[0].env
-    assert all(call.argv != ("bash", _deploy("ao")) for call in app_ctx.runner.calls)
+    assert AO_CALLS == []
     assert "product-demos" in app_ctx.config.get("addons.enabled")
 
 
@@ -81,7 +97,7 @@ def test_missing_fleet_noninteractive_continues_with_warning(app_ctx, monkeypatc
     app_ctx.runner.ok(["bash", str(wire_script())])
     get("product-demos").enable(app_ctx, argparse.Namespace())
     assert "AAP_DEMO_FLEET_HOST" not in app_ctx.runner.calls[0].env
-    assert all(call.argv != ("bash", _deploy("ao")) for call in app_ctx.runner.calls)
+    assert AO_CALLS == []
     assert "aap-demo enable fleet" in app_ctx.console.stderr
 
 
@@ -101,11 +117,11 @@ def test_product_demos_automatically_enables_ao(app_ctx, monkeypatch) -> None:
     _present_tools(monkeypatch)
     app_ctx.runner.ok(["bash", _deploy("product-demos")])
     app_ctx.runner.ok(["bash", str(wire_script())])
-    app_ctx.runner.ok(["bash", _deploy("ao")])
     get("product-demos").enable(app_ctx, argparse.Namespace())
-    assert app_ctx.runner.calls[-1].argv == ("bash", _deploy("ao"))
-    assert app_ctx.runner.calls[-1].env["AAP_DEMO_FLEET_HOST"] == "fleet-ubi9"
-    assert app_ctx.runner.calls[-1].env["AO_LLM_PROVIDER"] == "none"
+    assert AO_CALLS == [
+        {"fleet_host": "fleet-ubi9", "provider": "none", "model": AO_CALLS[0]["model"]}
+    ]
+    assert "AO_LLM_PROVIDER" not in app_ctx.env  # the caller's context is unchanged
 
 
 def test_product_demos_does_not_record_success_when_ao_fails(app_ctx, monkeypatch) -> None:
@@ -132,8 +148,8 @@ def test_product_demos_preserves_saved_ao_provider(app_ctx, monkeypatch) -> None
     app_ctx.runner.ok(["bash", _deploy("product-demos")])
     app_ctx.runner.ok(["bash", str(wire_script())])
     get("product-demos").enable(app_ctx, argparse.Namespace())
-    assert app_ctx.runner.calls[-1].env["AO_LLM_PROVIDER"] == "external"
-    assert app_ctx.runner.calls[-1].env["AO_LLM_MODEL"] == "existing-model"
+    assert AO_CALLS[-1]["provider"] == "external"
+    assert AO_CALLS[-1]["model"] == "existing-model"
 
 
 def _present_tools(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,18 +181,16 @@ def test_packaged_scripts_are_used_outside_a_checkout(monkeypatch, tmp_path: Pat
     assert scripts_root() == tmp_path / "aap_demo" / "bundled" / "addons"
 
 
-def test_ao_installer_is_found_in_packaged_runtime(monkeypatch, tmp_path: Path) -> None:
+def test_ao_manifests_are_found_in_packaged_runtime(monkeypatch, tmp_path: Path) -> None:
     import aap_demo
+    from aap_demo.addons.ao import manifests
 
     package = tmp_path / "aap_demo"
     demos = package / "bundled" / "addons" / "product-demos"
     demos.mkdir(parents=True)
     (demos / "deploy.sh").write_text("", encoding="utf-8")
-    ao = package / "bundled" / "addons" / "ao" / "deploy.sh"
-    ao.parent.mkdir(parents=True)
-    ao.write_text("", encoding="utf-8")
     monkeypatch.setattr(aap_demo, "__file__", str(package / "__init__.py"))
-    assert ao_script() == ao
+    assert manifests.directory() == package / "bundled" / "addons" / "ao" / "manifests"
 
 
 def test_checkout_scripts_are_the_ones_enable_runs() -> None:
@@ -260,7 +274,7 @@ def test_enable_runs_the_installer_and_records_it(app_ctx, monkeypatch) -> None:
 
     assert get("product-demos").enable(app_ctx, argparse.Namespace(addon="product-demos")) == 0
 
-    deploy_call, wire_call, ao_call = app_ctx.runner.calls
+    deploy_call, wire_call = app_ctx.runner.calls
     assert deploy_call.argv == ("bash", _deploy("product-demos"))
     assert deploy_call.env["KUBECONFIG"] == str(app_ctx.kubeconfig)
     assert deploy_call.env["NAMESPACE"] == "aap-operator"
@@ -268,7 +282,7 @@ def test_enable_runs_the_installer_and_records_it(app_ctx, monkeypatch) -> None:
     assert deploy_call.env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "0"
     assert wire_call.argv[0:2] == ("bash", str(wire_script()))
     assert Path(wire_call.argv[2]) == scripts_root() / "product-demos-base" / "lib.sh"
-    assert ao_call.argv == ("bash", _deploy("ao"))
+    assert [call["fleet_host"] for call in AO_CALLS] == ["fleet-ubi9"]
     assert app_ctx.config.get("addons.enabled") == ["product-demos", "product-demos-base"]
     assert "Product demos installed" in app_ctx.console.stdout
     assert _token_files(app_ctx) == []
