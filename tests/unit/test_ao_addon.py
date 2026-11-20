@@ -1,4 +1,4 @@
-"""AO, mcp-server and ollama run their bundled bash installers (ADR-040)."""
+"""AO is native (ADR-045); mcp-server and ollama run their bash installers (ADR-040)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from aap_demo.addons import get, names
+from aap_demo.addons.ao import AoAddon, deps
 from aap_demo.addons.shell import scripts_root
 from aap_demo.core.errors import AddonError, UsageError
 from aap_demo.exec.runner import CompletedCommand
@@ -36,52 +37,40 @@ def _call(app_ctx, name: str):
     return next(call for call in app_ctx.runner.calls if call.argv[1] == _deploy(name))
 
 
-def _enable(app_ctx, *args: str) -> int:
-    return get("ao").enable(app_ctx, argparse.Namespace(addon="ao", addon_args=list(args)))
-
-
-def test_ao_mcp_server_and_ollama_are_public_legacy_addons() -> None:
+def test_ao_is_native_and_its_dependencies_are_legacy() -> None:
+    assert isinstance(get("ao"), AoAddon)
+    assert get("ao").kind == "native"
+    for name in ("mcp-server", "ollama"):
+        assert get(name).kind == "legacy"
     for name in ("ao", "mcp-server", "ollama"):
-        addon = get(name)
-        assert addon.kind == "legacy"
-        assert addon.public is True
-        assert addon.needs_cluster is True
+        assert get(name).public is True
+        assert get(name).needs_cluster is True
         assert name in names()
 
 
-def test_enable_ao_enables_mcp_server_and_ollama_first(app_ctx, tmp_path) -> None:
+def test_prepare_enables_mcp_server_and_ollama_first(app_ctx, tmp_path) -> None:
     secret = tmp_path / "pull-secret.json"
     secret.write_text("{}", encoding="utf-8")
     app_ctx.config.set("deploy.pull_secret_path", str(secret))
-    for name in ("mcp-server", "ollama", "ao"):
+    for name in ("mcp-server", "ollama"):
         app_ctx.runner.ok(["bash", _deploy(name)])
 
-    assert _enable(app_ctx, "--force") == 0
+    assert deps.prepare(app_ctx) == str(secret)
 
-    assert _ran(app_ctx) == ["mcp-server", "ollama", "ao"]
-    ao = _call(app_ctx, "ao")
-    assert ao.argv == ("bash", _deploy("ao"), "--force")
-    assert ao.env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "1"
-    assert ao.env["AO_LLM_PROVIDER"] == "ollama"
-    assert ao.env["PULL_SECRET_PATH"] == str(secret)
-    assert ao.env["KUBECONFIG"] == str(app_ctx.kubeconfig)
-    assert ao.env["AAP_DEMO_ENABLED_ADDONS"] == "mcp-server ollama"
+    assert _ran(app_ctx) == ["mcp-server", "ollama"]
     assert _call(app_ctx, "mcp-server").env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "1"
-    assert app_ctx.config.get("addons.enabled") == ["mcp-server", "ollama", "ao"]
+    assert app_ctx.config.get("addons.enabled") == ["mcp-server", "ollama"]
     assert "No product demos are enabled" in app_ctx.console.stdout + app_ctx.console.stderr
 
 
 def test_enabled_dependencies_are_not_installed_again(app_ctx) -> None:
     app_ctx.config.set("addons.enabled", ["product-demos", "mcp-server", "ollama"])
-    app_ctx.runner.ok(["bash", _deploy("ao")])
-
-    assert _enable(app_ctx) == 0
-
-    assert _ran(app_ctx) == ["ao"]
+    deps.prepare(app_ctx)
+    assert _ran(app_ctx) == []
     assert "No product demos are enabled" not in app_ctx.console.stdout + app_ctx.console.stderr
 
 
-def test_ao_reuses_and_records_a_detected_mcp_server(app_ctx) -> None:
+def test_a_detected_mcp_server_is_reused_and_recorded(app_ctx) -> None:
     app_ctx.env["AO_LLM_PROVIDER"] = "none"
     app_ctx.config.set("addons.enabled", ["product-demos"])
     app_ctx.runner._rules.insert(
@@ -91,15 +80,13 @@ def test_ao_reuses_and_records_a_detected_mcp_server(app_ctx) -> None:
             CompletedCommand(argv=(), returncode=0, stdout="ansiblemcpserver/aap-mcp-server\n"),
         ),
     )
-    app_ctx.runner.ok(["bash", _deploy("ao")])
-
-    assert _enable(app_ctx) == 0
-    assert _ran(app_ctx) == ["ao"]
-    assert app_ctx.config.get("addons.enabled") == ["product-demos", "mcp-server", "ao"]
+    deps.prepare(app_ctx)
+    assert _ran(app_ctx) == []
+    assert app_ctx.config.get("addons.enabled") == ["product-demos", "mcp-server"]
     assert "Using the existing MCP Server" in app_ctx.console.stdout + app_ctx.console.stderr
 
 
-def test_ao_stops_if_existing_mcp_cannot_be_checked(app_ctx) -> None:
+def test_prepare_stops_if_existing_mcp_cannot_be_checked(app_ctx) -> None:
     app_ctx.runner._rules.insert(
         0,
         (
@@ -108,68 +95,40 @@ def test_ao_stops_if_existing_mcp_cannot_be_checked(app_ctx) -> None:
         ),
     )
     with pytest.raises(AddonError, match="Could not determine whether MCP Server is installed"):
-        _enable(app_ctx)
+        deps.prepare(app_ctx)
     assert _ran(app_ctx) == []
-    assert app_ctx.config.get("addons.enabled") in (None, [])
 
 
 @pytest.mark.parametrize("provider", ["none", "external"])
 def test_an_llm_provider_other_than_ollama_skips_ollama(app_ctx, provider) -> None:
     app_ctx.env["AO_LLM_PROVIDER"] = provider
-    for name in ("mcp-server", "ao"):
-        app_ctx.runner.ok(["bash", _deploy(name)])
+    app_ctx.runner.ok(["bash", _deploy("mcp-server")])
+    deps.prepare(app_ctx)
+    assert _ran(app_ctx) == ["mcp-server"]
 
-    assert _enable(app_ctx) == 0
 
-    assert _ran(app_ctx) == ["mcp-server", "ao"]
-    assert _call(app_ctx, "ao").env["AO_LLM_PROVIDER"] == provider
+def test_a_provider_saved_by_the_bash_command_picks_the_dependencies(app_ctx) -> None:
+    legacy = app_ctx.paths.legacy_config_file
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("AO_LLM_PROVIDER=external\n", encoding="utf-8")
+    app_ctx.runner.ok(["bash", _deploy("mcp-server")])
+    deps.prepare(app_ctx)
+    assert _ran(app_ctx) == ["mcp-server"]
 
 
 def test_an_unknown_llm_provider_stops_before_any_install(app_ctx) -> None:
     app_ctx.env["AO_LLM_PROVIDER"] = "llama"
     with pytest.raises(UsageError, match="AO_LLM_PROVIDER=llama"):
-        _enable(app_ctx)
+        get("ao").enable(app_ctx, argparse.Namespace(addon="ao", addon_args=[]))
     assert app_ctx.runner.calls == []
 
 
 def test_a_failed_dependency_stops_before_ao(app_ctx) -> None:
     app_ctx.runner.fail(["bash", _deploy("mcp-server")])
     with pytest.raises(AddonError, match="enable mcp-server failed"):
-        _enable(app_ctx)
+        get("ao").enable(app_ctx, argparse.Namespace(addon="ao", addon_args=[]))
     assert _ran(app_ctx) == ["mcp-server"]
-    assert app_ctx.config.get("addons.enabled") in (None, [])
-
-
-def test_the_global_force_flag_reaches_the_installer(app_ctx) -> None:
-    app_ctx.config.set("addons.enabled", ["product-demos", "mcp-server", "ollama"])
-    app_ctx.force = True
-    app_ctx.runner.ok(["bash", _deploy("ao")])
-
-    assert _enable(app_ctx) == 0
-
-    assert _call(app_ctx, "ao").env["FORCE"] == "1"
-
-
-def test_force_is_not_set_without_the_flag(app_ctx) -> None:
-    app_ctx.config.set("addons.enabled", ["product-demos", "mcp-server", "ollama"])
-    app_ctx.runner.ok(["bash", _deploy("ao")])
-
-    assert _enable(app_ctx) == 0
-
-    assert "FORCE" not in _call(app_ctx, "ao").env
-
-
-def test_disable_ao_runs_only_its_delete(app_ctx) -> None:
-    app_ctx.config.set("addons.enabled", ["mcp-server", "ollama", "ao"])
-    app_ctx.runner.ok(["bash", _deploy("ao"), "--delete"])
-
-    assert get("ao").disable(app_ctx, argparse.Namespace(addon="ao")) == 0
-
-    call = app_ctx.runner.calls[0]
-    assert len(app_ctx.runner.calls) == 1
-    assert call.argv == ("bash", _deploy("ao"), "--delete")
-    assert call.env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "0"
-    assert app_ctx.config.get("addons.enabled") == ["mcp-server", "ollama"]
+    assert not any(c.argv[:2] == ("kubectl", "create") for c in app_ctx.runner.calls)
 
 
 def test_product_demos_still_leave_wiring_to_the_command(app_ctx) -> None:
