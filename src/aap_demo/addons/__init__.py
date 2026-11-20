@@ -12,8 +12,8 @@ from typing import Dict, Literal, Optional, overload
 from aap_demo.addons import ao_shell
 from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
-from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.keycloak import KeycloakAddon
+from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
 

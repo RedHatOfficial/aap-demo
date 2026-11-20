@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 
 import pytest
 import yaml
@@ -78,7 +79,11 @@ def test_enable_is_idempotent_and_redacts_credentials(app_ctx) -> None:
     assert get("keycloak").enable(app_ctx, args) == 0
     first = list(app_ctx.paths.addon_dir("keycloak").iterdir())
     assert first
-    assert all(path.stat().st_mode & 0o077 == 0 for path in first)
+    # Windows does not expose POSIX permission bits through ``stat``. The
+    # production code still applies restrictive modes where the platform
+    # supports them; this assertion is meaningful only on POSIX.
+    if os.name != "nt":
+        assert all(path.stat().st_mode & 0o077 == 0 for path in first)
     assert app_ctx.config.get("addons.enabled") == ["keycloak"]
     apply = next(call for call in runner.calls if call.argv[:2] == ("kubectl", "apply"))
     assert "--server-side" in apply.argv
@@ -108,6 +113,13 @@ def test_explicit_redirect_override_allows_custom_https_callback(app_ctx) -> Non
 def test_redirect_override_rejects_query_and_credentials(app_ctx) -> None:
     _runner(app_ctx)
     app_ctx.env = {"KEYCLOAK_AAP_REDIRECT_URI": "https://example.test/callback?token=bad"}
+    with pytest.raises(AddonError, match="redirect URI"):
+        get("keycloak").enable(app_ctx, argparse.Namespace(addon="keycloak", addon_args=[]))
+
+
+def test_redirect_override_rejects_missing_host(app_ctx) -> None:
+    _runner(app_ctx)
+    app_ctx.env = {"KEYCLOAK_AAP_REDIRECT_URI": "https:///callback"}
     with pytest.raises(AddonError, match="redirect URI"):
         get("keycloak").enable(app_ctx, argparse.Namespace(addon="keycloak", addon_args=[]))
 

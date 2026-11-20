@@ -185,8 +185,11 @@ def _validate_redirect(value: str, expected_host: str, expected_path: str, *, st
     if "*" in value:
         raise AddonError("Keycloak redirect URIs must be exact URLs, not wildcards")
     parsed = urlsplit(value)
+    # ``urlsplit`` accepts ``https:///callback``; Keycloak cannot use a URI
+    # without a hostname even when an explicit redirect override is supplied.
     if (
         parsed.scheme != "https"
+        or parsed.hostname is None
         or (strict and parsed.hostname != expected_host)
         or parsed.username
         or parsed.password
