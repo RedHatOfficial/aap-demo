@@ -29,6 +29,8 @@ def test_every_registered_addon_meets_the_protocol() -> None:
 
 def test_kinds_and_listed_names() -> None:
     assert get("fleet").kind == "native"
+    assert get("monitoring").kind == "native"
+    assert get("prometheus") is get("monitoring")
     assert get("product-demos").kind == "legacy"
     assert names() == [
         "ao",
@@ -36,6 +38,7 @@ def test_kinds_and_listed_names() -> None:
         "fleet",
         "keycloak",
         "mcp-server",
+        "monitoring",
         "ollama",
         "opa",
         "product-demo-satellite",

@@ -1,7 +1,7 @@
-"""Addon registry: one table of every addon the new command can enable.
+"""Addon registry: one table of every addon the Python command can enable.
 
-``fleet``, ``opa`` and ``ao`` (ADR-045) are native Python. Product demos, EDA
-Playground, mcp-server and ollama run their bundled bash installers
+``fleet``, ``monitoring``, ``opa`` and ``ao`` are native Python. Product demos,
+EDA Playground, mcp-server and ollama run their bundled bash installers
 (``kind == "legacy"``). Any other name is an error that points at the older
 command. See ADR-040.
 """
@@ -14,11 +14,13 @@ from aap_demo.addons.ao import AoAddon
 from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
 from aap_demo.addons.keycloak import KeycloakAddon
+from aap_demo.addons.monitoring import MonitoringAddon
 from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
 
 _FLEET = FleetAddon()
+_MONITORING = MonitoringAddon()
 _OPA = OpaAddon()
 _KEYCLOAK = KeycloakAddon()
 _EDA_PLAYGROUND = ShellAddon(
@@ -52,6 +54,7 @@ _CUSTOM_SHELL = {a.name: a for a in (_EDA_PLAYGROUND, _MCP_SERVER, _OLLAMA)}
 
 _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
+    _MONITORING.name: _MONITORING,
     _OPA.name: _OPA,
     _KEYCLOAK.name: _KEYCLOAK,
     **{
@@ -61,6 +64,8 @@ _REGISTRY: Dict[str, Addon] = {
     },
     _AO.name: _AO,
 }
+
+_ALIASES = {"prometheus": _MONITORING.name}
 
 #: How to run the bash command next to this one, for addons not ported yet.
 OLDER_COMMAND_GUIDE = (
@@ -75,7 +80,8 @@ def names() -> list:
 
 def needs_cluster(name: Optional[str]) -> bool:
     """True when enable/disable has to talk to the cluster before it starts."""
-    addon = _REGISTRY.get(name) if name else None
+    canonical = _ALIASES.get(name, name) if name else None
+    addon = _REGISTRY.get(canonical) if canonical else None
     return bool(addon and addon.needs_cluster)
 
 
@@ -88,6 +94,7 @@ def get(name: str) -> Addon: ...
 
 
 def get(name: str) -> Addon:
+    name = _ALIASES.get(name, name)
     addon = _REGISTRY.get(name)
     if addon is not None:
         return addon

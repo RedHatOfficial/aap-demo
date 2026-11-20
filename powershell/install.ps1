@@ -4,9 +4,9 @@
   Install aap-demo on Windows.
 
 .DESCRIPTION
-  Checks prerequisites, records repo location, installs aap-demo to
-  %USERPROFILE%\.local\bin, adds that directory to the user PATH, and
-  installs optional dependencies (oc) via winget when missing.
+  Checks prerequisites, installs the Python aap-demo package from PyPI with
+  pipx, preserves the repository Bash implementation as aap-demo-v1, adds
+  the launcher directory to the user PATH, and installs oc when missing.
 
 .EXAMPLE
   .\powershell\install.ps1
@@ -27,8 +27,10 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ConfigDir = Join-Path $env:USERPROFILE '.aap-demo'
 $BinDir = Join-Path $env:USERPROFILE '.local\bin'
 $RepoMarker = Join-Path $ConfigDir 'repo-path'
+$PipxOwnedMarker = Join-Path $ConfigDir 'pipx-owned'
 $WrapperTarget = Join-Path $BinDir 'aap-demo.ps1'
 $CmdShim = Join-Path $BinDir 'aap-demo.cmd'
+$LegacyShim = Join-Path $BinDir 'aap-demo-v1.cmd'
 
 function Write-Info([string]$Message) { Write-Host "  $Message" }
 function Write-Ok([string]$Message) { Write-Host "  OK $Message" -ForegroundColor Green }
@@ -38,6 +40,49 @@ function Write-Err([string]$Message) { Write-Host "  ERROR $Message" -Foreground
 function Test-CommandExists {
   param([string]$Name)
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+function Get-PythonCommand {
+  foreach ($name in @('python', 'py')) {
+    $command = Get-Command $name -ErrorAction SilentlyContinue
+    if ($null -ne $command) { return $command.Source }
+  }
+  return $null
+}
+
+function Test-PipxAapDemoInstalled {
+  $python = Get-PythonCommand
+  if ($null -eq $python) { return $false }
+  try {
+    $json = & $python -m pipx list --json 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $items = $json | ConvertFrom-Json
+    return $null -ne $items.venvs.'aap-demo'
+  } catch {
+    return $false
+  }
+}
+
+function Install-PythonCli {
+  $python = Get-PythonCommand
+  if ($null -eq $python) {
+    throw 'Python 3 is required. Install it with: winget install --id Python.Python.3.12 -e --source winget'
+  }
+
+  $hadPipxAapDemo = Test-PipxAapDemoInstalled
+  Write-Info 'Installing the Python aap-demo CLI from PyPI with pipx...'
+  & $python -m pip install --user pipx --disable-pip-version-check
+  if ($LASTEXITCODE -ne 0) { throw "Could not install pipx (exit $LASTEXITCODE)" }
+  & $python -m pipx ensurepath --force | Out-Host
+  if ($hadPipxAapDemo) {
+    Write-Info 'Keeping the existing user-managed pipx aap-demo installation'
+  } else {
+    & $python -m pipx install aap-demo
+    if ($LASTEXITCODE -ne 0) { throw "Could not install aap-demo from PyPI (exit $LASTEXITCODE)" }
+    New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+    Set-Content -LiteralPath $PipxOwnedMarker -Value 'aap-demo' -NoNewline -Encoding ascii
+  }
+  Write-Ok 'Python aap-demo installed from PyPI'
 }
 
 function Install-Oc {
@@ -185,6 +230,8 @@ function Install-AapDemo {
 
   Write-Ok 'Required tools: crc, oc'
 
+  Install-PythonCli
+
   if ($checks.Warnings.Count -gt 0 -and -not $Quiet) {
     Write-Warn 'Optional tools not found (deploy may still work):'
     foreach ($item in $checks.Warnings) { Write-Info "- $item" }
@@ -196,10 +243,10 @@ function Install-AapDemo {
   Set-Content -LiteralPath $RepoMarker -Value $RepoRoot -NoNewline -Encoding ascii
   Write-Ok "Repo registered: $RepoRoot"
 
-  # PowerShell resolves .ps1 commands before .cmd commands. A policy-blocked
-  # .ps1 shim therefore prevents `aap-demo` from reaching the bypass-enabled
-  # command shim below, so remove any launcher from older installations.
+  # The Python console script owns `aap-demo`. Remove the old repository
+  # wrapper so PowerShell cannot select it before the PyPI command.
   Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $CmdShim -Force -ErrorAction SilentlyContinue
 
 @"
 @echo off
@@ -207,13 +254,13 @@ setlocal
 set "AAP_DEMO_REPO="
 for /f "usebackq delims=" %%R in ("%USERPROFILE%\.aap-demo\repo-path") do set "AAP_DEMO_REPO=%%R"
 if not defined AAP_DEMO_REPO (
-  echo aap-demo is not installed: missing %USERPROFILE%\.aap-demo\repo-path 1>&2
+  echo aap-demo-v1 is not installed: missing %USERPROFILE%\.aap-demo\repo-path 1>&2
   exit /b 1
 )
-powershell -NoProfile -ExecutionPolicy Bypass -File "%AAP_DEMO_REPO%\powershell\aap-demo.ps1" %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%AAP_DEMO_REPO%\powershell\aap-demo.ps1" %*
 exit /b %ERRORLEVEL%
-"@ | Set-Content -LiteralPath $CmdShim -Encoding ascii
-  Write-Ok "Launcher installed: $CmdShim"
+"@ | Set-Content -LiteralPath $LegacyShim -Encoding ascii
+  Write-Ok "Legacy Bash launcher installed: $LegacyShim"
 
   if (Add-UserPathEntry -Directory $BinDir) {
     Write-Ok 'Added %USERPROFILE%\.local\bin to user PATH'
@@ -228,12 +275,13 @@ exit /b %ERRORLEVEL%
   Write-Host 'Done.' -ForegroundColor Green
   Write-Host ''
   Write-Info 'Open a new PowerShell window, then:'
-  Write-Info '  aap-demo help'
-  Write-Info '  aap-demo create'
-  Write-Info '  aap-demo deploy'
+  Write-Info '  aap-demo --help'
+  Write-Info '  aap-demo status'
+  Write-Info '  aap-demo-v1 status  # legacy Bash compatibility path'
   Write-Host ''
   Write-Info 'Notes:'
-  Write-Info '- All commands run in PowerShell.'
+  Write-Info '- aap-demo is the Python package installed from PyPI.'
+  Write-Info '- aap-demo-v1 is the legacy Bash compatibility command.'
   Write-Info '- OpenShift Local on Windows needs Hyper-V enabled.'
   Write-Info '- Kubeconfig default: %USERPROFILE%\.crc\machines\crc\kubeconfig'
   Write-Host ''
@@ -246,7 +294,21 @@ function Uninstall-AapDemo {
 
   Remove-Item -LiteralPath $WrapperTarget -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $CmdShim -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $LegacyShim -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $RepoMarker -Force -ErrorAction SilentlyContinue
+
+  if (Test-Path -LiteralPath $PipxOwnedMarker) {
+    $python = Get-PythonCommand
+    if ($null -eq $python) {
+      throw 'Cannot remove the installer-owned pipx aap-demo package because Python is not on PATH. Restore Python, run pipx uninstall aap-demo, then rerun uninstall.'
+    }
+    & $python -m pipx uninstall aap-demo
+    if ($LASTEXITCODE -ne 0) { throw "Could not uninstall the aap-demo pipx package (exit $LASTEXITCODE)" }
+    Remove-Item -LiteralPath $PipxOwnedMarker -Force -ErrorAction SilentlyContinue
+    Write-Ok 'Removed the pipx aap-demo package installed by this script'
+  } else {
+    Write-Info 'Left the separately managed pipx aap-demo package installed'
+  }
 
   Write-Ok 'Removed wrapper, shim, and repo marker'
   Write-Info 'VM data under %USERPROFILE%\.aap-demo\ and %USERPROFILE%\.crc\ was NOT removed'
