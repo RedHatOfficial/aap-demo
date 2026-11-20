@@ -238,13 +238,18 @@ def test_sccs_grant_nonroot_and_drop_the_broad_legacy_grants(app_ctx, monkeypatc
     assert "nonroot-v2" not in deleted
 
 
-def test_a_failed_legacy_scc_cleanup_warns_with_the_command(app_ctx, monkeypatch) -> None:
+def test_a_failed_legacy_scc_cleanup_stops_with_the_command(app_ctx, monkeypatch) -> None:
     monkeypatch.setattr(catalog, "grant_scc", lambda *_a: None)
     app_ctx.runner = FakeRunner().fail("kubectl delete clusterrolebinding")
-    catalog.grant_sccs(app_ctx, ("default",), NAMESPACE)
-    assert f"kubectl delete clusterrolebinding aap-demo-scc-anyuid-{NAMESPACE}-default" in (
-        app_ctx.console.stderr
-    )
+    with pytest.raises(AddonError, match="anyuid and privileged") as excinfo:
+        catalog.grant_sccs(app_ctx, ("default",), NAMESPACE)
+    assert f"aap-demo-scc-anyuid-{NAMESPACE}-default" in (excinfo.value.hint or "")
+
+
+def test_a_failed_scc_cleanup_stops_disable(app_ctx) -> None:
+    app_ctx.runner = FakeRunner().fail("kubectl delete clusterrolebinding")
+    with pytest.raises(AddonError, match="SCC grants"):
+        catalog.remove_sccs(app_ctx, ("default",), NAMESPACE)
 
 
 def test_disable_removes_every_scc_binding(app_ctx) -> None:

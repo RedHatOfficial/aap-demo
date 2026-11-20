@@ -245,20 +245,30 @@ def grant_sccs(ctx: AppContext, accounts: Sequence[str], namespace: str) -> None
     """
     for account in accounts:
         grant_scc(ctx, SCC, account, namespace)
-    legacy = [_binding(scc, a, namespace) for a in accounts for scc in LEGACY_SCCS]
-    removed = kubectl.run(ctx.runner, "delete", "clusterrolebinding", *legacy, "--ignore-not-found")
-    if not removed.ok:
-        ctx.console.warn(
-            "Could not remove the anyuid and privileged grants earlier releases gave "
-            f"{', '.join(accounts)} in {namespace}; remove them with: "
-            f"kubectl delete clusterrolebinding {' '.join(legacy)}"
-        )
+    _delete_bindings(
+        ctx,
+        [_binding(scc, a, namespace) for a in accounts for scc in LEGACY_SCCS],
+        f"Could not remove the anyuid and privileged grants in {namespace}.",
+    )
 
 
 def remove_sccs(ctx: AppContext, accounts: Sequence[str], namespace: str) -> None:
     """Delete AO's SCC bindings; they are cluster-scoped and outlive the namespace."""
-    names = [_binding(scc, a, namespace) for a in accounts for scc in (SCC, *LEGACY_SCCS)]
-    kubectl.run(ctx.runner, "delete", "clusterrolebinding", *names, "--ignore-not-found")
+    _delete_bindings(
+        ctx,
+        [_binding(scc, a, namespace) for a in accounts for scc in (SCC, *LEGACY_SCCS)],
+        f"Could not remove AO's SCC grants in {namespace}.",
+    )
+
+
+def _delete_bindings(ctx: AppContext, names: Sequence[str], message: str) -> None:
+    """Stop rather than leave a cluster-scoped SCC grant behind."""
+    deleted = kubectl.run(ctx.runner, "delete", "clusterrolebinding", *names, "--ignore-not-found")
+    if not deleted.ok:
+        raise AddonError(
+            message,
+            hint=f"Remove them, then rerun: kubectl delete clusterrolebinding {' '.join(names)}",
+        )
 
 
 def copy_pull_secret(ctx: AppContext, source: str, target: str) -> bool:
