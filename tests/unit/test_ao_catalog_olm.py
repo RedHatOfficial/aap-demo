@@ -218,3 +218,38 @@ def test_unresolvable_subscription_resets_once_then_reports(app_ctx) -> None:
         call for call in app_ctx.runner.calls if call.input and "kind: Subscription" in call.input
     ]
     assert len(subscriptions_applied) == 2
+
+
+# -- SCC grants ----------------------------------------------------------------
+
+
+def test_sccs_grant_nonroot_and_drop_the_broad_legacy_grants(app_ctx, monkeypatch) -> None:
+    granted: List[str] = []
+    monkeypatch.setattr(
+        catalog, "grant_scc", lambda _c, scc, account, _ns: granted.append(f"{scc}/{account}")
+    )
+    app_ctx.runner = FakeRunner().ok("kubectl delete clusterrolebinding")
+    catalog.grant_sccs(app_ctx, ("default", "redhat-operators"), NAMESPACE)
+    assert granted == ["nonroot-v2/default", "nonroot-v2/redhat-operators"]
+    deleted = [c for c in app_ctx.runner.commands if "delete clusterrolebinding" in c][0]
+    for scc in ("anyuid", "privileged"):
+        for account in ("default", "redhat-operators"):
+            assert f"aap-demo-scc-{scc}-{NAMESPACE}-{account}" in deleted
+    assert "nonroot-v2" not in deleted
+
+
+def test_a_failed_legacy_scc_cleanup_warns_with_the_command(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(catalog, "grant_scc", lambda *_a: None)
+    app_ctx.runner = FakeRunner().fail("kubectl delete clusterrolebinding")
+    catalog.grant_sccs(app_ctx, ("default",), NAMESPACE)
+    assert f"kubectl delete clusterrolebinding aap-demo-scc-anyuid-{NAMESPACE}-default" in (
+        app_ctx.console.stderr
+    )
+
+
+def test_disable_removes_every_scc_binding(app_ctx) -> None:
+    app_ctx.runner = FakeRunner().ok("kubectl delete clusterrolebinding")
+    catalog.remove_sccs(app_ctx, ("default",), NAMESPACE)
+    deleted = app_ctx.runner.commands[0]
+    for scc in ("nonroot-v2", "anyuid", "privileged"):
+        assert f"aap-demo-scc-{scc}-{NAMESPACE}-default" in deleted

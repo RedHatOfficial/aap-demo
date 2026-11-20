@@ -47,6 +47,16 @@ commands.
 The switch happens in one release. Python never runs `deploy.sh`, and AO no
 longer needs Bash, curl, jq or base64 under the Python command.
 
+### SCCs
+
+AO's namespace grants only `nonroot-v2`, to `default` and the catalog
+ServiceAccount. Only two AO pods run outside `restricted-v2`, and both need just a
+fixed non-root UID: PostgreSQL as UID 26, which owns its data, and OLM's bundle
+unpack and catalog pods as UID 1001. The PostgreSQL manifest pins UID 26, so data
+written under the `anyuid` grant of earlier releases stays readable. `enable ao`
+grants `nonroot-v2` before it deletes the earlier `anyuid` and `privileged`
+bindings, and `disable ao` deletes all of them, since they are cluster-scoped.
+
 ### Adopting existing installs
 
 The Python addon must take over any AO the Bash installer left, without
