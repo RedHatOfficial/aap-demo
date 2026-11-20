@@ -23,7 +23,23 @@ def _valid_archive(path) -> None:
         info = tarfile.TarInfo("oci-layout")
         info.size = len(payload)
         archive.addfile(info, io.BytesIO(payload))
-        manifest = b'{"schemaVersion":2,"config":{"digest":"sha256:config"}}\n'
+        config = b'{"architecture":"amd64","os":"linux"}\n'
+        config_digest = hashlib.sha256(config).hexdigest()
+        info = tarfile.TarInfo(f"blobs/sha256/{config_digest}")
+        info.size = len(config)
+        archive.addfile(info, io.BytesIO(config))
+        layer = b"layer"
+        layer_digest = hashlib.sha256(layer).hexdigest()
+        info = tarfile.TarInfo(f"blobs/sha256/{layer_digest}")
+        info.size = len(layer)
+        archive.addfile(info, io.BytesIO(layer))
+        manifest = json.dumps(
+            {
+                "schemaVersion": 2,
+                "config": {"digest": f"sha256:{config_digest}"},
+                "layers": [{"digest": f"sha256:{layer_digest}"}],
+            }
+        ).encode()
         digest = hashlib.sha256(manifest).hexdigest()
         index = json.dumps(
             {"schemaVersion": 2, "manifests": [{"digest": f"sha256:{digest}"}]}

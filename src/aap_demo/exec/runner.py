@@ -63,6 +63,7 @@ class CommandRunner(Protocol):
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
@@ -91,6 +92,7 @@ class SubprocessRunner:
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
@@ -109,6 +111,7 @@ class SubprocessRunner:
             result = self._run_captured(
                 args,
                 input=input,
+                stdin_path=stdin_path,
                 timeout=timeout,
                 env=env,
                 capture=capture,
@@ -125,6 +128,7 @@ class SubprocessRunner:
         args: List[str],
         *,
         input: Optional[str],
+        stdin_path: Optional[Path],
         timeout: Optional[float],
         env: Optional[Mapping[str, str]],
         capture: bool,
@@ -135,16 +139,17 @@ class SubprocessRunner:
         try:
             # A detached child must not read the terminal. Otherwise crc delete
             # waits for a second Enter and the checklist never appears.
-            output = stdout_path.open("w", encoding="ascii") if stdout_path else None
+            output = stdout_path.open("wb") if stdout_path else None
+            source = stdin_path.open("rb") if stdin_path else None
             try:
                 proc = subprocess.run(  # noqa: S603 - argv list, never shell=True
                     args,
-                    input=input,
-                    stdin=subprocess.DEVNULL if detach and input is None else None,
+                    input=input if source is None else None,
+                    stdin=source or (subprocess.DEVNULL if detach and input is None else None),
                     capture_output=capture and output is None,
                     stdout=output,
                     stderr=subprocess.PIPE if capture and output is not None else None,
-                    text=True,
+                    text=output is None,
                     timeout=timeout,
                     env=self._env_for(env),
                     cwd=cwd,
@@ -153,6 +158,8 @@ class SubprocessRunner:
             finally:
                 if output is not None:
                     output.close()
+                if source is not None:
+                    source.close()
         except FileNotFoundError as exc:
             raise PrerequisiteError(
                 f"required command not found: {args[0]}",
@@ -163,8 +170,18 @@ class SubprocessRunner:
         return CompletedCommand(
             argv=tuple(args),
             returncode=proc.returncode,
-            stdout=proc.stdout or "",
-            stderr=proc.stderr or "",
+            stdout=(
+                proc.stdout.decode(errors="replace")
+                if isinstance(proc.stdout, bytes)
+                else proc.stdout
+            )
+            or "",
+            stderr=(
+                proc.stderr.decode(errors="replace")
+                if isinstance(proc.stderr, bytes)
+                else proc.stderr
+            )
+            or "",
         )
 
     def _run_streaming(
@@ -240,6 +257,7 @@ class EnvRunner:
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
@@ -255,6 +273,7 @@ class EnvRunner:
         return self.inner.run(
             argv,
             input=input,
+            stdin_path=stdin_path,
             timeout=timeout,
             env=merged,
             check=check,
@@ -273,6 +292,7 @@ Result = Union[CompletedCommand, Callable[..., CompletedCommand], BaseException]
 class Invocation:
     argv: Tuple[str, ...]
     input: Optional[str] = None
+    stdin_path: Optional[Path] = None
     env: Optional[Dict[str, str]] = None
     cwd: Optional[str] = None
     timeout: Optional[float] = None
@@ -324,6 +344,7 @@ class FakeRunner:
         argv: Sequence[str],
         *,
         input: Optional[str] = None,
+        stdin_path: Optional[Path] = None,
         timeout: Optional[float] = None,
         env: Optional[Mapping[str, str]] = None,
         check: bool = False,
@@ -339,6 +360,7 @@ class FakeRunner:
             Invocation(
                 argv=args,
                 input=input,
+                stdin_path=stdin_path,
                 env=dict(env) if env else None,
                 cwd=cwd,
                 timeout=timeout,

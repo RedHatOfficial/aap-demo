@@ -7,9 +7,9 @@ through the shared runner/SSH seams; no shell installer is invoked.
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
+import re
 import shutil
 import tarfile
 from functools import partial
@@ -70,9 +70,7 @@ class LocalCacheAddon:
         cache = _cache_dir(ctx)
         if not cache.is_dir():
             raise AddonError(f"No image cache found for {_preset(ctx)}")
-        format_current = (cache / ".format-version").read_text(
-            encoding="utf-8"
-        ).strip() == CACHE_FORMAT_VERSION
+        format_current = _format_current(cache)
         checked = 0
         failed = 0
         for archive in sorted(cache.glob("*.tar")):
@@ -80,6 +78,10 @@ class LocalCacheAddon:
             stem = archive.with_suffix("")
             ref_file = stem.with_suffix(".ref")
             reference = ref_file.read_text(encoding="utf-8").strip() if ref_file.is_file() else ""
+            local_file = stem.with_suffix(".local-ref")
+            local_reference = (
+                local_file.read_text(encoding="utf-8").strip() if local_file.is_file() else ""
+            )
             valid = (
                 format_current
                 and _valid_oci_archive(archive)
@@ -90,7 +92,8 @@ class LocalCacheAddon:
                     hashlib.md5(reference.encode(), usedforsecurity=False).hexdigest(),
                     hashlib.md5((reference + "\n").encode(), usedforsecurity=False).hexdigest(),
                 }
-                and (stem.with_suffix(".local-ref")).is_file()
+                and local_reference
+                and "@sha256:" in local_reference
             )
             if not valid:
                 failed += 1
@@ -142,9 +145,7 @@ class LocalCacheAddon:
         if not refs:
             raise AddonError("no registry images found in CRC")
         catalog_versions = _catalog_versions(images)
-        format_current = (cache / ".format-version").read_text(
-            encoding="utf-8"
-        ).strip() == CACHE_FORMAT_VERSION
+        format_current = _format_current(cache)
         saved = 0
         skipped = 0
         failed = 0
@@ -167,28 +168,16 @@ class LocalCacheAddon:
                 f"rm -f {REMOTE_ARCHIVE} && "
                 f"sudo skopeo copy --quiet --remove-signatures "
                 f"containers-storage:{shlex_quote(ref)} "
-                f"oci-archive:{REMOTE_ARCHIVE}:aap-demo-cache && "
-                f"sudo base64 -w0 {REMOTE_ARCHIVE}; status=$?; "
+                f"oci-archive:{REMOTE_ARCHIVE}:aap-demo-cache; status=$?; "
+                f"if [ $status -eq 0 ]; then sudo cat {REMOTE_ARCHIVE}; fi; "
                 f"sudo rm -f {REMOTE_ARCHIVE}; exit $status"
             )
-            encoded = cache / f".{stem.name}.b64.tmp"
-            result = _remote(ctx, key, command, output_path=encoded, timeout=900)
-            if not result.ok:
-                encoded.unlink(missing_ok=True)
-                failed += 1
-                continue
             temporary = cache / f".{stem.name}.tar.tmp"
-            try:
-                if encoded.is_file():
-                    _decode_base64_file(encoded, temporary)
-                else:
-                    temporary.write_bytes(base64.b64decode(result.stdout, validate=True))
-            except (ValueError, UnicodeError):
-                encoded.unlink(missing_ok=True)
+            result = _remote(ctx, key, command, output_path=temporary, timeout=900)
+            if not result.ok:
                 temporary.unlink(missing_ok=True)
                 failed += 1
                 continue
-            encoded.unlink(missing_ok=True)
             if not _valid_oci_archive(temporary):
                 temporary.unlink(missing_ok=True)
                 failed += 1
@@ -241,41 +230,33 @@ class LocalCacheAddon:
         for archive in archives:
             local_ref_file = archive.with_suffix(".local-ref")
             ref_file = archive.with_suffix(".ref")
-            if not local_ref_file.is_file() or not ref_file.is_file():
+            if not ref_file.is_file():
                 failed += 1
                 continue
-            local_ref = local_ref_file.read_text(encoding="utf-8").strip()
+            reference = ref_file.read_text(encoding="utf-8").strip()
+            if not _valid_oci_archive(archive):
+                failed += 1
+                continue
+            if not local_ref_file.is_file():
+                local_ref = _archive_digest(ctx, archive, reference)
+                if not local_ref:
+                    failed += 1
+                    continue
+                local_ref_file.write_text(local_ref + "\n", encoding="utf-8")
+            else:
+                local_ref = local_ref_file.read_text(encoding="utf-8").strip()
             present = _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(local_ref)}")
             if present.ok:
                 loaded += 1
                 continue
-            staged = _remote(ctx, key, f": > {REMOTE_ARCHIVE}")
-            if not staged.ok:
-                failed += 1
-                continue
-            transport_failed = False
-            with archive.open("rb") as source:
-                while chunk := source.read(256 * 1024):
-                    result = _remote(
-                        ctx,
-                        key,
-                        f"base64 -d >> {REMOTE_ARCHIVE}",
-                        input=base64.b64encode(chunk).decode(),
-                        timeout=900,
-                    )
-                    if not result.ok:
-                        transport_failed = True
-                        break
-            if transport_failed:
-                failed += 1
-                continue
             result = _remote(
                 ctx,
                 key,
-                f"sudo skopeo copy --all --preserve-digests "
+                f"cat > {REMOTE_ARCHIVE} && sudo skopeo copy --all --preserve-digests "
                 f"oci-archive:{REMOTE_ARCHIVE}:aap-demo-cache "
-                f"containers-storage:{shlex_quote(local_ref)}; "
-                f"status=$?; rm -f {REMOTE_ARCHIVE}; exit $status",
+                f"containers-storage:{shlex_quote(local_ref)}; status=$?; "
+                f"rm -f {REMOTE_ARCHIVE}; exit $status",
+                stdin_path=archive,
                 timeout=900,
             )
             if not result.ok:
@@ -285,13 +266,13 @@ class LocalCacheAddon:
                 loaded += 1
             else:
                 failed += 1
-                _remove_entry(archive.with_suffix(""))
         _say(ctx, f"Loaded {loaded} images ({failed} failed)")
         return 0 if not failed else 1
 
     def _rewrite(self, ctx: AppContext, key: Path) -> int:
         mappings = _mappings(_cache_dir(ctx))
         rewritten = 0
+        available: Dict[str, bool] = {}
         for resource in (
             "deployments",
             "statefulsets",
@@ -310,10 +291,14 @@ class LocalCacheAddon:
                 continue
             for item in items:
                 for mapping in mappings:
-                    if not _remote(ctx, key, f"sudo crictl inspecti {shlex_quote(mapping[1])}").ok:
-                        continue
                     patch = _image_patch(item, mapping[0], mapping[1])
                     if patch:
+                        if mapping[1] not in available:
+                            available[mapping[1]] = _remote(
+                                ctx, key, f"sudo crictl inspecti {shlex_quote(mapping[1])}"
+                            ).ok
+                        if not available[mapping[1]]:
+                            continue
                         name = item.get("metadata", {}).get("name")
                         namespace = item.get("metadata", {}).get("namespace")
                         kind = str(item.get("kind", resource.rstrip("s"))).lower()
@@ -360,28 +345,22 @@ def _remote(
     command: str,
     *,
     input: Optional[str] = None,
+    stdin_path: Optional[Path] = None,
     timeout: Optional[float] = None,
     output_path: Optional[Path] = None,
 ):
     return ctx.runner.run(
         ssh_mod.remote_argv(key, "bash", "-c", command, sudo=False),
         input=input,
+        stdin_path=stdin_path,
         timeout=timeout,
         stdout_path=output_path,
     )
 
 
-def _decode_base64_file(source: Path, destination: Path) -> None:
-    carry = b""
-    with source.open("rb") as encoded, destination.open("wb") as decoded:
-        while chunk := encoded.read(256 * 1024):
-            data = carry + chunk
-            usable = len(data) - (len(data) % 4)
-            if usable:
-                decoded.write(base64.b64decode(data[:usable], validate=True))
-            carry = data[usable:]
-        if carry:
-            decoded.write(base64.b64decode(carry, validate=True))
+def _format_current(cache: Path) -> bool:
+    marker = cache / ".format-version"
+    return marker.is_file() and marker.read_text(encoding="utf-8").strip() == CACHE_FORMAT_VERSION
 
 
 def _image_refs(images: Iterable[Dict[str, Any]]) -> List[str]:
@@ -394,12 +373,14 @@ def _image_refs(images: Iterable[Dict[str, Any]]) -> List[str]:
 
 
 def _cache_stem(cache: Path, ref: str) -> Path:
-    """Use the V1 newline-hashed key when that entry already exists."""
+    """Use the V1 newline-hashed key for new entries and read old keys too."""
     current = cache / hashlib.md5(ref.encode(), usedforsecurity=False).hexdigest()
     legacy = cache / hashlib.md5((ref + "\n").encode(), usedforsecurity=False).hexdigest()
     if any(legacy.with_suffix(suffix).is_file() for suffix in (".tar", ".ref", ".local-ref")):
         return legacy
-    return current
+    if any(current.with_suffix(suffix).is_file() for suffix in (".tar", ".ref", ".local-ref")):
+        return current
+    return legacy
 
 
 def _cache_entry_usable(stem: Path, ref: str) -> bool:
@@ -429,7 +410,9 @@ def _catalog_versions(images: Iterable[Dict[str, Any]]) -> Dict[str, str]:
 
 
 def _catalog_row(version: str, original: str, local: str, ctx: AppContext) -> str:
-    aap_version = str(ctx.env.get("AAP_VERSION") or "all")
+    channel = str(ctx.config.get("deploy.channel", "") or "")
+    match = re.search(r"(?:^|-)((?:\d+)\.(?:\d+))(?:-|$)", channel)
+    aap_version = (match.group(1) if match else "") or str(ctx.env.get("AAP_VERSION") or "all")
     return f"{version}\t{original}\t{local}\t{aap_version}\n"
 
 
@@ -441,16 +424,54 @@ def _valid_oci_archive(path: Path) -> bool:
             names = set(archive.getnames())
             if "oci-layout" not in names or "index.json" not in names:
                 return False
-            index = json.loads(archive.extractfile("index.json").read())  # type: ignore[union-attr]
+            index_member = archive.extractfile("index.json")
+            if index_member is None:
+                return False
+            index = json.loads(index_member.read())
             manifests = index.get("manifests", [])
             if not isinstance(manifests, list) or not manifests:
                 return False
-            return all(
-                isinstance(entry, dict)
-                and isinstance(entry.get("digest"), str)
-                and f"blobs/{entry['digest'].replace(':', '/', 1)}" in names
-                for entry in manifests
-            )
+            checked: set[str] = set()
+
+            def descriptor_blob(descriptor: Dict[str, Any]) -> Optional[bytes]:
+                digest = descriptor.get("digest")
+                if not isinstance(digest, str) or not digest.startswith("sha256:"):
+                    return None
+                blob = f"blobs/{digest.replace(':', '/', 1)}"
+                if blob not in names:
+                    return None
+                member = archive.extractfile(blob)
+                if member is None:
+                    return None
+                data = member.read()
+                digest_value = digest.split(":", 1)[1]
+                if digest_value not in checked and hashlib.sha256(data).hexdigest() != digest_value:
+                    return None
+                checked.add(digest_value)
+                return data
+
+            def visit(descriptor: Dict[str, Any]) -> bool:
+                data = descriptor_blob(descriptor)
+                if data is None:
+                    return False
+                try:
+                    document = json.loads(data)
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    return False
+                if isinstance(document.get("manifests"), list):
+                    return all(
+                        isinstance(child, dict) and visit(child) for child in document["manifests"]
+                    )
+                config = document.get("config")
+                layers = document.get("layers", [])
+                if not isinstance(config, dict) or not isinstance(layers, list):
+                    return False
+                return descriptor_blob(config) is not None and all(
+                    isinstance(layer, dict) and descriptor_blob(layer) is not None
+                    for layer in layers
+                )
+
+            return all(isinstance(entry, dict) and visit(entry) for entry in manifests)
     except (OSError, tarfile.TarError):
         return False
     except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
@@ -492,7 +513,7 @@ def _image_patch(item: Dict[str, Any], old: str, new: str) -> List[Dict[str, Any
         if item.get("spec", {}).get("image") == old:
             return [{"op": "replace", "path": "/spec/image", "value": new}]
         return []
-    if kind == "csv":
+    if kind in ("csv", "clusterserviceversion"):
         for index, deployment in enumerate(
             item.get("spec", {}).get("install", {}).get("spec", {}).get("deployments", []) or []
         ):
