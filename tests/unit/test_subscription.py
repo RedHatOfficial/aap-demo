@@ -208,3 +208,29 @@ def test_a_failed_subscription_read_applies_nothing(ready: AppContext) -> None:
 def test_redirects_are_not_followed() -> None:
     handler = subscription._NoRedirect()
     assert handler.redirect_request(None, None, 307, "", {}, "https://other.example/") is None
+
+
+def test_local_aap_request_bypasses_configured_proxies(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: List[Any] = []
+
+    class _Opener:
+        def open(self, *_: Any, **__: Any) -> None:
+            return None
+
+    def build_opener(*handlers: Any) -> _Opener:
+        captured.extend(handlers)
+        return _Opener()
+
+    monkeypatch.setattr(subscription.urllib.request, "build_opener", build_opener)
+    subscription._open(
+        subscription.urllib.request.Request("https://aap.test/api/controller/v2/config/"),
+        timeout=1,
+        context=subscription.ssl.SSLContext(subscription.ssl.PROTOCOL_TLS_CLIENT),
+    )
+
+    proxy_handler = next(
+        handler
+        for handler in captured
+        if isinstance(handler, subscription.urllib.request.ProxyHandler)
+    )
+    assert proxy_handler.proxies == {}
