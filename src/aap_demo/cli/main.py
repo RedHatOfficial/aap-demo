@@ -268,7 +268,7 @@ def build_parser(
     _add_config_command(add, sub)
 
     # -- addons -------------------------------------------------------------
-    p = add("enable", "Enable an addon (fleet, product-demos, ao, EDA Playground, ...)")
+    p = add("enable", "Enable an addon (fleet, monitoring, product-demos, ao, ...)")
     p.add_argument("addon", nargs="?", help="Addon name; omit to list available addons")
     p.add_argument("addon_args", nargs="*", metavar="ARGS", help="Addon-specific arguments")
     p.add_argument(
@@ -592,6 +592,11 @@ def _addon_needs_cluster(command: str, args: argparse.Namespace) -> bool:
     if command == "fleet":
         return True
     if command in {"enable", "disable"}:
+        if getattr(args, "addon", None) == "local-cache":
+            if command == "disable":
+                return False
+            action = str((getattr(args, "addon_args", None) or ["save"])[0])
+            return action not in {"clear", "delete", "validate"}
         return needs_cluster(getattr(args, "addon", None))
     return False
 

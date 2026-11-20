@@ -63,6 +63,11 @@ def _venv_python(ctx: AppContext) -> Path:
     return _venv_dir(ctx) / "bin" / "python"
 
 
+def _venv_command() -> str:
+    """Return the platform's Python executable for creating the addon venv."""
+    return sys.executable if sys.platform == "win32" else "python3"
+
+
 def _require_tools() -> None:
     missing = [tool for tool in _TOOLS if shutil.which(tool) is None]
     if missing:
@@ -96,7 +101,7 @@ def _ensure_venv(ctx: AppContext, root: Path) -> Path:
     venv_dir = _venv_dir(ctx)
     python = _venv_python(ctx)
     if not python.is_file():
-        result = ctx.runner.run(["python3", "-m", "venv", str(venv_dir)])
+        result = ctx.runner.run([_venv_command(), "-m", "venv", str(venv_dir)])
         if not result.ok:
             raise AddonError(
                 "could not create the APME Python environment",

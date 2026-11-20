@@ -96,14 +96,45 @@ cleanup_on_exit() {
   local status=$?
   trap - EXIT
   if [ "$status" -ne 0 ] && [ "${CLEANUP_REQUIRED:-false}" = true ]; then
-    "$CLI" --kubeconfig "$LIVE_KUBECONFIG" disable eda-playground >/dev/null 2>&1 || true
+    AAP_DEMO_DIR="$LIVE_STATE_ROOT" EDA_PLAYGROUND_STATE_DIR="$STATE_DIR" \
+      "$CLI" --kubeconfig "$LIVE_KUBECONFIG" disable eda-playground >/dev/null 2>&1 || true
+  fi
+  if [ -n "${LIVE_STATE_ROOT:-}" ]; then
+    rm -rf -- "$LIVE_STATE_ROOT"
   fi
   exit "$status"
 }
 
+# Validate the image before arming cleanup.  The deploy script intentionally
+# fails early when no reviewed image is configured, and that failure must not
+# trigger cleanup of an installation that existed before this test started.
+LIVE_IMAGE="${EDA_PLAYGROUND_IMAGE:-}"
+LIVE_ALLOW_UNPINNED="${EDA_PLAYGROUND_ALLOW_UNPINNED_IMAGE:-false}"
+if [ -z "$LIVE_IMAGE" ]; then
+  fail 'EDA_PLAYGROUND_IMAGE must be set before the live test starts'
+fi
+if [[ "$LIVE_IMAGE" != *@sha256:* ]] && [ "$LIVE_ALLOW_UNPINNED" != true ]; then
+  fail 'EDA_PLAYGROUND_IMAGE must use a sha256 digest before the live test starts'
+fi
+if EXISTING_NAMESPACE="$(kubectl get namespace "$NAMESPACE" --ignore-not-found -o name 2>/dev/null)"; then
+  :
+else
+  status=$?
+  fail 'could not determine whether the EDA Playground namespace already exists' "$status"
+fi
+[ -z "$EXISTING_NAMESPACE" ] || fail "refusing to run over existing EDA Playground namespace $NAMESPACE"
+
+# Use a disposable state root for both the legacy and Python CLIs.  The Python
+# adapter derives EDA_PLAYGROUND_STATE_DIR from AAP_DEMO_DIR, so checking a
+# caller-provided legacy path would not protect cleanup in that mode.
+LIVE_STATE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aap-demo-eda-live.XXXXXX")"
+STATE_DIR="$LIVE_STATE_ROOT/eda-playground"
+
 trap cleanup_on_exit EXIT
 CLEANUP_REQUIRED=true
-run_quiet 'enable eda-playground failed' "$CLI" --kubeconfig "$LIVE_KUBECONFIG" enable eda-playground
+run_quiet 'enable eda-playground failed' \
+  env AAP_DEMO_DIR="$LIVE_STATE_ROOT" EDA_PLAYGROUND_STATE_DIR="$STATE_DIR" \
+  "$CLI" --kubeconfig "$LIVE_KUBECONFIG" enable eda-playground
 run_quiet 'EDA Playground Deployment did not become available' \
   kubectl wait --for=condition=available deployment/eda-playground -n "$NAMESPACE" --timeout=180s
 if HOST="$(kubectl get route eda-playground -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null)"; then
@@ -125,8 +156,10 @@ else
 fi
 
 run_quiet 'first disable eda-playground failed' \
+  env AAP_DEMO_DIR="$LIVE_STATE_ROOT" EDA_PLAYGROUND_STATE_DIR="$STATE_DIR" \
   "$CLI" --kubeconfig "$LIVE_KUBECONFIG" disable eda-playground
 run_quiet 'second disable eda-playground failed' \
+  env AAP_DEMO_DIR="$LIVE_STATE_ROOT" EDA_PLAYGROUND_STATE_DIR="$STATE_DIR" \
   "$CLI" --kubeconfig "$LIVE_KUBECONFIG" disable eda-playground
 if REMAINING="$(kubectl get namespace "$NAMESPACE" --ignore-not-found -o name 2>/dev/null)"; then
   :
@@ -137,3 +170,6 @@ fi
 [ -z "$REMAINING" ] || fail 'EDA Playground namespace remains after disable' 1
 
 echo 'PASS: EDA Playground enable, readiness, Route, and repeated disable'
+trap - EXIT
+rm -rf -- "$LIVE_STATE_ROOT"
+LIVE_STATE_ROOT=""

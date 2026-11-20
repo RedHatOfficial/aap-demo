@@ -53,7 +53,7 @@ def _vm_kubeconfig(ctx: AppContext):
         )
     try:
         result = ssh_mod.exec_remote(
-            ctx.runner, key, "cat", kubeconfig.REMOTE_KUBECONFIG_PATH, timeout=15
+            ctx.runner, key, "cat", kubeconfig.REMOTE_KUBECONFIG_PATH, sudo=True, timeout=15
         )
         if not result.ok or not result.stdout.strip():
             raise AapDemoError("Could not obtain the CRC VM kubeconfig")
@@ -83,7 +83,7 @@ def start(ctx: AppContext, *, sleep: Callable[[float], None] = time.sleep) -> No
     preflight.require_local_kubeconfig(ctx)
     ctx.console.out("")
     ctx.console.step("aap-demo start - Starting CRC cluster...")
-    started = ctx.runner.run(["crc", "start"], sink=ctx.console.log_sink())
+    started = ctx.runner.run(["crc", "start"], sink=ctx.console.log_sink(verbose=ctx.verbose))
     if not started.ok:
         raise AapDemoError(
             f"crc start failed (exit {started.returncode})",
@@ -135,7 +135,7 @@ def stop(ctx: AppContext) -> None:
     """Ports ``cmd_stop``. A failed ``crc stop`` still reports the attempt, as bash does."""
     ctx.console.out("")
     ctx.console.step("aap-demo stop - Stopping CRC cluster...")
-    ctx.runner.run(["crc", "stop"], sink=ctx.console.log_sink())
+    ctx.runner.run(["crc", "stop"], sink=ctx.console.log_sink(verbose=ctx.verbose))
     ctx.console.success("CRC cluster stopped")
     ctx.console.out("To restart: aap-demo start")
 

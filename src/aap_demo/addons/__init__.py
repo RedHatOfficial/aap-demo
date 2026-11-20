@@ -1,7 +1,8 @@
 """Addon registry: one table of every addon the Python command can enable.
 
-``fleet``, ``monitoring``, ``apme-eap``, ``opa`` and ``ao`` are native Python.
-Product demos, EDA Playground, mcp-server and ollama run their bundled bash installers
+``fleet``, ``monitoring``, ``apme-eap``, ``opa``, ``local-cache``, ``keycloak`` and ``ao``
+are native Python. Product demos, EDA Playground, mcp-server and ollama run their bundled bash
+installers
 (``kind == "legacy"``). Any other name is an error that points at the older
 command. See ADR-040.
 """
@@ -10,10 +11,12 @@ from __future__ import annotations
 
 from typing import Dict, Literal, Optional, overload
 
-from aap_demo.addons.apme_eap import ApmeEapAddon
 from aap_demo.addons.ao import AoAddon
+from aap_demo.addons.apme_eap import ApmeEapAddon
 from aap_demo.addons.base import Addon
 from aap_demo.addons.fleet import FleetAddon
+from aap_demo.addons.keycloak import KeycloakAddon
+from aap_demo.addons.local_cache import LocalCacheAddon
 from aap_demo.addons.monitoring import MonitoringAddon
 from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
@@ -23,6 +26,8 @@ _FLEET = FleetAddon()
 _MONITORING = MonitoringAddon()
 _APME_EAP = ApmeEapAddon()
 _OPA = OpaAddon()
+_LOCAL_CACHE = LocalCacheAddon()
+_KEYCLOAK = KeycloakAddon()
 _EDA_PLAYGROUND = ShellAddon(
     "eda-playground",
     required_tools=("bash", "curl", "jq", "kubectl", "base64"),
@@ -56,6 +61,8 @@ _REGISTRY: Dict[str, Addon] = {
     _MONITORING.name: _MONITORING,
     _APME_EAP.name: _APME_EAP,
     _OPA.name: _OPA,
+    _LOCAL_CACHE.name: _LOCAL_CACHE,
+    _KEYCLOAK.name: _KEYCLOAK,
     **{
         name: _CUSTOM_SHELL.get(name) or ShellAddon(name)
         for name in BUNDLED_ADDON_DIRS

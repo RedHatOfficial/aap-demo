@@ -23,6 +23,18 @@ aap-demo enable monitoring
 aap-demo status monitoring
 ```
 
+Before enabling it, provision a least-privilege Gateway credential in the AAP namespace and
+point the addon at its HTTPS endpoint:
+
+```bash
+export AAP_MONITORING_CREDENTIAL_SECRET=aap-monitoring-reader
+export AAP_MONITORING_GATEWAY_URL=https://aap.example.test
+aap-demo enable monitoring
+```
+
+The Secret must contain base64-encoded `username` and `password` keys. The addon refuses to
+fall back to the AAP admin credential or an HTTP endpoint.
+
 Open the Grafana route printed by `status monitoring`. The local Grafana password is stored
 in the credential file reported by that command. The password is not printed by status.
 
@@ -42,8 +54,8 @@ aap-demo disable monitoring
 
 - Prometheus with 24 hours of local retention and a 2 GiB PVC.
 - Grafana with the version-controlled AAP Platform Overview dashboard.
-- `json-exporter`, which queries the Gateway-proxied controller API using a password mounted
-  from an addon-owned Secret and exposes internal Prometheus metrics.
+- `json-exporter`, which queries the HTTPS Gateway-proxied controller API using a supplied
+  least-privilege credential copied into an addon-owned Secret and exposes internal Prometheus metrics.
 - A Grafana OpenShift Route. Prometheus and the adapter stay cluster-internal.
 
 The first implementation uses static Prometheus scraping because the supported MicroShift
@@ -61,7 +73,7 @@ kubectl logs deployment/json-exporter -n aap-monitoring
 kubectl logs deployment/prometheus -n aap-monitoring
 ```
 
-If the adapter reports authorization failures, confirm that AAP is ready and rerun
-`aap-demo enable monitoring` so the addon refreshes its copied Gateway credential. If the
+If the adapter reports authorization failures, confirm that the supplied read-only credential
+and HTTPS Gateway URL are valid, then rerun `aap-demo enable monitoring`. If the
 dashboard shows no job data, the AAP controller may not have any jobs yet; the initial
 population helper is intentionally deferred until its Gateway write contract is validated.

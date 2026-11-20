@@ -27,6 +27,7 @@ $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ConfigDir = Join-Path $env:USERPROFILE '.aap-demo'
 $BinDir = Join-Path $env:USERPROFILE '.local\bin'
 $RepoMarker = Join-Path $ConfigDir 'repo-path'
+$PipxOwnedMarker = Join-Path $ConfigDir 'pipx-owned'
 $WrapperTarget = Join-Path $BinDir 'aap-demo.ps1'
 $CmdShim = Join-Path $BinDir 'aap-demo.cmd'
 $LegacyShim = Join-Path $BinDir 'aap-demo-v1.cmd'
@@ -49,18 +50,38 @@ function Get-PythonCommand {
   return $null
 }
 
+function Test-PipxAapDemoInstalled {
+  $python = Get-PythonCommand
+  if ($null -eq $python) { return $false }
+  try {
+    $json = & $python -m pipx list --json 2>$null
+    if ($LASTEXITCODE -ne 0) { return $false }
+    $items = $json | ConvertFrom-Json
+    return $null -ne $items.venvs.'aap-demo'
+  } catch {
+    return $false
+  }
+}
+
 function Install-PythonCli {
   $python = Get-PythonCommand
   if ($null -eq $python) {
     throw 'Python 3 is required. Install it with: winget install --id Python.Python.3.12 -e --source winget'
   }
 
+  $hadPipxAapDemo = Test-PipxAapDemoInstalled
   Write-Info 'Installing the Python aap-demo CLI from PyPI with pipx...'
   & $python -m pip install --user pipx --disable-pip-version-check
   if ($LASTEXITCODE -ne 0) { throw "Could not install pipx (exit $LASTEXITCODE)" }
   & $python -m pipx ensurepath --force | Out-Host
-  & $python -m pipx install --force aap-demo
-  if ($LASTEXITCODE -ne 0) { throw "Could not install aap-demo from PyPI (exit $LASTEXITCODE)" }
+  if ($hadPipxAapDemo) {
+    Write-Info 'Keeping the existing user-managed pipx aap-demo installation'
+  } else {
+    & $python -m pipx install aap-demo
+    if ($LASTEXITCODE -ne 0) { throw "Could not install aap-demo from PyPI (exit $LASTEXITCODE)" }
+    New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
+    Set-Content -LiteralPath $PipxOwnedMarker -Value 'aap-demo' -NoNewline -Encoding ascii
+  }
   Write-Ok 'Python aap-demo installed from PyPI'
 }
 
@@ -236,7 +257,7 @@ if not defined AAP_DEMO_REPO (
   echo aap-demo-v1 is not installed: missing %USERPROFILE%\.aap-demo\repo-path 1>&2
   exit /b 1
 )
-bash "%AAP_DEMO_REPO%\aap-demo.sh" %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%AAP_DEMO_REPO%\powershell\aap-demo.ps1" %*
 exit /b %ERRORLEVEL%
 "@ | Set-Content -LiteralPath $LegacyShim -Encoding ascii
   Write-Ok "Legacy Bash launcher installed: $LegacyShim"
@@ -275,6 +296,19 @@ function Uninstall-AapDemo {
   Remove-Item -LiteralPath $CmdShim -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $LegacyShim -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $RepoMarker -Force -ErrorAction SilentlyContinue
+
+  if (Test-Path -LiteralPath $PipxOwnedMarker) {
+    $python = Get-PythonCommand
+    if ($null -eq $python) {
+      throw 'Cannot remove the installer-owned pipx aap-demo package because Python is not on PATH. Restore Python, run pipx uninstall aap-demo, then rerun uninstall.'
+    }
+    & $python -m pipx uninstall aap-demo
+    if ($LASTEXITCODE -ne 0) { throw "Could not uninstall the aap-demo pipx package (exit $LASTEXITCODE)" }
+    Remove-Item -LiteralPath $PipxOwnedMarker -Force -ErrorAction SilentlyContinue
+    Write-Ok 'Removed the pipx aap-demo package installed by this script'
+  } else {
+    Write-Info 'Left the separately managed pipx aap-demo package installed'
+  }
 
   Write-Ok 'Removed wrapper, shim, and repo marker'
   Write-Info 'VM data under %USERPROFILE%\.aap-demo\ and %USERPROFILE%\.crc\ was NOT removed'

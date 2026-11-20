@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -29,8 +30,10 @@ def _env(app_ctx) -> None:
 def _cached_venv(app_ctx) -> None:
     root = Path(__file__).resolve().parents[2] / "addons" / "apme-eap"
     venv = app_ctx.paths.addon_dir("apme-eap") / "venv"
-    (venv / "bin").mkdir(parents=True)
-    (venv / "bin" / "python").write_text("", encoding="utf-8")
+    bin_dir = venv / ("Scripts" if sys.platform == "win32" else "bin")
+    python_name = "python.exe" if sys.platform == "win32" else "python"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / python_name).write_text("", encoding="utf-8")
     (venv / ".requirements.sha256").write_text(
         hashlib.sha256((root / "requirements.txt").read_bytes()).hexdigest() + "\n",
         encoding="utf-8",
@@ -169,17 +172,20 @@ def test_fresh_enable_bootstraps_the_dedicated_venv(app_ctx, monkeypatch) -> Non
         lambda name: f"/usr/bin/{name}",
     )
     venv_dir = app_ctx.paths.addon_dir("apme-eap") / "venv"
+    bin_dir = venv_dir / ("Scripts" if sys.platform == "win32" else "bin")
+    python_name = "python.exe" if sys.platform == "win32" else "python"
 
     def create_venv(args):
-        (venv_dir / "bin").mkdir(parents=True)
-        (venv_dir / "bin" / "python").write_text("", encoding="utf-8")
+        bin_dir.mkdir(parents=True)
+        (bin_dir / python_name).write_text("", encoding="utf-8")
         return CompletedCommand(argv=tuple(args), returncode=0)
 
-    app_ctx.runner.register(["python3", "-m", "venv"], create_venv)
-    app_ctx.runner.ok([str(venv_dir / "bin" / "python"), "-m", "pip"])
-    app_ctx.runner.ok([str(venv_dir / "bin" / "ansible-galaxy"), "collection"])
+    app_ctx.runner.register([apme_eap._venv_command(), "-m", "venv"], create_venv)
+    app_ctx.runner.ok([str(bin_dir / python_name), "-m", "pip"])
+    galaxy_name = "ansible-galaxy.exe" if sys.platform == "win32" else "ansible-galaxy"
+    app_ctx.runner.ok([str(bin_dir / galaxy_name), "collection"])
 
-    assert apme_eap._ensure_venv(app_ctx, apme_eap._addon_root()) == venv_dir / "bin" / "python"
+    assert apme_eap._ensure_venv(app_ctx, apme_eap._addon_root()) == bin_dir / python_name
     assert (venv_dir / ".requirements.sha256").is_file()
     assert (venv_dir / ".collections.sha256").is_file()
 
@@ -303,7 +309,8 @@ def test_user_overrides_survive_and_run_vars_are_ephemeral(app_ctx) -> None:
     user_vars.write_text("custom_setting: preserved\n", encoding="utf-8")
 
     path = apme_eap._write_run_vars(app_ctx, {"aap_password": "secret"})
-    assert path.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        assert path.stat().st_mode & 0o777 == 0o600
     values = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert values == {
         "aap_password": "secret",  # pragma: allowlist secret

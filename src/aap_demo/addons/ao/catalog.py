@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Sequence
 
 import yaml
 
@@ -201,8 +201,19 @@ def _apply(ctx: AppContext, manifest: str, message: str) -> None:
         raise AddonError(message, hint=output_of(applied) or None)
 
 
+# The AO pods outside restricted-v2 need only a fixed non-root UID: PostgreSQL
+# runs as 26, and OLM's bundle unpack and catalog pods as 1001.
+SCC = "nonroot-v2"
+# Earlier releases granted these to the same accounts; enable and disable remove them.
+LEGACY_SCCS = ("anyuid", "privileged")
+
+
+def _binding(scc: str, account: str, namespace: str) -> str:
+    return f"aap-demo-scc-{scc}-{namespace}-{account}"
+
+
 def grant_scc(ctx: AppContext, scc: str, account: str, namespace: str) -> None:
-    binding = f"aap-demo-scc-{scc}-{namespace}-{account}"
+    binding = _binding(scc, account, namespace)
     manifest = yaml.safe_dump(
         {
             "apiVersion": "rbac.authorization.k8s.io/v1",
@@ -223,6 +234,40 @@ def grant_scc(ctx: AppContext, scc: str, account: str, namespace: str) -> None:
             f"Failed to grant SCC '{scc}' to ServiceAccount '{account}' "
             f"in namespace '{namespace}'.",
             hint=f"The current user must be allowed to create the SCC binding '{binding}'.",
+        )
+
+
+def grant_sccs(ctx: AppContext, accounts: Sequence[str], namespace: str) -> None:
+    """Grant nonroot-v2, then drop the broader grants of earlier releases.
+
+    SCCs are checked when a pod is admitted, so running pods keep theirs; the
+    narrower grant is in place before any of them restarts.
+    """
+    for account in accounts:
+        grant_scc(ctx, SCC, account, namespace)
+    _delete_bindings(
+        ctx,
+        [_binding(scc, a, namespace) for a in accounts for scc in LEGACY_SCCS],
+        f"Could not remove the anyuid and privileged grants in {namespace}.",
+    )
+
+
+def remove_sccs(ctx: AppContext, accounts: Sequence[str], namespace: str) -> None:
+    """Delete AO's SCC bindings; they are cluster-scoped and outlive the namespace."""
+    _delete_bindings(
+        ctx,
+        [_binding(scc, a, namespace) for a in accounts for scc in (SCC, *LEGACY_SCCS)],
+        f"Could not remove AO's SCC grants in {namespace}.",
+    )
+
+
+def _delete_bindings(ctx: AppContext, names: Sequence[str], message: str) -> None:
+    """Stop rather than leave a cluster-scoped SCC grant behind."""
+    deleted = kubectl.run(ctx.runner, "delete", "clusterrolebinding", *names, "--ignore-not-found")
+    if not deleted.ok:
+        raise AddonError(
+            message,
+            hint=f"Remove them, then rerun: kubectl delete clusterrolebinding {' '.join(names)}",
         )
 
 

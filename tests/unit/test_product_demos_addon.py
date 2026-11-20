@@ -230,6 +230,8 @@ def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
         "apme-eap",
         "eda-playground",
         "fleet",
+        "keycloak",
+        "local-cache",
         "mcp-server",
         "monitoring",
         "ollama",

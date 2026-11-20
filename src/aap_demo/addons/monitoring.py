@@ -1,8 +1,8 @@
 """Native, low-resource AAP monitoring addon.
 
 The first release uses standalone Prometheus/Grafana and json-exporter. The exporter
-queries the AAP Gateway's controller API with the existing admin Secret; Prometheus
-never talks directly to the controller or Metrics Service.
+queries the AAP Gateway's controller API with a supplied least-privilege Secret;
+Prometheus never talks directly to the controller or Metrics Service.
 """
 
 from __future__ import annotations
@@ -11,12 +11,15 @@ import argparse
 import base64
 import json
 import secrets
+import time
+from pathlib import Path
 from typing import Any, Dict, List
 
 from aap_demo.addons.base import AddonKind
 from aap_demo.addons.common import kube
 from aap_demo.addons.common.state import enabled_names, set_enabled_names
 from aap_demo.cluster import pull_secret
+from aap_demo.cluster.ingress_ca import fetch_cluster_ca
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError
 from aap_demo.exec import kubectl
@@ -24,6 +27,11 @@ from aap_demo.exec import kubectl
 NAME = "monitoring"
 NAMESPACE = "aap-monitoring"
 STATE_PASSWORD = "grafana-admin-password"  # pragma: allowlist secret
+OWNERSHIP_TOKEN = "namespace-ownership-token"
+NAMESPACE_UID = "namespace-uid"
+MANAGED_BY = "aap-demo-monitoring"
+OWNERSHIP_LABEL = "app.kubernetes.io/managed-by"
+OWNERSHIP_TOKEN_LABEL = "aap-demo-monitoring-token"
 PROMETHEUS_IMAGE = (
     "quay.io/prometheus/prometheus:v3.16.0@sha256:"
     "9332054523223e2ddc18d8101799d54a4a8d823b030c53216f063a6c117773cd"  # pragma: allowlist secret
@@ -85,8 +93,16 @@ def _dashboard() -> dict:
     }
 
 
-def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dict]:
-    ownership = {"app.kubernetes.io/managed-by": "aap-demo-monitoring"}
+def _documents(
+    password: str,
+    aap_password: str,
+    aap_username: str,
+    gateway_url: str,
+    aap_namespace: str,
+    ownership_token: str,
+    gateway_ca: str,
+) -> List[dict]:
+    ownership = {OWNERSHIP_LABEL: MANAGED_BY, OWNERSHIP_TOKEN_LABEL: ownership_token}
     prometheus_config = {
         "global": {"scrape_interval": "30s"},
         "scrape_configs": [
@@ -95,9 +111,7 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
                 "metrics_path": "/probe",
                 "params": {
                     "module": ["aap_jobs"],
-                    "target": [
-                        f"http://aap.{aap_namespace}.svc.cluster.local/api/controller/v2/jobs/?page_size=1"
-                    ],
+                    "target": [f"{gateway_url.rstrip('/')}/api/controller/v2/jobs/?page_size=1"],
                 },
                 "static_configs": [
                     {"targets": ["json-exporter.aap-monitoring.svc.cluster.local:7979"]}
@@ -106,15 +120,18 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
             {"job_name": "prometheus", "static_configs": [{"targets": ["localhost:9090"]}]},
         ],
     }
+    http_client_config = {
+        "basic_auth": {
+            "username": aap_username,
+            "password_file": "/etc/aap-monitoring/aap-password",
+        }
+    }
+    if gateway_ca:
+        http_client_config["tls_config"] = {"ca_file": "/etc/aap-monitoring-ca/ca.crt"}
     exporter_config = {
         "modules": {
             "aap_jobs": {
-                "http_client_config": {
-                    "basic_auth": {
-                        "username": "admin",
-                        "password_file": "/etc/aap-monitoring/aap-password",
-                    }
-                },
+                "http_client_config": http_client_config,
                 "metrics": [
                     {
                         "name": "aap_jobs_total",
@@ -125,7 +142,7 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
             }
         }
     }
-    return [
+    documents = [
         _doc(
             "Namespace",
             NAMESPACE,
@@ -187,7 +204,10 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
             ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=24h"],
         ),
         _deployment(
-            "json-exporter", JSON_EXPORTER_IMAGE, ["--config.file=/etc/json-exporter/config.yml"]
+            "json-exporter",
+            JSON_EXPORTER_IMAGE,
+            ["--config.file=/etc/json-exporter/config.yml"],
+            gateway_ca=bool(gateway_ca),
         ),
         _deployment("grafana", GRAFANA_IMAGE, []),
         _doc(
@@ -199,6 +219,98 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
             "Service",
             "json-exporter",
             spec={"selector": _labels("json-exporter"), "ports": [{"name": "http", "port": 7979}]},
+        ),
+        _doc(
+            "NetworkPolicy",
+            "json-exporter-network",
+            apiVersion="networking.k8s.io/v1",
+            spec={
+                "podSelector": {"matchLabels": _labels("json-exporter")},
+                "policyTypes": ["Ingress", "Egress"],
+                "ingress": [
+                    {
+                        "from": [{"podSelector": {"matchLabels": _labels("prometheus")}}],
+                        "ports": [{"protocol": "TCP", "port": 7979}],
+                    }
+                ],
+                "egress": [
+                    {
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {"kubernetes.io/metadata.name": aap_namespace}
+                                },
+                                "podSelector": {
+                                    "matchLabels": {
+                                        "app.kubernetes.io/component": "aap-gateway",
+                                        "app.kubernetes.io/managed-by": "aap-operator",
+                                    }
+                                },
+                            }
+                        ],
+                        "ports": [
+                            {"protocol": "TCP", "port": 8000},
+                            {"protocol": "TCP", "port": 443},
+                        ],
+                    },
+                    {
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                                },
+                                "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                            }
+                        ],
+                        "ports": [
+                            {"protocol": "UDP", "port": 53},
+                            {"protocol": "TCP", "port": 53},
+                            {"protocol": "UDP", "port": 5353},
+                            {"protocol": "TCP", "port": 5353},
+                        ],
+                    },
+                    {
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {"kubernetes.io/metadata.name": "openshift-dns"}
+                                },
+                                "podSelector": {
+                                    "matchLabels": {
+                                        "dns.operator.openshift.io/daemonset-dns": "default"
+                                    }
+                                },
+                            }
+                        ],
+                        "ports": [
+                            {"protocol": "UDP", "port": 53},
+                            {"protocol": "TCP", "port": 53},
+                            {"protocol": "UDP", "port": 5353},
+                            {"protocol": "TCP", "port": 5353},
+                        ],
+                    },
+                    {
+                        "to": [
+                            {
+                                "namespaceSelector": {
+                                    "matchLabels": {
+                                        "kubernetes.io/metadata.name": "openshift-ingress"
+                                    }
+                                },
+                                "podSelector": {
+                                    "matchLabels": {
+                                        (
+                                            "ingresscontroller.operator.openshift.io/"
+                                            "deployment-ingresscontroller"
+                                        ): "default"
+                                    }
+                                },
+                            }
+                        ],
+                        "ports": [{"protocol": "TCP", "port": 443}],
+                    },
+                ],
+            },
         ),
         _doc(
             "Service",
@@ -216,11 +328,17 @@ def _documents(password: str, aap_password: str, aap_namespace: str) -> List[dic
             },
         ),
     ]
+    if gateway_ca:
+        documents.insert(
+            3,
+            _doc("Secret", "aap-gateway-ca", type="Opaque", stringData={"ca.crt": gateway_ca}),
+        )
+    return documents
 
 
-def _deployment(name: str, image: str, command: List[str]) -> dict:
-    volumes = []
-    mounts = []
+def _deployment(name: str, image: str, command: List[str], *, gateway_ca: bool = False) -> dict:
+    volumes: List[Dict[str, Any]] = []
+    mounts: List[Dict[str, Any]] = []
     if name == "prometheus":
         volumes = [
             {"name": "config", "configMap": {"name": "prometheus-config"}},
@@ -245,6 +363,24 @@ def _deployment(name: str, image: str, command: List[str]) -> dict:
             {"name": "config", "mountPath": "/etc/json-exporter"},
             {"name": "password", "mountPath": "/etc/aap-monitoring", "readOnly": True},
         ]
+        if gateway_ca:
+            volumes.append(
+                {
+                    "name": "ca",
+                    "secret": {
+                        "secretName": "aap-gateway-ca",  # pragma: allowlist secret
+                        "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                    },
+                }
+            )
+            mounts.append(
+                {
+                    "name": "ca",
+                    "mountPath": "/etc/aap-monitoring-ca/ca.crt",
+                    "subPath": "ca.crt",
+                    "readOnly": True,
+                }
+            )
     else:
         volumes = [
             {"name": "dashboard", "configMap": {"name": "grafana-dashboard"}},
@@ -308,6 +444,7 @@ def _deployment(name: str, image: str, command: List[str]) -> dict:
         spec={
             "replicas": 1,
             "selector": {"matchLabels": _labels(name)},
+            **({"strategy": {"type": "Recreate"}} if name == "prometheus" else {}),
             "template": {
                 "metadata": {"labels": _labels(name)},
                 "spec": {
@@ -324,21 +461,96 @@ def _wait_for_readiness(ctx: AppContext) -> None:
     for name in ("prometheus", "json-exporter", "grafana"):
         result = kubectl.run(
             ctx.runner,
-            "wait",
+            "rollout",
+            "status",
             f"deployment/{name}",
-            "--for=condition=Available",
             "--timeout=180s",
             "-n",
             NAMESPACE,
         )
         if result.ok:
-            continue
+            deployment = kube.read_object(ctx, "deployment", name, namespace=NAMESPACE)
+            if deployment and _deployment_is_currently_ready(deployment):
+                continue
         diagnostics = kubectl.run(ctx.runner, "get", "pods", "-n", NAMESPACE, "-o", "wide")
         detail = diagnostics.stdout or diagnostics.stderr or ""
         raise AddonError(
             f"monitoring deployment {name!r} did not become ready",
             hint=detail.strip() or (result.stderr or result.stdout or "").strip() or None,
         )
+
+
+def _deployment_is_currently_ready(deployment: Dict[str, Any]) -> bool:
+    metadata = deployment.get("metadata", {})
+    spec = deployment.get("spec", {})
+    status = deployment.get("status", {})
+    generation = metadata.get("generation")
+    observed = status.get("observedGeneration")
+    replicas = int(spec.get("replicas", 1) or 1)
+    return (
+        generation is not None
+        and observed == generation
+        and int(status.get("replicas", 0) or 0) == replicas
+        and int(status.get("updatedReplicas", 0) or 0) == replicas
+        and int(status.get("readyReplicas", 0) or 0) == replicas
+        and int(status.get("availableReplicas", 0) or 0) == replicas
+    )
+
+
+def _route_host(route: Dict[str, Any] | None) -> str:
+    if not route:
+        return ""
+    ingress = route.get("status", {}).get("ingress") or []
+    for entry in ingress:
+        admitted = any(
+            condition.get("type") == "Admitted" and condition.get("status") == "True"
+            for condition in entry.get("conditions", [])
+        )
+        if admitted and entry.get("host"):
+            return str(entry["host"])
+    return ""
+
+
+def _wait_for_route(ctx: AppContext) -> str:
+    for _ in range(60):
+        route = kube.read_object(ctx, "route", "grafana", namespace=NAMESPACE)
+        host = _route_host(route)
+        if host:
+            return host
+        time.sleep(3)
+    raise AddonError("the Grafana route was not admitted")
+
+
+def _gateway_ca(ctx: AppContext) -> str:
+    secret_name = str(ctx.env.get("AAP_MONITORING_GATEWAY_CA_SECRET") or "router-ca")
+    secret = kube.read_object(ctx, "secret", secret_name, namespace="openshift-ingress-operator")
+    if secret is None:
+        return fetch_cluster_ca(ctx) or ""
+    data = secret.get("data", {})
+    for key in ("tls.crt", "ca.crt"):
+        encoded = data.get(key)
+        if encoded:
+            try:
+                return base64.b64decode(encoded).decode("utf-8")
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise AddonError("the OpenShift ingress CA Secret is invalid") from exc
+    raise AddonError(
+        f"the OpenShift ingress CA Secret {secret_name!r} has no tls.crt or ca.crt data"
+    )
+
+
+def _namespace_uid_path(state_dir: Path) -> Path:
+    return state_dir / NAMESPACE_UID
+
+
+def _persist_namespace_uid(namespace: Dict[str, Any], uid_path: Path) -> str:
+    uid = str(namespace.get("metadata", {}).get("uid") or "")
+    if not uid:
+        raise AddonError("monitoring namespace has no stable UID")
+    uid_path.parent.mkdir(parents=True, exist_ok=True)
+    uid_path.write_text(uid + "\n", encoding="utf-8")
+    uid_path.chmod(0o600)
+    return uid
 
 
 class MonitoringAddon:
@@ -356,6 +568,19 @@ class MonitoringAddon:
         if actions:
             raise AddonError(f"unsupported monitoring action: {actions[0]}")
         state_dir = ctx.paths.addon_dir(NAME)
+        namespace = kube.read_object(ctx, "namespace", NAMESPACE)
+        ownership_token_path = state_dir / OWNERSHIP_TOKEN
+        namespace_uid_path = _namespace_uid_path(state_dir)
+        if namespace is not None:
+            _verify_namespace_ownership(
+                namespace, ownership_token_path, namespace_uid_path, recover_uid=True
+            )
+            ownership_token = ownership_token_path.read_text(encoding="utf-8").strip()
+        else:
+            ownership_token = secrets.token_hex(16)
+            state_dir.mkdir(parents=True, exist_ok=True)
+            ownership_token_path.write_text(ownership_token + "\n", encoding="utf-8")
+            ownership_token_path.chmod(0o600)
         state_dir.mkdir(parents=True, exist_ok=True)
         password_path = state_dir / STATE_PASSWORD
         password = (
@@ -366,21 +591,60 @@ class MonitoringAddon:
         if not password_path.exists():
             password_path.write_text(password + "\n", encoding="utf-8")
             password_path.chmod(0o600)
-        aap_password = _aap_password(ctx)
-        documents = _documents(password, aap_password, ctx.namespace)
+        aap_password, aap_username, gateway_url = _gateway_credential(ctx)
+        gateway_ca = _gateway_ca(ctx)
+        documents = _documents(
+            password,
+            aap_password,
+            aap_username,
+            gateway_url,
+            ctx.namespace,
+            ownership_token,
+            gateway_ca,
+        )
+        if namespace is None:
+            created = kubectl.run(
+                ctx.runner, "create", "-f", "-", "-o", "json", input=_manifest([documents[0]])
+            )
+            if created.ok:
+                try:
+                    created_namespace = json.loads(created.stdout or "{}")
+                except json.JSONDecodeError:
+                    created_namespace = {}
+                if not isinstance(created_namespace, dict) or not created_namespace.get(
+                    "metadata", {}
+                ).get("uid"):
+                    created_namespace = kube.read_object(ctx, "namespace", NAMESPACE) or {}
+                _persist_namespace_uid(created_namespace, namespace_uid_path)
+                namespace = created_namespace
+            else:
+                existing = kube.read_object(ctx, "namespace", NAMESPACE)
+                if existing is None:
+                    raise AddonError(
+                        "could not create the monitoring namespace",
+                        hint=(created.stderr or created.stdout or "").strip() or None,
+                    )
+                _verify_namespace_ownership(
+                    existing, ownership_token_path, namespace_uid_path, recover_uid=True
+                )
+                namespace = existing
+        pull_secret.ensure(ctx, NAMESPACE)
         kube.apply_or_raise(
             ctx,
-            _manifest([documents[0]]),
-            message="could not create the monitoring namespace",
-        )
-        pull_secret.ensure(ctx, NAMESPACE)
-        result = kube.apply_or_raise(
-            ctx,
-            _manifest(documents),
+            _manifest(documents if namespace is None else documents[1:]),
             message="could not install monitoring addon",
         )
-        del result
+        for name in ("prometheus", "json-exporter"):
+            result = kubectl.run(
+                ctx.runner, "rollout", "restart", f"deployment/{name}", "-n", NAMESPACE
+            )
+            if not result.ok:
+                raise AddonError(
+                    f"could not restart monitoring deployment {name!r}",
+                    hint=(result.stderr or result.stdout or "").strip() or None,
+                )
         _wait_for_readiness(ctx)
+        _wait_for_route(ctx)
         names = enabled_names(ctx)
         if NAME not in names:
             names.append(NAME)
@@ -391,26 +655,33 @@ class MonitoringAddon:
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
         namespace = kube.read_object(ctx, "namespace", NAMESPACE)
-        if namespace is not None:
-            labels = namespace.get("metadata", {}).get("labels", {})
-            if labels.get("app.kubernetes.io/managed-by") != "aap-demo-monitoring":
-                raise AddonError(
-                    f"refusing to delete unowned namespace {NAMESPACE!r}",
-                    hint="The namespace is not labeled as managed by the monitoring addon.",
-                )
-        result = kubectl.delete(ctx.runner, "namespace", NAMESPACE, "--ignore-not-found")
+        if namespace is None:
+            _remove_state(ctx)
+            set_enabled_names(ctx, [name for name in enabled_names(ctx) if name != NAME], save=True)
+            _say(ctx, "Monitoring disabled", namespace=NAMESPACE)
+            return 0
+        state_dir = ctx.paths.addon_dir(NAME)
+        _verify_namespace_ownership(
+            namespace, state_dir / OWNERSHIP_TOKEN, state_dir / NAMESPACE_UID
+        )
+        uid = namespace.get("metadata", {}).get("uid")
+        result = ctx.runner.run(
+            ["kubectl", "delete", "--raw", f"/api/v1/namespaces/{NAMESPACE}", "-f", "-"],
+            input=json.dumps(
+                {
+                    "apiVersion": "v1",
+                    "kind": "DeleteOptions",
+                    "preconditions": {"uid": uid},
+                }
+            ),
+        )
         if not result.ok:
             raise AddonError(
                 "could not remove monitoring addon",
                 hint=(result.stderr or result.stdout or "").strip(),
             )
         set_enabled_names(ctx, [name for name in enabled_names(ctx) if name != NAME], save=True)
-        state_dir = ctx.paths.addon_dir(NAME)
-        if state_dir.exists():
-            for child in state_dir.iterdir():
-                if child.is_file():
-                    child.unlink()
-            state_dir.rmdir()
+        _remove_state(ctx)
         _say(ctx, "Monitoring disabled", namespace=NAMESPACE)
         return 0
 
@@ -421,12 +692,11 @@ class MonitoringAddon:
         if namespace:
             for name in ("prometheus", "json-exporter", "grafana"):
                 deployment = kube.read_object(ctx, "deployment", name, namespace=NAMESPACE)
-                status = deployment.get("status", {}) if deployment else {}
-                deployment_states[name] = bool(status.get("availableReplicas", 0) >= 1)
-        ready = bool(namespace) and all(deployment_states.values())
-        route = kubectl.jsonpath(
-            ctx.runner, "route", "grafana", "-n", NAMESPACE, path="{.spec.host}"
-        )
+                deployment_states[name] = bool(
+                    deployment and _deployment_is_currently_ready(deployment)
+                )
+        route = _route_host(kube.read_object(ctx, "route", "grafana", namespace=NAMESPACE))
+        ready = bool(namespace) and all(deployment_states.values()) and bool(route)
         _say(
             ctx,
             "Monitoring status",
@@ -451,28 +721,67 @@ def _say(ctx: AppContext, message: str, **fields: object) -> None:
                 ctx.console.out(f"{key}: {value}")
 
 
-def _aap_password(ctx: AppContext) -> str:
-    """Copy the existing AAP password into the addon namespace Secret."""
-    result = ctx.runner.run(
-        [
-            "kubectl",
-            "get",
-            "secret",
-            "aap-admin-password",
-            "-n",
-            ctx.namespace,
-            "-o",
-            "json",
-        ]
-    )
-    if not result.ok:
+def _verify_namespace_ownership(
+    namespace: Dict[str, Any], token_path: Path, uid_path: Path, *, recover_uid: bool = False
+) -> None:
+    metadata = namespace.get("metadata", {})
+    labels = metadata.get("labels", {})
+    if labels.get(OWNERSHIP_LABEL) != MANAGED_BY:
         raise AddonError(
-            "could not read the AAP admin password Secret",
-            hint=(result.stderr or result.stdout or "").strip() or None,
+            f"refusing to use unowned namespace {NAMESPACE!r}",
+            hint="The namespace is not labeled as managed by the monitoring addon.",
         )
+    if (
+        not token_path.exists()
+        or labels.get(OWNERSHIP_TOKEN_LABEL) != token_path.read_text(encoding="utf-8").strip()
+    ):
+        raise AddonError(
+            f"refusing to use unowned namespace {NAMESPACE!r}",
+            hint="The monitoring ownership token does not match.",
+        )
+    actual_uid = str(metadata.get("uid") or "")
+    if recover_uid and not uid_path.exists() and actual_uid:
+        _persist_namespace_uid(namespace, uid_path)
+        return
+    if not uid_path.exists() or actual_uid != uid_path.read_text(encoding="utf-8").strip():
+        raise AddonError(
+            f"refusing to use unowned namespace {NAMESPACE!r}",
+            hint="The monitoring namespace UID does not match.",
+        )
+
+
+def _remove_state(ctx: AppContext) -> None:
+    state_dir = ctx.paths.addon_dir(NAME)
+    if state_dir.exists():
+        for child in state_dir.iterdir():
+            if child.is_file():
+                child.unlink()
+        state_dir.rmdir()
+
+
+def _gateway_credential(ctx: AppContext) -> tuple[str, str, str]:
+    """Read an explicitly supplied least-privilege HTTPS Gateway credential."""
+    secret_name = str(ctx.env.get("AAP_MONITORING_CREDENTIAL_SECRET") or "")
+    gateway_url = str(ctx.env.get("AAP_MONITORING_GATEWAY_URL") or "")
+    if not secret_name or not gateway_url.startswith("https://"):
+        raise AddonError(
+            "monitoring needs a read-only HTTPS Gateway credential",
+            hint=(
+                "Set AAP_MONITORING_CREDENTIAL_SECRET to a Secret in the AAP namespace "
+                "and AAP_MONITORING_GATEWAY_URL to its HTTPS Gateway URL."
+            ),
+        )
+    key = str(ctx.env.get("AAP_MONITORING_CREDENTIAL_KEY") or "password")
+    username_key = str(ctx.env.get("AAP_MONITORING_CREDENTIAL_USERNAME_KEY") or "username")
+    secret = kube.read_object(ctx, "secret", secret_name, namespace=ctx.namespace)
+    if secret is None:
+        raise AddonError(f"monitoring credential Secret {secret_name!r} was not found")
     try:
-        document = json.loads(result.stdout or "{}")
-        encoded = document["data"]["password"]
-        return base64.b64decode(encoded).decode("utf-8")
+        data = secret["data"]
+        password = base64.b64decode(data[key]).decode("utf-8")
+        username = base64.b64decode(data[username_key]).decode("utf-8")
+        return password, username, gateway_url
     except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
-        raise AddonError("AAP admin password Secret has no usable password") from exc
+        raise AddonError(
+            f"monitoring credential Secret has no usable {key!r} and {username_key!r} data"
+        ) from exc
