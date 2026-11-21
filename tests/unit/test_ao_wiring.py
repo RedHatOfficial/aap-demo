@@ -323,6 +323,7 @@ def test_external_llm_allows_http_only_for_an_http_url(app_ctx, url, allow_http)
     config = _created_config(http)
     assert config["base_url"] == url
     assert (config["allow_http"], config["insecure_skip_tls_verify"]) == (allow_http, False)
+    assert ("sends the API key unencrypted" in app_ctx.console.stderr) is allow_http
 
 
 @pytest.mark.parametrize(

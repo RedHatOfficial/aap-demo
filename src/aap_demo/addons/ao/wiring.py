@@ -516,6 +516,11 @@ def wire_llm(ctx: AppContext, ao: AoClient) -> None:
     else:
         ctx.console.info("Wiring Automation Orchestrator to the external LLM provider...")
         key = llm_mod.api_key(ctx)
+        if key and settings.base_url.startswith("http://"):
+            ctx.console.warn(
+                f"{settings.base_url} is plain HTTP, so AO sends the API key unencrypted. "
+                "Use an https:// URL unless the service is on a network you trust."
+            )
         _wire_llm(
             ao, settings.integration, config, {"api_key": key} if key else None, settings.model
         )
