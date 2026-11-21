@@ -66,10 +66,29 @@ def _client(routes: Dict[str, Handler]) -> Tuple[AoClient, FakeHttp]:
 # -- LLM settings -------------------------------------------------------------------
 
 
-def test_llm_defaults_to_ollama(app_ctx) -> None:
+def test_llm_defaults_to_the_hosts_ollama_with_no_model(app_ctx) -> None:
     settings = llm.settings(app_ctx)
-    assert (settings.provider, settings.model) == ("ollama", llm.DEFAULT_OLLAMA_MODEL)
+    assert (settings.provider, settings.model) == ("ollama", "")
+    assert settings.base_url == "http://192.168.127.254:11434/v1"
     assert settings.integration == "aap-demo Ollama"
+
+
+def test_ollama_model_comes_from_the_environment_then_config(app_ctx) -> None:
+    app_ctx.config.set("addons.options", {"ao": {"ollama_model": "saved:1b"}})
+    assert llm.settings(app_ctx).model == "saved:1b"
+    app_ctx.env = {"OLLAMA_MODEL": "env:7b"}
+    assert llm.settings(app_ctx).model == "env:7b"
+
+
+def test_ollama_ignores_the_external_providers_saved_url_and_model(app_ctx) -> None:
+    app_ctx.config.set(
+        "addons.options",
+        {"ao": {"llm_base_url": "https://api.example/v1", "llm_model": "gpt-x"}},
+    )
+    settings = llm.settings(app_ctx)
+    assert (settings.base_url, settings.model) == ("http://192.168.127.254:11434/v1", "")
+    app_ctx.env = {"AO_LLM_BASE_URL": "http://10.0.0.5:11434/v1"}
+    assert llm.settings(app_ctx).base_url == "http://10.0.0.5:11434/v1"
 
 
 def test_llm_reads_the_bash_config(app_ctx) -> None:
@@ -213,6 +232,7 @@ def test_a_cursor_that_never_ends_stops_at_the_page_limit() -> None:
 
 
 def test_rebind_updates_only_aap_demo_agentic_nodes(app_ctx) -> None:
+    app_ctx.env = {"OLLAMA_MODEL": "granite:8b"}
     workflow = {
         "id": "w1",
         "labels": {"aap-demo": "true"},
@@ -229,7 +249,7 @@ def test_rebind_updates_only_aap_demo_agentic_nodes(app_ctx) -> None:
             "GET /credentials": _reply({"resources": [{"id": "c1", "name": "aap-demo Ollama"}]}),
             "GET /integrations?": _reply({"resources": [{"id": "i1", "name": "aap-demo Ollama"}]}),
             "GET /integrations/i1/models": _reply(
-                {"resources": [{"id": "m1", "model_id": llm.DEFAULT_OLLAMA_MODEL}]}
+                {"resources": [{"id": "m1", "model_id": "granite:8b"}]}
             ),
             "GET /workflows": _reply({"resources": [workflow, other]}),
             "PATCH /workflows/w1": _reply({"id": "w1"}),
@@ -258,15 +278,71 @@ def test_rebind_warns_when_the_model_is_missing(app_ctx) -> None:
     assert "workflow rebinding skipped" in app_ctx.console.stderr + app_ctx.console.stdout
 
 
-def test_wire_llm_without_ollama_only_warns(app_ctx) -> None:
+def test_wire_llm_without_an_ollama_model_only_warns(app_ctx) -> None:
     ao, http = _client({})
-    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
-    wiring.wire_llm(app_ctx, ao, routes)
+    wiring.wire_llm(app_ctx, ao)
     assert http.calls == []
+    assert "No Ollama model chosen" in app_ctx.console.stderr
+
+
+def _llm_routes(model: str) -> Dict[str, Handler]:
+    return {
+        "GET /credentials": _reply({"resources": []}),
+        "POST /projects/p1/credentials": _reply({"id": "c1"}),
+        "GET /integrations?": _reply({"resources": []}),
+        "POST /integrations/i1/validate": _reply({}),
+        "POST /integrations/i1/refresh": _reply({}),
+        "GET /integrations/i1/models": _reply({"resources": [{"id": "m1", "model_id": model}]}),
+        "PATCH /integrations/i1/models/m1": _reply({}),
+        "POST /integrations": _reply({"id": "i1"}),
+    }
+
+
+def _created_config(http: "FakeHttp") -> Dict[str, Any]:
+    [body] = [b for m, p, b in http.calls if m == "POST" and p == "/integrations"]
+    return body["configuration"]
+
+
+def test_wire_llm_points_ao_at_the_hosts_ollama_over_http(app_ctx) -> None:
+    app_ctx.env = {"OLLAMA_MODEL": "granite:8b"}
+    ao, http = _client(_llm_routes("granite:8b"))
+    wiring.wire_llm(app_ctx, ao)
+    config = _created_config(http)
+    assert config["base_url"] == "http://192.168.127.254:11434/v1"
+    assert (config["allow_http"], config["insecure_skip_tls_verify"]) == (True, False)
+    assert http.sent("POST", "/projects/p1/credentials")[0]["inputs"] == wiring.OLLAMA_INPUTS
+
+
+@pytest.mark.parametrize(
+    ("url", "allow_http"), [("http://llm.lan:8000/v1", True), ("https://api.x/v1", False)]
+)
+def test_external_llm_allows_http_only_for_an_http_url(app_ctx, url, allow_http) -> None:
+    app_ctx.env = {"AO_LLM_PROVIDER": "external", "AO_LLM_BASE_URL": url, "AO_LLM_API_KEY": "k"}
+    ao, http = _client(_llm_routes("gpt-6-luna"))
+    wiring.wire_llm(app_ctx, ao)
+    config = _created_config(http)
+    assert config["base_url"] == url
+    assert (config["allow_http"], config["insecure_skip_tls_verify"]) == (allow_http, False)
+    assert ("sends the API key unencrypted" in app_ctx.console.stderr) is allow_http
+
+
+@pytest.mark.parametrize(
+    ("env", "host"),
+    [
+        ({}, "192.168.127.254"),
+        ({"AO_LLM_PROVIDER": "external", "AO_LLM_BASE_URL": "http://llm.lan:8000/v1"}, "llm.lan"),
+        ({"AO_LLM_PROVIDER": "none"}, ""),
+    ],
+)
+def test_the_llm_host_joins_the_allow_list(app_ctx, env, host) -> None:
+    app_ctx.env = env
+    assert wiring.llm_host(app_ctx) == host
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", llm=host)
+    assert (host in wiring.allowed_hosts(routes, "aap-operator")) is bool(host)
 
 
 def test_allowed_hosts_are_unique_and_skip_blanks() -> None:
-    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="aap.x")
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", llm="aap.x")
     assert wiring.allowed_hosts(routes, "aap-operator") == [
         "aap.x",
         "ao.x",
@@ -340,7 +416,7 @@ def _deployment(hosts, *, oidc=True):
 
 
 def test_allow_list_is_patched_when_only_a_worker_is_missing_it(app_ctx) -> None:
-    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="")
     hosts = wiring.allowed_hosts(routes, "aap-operator")
     app_ctx.runner = (
         FakeRunner()
@@ -355,7 +431,7 @@ def test_allow_list_is_patched_when_only_a_worker_is_missing_it(app_ctx) -> None
 
 
 def test_allow_list_already_on_every_caller_is_left_alone(app_ctx) -> None:
-    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="")
     hosts = wiring.allowed_hosts(routes, "aap-operator")
     app_ctx.runner = FakeRunner().ok("kubectl get deployment", _deployment(hosts))
     wiring.network_access(app_ctx, routes, "aap-operator", sleep=lambda _s: None)
@@ -363,7 +439,7 @@ def test_allow_list_already_on_every_caller_is_left_alone(app_ctx) -> None:
 
 
 def test_backend_without_private_network_oidc_is_patched(app_ctx) -> None:
-    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="")
     hosts = wiring.allowed_hosts(routes, "aap-operator")
     app_ctx.runner = (
         FakeRunner()
@@ -380,7 +456,7 @@ def test_backend_without_private_network_oidc_is_patched(app_ctx) -> None:
 
 
 def test_a_failed_caller_patch_is_reported(app_ctx) -> None:
-    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="")
     app_ctx.runner = (
         FakeRunner()
         .ok("kubectl get deployment", _deployment(None))
@@ -393,7 +469,7 @@ def test_a_failed_caller_patch_is_reported(app_ctx) -> None:
 
 
 def test_an_unreadable_caller_is_not_treated_as_configured(app_ctx) -> None:
-    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="", ollama="")
+    routes = wiring.Routes(aap="aap.x", ao="ao.x", mcp="")
     hosts = wiring.allowed_hosts(routes, "aap-operator")
     app_ctx.runner = (
         FakeRunner()

@@ -9,13 +9,14 @@ from __future__ import annotations
 import base64
 import json
 import time
+import urllib.parse
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from aap_demo.addons.ao import llm as llm_mod
 from aap_demo.addons.ao.admin import SECRET as ADMIN_SECRET
 from aap_demo.addons.ao.api import AoClient, Http, Response, aap_token, error_text, quote
-from aap_demo.addons.ao.instance import CALLERS, OLLAMA_NAMESPACE
+from aap_demo.addons.ao.instance import CALLERS
 from aap_demo.addons.ao.postgres import NAMESPACE
 from aap_demo.addons.common.kube import as_dict
 from aap_demo.cluster import ingress_ca
@@ -55,7 +56,8 @@ class Routes:
     aap: str
     ao: str
     mcp: str
-    ollama: str
+    #: The LLM URL's host, when AO uses one, so the allow-list admits it.
+    llm: str = ""
     #: The cluster ingress CA that signs these routes, or "" when unreadable.
     ca: str = ""
 
@@ -78,10 +80,16 @@ class Routes:
             aap=aap,
             ao=kubectl.jsonpath(ctx.runner, "route", "-n", NAMESPACE, path="{.items[0].spec.host}"),
             mcp=mcp,
-            ollama=kubectl.jsonpath(
-                ctx.runner, "route", "ollama", "-n", OLLAMA_NAMESPACE, path="{.spec.host}"
-            ),
+            llm=llm_host(ctx),
         )
+
+
+def llm_host(ctx: AppContext) -> str:
+    """The host of the LLM URL AO calls, or "" with no LLM."""
+    settings = llm_mod.settings(ctx)
+    if settings.provider == "none":
+        return ""
+    return urllib.parse.urlparse(settings.base_url).hostname or ""
 
 
 # -- network access -----------------------------------------------------------------
@@ -94,7 +102,7 @@ def allowed_hosts(routes: Routes, aap_namespace: str) -> List[str]:
         f"aap.{aap_namespace}.svc.cluster.local",
         f"aap-mcp-server.{aap_namespace}.svc.cluster.local",
         routes.mcp,
-        routes.ollama,
+        routes.llm,
     ]
     unique: List[str] = []
     for host in hosts:
@@ -131,7 +139,7 @@ def _allowed(container: Dict[str, Any]) -> List[str]:
 def network_access(
     ctx: AppContext, routes: Routes, aap_namespace: str, *, sleep: Sleep = time.sleep
 ) -> None:
-    """Put AAP, AO, MCP and Ollama hosts on AO's integration allow-list."""
+    """Put the AAP, AO, MCP and LLM hosts on AO's integration allow-list."""
     hosts = allowed_hosts(routes, aap_namespace)
     containers = {name: _container_env(ctx, name) for name in CALLERS}
     if containers["automation-orchestrator-backend"] is None:
@@ -182,7 +190,7 @@ def network_access(
     for deployment in failed:
         ctx.console.warn(
             f"Could not set the integration allow-list on {deployment}; it may not reach "
-            "AAP, MCP or Ollama. Run aap-demo enable ao again."
+            "AAP, MCP or the LLM. Run aap-demo enable ao again."
         )
     if not patched:
         return
@@ -362,6 +370,11 @@ def _tls(url: str, ca: str) -> Dict[str, Any]:
     return settings
 
 
+def _llm_tls(url: str) -> Dict[str, Any]:
+    """Plain HTTP only when the URL asks for it; HTTPS is always verified."""
+    return {"allow_http": url.startswith("http://"), "insecure_skip_tls_verify": False}
+
+
 def _plain_config(kind: str, url: str, ca: str) -> Dict[str, Any]:
     return {"integration_type": kind, "base_url": url, **_tls(url, ca)}
 
@@ -481,34 +494,33 @@ def _wire_llm(
     return integration
 
 
-def wire_llm(ctx: AppContext, ao: AoClient, routes: Routes) -> None:
+def wire_llm(ctx: AppContext, ao: AoClient) -> None:
     settings = llm_mod.settings(ctx)
     if settings.provider == "none":
         ctx.console.info("Skipping AO LLM provider wiring (none selected)")
         return
+    config = {
+        "integration_type": "llm_provider",
+        "provider_hint": "custom",
+        "base_url": settings.base_url,
+        **_llm_tls(settings.base_url),
+    }
     if settings.provider == "ollama":
-        if not routes.ollama:
-            ctx.console.warn("Ollama is not deployed; skipping AO LLM wiring")
+        if not settings.model:
+            ctx.console.warn("No Ollama model chosen; skipping AO LLM wiring")
             return
-        ctx.console.info("Wiring Automation Orchestrator to the Ollama LLM provider...")
-        url = f"https://{routes.ollama}/v1"
-        config = {
-            "integration_type": "llm_provider",
-            "provider_hint": "custom",
-            "base_url": url,
-            **_tls(url, routes.ca),
-        }
+        ctx.console.info(
+            f"Wiring Automation Orchestrator to the host's Ollama ({settings.model})..."
+        )
         _wire_llm(ao, settings.integration, config, OLLAMA_INPUTS, settings.model)
     else:
         ctx.console.info("Wiring Automation Orchestrator to the external LLM provider...")
-        config = {
-            "integration_type": "llm_provider",
-            "provider_hint": "custom",
-            "base_url": settings.base_url,
-            "allow_http": False,
-            "insecure_skip_tls_verify": False,
-        }
         key = llm_mod.api_key(ctx)
+        if key and settings.base_url.startswith("http://"):
+            ctx.console.warn(
+                f"{settings.base_url} is plain HTTP, so AO sends the API key unencrypted. "
+                "Use an https:// URL unless the service is on a network you trust."
+            )
         _wire_llm(
             ao, settings.integration, config, {"api_key": key} if key else None, settings.model
         )
@@ -621,7 +633,7 @@ def wire(
     if not routes.ca:
         ctx.console.warn(
             "Could not read the cluster ingress CA; AO's integrations will not verify "
-            "the AAP, MCP and Ollama route certificates."
+            "the AAP and MCP route certificates."
         )
     context = http.context if http is not None else tls_context(ctx, routes.ca)
     client = http or Http(context=context)
@@ -631,7 +643,7 @@ def wire(
         wire_aap(ctx, ao, client, routes, aap_namespace)
     wire_mcp(ctx, ao, client, routes, aap_namespace, sleep=sleep)
     try:
-        wire_llm(ctx, ao, routes)
+        wire_llm(ctx, ao)
     except AddonError as exc:
         ctx.console.warn(f"AO LLM provider wiring skipped: {exc.message}")
     rebind_workflows(ctx, ao)

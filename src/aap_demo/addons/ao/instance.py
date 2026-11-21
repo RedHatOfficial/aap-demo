@@ -19,7 +19,6 @@ NAME = "automation-orchestrator"
 SETTINGS = "automation-orchestrator-admin-settings"
 NETWORK_POLICY = "automation-orchestrator-allow-aap"
 DEFAULT_DOMAIN = "apps.127.0.0.1.nip.io"
-OLLAMA_NAMESPACE = "aap-demo-ollama"
 READY_TIMEOUT = 1200
 READY_INTERVAL = 10
 #: Workloads that call AAP and need the allow-list and hostAliases.
@@ -207,10 +206,6 @@ def _route_hosts(ctx: AppContext, aap_namespace: str) -> List[str]:
         ctx.runner, "route", "-n", aap_namespace, path='{range .items[*]}{.spec.host}{"\\n"}{end}'
     )
     hosts.extend(h for h in listed.splitlines() if "mcp" in h)
-    # Ollama too, so LLM calls survive the CoreDNS rewrite being wiped.
-    hosts.append(
-        kubectl.jsonpath(ctx.runner, "route", "ollama", "-n", OLLAMA_NAMESPACE, path="{.spec.host}")
-    )
     unique: List[str] = []
     for host in (h.strip() for h in hosts):
         if host and host not in unique:
