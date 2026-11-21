@@ -44,6 +44,9 @@ NIPIO_DOMAIN = "127.0.0.1.nip.io"
 METRICS_APPLY_RETRIES = 2
 METRICS_APPLY_RETRY_SECONDS = 15
 
+#: CRC uses user-mode networking here, where host-network-access applies.
+HOST_NETWORK_SYSTEMS = ("Darwin", "Windows")
+
 HostResources = Tuple[int, int]
 
 
@@ -724,6 +727,15 @@ def _create(
 
     ctx.runner.run(["crc", "config", "set", "preset", "microshift"])
     ctx.console.progress("CRC preset: microshift")
+
+    if state == infra_crc.STATE_NOT_CREATED and platform.system() in HOST_NETWORK_SYSTEMS:
+        # Lets pods reach the host, such as AO's Ollama (ADR-046). CRC applies
+        # it only to a VM it creates after crc setup.
+        ctx.runner.run(["crc", "config", "set", "host-network-access", "true"])
+        ctx.console.progress("CRC host network access: on")
+        ctx.console.note(
+            "Pods in the VM can reach services on this host's 127.0.0.1, such as Ollama."
+        )
 
     if state == infra_crc.STATE_NOT_CREATED:
         ctx.console.progress("Running CRC setup...")

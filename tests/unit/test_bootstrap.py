@@ -109,6 +109,26 @@ def _prepare(
     return runner
 
 
+@pytest.mark.parametrize("supported", [True, False])
+def test_a_new_vm_gets_host_network_access_where_crc_supports_it(
+    app_ctx, tmp_path, monkeypatch, supported
+) -> None:
+    import platform
+
+    systems = (platform.system(),) if supported else ()
+    monkeypatch.setattr(bootstrap, "HOST_NETWORK_SYSTEMS", systems)
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    setting = "crc config set host-network-access true"
+    assert runner.called(setting) is supported
+    if supported:
+        # CRC reads it when crc setup runs, before the VM exists.
+        assert runner.index_of(setting) < runner.index_of("crc setup")
+        assert "can reach services on this host" in app_ctx.console.stdout + app_ctx.console.stderr
+
+
 def test_create_refuses_a_cluster_that_is_already_running(app_ctx, tmp_path) -> None:
     _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Running"}')
     try:

@@ -233,7 +233,6 @@ def test_enable_with_no_name_lists_fleet_and_product_demos() -> None:
         "local-cache",
         "mcp-server",
         "monitoring",
-        "ollama",
         "opa",
         "product-demo-satellite",
         "product-demos",

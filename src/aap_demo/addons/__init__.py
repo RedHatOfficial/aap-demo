@@ -1,8 +1,9 @@
 """Addon registry: one table of every addon the Python command can enable.
 
 ``fleet``, ``monitoring``, ``opa`` and ``ao`` are native Python. Product demos,
-EDA Playground, mcp-server and ollama run their bundled bash installers
-(``kind == "legacy"``). Any other name is an error that points at the older
+EDA Playground and mcp-server run their bundled bash installers
+(``kind == "legacy"``). ``ollama`` only removes the in-cluster Ollama of earlier
+releases (ADR-046). Any other name is an error that points at the older
 command. See ADR-040.
 """
 
@@ -16,6 +17,7 @@ from aap_demo.addons.fleet import FleetAddon
 from aap_demo.addons.keycloak import KeycloakAddon
 from aap_demo.addons.local_cache import LocalCacheAddon
 from aap_demo.addons.monitoring import MonitoringAddon
+from aap_demo.addons.ollama import OllamaCleanup
 from aap_demo.addons.opa import OpaAddon
 from aap_demo.addons.shell import BUNDLED_ADDON_DIRS, ShellAddon
 from aap_demo.core.errors import AddonError
@@ -44,15 +46,8 @@ _MCP_SERVER = ShellAddon(
     dependencies=(),
     self_wire=True,
 )
-_OLLAMA = ShellAddon(
-    "ollama",
-    required_tools=_KUBE_TOOLS,
-    delete_tools=("bash", "kubectl"),
-    wire_after_enable=False,
-    dependencies=(),
-    self_wire=True,
-)
-_CUSTOM_SHELL = {a.name: a for a in (_EDA_PLAYGROUND, _MCP_SERVER, _OLLAMA)}
+_OLLAMA = OllamaCleanup()
+_CUSTOM_SHELL = {a.name: a for a in (_EDA_PLAYGROUND, _MCP_SERVER)}
 
 _REGISTRY: Dict[str, Addon] = {
     _FLEET.name: _FLEET,
@@ -60,6 +55,7 @@ _REGISTRY: Dict[str, Addon] = {
     _OPA.name: _OPA,
     _LOCAL_CACHE.name: _LOCAL_CACHE,
     _KEYCLOAK.name: _KEYCLOAK,
+    _OLLAMA.name: _OLLAMA,
     **{
         name: _CUSTOM_SHELL.get(name) or ShellAddon(name)
         for name in BUNDLED_ADDON_DIRS

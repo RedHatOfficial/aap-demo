@@ -154,27 +154,58 @@ aap-demo enable product-demos   # optional, before AO
 aap-demo enable ao
 ```
 
-AO needs two other add-ons, and `enable ao` installs them first when they are missing:
-
-- `mcp-server`, the MCP server for AAP.
-- `ollama`, a local model for AO's agentic demos.
+AO needs the `mcp-server` add-on, the MCP server for AAP, and `enable ao` installs it first when it is
+missing.
 
 AO links its workflows to the product demos' job templates when it installs. When no product demos are
 enabled, `enable ao` says so and carries on. Enable them and run `aap-demo enable ao` again to link them later.
 
-The new command does not ask which model to use. Set `AO_LLM_PROVIDER` instead:
+Set `AO_LLM_PROVIDER` to choose the model AO's agentic demos use:
 
 | `AO_LLM_PROVIDER` | Model |
 |---|---|
-| `ollama` (default) | The local `ollama` add-on |
+| `ollama` (default) | Ollama running on this machine (see below) |
 | `external` | An OpenAI-compatible service (see below) |
 | `none` | No model. The agentic demos are unavailable |
 
 For `external`, set `AO_LLM_BASE_URL` and `AO_LLM_MODEL`, and set `AO_LLM_API_KEY` once. The key is kept in
 the new command's state directory for later runs. A key or settings the older command saved are picked up.
+An `http://` URL is allowed, and the URL's host is added to AO's integration allow-list.
 
-For `ollama`, set `OLLAMA_MODEL` to change the model. `AO_LLM_MODEL` applies only to `external`, so AO never
-selects a model the `ollama` add-on did not pull.
+### Ollama on this machine
+
+AO uses Ollama running on the host, not in the cluster, so it can use the Mac's GPU and keep the VM small
+([ADR-046](../adr/046-ao-host-ollama.md)). aap-demo does not install Ollama or download models. You choose
+a model and accept its license.
+
+1. Install Ollama from [ollama.com](https://ollama.com/download), or `brew install ollama` on macOS, and
+   start it.
+2. Pull a model that supports tools, which AO's agents call. Some choices:
+
+   | Model | License |
+   |---|---|
+   | `granite3.3:8b` | Apache 2.0 |
+   | `qwen3:8b` | Apache 2.0 |
+   | `llama3.1:8b` | Llama 3.1 Community License |
+
+   ```bash
+   ollama pull granite3.3:8b
+   ```
+
+3. Run `aap-demo enable ao`.
+
+`enable ao` checks that Ollama answers on `127.0.0.1:11434` and that the cluster reaches it before it
+installs anything. With one model pulled, it uses that one. With several, it asks in a terminal, or set
+`OLLAMA_MODEL`. The choice is saved for later runs; set `OLLAMA_MODEL` again to change it. It warns when the
+model does not list tool support.
+
+Pods reach the host through CRC's `host-network-access`, which `aap-demo create` turns on for a new VM on
+macOS and Windows. A VM created before this needs `aap-demo destroy`, then `aap-demo create`. With it on,
+pods in the VM can reach any service that listens on the host's `127.0.0.1`, not only Ollama. On Linux, CRC
+has no such setting: make Ollama listen on the libvirt bridge (`OLLAMA_HOST`) and set `AO_LLM_BASE_URL` to
+that address with `/v1`, or use `external`.
+
+Earlier releases ran Ollama in the cluster. `aap-demo disable ollama` removes that install.
 
 To reinstall AO, run `aap-demo enable ao --force`. To remove it:
 
@@ -183,7 +214,7 @@ aap-demo disable ao
 AO_PURGE_DATA=1 aap-demo disable ao   # also remove its database and saved admin password
 ```
 
-`disable ao` leaves `mcp-server` and `ollama` installed. Disable them by name.
+`disable ao` leaves `mcp-server` installed. Disable it by name.
 
 ## Local image cache
 

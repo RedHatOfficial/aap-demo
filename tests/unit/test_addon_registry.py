@@ -40,7 +40,6 @@ def test_kinds_and_listed_names() -> None:
         "local-cache",
         "mcp-server",
         "monitoring",
-        "ollama",
         "opa",
         "product-demo-satellite",
         "product-demos",

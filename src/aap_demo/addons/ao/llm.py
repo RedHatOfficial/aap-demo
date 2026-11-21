@@ -4,6 +4,10 @@ Settings come from the environment, then ``addons.options.ao`` in config.yaml,
 then the Bash command's ``~/.aap-demo/config`` (ADR-045). The external API key
 is read from ``AO_LLM_API_KEY``, else a 0600 file in the Python state
 directory, else the Bash command's ``~/.aap-demo/ao/llm-api-key``.
+
+The ``ollama`` provider is the host's Ollama (ADR-046). It has no default model:
+``OLLAMA_MODEL``, else the model ``enable ao`` saved, else "" until
+:func:`aap_demo.addons.ao.host_ollama.prepare` chooses one.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
+from aap_demo.addons.ao import host_ollama
 from aap_demo.addons.common.state import options_for
 from aap_demo.core.context import AppContext
 from aap_demo.core.errors import AddonError, UsageError
@@ -21,7 +26,6 @@ PROVIDERS = ("ollama", "external", "none")
 DEFAULT_PROVIDER = "ollama"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_EXTERNAL_MODEL = "gpt-6-luna"
-DEFAULT_OLLAMA_MODEL = "qwen2.5:3b"
 KEY_FILE = "llm-api-key"
 #: config.yaml ``addons.options.ao`` key -> environment variable.
 OPTION_ENV = {
@@ -73,13 +77,15 @@ def settings(ctx: AppContext) -> Settings:
             hint="Use ollama, external, or none.",
         )
     if provider == "ollama":
-        model = str(
-            ctx.env.get("WIRE_OLLAMA_MODEL") or ctx.env.get("OLLAMA_MODEL") or DEFAULT_OLLAMA_MODEL
+        # The external provider's saved URL and model do not apply here.
+        return Settings(
+            provider=provider,
+            base_url=str(ctx.env.get("AO_LLM_BASE_URL") or "").strip() or host_ollama.CLUSTER_URL,
+            model=host_ollama.requested_model(ctx),
         )
-    else:
-        model = _value(ctx, "llm_model", legacy) or DEFAULT_EXTERNAL_MODEL
-        if model == "luna":
-            model = DEFAULT_EXTERNAL_MODEL
+    model = _value(ctx, "llm_model", legacy) or DEFAULT_EXTERNAL_MODEL
+    if model == "luna":
+        model = DEFAULT_EXTERNAL_MODEL
     return Settings(
         provider=provider,
         base_url=_value(ctx, "llm_base_url", legacy) or DEFAULT_BASE_URL,
