@@ -740,10 +740,24 @@ def _create(
         # Lets pods reach the host, such as AO's Ollama (ADR-046). CRC applies
         # it only to a VM it creates after crc setup.
         allow = host_network_access(ctx)
-        ctx.runner.run(
+        result = ctx.runner.run(
             ["crc", "config", "set", "host-network-access", "true" if allow else "false"]
         )
-        if allow:
+        if not result.ok:
+            detail = (result.stderr or result.stdout or "").strip()
+            if not allow:
+                # The user asked for no host access; do not create a VM that may have it.
+                raise AapDemoError(
+                    "Could not turn off CRC host-network-access",
+                    hint=detail
+                    or f"Run crc config set host-network-access false, or unset "
+                    f"{HOST_NETWORK_ENV}.",
+                )
+            ctx.console.warn(
+                "Could not turn on CRC host-network-access, so AO's ollama provider will not "
+                "reach Ollama on this host." + (f" {detail}" if detail else "")
+            )
+        elif allow:
             ctx.console.progress("CRC host network access: on")
             ctx.console.note(
                 "Pods in the VM can reach services on this host's 127.0.0.1, such as Ollama. "

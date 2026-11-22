@@ -148,6 +148,38 @@ def test_host_network_access_can_be_turned_off(app_ctx, tmp_path, monkeypatch, v
     assert "AO_LLM_PROVIDER=external" in app_ctx.console.stdout + app_ctx.console.stderr
 
 
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_a_failed_host_network_access_setting_is_reported(
+    app_ctx, tmp_path, monkeypatch, value
+) -> None:
+    import platform
+
+    monkeypatch.setattr(bootstrap, "HOST_NETWORK_SYSTEMS", (platform.system(),))
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    setting = ("crc", "config", "set", "host-network-access", value)
+    runner._rules.insert(
+        0, (setting, CompletedCommand(argv=setting, returncode=1, stderr="config is read-only"))
+    )
+    app_ctx.env = {**app_ctx.env, bootstrap.HOST_NETWORK_ENV: value}
+
+    def create() -> None:
+        bootstrap.create(
+            app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+        )
+
+    if value == "false":
+        # Never create a VM the user asked to keep off the host.
+        with pytest.raises(AapDemoError, match="Could not turn off"):
+            create()
+        assert not runner.called("crc setup")
+    else:
+        create()
+        out = app_ctx.console.stdout + app_ctx.console.stderr
+        assert "Could not turn on CRC host-network-access" in out
+        assert "config is read-only" in out
+        assert "CRC host network access: on" not in out
+
+
 def test_create_refuses_a_cluster_that_is_already_running(app_ctx, tmp_path) -> None:
     _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Running"}')
     try:
