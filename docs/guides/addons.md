@@ -201,7 +201,9 @@ model does not list tool support.
 
 Pods reach the host through CRC's `host-network-access`, which `aap-demo create` turns on for a new VM on
 macOS and Windows. A VM created before this needs `aap-demo destroy`, then `aap-demo create`. With it on,
-pods in the VM can reach any service that listens on the host's `127.0.0.1`, not only Ollama. On Linux, CRC
+pods in the VM can reach any service that listens on the host's `127.0.0.1`, not only Ollama. To create
+the VM without it, run `AAP_DEMO_HOST_NETWORK_ACCESS=false aap-demo create`; the `ollama` provider then
+cannot reach the host, so use `external`. On Linux, CRC
 has no such setting: make Ollama listen on the libvirt bridge (`OLLAMA_HOST`) and set `AO_LLM_BASE_URL` to
 that address with `/v1`, or use `external`.
 

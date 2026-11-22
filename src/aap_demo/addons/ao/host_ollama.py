@@ -233,7 +233,8 @@ def unreachable(ctx: AppContext, base_url: str, *, platform: str = sys.platform)
         )
     else:
         why = (
-            "This VM was created without CRC's host-network-access, which lets pods reach the host."
+            "This VM was created without CRC's host-network-access, which lets pods reach the "
+            "host. AAP_DEMO_HOST_NETWORK_ACCESS=false at create time turns it off."
         )
     return AddonError(
         message,

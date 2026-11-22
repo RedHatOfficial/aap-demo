@@ -126,7 +126,26 @@ def test_a_new_vm_gets_host_network_access_where_crc_supports_it(
     if supported:
         # CRC reads it when crc setup runs, before the VM exists.
         assert runner.index_of(setting) < runner.index_of("crc setup")
-        assert "can reach services on this host" in app_ctx.console.stdout + app_ctx.console.stderr
+        out = app_ctx.console.stdout + app_ctx.console.stderr
+        assert "can reach services on this host" in out
+        assert "AAP_DEMO_HOST_NETWORK_ACCESS=false" in out
+
+
+@pytest.mark.parametrize("value", ["false", "0", "No", "off"])
+def test_host_network_access_can_be_turned_off(app_ctx, tmp_path, monkeypatch, value) -> None:
+    import platform
+
+    monkeypatch.setattr(bootstrap, "HOST_NETWORK_SYSTEMS", (platform.system(),))
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.env = {**app_ctx.env, bootstrap.HOST_NETWORK_ENV: value}
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    # Set explicitly, so an earlier crc config set ... true does not carry over.
+    setting = "crc config set host-network-access false"
+    assert runner.index_of(setting) < runner.index_of("crc setup")
+    assert not runner.called("crc config set host-network-access true")
+    assert "AO_LLM_PROVIDER=external" in app_ctx.console.stdout + app_ctx.console.stderr
 
 
 def test_create_refuses_a_cluster_that_is_already_running(app_ctx, tmp_path) -> None:

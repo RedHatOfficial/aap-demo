@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-11-20 (Updated: 2026-11-20, step 7 dropped; see below)
+**Date**: 2026-11-20 (Updated: 2026-11-22, step 7 dropped and an opt-out added; see below)
 
 **Authors**: aap-demo maintainers
 
@@ -92,7 +92,9 @@ a model, pulls it and accepts its license.
 ### CRC host network access
 
 `aap-demo create` sets `host-network-access=true` before the VM exists, on macOS and
-Windows, where CRC uses user-mode networking.
+Windows, where CRC uses user-mode networking. `AAP_DEMO_HOST_NETWORK_ACCESS=false`
+(or `0`, `no`, `off`) sets it to `false` instead, for users who cannot accept the
+host exposure below; the `ollama` provider then cannot reach the host.
 
 For an existing VM without it, `enable ao` explains that the setting needs a new VM
 (`aap-demo destroy`, then `aap-demo create`) and stops. aap-demo never runs
@@ -148,7 +150,8 @@ only, and explains how to pull one.
   host's `127.0.0.1`, not just Ollama. aap-demo is a local development tool, and the
   user's own playbooks already run with their credentials, but users who run other
   local services should know. `aap-demo create`
-  and the AO guide say so. aap-demo cannot narrow this with a NetworkPolicy (step 7).
+  and the AO guide say so, and `AAP_DEMO_HOST_NETWORK_ACCESS=false`
+  opts out. aap-demo cannot narrow this with a NetworkPolicy (step 7).
 
 ### Neutral
 
