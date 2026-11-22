@@ -88,6 +88,14 @@ def control_job_extra_vars(args: argparse.Namespace) -> dict[str, str]:
     }
 
 
+def listed(response: Any, what: str) -> list[dict[str, Any]]:
+    """Return a list response's rows, or stop when AAP sent no list."""
+    rows = response.get("results") if isinstance(response, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError(f"AAP returned no results list for {what}")
+    return rows
+
+
 def ensure_ao_token_credential(api: Any, organization_id: int, token: str) -> int:
     """Store the AO token in an AAP credential and return the credential id."""
     kind = api.find("credential_types", AO_CREDENTIAL_TYPE_NAME)
@@ -125,7 +133,9 @@ def ensure_ao_token_credential(api: Any, organization_id: int, token: str) -> in
             "organization": organization_id,
         }
     )
-    found = api.request(f"/credentials/?{query}").get("results", [])
+    found = listed(
+        api.request(f"/credentials/?{query}"), f"credentials named {AO_CREDENTIAL_NAME!r}"
+    )
     if found:
         credential_id = int(found[0]["id"])
         api.request(f"/credentials/{credential_id}/", "PATCH", payload)
@@ -139,7 +149,9 @@ def attach_credential(api: Any, template_id: int, credential_id: int, label: str
     attached = api.request(path)
     if attached.get("next"):
         raise RuntimeError(f"too many credentials attached to {label}")
-    if not any(item.get("id") == credential_id for item in attached.get("results", [])):
+    if not any(
+        item.get("id") == credential_id for item in listed(attached, f"credentials on {label}")
+    ):
         api.request(path, "POST", {"id": credential_id})
 
 

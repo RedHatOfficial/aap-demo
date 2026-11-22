@@ -244,3 +244,24 @@ def test_the_playbook_still_reads_ao_api_token():
         provision.Path(__file__).resolve().parents[2] / provision.CONTROL_PLAYBOOK
     ).read_text(encoding="utf-8")
     assert "ao_api_token | length > 0" in playbook
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["/credentials/", "/job_templates/{id}/credentials/"],
+    ids=["credential-lookup", "attached-lookup"],
+)
+def test_a_credential_list_without_results_stops(monkeypatch, route):
+    fake = FakeAAP()
+    answer = fake.request
+
+    def request(path: str, method: str = "GET", payload: Any = None) -> Any:
+        listing = path.partition("?")[0]
+        if method == "GET" and re.fullmatch(route.replace("{id}", r"\d+"), listing):
+            return {"detail": "unexpected"}
+        return answer(path, method, payload)
+
+    fake.request = request  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="no results list"):
+        run_main(fake, monkeypatch)
+    assert not launches(fake)
