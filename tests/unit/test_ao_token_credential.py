@@ -190,8 +190,27 @@ def test_a_rerun_updates_the_token_and_reuses_the_credential(monkeypatch):
             {"fields": [{"id": "token", "label": "AO API token", "type": "string"}]},
             provision.AO_CREDENTIAL_TYPE_INJECTORS,
         ),
+        (
+            {
+                "fields": [
+                    {"id": "token", "label": "AO API token", "type": "string", "secret": False}
+                ],
+                "required": ["token"],
+            },
+            provision.AO_CREDENTIAL_TYPE_INJECTORS,
+        ),
+        (
+            {
+                "fields": [
+                    *provision.AO_CREDENTIAL_TYPE_INPUTS["fields"],
+                    {"id": "extra", "label": "Extra", "type": "string"},
+                ],
+                "required": ["token"],
+            },
+            provision.AO_CREDENTIAL_TYPE_INJECTORS,
+        ),
     ],
-    ids=["other-injector", "token-not-secret"],
+    ids=["other-injector", "token-not-secret", "token-secret-false", "extra-input"],
 )
 def test_a_same_named_type_aap_demo_did_not_create_stops(monkeypatch, inputs, injectors):
     fake = FakeAAP()
