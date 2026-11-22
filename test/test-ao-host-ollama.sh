@@ -170,6 +170,15 @@ AO_LLM_BASE_URL=https://api.openai.com/v1
 run_prepare
 check "the_saved_external_url_is_ignored" 'grep -q "curl .*http://127.0.0.1:11434/api/version" "$CALLS"'
 
+reset
+(
+  aap_demo_ao_llm_save_config() { return 1; }
+  run_prepare
+  printf '%s' "$WIRE_OLLAMA_MODEL" >"${TMP_DIR}/model"
+)
+check "a_failed_save_warns_and_still_uses_the_model" \
+  '[ "$(cat "${TMP_DIR}/model")" = granite3.3:8b ] && out | grep -q "Could not save OLLAMA_MODEL=granite3.3:8b"'
+
 # -- reachability -------------------------------------------------------------------
 if [ "$(uname -s)" != Linux ]; then
   reset

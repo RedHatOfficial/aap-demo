@@ -85,6 +85,8 @@ ACTION=deploy
 
 export NAMESPACE AO_NAMESPACE
 source "$REPO_ROOT/includes/addon-wire.sh"
+# shellcheck source=../../includes/ao-host-ollama.sh
+source "$REPO_ROOT/includes/ao-host-ollama.sh"
 # shellcheck source=lib/model-config.sh
 source "$SCRIPT_DIR/lib/model-config.sh"
 

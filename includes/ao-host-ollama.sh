@@ -244,8 +244,9 @@ ao_host_ollama_prepare() {
     [ -n "$model" ] && available+=("$model")
   done < <(ao_host_ollama_models "$api")
   model=$(ao_host_ollama_choose_model ${available[@]+"${available[@]}"}) || return 1
-  if [ "$model" != "$(ao_host_ollama_saved OLLAMA_MODEL)" ]; then
-    aap_demo_ao_llm_save_config OLLAMA_MODEL "$model" || true
+  if [ "$model" != "$(ao_host_ollama_saved OLLAMA_MODEL)" ] \
+    && ! aap_demo_ao_llm_save_config OLLAMA_MODEL "$model"; then
+    echo "WARNING: Could not save OLLAMA_MODEL=${model} to ${AAP_DEMO_CONFIG:-the aap-demo config}; later runs will ask again. Set OLLAMA_MODEL to keep it." >&2
   fi
   OLLAMA_MODEL="$model"
   WIRE_OLLAMA_MODEL="$model"
