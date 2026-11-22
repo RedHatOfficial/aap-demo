@@ -125,7 +125,10 @@ All commands run in PowerShell. Run `aap-demo help` for the full list.
 | `aap-demo help`                | Show command help                                                  |
 
 Available non-fleet addons are `mcp-server`, `portal`, `portal-operator`,
-`setup-pah`, `ao` (alias `ao-eap`), `product-demos`, `opa`, and `ollama`.
+`setup-pah`, `ao` (alias `ao-eap`), `product-demos`, and `opa`. AO's `ollama`
+provider uses Ollama running on this machine
+([ADR-046](../docs/adr/046-ao-host-ollama.md)); `aap-demo disable ollama` removes
+the in-cluster Ollama of earlier releases.
 Product Demos is exposed as one aggregate deployment on Windows. Fleet and
 `local-cache` are deferred from the Windows build. These commands are delegated
 to the same Bash addon
@@ -150,7 +153,9 @@ one-shot process environment variable.
 | `QUIET`             | `false`                                      | Suppress interactive prompts                       |
 | `KUBECONFIG`        | `%USERPROFILE%\.crc\machines\crc\kubeconfig` | Cluster kubeconfig                                 |
 | `AAP_DEMO_TRUST_CA` | `true` (implicit)                            | Set to `false` to skip automatic ingress CA import |
-| `AO_LLM_PROVIDER`    | `ollama` when unset                           | AO provider: `ollama`, `external`, or `none`      |
+| `AO_LLM_PROVIDER`    | `ollama` when unset                           | AO provider: `ollama` (Ollama on this machine), `external`, or `none` |
+| `OLLAMA_MODEL`       | the model chosen during `enable ao`           | Host Ollama model for AO; aap-demo never pulls one |
+| `AAP_DEMO_HOST_NETWORK_ACCESS` | `true`                              | `false` creates the VM without CRC host network access, so pods cannot reach this host |
 | `AO_LLM_BASE_URL`    | `https://api.openai.com/v1` for `external`     | External LLM API base URL                         |
 | `AO_LLM_MODEL`       | `gpt-5.6-luna` for `external`                 | External LLM model; `luna` is an alias            |
 | `AO_LLM_API_KEY_FILE` | `%USERPROFILE%\.aap-demo\ao\llm-api-key`  | File used to save/reuse the external API key      |

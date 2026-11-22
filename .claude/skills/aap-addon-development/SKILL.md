@@ -112,7 +112,6 @@ ls -1 addons/
 - product-demos
 - product-demo-satellite
 - opa
-- ollama
 
 **Good names**:
 - `grafana` (simple service)
@@ -319,12 +318,12 @@ Edit `aap-demo.sh` line 3002 and add addon name:
 
 **Current**:
 ```bash
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa ollama"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao apme-eap local-cache product-demos product-demo-satellite opa"
 ```
 
 **Updated** (add in alphabetical order):
 ```bash
-AVAILABLE_ADDONS="fleet local-cache mcp-server my-addon opa ollama portal portal-operator product-demos product-demo-satellite setup-pah ao apme-eap"
+AVAILABLE_ADDONS="fleet local-cache mcp-server my-addon opa portal portal-operator product-demos product-demo-satellite setup-pah ao apme-eap"
 ```
 
 ### 7. Create README.md

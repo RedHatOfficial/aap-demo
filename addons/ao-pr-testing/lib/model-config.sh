@@ -52,7 +52,14 @@ ao_pr_testing_configure_model() {
   case "$provider" in
     ollama)
       model="${AO_PR_TESTING_PLAIBOOK_MODEL:-${OLLAMA_MODEL:-}}"
-      base_url="${AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL:-http://ollama.aap-demo-ollama.svc.cluster.local:11434/v1}"
+      # The host's Ollama through CRC (ADR-046), or the run's AO_LLM_BASE_URL.
+      if [ -n "${AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL:-}" ]; then
+        base_url="$AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL"
+      elif declare -F ao_host_ollama_base_url >/dev/null; then
+        base_url=$(ao_host_ollama_base_url)
+      else
+        base_url=http://192.168.127.254:11434/v1
+      fi
       api_key="${AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY:-${AO_PR_TESTING_PLAIBOOK_API_KEY:-ollama}}"
       REVIEW_OLLAMA_COMPAT=true
       ;;

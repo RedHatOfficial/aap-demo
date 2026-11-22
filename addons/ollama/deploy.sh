@@ -1,218 +1,30 @@
 #!/usr/bin/env bash
-# Deploy Ollama LLM server for aap-demo
+# Remove the in-cluster Ollama of earlier aap-demo releases.
 #
-# Deploys Ollama (CPU-only) with qwen2.5:3b model pre-pulled.
-# Accessible via:
-#   - Route: https://ollama.apps.<cluster-domain>
-#   - OpenAI-compatible: https://ollama.apps.<cluster-domain>/v1
-#   - In-cluster: http://ollama.aap-demo-ollama.svc.cluster.local:11434
+# AO now uses Ollama running on the host (ADR-046), so enabling this addon only
+# explains that. --delete removes what the old installer created. Kept for one
+# release.
 #
 # Usage:
-#   ./deploy.sh          # Deploy Ollama and pull qwen2.5:3b
-#   ./deploy.sh --delete # Remove Ollama
+#   ./deploy.sh          # Explain the host Ollama and exit 1
+#   ./deploy.sh --delete # Remove the old in-cluster Ollama
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:3b}"
-OLLAMA_ROLLOUT_TIMEOUT="${OLLAMA_ROLLOUT_TIMEOUT:-15m}"
-OLLAMA_STORAGE_CLASS="${OLLAMA_STORAGE_CLASS:-}"
-_ollama_storage_size_explicit="${OLLAMA_STORAGE_SIZE+yes}"
-OLLAMA_STORAGE_SIZE="${OLLAMA_STORAGE_SIZE:-10Gi}"
-
-# shellcheck source=../../includes/infra-crc.sh
-source "${SCRIPT_DIR}/../../includes/infra-crc.sh" 2>/dev/null || true
+# shellcheck source=../../includes/ao-host-ollama.sh
+source "${SCRIPT_DIR}/../../includes/ao-host-ollama.sh"
 
 ACTION="${1:-deploy}"
 
 if [ "$ACTION" = "--delete" ] || [ "$ACTION" = "delete" ]; then
-  echo "Removing Ollama..."
-  kubectl delete namespace aap-demo-ollama 2>/dev/null || true
-  kubectl delete clusterrolebinding aap-demo-ollama-anyuid 2>/dev/null || true
-  echo "✓ Ollama removed"
+  echo "Removing the in-cluster Ollama from an earlier aap-demo..."
+  kubectl delete namespace "$AO_HOST_OLLAMA_OLD_NAMESPACE" --ignore-not-found
+  kubectl delete clusterrolebinding aap-demo-ollama-anyuid --ignore-not-found
+  echo "✓ In-cluster Ollama removed"
   exit 0
 fi
 
-_ollama_normalize_storage_size() {
-  local _size="$1" _number
-
-  _size=$(printf '%s' "$_size" | sed -E 's/^[[:space:]]+//;s/[[:space:]]+$//')
-  if [[ "$_size" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%sGi\n' "$_size"
-    return 0
-  fi
-
-  # Match the Kubernetes quantity grammar: decimal, binary, and exponent
-  # suffixes are all valid, but the value must still be positive.
-  if [[ "$_size" =~ ^[+]?(0|[1-9][0-9]*)([.]([0-9]+)?)?([eE][+-]?[0-9]+|m|Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$ ||
-    "$_size" =~ ^[+]?([.][0-9]+)([eE][+-]?[0-9]+|m|Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$ ]]; then
-    _number="$_size"
-    if awk -v value="$_number" 'BEGIN { exit !(value > 0) }'; then
-      printf '%s\n' "$_size"
-      return 0
-    fi
-  fi
-
-  echo "ERROR: OLLAMA_STORAGE_SIZE must be a positive integer (GiB implied) or a positive Kubernetes quantity such as 20Gi." >&2
-  return 1
-}
-
-if ! kubectl cluster-info >/dev/null 2>&1; then
-  echo "ERROR: kubectl not connected to cluster"
-  exit 1
-fi
-
-echo "Deploying Ollama (CPU-only)..."
-
-# Convert the kubectl duration used for rollout status into seconds for the
-# Kubernetes Deployment progress deadline. Support the integer-unit durations
-# accepted by this script, including combinations such as 1h30m.
-_ollama_timeout_seconds() {
-  local _duration="$1" _total=0 _value _unit
-
-  while [ -n "$_duration" ]; do
-    if [[ "$_duration" =~ ^([0-9]+)([smh])([0-9smh]*)$ ]]; then
-      _value="${BASH_REMATCH[1]}"
-      _unit="${BASH_REMATCH[2]}"
-      _duration="${BASH_REMATCH[3]}"
-      case "$_unit" in
-        s) _total=$((_total + _value)) ;;
-        m) _total=$((_total + _value * 60)) ;;
-        h) _total=$((_total + _value * 3600)) ;;
-      esac
-    else
-      echo "ERROR: OLLAMA_ROLLOUT_TIMEOUT must use durations such as 15m or 1h30m (got '${OLLAMA_ROLLOUT_TIMEOUT}')." >&2
-      return 1
-    fi
-  done
-
-  if [ "$_total" -lt 1 ]; then
-    echo "ERROR: OLLAMA_ROLLOUT_TIMEOUT must be greater than zero." >&2
-    return 1
-  fi
-  printf '%s\n' "$_total"
-}
-
-if ! _ollama_progress_deadline="$(_ollama_timeout_seconds "$OLLAMA_ROLLOUT_TIMEOUT")"; then
-  exit 1
-fi
-
-# Detect StorageClass: explicit override > topolvm-provisioner > CRC hostpath > standard
-if [ -n "$OLLAMA_STORAGE_CLASS" ]; then
-  _ollama_sc="$OLLAMA_STORAGE_CLASS"
-elif kubectl get sc topolvm-provisioner >/dev/null 2>&1; then
-  _ollama_sc="topolvm-provisioner"
-elif kubectl get sc crc-csi-hostpath-provisioner >/dev/null 2>&1; then
-  _ollama_sc="crc-csi-hostpath-provisioner"
-elif kubectl get sc standard >/dev/null 2>&1; then
-  _ollama_sc="standard"
-else
-  echo "ERROR: No suitable StorageClass found (expected topolvm-provisioner, crc-csi-hostpath-provisioner, or standard)." >&2
-  echo "  Set OLLAMA_STORAGE_CLASS=<name> to use a different class, or run 'aap-demo create'." >&2
-  exit 1
-fi
-echo "  StorageClass: ${_ollama_sc}"
-
-# Prompt for PVC size when running interactively and no explicit override was given
-if [ -z "$_ollama_storage_size_explicit" ] && [ -t 0 ]; then
-  read -r -p "  PVC size [${OLLAMA_STORAGE_SIZE}] (e.g. 20Gi for multiple/larger models): " _input_size
-  [ -n "$_input_size" ] && OLLAMA_STORAGE_SIZE="$_input_size"
-fi
-
-if ! OLLAMA_STORAGE_SIZE="$(_ollama_normalize_storage_size "$OLLAMA_STORAGE_SIZE")"; then
-  exit 1
-fi
-echo "  PVC size:     ${OLLAMA_STORAGE_SIZE}"
-
-# Detect cluster apps domain from existing AAP route, fall back to nip.io default
-_aap_host=$(kubectl get route aap -n "${NAMESPACE:-aap-operator}" \
-  -o jsonpath='{.spec.host}' 2>/dev/null || true)
-if [ -n "$_aap_host" ]; then
-  CLUSTER_DOMAIN="${_aap_host#*.}"
-else
-  CLUSTER_DOMAIN="apps.127.0.0.1.nip.io"
-fi
-OLLAMA_ROUTE="ollama.${CLUSTER_DOMAIN}"
-
-# Patch the route hostname and StorageClass from their manifest placeholders
-sed -e "s|host: ollama\.apps\.127\.0\.0\.1\.nip\.io|host: ${OLLAMA_ROUTE}|" \
-  -e "s|storageClassName: __STORAGE_CLASS__|storageClassName: ${_ollama_sc}|" \
-  -e "s|storage: __STORAGE_SIZE__|storage: ${OLLAMA_STORAGE_SIZE}|" \
-  -e "s|progressDeadlineSeconds: __PROGRESS_DEADLINE_SECONDS__|progressDeadlineSeconds: ${_ollama_progress_deadline}|" \
-  "${SCRIPT_DIR}/ollama.yaml" | kubectl apply -f -
-
-echo "  Waiting for Ollama deployment to be ready..."
-if ! kubectl rollout status deployment/ollama -n aap-demo-ollama \
-  --timeout="${OLLAMA_ROLLOUT_TIMEOUT}"; then
-  echo "ERROR: Ollama rollout failed — diagnostics:" >&2
-  kubectl get deployment,pod,pvc -n aap-demo-ollama >&2 || true
-  kubectl describe pod -n aap-demo-ollama -l app=ollama >&2 || true
-  kubectl get events -n aap-demo-ollama --sort-by=.lastTimestamp >&2 || true
-  exit 1
-fi
-
-echo "  Pulling model: ${OLLAMA_MODEL}..."
-echo "  (This may take several minutes — model is ~2GB)"
-
-# Pull from a Ready pod. During a rollout, the first pod returned by the API
-# can still be the terminating old replica even after rollout status succeeds.
-OLLAMA_POD=""
-_ollama_found_candidate=0
-for _ollama_attempt in $(seq 1 30); do
-  while read -r _ollama_candidate; do
-    [ -n "$_ollama_candidate" ] || continue
-    _ollama_found_candidate=1
-    if kubectl wait --for=condition=ready "pod/${_ollama_candidate}" \
-      -n aap-demo-ollama --timeout=10s >/dev/null 2>&1 \
-      && kubectl exec -n aap-demo-ollama "$_ollama_candidate" -- ollama pull "${OLLAMA_MODEL}"; then
-      OLLAMA_POD="$_ollama_candidate"
-      break 2
-    fi
-  done < <(kubectl get pod -n aap-demo-ollama -l app=ollama \
-    --sort-by=.metadata.creationTimestamp \
-    -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
-  sleep 2
-done
-
-if [ -n "$OLLAMA_POD" ]; then
-  echo "  ✓ Model ${OLLAMA_MODEL} ready"
-elif [ "$_ollama_found_candidate" -eq 1 ]; then
-  echo "  ERROR: Ollama pod was found, but model ${OLLAMA_MODEL} could not be pulled." >&2
-  echo "  Check pod logs and retry: kubectl logs -n aap-demo-ollama -l app=ollama" >&2
-  kubectl get pod -n aap-demo-ollama -l app=ollama -o wide >&2 || true
-  kubectl get events -n aap-demo-ollama --sort-by=.lastTimestamp >&2 || true
-  exit 1
-else
-  echo "  ERROR: No Ollama pod matched label app=ollama after the deployment became ready." >&2
-  echo "  Check the deployment and retry: aap-demo enable ollama" >&2
-  kubectl get deployment,pod -n aap-demo-ollama -o wide >&2 || true
-  kubectl get events -n aap-demo-ollama --sort-by=.lastTimestamp >&2 || true
-  exit 1
-fi
-
-echo ""
-echo "✓ Ollama deployed!"
-echo ""
-echo "  Route:         https://${OLLAMA_ROUTE}"
-echo "  OpenAI base:   https://${OLLAMA_ROUTE}/v1"
-echo "  In-cluster:    http://ollama.aap-demo-ollama.svc.cluster.local:11434"
-echo "  Model:         ${OLLAMA_MODEL}"
-echo ""
-echo "  Test inference:"
-echo "    curl https://${OLLAMA_ROUTE}/api/generate \\"
-echo "      -d '{\"model\":\"${OLLAMA_MODEL}\",\"prompt\":\"Hello\",\"stream\":false}'"
-echo ""
-echo "  List models:   curl https://${OLLAMA_ROUTE}/api/tags"
-echo ""
-echo "  Pull additional model:"
-echo "    OLLAMA_MODEL=mistral:7b aap-demo enable ollama"
-echo "    # or directly:"
-echo "    kubectl exec -n aap-demo-ollama \$(kubectl get pod -n aap-demo-ollama -l app=ollama -o jsonpath='{.items[0].metadata.name}') -- ollama pull mistral:7b"
-echo ""
-
-# Wire into AO if present
-if [ "${AAP_DEMO_WIRE_AFTER_DEPLOY:-0}" != "0" ]; then
-  # shellcheck source=../../includes/addon-wire.sh
-  source "${SCRIPT_DIR}/../../includes/addon-wire.sh"
-  aap_demo_wire || true
-fi
+echo "ERROR: aap-demo no longer installs Ollama in the cluster. AO uses Ollama on the host." >&2
+echo "  ${AO_HOST_OLLAMA_INSTALL_HINT} See docs/adr/046-ao-host-ollama.md." >&2
+exit 1

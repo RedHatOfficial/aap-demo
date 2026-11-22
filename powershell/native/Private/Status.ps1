@@ -183,7 +183,7 @@ ADDONS:
     disable <name>  Disable an addon
     wire            Apply addon integrations after deployment
     Available: mcp-server, portal, portal-operator, setup-pah, ao,
-               product-demos, opa, ollama
+               product-demos, opa
     Legacy alias: ao-eap maps to ao
     Host VM and image caching features are deferred from the Windows build.
 

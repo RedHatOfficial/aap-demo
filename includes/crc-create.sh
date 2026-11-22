@@ -438,6 +438,35 @@ fi
 printf "${_GREEN}▸${_NC} Resources: ${CRC_CPUS} CPUs, $((CRC_MEMORY / 1024))GB RAM, ${CRC_DISK}GB disk (${CRC_PV_SIZE}GB for PVs)\n"
 
 # ---------------------------------------------------------------------------
+# Host network access (ADR-046): lets pods reach this host's 127.0.0.1, such as
+# Ollama for AO. CRC applies it only to a VM it creates after crc setup, and
+# only on macOS and Windows. AAP_DEMO_HOST_NETWORK_ACCESS=false turns it off.
+# ---------------------------------------------------------------------------
+if ! _crc_machine_exists && { [ "$(uname -s)" = Darwin ] || _is_mingw; }; then
+  case "$(printf '%s' "${AAP_DEMO_HOST_NETWORK_ACCESS:-true}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
+    0 | false | no | off) _host_network_access=false ;;
+    *) _host_network_access=true ;;
+  esac
+  if crc config set host-network-access "$_host_network_access" >/dev/null 2>&1; then
+    if [ "$_host_network_access" = true ]; then
+      printf "${_GREEN}▸${_NC} CRC host network access: on\n"
+      echo "  Pods in the VM can reach services on this host's 127.0.0.1, such as Ollama."
+      echo "  To create the VM without it, set AAP_DEMO_HOST_NETWORK_ACCESS=false."
+    else
+      printf "${_GREEN}▸${_NC} CRC host network access: off (AAP_DEMO_HOST_NETWORK_ACCESS)\n"
+      echo "  AO's ollama provider cannot reach Ollama on this host. Use AO_LLM_PROVIDER=external instead."
+    fi
+  elif [ "$_host_network_access" = false ]; then
+    # The user asked for no host access; do not create a VM that may have it.
+    echo "ERROR: Could not turn off CRC host-network-access." >&2
+    echo "  Run crc config set host-network-access false, or unset AAP_DEMO_HOST_NETWORK_ACCESS." >&2
+    exit 1
+  else
+    echo "WARNING: Could not turn on CRC host-network-access, so AO's ollama provider will not reach Ollama on this host." >&2
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Setup CRC (if needed)
 # ---------------------------------------------------------------------------
 if _crc_needs_setup; then

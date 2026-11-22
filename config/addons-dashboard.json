@@ -12,7 +12,6 @@
     {"id": "product-demos"},
     {"id": "product-demo-satellite"},
     {"id": "opa"},
-    {"id": "ollama"},
     {"id": "keycloak"},
     {
       "id": "eda-playground",

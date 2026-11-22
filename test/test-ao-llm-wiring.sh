@@ -144,6 +144,60 @@ if [ "$(wire_ao_llm_agent_model_id explicit-integration-id)" != model-id ]; then
   fail "model_lookup_uses_explicit_integration"
 fi
 
+# -- host Ollama (ADR-046) ----------------------------------------------------
+host_tmp=$(mktemp -d)
+export AAP_DEMO_CONFIG="${host_tmp}/config"
+: >"$AAP_DEMO_CONFIG"
+AO_LLM_PROVIDER=ollama
+unset AO_LLM_BASE_URL
+if [ "$(wire_ollama_url_for_ao)" != "http://192.168.127.254:11434/v1" ] \
+  || [ "$(wire_ollama_allowed_host)" != 192.168.127.254 ]; then
+  fail "ollama_uses_the_host_through_crc"
+fi
+printf 'AO_LLM_BASE_URL=https://api.example.test/v1\n' >"$AAP_DEMO_CONFIG"
+AO_LLM_BASE_URL=https://api.example.test/v1
+if [ "$(wire_ollama_url_for_ao)" != "http://192.168.127.254:11434/v1" ]; then
+  fail "saved_external_url_does_not_redirect_ollama"
+fi
+AO_LLM_BASE_URL=http://192.168.130.1:11434/v1
+if [ "$(wire_ollama_url_for_ao)" != "$AO_LLM_BASE_URL" ] \
+  || [ "$(wire_ollama_allowed_host)" != 192.168.130.1 ]; then
+  fail "run_base_url_moves_ollama"
+fi
+unset AO_LLM_BASE_URL
+AO_LLM_PROVIDER=external
+if [ -n "$(wire_ollama_allowed_host)" ]; then
+  fail "external_provider_adds_no_ollama_host"
+fi
+AO_LLM_PROVIDER=ollama
+
+wire_ao_deployed() { return 0; }
+wire_ao_ensure_credential() { printf '%s' cred-1; }
+wire_ao_find_integration_by_name() { :; }
+wire_ao_set_default_llm_model() { printf '%s' "$2" >"${host_tmp}/default-model"; }
+wire_ao_api() {
+  printf '%s %s %s\n' "$1" "$2" "$(printf '%s' "${3:-null}" | jq -c . 2>/dev/null)" >>"${host_tmp}/api"
+  case "$1 $2" in
+    "POST /integrations") printf '%s' '{"id":"int-1"}' ;;
+    *) printf '%s' '{}' ;;
+  esac
+}
+WIRE_OLLAMA_MODEL=""
+if ! wire_ao_ollama 2>/dev/null || [ -s "${host_tmp}/api" ]; then
+  fail "ollama_without_a_model_is_skipped"
+fi
+WIRE_OLLAMA_MODEL=granite3.3:8b
+wire_ao_ollama >/dev/null 2>&1 || fail "ollama_wiring_succeeds"
+created=$(grep '^POST /integrations ' "${host_tmp}/api" | head -1 | cut -d' ' -f3-)
+if [ "$(printf '%s' "$created" | jq -r .configuration.base_url)" != "http://192.168.127.254:11434/v1" ] \
+  || [ "$(printf '%s' "$created" | jq -r .configuration.allow_http)" != true ] \
+  || [ "$(printf '%s' "$created" | jq -r .configuration.insecure_skip_tls_verify)" != false ] \
+  || [ "$(cat "${host_tmp}/default-model")" != granite3.3:8b ]; then
+  fail "ollama_integration_targets_the_host"
+fi
+rm -rf "$host_tmp"
+unset AAP_DEMO_CONFIG
+
 external_called=false
 ollama_called=false
 wire_ao_external_llm() { external_called=true; }
@@ -176,9 +230,9 @@ if [ "$(wire_ao_llm_model_name)" != gpt-6-luna ]; then
 fi
 
 AO_LLM_PROVIDER=ollama
-WIRE_OLLAMA_MODEL=qwen2.5:3b
+WIRE_OLLAMA_MODEL=granite3.3:8b
 if [ "$(wire_ao_llm_integration_name)" != "aap-demo Ollama" ] \
-  || [ "$(wire_ao_llm_model_name)" != qwen2.5:3b ]; then
+  || [ "$(wire_ao_llm_model_name)" != granite3.3:8b ]; then
   fail "ollama_agent_model_selection"
 fi
 

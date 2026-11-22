@@ -1,7 +1,10 @@
 $Script:AapAvailableAddons = @(
   'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
-  'product-demos', 'opa', 'ollama'
+  'product-demos', 'opa'
 )
+# Accepted by enable and disable but not listed. ollama only removes the
+# in-cluster Ollama of earlier releases; AO uses Ollama on the host (ADR-046).
+$Script:AapHiddenAddons = @('ollama')
 
 function Invoke-AapAddonDeployScript {
   param(
@@ -161,11 +164,6 @@ function Get-AapAddonStatusLabel {
     'ao' {
       $aoHost = Get-AapAddonRouteHost -Namespace 'automation-orchestrator'
       if ($aoHost) { return "https://$aoHost" }
-      return 'enabled'
-    }
-    'ollama' {
-      $ollamaHost = Get-AapAddonRouteHost -Namespace 'aap-demo-ollama'
-      if ($ollamaHost) { return "https://$ollamaHost" }
       return 'enabled'
     }
     default { return 'enabled' }

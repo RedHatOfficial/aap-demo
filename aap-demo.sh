@@ -47,6 +47,8 @@ source "${SCRIPT_DIR}/includes/aap-demo-paths.sh"
 source "${SCRIPT_DIR}/includes/kubeconfig-guard.sh"
 # shellcheck source=includes/ao-llm.sh
 source "${SCRIPT_DIR}/includes/ao-llm.sh"
+# shellcheck source=includes/ao-host-ollama.sh
+source "${SCRIPT_DIR}/includes/ao-host-ollama.sh"
 # shellcheck source=includes/json-utils.sh
 source "${SCRIPT_DIR}/includes/json-utils.sh"
 
@@ -564,9 +566,6 @@ _help_addon_summary() {
       ;;
     local-cache)
       printf '%s\n' "Cache container images locally (~30GB). save, load, or clear"
-      ;;
-    ollama)
-      printf '%s\n' "Deploy with aap-demo enable ollama (qwen2.5:3b, wires into AO as llm_provider)"
       ;;
     keycloak)
       printf '%s\n' "Keycloak OIDC provider for local AAP and AO authentication tests"
@@ -3581,7 +3580,7 @@ cmd_fleet() {
 # ---------------------------------------------------------------------------
 # product-demos installs all APD domains (runs product-demos-base automatically).
 # product-demos-base and individual domain addons are hidden from status; enable directly if needed.
-AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak eda-playground"
+AVAILABLE_ADDONS="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa keycloak eda-playground"
 
 _normalize_addon_name() {
   case "$1" in
@@ -3817,7 +3816,8 @@ cmd_enable() {
     _ao_prompt_product_demos || return 1
     _ensure_addon_dependency mcp-server "$@" || return 1
     if [ "${AO_LLM_PROVIDER:-ollama}" = ollama ]; then
-      _ensure_addon_dependency ollama "$@" || return 1
+      # Ollama runs on the host (ADR-046). Check it and the path to it before installing AO.
+      ao_host_ollama_prepare "$NAMESPACE" || return 1
     fi
   fi
   local _addon_was_enabled=false

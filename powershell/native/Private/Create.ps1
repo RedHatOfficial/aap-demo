@@ -205,6 +205,25 @@ function Invoke-AapDemoCreate {
   Write-AapStep "Preset $preset | CPUs $cpus | Memory $memory MiB | Disk ${disk}GB | PV ${pvSize}GB"
 
   if ($crcState -eq 'Unknown') {
+    # Host network access (ADR-046): lets pods reach this host's 127.0.0.1, such
+    # as Ollama for AO. CRC applies it only to a VM created after crc setup.
+    $hostAccessValue = if ($env:AAP_DEMO_HOST_NETWORK_ACCESS) { $env:AAP_DEMO_HOST_NETWORK_ACCESS.Trim().ToLowerInvariant() } else { 'true' }
+    $hostAccess = $hostAccessValue -notin @('0', 'false', 'no', 'off')
+    & crc config set host-network-access ($(if ($hostAccess) { 'true' } else { 'false' })) 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      if (-not $hostAccess) {
+        throw 'Could not turn off CRC host-network-access. Run crc config set host-network-access false, or unset AAP_DEMO_HOST_NETWORK_ACCESS.'
+      }
+      Write-AapWarn "Could not turn on CRC host-network-access, so AO's ollama provider will not reach Ollama on this host."
+    } elseif ($hostAccess) {
+      Write-AapStep 'CRC host network access: on'
+      Write-Host "  Pods in the VM can reach services on this host's 127.0.0.1, such as Ollama."
+      Write-Host '  To create the VM without it, set AAP_DEMO_HOST_NETWORK_ACCESS=false.'
+    } else {
+      Write-AapStep 'CRC host network access: off (AAP_DEMO_HOST_NETWORK_ACCESS)'
+      Write-Host "  AO's ollama provider cannot reach Ollama on this host. Use AO_LLM_PROVIDER=external instead."
+    }
+
     Write-AapStep 'Running crc setup...'
     & crc setup --show-progressbars
     if ($LASTEXITCODE -ne 0) { throw 'crc setup failed' }

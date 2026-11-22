@@ -10,7 +10,7 @@ _aap_demo() {
   commands="deploy deploy-all status clean destroy stop repair setup create watch update config redeploy redeploy-all redhat-status rh-status kubeconfig keycloak enable disable help"
   options="--infra --kubeconfig --context --ansible"
   infra_types="minc vm lab"
-  addons="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa ollama keycloak eda-playground"
+  addons="fleet mcp-server portal portal-operator setup-pah ao ao-pr-testing apme-eap local-cache product-demos product-demo-satellite opa keycloak eda-playground"
 
   if [[ "$prev" == enable || "$prev" == disable ]]; then
     COMPREPLY=($(compgen -W "$addons" -- "$cur"))

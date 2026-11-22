@@ -37,8 +37,11 @@ foreach ($contractName in @('AO_LLM_PROVIDER', 'AO_LLM_API_KEY_FILE', 'OPENAI_AP
 $addons = & $module { @($Script:AapAvailableAddons) }
 $required = @(
   'mcp-server', 'portal', 'portal-operator', 'setup-pah', 'ao',
-  'product-demos', 'opa', 'ollama'
+  'product-demos', 'opa'
 )
+$hidden = & $module { @($Script:AapHiddenAddons) }
+if ($addons -contains 'ollama') { throw 'ollama must not be listed; AO uses Ollama on the host (ADR-046)' }
+if ($hidden -notcontains 'ollama') { throw 'disable ollama must still remove the in-cluster Ollama of earlier releases' }
 
 foreach ($addon in $required) {
   if ($addons -notcontains $addon) { throw "Missing Windows addon registry entry: $addon" }
