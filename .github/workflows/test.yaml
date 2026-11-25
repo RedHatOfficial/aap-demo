@@ -81,8 +81,8 @@ jobs:
       - name: Run AO PostgreSQL TLS rotation tests
         run: ./test/test-ao-postgres-tls.sh
 
-      - name: Run Ollama addon tests
-        run: ./test/test-ollama.sh
+      - name: Run AO host Ollama tests
+        run: ./test/test-ao-host-ollama.sh
 
       - name: Run Keycloak addon tests
         run: ./test/test-keycloak-addon.sh

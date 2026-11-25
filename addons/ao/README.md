@@ -20,15 +20,19 @@ one-pod PostgreSQL (`rhel9/postgresql-15`, ADR-043) are checked in under [`manif
 
 ```bash
 aap-demo deploy          # once: AAP + OLM + catalog
-aap-demo enable ao       # prompts for local Ollama, external LLM, or no LLM
+aap-demo enable ao       # prompts for Ollama on this machine, external LLM, or no LLM
 aap-demo status          # route URL + admin password when ready
 ```
 
 During an interactive `enable ao`, choose one of these LLM provider paths:
 
-1. **Local Ollama** — installs the `ollama` addon, pulls `qwen2.5:3b`, and wires
-   the local provider into AO. This remains the default for `QUIET=true` and
-   other non-interactive runs.
+1. **Ollama on this machine** — uses an Ollama you installed and started on the
+   host ([ADR-046](../../docs/adr/046-ao-host-ollama.md)). aap-demo does not
+   install Ollama or pull models. `enable ao` checks that Ollama answers on
+   `127.0.0.1:11434`, chooses one of the models you pulled (`OLLAMA_MODEL`, the
+   saved choice, the only model, or a prompt), and checks from a pod that the
+   cluster reaches `192.168.127.254:11434` before installing AO. This remains
+   the default for `QUIET=true` and other non-interactive runs.
 2. **External provider** — skips Ollama and prompts for an API key for an
    OpenAI-compatible endpoint, then prompts for the model. The default model
    is `gpt-6-luna`; press Enter to accept it. If `OPENAI_API_KEY` is already
@@ -60,9 +64,8 @@ parse shell profile files. Selecting **None** always skips the key, even when
 
 The API key is stored locally at `~/.aap-demo/ao/llm-api-key` with mode `600`
 and is sent only to the AO encrypted credential store. It is not written to
-`~/.aap-demo/config` or printed in command output. Switching providers does not
-automatically uninstall an existing Ollama addon; disable it separately when
-it is no longer needed.
+`~/.aap-demo/config` or printed in command output. An in-cluster Ollama from an
+earlier release is not used any more; `aap-demo disable ollama` removes it.
 
 Force a clean reinstall (resets Postgres if secret names or passwords drifted):
 
@@ -213,10 +216,10 @@ See [`manifests/README.md`](manifests/README.md) for file-level detail and apply
 | `AO_IMPORT_DEMOS` | `1` | Download and synchronize upstream AO workflow exports after wiring |
 | `AO_DEMOS_REPOSITORY` | `https://github.com/ansible-tmm/aap-orchestrator-demos` | Upstream AO workflow repository |
 | `AO_DEMOS_REF` | `abcc1a1482a` | Pinned upstream demo commit |
-| `AO_LLM_PROVIDER` | `ollama` | `ollama`, `external`, or `none`; external and none modes skip the Ollama dependency |
-| `AO_LLM_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible endpoint used by external mode |
+| `AO_LLM_PROVIDER` | `ollama` | `ollama` (Ollama on this machine), `external`, or `none` |
+| `AO_LLM_BASE_URL` | `https://api.openai.com/v1` for external, `http://192.168.127.254:11434/v1` for ollama | OpenAI-compatible endpoint AO calls |
 | `AO_LLM_MODEL` | `gpt-6-luna` | External model selected as AO's default after discovery |
-| `OLLAMA_MODEL` | `qwen2.5:3b` | Model the `ollama` addon pulls and AO uses in Ollama mode; `AO_LLM_MODEL` does not apply to Ollama |
+| `OLLAMA_MODEL` | the model chosen during `enable ao` | A model already pulled on the host Ollama; saved for later runs. `AO_LLM_MODEL` does not apply to Ollama |
 | `AO_SYNC_REPOSITORY` | `https://github.com/RedHatOfficial/aap-demo.git` | Git repository containing the AAP control-plane playbook |
 | `AO_SYNC_BRANCH` | `main` | Branch used by the AAP control-plane project |
 | `AO_SYNC_API_URL` | internal OpenShift router URL | AO API URL passed to the AAP sync job |

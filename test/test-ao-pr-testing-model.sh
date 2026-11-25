@@ -5,8 +5,13 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 DEPLOY="$ROOT_DIR/addons/ao-pr-testing/deploy.sh"
 
+# shellcheck source=../includes/ao-host-ollama.sh
+source "$ROOT_DIR/includes/ao-host-ollama.sh"
 # shellcheck source=../addons/ao-pr-testing/lib/model-config.sh
 source "$ROOT_DIR/addons/ao-pr-testing/lib/model-config.sh"
+TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$TMP_DIR"' EXIT
+export AAP_DEMO_CONFIG="$TMP_DIR/config"
 
 grep -Fq 'find_configured_model' "$DEPLOY"
 grep -Fq 'ao_pr_testing_select_model' "$DEPLOY"
@@ -26,7 +31,10 @@ models='{"resources":[{"model_id":"first-model"},{"model_id":"default-model","is
 
 unset AO_LLM_PROVIDER AO_LLM_BASE_URL AO_LLM_MODEL
 unset AO_PR_TESTING_PLAIBOOK_MODEL AO_PR_TESTING_PLAIBOOK_OPENAI_BASE_URL
-unset AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY
+unset AO_PR_TESTING_PLAIBOOK_OPENAI_API_KEY OLLAMA_MODEL
+# aap-demo.sh loads saved keys into the environment; the saved external URL
+# must not redirect the host Ollama.
+printf 'AO_LLM_BASE_URL=https://stale.example.test/v1\nAO_LLM_MODEL=stale-model\n' >"$AAP_DEMO_CONFIG"
 AO_LLM_BASE_URL=https://stale.example.test/v1
 AO_LLM_MODEL=stale-model
 if ! ao_pr_testing_configure_model; then
@@ -34,9 +42,14 @@ if ! ao_pr_testing_configure_model; then
   exit 1
 fi
 [ -z "$PLAIBOOK_MODEL" ]
-[ "$PLAIBOOK_OPENAI_BASE_URL" = 'http://ollama.aap-demo-ollama.svc.cluster.local:11434/v1' ]
+[ "$PLAIBOOK_OPENAI_BASE_URL" = 'http://192.168.127.254:11434/v1' ]
 [ "$PLAIBOOK_OPENAI_API_KEY" = ollama ]
 [ "$REVIEW_OLLAMA_COMPAT" = true ]
+
+# AO_LLM_BASE_URL set for this run (not saved) moves the host Ollama.
+AO_LLM_BASE_URL=http://192.168.130.1:11434/v1
+ao_pr_testing_configure_model
+[ "$PLAIBOOK_OPENAI_BASE_URL" = 'http://192.168.130.1:11434/v1' ]
 
 AO_LLM_PROVIDER=external
 AO_LLM_BASE_URL=https://api.example.test/v1

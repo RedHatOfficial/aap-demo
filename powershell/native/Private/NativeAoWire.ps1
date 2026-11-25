@@ -276,16 +276,18 @@ function Invoke-AapAoWire {
   }
 
   $agentCredentialId = $null; $agentIntegrationId = $null; $agentModelId = $null
-  $provider = $env:AO_LLM_PROVIDER
-  if (-not $provider) { $provider = Get-AapConfigValue 'AO_LLM_PROVIDER' }
-  if (-not $provider) { $provider = 'ollama' }
-  $ollamaRouteResult = Invoke-AapKubectlNative -Arguments @('get', 'route', 'ollama', '-n', 'aap-demo-ollama', '-o', 'jsonpath={.spec.host}') -AllowFailure
-  if ($provider -eq 'ollama' -and $ollamaRouteResult.Success -and $ollamaRouteResult.Stdout.Trim()) {
-    $ollamaHost = $ollamaRouteResult.Stdout.Trim()
-    $agentCredentialId = Ensure-AapAoCredential -Route $aoRoute -Token $aoToken -Name 'aap-demo Ollama' -TypeName 'LLM Provider' -Inputs @{ api_key = 'ollama' } -ProjectId $projectId
-    $agentIntegrationId = Ensure-AapAoIntegration -Route $aoRoute -Token $aoToken -Name 'aap-demo Ollama' -Type 'llm_provider' -Configuration @{ integration_type = 'llm_provider'; provider_hint = 'custom'; base_url = "https://$ollamaHost/v1"; allow_http = $true; insecure_skip_tls_verify = $true } -CredentialId $agentCredentialId
-    $model = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { 'qwen2.5:3b' }
-    $agentModelId = Invoke-AapAoRefreshAndSelectModel -Route $aoRoute -Token $aoToken -IntegrationId $agentIntegrationId -Model $model
+  $provider = Get-AapAoLlmProvider
+  if ($provider -eq 'ollama') {
+    # Ollama runs on the host (ADR-046). enable ao checked it and saved the model.
+    $model = Get-AapAoOllamaModel
+    if (-not $model) {
+      Write-AapWarn "No Ollama model chosen for AO; skipping the LLM provider. Run 'aap-demo enable ao' to choose one, or set OLLAMA_MODEL."
+    } else {
+      $ollamaUrl = Get-AapAoOllamaBaseUrl
+      $agentCredentialId = Ensure-AapAoCredential -Route $aoRoute -Token $aoToken -Name 'aap-demo Ollama' -TypeName 'LLM Provider' -Inputs @{ api_key = 'ollama' } -ProjectId $projectId
+      $agentIntegrationId = Ensure-AapAoIntegration -Route $aoRoute -Token $aoToken -Name 'aap-demo Ollama' -Type 'llm_provider' -Configuration @{ integration_type = 'llm_provider'; provider_hint = 'custom'; base_url = $ollamaUrl; allow_http = $ollamaUrl.StartsWith('http://'); insecure_skip_tls_verify = $false } -CredentialId $agentCredentialId
+      $agentModelId = Invoke-AapAoRefreshAndSelectModel -Route $aoRoute -Token $aoToken -IntegrationId $agentIntegrationId -Model $model
+    }
   }
 
   Set-AapAoLocalAccess -Namespace 'automation-orchestrator'

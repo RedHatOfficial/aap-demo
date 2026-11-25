@@ -52,7 +52,7 @@ function Get-AapGitBashEnvironment {
     'AO_CATALOG_TIMEOUT', 'AO_INSTANCE_TIMEOUT', 'AO_STORAGE_CLASS',
     'AO_REPLICA_COUNT', 'AO_PULL_SECRET_NAME', 'AO_NAMESPACE', 'AO_STATE_DIR',
     'AO_AGENT_CREDENTIAL_ID', 'AO_AGENT_INTEGRATION_ID', 'OLLAMA_MODEL',
-    'OLLAMA_STORAGE_CLASS', 'OLLAMA_STORAGE_SIZE', 'OLLAMA_ROLLOUT_TIMEOUT'
+    'AAP_DEMO_HOST_NETWORK_ACCESS', 'AAP_DEMO_INTERACTIVE'
   )
 
   $result = @{}
@@ -224,76 +224,6 @@ function ConvertTo-AapDurationSeconds {
   }
   if ($total -lt 1) { throw "Duration must be greater than zero (got '$Value')" }
   return $total
-}
-
-function Invoke-AapOllamaAddonNative {
-  param(
-    [string[]]$ScriptArgs = @(),
-    [string]$Namespace = $Script:AapDemoDefaultNamespace
-  )
-
-  $action = if ($ScriptArgs.Count -gt 0) { $ScriptArgs[0].ToLowerInvariant() } else { 'deploy' }
-  if ($action -in @('--delete', 'delete')) {
-    Write-Host 'Removing Ollama...'
-    Invoke-AapKubectlNative -Arguments @('delete', 'namespace', 'aap-demo-ollama', '--ignore-not-found') -AllowFailure | Out-Null
-    Invoke-AapKubectlNative -Arguments @('delete', 'clusterrolebinding', 'aap-demo-ollama-anyuid', '--ignore-not-found') -AllowFailure | Out-Null
-    Write-AapStep 'Ollama removed'
-    return
-  }
-
-  $storageClass = if ($env:OLLAMA_STORAGE_CLASS) { $env:OLLAMA_STORAGE_CLASS } else { $null }
-  if (-not $storageClass) {
-    foreach ($candidate in @('topolvm-provisioner', 'crc-csi-hostpath-provisioner', 'standard')) {
-      if ((Invoke-AapKubectlNative -Arguments @('get', 'sc', $candidate) -AllowFailure).Success) {
-        $storageClass = $candidate
-        break
-      }
-    }
-  }
-  if (-not $storageClass) {
-    throw 'No suitable StorageClass found for Ollama. Set OLLAMA_STORAGE_CLASS or run aap-demo create.'
-  }
-
-  $model = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { 'qwen2.5:3b' }
-  $size = if ($env:OLLAMA_STORAGE_SIZE) { $env:OLLAMA_STORAGE_SIZE } else { '10Gi' }
-  $domain = Get-AapClusterAppsDomain -Namespace $Namespace
-  $timeout = if ($env:OLLAMA_ROLLOUT_TIMEOUT) { $env:OLLAMA_ROLLOUT_TIMEOUT } else { '15m' }
-  $deadline = ConvertTo-AapDurationSeconds -Value $timeout
-
-  $manifestPath = Join-Path $Script:AapDemoRepoRoot 'addons/ollama/ollama.yaml'
-  $temp = Write-AapNativeManifest -ManifestPath $manifestPath -Replacements @{
-    'ollama.apps.127.0.0.1.nip.io' = "ollama.$domain"
-    '__STORAGE_CLASS__' = $storageClass
-    '__STORAGE_SIZE__' = $size
-    '__PROGRESS_DEADLINE_SECONDS__' = $deadline
-  }
-  try {
-    Write-Host 'Deploying Ollama (CPU-only)...'
-    Invoke-AapKubectlNative -Arguments @('apply', '-f', $temp) | Out-Null
-  } finally {
-    Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
-  }
-
-  Invoke-AapKubectlNative -Arguments @(
-    'rollout', 'status', 'deployment/ollama', '-n', 'aap-demo-ollama', "--timeout=$timeout"
-  ) | Out-Null
-
-  $pods = Get-AapKubectlJson -Arguments @(
-    'get', 'pods', '-n', 'aap-demo-ollama', '-l', 'app=ollama'
-  )
-  $pod = @($pods.items | Sort-Object { $_.metadata.creationTimestamp } -Descending | Select-Object -First 1)
-  if (-not $pod) { throw 'Ollama pod was not found after rollout' }
-  Invoke-AapKubectlNative -Arguments @(
-    'wait', '--for=condition=ready', "pod/$($pod.metadata.name)", '-n', 'aap-demo-ollama', '--timeout=120s'
-  ) | Out-Null
-  Invoke-AapKubectlNative -Arguments @(
-    'exec', '-n', 'aap-demo-ollama', $pod.metadata.name, '--', 'ollama', 'pull', $model
-  ) | Out-Null
-
-  Write-AapStep 'Ollama deployed'
-  Write-Host "  Route:      https://ollama.$domain"
-  Write-Host "  OpenAI API: https://ollama.$domain/v1"
-  Write-Host "  Model:      $model"
 }
 
 function Invoke-AapLocalCacheAddonNative {

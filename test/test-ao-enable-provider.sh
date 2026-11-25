@@ -119,7 +119,8 @@ fi
 if grep -q 'source .*includes/ao-llm.sh' "${REPO_ROOT}/aap-demo.sh" \
   && grep -q 'aap_demo_ao_llm_prepare' "${REPO_ROOT}/aap-demo.sh" \
   && grep -q 'aap_demo_ao_llm_prompt_for_model' "${REPO_ROOT}/includes/ao-llm.sh" \
-  && grep -q '_ensure_addon_dependency ollama' "${REPO_ROOT}/aap-demo.sh"; then
+  && grep -q 'ao_host_ollama_prepare' "${REPO_ROOT}/aap-demo.sh" \
+  && ! grep -q '_ensure_addon_dependency ollama' "${REPO_ROOT}/aap-demo.sh"; then
   :
 else
   fail "cli_integrates_provider_preparation"

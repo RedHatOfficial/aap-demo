@@ -86,12 +86,12 @@ consumption, when placing pods.
 | **Minimum headroom** | **1600m** |
 | **Recommended headroom (survives rollout)** | **2850m** |
 
-When AAP, Automation Orchestrator, and Ollama are all running, reserved CPU requests
-often exceed 7000m on an 8-CPU node, leaving less than 1000m free. Running
-`aap-demo enable portal-operator` triggers a preflight check that reports available
-headroom and offers to scale Ollama to zero. The preflight reports the Ollama
-Deployment's current CPU request (currently ~200m for one replica) before the
-install proceeds.
+When AAP and Automation Orchestrator are both running, reserved CPU requests can
+leave little headroom on an 8-CPU node. Running `aap-demo enable portal-operator`
+triggers a preflight check that reports available headroom before the install
+proceeds. AO's Ollama runs on the host, not in the VM
+([ADR-046](../../docs/adr/046-ao-host-ollama.md)); if the in-cluster Ollama from an
+earlier release is still installed, the preflight suggests `aap-demo disable ollama`.
 
 **Recommended CRC configuration** when running AAP + AO + portal together:
 

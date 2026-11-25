@@ -111,8 +111,14 @@ Linux users choose `external` with their own URL.
 ### The `ollama` addon is removed
 
 - `enable ao` no longer installs anything for the LLM.
-- The `ollama` addon is removed from the Python command, along with `addons/ollama/`,
-  its tests and its Bash and PowerShell wiring.
+- The `ollama` addon is removed from the Python command, along with
+  `addons/ollama/`'s installer and manifest, its tests and its Bash and PowerShell
+  wiring.
+- The Bash (`aap-demo-v1`) and PowerShell paths use the host's Ollama too, with the
+  same checks: Ollama answers, a pulled model is chosen and saved as `OLLAMA_MODEL`
+  in `~/.aap-demo/config`, and a pod reaches the host. Their `create` sets
+  `host-network-access` the same way, and `ao-pr-testing` loads the model on the
+  host before reviews.
 - `aap-demo disable ollama` stays for one release, as cleanup only. It deletes the
   `aap-demo-ollama` namespace and the `aap-demo-ollama-anyuid` ClusterRoleBinding.
   `enable ao` points to it when it finds that namespace.
@@ -143,9 +149,9 @@ only, and explains how to pull one.
   default provider works.
 - **Existing clusters need a new VM** to get `host-network-access`, unless they
   switch to `external`.
-- **Breaking change.** `aap-demo enable ollama` and the Bash and PowerShell paths
-  that install Ollama stop working. Users of `aap-demo-v1` with the `ollama`
-  provider must move to `external`.
+- **Breaking change.** `aap-demo enable ollama` stops working on every path. Users
+  with the `ollama` provider install Ollama on the host and pull a model, or move
+  to `external`.
 - **Linux and Windows are not yet tested** for host access.
 - **Host memory.** A large model uses host memory instead of VM memory.
 - **Host services are reachable from the VM.** `host-network-access` lets every pod

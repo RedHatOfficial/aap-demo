@@ -58,20 +58,11 @@ result=$(_parse_cpu_m "250m")
 [ "$result" = "250" ] && _pass "_parse_cpu_m '250m' → 250" \
   || _fail "_parse_cpu_m '250m' returned '$result', expected 250"
 
-echo ""
-echo "--- _ollama_cpu_reservation_m ---"
-
-result=$(_ollama_cpu_reservation_m "200m" 1)
-[ "$result" = "200" ] && _pass "one 200m Ollama replica reserves 200m" \
-  || _fail "one 200m Ollama replica reserved '$result', expected 200"
-
-result=$(_ollama_cpu_reservation_m "200m" 2)
-[ "$result" = "400" ] && _pass "two 200m Ollama replicas reserve 400m" \
-  || _fail "two 200m Ollama replicas reserved '$result', expected 400"
-
-result=$(_ollama_cpu_reservation_m "1" 1)
-[ "$result" = "1000" ] && _pass "one 1-core Ollama replica reserves 1000m" \
-  || _fail "one 1-core Ollama replica reserved '$result', expected 1000"
+if declare -F _ollama_cpu_reservation_m >/dev/null; then
+  _fail "the Ollama scale-down helper is gone (AO's Ollama runs on the host)"
+else
+  _pass "the Ollama scale-down helper is gone (AO's Ollama runs on the host)"
+fi
 
 echo ""
 echo "--- apply_portal manifest ---"

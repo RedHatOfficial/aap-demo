@@ -501,6 +501,30 @@ function ConvertTo-AapAoHostListJson {
   return (ConvertTo-Json -InputObject @($Hosts) -Compress)
 }
 
+# AO's ollama provider is Ollama on the host (ADR-046), reached through CRC.
+$Script:AapAoHostOllamaUrl = 'http://192.168.127.254:11434/v1'
+
+function Get-AapAoLlmProvider {
+  $provider = $env:AO_LLM_PROVIDER
+  if (-not $provider) { $provider = Get-AapConfigValue 'AO_LLM_PROVIDER' }
+  if (-not $provider) { $provider = 'ollama' }
+  return $provider
+}
+
+function Get-AapAoOllamaBaseUrl {
+  # AO_LLM_BASE_URL overrides the host URL for this run. A value that only
+  # matches the saved one belongs to the external provider and is ignored.
+  $url = $env:AO_LLM_BASE_URL
+  if (-not $url -or $url -eq (Get-AapConfigValue 'AO_LLM_BASE_URL')) { $url = $Script:AapAoHostOllamaUrl }
+  return $url
+}
+
+function Get-AapAoOllamaModel {
+  $model = $env:OLLAMA_MODEL
+  if (-not $model) { $model = Get-AapConfigValue 'OLLAMA_MODEL' }
+  return $model
+}
+
 function Set-AapAoLocalAccess {
   param([Parameter(Mandatory)][string]$Namespace)
 
@@ -520,7 +544,12 @@ function Set-AapAoLocalAccess {
     }
   }
 
-  $allowedHostsJson = ConvertTo-AapAoHostListJson -Hosts @($aapHost)
+  $allowed = @($aapHost)
+  if ((Get-AapAoLlmProvider) -eq 'ollama') {
+    $llmHost = ([uri](Get-AapAoOllamaBaseUrl)).Host
+    if ($llmHost) { $allowed += $llmHost }
+  }
+  $allowedHostsJson = ConvertTo-AapAoHostListJson -Hosts $allowed
   $config = [ordered]@{
     apiVersion = 'v1'; kind = 'ConfigMap'
     metadata = @{ name = 'automation-orchestrator-admin-settings'; namespace = $Namespace; labels = @{ 'app.kubernetes.io/managed-by' = 'aap-demo'; 'app.kubernetes.io/part-of' = 'automation-orchestrator' } }

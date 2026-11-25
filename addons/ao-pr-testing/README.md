@@ -43,11 +43,12 @@ old disk-percentage workflow or any unrelated AO demo workflow.
     aap-demo enable ao-pr-testing
 
 The addon works with an already-running AO deployment and an available AI
-provider/model. The provider defaults to local Ollama, but the PR workflow does not
+provider/model. The provider defaults to Ollama running on this machine
+([ADR-046](../../docs/adr/046-ao-host-ollama.md)), but the PR workflow does not
 require a particular model: it uses the explicitly configured model, then the
-provider's AO default, then the first model exposed by that provider. When the
-Ollama addon is installed normally, it pulls and selects `qwen2.5:3b` as that
-default. Public GitHub PRs are retrieved by plaibook from the AAP Job Template,
+provider's AO default, then the first model exposed by that provider. For Ollama,
+the AO default is the model you chose during `aap-demo enable ao`. Public GitHub
+PRs are retrieved by plaibook from the AAP Job Template,
 so a GitHub MCP integration or shared GitHub token is not required. Private
 repositories need explicit AAP credential and plaibook wiring; this addon does
 not copy local GitHub secrets into the cluster.
@@ -119,8 +120,7 @@ When `AO_PR_TESTING_PLAIBOOK_PROJECT_URL` points to a private repository or a
 fork, the same PAT is also stored in an AAP Source Control credential as the
 checkout password and attached to the plaibook project.
 
-The Ollama addon documents `qwen2.5:3b` as its installation default, but
-`ao-pr-testing` discovers the selected model rather than requiring that name.
+`ao-pr-testing` discovers the selected model rather than requiring a name.
 If no provider or model is configured, setup completes with a warning telling
 you to set up an AI provider; the review workflow remains unavailable until
 then. The discovered PR model is the model checked, warmed for Ollama, and
@@ -140,7 +140,10 @@ transient API failure does not rerun the model review. There is no agentic
 normalizer or agentic verifier in the critical path, so an empty artifact is a
 hard bridge failure rather than a model interpretation problem.
 
-The addon warms the configured Ollama model before publishing. AO 2026.8 uses
+The addon warms the configured Ollama model on the host before publishing, and
+asks Ollama to keep it loaded for 30 minutes. Set `AO_PR_TESTING_WARM_MODEL=false`
+to skip that, or `AO_PR_TESTING_WARM_TIMEOUT` (seconds, default 600) for a large
+model. AO 2026.8 uses
 its platform Task Agent timeout; a model that cannot produce MCP tool calls
 within that limit is reported as a failed validation, not a successful PR
 result.

@@ -25,6 +25,8 @@ REPO_ROOT="${REPO_ROOT:-${_WIRE_SCRIPT_DIR}/..}"
 source "${_WIRE_SCRIPT_DIR}/aap-demo-paths.sh"
 # shellcheck source=ao-llm.sh
 source "${_WIRE_SCRIPT_DIR}/ao-llm.sh"
+# shellcheck source=ao-host-ollama.sh
+source "${_WIRE_SCRIPT_DIR}/ao-host-ollama.sh"
 
 NAMESPACE="${NAMESPACE:-aap-operator}"
 AO_NAMESPACE="${AO_NAMESPACE:-automation-orchestrator}"
@@ -35,7 +37,8 @@ WIRE_AAP_CREDENTIAL_NAME="${WIRE_AAP_CREDENTIAL_NAME:-aap-demo AAP Token}"
 WIRE_MCP_CREDENTIAL_NAME="${WIRE_MCP_CREDENTIAL_NAME:-aap-demo MCP Token}"
 WIRE_AAP_OAUTH_APP_NAME="${WIRE_AAP_OAUTH_APP_NAME:-Automation Orchestrator (aap-demo)}"
 WIRE_AO_LIST_LIMIT="${WIRE_AO_LIST_LIMIT:-100}"
-WIRE_OLLAMA_MODEL="${WIRE_OLLAMA_MODEL:-${OLLAMA_MODEL:-qwen2.5:3b}}"
+# The host Ollama model chosen by enable ao (ADR-046). There is no default.
+WIRE_OLLAMA_MODEL="${WIRE_OLLAMA_MODEL:-${OLLAMA_MODEL:-}}"
 
 export KUBECONFIG="${KUBECONFIG:-$(aap_demo_resolve_kubeconfig "${KUBECONFIG:-}")}"
 
@@ -82,19 +85,20 @@ wire_mcp_deployed() {
     || kubectl get deployment aap-mcp-server -n "$NAMESPACE" >/dev/null 2>&1
 }
 
-wire_ollama_deployed() {
-  kubectl get deployment ollama -n aap-demo-ollama &>/dev/null 2>&1
-}
-
-wire_ollama_route_host() {
-  kubectl get route ollama -n aap-demo-ollama \
-    -o jsonpath='{.spec.host}' 2>/dev/null
-}
-
+# AO calls the host's Ollama (ADR-046): 192.168.127.254 through CRC, or AO_LLM_BASE_URL.
 wire_ollama_url_for_ao() {
-  local route
-  route=$(wire_ollama_route_host)
-  [ -n "$route" ] && printf 'https://%s/v1\n' "$route"
+  ao_host_ollama_base_url
+}
+
+# The LLM URL's host, for AO's integration allow-list. Empty unless the provider is ollama.
+wire_ollama_allowed_host() {
+  local url host
+  [ "${AO_LLM_PROVIDER:-ollama}" = ollama ] || return 0
+  url=$(wire_ollama_url_for_ao)
+  host="${url#*://}"
+  host="${host%%/*}"
+  host="${host%:*}"
+  [ -n "$host" ] && printf '%s\n' "$host"
 }
 
 wire_apd_installed() {
@@ -219,7 +223,7 @@ wire_ao_integration_allowed_hosts_json() {
     printf 'aap.%s.svc.cluster.local\n' "$NAMESPACE"
     printf 'aap-mcp-server.%s.svc.cluster.local\n' "$NAMESPACE"
     h=$(wire_mcp_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
-    h=$(wire_ollama_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
+    h=$(wire_ollama_allowed_host) && [ -n "$h" ] && printf '%s\n' "$h"
   } | awk 'NF && !seen[$0]++' | jq -R . | jq -s -c .
 }
 
@@ -285,14 +289,12 @@ wire_ingress_router_ip() {
 }
 
 # Route hostnames only (never *.svc.cluster.local — those must keep kube-dns).
-# Include Ollama so LLM calls survive CoreDNS rewrite wipes the same way AAP/MCP do.
 wire_ao_route_hosts_json() {
   local h
   {
     h=$(wire_aap_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
     h=$(wire_ao_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
     h=$(wire_mcp_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
-    h=$(wire_ollama_route_host) && [ -n "$h" ] && printf '%s\n' "$h"
   } | awk 'NF && !seen[$0]++' | jq -R . | jq -s -c .
 }
 
@@ -1146,17 +1148,20 @@ wire_ao_llm() {
 wire_ao_ollama() {
   local ollama_url cred_id config_json
 
-  if ! wire_ollama_deployed || ! wire_ao_deployed; then
+  if ! wire_ao_deployed; then
+    return 0
+  fi
+  if [ -z "$WIRE_OLLAMA_MODEL" ]; then
+    wire_warn "No Ollama model chosen for AO; skipping the LLM provider"
+    wire_warn "  Run 'aap-demo enable ao' to choose one, or set OLLAMA_MODEL"
     return 0
   fi
 
   ollama_url=$(wire_ollama_url_for_ao)
-  if [ -z "$ollama_url" ]; then
-    wire_warn "Could not determine Ollama route URL for AO integration"
-    return 1
-  fi
+  local allow_http=false
+  case "$ollama_url" in http://*) allow_http=true ;; esac
 
-  wire_log "Wiring Automation Orchestrator → Ollama LLM provider..."
+  wire_log "Wiring Automation Orchestrator → host Ollama at ${ollama_url}..."
 
   cred_id=$(
     wire_ao_ensure_credential \
@@ -1169,12 +1174,13 @@ wire_ao_ollama() {
   # using wire_ao_integration_config_json which doesn't know about this field.
   config_json=$(jq -n \
     --arg url "$ollama_url" \
+    --argjson allow_http "$allow_http" \
     '{
       integration_type: "llm_provider",
       provider_hint: "custom",
       base_url: $url,
-      allow_http: true,
-      insecure_skip_tls_verify: true
+      allow_http: $allow_http,
+      insecure_skip_tls_verify: false
     }')
 
   local name="aap-demo Ollama"

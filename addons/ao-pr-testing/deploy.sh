@@ -85,6 +85,8 @@ ACTION=deploy
 
 export NAMESPACE AO_NAMESPACE
 source "$REPO_ROOT/includes/addon-wire.sh"
+# shellcheck source=../../includes/ao-host-ollama.sh
+source "$REPO_ROOT/includes/ao-host-ollama.sh"
 # shellcheck source=lib/model-config.sh
 source "$SCRIPT_DIR/lib/model-config.sh"
 
@@ -650,10 +652,15 @@ find_configured_model() {
 warm_ollama_model() {
   [ "${AO_LLM_PROVIDER:-ollama}" = ollama ] || return 0
   [ "$(env_value AO_PR_TESTING_WARM_MODEL true)" = true ] || return 0
-  printf '  Warming Ollama model: %s\n' "$PLAIBOOK_MODEL"
-  kubectl exec -n aap-demo-ollama deploy/ollama -- \
-    ollama run "$PLAIBOOK_MODEL" 'Respond with READY only.' \
-    >/dev/null 2>&1 \
+  local api
+  # Ollama runs on the host (ADR-046). Load the model there and keep it loaded
+  # so the first review does not wait for it.
+  api=$(ao_host_ollama_host_api "$(ao_host_ollama_base_url)")
+  printf '  Warming Ollama model on the host: %s\n' "$PLAIBOOK_MODEL"
+  curl --noproxy '*' -fsS -m "$(env_value AO_PR_TESTING_WARM_TIMEOUT 600)" \
+    -H 'Content-Type: application/json' \
+    -d "$(jq -cn --arg m "$PLAIBOOK_MODEL" '{model: $m, prompt: "Respond with READY only.", stream: false, keep_alive: "30m"}')" \
+    "${api}/api/generate" >/dev/null 2>&1 \
     || warn "Could not warm Ollama model $PLAIBOOK_MODEL; AO will load it on demand"
 }
 

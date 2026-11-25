@@ -61,7 +61,7 @@ aap_demo_ao_llm_save_config() {
   local value="${2:-}"
   local config_file tmp_file
   case "$key" in
-    AO_LLM_PROVIDER | AO_LLM_BASE_URL | AO_LLM_MODEL) ;;
+    AO_LLM_PROVIDER | AO_LLM_BASE_URL | AO_LLM_MODEL | OLLAMA_MODEL) ;;
     *) return 1 ;;
   esac
 
@@ -224,7 +224,7 @@ aap_demo_ao_llm_prepare() {
   fi
 
   echo "Choose an AO LLM provider:"
-  echo "  1) Install local Ollama (recommended for offline demos)"
+  echo "  1) Use Ollama running on this machine (install it and pull a model first)"
   echo "  2) Use an external OpenAI-compatible provider"
   echo "  3) Do not configure an LLM (agentic demos will be unavailable)"
   printf 'Choice [1]: '
