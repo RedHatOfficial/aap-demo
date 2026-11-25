@@ -1,0 +1,16 @@
+---
+# The portal image is built from the verified artifact resolved from the
+# upstream plugin repository. The archive is transient build input only.
+apme_image_build_name: rhdh-apme-preloaded
+apme_image_build_force: false
+apme_image_build_podman_binary: podman
+apme_image_build_podman_connection: ""
+apme_image_build_push_registry: ""
+apme_image_build_skopeo_binary: skopeo
+apme_image_build_base_x86: registry.redhat.io/rhdh/rhdh-hub-rhel9:1.10
+apme_image_build_base_arm: quay.io/rhdh-community/rhdh:1.10
+apme_image_build_source_repo: "{{ apme_source_repo | default('ansible/ansible-rhdh-plugins') }}"
+apme_image_build_source_ref: "{{ apme_source_ref | default('latest', true) }}"
+apme_image_build_artifact_name: "{{ apme_source_artifact_name | default('') }}"
+apme_image_build_pack_format: "{{ apme_pack_format | default('oci') }}"
+apme_image_build_pack_sha256: ""

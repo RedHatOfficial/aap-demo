@@ -17,6 +17,9 @@ apme_pah_seed_apme_galaxy_servers: true  # noqa: var-naming[no-role-prefix]
 # auto: enable when galaxy-token or pah-config.yml is present
 apme_pah_collections_enabled: auto  # noqa: var-naming[no-role-prefix]
 
+apme_engine_deployment_name: "{{ apme_helm_release_name | default('apme') }}-engine"  # noqa: var-naming[no-role-prefix]
+apme_engine_deploy: "deploy/{{ apme_engine_deployment_name }}"  # noqa: var-naming[no-role-prefix]
+
 apme_pah_gateway_service: apme-gateway  # noqa: var-naming[no-role-prefix]
 apme_pah_gateway_port: 8080  # noqa: var-naming[no-role-prefix]
 apme_pah_seed_retries: 12  # noqa: var-naming[no-role-prefix]

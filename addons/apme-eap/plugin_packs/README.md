@@ -1,6 +1,7 @@
-# APME plugin OCI pack
+# APME plugin artifact staging
 
-APME deploy pushes this OCI archive to the local registry and lets the standard portal
-Helm chart run `install-dynamic-plugins`.
+Plugin packs are resolved at image-build time from the configured external source
+(by default `ansible/ansible-rhdh-plugins`). The resolver validates the GitHub Actions
+artifact, and `Containerfile.ci` bakes the six verified plugins into the portal image.
 
-To use a different plugin build, replace the archive and update `plugin-pack.manifest.yml`.
+No plugin archive is checked into this repository or pushed to the cluster at runtime.

@@ -30,7 +30,9 @@ OAUTH_APP_NAME="${OAUTH_APP_NAME:-ansible-automation-portal}"
 # ARM profile: upstream community RHDH (multi-arch) + RHEL9 PostgreSQL
 DEFAULT_RHDH_REGISTRY="${DEFAULT_RHDH_REGISTRY:-quay.io}"
 DEFAULT_RHDH_REPOSITORY="${DEFAULT_RHDH_REPOSITORY:-rhdh-community/rhdh}"
-DEFAULT_RHDH_TAG="${DEFAULT_RHDH_TAG:-1.10}"
+_APME_DEFAULTS="${SCRIPT_DIR}/../apme-eap/defaults.yml"
+_SHARED_RHDH_TAG=$(sed -n 's/^rhdh_image_tag:[[:space:]]*//p' "$_APME_DEFAULTS" 2>/dev/null | head -1 | tr -d '"')
+DEFAULT_RHDH_TAG="${DEFAULT_RHDH_TAG:-${_SHARED_RHDH_TAG:-1.10}}"
 DEFAULT_POSTGRES_REGISTRY="${DEFAULT_POSTGRES_REGISTRY:-registry.redhat.io}"
 DEFAULT_POSTGRES_REPOSITORY="${DEFAULT_POSTGRES_REPOSITORY:-rhel9/postgresql-15}"
 DEFAULT_POSTGRES_TAG="${DEFAULT_POSTGRES_TAG:-9.8-1782419742}"

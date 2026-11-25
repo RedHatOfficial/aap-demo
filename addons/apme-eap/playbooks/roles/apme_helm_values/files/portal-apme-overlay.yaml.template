@@ -1,157 +1,6 @@
-# portal-apme-values.yaml.template — render before helm install
-#
-# Fresh non-production greenfield. Use a new, empty namespace on a lab or EAP early access cluster.
-# Helm applies the full dynamic.plugins list from the rendered file.
-#
-# Rendered by apme-portal-installer role apme_helm_values (placeholders below).
-# Placeholders: namespace, cluster-router-base, init-install-command, init-container-image
-#
-# APME plugins load through the chart's standard dynamic-plugin installer.
-
+---
+# aap-demo overlay — merged after portal-chart-values.yaml (helm show values + inject)
 redhat-developer-hub:
-  common:
-    exampleValue: common-chart
-    global:
-      _environment:
-        _development: false
-        _production: true
-        _stage: false
-      auth:
-        backend:
-          enabled: true
-          existingSecret: ""
-          value: ""
-      catalogIndex:
-        image:
-          registry: registry.access.redhat.com
-          repository: rhdh/plugin-catalog-index@sha256
-          tag: 05ca260c6511bc49f619535f7ea56d58bb7bc5336daf6d5cff5b2f03e970fb44
-      clusterRouterBase: apps.example.com
-      dynamic:
-        includes:
-        - dynamic-plugins.default.yaml
-        plugins:
-        - disabled: false
-          package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
-        - disabled: false
-          integrity: '{{- include "plugins.integrity.scaffolder" . }}'
-          package: '{{- include "plugins.load.scaffolder" . }}'
-          pluginConfig:
-            dynamicPlugins:
-              backend:
-                ansible.plugin-scaffolder-backend-module-backstage-rhaap: null
-        - disabled: false
-          integrity: '{{- include "plugins.integrity.catalog" . }}'
-          package: '{{- include "plugins.load.catalog" . }}'
-        - disabled: false
-          integrity: '{{- include "plugins.integrity.self-service" . }}'
-          package: '{{- include "plugins.load.self-service" . }}'
-          pluginConfig:
-            dynamicPlugins:
-              frontend:
-                ansible.plugin-backstage-self-service:
-                  dynamicRoutes:
-                  - importName: LandingPage
-                    path: /
-                  - importName: SelfServicePage
-                    path: /self-service
-                  - importName: TemplatesPage
-                    menuItem:
-                      importName: TemplatesSidebarItem
-                    path: /self-service/*
-                  - importName: HistoryPage
-                    menuItem:
-                      importName: HistorySidebarItem
-                    path: /self-service/create/tasks
-                  - importName: EEPage
-                    path: /self-service/ee/*
-                  - importName: EEPage
-                    menuItem:
-                      importName: EEBuilderSidebarItem
-                    path: /self-service/ee
-                  - importName: CollectionsPage
-                    menuItem:
-                      importName: CollectionsSidebarItem
-                    path: /self-service/collections
-                  - importName: CollectionsPage
-                    path: /self-service/collections/*
-                  - importName: GitRepositoriesPage
-                    menuItem:
-                      importName: GitRepositoriesSidebarItem
-                    path: /self-service/repositories
-                  - importName: GitRepositoriesPage
-                    path: /self-service/repositories/*
-                  mountPoints:
-                  - importName: LocationListener
-                    mountPoint: application/listener
-                  - importName: AppThemeFixer
-                    mountPoint: application/listener
-                  - config:
-                      priority: 100
-                    importName: AAPLogoutButton
-                    mountPoint: global.header/profile
-                  providerSettings:
-                  - description: Sign in with RHAAP
-                    provider: ansible.auth.rhaap
-                    title: RHAAP
-                  scaffolderFieldExtensions:
-                  - importName: AAPTokenFieldExtension
-                  - importName: AAPResourcePickerExtension
-                  - importName: AdditionalBuildStepsPickerFieldExtension
-                  - importName: BaseImagePickerFieldExtension
-                  - importName: CollectionsPickerFieldExtension
-                  - importName: EEFileNamePickerExtension
-                  - importName: FileUploadPickerFieldExtension
-                  - importName: PackagesPickerFieldExtension
-                  - importName: MCPServersPickerFieldExtension
-                  - importName: ScmSelectorFieldExtension
-                  signInPage:
-                    importName: SignInPage
-        - disabled: false
-          integrity: '{{- include "plugins.integrity.auth" . }}'
-          package: '{{- include "plugins.load.auth" . }}'
-          pluginConfig: {}
-        - disabled: false
-          package: '{{- include "plugins.load.github-auth-provider" . }}'
-        - disabled: false
-          package: '{{- include "plugins.load.gitlab-auth-provider" . }}'
-        - disabled: false
-          package: ./dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-github-dynamic
-        - disabled: false
-          package: ./dynamic-plugins/dist/backstage-plugin-scaffolder-backend-module-gitlab-dynamic
-        - disabled: true
-          package: ./dynamic-plugins/dist/backstage-plugin-techdocs
-        - disabled: true
-          package: ./dynamic-plugins/dist/backstage-plugin-techdocs-backend-dynamic
-        - disabled: true
-          package: ./dynamic-plugins/dist/backstage-plugin-techdocs-module-addons-contrib
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-catalog-backend-module-marketplace-dynamic
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-quickstart
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-adoption-insights
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-adoption-insights-backend-dynamic
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-analytics-module-adoption-insights-dynamic
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-dynamic-home-page
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-marketplace
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-marketplace-backend-dynamic
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-extensions
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-catalog-backend-module-extensions-dynamic
-        - disabled: true
-          package: ./dynamic-plugins/dist/red-hat-developer-hub-backstage-plugin-extensions-backend-dynamic
-      host: ""
-      imageRegistry: ""
-      imageTagInfo: "2.2"
-      ociPluginImage: ""
-      pluginMode: tarball
   global:
     _environment:
       _development: false
@@ -169,21 +18,22 @@ redhat-developer-hub:
         tag: 05ca260c6511bc49f619535f7ea56d58bb7bc5336daf6d5cff5b2f03e970fb44
     clusterRouterBase: <cluster-router-base>
     dynamic:
-      includes:
-      - dynamic-plugins.default.yaml
+      includes: []
       plugins:
       - disabled: false
         package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
+      - disabled: true
+        package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-quay-dynamic
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-plugin-scaffolder-backend-module-backstage-rhaap
+        package: ./dynamic-plugins/dist/ansible-plugin-scaffolder-backend-module-backstage-rhaap
         pluginConfig:
           dynamicPlugins:
             backend:
               ansible.plugin-scaffolder-backend-module-backstage-rhaap: null
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-backstage-plugin-catalog-backend-module-rhaap
+        package: ./dynamic-plugins/dist/ansible-backstage-plugin-catalog-backend-module-rhaap
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-plugin-backstage-self-service
+        package: ./dynamic-plugins/dist/ansible-plugin-backstage-self-service
         pluginConfig:
           dynamicPlugins:
             frontend:
@@ -243,13 +93,14 @@ redhat-developer-hub:
                 - importName: PackagesPickerFieldExtension
                 - importName: MCPServersPickerFieldExtension
                 - importName: ScmSelectorFieldExtension
+                - importName: GitHubRepoUrlFieldExtension
                 signInPage:
                   importName: SignInPage
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-backstage-plugin-auth-backend-module-rhaap-provider
+        package: ./dynamic-plugins/dist/ansible-backstage-plugin-auth-backend-module-rhaap-provider
         pluginConfig: {}
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-plugin-backstage-apme
+        package: ./dynamic-plugins/dist/ansible-plugin-backstage-apme
         pluginConfig:
           dynamicPlugins:
             frontend:
@@ -262,7 +113,7 @@ redhat-developer-hub:
                   module: '@material-ui/icons'
                   name: apmeIcon
       - disabled: false
-        package: oci://<oci-registry>/apme-prototype-plugins:<plugin-sha>!ansible-backstage-plugin-catalog-backend-module-apme
+        package: ./dynamic-plugins/dist/ansible-backstage-plugin-catalog-backend-module-apme
         pluginConfig:
           dynamicPlugins:
             backend:
@@ -380,10 +231,15 @@ redhat-developer-hub:
       appConfig:
         ansible:
           apme:
+            addRepositoryButton:
+              enabled: true
             baseUrl: http://apme-gateway:8080
             checkSSL: false
+            enableAi: true
             enabled: true
             mockMode: false
+            # Hosted welcome-pack / early-access Preview feedback (not plugin default Google Form)
+            feedbackFormUrl: https://red.ht/amce-preview-feedback
           creatorService:
             baseUrl: 127.0.0.1
             port: "8000"
@@ -496,9 +352,9 @@ redhat-developer-hub:
                     providers:
                       github:
                       - host: github.com
-                        name: github-acme-scm
+                        name: github-catalog-scm
                         orgs:
-                        - name: acme-scm
+                        - name: <github-catalog-org>
                           branches:
                           - main
                           - master
@@ -648,6 +504,7 @@ redhat-developer-hub:
               - importName: PackagesPickerFieldExtension
               - importName: MCPServersPickerFieldExtension
               - importName: ScmSelectorFieldExtension
+              - importName: GitHubRepoUrlFieldExtension
               signInPage:
                 importName: SignInPage
             ansible.plugin-backstage-apme:
@@ -914,7 +771,7 @@ redhat-developer-hub:
         pullSecrets: []
         registry: registry.redhat.io
         repository: rhdh/rhdh-hub-rhel9
-        tag: "1.9"
+        tag: "<rhdh-hub-tag>"
       initContainers:
       - command:
         <init-install-command>
@@ -1048,11 +905,12 @@ redhat-developer-hub:
             tag: 05ca260c6511bc49f619535f7ea56d58bb7bc5336daf6d5cff5b2f03e970fb44
         clusterRouterBase: apps.example.com
         dynamic:
-          includes:
-          - dynamic-plugins.default.yaml
+          includes: []
           plugins:
           - disabled: false
             package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
+          - disabled: true
+            package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-quay-dynamic
           - disabled: false
             integrity: '{{- include "plugins.integrity.scaffolder" . }}'
             package: '{{- include "plugins.load.scaffolder" . }}'
@@ -1125,6 +983,7 @@ redhat-developer-hub:
                     - importName: PackagesPickerFieldExtension
                     - importName: MCPServersPickerFieldExtension
                     - importName: ScmSelectorFieldExtension
+                    - importName: GitHubRepoUrlFieldExtension
                     signInPage:
                       importName: SignInPage
           - disabled: false
@@ -1200,11 +1059,12 @@ redhat-developer-hub:
           tag: 05ca260c6511bc49f619535f7ea56d58bb7bc5336daf6d5cff5b2f03e970fb44
       clusterRouterBase: apps.example.com
       dynamic:
-        includes:
-        - dynamic-plugins.default.yaml
+        includes: []
         plugins:
         - disabled: false
           package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
+        - disabled: true
+          package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-quay-dynamic
         - disabled: false
           integrity: '{{- include "plugins.integrity.scaffolder" . }}'
           package: '{{- include "plugins.load.scaffolder" . }}'
@@ -1277,6 +1137,7 @@ redhat-developer-hub:
                   - importName: PackagesPickerFieldExtension
                   - importName: MCPServersPickerFieldExtension
                   - importName: ScmSelectorFieldExtension
+                  - importName: GitHubRepoUrlFieldExtension
                   signInPage:
                     importName: SignInPage
         - disabled: false
@@ -1440,11 +1301,12 @@ redhat-developer-hub:
               tag: 05ca260c6511bc49f619535f7ea56d58bb7bc5336daf6d5cff5b2f03e970fb44
           clusterRouterBase: apps.example.com
           dynamic:
-            includes:
-            - dynamic-plugins.default.yaml
+            includes: []
             plugins:
             - disabled: false
               package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
+            - disabled: true
+              package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-quay-dynamic
             - disabled: false
               integrity: '{{- include "plugins.integrity.scaffolder" . }}'
               package: '{{- include "plugins.load.scaffolder" . }}'
@@ -1517,6 +1379,7 @@ redhat-developer-hub:
                       - importName: PackagesPickerFieldExtension
                       - importName: MCPServersPickerFieldExtension
                       - importName: ScmSelectorFieldExtension
+                      - importName: GitHubRepoUrlFieldExtension
                       signInPage:
                         importName: SignInPage
             - disabled: false
@@ -1610,11 +1473,12 @@ redhat-developer-hub:
             tag: 05ca260c6511bc49f619535f7ea56d58bb7bc5336daf6d5cff5b2f03e970fb44
         clusterRouterBase: apps.example.com
         dynamic:
-          includes:
-          - dynamic-plugins.default.yaml
+          includes: []
           plugins:
           - disabled: false
             package: ./dynamic-plugins/dist/backstage-community-plugin-rbac
+          - disabled: true
+            package: ./dynamic-plugins/dist/backstage-community-plugin-scaffolder-backend-module-quay-dynamic
           - disabled: false
             integrity: '{{- include "plugins.integrity.scaffolder" . }}'
             package: '{{- include "plugins.load.scaffolder" . }}'
@@ -1687,6 +1551,7 @@ redhat-developer-hub:
                     - importName: PackagesPickerFieldExtension
                     - importName: MCPServersPickerFieldExtension
                     - importName: ScmSelectorFieldExtension
+                    - importName: GitHubRepoUrlFieldExtension
                     signInPage:
                       importName: SignInPage
           - disabled: false

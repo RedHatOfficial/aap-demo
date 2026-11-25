@@ -1,0 +1,8 @@
+---
+apme_preloaded_image_ref: ""
+apme_preloaded_image_pull_secret: ""
+apme_preloaded_image_auth_file: "{{ lookup('ansible.builtin.env', 'REGISTRY_AUTH_FILE') }}"
+# This controls registry inspection only; six-plugin validation is mandatory.
+apme_preloaded_image_verify: true
+apme_preloaded_image_skopeo_binary: skopeo
+apme_preloaded_image_podman_binary: podman

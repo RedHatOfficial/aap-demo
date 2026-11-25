@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   author: Red Hat
-  description: Render portal-apme-values.yaml from EAP welcome package template
+  description: Fetch portal chart values, inject APME plugins, render overlay for Helm install
   license: Apache-2.0
   min_ansible_version: "2.14"
 
