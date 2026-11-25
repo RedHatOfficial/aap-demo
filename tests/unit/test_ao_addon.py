@@ -1,4 +1,8 @@
-"""AO is native (ADR-045); mcp-server and ollama run their bash installers (ADR-040)."""
+"""AO is native (ADR-045); mcp-server runs its bash installer (ADR-040).
+
+AO's ``ollama`` provider is the host's Ollama (ADR-046), checked before anything
+installs; the ``ollama`` addon only removes the in-cluster one.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from aap_demo.addons import get, names
-from aap_demo.addons.ao import AoAddon, deps
+from aap_demo.addons.ao import AoAddon, deps, host_ollama
+from aap_demo.addons.ollama import OllamaCleanup
 from aap_demo.addons.shell import scripts_root
 from aap_demo.core.errors import AddonError, UsageError
 from aap_demo.exec.runner import CompletedCommand
@@ -22,6 +27,16 @@ def _tools(monkeypatch, fake_runner) -> None:
     monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda name: f"/usr/bin/{name}")
     fake_runner.ok("kubectl get ansiblemcpservers.mcpserver.ansible.com")
     fake_runner.ok("kubectl get deployment aap-mcp-server")
+
+
+@pytest.fixture(autouse=True)
+def host_checks(monkeypatch) -> list:
+    """The host's Ollama checks, recorded instead of run."""
+    seen: list = []
+    monkeypatch.setattr(
+        host_ollama, "prepare", lambda _ctx, url, **_k: seen.append(url) or "granite:8b"
+    )
+    return seen
 
 
 def _deploy(name: str) -> str:
@@ -37,34 +52,51 @@ def _call(app_ctx, name: str):
     return next(call for call in app_ctx.runner.calls if call.argv[1] == _deploy(name))
 
 
-def test_ao_is_native_and_its_dependencies_are_legacy() -> None:
+def test_ao_is_native_and_mcp_server_is_legacy() -> None:
     assert isinstance(get("ao"), AoAddon)
     assert get("ao").kind == "native"
-    for name in ("mcp-server", "ollama"):
-        assert get(name).kind == "legacy"
-    for name in ("ao", "mcp-server", "ollama"):
+    assert get("mcp-server").kind == "legacy"
+    for name in ("ao", "mcp-server"):
         assert get(name).public is True
         assert get(name).needs_cluster is True
         assert name in names()
 
 
-def test_prepare_enables_mcp_server_and_ollama_first(app_ctx, tmp_path) -> None:
+def test_ollama_is_a_hidden_cleanup_addon() -> None:
+    assert isinstance(get("ollama"), OllamaCleanup)
+    assert get("ollama").public is False
+    assert "ollama" not in names()
+
+
+def test_prepare_checks_the_hosts_ollama_then_enables_mcp_server(
+    app_ctx, tmp_path, host_checks
+) -> None:
     secret = tmp_path / "pull-secret.json"
     secret.write_text("{}", encoding="utf-8")
     app_ctx.config.set("deploy.pull_secret_path", str(secret))
-    for name in ("mcp-server", "ollama"):
-        app_ctx.runner.ok(["bash", _deploy(name)])
+    app_ctx.runner.ok(["bash", _deploy("mcp-server")])
 
     assert deps.prepare(app_ctx) == str(secret)
 
-    assert _ran(app_ctx) == ["mcp-server", "ollama"]
+    assert host_checks == [host_ollama.CLUSTER_URL]
+    assert _ran(app_ctx) == ["mcp-server"]
     assert _call(app_ctx, "mcp-server").env["AAP_DEMO_WIRE_AFTER_DEPLOY"] == "1"
-    assert app_ctx.config.get("addons.enabled") == ["mcp-server", "ollama"]
+    assert app_ctx.config.get("addons.enabled") == ["mcp-server"]
     assert "No product demos are enabled" in app_ctx.console.stdout + app_ctx.console.stderr
 
 
+def test_a_host_ollama_failure_stops_before_any_install(app_ctx, monkeypatch) -> None:
+    def fail(*_a, **_k):
+        raise AddonError("Ollama is not running at http://127.0.0.1:11434")
+
+    monkeypatch.setattr(host_ollama, "prepare", fail)
+    with pytest.raises(AddonError, match="Ollama is not running"):
+        get("ao").enable(app_ctx, argparse.Namespace(addon="ao", addon_args=[]))
+    assert _ran(app_ctx) == []
+
+
 def test_enabled_dependencies_are_not_installed_again(app_ctx) -> None:
-    app_ctx.config.set("addons.enabled", ["product-demos", "mcp-server", "ollama"])
+    app_ctx.config.set("addons.enabled", ["product-demos", "mcp-server"])
     deps.prepare(app_ctx)
     assert _ran(app_ctx) == []
     assert "No product demos are enabled" not in app_ctx.console.stdout + app_ctx.console.stderr
@@ -100,11 +132,14 @@ def test_prepare_stops_if_existing_mcp_cannot_be_checked(app_ctx) -> None:
 
 
 @pytest.mark.parametrize("provider", ["none", "external"])
-def test_an_llm_provider_other_than_ollama_skips_ollama(app_ctx, provider) -> None:
+def test_an_llm_provider_other_than_ollama_skips_the_host_check(
+    app_ctx, provider, host_checks
+) -> None:
     app_ctx.env["AO_LLM_PROVIDER"] = provider
     app_ctx.runner.ok(["bash", _deploy("mcp-server")])
     deps.prepare(app_ctx)
     assert _ran(app_ctx) == ["mcp-server"]
+    assert host_checks == []
 
 
 def test_a_provider_saved_by_the_bash_command_picks_the_dependencies(app_ctx) -> None:

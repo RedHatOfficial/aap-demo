@@ -109,6 +109,77 @@ def _prepare(
     return runner
 
 
+@pytest.mark.parametrize("supported", [True, False])
+def test_a_new_vm_gets_host_network_access_where_crc_supports_it(
+    app_ctx, tmp_path, monkeypatch, supported
+) -> None:
+    import platform
+
+    systems = (platform.system(),) if supported else ()
+    monkeypatch.setattr(bootstrap, "HOST_NETWORK_SYSTEMS", systems)
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    setting = "crc config set host-network-access true"
+    assert runner.called(setting) is supported
+    if supported:
+        # CRC reads it when crc setup runs, before the VM exists.
+        assert runner.index_of(setting) < runner.index_of("crc setup")
+        out = app_ctx.console.stdout + app_ctx.console.stderr
+        assert "can reach services on this host" in out
+        assert "AAP_DEMO_HOST_NETWORK_ACCESS=false" in out
+
+
+@pytest.mark.parametrize("value", ["false", "0", "No", "off"])
+def test_host_network_access_can_be_turned_off(app_ctx, tmp_path, monkeypatch, value) -> None:
+    import platform
+
+    monkeypatch.setattr(bootstrap, "HOST_NETWORK_SYSTEMS", (platform.system(),))
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    app_ctx.env = {**app_ctx.env, bootstrap.HOST_NETWORK_ENV: value}
+    bootstrap.create(
+        app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+    )
+    # Set explicitly, so an earlier crc config set ... true does not carry over.
+    setting = "crc config set host-network-access false"
+    assert runner.index_of(setting) < runner.index_of("crc setup")
+    assert not runner.called("crc config set host-network-access true")
+    assert "AO_LLM_PROVIDER=external" in app_ctx.console.stdout + app_ctx.console.stderr
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_a_failed_host_network_access_setting_is_reported(
+    app_ctx, tmp_path, monkeypatch, value
+) -> None:
+    import platform
+
+    monkeypatch.setattr(bootstrap, "HOST_NETWORK_SYSTEMS", (platform.system(),))
+    runner = _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Unknown"}')
+    setting = ("crc", "config", "set", "host-network-access", value)
+    runner._rules.insert(
+        0, (setting, CompletedCommand(argv=setting, returncode=1, stderr="config is read-only"))
+    )
+    app_ctx.env = {**app_ctx.env, bootstrap.HOST_NETWORK_ENV: value}
+
+    def create() -> None:
+        bootstrap.create(
+            app_ctx, sleep=lambda _s: None, host=(8, 32768), which=lambda name: "/bin/" + name
+        )
+
+    if value == "false":
+        # Never create a VM the user asked to keep off the host.
+        with pytest.raises(AapDemoError, match="Could not turn off"):
+            create()
+        assert not runner.called("crc setup")
+    else:
+        create()
+        out = app_ctx.console.stdout + app_ctx.console.stderr
+        assert "Could not turn on CRC host-network-access" in out
+        assert "config is read-only" in out
+        assert "CRC host network access: on" not in out
+
+
 def test_create_refuses_a_cluster_that_is_already_running(app_ctx, tmp_path) -> None:
     _prepare(app_ctx, tmp_path, first_status='{"crcStatus": "Running"}')
     try:

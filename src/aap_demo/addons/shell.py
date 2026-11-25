@@ -56,7 +56,6 @@ BUNDLED_ADDON_DIRS: tuple = (
     "eda-playground",
     "ao",
     "mcp-server",
-    "ollama",
 )
 
 #: Names ``aap-demo enable`` prints when no addon is given.
@@ -66,7 +65,6 @@ PUBLIC_SHELL_ADDONS: tuple = (
     "eda-playground",
     "ao",
     "mcp-server",
-    "ollama",
 )
 
 #: Extra environment for one installer run, worked out before it starts.
@@ -108,7 +106,7 @@ def _enable_ao(ctx: AppContext, env: Dict[str, str]) -> None:
     """Product demos with a Fleet host also set up AO's Fleet workflows (ADR-045).
 
     Without a configured LLM provider this uses ``none``, as the Bash path did,
-    so product demos do not pull in Ollama.
+    so product demos do not need Ollama.
     """
     import argparse
     import dataclasses

@@ -44,6 +44,11 @@ NIPIO_DOMAIN = "127.0.0.1.nip.io"
 METRICS_APPLY_RETRIES = 2
 METRICS_APPLY_RETRY_SECONDS = 15
 
+#: CRC uses user-mode networking here, where host-network-access applies.
+HOST_NETWORK_SYSTEMS = ("Darwin", "Windows")
+#: Set to false, 0, no or off to create the VM without host network access.
+HOST_NETWORK_ENV = "AAP_DEMO_HOST_NETWORK_ACCESS"
+
 HostResources = Tuple[int, int]
 
 
@@ -590,6 +595,12 @@ def _target_version(ctx: AppContext, home: Path, state: str) -> Optional[ocp_ver
     return target
 
 
+def host_network_access(ctx: AppContext) -> bool:
+    """Whether a new VM gets CRC host-network-access. On unless turned off."""
+    value = (ctx.env.get(HOST_NETWORK_ENV) or "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
 def create(
     ctx: AppContext,
     *,
@@ -724,6 +735,40 @@ def _create(
 
     ctx.runner.run(["crc", "config", "set", "preset", "microshift"])
     ctx.console.progress("CRC preset: microshift")
+
+    if state == infra_crc.STATE_NOT_CREATED and platform.system() in HOST_NETWORK_SYSTEMS:
+        # Lets pods reach the host, such as AO's Ollama (ADR-046). CRC applies
+        # it only to a VM it creates after crc setup.
+        allow = host_network_access(ctx)
+        result = ctx.runner.run(
+            ["crc", "config", "set", "host-network-access", "true" if allow else "false"]
+        )
+        if not result.ok:
+            detail = (result.stderr or result.stdout or "").strip()
+            if not allow:
+                # The user asked for no host access; do not create a VM that may have it.
+                raise AapDemoError(
+                    "Could not turn off CRC host-network-access",
+                    hint=detail
+                    or f"Run crc config set host-network-access false, or unset "
+                    f"{HOST_NETWORK_ENV}.",
+                )
+            ctx.console.warn(
+                "Could not turn on CRC host-network-access, so AO's ollama provider will not "
+                "reach Ollama on this host." + (f" {detail}" if detail else "")
+            )
+        elif allow:
+            ctx.console.progress("CRC host network access: on")
+            ctx.console.note(
+                "Pods in the VM can reach services on this host's 127.0.0.1, such as Ollama. "
+                f"To create the VM without it, set {HOST_NETWORK_ENV}=false."
+            )
+        else:
+            ctx.console.progress(f"CRC host network access: off ({HOST_NETWORK_ENV})")
+            ctx.console.note(
+                "AO's ollama provider cannot reach Ollama on this host. "
+                "Use AO_LLM_PROVIDER=external instead."
+            )
 
     if state == infra_crc.STATE_NOT_CREATED:
         ctx.console.progress("Running CRC setup...")

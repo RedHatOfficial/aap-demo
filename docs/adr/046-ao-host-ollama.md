@@ -1,8 +1,8 @@
 # ADR-046: AO Uses the Host's Ollama
 
-**Status**: Proposed
+**Status**: Accepted
 
-**Date**: 2026-11-20
+**Date**: 2026-11-20 (Updated: 2026-11-22 and 2026-11-25; see below)
 
 **Authors**: aap-demo maintainers
 
@@ -64,7 +64,8 @@ a model, pulls it and accepts its license.
    macOS), start it, pull a model, rerun `aap-demo enable ao`, or choose the
    `external` or `none` provider.
 2. Choose the model:
-   - `OLLAMA_MODEL`, `--set addons.options.ao.llm_model=...` or config sets it.
+   - `OLLAMA_MODEL` sets it. Otherwise the model an earlier run chose, kept in
+     `addons.options.ao.ollama_model` (not `llm_model`, which belongs to `external`).
    - If none is set and the host has exactly one model, use it.
    - If it has several, ask in an interactive run. A non-interactive run stops with
      the list and how to set one.
@@ -73,23 +74,30 @@ a model, pulls it and accepts its license.
 3. Check the model's `capabilities` from `/api/show` and warn if `tools` is missing,
    since AO's agents call tools. Older Ollama releases do not report capabilities; in
    that case warn that the check was skipped.
-4. Check from a short-lived pod that the cluster reaches the host's Ollama before
-   wiring AO, and stop with the cause if it does not.
+4. Check from a short-lived pod that the cluster reaches the host's Ollama, and stop
+   with the cause if it does not. This runs right after step 1, before the model
+   prompt, so a VM that cannot reach the host fails before anyone answers a question.
+   A check pod that never runs is reported as a cluster problem, not as an
+   unreachable host.
 5. Wire AO's LLM integration to `http://192.168.127.254:11434/v1`, an IP rather than
    `host.crc.testing` because pods cannot resolve that name. `AO_LLM_BASE_URL`
    overrides it.
 6. Add the LLM URL's host to AO's integration allow-list
    (`APP_INTEGRATION_URL_ALLOWED_HOSTS`), and set the integration's `allow_http` from
    the URL's scheme. Both apply to `external` too, which today allows neither.
-7. Limit AO's egress to the host. AO's allow-list matches host names, not ports, so
-   aap-demo applies a NetworkPolicy in the `automation-orchestrator` namespace that
-   allows `192.168.127.254` only on the Ollama port (11434, or the port in
-   `AO_LLM_BASE_URL`) and allows all other egress as before.
+7. ~~Limit AO's egress to the host with a NetworkPolicy.~~ Dropped during
+   implementation. The AO operator already applies a default-deny policy and gives
+   its backend and worker pods, the ones that call the LLM, an allow-all egress rule
+   (`egress: [{}]`). NetworkPolicies only add allows, so no policy can narrow those
+   pods, and a broad one would open egress for the pods the operator restricts.
+   MicroShift has no EgressFirewall or AdminNetworkPolicy to deny instead.
 
 ### CRC host network access
 
 `aap-demo create` sets `host-network-access=true` before the VM exists, on macOS and
-Windows, where CRC uses user-mode networking.
+Windows, where CRC uses user-mode networking. `AAP_DEMO_HOST_NETWORK_ACCESS=false`
+(or `0`, `no`, `off`) sets it to `false` instead, for users who cannot accept the
+host exposure below; the `ollama` provider then cannot reach the host.
 
 For an existing VM without it, `enable ao` explains that the setting needs a new VM
 (`aap-demo destroy`, then `aap-demo create`) and stops. aap-demo never runs
@@ -142,10 +150,11 @@ only, and explains how to pull one.
 - **Host memory.** A large model uses host memory instead of VM memory.
 - **Host services are reachable from the VM.** `host-network-access` lets every pod
   in the VM, including AAP job pods that run playbooks, connect to any service on the
-  host's `127.0.0.1`, not just Ollama. The AO NetworkPolicy limits AO only. aap-demo
-  is a local development tool, and the user's own playbooks already run with their
-  credentials, but users who run other local services should know. `aap-demo create`
-  and the AO guide say so.
+  host's `127.0.0.1`, not just Ollama. aap-demo is a local development tool, and the
+  user's own playbooks already run with their credentials, but users who run other
+  local services should know. `aap-demo create`
+  and the AO guide say so, and `AAP_DEMO_HOST_NETWORK_ACCESS=false`
+  opts out. aap-demo cannot narrow this with a NetworkPolicy (step 7).
 
 ### Neutral
 
