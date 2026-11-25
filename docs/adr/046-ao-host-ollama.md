@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 
-**Date**: 2026-11-20 (Updated: 2026-11-22: step 7 dropped, opt-out added, Bash and PowerShell moved)
+**Date**: 2026-11-20 (Updated: 2026-11-22 and 2026-11-25; see below)
 
 **Authors**: aap-demo maintainers
 
@@ -74,8 +74,11 @@ a model, pulls it and accepts its license.
 3. Check the model's `capabilities` from `/api/show` and warn if `tools` is missing,
    since AO's agents call tools. Older Ollama releases do not report capabilities; in
    that case warn that the check was skipped.
-4. Check from a short-lived pod that the cluster reaches the host's Ollama before
-   wiring AO, and stop with the cause if it does not.
+4. Check from a short-lived pod that the cluster reaches the host's Ollama, and stop
+   with the cause if it does not. This runs right after step 1, before the model
+   prompt, so a VM that cannot reach the host fails before anyone answers a question.
+   A check pod that never runs is reported as a cluster problem, not as an
+   unreachable host.
 5. Wire AO's LLM integration to `http://192.168.127.254:11434/v1`, an IP rather than
    `host.crc.testing` because pods cannot resolve that name. `AO_LLM_BASE_URL`
    overrides it.
