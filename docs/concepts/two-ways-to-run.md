@@ -23,7 +23,13 @@ There are two commands, on purpose.
 | How you get it | `pipx install aap-demo` | Clone the repo and run `./install.sh` |
 | What it is | The Python release candidate of 2.0.0 | The bash script `aap-demo.sh` |
 | Where your files go | `~/.local/state/aap-demo` | `~/.aap-demo` |
-| What to use it for | Create the cluster, deploy AAP, day-to-day start and stop, Fleet, product demos | Anything the new command does not do yet |
+| What to use it for | Create the cluster, deploy AAP, day-to-day cluster care, and listed Python v2 addons | Commands and addons that Python v2 has not implemented |
+
+On Windows, `powershell/install.ps1` installs Python v2 as `aap-demo` and
+registers the checkout-based Bash command as `aap-demo-v1`. Some addons listed
+by Python v2 still invoke bundled Bash scripts and require Git for Windows. The
+Windows-specific install, migration, rollback, and capability details are in
+[Windows Python migration](../reference/windows-python-migration.md).
 
 You can keep both. If the older command is installed as `aap-demo`, rename it to `aap-demo-v1` before you
 install the new one, so the new command is the one that runs. The steps are in

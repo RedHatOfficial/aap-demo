@@ -58,6 +58,11 @@ Skip all automatic import when `AAP_DEMO_TRUST_CA=false`.
 
 ### Windows — Current User root store (primary user store)
 
+The PowerShell implementation below also attempts LocalMachine trust and may
+request elevation. Python v2 currently imports only into Current User Root and
+does not request elevation; ADR-046 tracks end-to-end browser trust validation
+for that path.
+
 `powershell/native/Private/Helpers.ps1` → `Import-AapIngressCaCertificate`:
 
 1. Compute SHA-1 thumbprint; skip if already in **LocalMachine** Root
@@ -144,7 +149,8 @@ When already trusted, commands stay silent. Import failures are warnings only �
 
 | Platform | User store | System store | Module |
 |----------|------------|--------------|--------|
-| Windows | CurrentUser Root | LocalMachine Root (UAC) | `Helpers.ps1` |
+| Windows PowerShell | CurrentUser Root | LocalMachine Root (UAC) | `Helpers.ps1` |
+| Windows Python v2 | CurrentUser Root | — | `cluster/ingress_ca.py` |
 | Linux | NSS (`~/.pki/nssdb`, etc.) | ca-trust / ca-certificates (sudo) | `ingress-ca-trust.sh` |
 | macOS | — | System keychain (sudo) | `ingress-ca-trust.sh` |
 

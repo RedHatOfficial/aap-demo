@@ -50,7 +50,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [007](007-coredns-route-resolution.md) | CoreDNS Route Resolution for nip.io | Accepted |
 | [008](008-addon-system.md) | Addon System Architecture | Accepted |
 | [009](009-aap-operator-olm-deployment.md) | AAP Operator Deployment via OLM | Accepted |
-| [010](010-cross-platform-cli.md) | Cross-Platform CLI (Bash and PowerShell) | Accepted |
+| [010](010-cross-platform-cli.md) | Cross-Platform CLI (Bash and PowerShell) | Superseded by [046](046-python-cli-windows-default.md) |
 | [011](011-mcp-server-addon.md) | MCP Server Addon | Accepted |
 | [012](012-scc-and-pod-security.md) | Security Context Constraints and Pod Security | Accepted |
 | [013](013-in-cluster-registry.md) | In-Cluster Container Registry | Accepted |
@@ -72,7 +72,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [028](028-ao-agentic-model-binding.md) | AO Agentic Task Model Binding | Accepted |
 | [029](029-windows-feature-parity.md) | Windows Feature Parity Strategy | Proposed |
 | [030](030-windows-native-addon-execution.md) | Native PowerShell Addon Execution | Superseded |
-| [031](031-windows-git-bash-wrapper.md) | Windows Git Bash Command Wrapper | Accepted |
+| [031](031-windows-git-bash-wrapper.md) | Windows Git Bash Command Wrapper | Superseded by [046](046-python-cli-windows-default.md) |
 | [032](032-fleet-v2-addon.md) | Fleet v2 Addon | Accepted |
 | [032](032-open-issues-remediation-strategy.md) | Open Issue Remediation Strategy | Proposed |
 | [033](033-apme-local-oci-plugin-publishing.md) | APME Local OCI Plugin Publishing | Accepted |
@@ -90,6 +90,7 @@ We use a simplified ADR format based on [Michael Nygard's template](https://cogn
 | [046](046-native-v2-addon-migrations.md) | Native V2 Migration of Non-AO Bash Addons | Proposed |
 | [043](043-ao-postgres-statefulset.md) | One PostgreSQL StatefulSet for Automation Orchestrator | Accepted |
 | [045](045-ao-on-python-command.md) | Automation Orchestrator on the Python Command | Accepted |
+| [046](046-python-cli-windows-default.md) | Python CLI as the Windows Default | Accepted |
 | [046](046-ao-host-ollama.md) | AO Uses the Host's Ollama | Proposed |
 
 ## Creating a New ADR

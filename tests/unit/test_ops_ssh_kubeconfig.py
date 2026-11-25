@@ -178,19 +178,38 @@ def test_config_edit_goes_through_the_runner(app_ctx: AppContext, fake_runner: F
 
 
 def test_config_secrets_migrate_uses_the_public_migration_api(
-    app_ctx: AppContext, tmp_path: Path
+    app_ctx: AppContext, tmp_path: Path, monkeypatch
 ) -> None:
     from aap_demo.core import migration
 
     assert not hasattr(migration, "_import_secret")
     app_ctx.paths.legacy_dir.mkdir(parents=True, exist_ok=True)
     app_ctx.paths.legacy_config_file.write_text("NAMESPACE=aap-operator\n")
-    (app_ctx.paths.legacy_dir / "galaxy-token").write_text("s3cret")
+    credential = app_ctx.paths.legacy_dir / "galaxy-token"
+    credential.write_text("s3cret")
+    monkeypatch.setattr(ops, "_preserve_legacy_migration_sources", lambda: True)
 
     rc = ops.config(app_ctx, argparse_namespace(config_action="secrets", secrets_action="migrate"))
 
     assert rc == 0
     assert app_ctx.secrets.get("galaxy-token") == "s3cret"
+    assert credential.read_text() == "s3cret"
+
+
+def test_config_migrate_preserves_legacy_sources_when_requested(
+    app_ctx: AppContext, monkeypatch
+) -> None:
+    app_ctx.paths.legacy_dir.mkdir(parents=True, exist_ok=True)
+    app_ctx.paths.legacy_config_file.write_text("NAMESPACE=aap-operator\n")
+    monkeypatch.setattr(ops, "_preserve_legacy_migration_sources", lambda: True)
+
+    rc = ops.config(
+        app_ctx,
+        argparse_namespace(config_action="migrate", force=False, dry_run=False),
+    )
+
+    assert rc == 0
+    assert app_ctx.paths.legacy_config_file.read_text() == "NAMESPACE=aap-operator\n"
 
 
 def test_config_set_pull_secret_stores_the_path_the_user_gave(app_ctx: AppContext) -> None:

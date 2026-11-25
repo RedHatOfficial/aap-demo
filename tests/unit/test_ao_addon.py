@@ -10,7 +10,7 @@ import pytest
 
 from aap_demo.addons import get, names
 from aap_demo.addons.ao import AoAddon, deps
-from aap_demo.addons.shell import scripts_root
+from aap_demo.addons.shell import scripts_root, use_oc_for_kubectl
 from aap_demo.core.errors import AddonError, UsageError
 from aap_demo.exec.runner import CompletedCommand
 
@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture(autouse=True)
 def _tools(monkeypatch, fake_runner) -> None:
     monkeypatch.setattr("aap_demo.addons.shell.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("aap_demo.addons.shell.find_bash", lambda _which=None: "bash")
     fake_runner.ok("kubectl get ansiblemcpservers.mcpserver.ansible.com")
     fake_runner.ok("kubectl get deployment aap-mcp-server")
 
@@ -46,6 +47,14 @@ def test_ao_is_native_and_its_dependencies_are_legacy() -> None:
         assert get(name).public is True
         assert get(name).needs_cluster is True
         assert name in names()
+
+
+def test_windows_shell_dependencies_can_use_oc_for_kubectl() -> None:
+    def which(name: str) -> str | None:
+        return "C:/OpenShift/oc.exe" if name == "oc" else None
+
+    assert use_oc_for_kubectl(windows=True, which=which)
+    assert not use_oc_for_kubectl(windows=False, which=which)
 
 
 def test_prepare_enables_mcp_server_and_ollama_first(app_ctx, tmp_path) -> None:

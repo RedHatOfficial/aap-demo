@@ -16,6 +16,7 @@ from typing import Callable
 from aap_demo.cluster import aap as aap_mod
 from aap_demo.cluster import bootstrap as bootstrap_mod
 from aap_demo.cluster import deploy as deploy_mod
+from aap_demo.cluster import ingress_ca
 from aap_demo.cluster import runtime as runtime_mod
 from aap_demo.cluster import status as status_mod
 from aap_demo.core import prompts
@@ -89,6 +90,15 @@ def setup(ctx: AppContext, args: argparse.Namespace) -> int:
     """
     ctx.console.out("CRC setup is handled during 'aap-demo create'")
     return 0
+
+
+def trust_ca(ctx: AppContext, args: argparse.Namespace) -> int:
+    """Import the current cluster ingress CA into the local trust store."""
+    del args
+    if ingress_ca.install(ctx):
+        return 0
+    ctx.console.warn("The current ingress CA could not be trusted.")
+    return 1
 
 
 def start(ctx: AppContext, args: argparse.Namespace) -> int:

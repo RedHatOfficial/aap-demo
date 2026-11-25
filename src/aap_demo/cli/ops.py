@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -43,6 +44,11 @@ CONFIG_KEY_ALIASES = {
 
 def _config_key(key: str) -> str:
     return CONFIG_KEY_ALIASES.get(key, key)
+
+
+def _preserve_legacy_migration_sources() -> bool:
+    """Keep v1-readable files intact while the Windows compatibility shim exists."""
+    return os.name == "nt"
 
 
 def version(ctx: AppContext, args: argparse.Namespace) -> int:
@@ -148,7 +154,11 @@ def _config_migrate(ctx: AppContext, args: argparse.Namespace) -> int:
     if getattr(args, "force", False) and ctx.paths.config_file.is_file():
         ctx.paths.config_file.unlink()
 
-    plan = migration.plan(ctx.paths, secrets_available=ctx.secrets.available())
+    plan = migration.plan(
+        ctx.paths,
+        secrets_available=ctx.secrets.available(),
+        preserve_legacy=_preserve_legacy_migration_sources(),
+    )
     if not plan.needed:
         ctx.console.info(f"Already migrated: {ctx.paths.config_file}")
         return 0
@@ -200,14 +210,23 @@ def _config_secrets(ctx: AppContext, args: argparse.Namespace) -> int:
         return 0
 
     if action == "migrate":
-        plan = migration.plan(ctx.paths, secrets_available=ctx.secrets.available())
-        actions = [a for a in plan.actions if a.kind == "import-secret"]
+        plan = migration.plan(
+            ctx.paths,
+            secrets_available=ctx.secrets.available(),
+            preserve_legacy=_preserve_legacy_migration_sources(),
+        )
+        actions = [a for a in plan.actions if a.kind in {"import-secret", "import-secret-preserve"}]
         if not actions:
             ctx.console.info("No legacy credential files to import.")
             return 0
         for action_item in actions:
             log: list = []
-            migration.import_secret(action_item.source, ctx.secrets, log)
+            migration.import_secret(
+                action_item.source,
+                ctx.secrets,
+                log,
+                delete_source=not _preserve_legacy_migration_sources(),
+            )
             for line in log:
                 ctx.console.out(line)
         return 0

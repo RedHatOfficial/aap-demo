@@ -15,6 +15,7 @@ from aap_demo.exec.runner import (
     CompletedCommand,
     FakeRunner,
     SubprocessRunner,
+    command_argv_for_platform,
 )
 
 # -- FakeRunner -------------------------------------------------------------
@@ -42,6 +43,22 @@ def test_wildcard_token_matches_anything() -> None:
 def test_regex_token_matches() -> None:
     runner = FakeRunner().ok(["kubectl", "get", "~^(pods|pvc)$"])
     assert runner.run(["kubectl", "get", "pvc"]).ok
+
+
+def test_windows_kubectl_uses_oc_when_kubectl_is_missing() -> None:
+    def which(name: str) -> str | None:
+        return r"C:\Program Files\OpenShift\oc.exe" if name == "oc" else None
+
+    assert command_argv_for_platform(["kubectl", "get", "pods"], windows=True, which=which) == [
+        r"C:\Program Files\OpenShift\oc.exe",
+        "get",
+        "pods",
+    ]
+    assert command_argv_for_platform(["kubectl", "get", "pods"], windows=False, which=which) == [
+        "kubectl",
+        "get",
+        "pods",
+    ]
 
 
 def test_callable_result_sees_the_argv() -> None:

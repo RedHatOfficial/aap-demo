@@ -1,10 +1,15 @@
 # ADR-031: Windows Git Bash Command Wrapper
 
-**Status**: Accepted
+**Status**: Superseded by [ADR-046](046-python-cli-windows-default.md)
 
 **Date**: 2026-09-30
 
 ## Context
+
+> Historical decision. ADR-046 replaces the all-command Git Bash wrapper with
+> Python v2 as the Windows default. Git Bash remains a dependency only for the
+> explicit `aap-demo-v1` command and Python addon handlers that call bundled
+> Bash scripts.
 
 The repository's Bash CLI is the maintained source of truth for CRC lifecycle,
 OLM recovery, addon dependencies, wiring, cleanup, and new feature additions.

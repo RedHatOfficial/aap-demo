@@ -48,7 +48,16 @@ BASH_COMMANDS = [
 BASH_ALIASES = {"rh-status": "redhat-status", "deploy-all": "deploy"}
 
 #: New in the rewrite.
-NEW_COMMANDS = ["addon", "playbooks", "gui", "completion", "oc", "fleet", "ocp-version-list"]
+NEW_COMMANDS = [
+    "addon",
+    "playbooks",
+    "gui",
+    "completion",
+    "oc",
+    "fleet",
+    "ocp-version-list",
+    "trust-ca",
+]
 
 
 @pytest.fixture(scope="module")
@@ -85,6 +94,44 @@ def test_aliases_resolve(alias: str, target: str, subcommands: List[str]) -> Non
 @pytest.mark.parametrize("command", NEW_COMMANDS)
 def test_new_commands_exist(command: str, subcommands: List[str]) -> None:
     assert command in subcommands
+
+
+def test_trust_ca_command_invokes_ingress_import(app_ctx, monkeypatch) -> None:
+    from aap_demo.cli import lifecycle
+
+    calls = []
+    monkeypatch.setattr(lifecycle.ingress_ca, "install", lambda ctx: calls.append(ctx) or True)
+
+    assert lifecycle.trust_ca(app_ctx, None) == 0
+    assert calls == [app_ctx]
+
+
+def test_trust_ca_cli_entry_uses_selected_cluster_preflight(tmp_path, monkeypatch) -> None:
+    from aap_demo.cli import main as cli_main
+
+    selected_kubeconfig = tmp_path / "crc-kubeconfig"
+    observed = {}
+
+    def setup_kubeconfig(ctx, *, guard=True):
+        observed["context"] = ctx.kube_context
+        observed["kubeconfig"] = ctx.kubeconfig_override
+        observed["guard"] = guard
+
+    monkeypatch.setattr(cli_main.preflight, "setup_kubeconfig", setup_kubeconfig)
+    monkeypatch.setattr(cli_main.preflight, "warn_cluster_state", lambda _ctx: None)
+    monkeypatch.setattr(cli_main.lifecycle, "trust_ca", lambda _ctx, _args: 0)
+
+    result = run(
+        ["--kubeconfig", str(selected_kubeconfig), "--context", "crc", "trust-ca"],
+        env={"HOME": str(tmp_path), "AAP_DEMO_SKIP_MIGRATION": "1"},
+    )
+
+    assert result == 0
+    assert observed == {
+        "context": "crc",
+        "kubeconfig": selected_kubeconfig,
+        "guard": True,
+    }
 
 
 def test_help_carries_the_bash_trailer_sections(help_text: str) -> None:

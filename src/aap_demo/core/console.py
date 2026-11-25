@@ -305,6 +305,12 @@ class Console:
         """
         if self.quiet:
             return
+        encoding = getattr(stream, "encoding", None)
+        if encoding:
+            try:
+                text.encode(encoding)
+            except UnicodeEncodeError:
+                text = text.encode(encoding, errors="backslashreplace").decode(encoding)
         if self._rich is not None and stream is self._stdout:
             self._rich_print(text, color)
             return

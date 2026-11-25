@@ -12,6 +12,7 @@ import hashlib
 import os
 import platform
 import shutil
+import stat
 import tarfile
 import zipfile
 from pathlib import Path
@@ -24,7 +25,16 @@ from aap_demo.infra.crc import managed_crc_release
 
 MIRROR = "https://mirror.openshift.com/pub/openshift-v4/clients/crc/{release}/{name}"
 
-_INSTALL_NAMES = frozenset({"crc", "crc.exe", "vfkit", "crc-admin-helper-darwin"})
+_INSTALL_NAMES = frozenset(
+    {
+        "crc",
+        "crc.exe",
+        "crc-admin-helper-darwin",
+        "crc-admin-helper-windows.exe",
+        "crc-background-launcher.exe",
+        "vfkit",
+    }
+)
 _ARCH = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 
 
@@ -76,16 +86,64 @@ def _install_file(source: Path, dest: Path) -> None:
             temporary.unlink()
 
 
-def extract_crc_zip(archive: Path, dest: Path) -> None:
+def extract_crc_zip(ctx: Any, archive: Path, dest: Path) -> None:
+    msi_packages = []
     with zipfile.ZipFile(archive) as bundle:
         for info in bundle.infolist():
             name = Path(info.filename).name
-            if name not in _INSTALL_NAMES or info.is_dir():
+            if info.is_dir():
+                continue
+            if name.lower().endswith(".msi"):
+                msi_packages.append((name, bundle.read(info)))
+                continue
+            if name not in _INSTALL_NAMES:
                 continue
             target = dest / name
             target.write_bytes(bundle.read(info))
             target.chmod(0o755)
+    if msi_packages and not (dest / "crc.exe").is_file():
+        for index, (name, payload) in enumerate(msi_packages):
+            _extract_crc_msi(ctx, name, payload, archive.parent, dest, index)
     _require_crc_binary(dest)
+
+
+def _extract_crc_msi(
+    ctx: Any, name: str, payload: bytes, work: Path, dest: Path, index: int
+) -> None:
+    """Extract a Windows CRC MSI without installing it on the machine."""
+    msi = work / f"crc-{index}-{Path(name).name}"
+    staging = work / f"crc-msi-{index}"
+    msi.write_bytes(payload)
+    try:
+        result = ctx.runner.run(
+            [
+                "msiexec.exe",
+                "/a",
+                str(msi),
+                "/qn",
+                "/norestart",
+                f"TARGETDIR={staging}",
+                "/l*v",
+                str(work / f"crc-msi-{index}.log"),
+            ]
+        )
+        if not result.ok:
+            raise AapDemoError(
+                "Could not extract the CRC Windows installer",
+                hint=(result.stderr or result.stdout or "msiexec /a failed").strip(),
+            )
+        binaries = list(staging.rglob("crc.exe"))
+        if not binaries:
+            raise AapDemoError("CRC Windows installer did not contain crc.exe")
+        bundle_dir = binaries[0].parent
+        for install_name in _INSTALL_NAMES:
+            source = bundle_dir / install_name
+            if source.is_file():
+                _install_file(source, dest / install_name)
+    finally:
+        msi.unlink(missing_ok=True)
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def extract_gzip_odc(payload: Path, dest: Path) -> None:
@@ -123,7 +181,7 @@ def install_managed_release(ctx: Any, *, current: Optional[str] = None) -> Path:
     if filename.endswith(".tar.xz"):
         extract_crc_tarball(archive, install_dir)
     elif filename.endswith(".zip"):
-        extract_crc_zip(archive, install_dir)
+        extract_crc_zip(ctx, archive, install_dir)
     else:
         _extract_macos_pkg(ctx, archive, install_dir)
     _publish(install_dir, current, Path(ctx.env.get("HOME") or Path.home()))
@@ -159,11 +217,17 @@ def remove_old_bundle_cache(home: Path, version: str) -> int:
         if version not in child.name:
             continue
         if child.is_dir():
-            shutil.rmtree(child)
+            shutil.rmtree(child, onerror=_remove_readonly_and_retry)
         else:
             child.unlink()
         removed += 1
     return removed
+
+
+def _remove_readonly_and_retry(function: Any, path: str, exc_info: Any) -> None:
+    """Clear CRC's read-only cache-file attribute and retry the removal."""
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
 
 
 def _curl(ctx: Any, url: str, dest: Path) -> None:
@@ -266,7 +330,7 @@ def _publish(install_dir: Path, current: Optional[str], home: Path) -> None:
     on PATH, so the new binary wins over that system symlink.
     """
     targets = [home / ".local" / "bin"]
-    if current:
+    if current and os.name != "nt":
         system_dir = Path(current).resolve().parent
         if os.access(system_dir, os.W_OK):
             targets.append(system_dir)

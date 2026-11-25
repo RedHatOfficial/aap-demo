@@ -7,6 +7,7 @@ import hashlib
 import io
 import os
 import tarfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,75 @@ def test_install_linux_tarball_verifies_the_checksum_and_prefers_the_binary(
     assert managed_crc_release() in str(install_dir)
 
 
+def test_install_windows_msi_extracts_crc_and_prefers_the_binary(
+    app_ctx, fake_runner: FakeRunner, tmp_path: Path
+) -> None:
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as bundle:
+        bundle.writestr("crc-windows-amd64.msi", b"verified MSI fixture")
+    blob = archive_buffer.getvalue()
+    digest = hashlib.sha256(blob).hexdigest()
+    filename = "crc-windows-installer.zip"
+    app_ctx.env["HOME"] = str(tmp_path)
+    app_ctx.env["AAP_DEMO_CRC_INSTALL_OS"] = "Windows"
+    app_ctx.env["AAP_DEMO_CRC_INSTALL_MACHINE"] = "AMD64"
+
+    def curl(argv):
+        dest = Path(argv[argv.index("-o") + 1])
+        if argv[-1].endswith("sha256sum.txt"):
+            dest.write_text(f"{digest}  {filename}\n", encoding="utf-8")
+        else:
+            dest.write_bytes(blob)
+        return CompletedCommand(argv=tuple(argv), returncode=0, stdout="")
+
+    def msiexec(argv):
+        assert argv[1] == "/a"
+        assert Path(argv[2]).suffix.lower() == ".msi"
+        target_arg = next(arg for arg in argv if arg.startswith("TARGETDIR="))
+        extracted_root = Path(target_arg.partition("=")[2])
+        bundle_dir = extracted_root / "PFiles64" / "Red Hat OpenShift Local"
+        bundle_dir.mkdir(parents=True)
+        for name in (
+            "crc.exe",
+            "crc-admin-helper-windows.exe",
+            "crc-background-launcher.exe",
+        ):
+            (bundle_dir / name).write_bytes(name.encode())
+        return CompletedCommand(argv=tuple(argv), returncode=0, stdout="")
+
+    fake_runner.register("curl", curl)
+    fake_runner.register("msiexec.exe", msiexec)
+    install_dir = crc_install.install_managed_release(app_ctx, current=None)
+
+    for name in (
+        "crc.exe",
+        "crc-admin-helper-windows.exe",
+        "crc-background-launcher.exe",
+    ):
+        assert (install_dir / name).read_bytes() == name.encode()
+        assert (tmp_path / ".local" / "bin" / name).read_bytes() == name.encode()
+    assert app_ctx.env["PATH"].split(os.pathsep)[0] == str(install_dir)
+
+
+def test_publish_does_not_overwrite_windows_crc_install(
+    tmp_path: Path,
+) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows CRC install path")
+    install_dir = tmp_path / "managed"
+    install_dir.mkdir()
+    (install_dir / "crc.exe").write_bytes(b"managed crc")
+    system_dir = tmp_path / "system"
+    system_dir.mkdir()
+    current = system_dir / "crc.exe"
+    current.write_bytes(b"system crc")
+
+    crc_install._publish(install_dir, str(current), tmp_path / "home")
+
+    assert current.read_bytes() == b"system crc"
+    assert (tmp_path / "home" / ".local" / "bin" / "crc.exe").read_bytes() == b"managed crc"
+
+
 def test_a_stalled_crc_download_names_the_url_and_asks_for_a_retry(app_ctx, fake_runner) -> None:
     app_ctx.env["AAP_DEMO_CRC_INSTALL_OS"] = "Linux"
     app_ctx.env["AAP_DEMO_CRC_INSTALL_MACHINE"] = "x86_64"
@@ -118,6 +188,20 @@ def test_remove_old_bundle_cache_deletes_only_the_named_version(tmp_path: Path) 
     assert crc_install.remove_old_bundle_cache(tmp_path, "4.21.0") == 1
     assert not old.exists()
     assert keep.is_dir()
+
+
+def test_remove_old_bundle_cache_handles_readonly_windows_files(tmp_path: Path) -> None:
+    if os.name != "nt":
+        pytest.skip("Windows CRC bundle attributes")
+    cache = tmp_path / ".crc" / "cache"
+    old = cache / "crc_microshift_hyperv_4.22.0_amd64"
+    old.mkdir(parents=True)
+    private_key = old / "id_ecdsa_crc"
+    private_key.write_text("private key", encoding="utf-8")
+    private_key.chmod(0o444)
+
+    assert crc_install.remove_old_bundle_cache(tmp_path, "4.22.0") == 1
+    assert not old.exists()
 
 
 def test_install_file_gives_the_target_a_new_inode(tmp_path: Path) -> None:

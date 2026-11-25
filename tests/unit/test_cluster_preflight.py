@@ -34,6 +34,14 @@ def test_missing_kubectl_is_a_prerequisite_error(app_ctx: AppContext) -> None:
         preflight.setup_kubeconfig(app_ctx, which=lambda name: None)
 
 
+def test_windows_accepts_the_openshift_cli_as_kubectl() -> None:
+    def which(name: str) -> str | None:
+        return "C:/OpenShift/oc.exe" if name == "oc" else None
+
+    assert preflight.has_kubectl(which, windows=True)
+    assert not preflight.has_kubectl(which, windows=False)
+
+
 def test_explicit_kubeconfig_must_exist(app_ctx: AppContext, tmp_path: Path) -> None:
     app_ctx.kubeconfig_override = tmp_path / "nope.yaml"
     with pytest.raises(AapDemoError, match="Kubeconfig file not found"):

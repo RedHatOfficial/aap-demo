@@ -30,7 +30,7 @@ cluster provisioning, OLM installation, AAP operator deployment, and optional ad
 | Layer | Path | Role |
 |-------|------|------|
 | Entry point (Unix) | `aap-demo.sh` | Bash dispatcher; symlinked to `~/.local/bin/aap-demo` by `install.sh` |
-| Entry point (Windows) | `powershell/aap-demo.ps1` | PowerShell launcher importing `powershell/native/AapDemo.psm1` |
+| Entry point (Windows) | pipx `aap-demo` / `aap-demo-v1.cmd` | Python v2 default / explicit Git Bash compatibility command; PowerShell installs and administers |
 | Infrastructure | `includes/infra-api.sh`, `includes/infra-crc.sh` | Backend abstraction for SSH and kubeconfig |
 | Cluster create | `includes/crc-create.sh` | CRC VM setup, NFS, CoreDNS, OLM bootstrap |
 | Manifests | `config/manifests/`, `config/olm/`, `config/crs/` | Kubernetes/OpenShift resources applied at deploy time |

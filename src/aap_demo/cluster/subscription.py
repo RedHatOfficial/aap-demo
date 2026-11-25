@@ -51,7 +51,11 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _open(request: urllib.request.Request, *, timeout: float, context: ssl.SSLContext) -> Any:
-    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=context))
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        _NoRedirect,
+        urllib.request.HTTPSHandler(context=context),
+    )
     return opener.open(request, timeout=timeout)
 
 
