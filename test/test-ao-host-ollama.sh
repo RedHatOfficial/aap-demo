@@ -63,6 +63,10 @@ kubectl() {
     "get namespace") [ "$OLD_NAMESPACE" = true ] ;;
     "delete pod") return 0 ;;
     "run aap-demo-ollama-check")
+      if [ "$REACH_STATUS" = none ]; then
+        echo "error: timed out waiting for the condition" >&2
+        return 1
+      fi
       printf '%s' "$REACH_STATUS"
       [ "$REACH_STATUS" = 200 ]
       ;;
@@ -71,6 +75,7 @@ kubectl() {
 }
 crc() {
   printf 'crc %s\n' "$*" >>"$CALLS"
+  [ "$CRC_SETTING" != fail ] || return 1
   [ "$1 $2" = "config get" ] && printf '%s\n' "$CRC_SETTING"
   return 0
 }
@@ -85,6 +90,7 @@ reset() {
   OLLAMA_CAPS='["completion","tools"]'
   REACH_STATUS=200
   OLD_NAMESPACE=false
+  CRC_SETTING="host-network-access : true"
 }
 
 run_prepare() {
@@ -108,8 +114,21 @@ check "nothing_is_pulled" '! grep -q "/api/pull" "$CALLS"'
 
 reset
 OLLAMA_VERSION=""
-check "ollama_not_running_says_how_to_install_it" \
-  '! run_prepare && out | grep -q "Ollama is not running at http://127.0.0.1:11434" && out | grep -q "ollama.com" && ! grep -q "^kubectl run" "$CALLS"'
+check "ollama_not_responding_says_how_to_install_it" \
+  '! run_prepare && out | grep -q "Ollama is not responding at http://127.0.0.1:11434" && out | grep -q "Is it running?" && out | grep -q "ollama.com" && ! grep -q "^kubectl run" "$CALLS"'
+
+for url in "http://192.168.127.254:11434/v1/" "http://192.168.127.254:11434" " HTTP://192.168.127.254:11434/v1 "; do
+  reset
+  AO_LLM_BASE_URL="$url"
+  run_prepare
+  check "the_cluster_url_written_as_${url// /_}_checks_127_0_0_1" \
+    'grep -q "curl .*http://127.0.0.1:11434/api/version" "$CALLS"'
+done
+
+reset
+OLLAMA_MODELS="granite3.3:8b qwen3:8b"
+WIRE_OLLAMA_MODEL=qwen3:8b
+check "wire_ollama_model_is_not_read" '! run_prepare && out | grep -q "several models"'
 
 reset
 OLLAMA_MODELS=""
@@ -141,7 +160,38 @@ export AO_LLM_PROMPT_DEVICE
 run_prepare
 check "several_models_are_offered_in_a_terminal" \
   '[ "$WIRE_OLLAMA_MODEL" = qwen3:8b ] && grep -qx "OLLAMA_MODEL=qwen3:8b" "$AAP_DEMO_CONFIG"'
+
+reset
+OLLAMA_MODELS="granite3.3:8b qwen3:8b"
+QUIET=false
+AAP_DEMO_INTERACTIVE=1
+printf '9\nllama3.2\n1\n' >"$AO_LLM_PROMPT_DEVICE"
+run_prepare
+check "a_wrong_answer_asks_again" \
+  '[ "$WIRE_OLLAMA_MODEL" = granite3.3:8b ] && out | grep -q "llama3.2 is not on this host. Enter a number"'
+
+reset
+OLLAMA_MODELS="granite3.3:8b qwen3:8b"
+QUIET=false
+AAP_DEMO_INTERACTIVE=1
+printf 'x\nx\nx\n1\n' >"$AO_LLM_PROMPT_DEVICE"
+check "three_wrong_answers_stop" \
+  '! run_prepare && out | grep -q "No model chosen for AO: x is not on this host" && ! grep -q OLLAMA_MODEL "$AAP_DEMO_CONFIG"'
+
+reset
+OLLAMA_MODELS="granite3.3:8b qwen3:8b"
+QUIET=false
+AAP_DEMO_INTERACTIVE=1
+REACH_STATUS=000
+printf '1\n' >"$AO_LLM_PROMPT_DEVICE"
+check "an_unreachable_cluster_fails_before_the_model_prompt" \
+  '! run_prepare && out | grep -q "cannot reach Ollama" && ! out | grep -q "Model for AO" && ! grep -q OLLAMA_MODEL "$AAP_DEMO_CONFIG"'
 unset AO_LLM_PROMPT_DEVICE
+
+reset
+REACH_STATUS=none
+check "a_check_pod_that_did_not_run_is_not_a_network_error" \
+  '! run_prepare && out | grep -q "did not run in namespace aap-operator" && out | grep -q "timed out waiting for the condition" && out | grep -q "ubi9/ubi-minimal" && ! out | grep -q "cannot reach Ollama"'
 
 reset
 OLLAMA_CAPS='["completion"]'
@@ -186,6 +236,12 @@ if [ "$(uname -s)" != Linux ]; then
   CRC_SETTING="host-network-access : false"
   check "an_unreachable_host_explains_the_new_vm" \
     '! run_prepare && out | grep -q "cannot reach Ollama" && out | grep -q "created without" && out | grep -q "aap-demo destroy, then aap-demo create" && ! grep -q "^crc cleanup" "$CALLS"'
+
+  reset
+  REACH_STATUS=000
+  CRC_SETTING=fail
+  check "an_unread_setting_says_it_could_not_be_read" \
+    '! run_prepare && out | grep -q "Could not read CRC.s host-network-access"'
 fi
 
 # -- the ollama addon ---------------------------------------------------------------
@@ -207,6 +263,8 @@ check "disable_ollama_removes_the_old_install" \
   '[ "$delete_rc" -eq 0 ] && grep -qx "kubectl delete namespace aap-demo-ollama --ignore-not-found" "${TMP_DIR}/addon-calls" && grep -qx "kubectl delete clusterrolebinding aap-demo-ollama-anyuid --ignore-not-found" "${TMP_DIR}/addon-calls"'
 check "the_old_manifest_and_qwen_default_are_gone" \
   '[ ! -e "${REPO_ROOT}/addons/ollama/ollama.yaml" ] && ! grep -rq "qwen2.5:3b" "${REPO_ROOT}/addons/ollama" "${REPO_ROOT}/includes" "${REPO_ROOT}/aap-demo.sh"'
+check "enable_ollama_skips_the_cluster_preflight" \
+  'grep -q "\"\${EXTRA_ARGS\[0\]:-}\" != ollama ]; then" "${REPO_ROOT}/aap-demo.sh"'
 check "ollama_is_not_listed_but_disable_still_works" \
   '! grep "^AVAILABLE_ADDONS=" "${REPO_ROOT}/aap-demo.sh" | grep -qw ollama && [ -f "${REPO_ROOT}/addons/ollama/deploy.sh" ]'
 

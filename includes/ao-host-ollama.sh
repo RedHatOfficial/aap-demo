@@ -45,10 +45,19 @@ ao_host_ollama_api_root() {
   printf '%s\n' "${url%/v1}"
 }
 
+# True for CRC's address for the host, however the URL is written.
+ao_host_ollama_is_cluster_url() {
+  local url="$1"
+  url="${url#"${url%%[![:space:]]*}"}"
+  url="${url%"${url##*[![:space:]]}"}"
+  url=$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')
+  [ "$(ao_host_ollama_api_root "$url")" = "$(ao_host_ollama_api_root "$AO_HOST_OLLAMA_CLUSTER_URL")" ]
+}
+
 # Where this host calls Ollama: 127.0.0.1, unless AO_LLM_BASE_URL moved it.
 ao_host_ollama_host_api() {
   local base_url="$1"
-  if [ "$base_url" = "$AO_HOST_OLLAMA_CLUSTER_URL" ]; then
+  if ao_host_ollama_is_cluster_url "$base_url"; then
     printf '%s\n' "$AO_HOST_OLLAMA_HOST_API"
   else
     ao_host_ollama_api_root "$base_url"
@@ -84,9 +93,9 @@ ao_host_ollama_capabilities() {
     || printf '?\n'
 }
 
-# The model asked for: WIRE_OLLAMA_MODEL or OLLAMA_MODEL (also loaded from the saved config).
+# The model asked for: OLLAMA_MODEL, which aap-demo.sh also loads from the saved config.
 ao_host_ollama_requested_model() {
-  printf '%s\n' "${WIRE_OLLAMA_MODEL:-${OLLAMA_MODEL:-}}"
+  printf '%s\n' "${OLLAMA_MODEL:-}"
 }
 
 # A name without a tag matches name:latest.
@@ -108,34 +117,47 @@ ao_host_ollama_can_ask() {
   [ -t 0 ] || { : </dev/tty; } 2>/dev/null
 }
 
+# Times the model prompt asks again after an answer that names no model.
+AO_HOST_OLLAMA_ASK_ATTEMPTS=3
+
+# Reads answers from stdin, up to AO_HOST_OLLAMA_ASK_ATTEMPTS, until one names a model.
+_ao_host_ollama_read_answers() {
+  local answer="" attempt
+  for ((attempt = 1; attempt <= AO_HOST_OLLAMA_ASK_ATTEMPTS; attempt++)); do
+    printf 'Model for AO [1-%d]: ' "$#" >&2
+    IFS= read -r answer || answer=""
+    answer="${answer#"${answer%%[![:space:]]*}"}"
+    answer="${answer%"${answer##*[![:space:]]}"}"
+    [ -n "$answer" ] || break
+    if [[ "$answer" =~ ^[0-9]+$ ]] && [ "$answer" -ge 1 ] && [ "$answer" -le "$#" ]; then
+      printf '%s\n' "${!answer}"
+      return 0
+    fi
+    ao_host_ollama_match "$answer" "$@" && return 0
+    echo "${answer} is not on this host. Enter a number or a model name." >&2
+  done
+  if [ -n "$answer" ]; then
+    echo "ERROR: No model chosen for AO: ${answer} is not on this host." >&2
+  else
+    echo "ERROR: No model chosen for AO." >&2
+  fi
+  echo "  Run aap-demo enable ao again, or set OLLAMA_MODEL=<model>." >&2
+  return 1
+}
+
 ao_host_ollama_ask() {
-  local i=1 name answer device
+  local i=1 name device
   echo "Ollama models on this host:" >&2
   for name in "$@"; do
     printf '  %d) %s\n' "$i" "$name" >&2
     i=$((i + 1))
   done
-  printf 'Model for AO: ' >&2
   device=$(aap_demo_ao_llm_prompt_device 2>/dev/null || true)
   if [ -n "$device" ]; then
-    IFS= read -r answer <"$device" || answer=""
+    _ao_host_ollama_read_answers "$@" <"$device"
   else
-    IFS= read -r answer || answer=""
+    _ao_host_ollama_read_answers "$@"
   fi
-  answer="${answer#"${answer%%[![:space:]]*}"}"
-  answer="${answer%"${answer##*[![:space:]]}"}"
-  if [ -z "$answer" ]; then
-    echo "ERROR: No model chosen for AO." >&2
-    return 1
-  fi
-  if [[ "$answer" =~ ^[0-9]+$ ]] && [ "$answer" -ge 1 ] && [ "$answer" -le "$#" ]; then
-    printf '%s\n' "${!answer}"
-    return 0
-  fi
-  ao_host_ollama_match "$answer" "$@" || {
-    echo "ERROR: ${answer} is not one of the models listed." >&2
-    return 1
-  }
 }
 
 ao_host_ollama_join() {
@@ -188,22 +210,37 @@ ao_host_ollama_check_overrides() {
   }'
 }
 
-# True when a pod in the namespace gets HTTP 200 from Ollama's version API.
+# 0 when a pod in the namespace gets HTTP 200 from Ollama's version API,
+# 1 when the pod ran and Ollama did not answer, and 2 (with the error printed)
+# when the pod itself did not run, which is a cluster problem, not a network one.
 ao_host_ollama_reaches() {
-  local base_url="$1" namespace="$2" url output
+  local base_url="$1" namespace="$2" url output errors rc=0 code detail
   url="$(ao_host_ollama_api_root "$base_url")/api/version"
+  errors=$(mktemp)
   kubectl delete pod "$AO_HOST_OLLAMA_CHECK_POD" -n "$namespace" --ignore-not-found --wait >/dev/null 2>&1 || true
   output=$(kubectl run "$AO_HOST_OLLAMA_CHECK_POD" -n "$namespace" --rm -i --quiet \
     --restart=Never --pod-running-timeout=3m "--image=${AO_HOST_OLLAMA_CHECK_IMAGE}" \
-    "--overrides=$(ao_host_ollama_check_overrides "$url")" 2>/dev/null) || return 1
-  [[ "$output" == *200 ]]
+    "--overrides=$(ao_host_ollama_check_overrides "$url")" 2>"$errors") || rc=$?
+  detail=$(tr '\n' ' ' <"$errors")
+  rm -f "$errors"
+  output="${output%"${output##*[![:space:]]}"}"
+  code="${output: -3}"
+  if [[ "$code" =~ ^[0-9]{3}$ ]]; then
+    [ "$rc" -eq 0 ] && [ "$code" = 200 ]
+    return
+  fi
+  detail="${detail%"${detail##*[![:space:]]}"}"
+  echo "ERROR: The pod that checks the path to Ollama did not run in namespace ${namespace}." >&2
+  [ -z "$detail" ] || echo "  ${detail}" >&2
+  echo "  The pod pulls ${AO_HOST_OLLAMA_CHECK_IMAGE}; check that the cluster can pull it, then run aap-demo enable ao again (kubectl get events -n ${namespace})." >&2
+  return 2
 }
 
 ao_host_ollama_unreachable() {
   local base_url="$1" other setting why
   other="Or set AO_LLM_PROVIDER=external, or none to install AO without an LLM."
   echo "ERROR: The cluster cannot reach Ollama at $(ao_host_ollama_api_root "$base_url")." >&2
-  if [ "$base_url" != "$AO_HOST_OLLAMA_CLUSTER_URL" ]; then
+  if ! ao_host_ollama_is_cluster_url "$base_url"; then
     echo "  Check that Ollama listens on an address the VM reaches, and that AO_LLM_BASE_URL points at it. ${other}" >&2
     return 0
   fi
@@ -214,6 +251,8 @@ ao_host_ollama_unreachable() {
   setting=$(crc config get host-network-access 2>/dev/null || true)
   if [[ "$setting" == *true ]]; then
     why="CRC's host-network-access is on, but this VM may have been created before it was set."
+  elif [[ "$setting" != *false ]]; then
+    why="Could not read CRC's host-network-access setting (crc config get host-network-access). Pods reach the host only when it was on at create time."
   else
     why="This VM was created without CRC's host-network-access, which lets pods reach the host. AAP_DEMO_HOST_NETWORK_ACCESS=false at create time turns it off."
   fi
@@ -221,18 +260,20 @@ ao_host_ollama_unreachable() {
 }
 
 # Check the host's Ollama and the path to it. Saves the model as OLLAMA_MODEL
-# in the aap-demo config and exports it as WIRE_OLLAMA_MODEL.
+# in the aap-demo config and exports it as WIRE_OLLAMA_MODEL. The cluster check
+# runs before the model prompt, so a VM that cannot reach the host fails before
+# anyone answers a question.
 ao_host_ollama_prepare() {
   local namespace="${1:-${NAMESPACE:-aap-operator}}"
-  local base_url api found model caps
+  local base_url api found model caps reach=0
   local -a available=()
 
   base_url=$(ao_host_ollama_base_url)
   api=$(ao_host_ollama_host_api "$base_url")
   found=$(ao_host_ollama_version "$api")
   if [ -z "$found" ]; then
-    echo "ERROR: Ollama is not running at ${api}." >&2
-    echo "  ${AO_HOST_OLLAMA_INSTALL_HINT}" >&2
+    echo "ERROR: Ollama is not responding at ${api}." >&2
+    echo "  Is it running? It has 5 seconds to answer. ${AO_HOST_OLLAMA_INSTALL_HINT}" >&2
     return 1
   fi
   echo "✓ Ollama ${found} on the host"
@@ -240,6 +281,13 @@ ao_host_ollama_prepare() {
     echo "  The in-cluster Ollama from an earlier aap-demo is still installed, and AO no longer uses it."
     echo "  Remove it with: aap-demo disable ollama"
   fi
+  echo "Checking that the cluster reaches the host's Ollama..."
+  ao_host_ollama_reaches "$base_url" "$namespace" || reach=$?
+  if [ "$reach" -ne 0 ]; then
+    [ "$reach" -eq 2 ] || ao_host_ollama_unreachable "$base_url"
+    return 1
+  fi
+  echo "✓ The cluster reaches Ollama at $(ao_host_ollama_api_root "$base_url")"
   while IFS= read -r model; do
     [ -n "$model" ] && available+=("$model")
   done < <(ao_host_ollama_models "$api")
@@ -258,10 +306,4 @@ ao_host_ollama_prepare() {
   elif ! printf '%s\n' "$caps" | grep -qx tools; then
     echo "WARNING: ${model} does not list tool support, which AO's agents need. Choose a model that does with OLLAMA_MODEL=<model>." >&2
   fi
-  echo "Checking that the cluster reaches the host's Ollama..."
-  if ! ao_host_ollama_reaches "$base_url" "$namespace"; then
-    ao_host_ollama_unreachable "$base_url"
-    return 1
-  fi
-  echo "✓ The cluster reaches Ollama at $(ao_host_ollama_api_root "$base_url")"
 }

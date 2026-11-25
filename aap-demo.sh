@@ -4023,7 +4023,8 @@ case "$COMMAND" in
     # These commands don't need cluster access
     ;;
   enable)
-    if [ "$_ENABLE_HELP" != true ]; then
+    # enable ollama only prints that Ollama moved to the host (ADR-046).
+    if [ "$_ENABLE_HELP" != true ] && [ "${EXTRA_ARGS[0]:-}" != ollama ]; then
       setup_kubeconfig
       verify_cluster_type || exit 1
     fi
