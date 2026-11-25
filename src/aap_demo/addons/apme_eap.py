@@ -39,7 +39,7 @@ def _addon_root() -> Path:
     checkout_root = checkout / "addons" / NAME
     if (checkout / "pyproject.toml").is_file() and (checkout_root / "defaults.yml").is_file():
         return checkout_root
-    bundled_root = package / "bundled_addons" / NAME
+    bundled_root = package / "bundled" / "addons" / NAME
     if (bundled_root / "defaults.yml").is_file():
         return bundled_root
     raise AddonError("APME addon files are not included in this aap-demo installation")
@@ -169,7 +169,16 @@ def _discover_vars(ctx: AppContext) -> Dict[str, Any]:
     aap_route = _env_or_discover(
         ctx,
         "APME_EAP_AAP_HOST",
-        ["kubectl", "get", "route", "-n", aap_namespace, "-o", "jsonpath={.items[0].spec.host}"],
+        [
+            "kubectl",
+            "get",
+            "route",
+            "-n",
+            aap_namespace,
+            "--field-selector=spec.to.name=aap-gateway",
+            "-o",
+            "jsonpath={.items[0].spec.host}",
+        ],
     )
     if not aap_route.startswith("http"):
         aap_route = "https://" + aap_route
@@ -246,13 +255,30 @@ def _discover_vars(ctx: AppContext) -> Dict[str, Any]:
         "aap_host_url": _portal_host_url(aap_route, domain),
         "aap_username": "admin",
         "aap_password": password,
-        "oci_registry": (
-            str(ctx.env.get("APME_EAP_REGISTRY_HOST") or "").strip()
-            or f"registry-aap-demo-registry.{domain}"
-        )
-        + "/apme",
+        "oci_registry": _discover_registry_host(ctx, domain) + "/apme",
         "oci_registry_internal": "registry.aap-demo-registry.svc.cluster.local:5000/apme",
     }
+
+
+def _discover_registry_host(ctx: AppContext, domain: str) -> str:
+    override = str(ctx.env.get("APME_EAP_REGISTRY_HOST") or "").strip()
+    if override:
+        return override
+    result = ctx.runner.run(
+        [
+            "kubectl",
+            "get",
+            "route",
+            "registry",
+            "-n",
+            REGISTRY_NAMESPACE,
+            "-o",
+            "jsonpath={.spec.host}",
+        ]
+    )
+    if result.ok and result.stdout.strip():
+        return result.stdout.strip()
+    return f"registry-aap-demo-registry.{domain}"
 
 
 def _portal_host_url(aap_host: str, cluster_domain: str) -> str:
@@ -281,6 +307,9 @@ def _write_run_vars(ctx: AppContext, generated: Mapping[str, Any]) -> Path:
     state_dir.chmod(0o700)
     merged = dict(generated)
     merged.update(_load_user_vars(ctx))
+    # User vars must not override the namespace ownership boundary.
+    if "openshift_project_name" in generated:
+        merged["openshift_project_name"] = generated["openshift_project_name"]
     fd, raw_path = tempfile.mkstemp(prefix=".run-vars.", suffix=".yml", dir=state_dir)
     path = Path(raw_path)
     try:
@@ -373,13 +402,25 @@ class ApmeEapAddon:
 
     def enable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
+        if sys.platform == "win32":
+            raise PrerequisiteError(
+                "apme-eap requires a Unix-like environment (macOS or Linux)",
+                hint="Use WSL2 or a macOS/Linux machine to deploy APME.",
+            )
         _require_tools()
         root = _addon_root()
         if not (root / "playbooks" / "deploy_apme_portal.yml").is_file():
             raise AddonError("APME addon playbooks are not included in this installation")
+        namespace_obj = kube.read_object(ctx, "namespace", NAMESPACE)
+        if namespace_obj is not None:
+            labels = namespace_obj.get("metadata", {}).get("labels", {})
+            if labels.get(_OWNER_LABEL) != _OWNER_VALUE:
+                raise AddonError(
+                    f"refusing to use unowned namespace {NAMESPACE!r}",
+                    hint="Choose another APME namespace or remove the existing namespace first.",
+                )
+        namespace_existed = namespace_obj is not None
         _ensure_registry(ctx, root)
-        namespace_existed = kube.read_object(ctx, "namespace", NAMESPACE) is not None
-        _claim_namespace(ctx)
         if not namespace_existed:
             kube.apply_or_raise(
                 ctx,
@@ -401,6 +442,8 @@ class ApmeEapAddon:
         )
         vars_path = _write_run_vars(ctx, generated_vars)
         env = ctx.kube_env()
+        venv_bin = str(ansible_python.parent)
+        env["PATH"] = venv_bin + os.pathsep + env.get("PATH", "")
         env["K8S_AUTH_KUBECONFIG"] = str(ctx.kubeconfig)
         # Ansible defaults to ~/.ansible/tmp, which may not be writable in a
         # managed/containerized environment. The playbook targets localhost,
@@ -443,11 +486,13 @@ class ApmeEapAddon:
     def disable(self, ctx: AppContext, args: argparse.Namespace) -> int:
         del args
         namespace = kube.read_object(ctx, "namespace", NAMESPACE)
-        if namespace is not None and not _namespace_owned(ctx):
-            raise AddonError(
-                f"refusing to delete unowned namespace {NAMESPACE!r}",
-                hint="The namespace is not labeled as managed by the APME addon.",
-            )
+        if namespace is not None:
+            labels = namespace.get("metadata", {}).get("labels", {})
+            if labels.get(_OWNER_LABEL) != _OWNER_VALUE:
+                raise AddonError(
+                    f"refusing to delete unowned namespace {NAMESPACE!r}",
+                    hint="The namespace is not labeled as managed by the APME addon.",
+                )
         result = ctx.runner.run(
             ["kubectl", "delete", "namespace", NAMESPACE, "--ignore-not-found=true"]
         )
@@ -470,15 +515,15 @@ class ApmeEapAddon:
         if namespace is None:
             _say(ctx, "APME status", namespace=NAMESPACE, readiness="absent")
             return 1
-        result = ctx.runner.run(["kubectl", "get", "deployments", "-n", NAMESPACE, "-o", "json"])
-        deployments = []
+        result = ctx.runner.run(
+            ["kubectl", "get", "deployment", "redhat-rhaap-portal", "-n", NAMESPACE, "-o", "json"]
+        )
+        ready = False
         if result.ok:
             try:
-                deployments = json.loads(result.stdout or "{}").get("items", [])
+                deploy = json.loads(result.stdout or "{}")
+                ready = int(deploy.get("status", {}).get("availableReplicas", 0) or 0) > 0
             except json.JSONDecodeError:
-                deployments = []
-        ready = bool(deployments) and all(
-            int(item.get("status", {}).get("availableReplicas", 0) or 0) > 0 for item in deployments
-        )
+                pass
         _say(ctx, "APME status", namespace=NAMESPACE, readiness="ready" if ready else "not-ready")
         return 0 if ready else 1

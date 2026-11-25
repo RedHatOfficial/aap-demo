@@ -31,7 +31,7 @@
       {{
         apme_helm_bootstrap_binary_stat.stat.exists and
         (not apme_helm_platform_marker_stat.stat.exists or
-         (apme_helm_cached_platform_b64.content | b64decode | trim) != apme_helm_bootstrap_platform)
+         (apme_helm_cached_platform_b64.content | b64decode | trim) != (apme_helm_bootstrap_platform ~ '-' ~ apme_helm_bootstrap_arch))
       }}
 
 - name: Remove incompatible Helm binary  # noqa var-naming[no-role-prefix]

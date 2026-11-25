@@ -60,6 +60,10 @@ def _registry_pull_secret_ready(app_ctx) -> None:
 def _registry_ready(app_ctx) -> None:
     app_ctx.runner.ok(["kubectl", "get", "deployment", "registry"])
     app_ctx.runner.ok(["kubectl", "wait", "--for=condition=available", "deployment/registry"])
+    app_ctx.runner.ok(
+        ["kubectl", "get", "route", "registry", "-n", "aap-demo-registry"],
+        stdout="registry-aap-demo-registry.apps.example.test",
+    )
 
 
 def test_apme_eap_is_a_public_native_addon() -> None:
@@ -283,6 +287,10 @@ def test_crc_portal_url_and_custom_aap_secret_are_discovered(app_ctx) -> None:
         ["kubectl", "get", "secret", "demo-admin-password"],
         stdout=json.dumps({"data": {"password": "c2VjcmV0"}}),
     )
+    app_ctx.runner.ok(
+        ["kubectl", "get", "route", "registry", "-n", "aap-demo-registry"],
+        stdout="registry-aap-demo-registry.crc.testing",
+    )
 
     values = apme_eap._discover_vars(app_ctx)
 
@@ -301,6 +309,10 @@ def test_cluster_domain_falls_back_to_aap_route_on_microshift(app_ctx) -> None:
     app_ctx.runner.fail(
         ["kubectl", "get", "route", "-n", "openshift-console"],
         stderr='namespaces "openshift-console" not found',
+    )
+    app_ctx.runner.ok(
+        ["kubectl", "get", "route", "registry", "-n", "aap-demo-registry"],
+        stdout="registry-aap-demo-registry.apps.example.test",
     )
 
     values = apme_eap._discover_vars(app_ctx)
@@ -367,8 +379,23 @@ def test_status_requires_ready_deployments(app_ctx) -> None:
         ),
     )
     app_ctx.runner.ok(
-        ["kubectl", "get", "deployments", "-n", "apme"],
-        stdout=json.dumps({"items": [{"status": {"availableReplicas": 0}}]}),
+        ["kubectl", "get", "deployment", "redhat-rhaap-portal", "-n", "apme"],
+        stdout=json.dumps({"status": {"availableReplicas": 0}}),
     )
 
     assert get("apme-eap").status(app_ctx, argparse.Namespace()) == 1
+
+
+def test_status_reports_ready_when_portal_deployment_is_available(app_ctx) -> None:
+    app_ctx.runner.ok(
+        ["kubectl", "get", "namespace", "apme"],
+        stdout=json.dumps(
+            {"metadata": {"labels": {"app.kubernetes.io/managed-by": "aap-demo-apme-eap"}}}
+        ),
+    )
+    app_ctx.runner.ok(
+        ["kubectl", "get", "deployment", "redhat-rhaap-portal", "-n", "apme"],
+        stdout=json.dumps({"status": {"availableReplicas": 1}}),
+    )
+
+    assert get("apme-eap").status(app_ctx, argparse.Namespace()) == 0
