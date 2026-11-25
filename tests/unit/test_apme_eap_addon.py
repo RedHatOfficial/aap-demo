@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from aap_demo.addons import apme_eap, get, names, needs_cluster
-from aap_demo.core.errors import AddonError
+from aap_demo.core.errors import AddonError, PrerequisiteError
 from aap_demo.exec.runner import CompletedCommand
 
 
@@ -96,6 +96,7 @@ def test_missing_registry_is_bootstrapped_before_apme(app_ctx) -> None:
     )
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="apme-eap requires a Unix-like control node")
 def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -> None:
     _env(app_ctx)
     monkeypatch.setattr(
@@ -137,6 +138,7 @@ def test_enable_runs_packaged_playbook_and_records_state(app_ctx, monkeypatch) -
     assert "redacted-password" not in app_ctx.console.stdout
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="apme-eap requires a Unix-like control node")
 def test_failed_enable_does_not_record_state(app_ctx, monkeypatch) -> None:
     _env(app_ctx)
     monkeypatch.setattr(
@@ -156,6 +158,7 @@ def test_failed_enable_does_not_record_state(app_ctx, monkeypatch) -> None:
     assert app_ctx.config.get("addons.enabled") == []
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="apme-eap requires a Unix-like control node")
 def test_failed_first_enable_removes_partial_namespace(app_ctx, monkeypatch) -> None:
     _env(app_ctx)
     monkeypatch.setattr(
@@ -199,6 +202,13 @@ def test_fresh_enable_bootstraps_the_dedicated_venv(app_ctx, monkeypatch) -> Non
     assert apme_eap._ensure_venv(app_ctx, apme_eap._addon_root()) == bin_dir / python_name
     assert (venv_dir / ".requirements.sha256").is_file()
     assert (venv_dir / ".collections.sha256").is_file()
+
+
+def test_enable_rejects_native_windows_control_node(app_ctx, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with pytest.raises(PrerequisiteError, match="requires a Unix-like environment"):
+        get("apme-eap").enable(app_ctx, argparse.Namespace(addon="apme-eap"))
 
 
 def test_apme_helm_bootstrap_selects_architecture_specific_client() -> None:
