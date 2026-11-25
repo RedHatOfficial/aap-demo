@@ -585,7 +585,8 @@ def _preflight(ctx: AppContext, command: str, args: argparse.Namespace) -> None:
 def _addon_needs_cluster(command: str, args: argparse.Namespace) -> bool:
     """Kubeconfig preflight for addons this command can install.
 
-    ``enable portal`` stays an addon error and does not touch the cluster.
+    ``enable portal`` and ``enable ollama`` stay addon errors and do not touch
+    the cluster.
     """
     from aap_demo.addons import needs_cluster
 
@@ -597,6 +598,8 @@ def _addon_needs_cluster(command: str, args: argparse.Namespace) -> bool:
                 return False
             action = str((getattr(args, "addon_args", None) or ["save"])[0])
             return action not in {"clear", "delete", "validate"}
+        if getattr(args, "addon", None) == "ollama" and command == "enable":
+            return False
         return needs_cluster(getattr(args, "addon", None))
     return False
 

@@ -47,14 +47,18 @@ class FakeOllama:
         raise AssertionError(url)
 
 
-def _runner(*, reaches: bool = True, old_namespace: bool = False) -> FakeRunner:
+def _runner(
+    *, reaches: bool = True, old_namespace: bool = False, check: Optional[CompletedCommand] = None
+) -> FakeRunner:
     runner = FakeRunner()
     if old_namespace:
         runner.ok(f"kubectl get namespace {host_ollama.OLD_NAMESPACE}")
     else:
         runner.fail(f"kubectl get namespace {host_ollama.OLD_NAMESPACE}")
     runner.ok(f"kubectl delete pod {host_ollama.CHECK_POD}")
-    if reaches:
+    if check is not None:
+        runner.register(CHECK, check)
+    elif reaches:
         runner.ok(CHECK, "200")
     else:
         runner.register(CHECK, CompletedCommand(argv=(), returncode=1, stdout="000"))
@@ -93,11 +97,29 @@ def test_one_model_is_chosen_saved_and_checked_from_the_cluster(app_ctx) -> None
 
 def test_ollama_not_running_says_how_to_install_it(app_ctx) -> None:
     app_ctx.runner = FakeRunner()
-    with pytest.raises(AddonError, match="Ollama is not running at http://127.0.0.1:11434") as exc:
+    with pytest.raises(
+        AddonError, match="Ollama is not responding at http://127.0.0.1:11434"
+    ) as exc:
         _prepare(app_ctx, FakeOllama(version=""))
+    assert "Is it running?" in (exc.value.hint or "")
     assert "ollama.com" in (exc.value.hint or "")
     assert "AO_LLM_PROVIDER=external" in (exc.value.hint or "")
     assert app_ctx.runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://192.168.127.254:11434/v1/",
+        "http://192.168.127.254:11434",
+        " HTTP://192.168.127.254:11434/v1 ",
+    ],
+)
+def test_the_cluster_url_written_differently_still_checks_127_0_0_1(app_ctx, base_url) -> None:
+    app_ctx.runner = _runner()
+    ollama = FakeOllama()
+    host_ollama.prepare(app_ctx, base_url, get=ollama, platform="darwin")
+    assert ollama.calls[0] == f"{API}/api/version"
 
 
 def test_no_models_says_to_pull_one_and_never_pulls(app_ctx) -> None:
@@ -121,6 +143,13 @@ def test_a_model_without_a_tag_matches_latest(app_ctx) -> None:
     app_ctx.runner = _runner()
     app_ctx.env = {"OLLAMA_MODEL": "granite"}
     assert _prepare(app_ctx, FakeOllama(models=["granite:latest", "qwen3:8b"])) == "granite:latest"
+
+
+def test_wire_ollama_model_is_not_read(app_ctx) -> None:
+    app_ctx.runner = _runner()
+    app_ctx.env = {"WIRE_OLLAMA_MODEL": "qwen3:8b"}
+    with pytest.raises(AddonError, match="several models"):
+        _prepare(app_ctx, FakeOllama(models=["granite:8b", "qwen3:8b"]))
 
 
 def test_a_saved_model_is_used_again(app_ctx) -> None:
@@ -153,6 +182,22 @@ def test_an_empty_answer_chooses_nothing(app_ctx) -> None:
     app_ctx.env = {"AAP_DEMO_INTERACTIVE": "1"}
     with pytest.raises(AddonError, match="No model chosen"):
         _prepare(app_ctx, FakeOllama(models=["a:1", "b:1"]), read=lambda _q: "")
+
+
+def test_a_wrong_answer_asks_again(app_ctx) -> None:
+    app_ctx.runner = _runner()
+    app_ctx.env = {"AAP_DEMO_INTERACTIVE": "1"}
+    answers = iter(["9", "llama3.2", "1"])
+    chosen = _prepare(app_ctx, FakeOllama(models=["a:1", "b:1"]), read=lambda _q: next(answers))
+    assert chosen == "a:1"
+    assert "'llama3.2' is not on this host" in _out(app_ctx)
+
+
+def test_three_wrong_answers_stop(app_ctx) -> None:
+    app_ctx.runner = _runner()
+    app_ctx.env = {"AAP_DEMO_INTERACTIVE": "1"}
+    with pytest.raises(AddonError, match="'x' is not on this host"):
+        _prepare(app_ctx, FakeOllama(models=["a:1", "b:1"]), read=lambda _q: "x")
 
 
 def test_a_model_without_tools_is_a_warning(app_ctx) -> None:
@@ -197,6 +242,37 @@ def test_an_unreachable_host_explains_the_new_vm(app_ctx, setting, why) -> None:
     assert not app_ctx.runner.called("crc cleanup")
 
 
+def test_an_unread_setting_says_it_could_not_be_read(app_ctx) -> None:
+    app_ctx.runner = _runner(reaches=False).fail("crc config get host-network-access")
+    with pytest.raises(AddonError, match="cannot reach Ollama") as exc:
+        _prepare(app_ctx, FakeOllama())
+    assert "Could not read CRC's host-network-access" in (exc.value.hint or "")
+
+
+def test_an_unreachable_cluster_fails_before_the_model_prompt(app_ctx) -> None:
+    app_ctx.runner = _runner(reaches=False).ok("crc config get host-network-access", "false")
+    app_ctx.env = {"AAP_DEMO_INTERACTIVE": "1"}
+
+    def read(_q: str) -> str:
+        raise AssertionError("asked for a model before checking the cluster")
+
+    with pytest.raises(AddonError, match="cannot reach Ollama"):
+        _prepare(app_ctx, FakeOllama(models=["a:1", "b:1"]), read=read)
+    assert "ollama_model" not in (app_ctx.config.get("addons.options") or {}).get("ao", {})
+
+
+def test_a_check_pod_that_did_not_run_is_not_a_network_error(app_ctx) -> None:
+    stuck = CompletedCommand(
+        argv=(), returncode=1, stderr="error: timed out waiting for the condition"
+    )
+    app_ctx.runner = _runner(check=stuck)
+    with pytest.raises(AddonError, match="did not run in namespace") as exc:
+        _prepare(app_ctx, FakeOllama())
+    hint = exc.value.hint or ""
+    assert "timed out waiting for the condition" in hint
+    assert host_ollama.CHECK_IMAGE in hint
+
+
 def test_an_unreachable_host_on_linux_points_at_the_base_url(app_ctx) -> None:
     app_ctx.runner = _runner(reaches=False)
     with pytest.raises(AddonError, match="cannot reach Ollama") as exc:
@@ -214,6 +290,13 @@ def test_enable_ollama_explains_the_host_ollama(app_ctx) -> None:
         get("ollama").enable(app_ctx, argparse.Namespace(addon="ollama"))
     assert "ollama.com" in (exc.value.hint or "")
     assert app_ctx.runner.calls == []
+
+
+def test_enable_ollama_does_not_need_a_cluster() -> None:
+    from aap_demo.cli.main import _addon_needs_cluster
+
+    assert not _addon_needs_cluster("enable", argparse.Namespace(addon="ollama"))
+    assert _addon_needs_cluster("disable", argparse.Namespace(addon="ollama"))
 
 
 def test_disable_ollama_removes_the_old_install(app_ctx) -> None:

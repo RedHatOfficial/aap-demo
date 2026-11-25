@@ -10,7 +10,7 @@ checks from a pod that the cluster reaches the host. With CRC's
 from __future__ import annotations
 
 import json
-import sys
+import platform as _platform
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional
@@ -33,6 +33,8 @@ OLD_NAMESPACE = "aap-demo-ollama"
 CHECK_POD = "aap-demo-ollama-check"
 CHECK_IMAGE = "registry.access.redhat.com/ubi9/ubi-minimal:latest"
 TIMEOUT = 5
+#: Times the model prompt asks again after an answer that names no model.
+ASK_ATTEMPTS = 3
 #: Seconds for the check pod, including its first image pull.
 CHECK_TIMEOUT = 300
 
@@ -68,9 +70,14 @@ def api_root(base_url: str) -> str:
     return root[: -len("/v1")] if root.endswith("/v1") else root
 
 
+def is_cluster_url(base_url: str) -> bool:
+    """True for CRC's address for the host, however the URL is written."""
+    return api_root(base_url.strip()).lower() == api_root(CLUSTER_URL)
+
+
 def host_api(base_url: str) -> str:
     """Where this machine reaches Ollama: 127.0.0.1, unless AO_LLM_BASE_URL is set."""
-    return api_root(base_url) if base_url != CLUSTER_URL else HOST_API
+    return HOST_API if is_cluster_url(base_url) else api_root(base_url)
 
 
 def version(api: str, get: Fetch) -> str:
@@ -98,9 +105,7 @@ def _saved(ctx: AppContext) -> str:
 
 def requested_model(ctx: AppContext) -> str:
     """OLLAMA_MODEL, then the model saved by an earlier enable, or ""."""
-    return str(
-        ctx.env.get("OLLAMA_MODEL") or ctx.env.get("WIRE_OLLAMA_MODEL") or _saved(ctx)
-    ).strip()
+    return str(ctx.env.get("OLLAMA_MODEL") or _saved(ctx)).strip()
 
 
 def _matches(wanted: str, available: List[str]) -> str:
@@ -116,20 +121,27 @@ def _ask(ctx: AppContext, available: List[str], read: Read) -> str:
     ctx.console.out("Models on this host's Ollama:")
     for number, name in enumerate(available, start=1):
         ctx.console.out(f"  {number}) {name}")
-    try:
-        answer = read(f"Model for AO [1-{len(available)}]: ").strip()
-    except EOFError:
-        answer = ""
+    answer = ""
+    for _ in range(ASK_ATTEMPTS):
+        try:
+            answer = read(f"Model for AO [1-{len(available)}]: ").strip()
+        except EOFError:
+            answer = ""
+        if not answer:
+            break
+        if answer.isdigit() and 1 <= int(answer) <= len(available):
+            ctx.console.out("")
+            return available[int(answer) - 1]
+        chosen = _matches(answer, available)
+        if chosen:
+            ctx.console.out("")
+            return chosen
+        ctx.console.out(f"{answer!r} is not on this host. Enter a number or a model name.")
     ctx.console.out("")
-    if answer.isdigit() and 1 <= int(answer) <= len(available):
-        return available[int(answer) - 1]
-    chosen = _matches(answer, available) if answer else ""
-    if not chosen:
-        raise AddonError(
-            f"No model chosen{f': {answer!r} is not on this host' if answer else ''}",
-            hint="Run aap-demo enable ao again, or set OLLAMA_MODEL=<model>.",
-        )
-    return chosen
+    raise AddonError(
+        f"No model chosen{f': {answer!r} is not on this host' if answer else ''}",
+        hint="Run aap-demo enable ao again, or set OLLAMA_MODEL=<model>.",
+    )
 
 
 def choose_model(
@@ -181,7 +193,11 @@ def _check_pod_overrides(url: str) -> str:
 
 
 def reaches(ctx: AppContext, base_url: str, namespace: str) -> bool:
-    """True when a pod in ``namespace`` gets HTTP 200 from Ollama's version API."""
+    """True when a pod in ``namespace`` gets HTTP 200 from Ollama's version API.
+
+    False when the pod ran and Ollama did not answer. Raises when the pod
+    itself did not run, which is a cluster problem rather than a network one.
+    """
     url = f"{api_root(base_url)}/api/version"
     kubectl.run(
         ctx.runner, "delete", "pod", CHECK_POD, "-n", namespace, "--ignore-not-found", "--wait"
@@ -201,7 +217,17 @@ def reaches(ctx: AppContext, base_url: str, namespace: str) -> bool:
         f"--overrides={_check_pod_overrides(url)}",
         timeout=CHECK_TIMEOUT,
     )
-    return result.ok and (result.stdout or "").strip().endswith("200")
+    output = (result.stdout or "").strip()
+    code = output[-3:]
+    if len(code) == 3 and code.isdigit():
+        return result.ok and code == "200"
+    detail = (result.stderr or output).strip()
+    raise AddonError(
+        f"The pod that checks the path to Ollama did not run in namespace {namespace}",
+        hint=f"{detail + '. ' if detail else ''}The pod pulls {CHECK_IMAGE}; check that "
+        f"the cluster can pull it, then run aap-demo enable ao again "
+        f"(kubectl get events -n {namespace}).",
+    )
 
 
 def _host_network_access(ctx: AppContext) -> str:
@@ -210,16 +236,16 @@ def _host_network_access(ctx: AppContext) -> str:
     return "true" if text.endswith("true") else "false" if text.endswith("false") else ""
 
 
-def unreachable(ctx: AppContext, base_url: str, *, platform: str = sys.platform) -> AddonError:
+def unreachable(ctx: AppContext, base_url: str, *, platform: Optional[str] = None) -> AddonError:
     message = f"The cluster cannot reach Ollama at {api_root(base_url)}"
     other = "Or set AO_LLM_PROVIDER=external, or none to install AO without an LLM."
-    if base_url != CLUSTER_URL:
+    if not is_cluster_url(base_url):
         return AddonError(
             message,
             hint="Check that Ollama listens on an address the VM reaches, and that "
             f"AO_LLM_BASE_URL points at it. {other}",
         )
-    if platform.startswith("linux"):
+    if (platform or _platform.system()).lower().startswith("linux"):
         return AddonError(
             message,
             hint="On Linux, CRC has no host network access setting. Make Ollama listen "
@@ -230,6 +256,11 @@ def unreachable(ctx: AppContext, base_url: str, *, platform: str = sys.platform)
     if setting == "true":
         why = (
             "CRC's host-network-access is on, but this VM may have been created before it was set."
+        )
+    elif not setting:
+        why = (
+            "Could not read CRC's host-network-access setting (crc config get "
+            "host-network-access). Pods reach the host only when it was on at create time."
         )
     else:
         why = (
@@ -249,19 +280,30 @@ def prepare(
     *,
     get: Fetch = fetch,
     read: Read = input,
-    platform: str = sys.platform,
+    platform: Optional[str] = None,
 ) -> str:
-    """Check the host's Ollama and the path to it. Saves and returns the model."""
+    """Check the host's Ollama and the path to it. Saves and returns the model.
+
+    The cluster check runs before the model prompt, so a VM that cannot reach
+    the host fails before anyone answers a question.
+    """
     api = host_api(base_url)
     found = version(api, get)
     if not found:
-        raise AddonError(f"Ollama is not running at {api}", hint=INSTALL_HINT)
+        raise AddonError(
+            f"Ollama is not responding at {api}",
+            hint=f"Is it running? It has {TIMEOUT} seconds to answer. {INSTALL_HINT}",
+        )
     ctx.console.success(f"Ollama {found} on the host")
     if kubectl.exists(ctx.runner, "namespace", OLD_NAMESPACE):
         ctx.console.note(
             "The in-cluster Ollama from an earlier aap-demo is still installed, and AO no "
             "longer uses it. Remove it with: aap-demo disable ollama"
         )
+    ctx.console.info("Checking that the cluster reaches the host's Ollama...")
+    if not reaches(ctx, base_url, ctx.namespace):
+        raise unreachable(ctx, base_url, platform=platform)
+    ctx.console.success(f"The cluster reaches Ollama at {api_root(base_url)}")
     model = choose_model(ctx, models(api, get), read=read, can_ask=prompts.can_ask(ctx.env))
     if model != _saved(ctx):
         save_options_for(ctx, "ao", {**options_for(ctx, "ao"), MODEL_OPTION: model})
@@ -277,16 +319,13 @@ def prepare(
             f"{model} does not list tool support, which AO's agents need. Choose a model "
             "that does with OLLAMA_MODEL=<model>."
         )
-    ctx.console.info("Checking that the cluster reaches the host's Ollama...")
-    if not reaches(ctx, base_url, ctx.namespace):
-        raise unreachable(ctx, base_url, platform=platform)
-    ctx.console.success(f"The cluster reaches Ollama at {api_root(base_url)}")
     return model
 
 
 __all__ = [
     "CLUSTER_URL",
     "choose_model",
+    "is_cluster_url",
     "prepare",
     "reaches",
 ]
